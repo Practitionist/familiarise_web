@@ -428,3 +428,69 @@ describe("playback follows the list", () => {
     });
   });
 });
+
+describe("co-host playback scope", () => {
+  it("asks only for accepted PRESENTER co-hosts, never a removed collaborator", async () => {
+    (prisma.appointment.findMany as jest.Mock)
+      .mockReset()
+      .mockResolvedValue([]);
+    (prisma.consultantProfile.findUnique as jest.Mock).mockResolvedValue({
+      id: "host",
+    });
+
+    const webinarBooking = {
+      id: "b-web",
+      appointmentType: "WEBINAR",
+      consultation: null,
+      subscription: null,
+      trial: null,
+      class: null,
+      webinar: {
+        id: "web-1",
+        webinarPlan: {
+          id: "plan-web",
+          title: "Webinar",
+          shareRecordingsWithAllAttendees: true,
+          consultantProfileId: "host",
+          organizationId: null,
+          collaborators: [],
+        },
+      },
+      participants: [],
+      payment: [],
+      occurrences: [],
+    };
+
+    (prisma.appointment.findMany as jest.Mock)
+      .mockResolvedValueOnce([{ appointmentType: "WEBINAR" }])
+      .mockResolvedValueOnce([webinarBooking])
+      .mockResolvedValue([]);
+
+    await loadRecordingViews(["b-web"], "host", NOW);
+
+    const bookingCall = (
+      prisma.appointment.findMany as jest.Mock
+    ).mock.calls.find(([args]) => args.select?.webinar);
+    if (!bookingCall) throw new Error("booking query was not issued");
+    const { select } = bookingCall[0];
+    // A removed or withdrawn collaborator must never be treated as a host.
+    expect(select.webinar.select.webinarPlan.select.collaborators).toEqual({
+      where: { status: "ACCEPTED", tier: "PRESENTER" },
+      select: { consultantProfileId: true },
+    });
+  });
+
+  it("treats an accepted co-host as a host", () => {
+    const booking = classBooking("b-cohost");
+    if (!booking.class) throw new Error("classBooking must include a class");
+    booking.class.classPlan.collaborators = [{ consultantProfileId: "cohost" }];
+
+    expect(
+      recordingViewerOf(
+        booking,
+        { consultantProfileId: "cohost", consulteeProfileId: null },
+        false,
+      )?.role,
+    ).toBe("host");
+  });
+});

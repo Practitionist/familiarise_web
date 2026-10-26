@@ -40,8 +40,6 @@ const MAX_TENTATIVE_SLOTS = 200;
 const MAX_REFERRAL_VESTS = 50;
 /** Expired credits per breakage run; one Serializable transaction each. */
 const MAX_REFERRAL_BREAKAGE = 500;
-/** Abandoned onboarding drafts are deleted after this many idle days. */
-const ONBOARDING_DRAFT_TTL_DAYS = 90;
 /** Payouts minted per rail per batch slice; each is one transaction. */
 const MAX_PAYOUT_BATCH_UNITS = 10;
 /** Disbursements per rail per run; each is a gateway round trip. */
@@ -72,6 +70,49 @@ const MAX_DOCUMENT_PURGE_ROWS = 200;
  */
 export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
   {
+    // @cleanup-twin consent-retention-sweeper
+    "consent-retention-sweeper": () =>
+      cleanupRoute({
+        job: "consent-retention-sweeper",
+        run: async (req, { startedAt }) => {
+          const { runConsentRetentionSweeper } =
+            await import("@/lib/compliance/consent-retention");
+          return runConsentRetentionSweeper({
+            limit: parseLimitParamOrDefault(req, 100),
+            startedAt,
+          });
+        },
+        failureMessage: "Consent retention slice failed",
+      }),
+    // @cleanup-twin databreach-deadline-alerts
+    "databreach-deadline-alerts": () =>
+      cleanupRoute({
+        job: "databreach-deadline-alerts",
+        run: async (req, { startedAt }) => {
+          const { runDataBreachDeadlineAlerts } =
+            await import("@/lib/compliance/databreach-deadline-alerts");
+          return runDataBreachDeadlineAlerts({
+            limit: parseLimitParamOrDefault(req, 5),
+            startedAt,
+          });
+        },
+        failureMessage: "Data breach deadline alert staging failed",
+      }),
+    // @cleanup-twin prune-system-events
+    "prune-system-events": () =>
+      cleanupRoute({
+        job: "prune-system-events",
+        run: async (req, { startedAt }) => {
+          const { pruneSystemEvents } =
+            await import("@/lib/observability/system-event-retention");
+          return pruneSystemEvents({
+            limit: parseLimitParamOrDefault(req, 100),
+            startedAt,
+          });
+        },
+        failureMessage: "System event retention slice failed",
+      }),
+
     // @cleanup-twin abandoned-org-top-ups
     "abandoned-org-top-ups": () =>
       cleanupRoute({
@@ -235,12 +276,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "archive-webhook-events": () =>
       cleanupRoute({
         job: "archive-webhook-events",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { archiveWebhookEvents } =
             await import("@/scripts/cleanup/archive-webhook-events");
-          return archiveWebhookEvents();
+          return archiveWebhookEvents({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
         },
         summarize: (r) => ({
+          hasMore: r.hasMore,
           processedEventsDeleted: r.processedEventsDeleted,
           terminalUnprocessedDeleted: r.terminalUnprocessedDeleted,
           failedEventsDeleted: r.failedEventsDeleted,
@@ -254,12 +299,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "auth-tokens": () =>
       cleanupRoute({
         job: "cleanup-auth-tokens",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { cleanupAuthTokens } =
             await import("@/lib/auth/cleanup-auth-tokens");
-          return cleanupAuthTokens();
+          return cleanupAuthTokens({ limit: parseLimitParam(req), startedAt });
         },
         summarize: (r) => ({
+          hasMore: r.hasMore,
           verificationTokensDeleted: r.verificationTokensDeleted,
           sessionsDeleted: r.sessionsDeleted,
           idempotencyRecordsDeleted: r.idempotencyRecordsDeleted,
@@ -428,46 +474,45 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to expire contracts",
       }),
 
+    // @cleanup-twin expire-event-channels
+    "expire-event-channels": () =>
+      cleanupRoute({
+        job: "expire-event-channels",
+        run: async () => {
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("expire-event-channels");
+        },
+        status: () => 202,
+        failureMessage: "Stream lifecycle dispatch failed",
+      }),
+
     // @cleanup-twin expire-recordings
     "expire-recordings": () =>
       cleanupRoute({
         job: "expire-recordings",
-        run: async (req) => {
-          const { expireRecordings } =
-            await import("@/lib/stream/recording-retention");
-          return expireRecordings({ limit: parseLimitParam(req) });
+        run: async () => {
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("expire-recordings");
         },
-        summarize: (r) => ({
-          scanned: r.scanned,
-          expired: r.expired,
-          failed: r.failed,
-        }),
-        status: (r) => statusFor(r),
-        failureMessage: "Recording retention sweep failed",
+        status: () => 202,
+        failureMessage: "Stream lifecycle dispatch failed",
       }),
 
     // @cleanup-twin expire-onboarding-drafts
     "expire-onboarding-drafts": () =>
       cleanupRoute({
         job: "expire-onboarding-drafts",
-        run: async () => {
-          const { default: prisma } = await import("@/lib/prisma");
-          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
-          return withCronLock(
-            "expire-onboarding-drafts",
-            { failMode: "open" },
-            async () => {
-              const cutoff = new Date(
-                Date.now() - ONBOARDING_DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000,
-              );
-              const { count } = await prisma.onboardingDraft.deleteMany({
-                where: { updatedAt: { lt: cutoff } },
-              });
-              return { success: true, deleted: count };
-            },
-          );
+        run: async (req, { startedAt }) => {
+          const { expireOnboardingDrafts } =
+            await import("@/scripts/cleanup/expire-onboarding-drafts");
+          return expireOnboardingDrafts({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
         },
-        summarize: (r) => ({ deleted: r.deleted }),
+        summarize: (r) => ({ deleted: r.deleted, hasMore: r.hasMore }),
         failureMessage: "Failed to expire onboarding drafts",
       }),
 
@@ -512,6 +557,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           subscriptionsExpired: r.subscriptionsExpired,
           subscriptionNudgesSent: r.subscriptionNudgesSent,
           paymentPendingExpired: r.paymentPendingExpired,
+          unallocatedHasMore: r.unallocatedHasMore,
+          unallocatedRefundsDeferred: r.unallocatedRefundsDeferred,
         }),
         failureMessage: "Failed to expire stale requests",
       }),
@@ -677,10 +724,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "prune-audit-logs": () =>
       cleanupRoute({
         job: "prune-audit-logs",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { pruneAuditLogs } =
             await import("@/scripts/cleanup/prune-audit-logs");
-          return pruneAuditLogs();
+          return pruneAuditLogs({ limit: parseLimitParam(req), startedAt });
         },
         failureMessage: "Audit prune failed",
       }),
@@ -689,22 +736,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "prune-system-job-executions": () =>
       cleanupRoute({
         job: "prune-system-job-executions",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { pruneSystemJobExecutions } =
             await import("@/scripts/cleanup/prune-system-job-executions");
-          return pruneSystemJobExecutions();
+          return pruneSystemJobExecutions({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
         },
         summarize: (r) => ({
           pruned: r.pruned,
           stranded: r.stranded,
-          failedEmailsBodyScrubbed: r.failedEmailsBodyScrubbed ?? 0,
-          failedEmailBatchesScrubbed: r.failedEmailBatchesScrubbed ?? 0,
-          failedEmailsPruned: r.failedEmailsPruned ?? 0,
-          failedEmailBatchesPruned: r.failedEmailBatchesPruned ?? 0,
-          notificationOutboxPruned: r.notificationOutboxPruned ?? 0,
-          emailEventsPruned: r.emailEventsPruned ?? 0,
+          failedEmailsBodyScrubbed: r.failedEmailsBodyScrubbed,
+          failedEmailBatchesScrubbed: r.failedEmailBatchesScrubbed,
+          failedEmailsPruned: r.failedEmailsPruned,
+          failedEmailBatchesPruned: r.failedEmailBatchesPruned,
+          notificationOutboxPruned: r.notificationOutboxPruned,
+          emailEventsPruned: r.emailEventsPruned,
+          hasMore: r.hasMore,
         }),
-        status: () => 200,
         failureMessage: "System job execution prune failed",
       }),
 
@@ -960,25 +1010,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "reconcile-orphaned-recordings",
         run: async () => {
-          const { reconcileOrphanedRecordings } =
-            await import("@/scripts/stream/reconcile-orphaned-recordings");
-          return reconcileOrphanedRecordings();
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("reconcile-orphaned-recordings");
         },
-        summarize: (r) => ({
-          scanned: r.scanned,
-          recovered: r.recovered,
-          stillMissing: r.stillMissing,
-          unrecoverable: r.unrecoverable,
-          partialScanned: r.partialScanned,
-          partialRecovered: r.partialRecovered,
-          errors: r.errors.slice(0, 5),
-        }),
-        status: (r) =>
-          statusFor(
-            r,
-            r.recovered > 0 || r.partialRecovered > 0 || r.unrecoverable > 0,
-          ),
-        failureMessage: "Failed to reconcile orphaned recordings",
+        status: () => 202,
+        failureMessage: "Stream lifecycle dispatch failed",
       }),
 
     // @cleanup-twin reconcile-payment-status
@@ -1060,12 +1097,11 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-sessions": () =>
       cleanupRoute({
         job: "reconcile-orphaned-sessions",
-        run: async () => {
+        run: async (req) => {
           const { reconcileOrphanedSessions } =
-            await import("@/jobs/meetings/reconcile-orphaned-sessions");
-          return reconcileOrphanedSessions();
+            await import("@/lib/meetings/reconcile-orphaned-sessions");
+          return reconcileOrphanedSessions({ limit: parseLimitParam(req) });
         },
-        status: () => 200,
         unauthorizedMessage:
           "Please provide a valid authorization header with the CRON_SECRET",
         failureMessage: "Reconciliation job failed",
@@ -1278,6 +1314,19 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to settle cancelled class sessions",
       }),
 
+    // @cleanup-twin maintenance-booking-remediation
+    "maintenance-booking-remediation": () =>
+      cleanupRoute({
+        job: "maintenance-booking-remediation",
+        run: async () => {
+          const { runMaintenanceRemediationSlice } =
+            await import("@/lib/maintenance-remediation");
+          return runMaintenanceRemediationSlice();
+        },
+        summarize: (r) => ({ processed: r.processed }),
+        failureMessage: "Failed to process confirmed maintenance cancellations",
+      }),
+
     // @cleanup-twin settle-platform-incidents
     "settle-platform-incidents": () =>
       cleanupRoute({
@@ -1349,21 +1398,14 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "stream-sync",
         run: async (req) => {
-          const { performStreamUserSync } =
-            await import("@/scripts/stream/stream-sync");
-          const dryRun = req.nextUrl.searchParams.get("dry-run") === "true";
-          if (dryRun) {
-            console.log("Stream user sync: DRY RUN");
-          }
-          return performStreamUserSync({ dryRun });
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("stream-sync", {
+            dryRun: req.nextUrl.searchParams.get("dry-run") === "true",
+          });
         },
-        summarize: (r) => ({
-          usersProcessed: r.totalStreamUsersProcessed,
-          staleIdentified: r.totalStaleUsersIdentified,
-          usersDeleted: r.totalStaleUsersDeleted,
-          failedDeletions: r.totalFailedDeletions,
-        }),
-        failureMessage: "Failed to sync Stream users",
+        status: () => 202,
+        failureMessage: "Stream lifecycle dispatch failed",
       }),
 
     // @cleanup-twin support-sla-sweep
@@ -1545,16 +1587,11 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         job: "transfer-recordings",
         run: async (req) => {
           parseLimitParam(req);
-          const { transferRecordings } =
-            await import("@/lib/stream/recording-transfer-service");
-          return transferRecordings();
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("transfer-recordings");
         },
-        summarize: (r) => ({
-          processed: r.processed,
-          succeeded: r.succeeded,
-          failed: r.failed,
-          exhaustedReported: r.exhaustedReported,
-        }),
+        status: () => 202,
         failureMessage: "Recording copy sweep failed",
       }),
 
@@ -1599,21 +1636,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "wind-down-deactivated-orgs",
         run: async () => {
-          const { windDownDeactivatedOrgs } =
-            await import("@/jobs/stream/wind-down-deactivated-orgs");
-          return windDownDeactivatedOrgs();
+          const { dispatchBackgroundJob } =
+            await import("@/lib/cron/dispatch-background");
+          return dispatchBackgroundJob("wind-down-deactivated-orgs");
         },
-        summarize: (r) => ({
-          orgsScanned: r.orgsScanned,
-          callsEnded: r.callsEnded,
-          eventChannelsFrozen: r.eventChannelsFrozen,
-          dmChannelsFrozen: r.dmChannelsFrozen,
-          tokensRevoked: r.tokensRevoked,
-          recordingsUnpublished: r.recordingsUnpublished,
-          recordingsPurged: r.recordingsPurged,
-          removedMembersDrained: r.removedMembersDrained,
-        }),
-        failureMessage: "Failed to wind down deactivated organizations",
+        status: () => 202,
+        failureMessage: "Stream lifecycle dispatch failed",
       }),
   };
 

@@ -76,7 +76,7 @@ R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
 1. Navigate to **Dashboard** → **Create New App**
 2. Choose app name (e.g., "Familiarise Dev")
 3. Select region closest to your users
-   - 🇺🇸 US East (Virginia / `gcp-us-east5`)
+   - 🇺🇸 US East (Virginia; the production app runs in region `gcp-us-east4`, placement `gcp-us-east4.vega`)
    - 🇪🇺 EU West (Ireland)
    - 🇸🇬 Singapore
    - 🇦🇺 Australia
@@ -209,7 +209,7 @@ Stream enforces strict per-minute rate limits per endpoint at the application le
 | `ExportUsers`        | **60 / min**     | Compliance / DSAR export workflows                                            |
 | `UpdateUsers`        | **300 / min**    | `actions/stream/chat/user.action.ts` (`upsertUsersToStream`, 100-user chunks) |
 | `UpdateUsersPartial` | **300 / min**    | User profile and role synchronization                                         |
-| `SendMessage`        | **1,000 / min**  | `app/api/stream/channels/open/route.ts` (`booking-ctx-` receipt cards)        |
+| `SendMessage`        | **1,000 / min**  | `lib/stream/support-intervention.ts`, `lib/stream/system-message.ts`          |
 | `QueryChannels`      | **10,000 / min** | `lib/stream/batch.ts` (`queryChannelsPaged`, 30-channel page ceiling)         |
 
 > [!IMPORTANT]
@@ -315,7 +315,7 @@ Stream provides default channel types. For Familiarise, configure:
 - Online classes (instructor + students)
 - Group events
 
-Chat is text-only: `scripts/stream/ensure-chat-text-only.ts` pins `uploads: false` on both channel types and strips `upload-file`, `upload-attachment`, and `create-attachment` from every role. It is dry-run by default; run it with `--apply` after any control-plane restore. In the app, the composer overrides `AttachmentSelector` to remove the remaining paperclip, and appointment-linked chats show a Documents hint.
+Chat is text-only: `scripts/stream/ensure-chat-text-only.ts` pins `uploads: false` on both channel types and strips `upload-file`, `upload-attachment`, and `create-attachment` from every role. The `-owner` and `-any-team` attachment grants and the giphy command stay, because GIFs are attachments and `uploads: false` is what blocks files. It is dry-run by default; run it with `--apply` after any control-plane restore. In the app, the composer overrides `AttachmentSelector` to remove the remaining paperclip, and appointment-linked chats show a Documents hint.
 
 ### 2. Set Up Roles & Permissions
 
@@ -1106,7 +1106,7 @@ railway variables set STREAM_API_SECRET=xxx
 - **`NEXTAUTH_SECRET` / `NEXTAUTH_URL`**: Replaced by `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`.
 - **`.github/workflows/stream-webhook-drift.yml`**: it compared only the event list, never the hook's enabled flag or URL, and ran on budget-blocked GitHub Actions. Superseded by the ticker job `stream-control-plane-drift`, which covers the whole contract.
 - **Manual dashboard clicks for call-type grants and app settings**: Superseded by `scripts/stream/ensure.ts` (`ensure-app-settings.ts` and `harden-unused-call-types.ts` write pre-image backups to `.stream-backups/`, while `ensure-call-type-grants.ts` writes a drift snapshot to `os.tmpdir()` when settings drift is detected and verifies post-write state).
-- **Dashboard-toggled chat file uploads**: Superseded by `scripts/stream/ensure-chat-text-only.ts`, which pins `uploads: false` and strips every attachment-upload grant on `messaging` and `team` (with `.stream-backups/channel-type-<name>-<timestamp>.json` pre-images); re-run it with `--apply` after any control-plane restore.
+- **Dashboard-toggled chat file uploads**: Superseded by `scripts/stream/ensure-chat-text-only.ts`, which pins `uploads: false` and strips the base attachment grants on `messaging` and `team` (with `.stream-backups/channel-type-<name>-<timestamp>.json` pre-images); re-run it with `--apply` after any control-plane restore.
 
 ---
 

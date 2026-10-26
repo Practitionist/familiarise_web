@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
+import { dueTargets } from "../../lib/cron/schedule";
 
 type Ticker = typeof import("../../netlify/functions/cron-tick.mjs");
 
@@ -69,6 +70,24 @@ describe("ticker execution outcomes", () => {
     ).toBe("failed");
   });
 
+  it("separates background admission from completed targets and never admits an ordinary 202", async () => {
+    const fetchImpl = jest.fn(
+      async (input: string | URL | Request) =>
+        new Response("{}", {
+          status: String(input).includes("recording-transfer-background")
+            ? 202
+            : 200,
+        }),
+    );
+    const ticker = load(fetchImpl);
+    const response = await ticker.default(new Request("https://tick.test"));
+    const body = await response.json();
+    expect(body.accepted).toEqual(["transfer-recordings"]);
+    expect(body.ok).not.toContain("transfer-recordings");
+    expect(body.failed).toEqual([]);
+    expect(ticker.bucketFor(202, false, "release-earnings")).toBe("failed");
+  });
+
   it("reports rejected check-ins without re-firing completed targets", async () => {
     const error = jest.spyOn(console, "error").mockImplementation(() => {});
     const fetchImpl = jest.fn(async (input: string | URL | Request) => {
@@ -76,17 +95,65 @@ describe("ticker execution outcomes", () => {
       return url.includes("sentry.test")
         ? new Response("rejected", { status: 403 })
         : new Response("{}", {
-            status: 200,
+            status: url.includes("recording-transfer-background") ? 202 : 200,
             headers: { "X-Job-Outcome": "success" },
           });
     });
     const ticker = load(fetchImpl);
     const response = await ticker.default(new Request("https://tick.test"));
     expect(response.status).toBe(200);
-    const expectedTargets = ticker.dueTargets(new Date());
+    const expectedTargets = dueTargets(new Date());
     expect(fetchImpl).toHaveBeenCalledTimes(expectedTargets.length + 1);
     expect(error).toHaveBeenCalledWith(
       JSON.stringify({ event: "cron-checkin-rejected", status: 403 }),
     );
+  });
+
+  describe("Better Stack summary line", () => {
+    beforeEach(() => {
+      process.env = {
+        ...process.env,
+        ENABLE_BETTERSTACK_TELEMETRY: "true",
+        BETTERSTACK_SOURCE_TOKEN: "tok",
+        BETTERSTACK_INGEST_URL: "https://ingest.betterstack.test",
+      };
+    });
+
+    it("logs the status of a rejected summary without the token", async () => {
+      const error = jest.spyOn(console, "error").mockImplementation(() => {});
+      const fetchImpl = jest.fn(async (input: string | URL | Request) =>
+        String(input).includes("betterstack.test")
+          ? new Response("bad token", { status: 401 })
+          : new Response("{}", {
+              status: String(input).includes("recording-transfer-background")
+                ? 202
+                : 200,
+            }),
+      );
+      await load(fetchImpl).default(new Request("https://tick.test"));
+      expect(error).toHaveBeenCalledWith(
+        JSON.stringify({ event: "betterstack-summary-rejected", status: 401 }),
+      );
+      expect(JSON.stringify(error.mock.calls)).not.toContain("tok");
+    });
+
+    it("emits an error summary when CRON_SECRET is missing", async () => {
+      jest.spyOn(console, "error").mockImplementation(() => {});
+      jest.useRealTimers();
+      delete process.env.CRON_SECRET;
+      delete process.env.SENTRY_DSN;
+      const fetchImpl = jest.fn(
+        async (_input: string | URL | Request, _init?: RequestInit) =>
+          new Response("{}", { status: 202 }),
+      );
+      await load(fetchImpl).default(new Request("https://tick.test"));
+      const summary = fetchImpl.mock.calls.find(([input]) =>
+        String(input).includes("betterstack.test"),
+      );
+      expect(summary).toBeDefined();
+      const payload = JSON.parse(String(summary?.[1]?.body));
+      expect(payload.level).toBe("error");
+      expect(payload.error).toMatch(/CRON_SECRET is not set/);
+    });
   });
 });

@@ -85,4 +85,4 @@ The table below lists the columns the recompute writes on the profile.
 ## Related
 
 - [02-two-track-scoring.md](02-two-track-scoring.md) — the arithmetic behind the profile columns.
-- [`docs/feedback/03-schema-reference.md`](../feedback/03-schema-reference.md) and [`docs/support/05-schema-reference.md`](../support/05-schema-reference.md) — the sibling tables.
+- [`docs/feedback/03-schema-reference.md`](../feedback/03-schema-reference.md) and [`docs/support/11-schema-and-invariants.md`](../support/11-schema-and-invariants.md) — the sibling tables.

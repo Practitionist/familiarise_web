@@ -251,7 +251,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         }),
       ).toEqual([]);
 
-      // Group webinar in SCHEDULED status offers Open Event Chat + Message Consultant when host userId is resolved
+      // Group webinar in SCHEDULED status offers Webinar chat + Message Consultant when host userId is resolved
       const webinarVm = {
         id: "vm-web-1",
         appointmentId: "apt-web-1",
@@ -276,7 +276,7 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
         push: jest.fn(),
       });
       expect(webinarItems.map((i) => i.label)).toEqual([
-        "Open Event Chat",
+        "Webinar chat",
         "Message Consultant",
       ]);
 

@@ -603,6 +603,7 @@ export const getCuratedExperts = unstable_cache(
           affiliationWhere(affiliationType, orgKind),
         ],
       },
+      relationLoadStrategy: "join",
       orderBy: orderByForSort(sort),
       take: limit,
       include: consultantCardInclude,
@@ -638,6 +639,7 @@ export const getDefaultConsultantsPage = unstable_cache(
     };
     const [rows, total] = await Promise.all([
       prisma.consultantProfile.findMany({
+        relationLoadStrategy: "join",
         where,
         orderBy: orderByForSort(sort),
         take: limit,

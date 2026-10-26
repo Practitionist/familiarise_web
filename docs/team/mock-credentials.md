@@ -12,6 +12,8 @@ All permutations: platform roles × enterprise org roles × org types.
 
 Non-operator users seeded via `prisma/seedFiles/1a-create-users.ts` share the seed default password (see that file). ADMIN and STAFF accounts use the `SEED_OPERATOR_PASSWORD` value from your local `.env`; ask the lead.
 
+Every ADMIN and STAFF account is on `qa.familiarise.invalid`, a domain reserved by RFC 2606 that receives no mail, so no password reset or setup link can be delivered for them. On deploy previews and local development, the QA operators marked below sign in with `SEED_OPERATOR_PASSWORD` alone and need no authenticator; production asks every operator for TOTP. The rule and the list live in `lib/auth/qa-accounts.ts` ([staff-onboarding.md §9](../authentication/staff-onboarding.md#9-two-factor-policy-seeds-and-qa-operators)).
+
 Three manually-created test accounts (`owner-test`, `learner-test`, `a@gmail.com`) and the five `tour-2026-04-26-*` accounts were created outside the seed script — their passwords are **unknown**. Reset them via `/auth/forgot-password` or the Supabase Auth dashboard if needed.
 
 **Sign-in URL:** `/auth/signin`
@@ -32,22 +34,22 @@ Three manually-created test accounts (`owner-test`, `learner-test`, `a@gmail.com
 
 ### ADMIN accounts
 
-| Name          | Email                       | Password                 |
-| ------------- | --------------------------- | ------------------------ |
-| Olivia Brown  | olivia.brown@protonmail.com | `SEED_OPERATOR_PASSWORD` |
-| Patrick Brown | patrick.brown@gmail.com     | `SEED_OPERATOR_PASSWORD` |
-| Priya Brown   | priya.brown@outlook.com     | `SEED_OPERATOR_PASSWORD` |
+| Name          | Email                             | Password                 | 2FA off production |
+| ------------- | --------------------------------- | ------------------------ | ------------------ |
+| Olivia Brown  | qa-admin-1@qa.familiarise.invalid | `SEED_OPERATOR_PASSWORD` | TOTP (enrolled)    |
+| Patrick Brown | qa-admin-2@qa.familiarise.invalid | `SEED_OPERATOR_PASSWORD` | None (QA operator) |
+| Priya Brown   | qa-admin-3@qa.familiarise.invalid | `SEED_OPERATOR_PASSWORD` | TOTP (enrolled)    |
 
 ---
 
 ### STAFF accounts
 
-| Name          | Email                     | Password                 |
-| ------------- | ------------------------- | ------------------------ |
-| Maria Brown   | maria.brown@gmail.com     | `SEED_OPERATOR_PASSWORD` |
-| Michael Brown | michael.brown@outlook.com | `SEED_OPERATOR_PASSWORD` |
-| Natalie Brown | natalie.brown@yahoo.com   | `SEED_OPERATOR_PASSWORD` |
-| Nathan Brown  | nathan.brown@hotmail.com  | `SEED_OPERATOR_PASSWORD` |
+| Name          | Email                             | Password                 | 2FA off production |
+| ------------- | --------------------------------- | ------------------------ | ------------------ |
+| Maria Brown   | qa-staff-1@qa.familiarise.invalid | `SEED_OPERATOR_PASSWORD` | None (QA operator) |
+| Michael Brown | qa-staff-2@qa.familiarise.invalid | `SEED_OPERATOR_PASSWORD` | TOTP (enrolled)    |
+| Natalie Brown | qa-staff-3@qa.familiarise.invalid | `SEED_OPERATOR_PASSWORD` | None (QA operator) |
+| Nathan Brown  | qa-staff-4@qa.familiarise.invalid | `SEED_OPERATOR_PASSWORD` | None (QA operator) |
 
 ---
 
@@ -275,8 +277,8 @@ Every valid combination of `UserRole × org capability kind × MemberRole`.
 | CONSULTANT    | HOST     | EXPERT (SELF)         | aarav/aditi/alex/amit/ananya.anderson (LearnPro Academy); aditi.anderson (LearnPro Test) |
 | CONSULTANT    | HYBRID   | EXPERT (SELF)         | arjun/benjamin/catherine.anderson (IIT Madras)                                           |
 | CONSULTANT    | HYBRID   | EXPERT (ORGANIZATION) | andrew/angela.anderson (IIT Madras) — salaried                                           |
-| ADMIN         | any      | Read-only OWNER stub  | olivia.brown@protonmail.com — org reads only; writes via `/api/admin/*`                  |
-| STAFF         | any      | None                  | maria.brown@gmail.com — back office only                                                 |
+| ADMIN         | any      | Read-only OWNER stub  | qa-admin-1@qa.familiarise.invalid — org reads only; writes via `/api/admin/*`            |
+| STAFF         | any      | None                  | qa-staff-1@qa.familiarise.invalid — back office only                                     |
 | any           | any      | MAINTAINER            | **Not seeded** — create via `PATCH /members/[id]` as OWNER                               |
 | any           | any      | MANAGER               | **Not seeded** — create via `PATCH /members/[id]` as OWNER                               |
 | any           | any      | SUPPORT               | **Not seeded** — create via `PATCH /members/[id]` as OWNER                               |

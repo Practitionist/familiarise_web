@@ -18,6 +18,7 @@ import {
   threadRowSelect,
   type ThreadView,
 } from "@/lib/documents/thread-view";
+import { isPastRetention } from "@/lib/documents/document-dates";
 import { fileTypeLabel } from "@/lib/documents/file-policy";
 import { getMaterialViewerUrl } from "@/lib/documents/urls";
 import { materialReaderWhere } from "@/lib/plans/material-access";
@@ -546,10 +547,12 @@ export async function readDocumentLibrary(args: {
           ? booking.expert.name
           : booking.learner.name,
     };
-    const threads = buildThreadViews(row.documents, {
-      viewerRole: role,
-      writable: documentWriteRefusal(booking) === null,
-    });
+    const threads = isPastRetention(booking.keptUntil)
+      ? []
+      : buildThreadViews(row.documents, {
+          viewerRole: role,
+          writable: documentWriteRefusal(booking) === null,
+        });
 
     if (everyone) {
       const done = threads.filter(

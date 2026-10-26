@@ -341,7 +341,7 @@ model SupportFlowOutcome {
 
   // #1300 — "did the self-serve tree help?" Bound to the flow terminal because a
   // RESOLVED outcome writes no ticket. NULL = not asked or not answered, never a 1.
-  // See docs/support/04-deflection-and-support-csat.md.
+  // See docs/support/01-intake-and-flows.md.
   helpfulRating Int? @db.SmallInt
 
   createdAt DateTime @default(now()) @db.Timestamptz
@@ -5499,6 +5499,13 @@ model Meeting {
   extendedSeconds Int @default(0)
   extensionsUsed  Int @default(0)
 
+  /// Set after a maintenance channel freeze succeeds; cleared after unfreeze succeeds.
+  maintenanceChannelFrozenAt    DateTime?          @db.Timestamptz
+  /// Recovery includes meetings whose freeze acknowledgement was lost.
+  maintenanceChannelRecoveredAt DateTime?          @db.Timestamptz
+  maintenanceWindowId           String?
+  maintenanceWindow             MaintenanceWindow? @relation(fields: [maintenanceWindowId], references: [id], onDelete: Restrict)
+
   recordings        Recording[]
   attendances       MeetingAttendance[] // STR-4 (#689) — per-participant join/leave audit
   recordingConsents RecordingConsent[] // #1134 P1-7
@@ -5522,6 +5529,9 @@ model Meeting {
   updatedAt DateTime @updatedAt
 
   @@index([isRecording])
+  @@index([endedAt])
+  @@index([maintenanceWindowId, maintenanceChannelFrozenAt, endedAt])
+  @@index([maintenanceWindowId, maintenanceChannelRecoveredAt])
   @@index([organizationId, createdAt])
 }
 
@@ -7516,16 +7526,20 @@ enum MaintenancePhase {
 }
 
 model MaintenanceWindow {
-  id           String           @id @default(cuid())
-  phase        MaintenancePhase @default(OFF)
-  reason       String?
-  scheduledAt  DateTime?
-  startedAt    DateTime?
-  endedAt      DateTime?
-  estimatedEnd DateTime?
-  startedBy    String?
-  endedBy      String?
-  bypassSecret String?
+  id                    String                   @id @default(cuid())
+  phase                 MaintenancePhase         @default(OFF)
+  reason                String?
+  scheduledAt           DateTime?
+  startedAt             DateTime?
+  endedAt               DateTime?
+  estimatedEnd          DateTime?
+  startedBy             String?
+  endedBy               String?
+  bypassSecret          String?
+  betterstackIncidentId String?
+  offlineActivatedAt    DateTime?
+  remediations          MaintenanceRemediation[]
+  drainedMeetings       Meeting[]
 
   /// PR #655 Tier 1 multi-tenant column. NULL = platform-wide window
   /// (every legacy row + the default for ops-triggered downtime).
@@ -7542,6 +7556,36 @@ model MaintenanceWindow {
 
   @@index([organizationId, phase])
   @@map("maintenance_windows")
+}
+
+/// Explicitly confirmed booking cancellations, separate from the maintenance gate.
+model MaintenanceRemediation {
+  id             String                       @id @default(cuid())
+  windowId       String
+  window         MaintenanceWindow            @relation(fields: [windowId], references: [id], onDelete: Restrict)
+  startsAt       DateTime
+  endsAt         DateTime
+  appointmentIds String[]
+  requestedBy    String
+  reason         String
+  completedAt    DateTime?
+  createdAt      DateTime                     @default(now())
+  items          MaintenanceRemediationItem[]
+
+  @@index([windowId, createdAt])
+}
+
+model MaintenanceRemediationItem {
+  id            String                 @id @default(cuid())
+  remediationId String
+  remediation   MaintenanceRemediation @relation(fields: [remediationId], references: [id], onDelete: Cascade)
+  appointmentId String
+  completedAt   DateTime?
+  attempts      Int                    @default(0)
+  lastError     String?
+
+  @@unique([remediationId, appointmentId])
+  @@index([completedAt, attempts, id])
 }
 
 /// A platform outage window ops declared; never auto-declared and never edited.

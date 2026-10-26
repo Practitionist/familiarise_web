@@ -1,6 +1,6 @@
 /**
- * Make chat text-only: disable attachments on the `messaging` and `team`
- * channel types and strip every attachment-upload grant from every role.
+ * Make chat text-only: disable uploads on the `messaging` and `team` channel
+ * types and strip the base attachment grants from every role.
  *
  *   npx tsx scripts/stream/ensure-chat-text-only.ts
  *   npx tsx scripts/stream/ensure-chat-text-only.ts --apply
@@ -13,6 +13,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { getStreamChatClient, isStreamConfigured } from "@/lib/stream-client";
 
 const CHANNEL_TYPES = ["messaging", "team"] as const;
+// The `-owner` / `-any-team` attachment grants and the giphy command stay: GIFs
+// are attachments, and `uploads: false` is what blocks files (those go through documents).
 const ATTACHMENT_ACTIONS = new Set([
   "upload-file",
   "upload-attachment",

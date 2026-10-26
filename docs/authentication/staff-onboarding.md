@@ -1,11 +1,11 @@
 # Staff onboarding, sign-in and recovery
 
-| Field         | Value                                                                                                                                                                                                                                                   |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status        | Live                                                                                                                                                                                                                                                    |
-| Audience      | Engineers, ADMINs, on-call                                                                                                                                                                                                                              |
-| Last reviewed | 2026-10-10                                                                                                                                                                                                                                              |
-| Source        | `lib/auth/operators.ts`, `lib/auth/operator-session-policy.ts`, `lib/auth/two-factor-policy.ts`, `lib/auth/passkey-policy.ts`, `lib/auth/step-up.ts`, `app/api/admin/team/members/**`, `scripts/bootstrap-admin.ts`, `lib/auth.ts`, `lib/auth-guard.ts` |
+| Field         | Value                                                                                                                                                                                                                                                                              |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status        | Live                                                                                                                                                                                                                                                                               |
+| Audience      | Engineers, ADMINs, on-call                                                                                                                                                                                                                                                         |
+| Last reviewed | 2026-10-27                                                                                                                                                                                                                                                                         |
+| Source        | `lib/auth/operators.ts`, `lib/auth/operator-session-policy.ts`, `lib/auth/two-factor-policy.ts`, `lib/auth/passkey-policy.ts`, `lib/auth/step-up.ts`, `app/api/admin/team/members/**`, `scripts/bootstrap-admin.ts`, `lib/auth.ts`, `lib/auth-guard.ts`, `lib/auth/qa-accounts.ts` |
 
 An **operator** is a user with role `STAFF` or `ADMIN`. Operators can read
 customer data and move money, so they get a stricter regime than consumers:
@@ -236,9 +236,9 @@ may be what was compromised.
 | 2   | Recovering the last ADMIN needs database access.                                                                                                 |
 | 3   | TOTP codes can be replayed within their ~90 s window; accepted, see [rate-limiting-and-abuse.md](./rate-limiting-and-abuse.md#7-accepted-risks). |
 
-## 7. Two-factor is mandatory, and what that means for seeds and QA
+## 9. Two-factor policy, seeds and QA operators
 
-Two-factor authentication is a deliberate, standing requirement for every `STAFF` and `ADMIN` account. There is no "skip for now" and no grace period, and customers and experts never meet a 2FA wall. The reasoning is blast radius: one operator session can read every customer's contact details and support transcripts and can issue refunds, hold earnings, remove reviews and ban accounts, while a customer session exposes only that customer's own data. Passwords alone are the usual route into support tooling, and a second factor defeats both phishing and credential stuffing. This is the platform's policy choice rather than a statutory mandate; it is evidence of "reasonable security safeguards" and is not named by the DPDP Rules or CERT-In's directions.
+Two-factor authentication is a deliberate, standing requirement for every `STAFF` and `ADMIN` account. There is no "skip for now" and no grace period for a real operator, and customers and experts never meet a 2FA wall. The reasoning is blast radius: one operator session can read every customer's contact details and support transcripts and can issue refunds, hold earnings, remove reviews and ban accounts, while a customer session exposes only that customer's own data. Passwords alone are the usual route into support tooling, and a second factor defeats both phishing and credential stuffing. This is the platform's policy choice rather than a statutory mandate; it is evidence of "reasonable security safeguards" and is not named by the DPDP Rules or CERT-In's directions.
 
 The rules the code enforces:
 
@@ -246,14 +246,27 @@ The rules the code enforces:
 - Recovery is a backup code, or another ADMIN's **Reset 2FA** from the Team page, which deletes the `TwoFactor` row and passkeys, clears `twoFactorEnabled`, replaces the password with random bytes and ends every session in one transaction, then emails a set-password link.
 - An un-enrolled operator is sent to `/auth/two-factor/setup` by `requireOperator`, and every back-office API behind the operator precondition answers 428 `TWO_FACTOR_REQUIRED` with `X-Auth-Action: enroll-2fa`; routes that read `getSession()` directly answer 401.
 
-Two gaps remain open under issue #2033 and are stated here so nobody assumes they are closed:
+### QA operators skip 2FA off production
 
-| Gap                          | Today                                                                                                                                                                  | Intended                                                                                                                                                                       |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Seed operators               | The seed creates staff and admin accounts (only with `SEED_WITH_STAFF=true`) with no second factor, so every back-office API answers 428 until someone enrols by hand. | Seeded operators are pre-enrolled with a per-account TOTP secret derived from `BETTER_AUTH_SECRET` and the user id, never one published constant, plus a small code generator. |
-| The setup page is a dead end | `/auth/two-factor/setup` renders only a heading and the enrolment form, with no sign-out, no back link and no explanation of why the requirement exists.               | A sign-out button, a link back to the public site, a short explanation, and a "saved my backup codes" confirmation before continuing.                                          |
+Production enforces 2FA for every operator. On deploy previews, branch deploys and local development, a short list of designated QA operator accounts is let through without a second factor, so back-office QA needs no authenticator:
 
-Until those land, a QA run that needs a back-office session enrols one staff and one admin account by hand, then reverts the enrolment by SQL afterwards, because the self-service disable is refused by design. The prompt suite's shared setup describes that recipe.
+- **The rule.** `isQaOperatorExemptFrom2fa(user, env)` in `lib/auth/qa-accounts.ts` is true only when the user is `STAFF` or `ADMIN`, their email is one of the exact addresses in `QA_OPERATOR_EMAILS` and is on the reserved `qa.familiarise.invalid` domain, and the build-inlined `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is `preview` or `development`. That variable is `production` on the Netlify production context, `preview` on deploy previews and branch deploys, and `development` in the `dev` context and the local `.env`. A missing, empty or unrecognised value enforces 2FA, so a host that forgets to set it fails closed. Netlify's `CONTEXT` is not used because it exists only at build time.
+- **Why it is so narrow.** Every deploy preview and every local checkout talks to the same production Postgres database, and preview URLs are public. Skipping 2FA for every operator whenever the deployment is not production would let one leaked real-admin password reach the production back office through any preview URL. So a real operator is enforced on every deployment, and a QA account is enforced on production.
+- **Where it applies.** One helper, `needsOperatorTwoFactor`, feeds every gate that confines an unenrolled operator: `requireApiAuth`'s 428 precondition (`lib/auth-helpers.ts`), `requireOperator` and the page guards (`lib/auth-guard.ts`), `getSession()` (`lib/auth-server.ts`), and the auth pages' signed-in redirect (`app/auth/useSignedInRedirect.ts`). `session.create.before` in `lib/auth.ts` logs one `console.info` line per exempted sign-in (user id and environment, no Sentry event).
+- **What does not change.** Sign-in rate limits, the per-account throttle, captcha, the one-hour session cap for an operator without 2FA, and step-up are untouched. Step-up still asks an operator for an authenticator code, so a QA operator who needs a fresh session for a sensitive action signs in again, which counts as fresh for 15 minutes. A QA account that has enrolled 2FA still meets the TOTP challenge, because the exemption only skips enrolment.
+
+Every seeded operator lives on `qa.familiarise.invalid`. `.invalid` is a top-level domain reserved by RFC 2606 that never resolves, so no mail is ever delivered there: nobody outside can receive a password reset, a setup link or a lockout email for these accounts, and nobody can register a real inbox that collides with one. The exemption checks the domain as well as the exact address, so a public-mailbox address can never be exempted even if someone adds one to the list. QA signs in with the password alone, `SEED_OPERATOR_PASSWORD` from the local `.env`; never copy the value into a doc, prompt or PR. Because no reset mail can arrive, a forgotten or rotated password is fixed by reseeding or by the owner, not through forgot-password.
+
+Four of the seven seeded operators are exempt and have no 2FA enrolled; the seed (`prisma/seedFiles/1a-create-users.ts`) leaves exactly these unenrolled and pre-enrols the rest.
+
+| Role  | Account                             |
+| ----- | ----------------------------------- |
+| ADMIN | `qa-admin-2@qa.familiarise.invalid` |
+| STAFF | `qa-staff-1@qa.familiarise.invalid` |
+| STAFF | `qa-staff-3@qa.familiarise.invalid` |
+| STAFF | `qa-staff-4@qa.familiarise.invalid` |
+
+The other three, `qa-admin-1`, `qa-admin-3` and `qa-staff-2`, keep TOTP and are the accounts to use when testing the 2FA flows themselves. To add or retire a QA account, edit `QA_OPERATOR_EMAILS` and this table in the same change, and check the live operator list (read-only) first.
 
 ## Deprecated & Superseded Approaches
 
@@ -269,4 +282,5 @@ Until those land, a QA run that needs a back-office session enrols one staff and
   hashed backup codes, and mandatory 2FA for org owners or payout consultants.
 - **Self-service 2FA removal for operators**: refused by design; the only removals are the ADMIN reset and a database-level recovery of the last admin.
 - **Trusted devices for operators**: refused (`TRUST_DEVICE_DISABLED`), because a stolen password would otherwise skip the authenticator for 30 days.
-- **A published constant TOTP secret for seed operators**: rejected for #2033, since a known password on a shared database plus a known secret would cancel the second factor.
+- **A published constant TOTP secret for seed operators**: rejected, since a known password on a shared database plus a known secret would cancel the second factor.
+- **Enrolling QA operators by hand and reverting by SQL**: replaced by the QA operator exemption off production.

@@ -18,13 +18,13 @@ export interface ChatPaneState {
   /** True while the conversation covers the list below `md`. */
   conversationOpen: boolean;
   openConversation: () => void;
-  backToList: () => void;
+  /** Absent where there is no list to return to, such as the appointment chat sheet. */
+  backToList?: () => void;
 }
 
 const ChatPaneContext = createContext<ChatPaneState>({
   conversationOpen: false,
   openConversation: () => {},
-  backToList: () => {},
 });
 
 export const ChatPaneProvider = ChatPaneContext.Provider;

@@ -21,4 +21,4 @@ One row per person per call. The table is additive-only and every column added s
 ## Related
 
 - [02-org-quality-signal.md](02-org-quality-signal.md) — the read that the last index serves.
-- [`docs/support/05-schema-reference.md`](../support/05-schema-reference.md) and [`docs/reviews/06-schema-reference.md`](../reviews/06-schema-reference.md) — the sibling tables.
+- [`docs/support/11-schema-and-invariants.md`](../support/11-schema-and-invariants.md) and [`docs/reviews/06-schema-reference.md`](../reviews/06-schema-reference.md) — the sibling tables.
