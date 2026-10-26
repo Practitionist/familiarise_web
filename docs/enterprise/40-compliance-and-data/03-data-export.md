@@ -80,20 +80,25 @@ immediately and a cron builds the bundle out-of-band. The states are
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Officer as BILLING_ADMIN / OWNER
+    actor Officer as MAINTAINER / BILLING_ADMIN / OWNER
     participant API as /data-exports route
     participant Job as OrgDataExportJob
     participant Worker as processDataExports<br/>(~10-min cron)
     participant Store as Supabase Storage
 
-    Officer->>API: POST /data-exports
+    alt PEOPLE: MAINTAINER or OWNER
+        Officer->>API: POST /data-exports {kind: PEOPLE}
+    else FINANCE: BILLING_ADMIN or OWNER
+        Officer->>API: POST /data-exports {kind: FINANCE}
+    end
+    API->>API: require permission for requested kind
     API->>Job: insert · status=PENDING<br/>audit DATA_EXPORT_REQUESTED
     API-->>Officer: 202 { export: PENDING }
 
     loop every ~10 min
         Worker->>Job: findFirst PENDING (oldest)
         Worker->>Job: claim → PROCESSING (startedAt)<br/>2nd tick sees PROCESSING & skips
-        Worker->>Worker: build bundle<br/>($transaction, 8-entity snapshot)
+        Worker->>Worker: recheck requester grant<br/>build requested-kind snapshot
         alt build + upload OK
             Worker->>Store: upload {orgId}/{jobId}.json
             Store-->>Worker: createSignedUrl (7-day TTL)
@@ -105,7 +110,7 @@ sequenceDiagram
     end
 
     Officer->>API: GET /data-exports/[id]/download
-    API->>Job: check status + expiry
+    API->>Job: check stored kind permission + status + expiry
     alt READY & now < expiresAt
         API-->>Officer: { url, expiresAt }<br/>audit DATA_EXPORT_DOWNLOADED
     else past expiresAt
@@ -128,8 +133,8 @@ sequenceDiagram
 
 **Persona — Wipro's compliance officer files a DPDP §11 access
 request.** Wipro (a SPONSOR enterprise in the design-partner set) gets a
-regulator query and needs a full snapshot of the org-scoped personal
-data the platform holds. Their billing officer — who holds
+regulator query and needs a finance snapshot of the org-scoped
+contracts, invoices, earnings and payouts. Their billing officer — who holds
 BILLING_ADMIN — requests the `FINANCE` bundle through
 `POST /data-exports`, gets a `202`, and polls the dashboard until the
 job flips `READY`. The 7-day signed URL is long enough to run their
