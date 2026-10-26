@@ -4,11 +4,15 @@ import { runJob } from "@/lib/observability/job-sentry";
 import { runConsentRetentionSweeper } from "@/lib/compliance/consent-retention";
 
 runJob("consent-retention-sweeper", async () => {
+  const startedAt = Date.now();
   await abortIfMaintenance("consent-retention-sweeper");
   try {
-    const deadline = Date.now() + 16_000;
+    const deadline = startedAt + 16_000;
     for (let slice = 0; slice < 40 && Date.now() < deadline; slice++) {
-      const result = await runConsentRetentionSweeper({ limit: 500 });
+      const result = await runConsentRetentionSweeper({
+        limit: 500,
+        startedAt,
+      });
       console.log(result);
       if (!result.deleteMode || !result.hasMore || result.deleted === 0) break;
     }

@@ -1,6 +1,6 @@
 # Compliance and event-retention workers
 
-The cleanup registry exposes consent-retention-sweeper, databreach-deadline-alerts and prune-system-events. The authenticated cleanup route and ADMIN System Jobs door call the same leased domain implementations. The existing Actions fleet steps remain their automatic scheduling owner; this change does not enable ticker targets or claim those workflows are currently executing. Verify actual completion independently.
+The cleanup registry exposes consent-retention-sweeper, databreach-deadline-alerts and prune-system-events. The authenticated cleanup route and ADMIN System Jobs door call the same leased domain implementations. The existing Actions fleet steps remain their automatic scheduling owner; this change does not enable ticker targets. Non-money Actions jobs are currently budget-blocked and not running. Use the authenticated operator door until capacity is restored or a scheduler cutover is reviewed, and verify actual completion independently.
 
 ## Consent and event retention
 
@@ -8,11 +8,11 @@ Consent retention uses the stored auditRetainedUntil deadline. DPDP_SWEEPER_DELE
 
 SystemEvent keeps the existing 400-day policy. It selects the oldest expired IDs with the same bounded sample/hasMore pattern and rechecks createdAt in deleteMany. HTTP/admin defaults examine 100 rows, capped at 500. These bounds describe candidate work, not total remaining history. A successful slice is not proof that the backlog is drained.
 
-The retained CLI entrypoints attempt at most 40 slices of 500 within a 16-second start budget, stopping on no progress. Consent count-only mode takes one slice. This preserves bounded batch draining while the Actions clock remains the owner. A slow in-flight database operation can outlive the start budget; it is not cancellation.
+The cleanup request and retained CLI entrypoints carry one original start time through maintenance checks, lease admission and every core slice. Retention checks this 16-second admission budget before selection and again before deletion; a slow selection leaves `hasMore` rather than admitting another write. The retained CLI entrypoints attempt at most 40 slices of 500 within that shared budget, stopping on no progress. Consent count-only mode takes one slice. This preserves bounded batch draining while the Actions clock remains the owner. A slow in-flight database operation can outlive the start budget; it is not cancellation.
 
 ## Breach deadline alerts
 
-The worker preserves the repository's existing 72-hour deadline and 12-hour warning predicates. This is an alerting implementation, not a new legal interpretation. It reads at most 51 candidate breaches and clearly reports sampled counts. It stages up to 5 recipient obligations per HTTP/admin call, with a 16-second start budget; the Actions entrypoint requests 50 recipients.
+The worker preserves the repository's existing 72-hour deadline and 12-hour warning predicates. This is an alerting implementation, not a new legal interpretation. It reads at most 51 candidate breaches and clearly reports sampled counts. It stages up to 5 recipient obligations per HTTP/admin call, with a 16-second start budget; the Actions entrypoint requests 50 recipients and passes its pre-maintenance start time. Officer preflight reads and ops-chat completion also recheck the budget before admitting a transaction or digest update. A timeout leaves the active digest resumable; already committed email/notification obligations are reused.
 
 The oldest unfinished hourly digest resumes across invocations and hour boundaries. FailedEmail.entityRef uses a job-specific active prefix until all currently eligible admin/officer addresses have an obligation, then a completed prefix for that hour. Existing persisted rows are progress evidence, including guarded held/suppressed mail. A completed digest means staging completed, not email delivered. The email relay owns delivery and its failure/dead-letter handling; Novu remains independently optional.
 
@@ -26,7 +26,7 @@ The existing email delivery guard applies to every staged message. Prelaunch hol
 
 ## Verification and scheduling handoff
 
-Mocked tests cover 25 rows/recipients over three slices, concurrent consent extension, unchanged retention cutoffs, staging rollback, hourly rollover, held mail, missing addresses and expired work budgets. No deletion, provider send, retention-policy update or live job invocation is part of this verification.
+Mocked tests exercise actual registered HTTP handlers and existing CLI entrypoints, including maintenance consuming the budget, repeated slice handoff and expiry between a read and its write. The breach tests also cover slow empty-cohort reads, officer preflight and ops-chat leaving a digest resumable. They cover 25 rows/recipients over three slices, concurrent consent extension, unchanged retention cutoffs, staging rollback, hourly rollover, held mail, missing addresses and expired work budgets. No deletion, provider send, retention-policy update or live job invocation is part of this verification.
 
 Before replacing an Actions step, verify deployed fail-closed lease behavior, bounded progress, appropriate repeat cadence and backlog capacity. Disable the old automatic trigger in the same controlled handoff; a shared lease does not justify dual clocks. Keep remaining fleet steps intact. The native Stream channel-expiry job remains separate and is not migrated here.
 

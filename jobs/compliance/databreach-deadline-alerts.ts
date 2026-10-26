@@ -5,9 +5,10 @@ import { runJob } from "@/lib/observability/job-sentry";
 import { runDataBreachDeadlineAlerts } from "@/lib/compliance/databreach-deadline-alerts";
 
 runJob("databreach-deadline-alerts", async () => {
+  const startedAt = Date.now();
   await abortIfMaintenance("databreach-deadline-alerts");
   try {
-    const result = await runDataBreachDeadlineAlerts({ limit: 50 });
+    const result = await runDataBreachDeadlineAlerts({ limit: 50, startedAt });
     console.log(result);
     if (!result.success) process.exitCode = 1;
   } finally {

@@ -56,7 +56,7 @@ const SYSTEM_JOBS: SystemJob[] = [
     name: "Consent Retention Slice",
     description:
       "Examine one expired-retention slice; deletion requires the existing delete gate",
-    schedule: "weekly through GitHub Actions; verify execution",
+    schedule: "Weekly (Actions currently budget-blocked)",
     category: "Cleanup",
   },
   {
@@ -64,7 +64,7 @@ const SYSTEM_JOBS: SystemJob[] = [
     name: "Breach Deadline Alert Slice",
     description:
       "Stage the next bounded recipient slice of the oldest unfinished deadline digest",
-    schedule: "hourly through GitHub Actions; verify execution",
+    schedule: "Hourly (Actions currently budget-blocked)",
     category: "Alerts",
   },
   {
@@ -72,7 +72,7 @@ const SYSTEM_JOBS: SystemJob[] = [
     name: "System Event Retention Slice",
     description:
       "Remove one oldest-first slice beyond the existing 400-day retention policy",
-    schedule: "daily through GitHub Actions; verify execution",
+    schedule: "Daily (Actions currently budget-blocked)",
     category: "Cleanup",
   },
   {

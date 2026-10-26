@@ -74,11 +74,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "consent-retention-sweeper": () =>
       cleanupRoute({
         job: "consent-retention-sweeper",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { runConsentRetentionSweeper } =
             await import("@/lib/compliance/consent-retention");
           return runConsentRetentionSweeper({
             limit: parseLimitParamOrDefault(req, 100),
+            startedAt,
           });
         },
         failureMessage: "Consent retention slice failed",
@@ -101,11 +102,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "prune-system-events": () =>
       cleanupRoute({
         job: "prune-system-events",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { pruneSystemEvents } =
             await import("@/lib/observability/system-event-retention");
           return pruneSystemEvents({
             limit: parseLimitParamOrDefault(req, 100),
+            startedAt,
           });
         },
         failureMessage: "System event retention slice failed",

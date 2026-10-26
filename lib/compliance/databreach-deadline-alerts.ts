@@ -134,6 +134,7 @@ async function stageRecipients(
 async function stageOfficer(
   digest: BreachDigest,
   errors: string[],
+  timedOut: () => boolean,
 ): Promise<boolean> {
   const { officer, ref, title, reason, dashboardUrl } = digest;
   if (!officer) return false;
@@ -142,6 +143,7 @@ async function stageOfficer(
       where: { email: { equals: officer, mode: "insensitive" } },
       select: { id: true },
     });
+    if (timedOut()) return false;
     if (
       user ||
       (await prisma.failedEmail.findFirst({
@@ -150,6 +152,7 @@ async function stageOfficer(
       }))
     )
       return false;
+    if (timedOut()) return false;
     const staged = await prisma.$transaction((tx) =>
       stage(
         {
@@ -197,6 +200,7 @@ async function completeDigest(
   if (!progress.hasMore && progress.success && !timedOut()) {
     if (Date.now() - startedAt < START_BUDGET_MS - 5_000)
       await postOpsChat(`${digest.title}. ${digest.dashboardUrl}`);
+    if (timedOut()) return;
     await prisma.failedEmail.updateMany({
       where: { entityRef: digest.ref },
       data: { entityRef: `${COMPLETE_PREFIX}${window}` },
@@ -280,6 +284,7 @@ export async function runDataBreachDeadlineAlerts(
           row.detectedAt.getTime() <
           now.getTime() - BREACH_REPORTING_DEADLINE_HOURS * 3_600_000,
       ).length;
+      if (timedOut()) return result;
       if (candidates.length === 0) {
         if (active)
           await prisma.failedEmail.updateMany({
@@ -288,7 +293,6 @@ export async function runDataBreachDeadlineAlerts(
           });
         return result;
       }
-      if (timedOut()) return result;
       const officer = configuredOfficer(result.errors);
       const recipients = await pendingRecipients(ref, officer, limit + 1);
       result.hasMore = recipients.length > limit;
@@ -317,7 +321,11 @@ export async function runDataBreachDeadlineAlerts(
         result.errors,
       );
       if (timedOut()) return result;
-      result.officerStaged = await stageOfficer(digest, result.errors);
+      result.officerStaged = await stageOfficer(
+        digest,
+        result.errors,
+        timedOut,
+      );
       if (!active && recipients.length === 0 && !officer)
         result.errors.push(
           "No eligible admin email or configured officer mailbox",

@@ -34,6 +34,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   delete process.env.DPDP_SWEEPER_DELETE;
 });
+afterEach(() => jest.useRealTimers());
 it("keeps consent deletion off unless its existing gate is explicitly true", async () => {
   findConsent.mockResolvedValue([{ id: "expired" }]);
   expect(await runConsentRetentionSweeper()).toMatchObject({
@@ -109,4 +110,42 @@ it("caps event history and rechecks the existing400day cutoff in the mutation", 
   expect(findEvents).toHaveBeenCalledWith(
     expect.objectContaining({ take: 11 }),
   );
+});
+
+it("does not start either retention selection after the caller deadline", async () => {
+  const startedAt = Date.now() - 16_000;
+  const consent = await runConsentRetentionSweeper({ startedAt });
+  const events = await pruneSystemEvents({ startedAt });
+
+  expect(consent).toMatchObject({ hasMore: true, deleted: 0 });
+  expect(events).toMatchObject({ hasMore: true, pruned: 0 });
+  expect(findConsent).not.toHaveBeenCalled();
+  expect(deleteConsent).not.toHaveBeenCalled();
+  expect(findEvents).not.toHaveBeenCalled();
+  expect(deleteEvents).not.toHaveBeenCalled();
+});
+
+it("does not delete a selected consent or event page after selection uses the budget", async () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2026-10-23T01:00:00Z"));
+  process.env.DPDP_SWEEPER_DELETE = "true";
+  findConsent.mockImplementationOnce(async () => {
+    jest.advanceTimersByTime(16_000);
+    return [{ id: "expired-consent" }];
+  });
+  findEvents.mockImplementationOnce(async () => {
+    jest.advanceTimersByTime(16_000);
+    return [{ id: "expired-event" }];
+  });
+  const consent = await runConsentRetentionSweeper({
+    limit: 10,
+    startedAt: Date.now(),
+  });
+  jest.setSystemTime(new Date("2026-10-23T01:00:00Z"));
+  const events = await pruneSystemEvents({ limit: 10, startedAt: Date.now() });
+
+  expect(consent).toMatchObject({ hasMore: true, deleted: 0 });
+  expect(events).toMatchObject({ hasMore: true, pruned: 0 });
+  expect(deleteConsent).not.toHaveBeenCalled();
+  expect(deleteEvents).not.toHaveBeenCalled();
 });

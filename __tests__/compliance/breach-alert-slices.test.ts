@@ -15,7 +15,11 @@ let users: Recipient[] = [],
 const stageEmail = jest.fn(),
   notify = jest.fn(),
   page = jest.fn(),
-  chat = jest.fn();
+  chat = jest.fn(),
+  markDigest = jest.fn(),
+  findBreaches = jest.fn(),
+  findUser = jest.fn(),
+  runTransaction = jest.fn();
 const tx = {
   user: {
     findFirst: async (q: {
@@ -63,39 +67,17 @@ jest.mock("../../lib/prisma", () => ({
     },
     failedEmail: {
       findFirst: (q: Parameters<typeof firstEmail>[0]) => firstEmail(q),
-      updateMany: async (q: {
+      updateMany: (q: {
         where: { entityRef: string };
         data: { entityRef: string };
-      }) => {
-        let count = 0;
-        for (const row of emails)
-          if (row.entityRef === q.where.entityRef) {
-            row.entityRef = q.data.entityRef;
-            count++;
-          }
-        return { count };
-      },
+      }) => markDigest(q),
     },
     user: {
-      findFirst: (q: Parameters<typeof tx.user.findFirst>[0]) =>
-        tx.user.findFirst(q),
+      findFirst: (q: Parameters<typeof tx.user.findFirst>[0]) => findUser(q),
     },
-    dataBreach: {
-      findMany: async () => [
-        { id: "breach", detectedAt: new Date(Date.now() - 70 * 3600000) },
-      ],
-    },
-    $transaction: async (run: (value: typeof tx) => Promise<unknown>) => {
-      const before = emails.map((r) => ({ ...r })),
-        beforeNotices = [...notices];
-      try {
-        return await run(tx);
-      } catch (error) {
-        emails = before;
-        notices = beforeNotices;
-        throw error;
-      }
-    },
+    dataBreach: { findMany: (...a: unknown[]) => findBreaches(...a) },
+    $transaction: (run: (value: typeof tx) => Promise<unknown>) =>
+      runTransaction(run),
   },
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -129,6 +111,39 @@ beforeEach(() => {
   }));
   emails = [];
   notices = [];
+  findBreaches.mockResolvedValue([
+    { id: "breach", detectedAt: new Date(Date.now() - 70 * 3600000) },
+  ]);
+  findUser.mockImplementation((q: Parameters<typeof tx.user.findFirst>[0]) =>
+    tx.user.findFirst(q),
+  );
+  markDigest.mockImplementation(
+    async (q: {
+      where: { entityRef: string };
+      data: { entityRef: string };
+    }) => {
+      let count = 0;
+      for (const row of emails)
+        if (row.entityRef === q.where.entityRef) {
+          row.entityRef = q.data.entityRef;
+          count++;
+        }
+      return { count };
+    },
+  );
+  runTransaction.mockImplementation(
+    async (run: (value: typeof tx) => Promise<unknown>) => {
+      const before = emails.map((r) => ({ ...r })),
+        beforeNotices = [...notices];
+      try {
+        return await run(tx);
+      } catch (error) {
+        emails = before;
+        notices = beforeNotices;
+        throw error;
+      }
+    },
+  );
   notify.mockImplementation(async (id: string) => {
     notices.push(id);
   });
@@ -252,6 +267,66 @@ it("does not start a cohort after the server work budget is already spent", asyn
   expect(result.deadlineReached).toBe(true);
   expect(stageEmail).not.toHaveBeenCalled();
   expect(result.success).toBe(false);
+});
+
+it("does not archive an active digest when the empty candidate read uses the remaining budget", async () => {
+  const activeRef =
+    "compliance:databreach-deadline:active:2026-10-23T01:00:00.000Z";
+  emails = [
+    {
+      id: "existing",
+      entityRef: activeRef,
+      recipient: "admin@example.test",
+      status: "PENDING",
+    },
+  ];
+  findBreaches.mockImplementationOnce(async () => {
+    jest.advanceTimersByTime(16_000);
+    return [];
+  });
+
+  const result = await runDataBreachDeadlineAlerts({ startedAt: Date.now() });
+
+  expect(result).toMatchObject({ deadlineReached: true, hasMore: true });
+  expect(markDigest).not.toHaveBeenCalled();
+  expect(emails[0].entityRef).toBe(activeRef);
+});
+
+it("leaves a fully staged digest active when the ops notice consumes the remaining budget", async () => {
+  users = users.slice(0, 1);
+  chat.mockImplementationOnce(async () => {
+    jest.advanceTimersByTime(16_000);
+    return true;
+  });
+
+  const first = await runDataBreachDeadlineAlerts({ startedAt: Date.now() });
+
+  expect(first).toMatchObject({ deadlineReached: true, hasMore: true });
+  expect(markDigest).not.toHaveBeenCalled();
+  expect(emails).toHaveLength(1);
+  expect(emails[0].entityRef).toContain(":active:");
+
+  const resumed = await runDataBreachDeadlineAlerts({ startedAt: Date.now() });
+
+  expect(resumed.success).toBe(true);
+  expect(markDigest).toHaveBeenCalledTimes(1);
+  expect(emails[0].entityRef).toContain(":complete:");
+});
+
+it("does not start configured officer mail after preliminary reads exhaust the budget", async () => {
+  users = [];
+  process.env.DATABREACH_ALERT_EMAIL = "officer@example.test";
+  findUser.mockImplementationOnce(async () => {
+    jest.advanceTimersByTime(16_000);
+    return null;
+  });
+
+  const result = await runDataBreachDeadlineAlerts({ startedAt: Date.now() });
+
+  expect(result).toMatchObject({ deadlineReached: true, hasMore: true });
+  expect(runTransaction).not.toHaveBeenCalled();
+  expect(stageEmail).not.toHaveBeenCalled();
+  expect(markDigest).not.toHaveBeenCalled();
 });
 
 it("stages a configured officer mailbox without a user and detects empty persistence", async () => {
