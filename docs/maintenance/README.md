@@ -34,6 +34,7 @@ Activation never implicitly cancels bookings. Cancellation requires a separate e
 | [10 — Cron and reconciliation](./10-cron-and-reconciliation-reference.md) | Dispatch/status contracts, sidecars, ledger checkpoints and host concerns       |
 | [Schedule catalog](./schedule-catalog.md)                                 | Catalog ownership and generated documentation                                   |
 | [Bounded housekeeping](./housekeeping-bounds.md)                          | Retention eligibility, per-phase limits and continuation semantics              |
+| [Compliance/retention workers](./compliance-retention-workers.md)         | Consent retention, durable breach staging and event history                     |
 | [Messaging retention](./messaging-retention.md)                           | Job-history retention, bounded payload scrubbing and replay races               |
 | [Recording worker](../stream/recording-background-worker.md)              | Narrow background adapter, source expiry and activation evidence                |
 | [Deployment/failback](../deployment/README.md)                            | Runtime differences, one active scheduler and standby recovery                  |
