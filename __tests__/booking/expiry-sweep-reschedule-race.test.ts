@@ -51,7 +51,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 import prisma from "../../lib/prisma";
 import { expireStaleRequests } from "../../scripts/appointments/expire-stale-requests";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
-import { AppointmentStatus, PaymentStatus } from "@prisma/client";
+import { AppointmentStatus, PaymentStatus, Prisma } from "@prisma/client";
 
 /**
  * Every guard in the sweep is expressed as "no reschedule request of mine is
@@ -107,11 +107,12 @@ describe("expiry sweep × live reschedule proposals", () => {
     });
 
     it("re-checks the guard at WRITE time, not just at read time", async () => {
-      (prisma.consultation.findMany as jest.Mock)
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([
-          { id: "cons-1", appointment: { id: "apt-1" } },
-        ]);
+      (prisma.consultation.findMany as jest.Mock).mockImplementation(
+        async ({ select }: { select?: Prisma.ConsultationSelect }) =>
+          select?.id === true && Object.keys(select).length === 1
+            ? []
+            : [{ id: "cons-1", appointment: { id: "apt-1" } }],
+      );
       (prisma.consultation.updateMany as jest.Mock).mockResolvedValue({
         count: 1,
       });
