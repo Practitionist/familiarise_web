@@ -44,7 +44,8 @@ Process ownership and removal batches sequentially to bound vendor pressure.
 Keep finalisation's in-transaction evidence-response recheck even when preflight
 validation is extracted into a helper; transaction reads must use its tx client.
 This fence does not bound whole-bucket listing; see
-`docs/support/08-intake-callbacks-attachments-and-limits.md` for the current flow.
+[attachment ownership](../../../docs/support/04-evidence-and-attachments.md#finalisation-and-cleanup-ownership)
+for the current flow.
 
 The scheduled ticker has a 30-second budget, distinct from its HTTP workers.
 A timeout or expired lease does not cancel vendor effects. Fleet selection fails
