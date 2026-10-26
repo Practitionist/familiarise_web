@@ -24,6 +24,8 @@ Do not put customer identities, credentials or storage bearer URLs into source
 or public evidence. A readiness score is an estimate, not a substitute for any
 of these acceptance gates.
 
+The ticker's real missed-check-in email path has a [recorded acceptance receipt](00-betterstack-setup.md#recorded-end-to-end-verification), including restoration and ordinary recovery. That sub-gate is met; it does not establish independent capability/backlog alarms, vendor correctness or protection from a Sentry outage. Stream's owning session retains its deployed-job verification; do not replay production work merely to collect duplicate evidence.
+
 ## Priority order
 
 | Priority | Core machinery                              | Acceptance                                                                                                                                                      |
@@ -51,6 +53,9 @@ capacity change; arbitrarily increasing the cap is not capacity evidence.
 The ticker counts admission separately for background adapters. A core's
 Postgres lease and its domain claims protect different scopes. An expired
 lease, a platform timeout or an HTTP disconnect does not cancel a vendor call.
+On Netlify, job leases are capped at 90 seconds and renewed every third of
+the effective TTL; other hosts retain requested TTLs. A failed renewal does not
+stop the core, so a replacement can overlap effects from a surviving old worker.
 Different jobs still require compatible row-level CAS and durable obligations.
 Fleet selection may fail open, so it cannot supply exactly-once effects.
 

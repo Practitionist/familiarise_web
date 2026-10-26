@@ -36,8 +36,11 @@ exactly-once lock. Changing hosting does not change these domain contracts.
 `process-data-exports` has one implementation in
 `scripts/cleanup/process-data-exports.ts`. Its Postgres lease fails closed.
 `OrgDataExportJob` retains the existing PENDING, PROCESSING, READY, FAILED and
-EXPIRED lifecycle. A stale PROCESSING claim becomes eligible after the long-job
-lease duration; an active claim stays ineligible. Reclaim updates `startedAt` to
+EXPIRED lifecycle. A PROCESSING claim becomes eligible after the core
+claim threshold of 35 minutes; younger claims stay ineligible. This is separate
+from the job lease: Netlify caps it at 90 seconds with 30-second renewal, while
+other hosts retain the requested TTL. Renewal loss does not cancel a running
+core. Reclaim updates `startedAt` to
 a distinct millisecond value. That timestamp is the attempt identity, and every
 terminal update requires both PROCESSING and that exact identity in its WHERE.
 

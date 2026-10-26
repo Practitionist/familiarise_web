@@ -19,7 +19,7 @@ the org-create transaction; operator profiles come from `createOperator()`.
 | `ConsulteeProfile`    | Platform learner — goals, career stage, aboutMe.                                                                                    | `consulteeProfileId`    | `/form/onboarding` (CONSULTEE), or **lazily** via `ensureConsulteeProfile(db, userId)` from checkout, slot request-for-approval, and LEARNER invite accept. |
 | `StaffProfile`        | Platform operator (support / moderation / ops).                                                                                     | `staffProfileId`        | `createOperator()` (operators arrive already onboarded).                                                                                                    |
 | `AdminProfile`        | Platform admin.                                                                                                                     | `adminProfileId`        | `createOperator()`.                                                                                                                                         |
-| `OrgWorkspaceProfile` | One row per user who operates an org. Mirrors `StaffProfile` / `AdminProfile` structure. Backs `/dashboard/org-workspace/:id/home`. | `orgWorkspaceProfileId` | `POST /api/organizations` (inside the create transaction) and by the `prisma/scripts/backfill-org-workspace-profiles.ts` one-shot for existing OWNERs.      |
+| `OrgWorkspaceProfile` | One row per user who operates an org. Mirrors `StaffProfile` / `AdminProfile` structure. Backs `/dashboard/org-workspace/:id/home`. | `orgWorkspaceProfileId` | `POST /api/organizations` (inside the create transaction).                                                                                                  |
 
 ### Lazy ConsulteeProfile (Arch-4)
 
@@ -50,7 +50,7 @@ inside the same transaction that creates the `Organization`,
 transaction also completes onboarding, §2), and returns the
 `orgWorkspaceProfileId` on the response body so the client can
 immediately navigate to `/dashboard/org-workspace/:id/home`. See
-`docs/enterprise/12-dashboard-pages.md` for the operator home route.
+`docs/enterprise/30-programs-and-lifecycle/04-dashboard-pages.md` for the operator home route.
 
 ### EXPERT invite accept stays strict (no placeholder)
 
@@ -226,7 +226,7 @@ failed load never overwrites the stored draft, and the action refuses writes
 once onboarding is complete (except in add mode). Step transitions save after
 800 ms; the professional and verification steps also save field edits after
 2 s. Drafts idle for 90 days are deleted by the `expire-onboarding-drafts`
-registry job (weekly).
+registry job (weekly), through `scripts/cleanup/expire-onboarding-drafts.ts`. Each bounded slice repeats the idle-age predicate at deletion, so an autosave after selection survives. Unfinished work returns `hasMore`; see [housekeeping bounds](../maintenance/housekeeping-bounds.md).
 
 ---
 
@@ -1093,23 +1093,23 @@ whole design.
 
 ### Core Files
 
-| File                                                        | Purpose                                                                                                               |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `app/form/onboarding/page.tsx`                              | Server page — decides add mode from the session                                                                       |
-| `app/form/onboarding/OnboardingWizard.tsx`                  | Orchestrator — step state, form data accumulation, draft hydrate/autosave/conflict/clear, submission                  |
-| `app/onboarding/gate/page.tsx`                              | The onboarding gate for invitees and SSO members                                                                      |
-| `actions/onboarding-gate.action.ts`                         | Gate server action (DOB + consent, eligibility, CAS claim)                                                            |
-| `utils/onboarding-completion.ts`                            | `claimOnboardingCompletion`, `recordOnboardingConsent`, gate eligibility                                              |
-| `utils/onboarding.ts`                                       | All Zod schemas, types, transform functions, validation utilities                                                     |
-| `utils/onboarding-draft.ts`                                 | Draft contract — wire schema, JSON sanitizer, date reviver, size gate                                                 |
-| `utils/onboarding-shared.ts`                                | Data builders, `isFullyOnboarded`, `canAddConsultantIdentity`, `canUploadVerificationDoc`, `shouldSubmitVerification` |
-| `utils/onboarding-server.ts`                                | Server processing (processOnboardingData, upserts, slot sync, verification deferral)                                  |
-| `actions/forms/onboarding.action.ts`                        | Server action entry point                                                                                             |
-| `actions/onboarding-draft.action.ts`                        | Session-scoped draft save (version CAS) / load / clear actions                                                        |
-| `utils/onboarding-telemetry.ts`                             | Client breadcrumbs (Sentry category "onboarding")                                                                     |
-| `lib/cron/cleanup-registry.ts` (`expire-onboarding-drafts`) | 90-day draft expiry                                                                                                   |
-| `schemas/user.ts`                                           | Base Zod schemas (profiles, slots, work experience, education, certs)                                                 |
-| `schemas/shared.ts`                                         | Shared validation helpers (experienceValidation)                                                                      |
+| File                                          | Purpose                                                                                                               |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `app/form/onboarding/page.tsx`                | Server page — decides add mode from the session                                                                       |
+| `app/form/onboarding/OnboardingWizard.tsx`    | Orchestrator — step state, form data accumulation, draft hydrate/autosave/conflict/clear, submission                  |
+| `app/onboarding/gate/page.tsx`                | The onboarding gate for invitees and SSO members                                                                      |
+| `actions/onboarding-gate.action.ts`           | Gate server action (DOB + consent, eligibility, CAS claim)                                                            |
+| `utils/onboarding-completion.ts`              | `claimOnboardingCompletion`, `recordOnboardingConsent`, gate eligibility                                              |
+| `utils/onboarding.ts`                         | All Zod schemas, types, transform functions, validation utilities                                                     |
+| `utils/onboarding-draft.ts`                   | Draft contract — wire schema, JSON sanitizer, date reviver, size gate                                                 |
+| `utils/onboarding-shared.ts`                  | Data builders, `isFullyOnboarded`, `canAddConsultantIdentity`, `canUploadVerificationDoc`, `shouldSubmitVerification` |
+| `utils/onboarding-server.ts`                  | Server processing (processOnboardingData, upserts, slot sync, verification deferral)                                  |
+| `actions/forms/onboarding.action.ts`          | Server action entry point                                                                                             |
+| `actions/onboarding-draft.action.ts`          | Session-scoped draft save (version CAS) / load / clear actions                                                        |
+| `utils/onboarding-telemetry.ts`               | Client breadcrumbs (Sentry category "onboarding")                                                                     |
+| `scripts/cleanup/expire-onboarding-drafts.ts` | 90-day draft expiry                                                                                                   |
+| `schemas/user.ts`                             | Base Zod schemas (profiles, slots, work experience, education, certs)                                                 |
+| `schemas/shared.ts`                           | Shared validation helpers (experienceValidation)                                                                      |
 
 ### Component Files
 
@@ -1150,7 +1150,7 @@ whole design.
 | `lib/profiles/profile-completion.ts`                     | `calculateProfileCompletion()` / `recomputeProfileCompletion()` (#698 OB-1)                       |
 | `utils/scheduling-engine/slotTimeUtils.ts`               | Slot overlap detection, time validation, `getTimezoneOffsetMinutes()`                             |
 | `utils/scheduling-engine/interval-validation.ts`         | `isValidTimeRange()` — duration bounds (30min–12h)                                                |
-| `lib/novu.ts`                                            | `notifyNewConsultantApplication()` — admin notifications                                          |
+| `lib/novu/service.ts`                                    | `notifyNewConsultantApplication()` — admin notifications                                          |
 | `prisma/schema.prisma`                                   | All model definitions                                                                             |
 
 ---

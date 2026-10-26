@@ -1,54 +1,47 @@
-/**
- * Audit Log Retention Job (GitHub Actions Wrapper)
- *
- * Daily at 03:15 UTC via .github/workflows/prune-audit-logs.yml.
- * Deletes audit rows past retention (7y financial / 2y other).
- */
-
+/** The existing daily Actions driver drains bounded slices within one start budget. */
 import "dotenv/config";
-import { appendFileSync } from "node:fs";
-
 import {
   pruneAuditLogs,
   disconnectDatabase,
-  type AuditPruneResult,
 } from "../../scripts/cleanup/prune-audit-logs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
 
-function outputToGitHubActions(result: AuditPruneResult): void {
-  if (!process.env.GITHUB_ACTIONS) return;
-  const outputFile = process.env.GITHUB_OUTPUT;
-  if (!outputFile) return;
-  const lines = [
-    `scanned=${result.scanned}`,
-    `deleted7y=${result.deleted7y}`,
-    `deleted2y=${result.deleted2y}`,
-    `per_org_summaries=${result.perOrgSummaries}`,
-    `success=${result.success}`,
-  ].join("\n");
-  appendFileSync(outputFile, lines + "\n");
-}
-
-// Unconditional entry: `require.main === module` never fires under tsx (ESM),
-// which previously left this job loading the module and exiting silently.
 runJob("prune-audit-logs", async () => {
   await abortIfMaintenance("prune-audit-logs");
+  const startedAt = Date.now();
+  let scanned = 0;
+  let deleted7y = 0;
+  let deleted2y = 0;
+  let perOrgSummaries = 0;
+  let hasMore = true;
   Sentry.logger.info("job:prune-audit-logs started");
-  console.log("🧹 Pruning audit logs past retention...");
   try {
-    const result = await pruneAuditLogs();
-    console.log(JSON.stringify(result, null, 2));
-    outputToGitHubActions(result);
-    if (!result.success) {
-      process.exitCode = 1;
-      return;
+    for (
+      let slice = 0;
+      slice < 40 && Date.now() - startedAt < 16_000;
+      slice++
+    ) {
+      const result = await pruneAuditLogs({ limit: 500, startedAt });
+      scanned += result.scanned;
+      deleted7y += result.deleted7y;
+      deleted2y += result.deleted2y;
+      perOrgSummaries += result.perOrgSummaries;
+      hasMore = result.hasMore;
+      console.log(JSON.stringify(result));
+      if (!result.success) {
+        process.exitCode = 1;
+        return;
+      }
+      if (!hasMore || result.deleted7y + result.deleted2y === 0) break;
     }
     Sentry.logger.info("job:prune-audit-logs finished", {
-      scanned: result.scanned,
-      deleted7y: result.deleted7y,
-      deleted2y: result.deleted2y,
+      scanned,
+      deleted7y,
+      deleted2y,
+      perOrgSummaries,
+      hasMore,
     });
   } finally {
     await disconnectDatabase();

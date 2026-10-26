@@ -117,6 +117,8 @@ The requested `closed` policy refuses work when acquisition is unavailable; `ope
 
 For export attempt ownership, exact artifact expiry and transactional expiry-to-refund obligations, see [worker recovery](11-worker-recovery.md).
 
+`expire-onboarding-drafts` owns its open-mode Postgres lease in its canonical core, rather than inline in the registry. Use the actual core when checking lease policy and bounds. See [bounded housekeeping](./housekeeping-bounds.md) for all four cleanup families.
+
 ## The Actions-scheduled jobs
 
 The generated inventory lists registered jobs outside the ticker and operational Actions steps missing registry coverage, with their configured owners and entrypoints. Actions workflows remain the configured automatic owner for their remaining jobs; enablement, budget availability and successful effects require separate verification.

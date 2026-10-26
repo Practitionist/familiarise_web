@@ -98,6 +98,12 @@ production recovery merely to manufacture an alert.
 11. [Worker recovery and durable obligations](11-worker-recovery.md)
 12. [Readiness and operating gates](12-readiness-and-operating-gates.md)
 
+Additional bounded-worker guides:
+
+- [Housekeeping admission and retention](housekeeping-bounds.md)
+- [Job history and messaging retention](messaging-retention.md)
+- [Compliance and event-retention workers](compliance-retention-workers.md)
+
 ## Deprecated & Superseded Approaches
 
 Older guidance treated DEGRADED as a banner only and claimed cron work bypassed

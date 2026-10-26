@@ -92,6 +92,22 @@ type JobResult = {
 type JobFunction = (actorUserId?: string) => Promise<JobResult>;
 
 const JOB_FUNCTIONS: Record<string, JobFunction> = {
+  "consent-retention-sweeper": async () => {
+    const { runConsentRetentionSweeper } =
+      await import("@/lib/compliance/consent-retention");
+    return runConsentRetentionSweeper();
+  },
+  "databreach-deadline-alerts": async () => {
+    const { runDataBreachDeadlineAlerts } =
+      await import("@/lib/compliance/databreach-deadline-alerts");
+    return runDataBreachDeadlineAlerts();
+  },
+  "prune-system-events": async () => {
+    const { pruneSystemEvents } =
+      await import("@/lib/observability/system-event-retention");
+    return pruneSystemEvents();
+  },
+
   "maintenance-booking-remediation": runMaintenanceRemediationSlice,
   "cleanup-abandoned-payments": async () => {
     const result = await cleanupAbandonedPayments();
@@ -208,6 +224,7 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     const result = await cleanupAuthTokens();
     return {
       success: result.success,
+      hasMore: result.hasMore,
       totalProcessed: result.totalCleaned,
       cleanedCount: result.totalCleaned,
       verificationTokensDeleted: result.verificationTokensDeleted,
@@ -283,6 +300,7 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     const result = await archiveWebhookEvents();
     return {
       success: result.success,
+      hasMore: result.hasMore,
       processedEventsDeleted: result.processedEventsDeleted,
       failedEventsDeleted: result.failedEventsDeleted,
       totalDeleted: result.totalDeleted,

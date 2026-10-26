@@ -16,6 +16,7 @@ const EXPECTED_AUTH_FAILURE_MESSAGES: ReadonlySet<string> = new Set([
   "User not found",
   "Credential account not found",
   "Password not found",
+  "State not found",
   "Failed to create session",
   "Password is too short",
   "Password is too long",

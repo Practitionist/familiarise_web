@@ -174,3 +174,5 @@ active cron monitor, with additional capacity requiring a paid plan and PAYG.
 Do not disable another project's monitor to make room without its owner's
 explicit retirement decision. Routing configuration, an existing disabled monitor
 and a failed activation are not accepted check-in or alert-delivery evidence.
+
+`SystemEvent` history retention has one bounded core in `lib/observability/system-event-retention.ts`. Preserve its existing 400-day cutoff, repeat eligibility during deletion and carry the caller deadline through lease admission and CLI slices. Its Actions owner is currently budget-blocked; a configured cadence does not prove execution. See [compliance and event-retention workers](../../../docs/maintenance/compliance-retention-workers.md) for operator recovery and the scheduler cutover gate.
