@@ -236,6 +236,7 @@ export async function GET(request: NextRequest) {
 
     const [consultants, total] = await Promise.all([
       prisma.consultantProfile.findMany({
+        relationLoadStrategy: "join",
         where,
         orderBy: orderByForSort(sort),
         skip: (page - 1) * limit,

@@ -8,7 +8,6 @@ import { applyRateLimit, documentReviewLimiter } from "@/lib/rate-limit";
 import {
   FileRouteError,
   answerFileRoute,
-  fileApiError,
   parseJsonBody,
 } from "@/lib/documents/api-error";
 import { resolveDocumentParty } from "@/lib/documents/document-party";
@@ -85,13 +84,13 @@ export async function POST(request: Request, { params }: RouteContext) {
           select: { id: true },
         })
       : null;
-    const stored =
-      body.reply && !committedReply
-        ? await verifyPartyUpload(preflight, body.reply)
-        : null;
 
     let outcome;
     try {
+      const stored =
+        body.reply && !committedReply
+          ? await verifyPartyUpload(preflight, body.reply)
+          : null;
       outcome = await withVersionConflictRetry(() =>
         prisma.$transaction(async (tx) => {
           await lockAppointment(tx, appointmentId);
@@ -139,6 +138,60 @@ export async function POST(request: Request, { params }: RouteContext) {
               nextStatus: target.reviewStatus,
               reply: replayedReply,
             };
+          }
+
+          // A retried close without a reply file finds the status it set and
+          // answers as the first write did.
+          if (
+            !body.reply &&
+            body.reviewStatus &&
+            CLOSED.has(body.reviewStatus)
+          ) {
+            const closed = await tx.appointmentDocument.findFirst({
+              where: {
+                id: documentId,
+                appointmentId,
+                deletedAt: null,
+                uploadedByRole: "CONSULTEE",
+                reviewStatus: body.reviewStatus,
+              },
+              select: {
+                id: true,
+                originalName: true,
+                rootDocumentId: true,
+                versionNo: true,
+                reviewStatus: true,
+                reviewNotes: true,
+              },
+            });
+            // A newer learner version supersedes the close; the main path answers SUPERSEDED.
+            const superseded =
+              closed !== null &&
+              (await tx.appointmentDocument.count({
+                where: {
+                  deletedAt: null,
+                  uploadedByRole: "CONSULTEE",
+                  versionNo: { gt: closed.versionNo },
+                  OR: [
+                    { id: closed.rootDocumentId ?? closed.id },
+                    { rootDocumentId: closed.rootDocumentId ?? closed.id },
+                  ],
+                },
+              })) > 0;
+            if (
+              closed &&
+              !superseded &&
+              (body.reviewNotes === undefined ||
+                (body.reviewNotes || null) === closed.reviewNotes)
+            ) {
+              return {
+                party: null,
+                doc: closed,
+                statusChanged: false,
+                nextStatus: closed.reviewStatus,
+                reply: null,
+              };
+            }
           }
 
           // The pre-read skipped verification because a row existed. If that
@@ -253,7 +306,10 @@ export async function POST(request: Request, { params }: RouteContext) {
         }),
       );
     } catch (error) {
-      if (body.reply) {
+      // A storage timeout does not prove the object is bad; keep it for a retry.
+      const storageUnavailable =
+        error instanceof FileRouteError && error.code === "STORAGE_UNAVAILABLE";
+      if (body.reply && !storageUnavailable) {
         await discardRefusedUpload({
           appointmentId,
           userId,

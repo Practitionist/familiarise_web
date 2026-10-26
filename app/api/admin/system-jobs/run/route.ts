@@ -51,6 +51,7 @@ import { cleanupAuthTokens } from "@/lib/auth/cleanup-auth-tokens";
 import { archiveWebhookEvents } from "@/scripts/cleanup/archive-webhook-events";
 import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
 import { purgeDeletedDocuments } from "@/lib/documents/document-purge";
+import { scheduleFor } from "@/lib/cron/schedule";
 
 // Alerts
 import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments";
@@ -60,14 +61,15 @@ import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments"
 // and the staff catalogue listed nine, and no Stream job appeared in either.
 // When recordings stop transferring or event channels stop expiring, the only
 // way to run the repair was to dispatch a GitHub workflow.
-import { performStreamUserSync } from "@/scripts/stream/stream-sync";
-import { reconcileOrphanedRecordings } from "@/scripts/stream/reconcile-orphaned-recordings";
-import { transferRecordings } from "@/lib/stream/recording-transfer-service";
-import { expireRecordings } from "@/lib/stream/recording-retention";
-import { expireEventChannels } from "@/jobs/stream/expire-event-channels";
-import { reconcileOrphanedSessions } from "@/jobs/meetings/reconcile-orphaned-sessions";
+import {
+  backgroundJobSchema,
+  dispatchBackgroundJob,
+  type BackgroundJob,
+} from "@/lib/cron/dispatch-background";
+import { reconcileOrphanedSessions } from "@/lib/meetings/reconcile-orphaned-sessions";
 
 import { z } from "zod";
+import { runMaintenanceRemediationSlice } from "@/lib/maintenance-remediation";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
@@ -105,6 +107,8 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       await import("@/lib/observability/system-event-retention");
     return pruneSystemEvents();
   },
+
+  "maintenance-booking-remediation": runMaintenanceRemediationSlice,
   "cleanup-abandoned-payments": async () => {
     const result = await cleanupAbandonedPayments();
     return {
@@ -220,6 +224,7 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     const result = await cleanupAuthTokens();
     return {
       success: result.success,
+      hasMore: result.hasMore,
       totalProcessed: result.totalCleaned,
       cleanedCount: result.totalCleaned,
       verificationTokensDeleted: result.verificationTokensDeleted,
@@ -289,6 +294,7 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     const result = await archiveWebhookEvents();
     return {
       success: result.success,
+      hasMore: result.hasMore,
       processedEventsDeleted: result.processedEventsDeleted,
       failedEventsDeleted: result.failedEventsDeleted,
       totalDeleted: result.totalDeleted,
@@ -307,7 +313,9 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     };
   },
   "purge-deleted-documents": async () => {
-    const result = await purgeDeletedDocuments();
+    const result = await purgeDeletedDocuments(new Date(), {
+      limit: scheduleFor("purge-deleted-documents")?.limit ?? undefined,
+    });
     return {
       success: result.success,
       tombstoned: result.tombstoned,
@@ -331,47 +339,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
   },
   // Stream (#1270). Each of these delegates to the SAME core the scheduled
   // workflow runs, so an operator-triggered run and a cron run cannot diverge.
-  "stream-sync": async () => {
-    const result = await performStreamUserSync();
-    return {
-      success: result.success,
-      totalProcessed: result.totalStreamUsersProcessed,
-      staleIdentified: result.totalStaleUsersIdentified,
-      usersDeleted: result.totalStaleUsersDeleted,
-      errorCount: result.totalFailedDeletions,
-    };
-  },
-  "transfer-recordings": async () => {
-    const result = await transferRecordings();
-    return {
-      success: result.success,
-      totalProcessed: result.processed,
-      succeededCount: result.succeeded,
-      failedCount: result.failed,
-      errorCount: result.errors.length,
-    };
-  },
-  "expire-recordings": async () => {
-    const result = await expireRecordings();
-    return {
-      success: result.success,
-      totalProcessed: result.scanned,
-      expiredCount: result.expired + result.lapsed,
-      cleanedCount: result.cleaned,
-      errorCount: result.errors.length,
-    };
-  },
-  "expire-event-channels": async () => {
-    const result = await expireEventChannels();
-    return {
-      success: result.success,
-      totalProcessed: result.frozen + result.deleted,
-      frozenCount: result.frozen,
-      deletedCount: result.deleted,
-      skippedAlreadyFrozen: result.skippedAlreadyFrozen,
-      errorCount: result.errors.length,
-    };
-  },
   "reconcile-orphaned-sessions": async () => {
     const result = await reconcileOrphanedSessions();
     return {
@@ -380,17 +347,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       reconciledCount: result.reconciled,
       streamNotFoundCount: result.streamNotFound,
       errorCount: result.errors,
-    };
-  },
-  "reconcile-orphaned-recordings": async () => {
-    const result = await reconcileOrphanedRecordings();
-    return {
-      success: result.success,
-      totalProcessed: result.scanned,
-      recoveredCount: result.recovered,
-      stillMissingCount: result.stillMissing,
-      unrecoverableCount: result.unrecoverable,
-      errorCount: result.errors.length,
     };
   },
 };
@@ -415,6 +371,28 @@ const runJobSchema = z.object({
   reason: opsReasonSchema,
 });
 
+async function queueStreamJob(
+  job: BackgroundJob,
+  logRun: (status: "ACCEPTED" | "FAILED") => Promise<unknown>,
+): Promise<NextResponse> {
+  try {
+    const admission = await dispatchBackgroundJob(job);
+    await logRun("ACCEPTED");
+    return NextResponse.json(
+      {
+        ...admission,
+        dispatched: true,
+        message:
+          "Queued for processing. Check execution history for completion.",
+      },
+      { status: 202 },
+    );
+  } catch (error) {
+    await logRun("FAILED");
+    throw new Error("Stream background dispatch failed", { cause: error });
+  }
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     // 1. Verify admin auth
@@ -436,7 +414,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // 4. Find and execute the job
     const jobFunction = JOB_FUNCTIONS[jobId];
 
-    if (!jobFunction) {
+    const backgroundJob = backgroundJobSchema.safeParse(jobId);
+    if (!jobFunction && !backgroundJob.success) {
       return NextResponse.json(
         { error: `Unknown job ID: ${jobId}` },
         { status: 400 },
@@ -468,9 +447,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       `[System Jobs] ${user.name || user.email} (${user.role}) running job: ${jobId}`,
     );
 
-    // 6. Execute the job; one ops-log row per run, whatever the outcome
-    // (#1527 Q10 — the gateway-door shape of lib/backoffice/ops-action-log.ts).
-    const logRun = (status: "SUCCEEDED" | "FAILED") =>
+    const logRun = (status: "ACCEPTED" | "SUCCEEDED" | "FAILED") =>
       recordOpsAction(prisma, {
         actorUserId: user.id,
         actorRole: String(user.role ?? "UNKNOWN"),
@@ -483,6 +460,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }).catch((logErr: unknown) =>
         reportSentryError(logErr, { subsystem: "admin", op: "ops-log" }),
       );
+    if (backgroundJob.success)
+      return await queueStreamJob(backgroundJob.data, logRun);
+
     if (BACKGROUND_JOBS.has(jobId)) {
       scheduleAfter(async () => {
         try {
@@ -524,15 +504,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result);
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
+    const runtimeError =
+      error instanceof Error ? error : new Error(String(error));
+    Sentry.captureException(runtimeError, { tags: { subsystem: "admin" } });
     console.error("[System Jobs] Error running job:", error);
     return NextResponse.json(
       {
         error: "Failed to run job",
-        details: error instanceof Error ? error.message : String(error),
       },
       { status: 500 },
     );

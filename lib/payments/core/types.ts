@@ -146,6 +146,9 @@ export class RefundError extends Error {
   }
 }
 
+/** Razorpay answered 404: these keys hold no such payment or order, so no retry can refund it. */
+export const GATEWAY_NOT_FOUND = "GATEWAY_NOT_FOUND";
+
 /**
  * Refusals that prove no gateway refund was created: our own pre-call checks
  * and the gateway's 4xx validation class. Anything else (timeout, 5xx, an
@@ -158,6 +161,7 @@ const DEFINITIVE_REFUND_REFUSAL_CODES = new Set([
   "RAZORPAY_NOT_INITIALIZED",
   "REFUND_IDEMPOTENCY_KEY_INVALID",
   "BAD_REQUEST_ERROR",
+  GATEWAY_NOT_FOUND,
 ]);
 
 /** True when the refund call failed before any gateway refund could exist. */

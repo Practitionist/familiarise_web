@@ -1,164 +1,122 @@
-/**
- * @jest-environment node
- */
-
-const mockFindMany = jest.fn();
-const mockTransaction = jest.fn();
-const mockCallEnd = jest.fn();
-const mockUpdatePartial = jest.fn();
-const mockGetEventChannelIds = jest.fn();
-const mockStopRecording = jest.fn();
-
+/** @jest-environment node */
+const findMeetings = jest.fn();
+const transaction = jest.fn();
+const endCall = jest.fn();
+const stopRecording = jest.fn();
+const updateChannel = jest.fn();
+const recordMeeting = jest.fn();
+const markChannels = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     meeting: {
-      findMany: (...a: unknown[]) => mockFindMany(...a),
-      update: jest.fn((args: unknown) => args),
+      findMany: (...args: unknown[]) => findMeetings(...args),
+      count: async () => 0,
+      update: (...args: unknown[]) => recordMeeting(...args),
+      updateMany: (...args: unknown[]) => markChannels(...args),
     },
-    appointmentOccurrence: { update: jest.fn((args: unknown) => args) },
-    $transaction: (...a: unknown[]) => mockTransaction(...a),
+    maintenanceWindow: {
+      findFirst: async () => ({
+        id: "window",
+        startedAt: new Date("2026-10-22T00:00Z"),
+      }),
+    },
+    $transaction: (...args: unknown[]) => transaction(...args),
   },
 }));
-
-jest.mock("../../lib/stream-client", () => ({
-  getStreamChatClient: () => ({
-    channel: () => ({
-      updatePartial: (...a: unknown[]) => mockUpdatePartial(...a),
-    }),
-  }),
-  getStreamVideoClient: () => ({
-    video: { call: () => ({ end: (...a: unknown[]) => mockCallEnd(...a) }) },
-  }),
-  withStreamCircuitBreaker: async (op: () => unknown) => op(),
+jest.mock("@stream-io/node-sdk", () => ({
+  StreamClient: jest.fn().mockImplementation(() => ({
+    video: {
+      call: () => ({
+        end: () => endCall(),
+        stopRecording: (...args: unknown[]) => stopRecording(...args),
+      }),
+    },
+    chat: {
+      channel: () => ({
+        updateChannelPartial: (...args: unknown[]) => updateChannel(...args),
+      }),
+    },
+  })),
 }));
-
-jest.mock("../../lib/stream/appointment-channels", () => ({
-  getEventChannelIdsForAppointment: (...a: unknown[]) =>
-    mockGetEventChannelIds(...a),
+jest.mock("../../lib/booking/transitions", () => ({
+  transitionOccurrenceCompletion: jest.fn(),
 }));
-
-jest.mock("../../lib/stream/recording-service", () => ({
-  RecordingService: class {
-    stopRecording = (...a: unknown[]) => mockStopRecording(...a);
-  },
-}));
-
 jest.mock("../../lib/novu/service", () => ({
-  notifyMaintenanceStarted: jest.fn(async () => undefined),
+  notifyMaintenanceStarted: jest.fn(),
 }));
-
-jest.mock("@sentry/nextjs", () => ({
-  captureException: jest.fn(),
-  logger: { warn: jest.fn(), info: jest.fn(), fmt: (s: unknown) => s },
-}));
-
-jest.mock("../../lib/stream/batch", () => ({
-  ...jest.requireActual("../../lib/stream/batch"),
-  pause: jest.fn(async () => undefined),
-}));
-
+jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+import { StreamClient } from "@stream-io/node-sdk";
 import {
   drainActiveSessions,
   unfreezeChannelsAfterMaintenance,
 } from "../../actions/maintenance/drain-sessions";
-
-function session(id: string, appointmentId: string) {
-  return {
-    id,
-    streamCallId: `slot-${id}`,
-    appointmentOccurrenceId: `slot-row-${id}`,
-    isRecording: false,
-    occurrence: {
-      appointmentId,
-      appointment: { participants: [{ userId: `u-${id}` }] },
-    },
-  };
-}
-
+const session = (id: string) => ({
+  id,
+  streamCallId: id,
+  appointmentOccurrenceId: id,
+  isRecording: false,
+  occurrence: { appointment: { participants: [{ userId: id }] } },
+});
 beforeEach(() => {
   jest.clearAllMocks();
-  mockCallEnd.mockResolvedValue(undefined);
-  mockTransaction.mockResolvedValue(undefined);
-  mockUpdatePartial.mockResolvedValue(undefined);
-  mockGetEventChannelIds.mockResolvedValue([]);
-  mockFindMany.mockResolvedValue([]);
+  process.env.NEXT_PUBLIC_STREAM_API_KEY = "test-key";
+  process.env.STREAM_API_SECRET = "test-secret";
+  endCall.mockResolvedValue(undefined);
+  stopRecording.mockResolvedValue(undefined);
+  transaction.mockResolvedValue(undefined);
+  markChannels.mockResolvedValue({ count: 1 });
+  updateChannel.mockResolvedValue(undefined);
 });
-
-describe("drainActiveSessions", () => {
-  it("continues the drain and freezes chat after a failed DB write", async () => {
-    mockFindMany.mockResolvedValue([
-      session("a", "appt-1"),
-      session("b", "appt-2"),
+it("continues after a failed drain commit and freezes durably ended group calls", async () => {
+  findMeetings
+    .mockResolvedValueOnce([session("a"), session("b")])
+    .mockResolvedValueOnce([
+      {
+        id: "b",
+        occurrence: { appointment: { webinarId: "event", classId: null } },
+      },
     ]);
-    mockGetEventChannelIds.mockResolvedValue(["webinar-1"]);
-    mockTransaction
-      .mockRejectedValueOnce(new Error("deadlock"))
-      .mockResolvedValueOnce(undefined);
-
-    const result = await drainActiveSessions();
-
-    expect(mockCallEnd).toHaveBeenCalledTimes(2);
-    expect(result.drained).toBe(1);
-    expect(result.errors.some((e) => e.includes("deadlock"))).toBe(true);
-    expect(mockUpdatePartial).toHaveBeenCalledWith({ set: { frozen: true } });
-  });
-
-  it("records errors for channels Stream refused to freeze without failing the drain", async () => {
-    mockFindMany.mockResolvedValue([session("a", "appt-1")]);
-    mockGetEventChannelIds.mockResolvedValue(["webinar-1", "class-2"]);
-    mockUpdatePartial
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error("stream 500"));
-
-    const result = await drainActiveSessions();
-
-    expect(result.drained).toBe(1);
-    expect(result.errors.some((e) => e.includes("freeze class-2"))).toBe(true);
-  });
+  transaction
+    .mockRejectedValueOnce(new Error("deadlock"))
+    .mockResolvedValueOnce(undefined);
+  const result = await drainActiveSessions();
+  expect(endCall).toHaveBeenCalledTimes(2);
+  expect(result.drained).toBe(1);
+  expect(result.errors.join(" ")).toContain("deadlock");
+  expect(updateChannel).toHaveBeenCalledWith({ set: { frozen: true } });
+  expect(markChannels).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: {
+        id: { in: ["b"] },
+        maintenanceChannelFrozenAt: null,
+        maintenanceWindowId: "window",
+      },
+    }),
+  );
 });
-
-describe("unfreezeChannelsAfterMaintenance", () => {
-  it("unfreezes channels derived from maintenance-ended meetings", async () => {
-    mockFindMany.mockResolvedValue([
-      { occurrence: { appointmentId: "appt-1" } },
-      { occurrence: { appointmentId: "appt-2" } },
-    ]);
-    mockGetEventChannelIds.mockResolvedValue(["webinar-1", "class-2"]);
-
-    const result = await unfreezeChannelsAfterMaintenance();
-
-    expect(result.source).toBe("derived");
-    expect(result.unfrozen).toBe(2);
-    expect(result.errors).toEqual([]);
-    expect(mockUpdatePartial).toHaveBeenCalledWith({ set: { frozen: false } });
+it("uses an isolated bounded transport and records recording stops after acknowledgement", async () => {
+  findMeetings
+    .mockResolvedValueOnce([{ ...session("recording"), isRecording: true }])
+    .mockResolvedValueOnce([]);
+  const result = await drainActiveSessions();
+  expect(StreamClient).toHaveBeenCalledWith("test-key", "test-secret", {
+    timeout: 3000,
   });
-
-  it("returns source 'none' when no maintenance-drained sessions exist", async () => {
-    mockFindMany.mockResolvedValue([]);
-
-    const result = await unfreezeChannelsAfterMaintenance();
-
-    expect(result.source).toBe("none");
-    expect(result.unfrozen).toBe(0);
-    expect(mockUpdatePartial).not.toHaveBeenCalled();
+  expect(stopRecording).toHaveBeenCalledWith({ recording_type: "composite" });
+  expect(recordMeeting).toHaveBeenCalledWith({
+    where: { id: "recording" },
+    data: { isRecording: false },
   });
-
-  it("counts only channels Stream confirmed unfrozen and reports partial failures", async () => {
-    mockFindMany.mockResolvedValue([
-      { occurrence: { appointmentId: "appt-1" } },
-    ]);
-    mockGetEventChannelIds.mockResolvedValue(["webinar-1", "class-2"]);
-    mockUpdatePartial
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error("stream 500"));
-
-    const result = await unfreezeChannelsAfterMaintenance();
-
-    expect(result.source).toBe("derived");
-    expect(result.unfrozen).toBe(1);
-    expect(result.errors.some((e) => e.includes("unfreeze class-2"))).toBe(
-      true,
-    );
+  expect(result.recordingsStopped).toBe(1);
+  expect(result.drained).toBe(1);
+});
+it("finishes recovery without a vendor call when no stamped meetings remain", async () => {
+  findMeetings.mockResolvedValue([]);
+  expect(await unfreezeChannelsAfterMaintenance()).toEqual({
+    unfrozen: 0,
+    remaining: 0,
+    errors: [],
   });
+  expect(updateChannel).not.toHaveBeenCalled();
 });

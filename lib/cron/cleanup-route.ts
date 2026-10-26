@@ -12,6 +12,7 @@ import { captureThrottled } from "@/lib/observability/throttled-capture";
 import {
   assertNotInMaintenance,
   MaintenanceActiveError,
+  MaintenanceUnavailableError,
 } from "@/lib/maintenance-cron";
 
 /**
@@ -157,6 +158,91 @@ function ingestCanaryEnabled(job: string): boolean {
     .includes(job);
 }
 
+interface CleanupExecutionResult {
+  body: unknown;
+  status: number;
+  ok: boolean;
+  outcome: JobOutcome;
+}
+
+function cleanupFailure(
+  error: unknown,
+  job: string,
+  failureMessage?: string,
+): CleanupExecutionResult {
+  if (error instanceof CronLockHeldError) {
+    return {
+      body: { error: error.message },
+      status: 409,
+      ok: true,
+      outcome: "held",
+    };
+  }
+  // Shared acquisition failures report once per instance and window across jobs.
+  if (error instanceof CronLockUnavailableError) {
+    captureThrottled(
+      "cron:lock-unavailable",
+      error,
+      {
+        subsystem: "cron",
+        op: "lock-unavailable",
+        expected: true,
+        level: "warning",
+        tags: { job },
+      },
+      CRON_FAILURE_REPORT_WINDOW_MS,
+    );
+    return {
+      body: { error: error.message },
+      status: 503,
+      ok: false,
+      outcome: "failure",
+    };
+  }
+  // Each message is its 400 error code.
+  if (
+    error instanceof InvalidLimitError ||
+    error instanceof InvalidWindowStartError
+  ) {
+    return {
+      body: { error: error.message },
+      status: 400,
+      ok: true,
+      outcome: "failure",
+    };
+  }
+  if (error instanceof MaintenanceUnavailableError) {
+    return {
+      body: { error: error.message, code: "MAINTENANCE_STATE_UNREADABLE" },
+      status: 503,
+      ok: false,
+      outcome: "failure",
+    };
+  }
+  if (error instanceof MaintenanceActiveError) {
+    return {
+      body: { error: error.message, phase: error.phase },
+      status: error.httpStatus,
+      ok: true,
+      outcome: "held",
+    };
+  }
+  // Keep exception details in telemetry; the HTTP body exposes only a stable message.
+  captureThrottled(
+    `cron:${job}`,
+    error,
+    { subsystem: "cron", tags: { job } },
+    CRON_FAILURE_REPORT_WINDOW_MS,
+  );
+  console.error(`Error in ${job}:`, error);
+  return {
+    body: { error: failureMessage ?? `Failed to run ${job}` },
+    status: 500,
+    ok: false,
+    outcome: "failure",
+  };
+}
+
 /**
  * Every job under `app/api/cleanup/*` needs the same HTTP twin: a
  * CRON_SECRET bearer check, a maintenance-phase guard, structured start/finish
@@ -188,12 +274,9 @@ export function cleanupRoute<T extends object>(opts: {
   const { job, run, summarize, status, failureMessage, unauthorizedMessage } =
     opts;
 
-  async function executeCleanupJob(req: NextRequest): Promise<{
-    body: unknown;
-    status: number;
-    ok: boolean;
-    outcome: JobOutcome;
-  }> {
+  async function executeCleanupJob(
+    req: NextRequest,
+  ): Promise<CleanupExecutionResult> {
     const startedAt = Date.now();
     try {
       const authHeader = req.headers.get("authorization");
@@ -219,12 +302,13 @@ export function cleanupRoute<T extends object>(opts: {
       Sentry.logger.info(`cron:${job} started`);
 
       const result = await run(req, { startedAt });
-      const summary: Record<string, unknown> = summarize
-        ? summarize(result)
-        : (result as Record<string, unknown>);
+      const summary = summarize?.(result) ?? result;
 
       console.log(`${job} completed:`, summary);
-      Sentry.logger.info(`cron:${job} finished`, summary);
+      Sentry.logger.info(
+        `cron:${job} finished`,
+        Object.fromEntries(Object.entries(summary)),
+      );
 
       // An explicit per-job mapping is authoritative, so the outcome header follows its status.
       const responseStatus = status ? status(result) : statusFor(result);
@@ -235,80 +319,7 @@ export function cleanupRoute<T extends object>(opts: {
         outcome: status ? outcomeOfStatus(responseStatus) : jobOutcome(result),
       };
     } catch (error) {
-      // #476 — concurrent invocation (schedule overlap / manual re-run)
-      // skips with a 409 instead of double-running.
-      if (error instanceof CronLockHeldError) {
-        return {
-          body: { error: error.message },
-          status: 409,
-          ok: true,
-          outcome: "held",
-        };
-      }
-      // #1822 Q-2 — one Redis outage is one report: a key shared by every job,
-      // 15-min window per instance; the first job to hit it is tagged.
-      if (error instanceof CronLockUnavailableError) {
-        captureThrottled(
-          "cron:lock-unavailable",
-          error,
-          {
-            subsystem: "cron",
-            op: "lock-unavailable",
-            expected: true,
-            level: "warning",
-            tags: { job },
-          },
-          CRON_FAILURE_REPORT_WINDOW_MS,
-        );
-        return {
-          body: { error: error.message },
-          status: 503,
-          ok: false,
-          outcome: "failure",
-        };
-      }
-      // Each message is its 400 error code.
-      if (
-        error instanceof InvalidLimitError ||
-        error instanceof InvalidWindowStartError
-      ) {
-        return {
-          body: { error: error.message },
-          status: 400,
-          ok: true,
-          outcome: "failure",
-        };
-      }
-      if (error instanceof MaintenanceActiveError) {
-        return {
-          body: { error: error.message, phase: error.phase },
-          status: error.httpStatus,
-          ok: true,
-          outcome: "held",
-        };
-      }
-      // The exception text stays in Sentry and the server log. It used to be
-      // echoed to the caller as `details`, which on these 36 endpoints means
-      // Prisma query fragments, table and column names, gateway payloads and
-      // payout identifiers — an internal leak the `app/api/**` contract
-      // forbids, and one the cron caller has no use for anyway.
-      // #1441 — a script that rethrows a plain object reached Sentry as
-      // "Error: [object Object]"; the report helper keeps its message/code.
-      // Keyed by target like the lock branch above: a systemic fault
-      // fails every tick and used to cost one event per tick per job.
-      captureThrottled(
-        `cron:${job}`,
-        error,
-        { subsystem: "cron", tags: { job } },
-        CRON_FAILURE_REPORT_WINDOW_MS,
-      );
-      console.error(`Error in ${job}:`, error);
-      return {
-        body: { error: failureMessage ?? `Failed to run ${job}` },
-        status: 500,
-        ok: false,
-        outcome: "failure",
-      };
+      return cleanupFailure(error, job, failureMessage);
     }
   }
 

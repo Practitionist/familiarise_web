@@ -262,6 +262,7 @@ async function refundRevokedAppointmentIds(
     select: {
       appointmentId: true,
       amount: true,
+      paymentIntent: true,
       refunds: { select: { amountPaise: true, status: true } },
     },
   });

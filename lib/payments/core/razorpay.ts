@@ -9,6 +9,7 @@ import {
   RefundResult,
   PaymentError,
   RefundError,
+  GATEWAY_NOT_FOUND,
 } from "./types";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { assertInrSettlement } from "@/lib/payments/validation/currency-guards";
@@ -814,6 +815,15 @@ async function postRefund({
     // Razorpay's error body is `{ error: { code, description } }` — the shape
     // handleRazorpayRefundError already parses, so throw it through unchanged.
     const parsed = await res.json().catch(() => null);
+    if (res.status === 404) {
+      throw new RefundError(
+        readRazorpayErrorBody(parsed)?.description ??
+          "Razorpay has no such payment for these keys",
+        GATEWAY_NOT_FOUND,
+        "RAZORPAY",
+        { statusCode: 404, body: parsed },
+      );
+    }
     if (parsed && typeof parsed === "object" && "error" in parsed) {
       throw parsed;
     }
@@ -920,14 +930,17 @@ export async function createRazorpayRefund({
     // NO_PAYMENT_FOUND/etc are our own pre-gateway validation (thrown above in
     // this same try), not a gateway fault — tag by origin so the dashboard
     // doesn't conflate "Razorpay is down" with "this order has no payment".
+    const refundError = handleRazorpayRefundError(error);
+    // An unknown payment is permanent; the refund-owed stuck alert is its one report.
     const isModelledValidation =
-      error instanceof RefundError && error.code !== "UNKNOWN_ERROR";
+      (error instanceof RefundError && error.code !== "UNKNOWN_ERROR") ||
+      refundError.code === GATEWAY_NOT_FOUND;
     reportSentryError(error, {
       subsystem: "payments",
       tags: { provider: "razorpay" },
       expected: isModelledValidation,
     });
-    throw handleRazorpayRefundError(error);
+    throw refundError;
   }
 }
 
@@ -1196,6 +1209,21 @@ function handleRazorpayRefundError(error: unknown): RefundError {
   }
 
   const razorpayError = readRazorpayErrorBody(error);
+  const notFound =
+    typeof error === "object" &&
+    error !== null &&
+    "statusCode" in error &&
+    error.statusCode === 404;
+  if (notFound) {
+    return new RefundError(
+      razorpayError?.description ??
+        "Razorpay has no such payment or order for these keys",
+      GATEWAY_NOT_FOUND,
+      "RAZORPAY",
+      error,
+      razorpayError?.reason,
+    );
+  }
   if (razorpayError) {
     const code = razorpayError.code || "UNKNOWN_ERROR";
     const description = razorpayError.description || "Failed to process refund";
