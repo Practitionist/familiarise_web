@@ -40,6 +40,14 @@ open on absent/unreadable `ops:active_cron_platform`, so it is not an exactly-on
 guarantee. Verify accepted Sentry check-ins and independent per-capability absence
 alerts; the shared heartbeat and HTTP200 alone do not prove complete health.
 
+For shared storage deletion, preserve `removeObjects()`'s receipt-or-`NoSuchKey`
+metadata contract. The installed SDK can return `exists().data=false` for an
+ambiguous HTTP 400; this deployment also uses 400 for a genuine missing key.
+HTTP status or that boolean alone is insufficient. Preserve caller retry/error
+handling when confirmation fails. Plan-material removal commits its row first,
+so unresolved vendor cleanup remains a separate obligation; see
+`docs/storage/management-strategy.md`.
+
 Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified via Web
 Crypto. Follow the active maintenance implementation and recovery instructions;
 never infer that a cached phase quiesces work already in flight. See the linked
@@ -48,6 +56,8 @@ references for transaction-client, deployed-runtime and environment constraints.
 PATCH updates require a validated non-empty reason, including ETA-only changes; use that value for incident and audit text. Maintenance retries preserve the active window's configuration and repeat OFFLINE setup until its completion stamp exists. Recovery checks database, Redis and chat before incident resolution and phase change. Preserve sequential session and channel-batch admission checks, paced vendor batches, transaction-client writes and ordered sidecar statements; a loop await is required when the next step depends on its predecessor or remaining budget.
 
 Mocks of `maintenance-cron` must provide both exported error constructors: cleanup error mapping uses `instanceof` to distinguish unreadable state from planned holds.
+
+Tests that mock `with-cron-lock` for recording retention must also provide `readJobCheckpoint` (usually resolving `null`); the retention core reads its saved cursor before scanning.
 
 Capture assertions that mock `@sentry/nextjs` must alias `@sentry/core` to the same mock, so native-worker helpers and Next.js routes share the asserted capture functions. Partial mocks spread the actual Core module, avoiding a circular import through the actual Next.js SDK.
 
@@ -71,6 +81,12 @@ the generated schema metadata, and verify query planning read-only before making
 production capacity claims.
 
 ## Worktree verification
+
+Every infrastructure, maintenance or observability PR updates its applicable
+domain docs and skill in the same change. Document triggers, ownership/leases,
+failure and recovery behavior, operational prerequisites, verification and
+rollback where developers will find them. Keep the current index and links
+accurate; GitHub comments supplement the runbook rather than replacing it.
 
 The Jest configuration keeps an explicit `@/` source mapping while retaining Next.js’s default mocks and transforms. Run targeted suites through the repository config. A CLI `--moduleNameMapper` replaces the entire map and can discard `server-only`, asset and Redis-edge mocks; do not use it as a shortcut for alias resolution.
 
