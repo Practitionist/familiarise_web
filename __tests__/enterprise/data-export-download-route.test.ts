@@ -50,7 +50,7 @@ beforeEach(() => {
     status: "READY",
     startedAt,
     expiresAt,
-    fileSizeBytes: 123n,
+    fileSizeBytes: BigInt(123),
     fileUrl: "https://old-bearer-url.invalid/should-not-be-used",
   });
   mockArtifactFindUnique.mockResolvedValue({

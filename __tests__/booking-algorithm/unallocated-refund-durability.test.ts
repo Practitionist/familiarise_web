@@ -490,9 +490,11 @@ it("boundedly backfills exact historical approved-expiry transitions under the s
   expect(mockMarkers.get("legacy-approved-pay-2")).toBe(
     "approved-unallocated:legacy-approved-pay-2",
   );
-  const scans = jest
-    .mocked(prisma.$queryRaw)
-    .mock.calls.map(([query]) => query);
+  const scans = jest.mocked(prisma.$queryRaw).mock.calls.map(([query]) => {
+    if (!("text" in query))
+      throw new Error("Expected a parameterized SQL query");
+    return query;
+  });
   const legacyScan = scans.find(
     (query) =>
       query.text.includes('"Subscription"') &&
