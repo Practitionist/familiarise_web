@@ -69,6 +69,31 @@ works when the application ticker, database or primary telemetry pipeline fails.
 A disabled Sentry cron monitor rejects check-ins; sending them does not silently
 enable it. See [Sentry's monitor contract](https://docs.sentry.io/api/crons/update-a-monitor/).
 
+## Error reporting, scheduler absence and worker completion
+
+Ordinary Sentry exception/message capture reports an observed failure while code
+is executing. A disabled scheduler, failed deployment or missing invocation
+executes no catch block and emits no exception. An outside observer must retain
+the expected deadline and alert when the next check-in never arrives. The Sentry
+cron monitor supplies that observation; it does not run the Netlify ticker or
+execute another copy of its jobs.
+
+These signals protect different boundaries. Error events retain the stack and
+context of a failing job. The fleet check-in proves scheduler activity and
+reports the tick's outcome. The environment-scoped completion probe detects a
+required worker that stops completing while other ticker targets continue.
+Backlog age and vendor-effect reconciliation remain separate evidence. One
+fleet monitor plus an aggregate capability probe avoids buying a cron-monitor
+seat for every worker.
+
+Keep Sentry for error diagnostics regardless of the absence-monitor provider.
+A dedicated heartbeat service can replace or complement the fleet observer
+without replacing the scheduler or exception reporting. An independent provider
+also avoids making every outage signal depend on Sentry's availability and
+allowance. Provider choice still requires a working account, reviewed credentials,
+truthful signals and an actual human alert receipt; a free plan is not operating
+proof. No alternative heartbeat integration is enabled by these documents.
+
 ## Monitor activation and allowance
 
 In Sentry's current UI, open **Monitors**, select the application project,
