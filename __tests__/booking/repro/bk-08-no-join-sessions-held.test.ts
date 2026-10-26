@@ -70,6 +70,18 @@ describe.each(["NOBODY_JOINED", "OFFLINE"])("a paid %s session", (outcome) => {
   });
 });
 
+it.each([
+  ["a soft-deleted SUCCEEDED payment", "SUCCEEDED", new Date()],
+  ["a FAILED payment", "FAILED", null],
+  ["a PENDING payment", "PENDING", null],
+  ["an EXPIRED payment", "EXPIRED", null],
+])("%s does not hold a no-join session", (_label, paymentStatus, deletedAt) => {
+  for (const outcome of ["NOBODY_JOINED", "OFFLINE"]) {
+    const payment = [{ paymentStatus, deletedAt }];
+    expect(matches(slot(outcome, payment), AWAITING_HUMAN)).toBe(false);
+  }
+});
+
 it("a free session nobody joined moves no money, so it does not wait for ops", () => {
   expect(matches(slot("NOBODY_JOINED", []), AWAITING_HUMAN)).toBe(false);
 });

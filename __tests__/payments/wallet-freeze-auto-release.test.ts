@@ -96,12 +96,9 @@ it("lifts a drift freeze once, as SYSTEM, and never an ops freeze", async () => 
     correlationId: "wallet-freeze:ba_drift",
     context: { unfrozenBy: "SYSTEM" },
   });
-  expect(
-    await releaseReconciledWalletFreezes(
-      "rep_10",
-      await snapshot(["ba_drift"]),
-    ),
-  ).toEqual([]);
+  // Replaying the same snapshot finds the freeze already lifted.
+  expect(await releaseReconciledWalletFreezes("rep_9", inSync)).toEqual([]);
+  expect(created).toHaveLength(1);
 });
 
 it("keeps a freeze written after the snapshot", async () => {

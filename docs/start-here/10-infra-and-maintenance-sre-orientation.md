@@ -379,7 +379,7 @@ When a reconciler finds something it cannot safely repair, it **records a findin
 | **Escrow**       | Row parked in a holding state with a stamp explaining why.   |
 | `AWAITING_HUMAN` | A marker that suppresses automatic earnings release.         |
 
-The largest reconciler is `reconcile-ledgers`: about seventeen derivation families, run set-based, writing a `LedgerReconciliationReport`. It repairs nothing. A `WALLET_BALANCE_DRIFT` finding freezes wallet spend for that account and pages once per drifting account, with a weekly reminder; the freeze lifts on the next audit that finds the cache equal to the journal.
+The largest reconciler is `reconcile-ledgers`: about seventeen derivation families, run set-based, writing a `LedgerReconciliationReport`. It repairs nothing. A `WALLET_BALANCE_DRIFT` finding freezes wallet spend for that account and pages once per drifting account, with a weekly reminder; that drift-tagged freeze lifts on the next audit that finds the cache equal to the journal, while a freeze an ops door set stays until an operator lifts it.
 
 ## 8. The database sidecars
 
