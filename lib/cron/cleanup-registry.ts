@@ -70,6 +70,49 @@ const MAX_DOCUMENT_PURGE_ROWS = 200;
  */
 export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
   {
+    // @cleanup-twin consent-retention-sweeper
+    "consent-retention-sweeper": () =>
+      cleanupRoute({
+        job: "consent-retention-sweeper",
+        run: async (req, { startedAt }) => {
+          const { runConsentRetentionSweeper } =
+            await import("@/lib/compliance/consent-retention");
+          return runConsentRetentionSweeper({
+            limit: parseLimitParamOrDefault(req, 100),
+            startedAt,
+          });
+        },
+        failureMessage: "Consent retention slice failed",
+      }),
+    // @cleanup-twin databreach-deadline-alerts
+    "databreach-deadline-alerts": () =>
+      cleanupRoute({
+        job: "databreach-deadline-alerts",
+        run: async (req, { startedAt }) => {
+          const { runDataBreachDeadlineAlerts } =
+            await import("@/lib/compliance/databreach-deadline-alerts");
+          return runDataBreachDeadlineAlerts({
+            limit: parseLimitParamOrDefault(req, 5),
+            startedAt,
+          });
+        },
+        failureMessage: "Data breach deadline alert staging failed",
+      }),
+    // @cleanup-twin prune-system-events
+    "prune-system-events": () =>
+      cleanupRoute({
+        job: "prune-system-events",
+        run: async (req, { startedAt }) => {
+          const { pruneSystemEvents } =
+            await import("@/lib/observability/system-event-retention");
+          return pruneSystemEvents({
+            limit: parseLimitParamOrDefault(req, 100),
+            startedAt,
+          });
+        },
+        failureMessage: "System event retention slice failed",
+      }),
+
     // @cleanup-twin abandoned-org-top-ups
     "abandoned-org-top-ups": () =>
       cleanupRoute({

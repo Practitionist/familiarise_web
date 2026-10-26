@@ -157,3 +157,5 @@ the vendor monitor is configured. Verify that worker maintenance refusals and
 held outcomes cannot record COMPLETED evidence before activation. The probe keeps
 reading during maintenance; suppress notifications externally without advancing
 successful-work freshness.
+
+`SystemEvent` history retention has one bounded core in `lib/observability/system-event-retention.ts`. Preserve its existing 400-day cutoff, repeat eligibility during deletion and carry the caller deadline through lease admission and CLI slices. Its Actions owner is currently budget-blocked; a configured cadence does not prove execution. See [compliance and event-retention workers](../../../docs/maintenance/compliance-retention-workers.md) for operator recovery and the scheduler cutover gate.
