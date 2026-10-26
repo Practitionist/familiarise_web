@@ -607,3 +607,9 @@ Email behavior and supported delay bounds:
 [digest construction](https://github.com/getsentry/sentry/blob/master/src/sentry/digests/notifications.py),
 [project settings validation](https://github.com/getsentry/sentry/blob/master/src/sentry/core/endpoints/project_details.py),
 and [monitor update semantics](https://github.com/getsentry/sentry/blob/master/src/sentry/monitors/validators.py).
+
+### Per-tick summary line and lease ceiling
+
+When `ENABLE_BETTERSTACK_TELEMETRY` is `true` and the Better Stack source token and ingest URL are set, each tick posts one `cron-tick summary` log line (category `CRON`, level `error` when any target failed, else `info`) carrying the duration, the ok and accepted counts, the held target names and the failed targets with their statuses. It is a second sink that does not depend on Sentry, it is sent once per tick rather than per target, and a send failure never affects the tick. The ticker reads `SENTRY_DSN` and falls back to `NEXT_PUBLIC_SENTRY_DSN`.
+
+On Netlify (`NETLIFY=true`) `withCronLock` caps every lease at 90 seconds, because a Netlify invocation cannot outlive 60 seconds and a longer lease only keeps a killed run's `RUNNING` row blocking the next ticks. A killed run therefore recovers within one lease window. Other hosts keep the per-job TTL. The ticker still files a 409 under `lockHeld`, a distinct field in the tick body and summary line, never under `ok`.
