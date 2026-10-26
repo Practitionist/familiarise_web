@@ -736,22 +736,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "prune-system-job-executions": () =>
       cleanupRoute({
         job: "prune-system-job-executions",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { pruneSystemJobExecutions } =
             await import("@/scripts/cleanup/prune-system-job-executions");
-          return pruneSystemJobExecutions();
+          return pruneSystemJobExecutions({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
         },
         summarize: (r) => ({
           pruned: r.pruned,
           stranded: r.stranded,
-          failedEmailsBodyScrubbed: r.failedEmailsBodyScrubbed ?? 0,
-          failedEmailBatchesScrubbed: r.failedEmailBatchesScrubbed ?? 0,
-          failedEmailsPruned: r.failedEmailsPruned ?? 0,
-          failedEmailBatchesPruned: r.failedEmailBatchesPruned ?? 0,
-          notificationOutboxPruned: r.notificationOutboxPruned ?? 0,
-          emailEventsPruned: r.emailEventsPruned ?? 0,
+          failedEmailsBodyScrubbed: r.failedEmailsBodyScrubbed,
+          failedEmailBatchesScrubbed: r.failedEmailBatchesScrubbed,
+          failedEmailsPruned: r.failedEmailsPruned,
+          failedEmailBatchesPruned: r.failedEmailBatchesPruned,
+          notificationOutboxPruned: r.notificationOutboxPruned,
+          emailEventsPruned: r.emailEventsPruned,
+          hasMore: r.hasMore,
         }),
-        status: () => 200,
         failureMessage: "System job execution prune failed",
       }),
 
