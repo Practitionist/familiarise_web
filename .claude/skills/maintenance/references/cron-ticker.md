@@ -111,6 +111,10 @@ ticker sends `limit=50` unless `TARGET_LIMITS` overrides it, for example 10 for
 `abandoned-payments`. A `null` override sends no limit to a route that takes
 none, such as `reconcile-ledgers`.
 
+## Job history and messaging retention
+
+`prune-system-job-executions` is currently owned by the daily Actions workflow. Its registered HTTP core accepts `?limit=` and always runs bounded: default 100, maximum 500 rows per phase, eight phases, and a 16-second start budget. `hasMore` indicates continuation; it is not a failure or a drained-backlog guarantee. The existing CLI repeats at most 40 slices of 500 within a 16-second start budget and stops on no progress. No ticker activation or retention-window change is implied. Final mutations repeat eligibility so an admin-requeued message is preserved, and scrubbing keeps the delivery/legacy retention clocks unchanged. See [the execution and replay contract](../../../../docs/maintenance/messaging-retention.md).
+
 ## Adding a job
 
 Never create 3-layer wrappers. A job has one implementation, registered in
@@ -126,7 +130,7 @@ Never create 3-layer wrappers. A job has one implementation, registered in
 6. Update the generated job reference and operational recovery instructions.
 7. Put a ticker job in `lib/cron/schedule.ts` (`TARGETS` with an offset or a `TARGET_WINDOWS` slot) so
    the cadence/collision tests preserve the ten-target design bound.
-   Only the resumable ledger target yields when the due roster reaches this bound;
+   Only the resumable ledger target yields when the due roster exceeds this bound;
    the dispatcher does not truncate other due work.
 8. If the job moves money or payouts, add its slug to `FINANCIAL_JOB_NAMES`
    (`lib/cron/financial-jobs.ts`). The maintenance gate then also stops it in
@@ -135,6 +139,12 @@ Never create 3-layer wrappers. A job has one implementation, registered in
 Some existing jobs intentionally take no row limit. That is not evidence that
 an unbounded implementation fits a function envelope; inspect its actual work.
 Calendar-window schedules also require explicit missed-window recovery.
+
+## Compliance and retention slices
+
+Consent, breach-deadline alerts and SystemEvent retention have registered bounded cores under lib/compliance and lib/observability. Their existing Actions steps retain configured automatic ownership until a verified single cutover, but non-money Actions jobs are currently budget-blocked. Carry the original caller start time through maintenance, lease admission and repeated slices; a slow read must not admit a post-deadline write. Consent deletion remains DPDP_SWEEPER_DELETE-gated and uses the stored retention deadline; event retention remains 400 days. Breach mail/Novu obligations stage transactionally and resume the oldest unfinished hourly digest, including across hour rollover. Staged or held mail is not delivered-mail evidence. See docs/maintenance/compliance-retention-workers.md; never run a real retention or alerting job to test it against the shared database.
+
+An invalid officer mailbox reports a configuration error while admin alerts still stage; the digest remains active until repaired. Do not complete or abandon an unfinished digest solely because it is old. Persistent staging failures require operator repair and an explicit progression/capacity gate before schedule cutover.
 
 ## Source-only verification
 

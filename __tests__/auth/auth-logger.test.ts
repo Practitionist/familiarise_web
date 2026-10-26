@@ -92,6 +92,7 @@ describe("reportAuthLogToSentry (#1856)", () => {
   // an unauthenticated surface, against a 5,000-error monthly quota.
 
   it.each([
+    ["State not found", undefined, undefined],
     ["Invalid password", undefined, undefined],
     [
       "User not found",

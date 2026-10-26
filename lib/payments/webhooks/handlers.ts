@@ -96,6 +96,7 @@ import {
   isFreeCreditIntent,
   isInternalFundedIntent,
 } from "@/lib/payments/funding-rail";
+import { isPrismaConnectionOrPoolError } from "@/lib/cron/with-cron-lock";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
 import { getAppUrl } from "@/lib/url";
@@ -1392,6 +1393,14 @@ export async function handlePaymentSuccess(
         );
       }
     } catch (channelError) {
+      // A pool/connection timeout leaves the stamp NULL; the orphan sweep heals it.
+      if (isPrismaConnectionOrPoolError(channelError)) {
+        streamLogger.warn(
+          "Stream channel step hit a database timeout — left for the reconcile sweep",
+          { appointmentId, userId },
+        );
+        return;
+      }
       reportSentryError(channelError, {
         subsystem: "stream",
         op: "handlePaymentSuccess.createChannels",
