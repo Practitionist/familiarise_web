@@ -9,10 +9,11 @@ last-reviewed: 2026-06-05
 # Org-wide data export (DPDP §11)
 
 Familiarise honours DPDP §11 right-to-access at the organization level
-via an async export job (the `OrgDataExportJob` model). OWNER +
-BILLING_ADMIN can request a JSON bundle of every entity scoped to their
-org; the worker builds the bundle, uploads it to Supabase Storage, and
-emails the requester with a 7-day signed-URL link.
+via an async export job (the `OrgDataExportJob` model). OWNER or MAINTAINER
+can request a `PEOPLE` bundle; OWNER or BILLING_ADMIN can request a
+`FINANCE` bundle. The worker builds only the requested org-scoped bundle,
+uploads it to Supabase Storage, and notifies the requester and active
+owners with a 7-day signed-URL link. Only legacy `FULL` jobs combine both kinds.
 
 > DPDP Act §11 (web-validated 2026-06-05) is the data principal's
 > right of access: a summary of the personal data being processed plus
@@ -128,8 +129,8 @@ sequenceDiagram
 **Persona — Wipro's compliance officer files a DPDP §11 access
 request.** Wipro (a SPONSOR enterprise in the design-partner set) gets a
 regulator query and needs a full snapshot of the org-scoped personal
-data the platform holds. Their compliance officer — who holds
-BILLING_ADMIN, the governance floor these routes require — hits
+data the platform holds. Their billing officer — who holds
+BILLING_ADMIN — requests the `FINANCE` bundle through
 `POST /data-exports`, gets a `202`, and polls the dashboard until the
 job flips `READY`. The 7-day signed URL is long enough to run their
 post-export ETL; after that the link lapses to `EXPIRED` and a fresh
@@ -139,7 +140,7 @@ per-data-principal §12 _erasure_ path is separate (see
 
 ## Routes
 
-Three endpoints form the request-poll-download lifecycle of a DPDP §11 export bundle; all are gated to OWNER or BILLING_ADMIN because every bundle contains financial PII.
+Three endpoints form the request-poll-download lifecycle. Access depends on the requested or stored bundle kind; a people export does not grant access to finance data.
 
 | Verb   | Path                                                          | Behaviour                                                                                                                                                   |
 | ------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -149,13 +150,13 @@ Three endpoints form the request-poll-download lifecycle of a DPDP §11 export b
 
 All three call `requireOrgAccess(orgId, { permission: ["dataExports.people", "dataExports.finance"] })`,
 so a caller needs at least one export key. Each bundle has a kind: the
-`people` bundle needs `dataExports.people` (OWNER, MAINTAINER) and the
-`finance` bundle needs `dataExports.finance` (OWNER, BILLING_ADMIN),
+`PEOPLE` bundle needs `dataExports.people` (OWNER, MAINTAINER) and the
+`FINANCE` bundle needs `dataExports.finance` (OWNER, BILLING_ADMIN),
 because it carries financial PII. A caller may request, list and download
 only the kinds they hold. A legacy `FULL` job, written before the split,
 carries both bundles, so listing or downloading it needs both keys, which
-in practice means an OWNER; a new request accepts only `people` or
-`finance` and can never create a `FULL` job.
+in practice means an OWNER; a new request accepts only `PEOPLE` or
+`FINANCE` and can never create a `FULL` job.
 
 The worker logic lives in scripts/cleanup/process-data-exports.ts
 (processDataExports). The Netlify ticker dispatches its registered
@@ -231,14 +232,16 @@ env vars to be configured even locally.
 ## Verification
 
 ```bash
-# As OWNER or BILLING_ADMIN — returns 202
+# As OWNER or BILLING_ADMIN, request FINANCE — returns 202
 curl -X POST $BASE/api/organizations/$ORG/data-exports \
-  -H "Cookie: $OWNER_COOKIE"
+  -H "Cookie: $OWNER_COOKIE" \
+  -H "Content-Type: application/json" \
+  --data '{"kind":"FINANCE"}'
 # 202 {"export":{"id":"...","status":"PENDING", ...}}
 
-# Trigger the worker manually (the GitHub Actions cron runs it ≤10 min
-# otherwise). This HTTP route is CRON_SECRET-gated and shares the global
-# Prisma client — it does NOT disconnect, unlike the standalone job wrapper.
+# Authorized operator recovery only; the ticker normally dispatches every ten
+# minutes. This CRON_SECRET-gated route runs the canonical worker; a successful
+# request is not evidence that every queued export completed.
 curl -X POST $BASE/api/cleanup/process-data-exports \
   -H "Authorization: Bearer $CRON_SECRET"
 
