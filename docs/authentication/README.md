@@ -112,7 +112,9 @@ Onboarding after sign-in (the wizard and `/onboarding/gate`) is in
 2. **Every operator power is behind 2FA.** Until the operator has an
    authenticator, the app's `getSession()` reads their session as signed out,
    `requireApiAuth` answers 428 `TWO_FACTOR_REQUIRED`, `requireOperator`
-   redirects to enrolment, and the session lasts at most an hour.
+   redirects to enrolment, and the session lasts at most an hour. The one
+   exception is a designated QA operator off production
+   ([staff-onboarding.md §9](./staff-onboarding.md#9-two-factor-policy-seeds-and-qa-operators)).
 3. **Sensitive writes need a fresh proof.** Credential, factor, payout, refund
    and IAM changes answer 403 `REAUTH_REQUIRED` unless the session was opened
    or re-authenticated in the last 15 minutes.

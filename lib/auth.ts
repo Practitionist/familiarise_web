@@ -42,6 +42,10 @@ import {
   refusesOperatorSession,
 } from "@/lib/auth/operator-session-policy";
 import {
+  deployEnvironment,
+  isQaOperatorExemptFrom2fa,
+} from "@/lib/auth/qa-accounts";
+import {
   authenticationStart,
   cappedSessionFields,
   refreshSessionLifetime,
@@ -467,6 +471,17 @@ export const auth = betterAuth({
               code: "STAFF_PASSWORD_SIGN_IN_ONLY",
             });
           }
+          if (
+            user &&
+            ctx?.path === "/sign-in/email" &&
+            user.twoFactorEnabled !== true &&
+            isQaOperatorExemptFrom2fa(user, deployEnvironment())
+          ) {
+            console.info("[auth] QA operator signed in without 2FA", {
+              userId: session.userId,
+              environment: deployEnvironment().sentryEnvironment,
+            });
+          }
 
           const enforcedOrg = await assertSsoSessionAllowed(prisma, {
             email: user?.email,
@@ -600,7 +615,8 @@ export const auth = betterAuth({
     // limits them to credential + TOTP sessions, the API/page guards in
     // lib/auth-helpers.ts and lib/auth-guard.ts confine an unenrolled
     // operator to /auth/two-factor/setup, and lib/auth-server.ts's
-    // getSession() reads their session as signed out everywhere else.
+    // getSession() reads their session as signed out everywhere else. Off
+    // production, designated QA operators skip that (lib/auth/qa-accounts.ts).
     //
     // `allowPasswordless` stays off, so enrolling needs the account password.
     // Every operator account is created with a credential account, so nobody

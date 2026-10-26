@@ -22,7 +22,7 @@ async function run() {
   await ensureServerOrSkip();
 
   const admin = await loginAs(
-    process.env.CHAOS_ADMIN_EMAIL ?? "olivia.brown@protonmail.com",
+    process.env.CHAOS_ADMIN_EMAIL ?? "qa-admin-1@qa.familiarise.invalid",
   );
 
   const name = `Chaos Double Submit ${process.pid}`;

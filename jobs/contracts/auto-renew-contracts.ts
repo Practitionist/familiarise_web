@@ -28,7 +28,7 @@ import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import * as Sentry from "@sentry/nextjs";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -139,6 +139,7 @@ async function autoRenewContracts(opts: {
   limit?: number;
   windowStart?: Date;
 }): Promise<RenewStats> {
+  const failures = createRunFailureReporter("jobs");
   const stats: RenewStats = { scanned: 0, renewed: 0, skipped: 0, failed: 0 };
   const now = new Date();
   const asOf = opts.windowStart ?? now;
@@ -321,13 +322,12 @@ async function autoRenewContracts(opts: {
         stats.skipped += 1;
         continue;
       }
-      Sentry.captureException(err, {
-        tags: { subsystem: "jobs", job: "auto-renew-contracts" },
-      });
+      failures.add("auto-renew-contracts", err, { contractId: c.id });
       console.error(`[auto-renew-contracts] Failed for contract ${c.id}:`, err);
       stats.failed += 1;
     }
   }
 
+  failures.flush();
   return stats;
 }

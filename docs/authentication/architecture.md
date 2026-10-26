@@ -26,6 +26,8 @@ and `GET /get-session` answers 503 instead of `200 null` when the lookup failed
 `/api/auth/clear-stale-session`, because only a route handler can delete
 cookies.
 
+Expired sessions and verification tokens are rejected by their runtime expiry checks. Housekeeping is separate: `cleanupAuthTokens` removes at most 100 expired verification, session and idempotency rows per arm by default, and examines at most 100 lapsed invitations. The maximum explicit limit is 500 per arm. Deletion repeats expiry after selection, so a refreshed row survives. Invitation expiry still conditionally claims PENDING and commits its audit row in the same transaction. A shared 16-second start budget and `hasMore` describe continuation; neither cleanup nor a successful batch establishes that the entire backlog is drained. See [housekeeping bounds](../maintenance/housekeeping-bounds.md).
+
 ## 2. Server composition (`lib/auth.ts`)
 
 ```mermaid
@@ -224,6 +226,11 @@ Routes that call the app's `getSession()` (`lib/auth-server.ts`) and check the
 role inline fail closed: an operator session without 2FA comes back as `null`,
 so they answer 401. The sign-in page sends such an operator straight to
 `/auth/two-factor/setup`.
+
+Each of these gates asks `needsOperatorTwoFactor` (`lib/auth/qa-accounts.ts`),
+which lets designated QA operators through on previews and local development
+only; production enforces 2FA for every operator
+([staff-onboarding.md §9](./staff-onboarding.md#9-two-factor-policy-seeds-and-qa-operators)).
 
 ## 5. Flows
 
