@@ -51,6 +51,14 @@ export interface SystemJob {
 }
 
 const SYSTEM_JOBS: SystemJob[] = [
+  {
+    id: "maintenance-booking-remediation",
+    name: "Maintenance booking remediation",
+    description:
+      "Process one explicitly confirmed booking cancellation; held until maintenance ends.",
+    schedule: "Every 15 minutes",
+    category: "Appointments",
+  },
   // Payments
   {
     id: "cleanup-abandoned-payments",
@@ -136,6 +144,13 @@ const SYSTEM_JOBS: SystemJob[] = [
   },
   // Cleanup
   {
+    id: "transfer-recordings",
+    name: "Copy Recordings",
+    description: "Queue the next session recording for permanent storage",
+    schedule: "Every 15 minutes",
+    category: "Cleanup",
+  },
+  {
     id: "auth-tokens",
     name: "Auth Token Cleanup",
     description:
@@ -164,6 +179,50 @@ const SYSTEM_JOBS: SystemJob[] = [
     description: "Delete processed webhook events >30 days",
     schedule: "Weekly",
     category: "Cleanup",
+  },
+  {
+    id: "expire-recordings",
+    name: "Expire Recordings",
+    description: "Queue recording retention and asset cleanup",
+    schedule: "Daily, 00:00–03:00 UTC",
+    category: "Cleanup",
+  },
+  {
+    id: "expire-event-channels",
+    name: "Expire Event Channels",
+    description: "Queue ended event and dormant conversation cleanup",
+    schedule: "Daily, 08:00–11:00 UTC",
+    category: "Cleanup",
+  },
+  {
+    id: "stream-sync",
+    name: "Sync Stream Users",
+    description:
+      "Queue a comparison of Stream principals against database ownership",
+    schedule: "Daily, 08:00–11:00 UTC",
+    category: "Cleanup",
+  },
+  {
+    id: "wind-down-deactivated-orgs",
+    name: "Wind Down Organizations",
+    description:
+      "Queue Stream access and recording cleanup for deactivated organizations",
+    schedule: "Daily, 03:00–06:00 UTC",
+    category: "Cleanup",
+  },
+  {
+    id: "reconcile-orphaned-recordings",
+    name: "Recover Missing Recordings",
+    description: "Queue recovery of missing recording webhook deliveries",
+    schedule: "Daily, 00:00–03:00 UTC",
+    category: "Reconciliation",
+  },
+  {
+    id: "reconcile-orphaned-sessions",
+    name: "Reconcile Ended Sessions",
+    description: "Recover overdue meeting end and presence state",
+    schedule: "Every 30 minutes",
+    category: "Reconciliation",
   },
   // Reconciliation
   {
@@ -386,7 +445,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
       // #1846 N6 — the payout jobs answer 202 and finish after the response.
       if (result.dispatched) {
         toast({
-          title: `${job.name} started`,
+          title: `${job.name} ${result.accepted ? "queued" : "started"}`,
           description: result.message,
           variant: "default",
         });

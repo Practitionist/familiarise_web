@@ -34,7 +34,7 @@ import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
-import { endActiveStreamVideoCalls } from "@/lib/stream/event-channel-service";
+import { endActiveStreamVideoCalls } from "@/lib/stream/channel-administration";
 import { MIN_ORG_RETENTION_DAYS } from "@/lib/stream/recording-retention";
 
 const ORG_DELETED_CALL_REASON: MeetingEndReason = "org_deleted";

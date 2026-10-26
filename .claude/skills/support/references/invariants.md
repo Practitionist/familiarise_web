@@ -1,0 +1,42 @@
+# Support invariants and their enforcers
+
+Full table with explanations: `docs/support/11-schema-and-invariants.md`. Before adding an app check, look for a sidecar object here; before relying on a sidecar object, grep `prisma/sql/check-constraints.sql` for it.
+
+## Database (sidecar or Prisma unique)
+
+| Invariant                                                                                      | Object                                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One open case per (scope, org, scopeKey, requester, submitter, category)                       | `support_case_open_scope_key` (partial unique, NULLS NOT DISTINCT) → map P2002 to 409 `OPEN_CASE_EXISTS` via `openCaseConflict()`                           |
+| One primary subject per case                                                                   | `support_case_subject_primary_key`                                                                                                                          |
+| Category or flowKey; occurrence ⇒ appointment; problem link only on INCIDENT; CSAT 1–5         | `support_case_scope_and_shape_chk`                                                                                                                          |
+| Non-personal ⇒ organizationId; at most one appeal target                                       | `support_case_ownership_and_appeal_shape`                                                                                                                   |
+| Message seq and turn replay                                                                    | `@@unique([caseId, seq])`, `@@unique([caseId, clientTurnId])`                                                                                               |
+| Intake replay                                                                                  | `@@unique([submitterUserId, clientIntakeId])`                                                                                                               |
+| One appeal per decision per person                                                             | `@@unique([appealOfDecisionId, submitterUserId])`, `@@unique([appealOfModerationActionId, submitterUserId])`                                                |
+| Decisions immutable; one original per case                                                     | trigger `support_case_decision_immutable`; `support_decision_one_original_per_case`; `supersedesDecisionId @unique`                                         |
+| Recommendation shape; one open per payment; one refund per recommendation                      | `support_recommendation_shape`; `support_recommendation_one_open_per_payment`; `refundId @unique`                                                           |
+| Attachment hangs off ≤ 1 parent; size ≥ 0; unique path                                         | `support_case_attachment_shape`; `storagePath @unique`                                                                                                      |
+| One active hold per (earning, reason, source); one earning per hold                            | `earnings_hold_active_consultant_key`, `earnings_hold_active_org_key`; `earnings_hold_one_earning`                                                          |
+| One open second-admin proposal per (action, target)                                            | `ops_action_proposal_one_open_key`                                                                                                                          |
+| One sweep run at a time                                                                        | `SystemJobExecution_running_jobName_key`                                                                                                                    |
+| Chat grants append-only; shape; one live seat per channel; one live READ per operator per case | `support_chat_access_append_only`; `support_chat_access_shape`; `support_chat_one_live_intervention_per_channel`; `support_chat_one_live_read_per_operator` |
+
+## App only (a new writer must call the same helper)
+
+| Invariant                                                              | Helper                                                                                           |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Allowed status moves and actors                                        | `assertCaseTransition()` / `CASE_TRANSITIONS`                                                    |
+| Explicit reopen only, requester/submitter, undecided, 14 days          | `reopenRefusalTx()`                                                                              |
+| Compare-and-set on `updatedAt`; staff reply vs unseen customer message | `executePatchLifecycleTx()`, `advanceAgentPublicTurnState()` (`NEW_CUSTOMER_MESSAGE`)            |
+| Channel never leaves HUMAN                                             | no writer sets another value — keep it so                                                        |
+| Decision fits case; matches money; no open recommendation              | `assertDecisionFitsCase()`, `assertDecisionMatchesMoney()`, `assertNoOpenRecommendation()`       |
+| Supersede rules                                                        | `supersedeDecisionTx()`, `assertSupersedeKeepsEffects()`                                         |
+| Independent appeal reviewer                                            | `assertIndependentReviewer()`, `hasConflictingAppealReviewerTx()`                                |
+| Staff caps, maker ≠ checker, preview match, chargeback block           | `assertBoundedRefund()`, `assertNotOwnRemedy()`, `assertRefundExecutable()`, `quoteCaseRefund()` |
+| Hold release gate                                                      | `holdReleaseRefusalTx()`                                                                         |
+| Access and visibility                                                  | `canCorrespondOnCase()`, `projectCaseForViewer()`, `ORG_SENSITIVE_PERSONAL_CATEGORIES`           |
+| Evidence recipient eligibility; answered once                          | `evidenceRecipientsByAppointment()`; CAS on `respondedAt` in the evidence route                  |
+| File type by first bytes; 60 s signed downloads; 20 files per uploader | `headMatchesMimeType()`, `attachmentDownload()`, attachments route                               |
+| Purge eligibility and verified deletes                                 | `purgeEligibleWhere()`, `removeObjects()`                                                        |
+| Chat eligibility, bases, scope, audited transcript pages               | `caseChatRefusal()`, `verifiedInterventionBases()`, `scopeFor()`, `readTranscriptPage()`         |
+| Replay compares stored columns                                         | `replayCaseActionTx()`                                                                           |

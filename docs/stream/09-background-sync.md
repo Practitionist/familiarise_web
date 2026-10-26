@@ -1,1110 +1,181 @@
-# Background Sync
-
-This document provides detailed information about the Stream user background synchronization job, including job overview, sync logic, exclusion rules, error handling, and monitoring.
-
-## Table of Contents
-
-- [Job Overview](#job-overview)
-- [Sync Logic](#sync-logic)
-- [Exclusion Rules](#exclusion-rules)
-- [Error Handling](#error-handling)
-- [Background Sync Flow](#background-sync-flow)
-- [Monitoring and Troubleshooting](#monitoring-and-troubleshooting)
-
----
-
-## Job Overview
-
-The Stream user background sync job maintains data consistency between your Prisma database and Stream Chat by identifying and removing stale users.
-
-### Purpose
-
-**Primary Goals:**
-
-1. Remove users from Stream Chat who no longer exist in the Prisma database
-2. Prevent orphaned user accounts in Stream
-3. Maintain data consistency across systems
-4. Clean up test accounts and deleted users
-
-**Business Impact:**
-
-- Reduces Stream user count (affects billing)
-- Improves channel member accuracy
-- Prevents messaging to deleted users
-- Maintains clean user directory
-
-### Schedule
-
-The sweep is written as a step of the daily 03:00 UTC batch in
-`.github/workflows/cron-daily.yml` (08:30 IST). That batch runs on GitHub
-Actions, which is budget-blocked, so the schedule is not firing today; the
-sweep runs when an operator starts it. Moving it to the Netlify ticker is
-planned. Start minutes are costed by `scripts/ci/check-workflow-hygiene.ts`
-against a connection-pool budget, so check that guard before moving one.
-
-There are three ways to start it. The GitHub Actions schedule is the normal one;
-`workflow_dispatch` on the same workflow is the manual one; and an administrator
-can run it from the staff Jobs page, which posts `stream-sync` to
-`/api/admin/system-jobs/run`. All three call the same core function, so they
-cannot diverge.
-
-### Where the definition actually lives
-
-The workflow step is `stream-sync` in `.github/workflows/cron-daily.yml`, the Actions wrapper is
-`jobs/stream/stream-sync.ts`, and the core is `scripts/stream/stream-sync.ts`.
-Read those rather than a copy pasted here — an earlier version of this document
-carried an inline copy of the workflow, and every field in it had drifted: the
-filename, the schedule, the Node version and the entrypoint path were all wrong,
-and the `package.json` script it quoted pointed at a file that does not exist.
-
-The workflow needs `DATABASE_URL` and `DIRECT_URL` for Prisma, `STREAM_API_KEY`
-and `STREAM_API_SECRET` to reach Stream, `UPSTASH_REDIS_REST_URL` and
-`UPSTASH_REDIS_REST_TOKEN` for the cron lock, and the Sentry DSN so that a job
-process — which never runs Next's instrumentation hook — reports its errors
-anywhere. Every one of those names is justified in
-[the required-secrets manifest](../enterprise/50-operations/07-required-secrets.md),
-and CI fails the build if a workflow references a secret that is not listed
-there.
-
-### Locking
-
-The job is fail-closed: without a working Redis lock it refuses to run rather
-than risk two runners soft-deleting Stream users at the same time. The lock has
-a forty-minute time to live, which is longer than the workflow's own
-`timeout-minutes`, so it always outlives any run that can exist. A run that
-finds the lock held exits cleanly rather than reporting a failure, because
-skipping is the correct outcome for every runner that loses that race.
-
-Previously the job held a bespoke Redis lock instead of the fleet's
-`withCronLock`. It excluded correctly, but it was invisible: `withCronLock` is
-what writes the `SystemJobExecution` row and refreshes the fleet heartbeat, so
-the sweep had no recorded last run, no recorded duration, and no presence at all
-in the operator surface. One consequence of the migration is worth stating: on a
-machine with no Upstash credentials the job now throws instead of proceeding
-unlocked, which is the right answer for a job that deletes users.
-
-### Execution environment
-
-The workflow runs Node 22 with `npm ci`, and executes the entrypoint through a
-pinned `tsx`. The Stream client uses a thirty-second per-request timeout, and a
-typical run takes two to ten minutes; the forty-minute lock and the thirty-five
-minute workflow timeout are sized for the pathological case of a hundred
-thousand Stream users, which walks a thousand pages with a half-second pause
-between deletions.
-
----
-
-## Sync Logic
-
-The sync job uses pagination to process all Stream users efficiently, checking each against the Prisma database.
-
-### Core Function
-
-**Location:** `/jobs/stream-sync.ts`
-
-**Function Signature:**
-
-```typescript
-export async function performStreamUserSync(): Promise<SyncSummary>;
-```
-
-**Return Type:**
-
-```typescript
-interface SyncSummary {
-  totalStreamUsersProcessed: number;
-  totalStaleUsersIdentified: number;
-  totalStaleUsersDeleted: number;
-  totalFailedDeletions: number;
-  failedDeletionDetails: FailedDeletionEntry[];
-}
-
-interface FailedDeletionEntry {
-  id: string;
-  error: string;
-}
-```
-
-### Step-by-Step Process
-
-#### 1. Initialize Stream Client
-
-```typescript
-function getStreamClient() {
-  const streamApiKey = process.env.NEXT_PUBLIC_STREAM_API_KEY;
-  const streamApiSecret = process.env.STREAM_API_SECRET;
-
-  if (!streamApiKey || !streamApiSecret) {
-    console.error(
-      "[Stream Sync Job] Critical: Stream API Key or Secret is not defined.",
-    );
-    throw new Error("Stream API Key or Secret not configured for sync job.");
-  }
-
-  return StreamChat.getInstance(streamApiKey, streamApiSecret, {
-    timeout: 30000, // 30 seconds timeout
-  });
-}
-```
-
-**Key Points:**
-
-- Validates environment variables before proceeding
-- Sets 30-second timeout for API calls
-- Throws error if credentials are missing
-
-#### 2. Paginate Through Stream Users
-
-```typescript
-const streamPageLimit = 100;
-let lastStreamUserId: string | undefined = undefined;
-
-while (true) {
-  console.log(
-    `[Stream Sync Job] Fetching next page of Stream users (after ID: ${lastStreamUserId || "start"})...`,
-  );
-
-  const streamUsersResponse = await serverStreamClient.queryUsers(
-    lastStreamUserId ? { id: { $gt: lastStreamUserId } } : {},
-    { id: 1 }, // Sort by ID for consistent pagination
-    { limit: streamPageLimit, presence: false },
-  );
-
-  const currentStreamPageUsers = streamUsersResponse.users;
-
-  // Exit loop if no more users
-  if (currentStreamPageUsers.length === 0) {
-    console.log("[Stream Sync Job] No more Stream users to process.");
-    break;
-  }
-
-  totalStreamUsersProcessed += currentStreamPageUsers.length;
-  lastStreamUserId =
-    currentStreamPageUsers[currentStreamPageUsers.length - 1].id;
-
-  // Process this page...
-}
-```
-
-**Pagination Strategy:**
-
-- Fetches 100 users per page
-- Uses cursor-based pagination with `$gt` (greater than)
-- Sorts by ID for consistent ordering
-- Disables presence data (`presence: false`) for performance
-- Continues until no more users returned
-
-#### 3. Check Against Prisma Database
-
-For each page of Stream users, query Prisma to find active users:
-
-```typescript
-const currentStreamUserIdsOnPage = currentStreamPageUsers.map(
-  (user) => user.id,
-);
-
-const activePrismaUsersOnPage = await prisma.user.findMany({
-  where: {
-    id: { in: currentStreamUserIdsOnPage },
-  },
-  select: { id: true },
-});
-
-const activePrismaUserIdsOnPageSet = new Set(
-  activePrismaUsersOnPage.map((user) => user.id),
-);
-
-console.log(
-  `[Stream Sync Job] Found ${activePrismaUserIdsOnPageSet.size} active Prisma users among the current Stream page.`,
-);
-```
-
-**Query Optimization:**
-
-- Only fetches `id` field (minimal data)
-- Uses `IN` clause for batch lookup
-- Converts to Set for O(1) lookup performance
-
-#### 4. Identify Stale Users
-
-```typescript
-const staleUsersInPage: string[] = [];
-
-for (const streamUserId of currentStreamUserIdsOnPage) {
-  if (!activePrismaUserIdsOnPageSet.has(streamUserId)) {
-    // Apply exclusion rules
-    if (
-      !streamUserId.startsWith("system-") &&
-      !streamUserId.startsWith("recording-egress-") &&
-      !EXCLUDED_USER_IDS.has(streamUserId)
-    ) {
-      staleUsersInPage.push(streamUserId);
-    }
-  }
-}
-
-if (staleUsersInPage.length > 0) {
-  totalStaleUsersIdentified += staleUsersInPage.length;
-  console.log(
-    `[Stream Sync Job] Identified ${staleUsersInPage.length} stale users in this page.`,
-  );
-}
-```
-
-**Stale User Criteria:**
-
-1. User exists in Stream but NOT in Prisma database
-2. User ID does NOT start with `system-`
-3. User ID does NOT start with `recording-egress-`
-4. User ID is NOT in `EXCLUDED_USER_IDS` set
-
-#### 5. Delete Stale Users
-
-```typescript
-if (staleUsersInPage.length > 0) {
-  try {
-    const deleteResponse = await serverStreamClient.deleteUsers(
-      staleUsersInPage,
-      { user: "hard", messages: "hard" },
-    );
-
-    // Check for failed deletions
-    const sdkFailedDeletions = deleteResponse.failed_delete_users || [];
-
-    if (sdkFailedDeletions.length > 0) {
-      const failures = sdkFailedDeletions.map((f) => ({
-        id: f.user_id,
-        error: f.message || "Unknown error",
-      }));
-      allFailedDeletions.push(...failures);
-      console.warn(
-        `[Stream Sync Job] Failed to delete ${failures.length} users in this batch:`,
-        failures,
-      );
-    }
-
-    const successfullyDeletedInBatch =
-      staleUsersInPage.length - sdkFailedDeletions.length;
-    totalStaleUsersDeleted += successfullyDeletedInBatch;
-
-    console.log(
-      `[Stream Sync Job] Deletion task for batch completed. Targeted: ${staleUsersInPage.length}, Successful: ${successfullyDeletedInBatch}, Failed: ${sdkFailedDeletions.length}`,
-    );
-  } catch (error) {
-    console.error(
-      `[Stream Sync Job] Error during batch deletion of Stream users:`,
-      error.message,
-    );
-    const failures = staleUsersInPage.map((id) => ({
-      id,
-      error: error.message || "Batch deletion API call failed",
-    }));
-    allFailedDeletions.push(...failures);
-  }
-}
-```
-
-**Deletion Strategy:**
-
-- **Hard delete users:** Permanently removes user from Stream
-- **Hard delete messages:** Removes all messages from deleted users
-- Batch deletion for efficiency
-- Tracks successful and failed deletions separately
-
-### Performance Characteristics
-
-**Scalability:**
-
-- Processes 100 users per page
-- Memory-efficient (doesn't load all users at once)
-- Can handle thousands of users without issues
-
-**Typical Execution Times:**
-
-| User Count   | Estimated Time |
-| ------------ | -------------- |
-| 100 users    | < 1 minute     |
-| 1,000 users  | 2-3 minutes    |
-| 10,000 users | 5-10 minutes   |
-| 50,000 users | 20-30 minutes  |
-
-**API Calls:**
-
-- 1 call per 100 Stream users (pagination)
-- 1 Prisma query per page
-- 1 deletion call per page (if stale users found)
-
----
-
-## Exclusion Rules
-
-Certain users are protected from deletion to maintain system functionality.
-
-### Pattern-Based Exclusions
-
-**System Users:**
-
-```typescript
-if (!streamUserId.startsWith("system-")) {
-  // User may be deleted
-}
-```
-
-**Examples:**
-
-- `system-notifications`
-- `system-admin`
-- `system-bot`
-
-**Purpose:** These accounts are used for automated messages, system notifications, and internal operations.
-
-**Recording Egress Users:**
-
-```typescript
-if (!streamUserId.startsWith("recording-egress-")) {
-  // User may be deleted
-}
-```
-
-**Examples:**
-
-- `recording-egress-abc123`
-- `recording-egress-session-456`
-
-**Purpose:** Stream creates these accounts automatically for recording and storage operations. Deleting them breaks recording functionality.
-
-### Hardcoded Exclusions
-
-**Location:** `/jobs/stream-sync.ts` (line 23)
-
-```typescript
-const EXCLUDED_USER_IDS = new Set(["system", "teetangh"]);
-```
-
-**Currently Excluded Users:**
-
-1. `system` - Core system account
-2. `teetangh` - Administrator account
-
-**Adding New Exclusions:**
-
-```typescript
-const EXCLUDED_USER_IDS = new Set([
-  "system",
-  "teetangh",
-  "admin",
-  "support-bot",
-  "demo-user",
-]);
-```
-
-**When to Add Exclusions:**
-
-- Critical administrator accounts
-- Demo or showcase accounts
-- Service accounts for integrations
-- Accounts used in automated testing
-- Bot accounts for customer support
-
-### Exclusion Logic Flow
-
-```typescript
-for (const streamUserId of currentStreamUserIdsOnPage) {
-  // Check 1: Does user exist in Prisma?
-  if (!activePrismaUserIdsOnPageSet.has(streamUserId)) {
-    // Check 2: Is it a system user?
-    if (streamUserId.startsWith("system-")) {
-      continue; // Skip deletion
-    }
-
-    // Check 3: Is it a recording egress user?
-    if (streamUserId.startsWith("recording-egress-")) {
-      continue; // Skip deletion
-    }
-
-    // Check 4: Is it in hardcoded exclusions?
-    if (EXCLUDED_USER_IDS.has(streamUserId)) {
-      continue; // Skip deletion
-    }
-
-    // All checks passed - mark for deletion
-    staleUsersInPage.push(streamUserId);
-  }
-}
-```
-
----
-
-## Error Handling
-
-The sync job implements comprehensive error handling to ensure robustness.
-
-### Error Categories
-
-#### 1. Configuration Errors
-
-**Missing Environment Variables:**
-
-```typescript
-if (!process.env.DATABASE_URL) {
-  console.error(
-    "[Stream Sync Script] Critical: DATABASE_URL environment variable is not set.",
-  );
-  process.exit(1);
-}
-
-if (!streamApiKey || !streamApiSecret) {
-  console.error(
-    "[Stream Sync Job] Critical: Stream API Key or Secret is not defined.",
-  );
-  throw new Error("Stream API Key or Secret not configured for sync job.");
-}
-```
-
-**Exit Behavior:**
-
-- Script exits with code `1` (failure)
-- GitHub Actions marks job as failed
-- No partial deletion occurs
-
-#### 2. Batch Deletion Errors
-
-**Entire Batch Fails:**
-
-```typescript
-try {
-  const deleteResponse = await serverStreamClient.deleteUsers(
-    staleUsersInPage,
-    { user: "hard", messages: "hard" },
-  );
-} catch (error) {
-  console.error(
-    `[Stream Sync Job] Error during batch deletion of Stream users:`,
-    error.message,
-  );
-
-  // Mark all users in batch as failed
-  const failures = staleUsersInPage.map((id) => ({
-    id,
-    error: error.message || "Batch deletion API call failed",
-  }));
-  allFailedDeletions.push(...failures);
-}
-```
-
-**Common Causes:**
-
-- Network timeout
-- Stream API rate limiting
-- Invalid API credentials
-- Temporary service outage
-
-**Impact:**
-
-- Failed deletions are tracked
-- Job continues to next page
-- Summary includes all failures
-
-#### 3. Individual Deletion Failures
-
-**Partial Batch Success:**
-
-```typescript
-const sdkFailedDeletions = deleteResponse.failed_delete_users || [];
-
-if (sdkFailedDeletions.length > 0) {
-  const failures = sdkFailedDeletions.map((f) => ({
-    id: f.user_id,
-    error: f.message || "Unknown error",
-  }));
-  allFailedDeletions.push(...failures);
-  console.warn(
-    `[Stream Sync Job] Failed to delete ${failures.length} users in this batch:`,
-    failures,
-  );
-}
-```
-
-**Common Causes:**
-
-- User is channel owner (must transfer ownership first)
-- User has active connections
-- User in protected channel
-- Rate limiting for specific user
-
-**Response Structure:**
-
-```typescript
-interface FailedDeletionFromSDK {
-  user_id: string;
-  message: string;
-}
-```
-
-### Error Reporting
-
-**Summary Report:**
-
-```typescript
-return {
-  totalStreamUsersProcessed: 1247,
-  totalStaleUsersIdentified: 23,
-  totalStaleUsersDeleted: 22,
-  totalFailedDeletions: 1,
-  failedDeletionDetails: [
-    {
-      id: "user-xyz",
-      error: "User is owner of channel 'consulting-room-123'",
-    },
-  ],
-};
-```
-
-**Console Output:**
-
-```
-[Stream Sync Job] Synchronization completed successfully.
---- Summary ---
-Total Stream Users Processed: 1247
-Total Stale Users Identified: 23
-Total Stale Users Deleted:    22
-Total Failed Deletions:       1
-
---- Failed Deletion Details ---
-  User ID: user-xyz, Error: User is owner of channel 'consulting-room-123'
-```
-
-### Exit Codes
-
-**Success (Exit 0):**
-
-- All users processed
-- All deletions successful OR documented failures
-- No fatal errors
-
-**Failure (Exit 1):**
-
-- Missing environment variables
-- Fatal database connection error
-- Stream client initialization failure
-- Unhandled exceptions
-
-**Partial Success:**
-
-```typescript
-if (summary.totalFailedDeletions > 0) {
-  console.warn(
-    "[Stream Sync Script] Process completed with some failed deletions.",
-  );
-  // Optionally, exit with code 2 for partial success
-  // process.exit(2);
-}
-```
-
-### Retry Strategy
-
-**Current Behavior:** No automatic retries
-
-**Recommended Enhancement:**
-
-```typescript
-async function deleteUsersWithRetry(
-  userIds: string[],
-  maxRetries: number = 3,
-): Promise<DeleteUsersResponse> {
-  let lastError;
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`Deletion attempt ${attempt}/${maxRetries}`);
-      return await serverStreamClient.deleteUsers(userIds, {
-        user: "hard",
-        messages: "hard",
-      });
-    } catch (error) {
-      lastError = error;
-      console.warn(`Attempt ${attempt} failed:`, error.message);
-
-      // Exponential backoff
-      if (attempt < maxRetries) {
-        const delay = Math.pow(2, attempt) * 1000;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  }
-
-  throw lastError;
-}
-```
-
----
-
-## Background Sync Flow
-
-The following flowchart illustrates the complete background sync process. Today only the operator-triggered entry runs it, because the scheduled entry is not firing.
+# Stream background recovery and lifecycle
+
+The five-minute ticker in `netlify/functions/cron-tick.mts` selects work from the
+pure `lib/cron/schedule.ts` catalog. PostgreSQL stores domain state, job leases and
+continuation cursors. Stream supplies call, recording and channel facts; R2 owns
+durable recording media. Each job has one domain implementation. Cleanup HTTP
+and staff recovery either execute the short session slice or queue the same
+background adapter used by the ticker.
+
+## Execution and ownership
 
 ```mermaid
-flowchart TD
-    Sched(["Scheduled · Daily 03:00 UTC Actions batch · not firing while Actions is budget-blocked"]) --> CheckEnv{Environment · Variables Set?}
-    Operator(["Operator-triggered · staff Jobs page or /api/admin/system-jobs/run"]) --> CheckEnv
-
-    CheckEnv -->|No| ErrorExit1[Exit with Error Code 1]
-    CheckEnv -->|Yes| InitClient["Initialize Stream Client · timeout: 30s"]
-
-    InitClient --> InitVars["Initialize Variables · - totalProcessed = 0 · - totalStale = 0 · - totalDeleted = 0 · - failedDeletions = empty list"]
-
-    InitVars --> StartLoop{More Stream · Users?}
-
-    StartLoop -->|No| GenerateSummary[Generate Summary Report]
-    StartLoop -->|Yes| FetchPage["Fetch Page of Stream Users · limit: 100, sort by ID"]
-
-    FetchPage --> CheckPage{Users · Returned?}
-    CheckPage -->|No| GenerateSummary
-    CheckPage -->|Yes| UpdateProcessed[totalProcessed += page.length]
-
-    UpdateProcessed --> ExtractIDs[Extract User IDs from Page]
-    ExtractIDs --> QueryPrisma["Query Prisma for Active Users · WHERE id IN ..."]
-
-    QueryPrisma --> CreateSet[Create Set of Active User IDs]
-    CreateSet --> InitStale["Initialize staleUsersInPage as an empty list"]
-
-    InitStale --> LoopUsers[For Each Stream User ID]
-
-    LoopUsers --> CheckPrisma{User in · Prisma?}
-    CheckPrisma -->|Yes| NextUser[Continue to Next User]
-    CheckPrisma -->|No| CheckSystem{Starts with · 'system-'?}
-
-    CheckSystem -->|Yes| NextUser
-    CheckSystem -->|No| CheckRecording{Starts with · 'recording-egress-'?}
-
-    CheckRecording -->|Yes| NextUser
-    CheckRecording -->|No| CheckExcluded{In · EXCLUDED_USER_IDS?}
-
-    CheckExcluded -->|Yes| NextUser
-    CheckExcluded -->|No| AddToStale[Add to staleUsersInPage]
-
-    AddToStale --> NextUser
-    NextUser --> MoreUsers{More Users · in Page?}
-
-    MoreUsers -->|Yes| LoopUsers
-    MoreUsers -->|No| CheckStale{staleUsersInPage · empty?}
-
-    CheckStale -->|Yes| UpdateCursor["Update lastStreamUserId · to last user in page"]
-    CheckStale -->|No| UpdateStaleCount[totalStale += staleUsersInPage.length]
-
-    UpdateStaleCount --> TryDelete{Attempt Batch · Deletion}
-
-    TryDelete -->|Success| CheckFailed{Any Failed · Deletions?}
-    TryDelete -->|Error| LogError[Log Batch Error]
-
-    LogError --> MarkAllFailed["Mark All Users in Batch · as Failed"]
-    MarkAllFailed --> UpdateCursor
-
-    CheckFailed -->|Yes| ExtractFailed["Extract Failed User IDs · and Error Messages"]
-    CheckFailed -->|No| UpdateDeleted["totalDeleted += · staleUsersInPage.length"]
-
-    ExtractFailed --> AddFailures[Add to failedDeletions Array]
-    AddFailures --> CalcSuccess["Calculate Successful Deletions · = total - failed"]
-    CalcSuccess --> UpdateDeletedPartial[totalDeleted += successful]
-
-    UpdateDeletedPartial --> LogResults[Log Deletion Results]
-    UpdateDeleted --> LogResults
-
-    LogResults --> UpdateCursor
-    UpdateCursor --> StartLoop
-
-    GenerateSummary --> LogSummary["Log Summary to Console · - Total Processed · - Total Stale · - Total Deleted · - Total Failed"]
-
-    LogSummary --> CheckFailures{Any Failed · Deletions?}
-
-    CheckFailures -->|Yes| LogFailureDetails["Log Failed Deletion Details · User IDs and Errors"]
-    CheckFailures -->|No| SuccessExit["Exit with Code 0 · Success"]
-
-    LogFailureDetails --> WarnPartial["Warn: Partial Success"]
-    WarnPartial --> SuccessExit
-
-    ErrorExit1 --> End([End])
-    SuccessExit --> End
-
-    style Start fill:#e1f5ff
-    style End fill:#e1f5ff
-    style ErrorExit1 fill:#ffebee
-    style SuccessExit fill:#e8f5e9
-    style CheckEnv fill:#fff9c4
-    style CheckPage fill:#fff9c4
-    style CheckPrisma fill:#fff9c4
-    style CheckSystem fill:#fff9c4
-    style CheckRecording fill:#fff9c4
-    style CheckExcluded fill:#fff9c4
-    style CheckStale fill:#fff9c4
-    style TryDelete fill:#fff9c4
-    style CheckFailed fill:#fff9c4
-    style CheckFailures fill:#fff9c4
-    style MoreUsers fill:#fff9c4
-    style StartLoop fill:#fff9c4
+flowchart LR
+    Clock[Five-minute Netlify ticker] --> Gate[Active host and calendar gates]
+    Gate --> Session[Short session HTTP sweep]
+    Gate --> Admission[202 background admission]
+    Admission --> Copy[One recording copy]
+    Admission --> Daily[Selected daily lifecycle core]
+    Session --> Lease[Postgres job lease]
+    Copy --> Lease
+    Daily --> Lease
+    Lease --> Vendor[Stream / R2 / Supabase]
+    Lease --> History[Owned finish and checkpoint]
+    History --> Health[Environment-scoped completion health]
 ```
 
-### Flow Explanation
-
-**Phase 1: Initialization**
-
-1. GitHub Actions triggers workflow at scheduled time
-2. Environment variables are validated
-3. Stream client is initialized with 30-second timeout
-4. Tracking variables are initialized
-
-**Phase 2: Pagination Loop** 5. Fetch next page of 100 Stream users (sorted by ID) 6. Update total processed count 7. Extract user IDs from current page 8. Query Prisma for active users matching these IDs
-
-**Phase 3: Stale User Identification** 9. For each Stream user ID in page:
-
-- Check if user exists in Prisma
-- Apply system prefix exclusion
-- Apply recording egress exclusion
-- Apply hardcoded exclusions
-- Add to stale list if all checks pass
-
-**Phase 4: Deletion** 10. If stale users found in page: - Attempt batch deletion with hard delete - Handle partial failures (some succeed, some fail) - Handle complete batch failures (all fail) - Update counters and track failures
-
-**Phase 5: Loop Continuation** 11. Update pagination cursor to last user ID 12. Return to step 5 if more users exist
-
-**Phase 6: Completion** 13. Generate comprehensive summary report 14. Log summary to console 15. Log individual failure details if any 16. Exit with appropriate code (0 = success, 1 = failure)
-
----
-
-## Monitoring and Troubleshooting
-
-### Monitoring Best Practices
-
-#### 1. GitHub Actions Logs
-
-**Accessing Logs:**
-
-1. Navigate to your repository on GitHub
-2. Click "Actions" tab
-3. Select "Sync Stale Stream Users" workflow
-4. Click on specific run to view logs
-
-**Key Metrics to Monitor:**
-
-```
-[Stream Sync Job] Total processed so far: 1247
-[Stream Sync Job] Found 1195 active Prisma users among the current Stream page
-[Stream Sync Job] Identified 5 stale users in this page
-[Stream Sync Job] Deletion task for batch completed. Targeted: 5, Successful: 5, Failed: 0
-```
-
-#### 2. Set Up Notifications
-
-**Email Notifications:**
-GitHub Settings > Notifications > Actions > Email notifications for workflow failures
-
-**Slack Integration:**
-
-```yaml
-- name: Notify Slack on Failure
-  if: failure()
-  uses: 8398a7/action-slack@v3
-  with:
-    status: ${{ job.status }}
-    text: "Stream sync job failed!"
-    webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
-```
-
-#### 3. Metrics Dashboard
-
-**Track Over Time:**
-
-- Total users processed per run
-- Stale users identified per run
-- Deletion success rate
-- Failed deletions trend
-
-**Example Tracking:**
-
-```typescript
-// Store metrics in database or monitoring service
-await metrics.record({
-  timestamp: new Date(),
-  totalProcessed: summary.totalStreamUsersProcessed,
-  totalStale: summary.totalStaleUsersIdentified,
-  totalDeleted: summary.totalStaleUsersDeleted,
-  totalFailed: summary.totalFailedDeletions,
-  successRate:
-    (summary.totalStaleUsersDeleted / summary.totalStaleUsersIdentified) * 100,
-});
-```
-
-### Common Issues and Solutions
-
-#### Issue: Sync Job Times Out
-
-**Symptoms:**
-
-- GitHub Actions job exceeds time limit
-- Incomplete processing of users
-
-**Solutions:**
-
-1. **Reduce Page Size:**
-
-   ```typescript
-   const streamPageLimit = 50; // Reduced from 100
-   ```
-
-2. **Increase Timeout:**
-
-   ```yaml
-   jobs:
-     sync_stream_users:
-       timeout-minutes: 60 # Default is 360
-   ```
-
-3. **Split into Multiple Jobs:**
-   ```typescript
-   // Process users in chunks across multiple workflow runs
-   const startFromId = process.env.START_FROM_USER_ID;
-   const maxUsers = 1000;
-   ```
-
-#### Issue: High Failure Rate
-
-**Symptoms:**
-
-- Many users in `failedDeletionDetails`
-- Consistent failure messages
-
-**Solutions:**
-
-1. **Check Error Messages:**
-
-   ```
-   User ID: user-123, Error: User is owner of channel 'room-456'
-   ```
-
-2. **Transfer Channel Ownership:**
-
-   ```typescript
-   // Before running sync, transfer channel ownership
-   await channel.updatePartial({
-     set: {
-       created_by_id: "new-owner-id",
-     },
-   });
-   ```
-
-3. **Implement Pre-deletion Checks:**
-
-   ```typescript
-   // Check if user owns channels before deleting
-   const channels = await serverStreamClient.queryChannels({
-     created_by_id: userId,
-   });
-
-   if (channels.length > 0) {
-     console.warn(`User ${userId} owns ${channels.length} channels`);
-     // Transfer or delete channels first
-   }
-   ```
-
-#### Issue: Missing Environment Variables
-
-**Symptoms:**
-
-- Job fails immediately
-- Error: "DATABASE_URL environment variable is not set"
-
-**Solutions:**
-
-1. **Verify Secrets:**
-   - Go to Repository Settings > Secrets and variables > Actions
-   - Ensure all required secrets are set
-
-2. **Check Secret Names:**
-   - Names are case-sensitive
-   - Must match exactly: `DATABASE_URL`, not `database_url`
-
-3. **Test Locally:**
-
-   ```bash
-   # Load environment variables
-   export DATABASE_URL="postgresql://..."
-   export NEXT_PUBLIC_STREAM_API_KEY="..."
-   export STREAM_API_SECRET="..."
-
-   # Run sync script
-   npm run scripts:stream-sync
-   ```
-
-#### Issue: Database Connection Failures
-
-**Symptoms:**
-
-- Prisma query errors
-- "Can't reach database server" messages
-
-**Solutions:**
-
-1. **Check Connection String:**
-
-   ```typescript
-   console.log("Testing database connection...");
-   await prisma.$connect();
-   console.log("Database connected successfully");
-   ```
-
-2. **Verify IP Allowlist:**
-   - GitHub Actions uses dynamic IPs
-   - Ensure database allows connections from GitHub IP ranges
-   - Consider using connection pooling (PgBouncer)
-
-3. **Check Connection Limits:**
-   - Prisma connection pool size
-   - Database max connections
-   - Close connections properly
-
-#### Issue: Rate Limiting from Stream API
-
-**Symptoms:**
-
-- Error: "Too many requests"
-- 429 HTTP status codes
-
-**Solutions:**
-
-1. **Add Rate Limit Handling:**
-
-   ```typescript
-   async function deleteWithRateLimit(userIds: string[]) {
-     try {
-       return await serverStreamClient.deleteUsers(userIds, {
-         user: "hard",
-         messages: "hard",
-       });
-     } catch (error) {
-       if (error.status === 429) {
-         const retryAfter = error.response?.headers?.["retry-after"] || 60;
-         console.log(`Rate limited. Waiting ${retryAfter}s...`);
-         await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
-         return await serverStreamClient.deleteUsers(userIds, {
-           user: "hard",
-           messages: "hard",
-         });
-       }
-       throw error;
-     }
-   }
-   ```
-
-2. **Reduce Batch Size:**
-
-   ```typescript
-   // Delete in smaller batches
-   const maxBatchSize = 25; // Reduced from 100
-   ```
-
-3. **Add Delays Between Batches:**
-   ```typescript
-   await deleteUsers(staleUsersInPage);
-   await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 second delay
-   ```
-
-### Testing the Sync Job
-
-#### Local Testing
-
-```bash
-# 1. Set up environment variables
-cp .env.example .env.local
-# Edit .env.local with actual credentials
-
-# 2. Run the sync script
-npm run scripts:stream-sync
-
-# 3. Check output
-# Should see summary report at the end
-```
-
-#### Dry Run Mode
-
-**Recommended Enhancement:**
-
-```typescript
-// Add DRY_RUN environment variable
-const DRY_RUN = process.env.DRY_RUN === "true";
-
-if (DRY_RUN) {
-  console.log(
-    `[DRY RUN] Would delete ${staleUsersInPage.length} users:`,
-    staleUsersInPage,
-  );
-  // Don't actually delete
-} else {
-  // Perform actual deletion
-  await serverStreamClient.deleteUsers(staleUsersInPage, {
-    user: "hard",
-    messages: "hard",
-  });
-}
-```
-
-**Usage:**
-
-```bash
-DRY_RUN=true npm run scripts:stream-sync
-```
-
-#### Manual Workflow Testing
-
-1. Go to GitHub Actions
-2. Select "Sync Stale Stream Users"
-3. Click "Run workflow"
-4. Select branch
-5. Monitor execution in real-time
-
-## Orphaned Recording Reconciliation (`reconcile-orphaned-recordings`)
-
-Alongside stale-user pruning, `reconcile-orphaned-recordings` (`scripts/stream/reconcile-orphaned-recordings.ts`, registered in `lib/cron/cleanup-registry.ts` and dispatched via `/api/cleanup/reconcile-orphaned-recordings` and `/api/admin/system-jobs/run`) ensures dropped `call.recording_ready` webhooks or multi-segment egress splits never lose a session recording before Stream's 14-day retention expires.
-
-### Candidate Windows & Two-Pass Recovery
-
-1. **Eligibility Window (`2 hours` to `14 days`):** Scans `Meeting` rows where `recordingStartedAt` is at least `2 hours` old (so active egress uploads are never raced) and within Stream's `14-day` retention horizon.
-2. **Pass 1 — Zero-Row Orphans (`recordings: { none: {} }`):** Prioritizes sessions that have zero persisted `Recording` rows (`take: 200`, ordered oldest-first).
-3. **Pass 2 — Multi-Segment Partial Sessions (`recordings: { some: {} }`):** Spends remaining run budget inspecting recorded meetings that already hold one or more rows so 2-hour egress split segments missed during partial webhook outages are backfilled.
-4. **Retryable Notification Staging:** `RecordingService.syncSessionRecordings` processes each segment via `syncSingleRecordingSegment`, persisting new segments (`READY`, `STREAM_S3`, `streamUrlExpiresAt = end_time + 14 days`) and invoking idempotent `stageAndSendRecordingReadyNotifications` (`recording.ready:<id>`) on both newly persisted and existing rows so prior transient outbox failures self-heal automatically.
-
-```mermaid
-sequenceDiagram
-    participant Cron as Cleanup Registry / Scheduler
-    participant Job as reconcileOrphanedRecordings
-    participant DB as PostgreSQL (Prisma)
-    participant Stream as Stream Video API
-    participant Outbox as Notification Outbox
-
-    Cron->>Job: Dispatch under Postgres cron lock (failMode: "open")
-    Job->>DB: Snapshot Pass 1 (recordings: none) + Pass 2 (recordings: some) within 2h..14d
-    loop Each candidate session
-        Job->>Stream: listRecordings(streamCallId)
-        Stream-->>Job: StreamRecording[]
-        Job->>DB: Persist missing segments (READY, STREAM_S3, 14d expiry)
-        Job->>Outbox: Idempotent stageAndSendRecordingReadyNotifications (new & existing rows)
-    end
-```
-
----
+Background responses acknowledge admission before authentication and execution.
+The ticker accepts only 202 for background targets, records `accepted` separately
+from `ok`, and never treats that admission as completed work. The adapters validate
+the bearer and maintenance state before invoking a core, and throw on server
+failures because Netlify discards background response bodies. The cleanup route
+and staff dispatch use configured HTTPS origins, refuse embedded credentials and
+redirects, and keep the bearer server-side.
+
+The adapters have no independent schedules. All Stream jobs in this document
+have one automatic owner; their former Actions steps, dispatch allowlists and
+failure-summary entries are removed. Other non-money Actions maintenance remains
+budget-blocked. CI/CD build and review workflows are a separate responsibility.
+
+Current background targets are `/.netlify/functions/recording-transfer-background`
+and `/.netlify/functions/stream-maintenance-background?job=<slug>`. Automatic
+background work currently requires Netlify as active cron host. Another host
+needs equivalent worker adapters before taking ownership; leaving Netlify as
+standby alone does not supply those adapters. Keep the standby configuration.
+
+## Cadence and capacity
+
+Daily windows are 00:00–03:00 UTC for retention/orphan recovery, 03:00–06:00
+for wind-down, and 08:00–11:00 for principal/channel lifecycle. Each daily job runs
+three bounded slices. These are dispatch cadences, not a guarantee that a backlog
+has drained. The catalog is shared with documentation and tested over every tick
+of a week and 400 days, including monthly/quarterly collisions; no tick exceeds
+ten targets. Existing Stream membership and control-plane checks remain scheduled.
+
+| Core / entry                                      | UTC slots           | Work bound and continuation                                                                                                                                                                                                                                     |
+| ------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/meetings/reconcile-orphaned-sessions.ts`     | :10/:40             | At most five rooms; stop starting work after six seconds; persist an ID bound across successes, active rooms and failures.                                                                                                                                      |
+| `lib/stream/recording-transfer-service.ts`        | :00/:15/:30/:45     | One stale claim, one eligible copy, at most 100 risk candidates; 12-minute copy deadline.                                                                                                                                                                       |
+| `lib/stream/recording-retention.ts`               | 00:05, 01:05, 02:05 | Default ten lapsed rows, ten due expiries, ten asset cleanups and ten transferred-source deletes; scan at most 25 retention candidates. Separate ID cursors for lapsed, due and source-copy stages. Explicit limits clamp to 1–25.                              |
+| `scripts/stream/reconcile-orphaned-recordings.ts` | 00:25, 01:25, 02:25 | At most 25 meetings aged 2h–14d with a durable recording-start witness, including both zero-row and partial deliveries; five-minute start budget; ID continuation.                                                                                              |
+| `jobs/stream/wind-down-deactivated-orgs.ts`       | 03:55, 04:55, 05:55 | At most two organizations and ten removed memberships with separate ID cursors; related database scans cap at 5,000 plus one sentinel; five-minute start budget through vendor loops; ten recording purges per organization; incomplete markers stay unwritten. |
+| `scripts/stream/stream-sync.ts`                   | 08:50, 09:50, 10:50 | At most five pages of 100 principals; persist the last ID; wrap at the end; preserve the starting cursor on dry runs.                                                                                                                                           |
+| `jobs/stream/expire-event-channels.ts`            | 08:55, 09:55, 10:55 | At most 25 event appointments plus shared collaborator channels and ten DM channels per slice; separate appointment-ID and DM-channel continuation.                                                                                                             |
+
+ID bounds use `id > checkpoint`, so deleting the last processed row does not break
+continuation. A finished failed slice can still save its progress. Retried rows
+are revisited after wrap, while permanent failures cannot pin the same prefix.
+Unstarted recording-recovery rows remain ahead of the next checkpoint. Renewal
+resolution stops on its time/hop bound rather than treating an incomplete chain
+as proof of expiry. A full retention scan exposes its checkpoint and warning;
+monitor age and backlog independently of successful slice completion.
+
+Channel expiry derives each collaborator channel's lifetime from the latest live
+occurrence across its whole plan, including future-only event appointments. A
+page-local maximum is insufficient. Event freeze stamps do not prove that a
+shared collaborator channel was frozen: its bounded idempotent freeze is retried
+independently, including after an earlier collaborator freeze failed. DM dormancy uses the latest booking across
+its funding context. The DM discovery scans cap at 5,000 consultations and 5,000
+subscriptions; deletion is withheld and the run fails if either input is
+truncated, because incomplete aggregation can misclassify an active relationship.
+This safety ceiling needs a separately reviewed discovery repair before higher
+volumes; increasing vendor work is not a safe workaround. Freeze calls remain
+paced and reversible. Bulk channel/user deletion acknowledges asynchronous tasks;
+accepted requests are not proof of physical deletion.
+
+## Failure and concurrency rules
+
+Every migrated core acquires a fail-closed 15-minute PostgreSQL lease. A missing
+lease delegate or database outage prevents work. Netlify's documented background
+ceiling is 15 minutes, distinct from the ticker's 30-second ceiling. The worker's
+cooperative start budgets reserve room for an in-flight operation and cleanup;
+a deadline does not undo a request already accepted by a vendor. Leases exclude
+concurrent executions of the same job, while row fences protect different jobs
+that touch the same recording. They do not provide exactly-once delivery.
+
+- Session end and presence closure share one transaction using its `tx` client.
+  Conditional meeting writes protect a concurrently extended or ended room.
+- Copy claims consume an attempt immediately. A stale reclaim keeps that attempt;
+  publication and release require the exact claim timestamp and attempt. Attempt
+  keys prevent a late loser from deleting another worker's published object.
+- Retention skips TRANSFERRING rows and preserves published/purchased exemptions.
+  A lapsed recent source expires only on confirmed absence; provider failure
+  leaves it READY. Expired asset pointers remain durable retry obligations.
+- Organization wind-down claims EXPIRED with status, asset identity and purchase
+  guards before vendor deletion. A lost claim performs no deletion and withholds
+  completion. Failed known-pointer cleanup stays retryable. Active copies and a
+  full purge slice withhold the retention-complete marker. Organization/channel
+  scan failures cannot be hidden by a later empty recording scan.
+- Dormancy never unfreezes an already-deactivated organization's DM. If wind-down
+  commits during an unfreeze, the post-write organization read re-freezes it and
+  retains a frozen ledger. These compensations address overlapping effects;
+  status reads do not atomically transact with Stream.
+- Confirmed Stream 404/code 16 on an individual lazy channel is absence, without
+  a false frozen stamp. Authentication, quota, transport and server failures stay
+  failed and retain bounded diagnostics. One invocation reporter aggregates
+  failures, including those caught by shared helpers.
+
+Wind-down's vendor pager still has Stream's offset ceiling (up to 1,020 channels).
+Frozen messaging prefixes leave its filter, permitting later progress; unchanged
+non-messaging prefixes or persistent failures can still conceal the tail. Such
+scans remain failed and cannot write completion markers. This is a documented
+scale limitation, not proof of full tenant cleanup. See
+[channel lifecycle](./17-channel-lifecycle.md#organisation-wind-down-completion).
+Removed-member retries retain their removal cutoff and skip rejoined memberships.
+The user-sync job exempts support/system principals, soft-deletes absent database
+users and requests hard deletion for erased users; it has no additional 30-day
+grace rule. Its result reports accepted deletion requests and task IDs, rather
+than claiming asynchronous hard-delete completion. Dedicated erasure obligations
+remain owned by the existing erasure/revocation retry flow.
+
+## Completion, alarms and operations
+
+`/api/health/jobs` requires successful owned COMPLETED executions scoped to the
+server environment: 45 minutes for transfer, 90 minutes for orphaned sessions,
+27 hours for each daily lifecycle capability. A 202 or another job's heartbeat
+cannot satisfy one capability's requirement. A successful bounded slice is still
+not evidence of complete vendor cleanup or acceptable backlog age.
+
+The recording-risk sample selects only future-expiring READY/STREAM_S3 rows that
+expire within 72 hours or have consumed at least three attempts. It selects at
+most 100 rows and conditionally claims each alert for six hours using
+`transferFailureAlertedAt`. The claim preserves `updatedAt` to avoid changing
+copy retry timing. Only won claims enter the aggregate Sentry event. Expired rows
+stop re-alerting. A crash after the stamp and before capture can defer a message
+until the cooldown ends; a database stamp is not a telemetry delivery receipt.
+Missing expiry metadata remains excluded and needs source classification, not
+inferred fixture timestamps.
+
+Before release, verify the published function manifests and native loading, active
+host selection, authorized cohort execution, environment-scoped history, accepted
+telemetry and real row/object progress. Temporary packaging with symlinked
+`node_modules` is not deployed-artifact proof. The read-only investigation found
+many absent lazy event channels, but retained October failure logs do not prove
+that every historical failure had that cause. Keep the bounded error sample for
+operator diagnosis. Do not run destructive expiry probes against shared fixtures.
+
+Use the staff system-jobs door or the authenticated cleanup route for recovery.
+Inspect history before retrying an ambiguous admission timeout. For recording
+transfer gates and manual recovery of failed unpublished attempt-object cleanup,
+follow [the worker runbook](./recording-background-worker.md). No SQL or Redis
+state apply is part of this code migration.
+
+Persisted lifecycle checkpoints are validated before vendor work. Malformed JSON
+or invalid cursor fields fail the run and require inspection of the execution
+trail. Restore a reviewed valid checkpoint or authorize a bounded restart through
+the database recovery procedure; never reinterpret arbitrary JSON as an
+organization ID. The deployed baseline did not write lifecycle cursors, so no
+legacy cursor-format fallback is required by this migration.
 
 ## Deprecated & Superseded Approaches
 
-- **Bespoke Redis cron locks without execution heartbeats:** Background sync jobs previously managed ad-hoc Redis keys directly and produced no `SystemJobExecution` rows. All background jobs now run through `withCronLock` (`lib/cron/with-cron-lock.ts`) and register in `CLEANUP_REGISTRY` (`lib/cron/cleanup-registry.ts`).
-- **Unpaced Bulk User/Channel Mutations:** Superseded by 100-item batching with `RATE_LIMIT_DELAY_MS = 10_000` delays keeping Stream operations well inside `DeleteUser: 60/min` and `UpdateUsers: 300/min`.
-- **Zero-row-only orphan reconciliation:** Early reconciliation sweeps filtered exclusively on `recordings: { none: {} }`, missing multi-segment calls (> 2 hours) where segment 1 arrived via webhook but segment 2 dropped. Pre-snapshotting `recordings: { some: {} }` before Pass 1 mutates rows closes multi-segment gaps without double-scanning repaired sessions.
-- **Skipping ready notifications on already-persisted sync rows:** Previously, if `stageAndSendRecordingReadyNotifications` failed transiently after `Recording` row creation, subsequent sync runs skipped notification staging altogether once `existingRecording` existed in Postgres. Re-running idempotent outbox staging on existing rows guarantees eventual attendee notification delivery.
-- **Unbounded 3-layer cron script wrappers:** Standalone wrapper hierarchies duplicating scheduler dispatch across multiple script directories were superseded by direct registration in `lib/cron/cleanup-registry.ts`.
-
----
-
-## Related Documentation
-
-- [User Management](./07-user-management.md)
-- [Token Management](./08-token-management.md)
-- [API Endpoints](./10-api-endpoints.md)
-- [Stream Recording & Webhooks](./13-recording-webhooks.md)
+The Stream jobs previously depended on Actions scheduling; exhausted Actions
+budget stopped their automatic execution. The ticker now owns their cadences.
+The migrated wrapper scripts and the old `scripts:stream-sync` command are
+removed; use the registered recovery doors. The daily cores no longer belong in
+short synchronous cleanup/admin requests. Recording transfer admission was
+previously indistinguishable from completion, and its risk alarm repeated every
+15 minutes for expired sources; queue/completion separation and conditional
+six-hour alert claims replace that behavior. Page-local collaborator lifetimes
+and delete-before-claim organization recording purges are superseded by the
+whole-plan read and claim-first cleanup described above.

@@ -15,6 +15,7 @@ jest.mock("next/server", () => ({
   }),
 }));
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => mockCaptureException(...args),
   captureMessage: jest.fn(),

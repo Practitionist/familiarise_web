@@ -2,10 +2,15 @@ import prisma from "@/lib/prisma";
 import {
   getStreamVideoClient,
   isStreamConfigured,
+  isExpectedStreamError,
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
-import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { withCronLock, readJobCheckpoint } from "@/lib/cron/with-cron-lock";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
 import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 import { closeSegmentPresences } from "@/lib/meetings/segment-presence";
@@ -17,12 +22,28 @@ export interface ReconciliationResult {
   errors: number;
   success: boolean;
   details: string[];
+  checkpoint: string | null;
+  hasMore: boolean;
 }
 
-/** Reconciles orphaned Meeting rows whose occurrence ended over 1 hour ago, ordered oldest-first. */
-export async function reconcileOrphanedSessions(): Promise<ReconciliationResult> {
-  return withCronLock("reconcile-orphaned-sessions", { failMode: "open" }, () =>
-    reconcileOrphanedSessionsUnlocked(),
+/** Reconcile a bounded rotating slice of rooms whose booked end passed over an hour ago. */
+export async function reconcileOrphanedSessions(
+  options: { limit?: number } = {},
+): Promise<ReconciliationResult> {
+  return withCronLock(
+    "reconcile-orphaned-sessions",
+    { failMode: "closed" },
+    async () => {
+      const failures = createRunFailureReporter("stream");
+      try {
+        return await reconcileOrphanedSessionsUnlocked(
+          options.limit ?? BATCH_SIZE,
+          failures,
+        );
+      } finally {
+        failures.flush();
+      }
+    },
   );
 }
 
@@ -38,26 +59,10 @@ interface OrphanedSessionRow {
 const roomEndOf = (session: OrphanedSessionRow) =>
   resolveRoomEndsAt(session.occurrence.endsAt, session.extendedSeconds);
 
-function isStreamCallNotFoundError(err: unknown): boolean {
-  if (typeof err === "object" && err !== null) {
-    const tagged = err as {
-      status?: unknown;
-      statusCode?: unknown;
-      metadata?: { responseCode?: unknown };
-    };
-    const code =
-      tagged.status ?? tagged.statusCode ?? tagged.metadata?.responseCode;
-    if (typeof code === "number") {
-      return code === 404;
-    }
-  }
-  const message = err instanceof Error ? err.message : String(err);
-  return /not[\s_-]*found|404|does not exist/i.test(message);
-}
-
 async function resolveOrphanedSessionEnd(
   session: OrphanedSessionRow,
   result: ReconciliationResult,
+  failures: RunFailureReporter,
 ): Promise<{ endedAt: Date; endedReason: MeetingEndReason } | null> {
   const fallbackEndedAt = roomEndOf(session);
   if (!isStreamConfigured()) {
@@ -71,7 +76,11 @@ async function resolveOrphanedSessionEnd(
       STREAM_CALL_TYPE,
       toCallId(session.streamCallId),
     );
-    const response = await withStreamCircuitBreaker(() => call.get());
+    const response = await withStreamCircuitBreaker(
+      () => call.get(),
+      undefined,
+      failures,
+    );
 
     if (response.call.ended_at) {
       result.reconciled++;
@@ -81,11 +90,7 @@ async function resolveOrphanedSessionEnd(
       };
     }
 
-    const callSession = (
-      response.call as {
-        session?: { ended_at?: string | Date | null; participants?: unknown[] };
-      }
-    ).session;
+    const callSession = response.call.session;
     if (callSession?.ended_at) {
       result.reconciled++;
       return {
@@ -103,7 +108,7 @@ async function resolveOrphanedSessionEnd(
     result.reconciled++;
     return { endedAt: fallbackEndedAt, endedReason: "reconciled_no_end" };
   } catch (streamError) {
-    if (!isStreamCallNotFoundError(streamError)) {
+    if (!isExpectedStreamError(streamError)) {
       throw streamError;
     }
     result.streamNotFound++;
@@ -121,13 +126,14 @@ async function reconcileSingleOrphanedSession(
   session: OrphanedSessionRow,
   result: ReconciliationResult,
   oneHourAgo: Date,
+  failures: RunFailureReporter,
 ): Promise<void> {
   // The query filters on the booked end; an extended room is not orphaned until its room end passes.
   if (roomEndOf(session) >= oneHourAgo) return;
   result.processed++;
 
   try {
-    const resolved = await resolveOrphanedSessionEnd(session, result);
+    const resolved = await resolveOrphanedSessionEnd(session, result, failures);
     if (!resolved) return;
     const { endedAt, endedReason } = resolved;
 
@@ -148,11 +154,7 @@ async function reconcileSingleOrphanedSession(
       }
     };
 
-    if (typeof prisma.$transaction === "function") {
-      await prisma.$transaction((tx) => closeMeetingAndPresence(tx));
-    } else {
-      await closeMeetingAndPresence(prisma);
-    }
+    await prisma.$transaction((tx) => closeMeetingAndPresence(tx));
 
     result.details.push(
       `Session ${session.id} (call: ${session.streamCallId}): ${endedReason}`,
@@ -169,10 +171,15 @@ async function reconcileSingleOrphanedSession(
   }
 }
 
-export const BATCH_SIZE = 100;
-export const MAX_BATCH_PAGES = 10;
+export const BATCH_SIZE = 5;
+// Reserve the video client's 15-second request timeout and transactional close under the HTTP ceiling.
+const START_BUDGET_MS = 6_000;
 
-async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult> {
+async function reconcileOrphanedSessionsUnlocked(
+  limit: number,
+  failures: RunFailureReporter,
+): Promise<ReconciliationResult> {
+  const stopStartingAt = Date.now() + START_BUDGET_MS;
   const result: ReconciliationResult = {
     processed: 0,
     reconciled: 0,
@@ -180,53 +187,43 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
     errors: 0,
     success: true,
     details: [],
+    checkpoint: await readJobCheckpoint("reconcile-orphaned-sessions"),
+    hasMore: false,
   };
-
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-  let lastCursorId: string | null = null;
-
-  for (let page = 0; page < MAX_BATCH_PAGES; page++) {
-    const orphanedSessions: OrphanedSessionRow[] =
-      await prisma.meeting.findMany({
-        where: {
-          endedAt: null,
-          occurrence: {
-            endsAt: { lt: oneHourAgo },
-          },
-        },
-        include: {
-          occurrence: true,
-        },
-        orderBy: [{ occurrence: { endsAt: "asc" } }, { id: "asc" }],
-        take: BATCH_SIZE,
-        ...(lastCursorId ? { cursor: { id: lastCursorId }, skip: 1 } : {}),
-      });
-
-    if (orphanedSessions.length === 0) {
-      if (page === 0) {
-        result.details.push("No orphaned sessions found");
-      }
-      break;
-    }
-
-    console.log(
-      `[reconcile-orphaned-sessions] Page ${page + 1}: found ${orphanedSessions.length} orphaned sessions`,
-    );
-
-    await orphanedSessions.reduce<Promise<void>>(
-      (chain, session) =>
-        chain.then(() =>
-          reconcileSingleOrphanedSession(session, result, oneHourAgo),
-        ),
-      Promise.resolve(),
-    );
-
-    if (orphanedSessions.length < BATCH_SIZE) {
-      break;
-    }
-
-    lastCursorId = orphanedSessions[orphanedSessions.length - 1].id;
+  const take = Math.min(Math.max(Math.trunc(limit), 1), BATCH_SIZE);
+  const load = (after: string | null) =>
+    prisma.meeting.findMany({
+      where: {
+        endedAt: null,
+        occurrence: { endsAt: { lt: oneHourAgo } },
+        ...(after ? { id: { gt: after } } : {}),
+      },
+      select: {
+        id: true,
+        streamCallId: true,
+        extendedSeconds: true,
+        occurrence: { select: { endsAt: true } },
+      },
+      orderBy: { id: "asc" },
+      take,
+    });
+  let rows = await load(result.checkpoint);
+  if (rows.length === 0 && result.checkpoint) {
+    result.checkpoint = null;
+    rows = await load(null);
   }
-
+  result.hasMore = rows.length === take;
+  let examined = 0;
+  for (const session of rows) {
+    if (Date.now() >= stopStartingAt) {
+      result.hasMore = true;
+      break;
+    }
+    result.checkpoint = session.id;
+    examined++;
+    await reconcileSingleOrphanedSession(session, result, oneHourAgo, failures);
+  }
+  if (examined === rows.length && rows.length < take) result.checkpoint = null;
   return result;
 }

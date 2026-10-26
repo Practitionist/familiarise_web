@@ -3,6 +3,7 @@
  */
 
 import redis from "@/lib/redis";
+import { z } from "zod";
 import { REDIS_KEYS } from "@/lib/maintenance-keys";
 import { flushJobSentry } from "@/lib/observability/job-sentry";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
@@ -26,6 +27,14 @@ export class MaintenanceActiveError extends Error {
     this.name = "MaintenanceActiveError";
     this.jobName = jobName;
     this.phase = phase;
+  }
+}
+
+export class MaintenanceUnavailableError extends Error {
+  readonly httpStatus = 503;
+  constructor() {
+    super("Maintenance state is unreadable; mutations are paused");
+    this.name = "MaintenanceUnavailableError";
   }
 }
 
@@ -54,7 +63,8 @@ export async function readMaintenancePhase(
   }
 
   try {
-    const phase = await redis.get<string>(REDIS_KEYS.PHASE);
+    const raw = await redis.get<string>(REDIS_KEYS.PHASE);
+    const phase = z.enum(["OFF", "DEGRADED", "OFFLINE"]).parse(raw);
     phaseCachedValue = phase;
     phaseCacheHasValue = true;
     phaseCachedAt = now;
@@ -64,7 +74,7 @@ export async function readMaintenancePhase(
     console.warn(
       `[${jobName}] Could not check maintenance state (Redis error: ${
         error instanceof Error ? error.message : String(error)
-      }) — proceeding`,
+      }) — refusing mutation`,
     );
     phaseCachedValue = null;
     phaseCacheHasValue = true;
@@ -102,6 +112,7 @@ function blockingPhaseFor(
 
 export async function abortIfMaintenance(jobName: string): Promise<void> {
   const phase = await readMaintenancePhase(jobName);
+  if (phase === null) throw new MaintenanceUnavailableError();
   const blocking = blockingPhaseFor(phase, jobName);
 
   if (blocking === "OFFLINE") {
@@ -127,6 +138,7 @@ export async function abortIfMaintenance(jobName: string): Promise<void> {
 
 export async function assertNotInMaintenance(jobName: string): Promise<void> {
   const phase = await readMaintenancePhase(jobName);
+  if (phase === null) throw new MaintenanceUnavailableError();
   const blocking = blockingPhaseFor(phase, jobName);
   if (blocking) throw new MaintenanceActiveError(jobName, blocking);
 }

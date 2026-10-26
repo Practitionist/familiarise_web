@@ -1,6 +1,7 @@
 /** @jest-environment node */
 const mockCaptureException = jest.fn();
 const mockCaptureMessage = jest.fn();
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   __esModule: true,
   captureException: (...args: unknown[]) => mockCaptureException(...args),

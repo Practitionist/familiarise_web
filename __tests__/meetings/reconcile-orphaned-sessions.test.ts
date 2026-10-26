@@ -1,156 +1,191 @@
-/**
- * @jest-environment node
- */
-
+/** @jest-environment node */
 const mockMeetingFindMany = jest.fn();
 const mockMeetingUpdateMany = jest.fn();
 const mockPresenceUpdateMany = jest.fn();
 const mockCallGet = jest.fn();
+const mockTransaction = jest.fn();
+let mockCheckpoint: string | null = null;
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     meeting: {
       findMany: (...a: unknown[]) => mockMeetingFindMany(...a),
-      updateMany: (...a: unknown[]) => mockMeetingUpdateMany(...a),
+      updateMany: () => {
+        throw new Error("Global Prisma write inside transaction");
+      },
     },
     meetingPresence: {
-      updateMany: (...a: unknown[]) => mockPresenceUpdateMany(...a),
+      updateMany: () => {
+        throw new Error("Global Prisma write inside transaction");
+      },
     },
+    $transaction: (...a: unknown[]) => mockTransaction(...a),
   },
 }));
-
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  withCronLock: async (
+    _name: string,
+    _options: unknown,
+    run: () => Promise<{ checkpoint: string | null }>,
+  ) => {
+    const result = await run();
+    mockCheckpoint = result.checkpoint;
+    return result;
+  },
+  readJobCheckpoint: async () => mockCheckpoint,
+}));
+jest.mock("../../lib/observability/run-failures", () => ({
+  createRunFailureReporter: () => ({ add: jest.fn(), flush: jest.fn() }),
+}));
 jest.mock("../../lib/stream-client", () => ({
   isStreamConfigured: jest.fn(() => true),
+  isExpectedStreamError: (error: unknown) =>
+    error instanceof Error && error.message === "confirmed missing call",
   withStreamCircuitBreaker: (fn: () => unknown) => fn(),
-  getStreamVideoClient: jest.fn(() => ({
-    video: {
-      call: () => ({
-        get: (...a: unknown[]) => mockCallGet(...a),
-      }),
-    },
-  })),
+  getStreamVideoClient: () => ({
+    video: { call: () => ({ get: (...a: unknown[]) => mockCallGet(...a) }) },
+  }),
 }));
-
 import {
   BATCH_SIZE,
   reconcileOrphanedSessions,
 } from "../../lib/meetings/reconcile-orphaned-sessions";
 
+const endedAt = new Date("2026-10-01T11:02:00Z");
+const meeting = (id: string) => ({
+  id,
+  streamCallId: `call-${id}`,
+  extendedSeconds: 0,
+  occurrence: { endsAt: new Date("2026-10-01T11:00:00Z") },
+});
 beforeEach(() => {
   jest.clearAllMocks();
+  mockCheckpoint = null;
+  mockMeetingFindMany.mockReset();
+  mockCallGet.mockResolvedValue({ call: { ended_at: endedAt.toISOString() } });
+  mockMeetingUpdateMany.mockResolvedValue({ count: 1 });
+  mockPresenceUpdateMany.mockResolvedValue({ count: 2 });
+  mockTransaction.mockImplementation((run) =>
+    run({
+      meeting: { updateMany: mockMeetingUpdateMany },
+      meetingPresence: { updateMany: mockPresenceUpdateMany },
+    }),
+  );
+});
+afterEach(() => {
+  jest.useRealTimers();
 });
 
-describe("reconcileOrphanedSessions", () => {
-  it("queries orphaned meetings oldest-first and closes dangling MeetingPresence rows when stamping endedAt", async () => {
-    const slotStartsAt = new Date("2026-10-01T10:00:00.000Z");
-    const slotEndsAt = new Date("2026-10-01T11:00:00.000Z");
-    const streamEndedAt = new Date("2026-10-01T11:02:00.000Z");
-
-    mockMeetingFindMany.mockResolvedValue([
-      {
-        id: "meeting-orphan-1",
-        streamCallId: "occurrence-slot-1",
-        appointmentOccurrenceId: "slot-1",
-        occurrence: {
-          startsAt: slotStartsAt,
-          endsAt: slotEndsAt,
-          completionStatus: "SCHEDULED",
-        },
-      },
-    ]);
-    mockCallGet.mockResolvedValue({
-      call: {
-        id: "occurrence-slot-1",
-        ended_at: streamEndedAt.toISOString(),
-      },
-    });
-    mockMeetingUpdateMany.mockResolvedValue({ count: 1 });
-    mockPresenceUpdateMany.mockResolvedValue({ count: 2 });
-
-    const result = await reconcileOrphanedSessions();
-
-    expect(mockMeetingFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        orderBy: [{ occurrence: { endsAt: "asc" } }, { id: "asc" }],
-        take: BATCH_SIZE,
-      }),
-    );
-    expect(mockMeetingUpdateMany).toHaveBeenCalledWith({
-      where: { id: "meeting-orphan-1", endedAt: null },
-      data: {
-        endedAt: streamEndedAt,
-        endedReason: "reconciled",
-      },
-    });
-    expect(mockPresenceUpdateMany).toHaveBeenCalledWith({
-      where: {
-        meetingId: "meeting-orphan-1",
-        leftAt: null,
-        OR: [{ streamCallId: "occurrence-slot-1" }, { streamCallId: null }],
-      },
-      data: {
-        leftAt: streamEndedAt,
-        closedByEnd: true,
-      },
-    });
-    expect(result.reconciled).toBe(1);
+it("atomically closes the meeting and its segment presences through the transaction client", async () => {
+  mockMeetingFindMany.mockResolvedValueOnce([meeting("a")]);
+  const result = await reconcileOrphanedSessions();
+  expect(mockTransaction).toHaveBeenCalledTimes(1);
+  expect(mockMeetingFindMany).toHaveBeenCalledWith(
+    expect.objectContaining({ take: BATCH_SIZE, orderBy: { id: "asc" } }),
+  );
+  expect(mockMeetingUpdateMany).toHaveBeenCalledWith({
+    where: { id: "a", endedAt: null },
+    data: { endedAt, endedReason: "reconciled" },
   });
+  expect(mockPresenceUpdateMany).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: expect.objectContaining({
+        meetingId: "a",
+        OR: [{ streamCallId: "call-a" }, { streamCallId: null }],
+      }),
+      data: { leftAt: endedAt, closedByEnd: true },
+    }),
+  );
+  expect(result).toMatchObject({
+    reconciled: 1,
+    checkpoint: null,
+    hasMore: false,
+  });
+});
 
-  it("advances cursor across pages so active or failing rows in page 1 cannot starve page 2", async () => {
-    const slotEndsAt = new Date("2026-10-01T11:00:00.000Z");
-    const streamEndedAt = new Date("2026-10-01T11:05:00.000Z");
-
-    const page1 = Array.from({ length: BATCH_SIZE }, (_, i) => ({
-      id: `meeting-p1-${i + 1}`,
-      streamCallId: `call-p1-${i + 1}`,
-      occurrence: { endsAt: slotEndsAt },
-    }));
-    const page2 = [
-      {
-        id: "meeting-p2-1",
-        streamCallId: "call-p2-1",
-        occurrence: { endsAt: slotEndsAt },
-      },
-    ];
-
-    mockMeetingFindMany
-      .mockResolvedValueOnce(page1)
-      .mockResolvedValueOnce(page2);
-
-    // Every call in page 1 is still active on Stream (skipped without updating endedAt),
-    // while page 2's call has ended and should be reconciled.
-    mockCallGet.mockImplementation(() => {
-      const callCount = mockCallGet.mock.calls.length;
-      if (callCount <= BATCH_SIZE) {
-        return Promise.resolve({
+it("persists rotation past an unchanged active head and reaches the tail on the next invocation", async () => {
+  const head = Array.from({ length: BATCH_SIZE }, (_, i) => meeting(`a${i}`));
+  mockMeetingFindMany
+    .mockResolvedValueOnce(head)
+    .mockResolvedValueOnce([meeting("tail")]);
+  mockCallGet.mockImplementation(async () =>
+    mockCallGet.mock.calls.length <= BATCH_SIZE
+      ? {
           call: {
             ended_at: null,
-            session: { ended_at: null, participants: [{ user_id: "u1" }] },
+            session: { participants: [{ user_id: "host" }] },
           },
-        });
-      }
-      return Promise.resolve({
-        call: {
-          ended_at: streamEndedAt.toISOString(),
-        },
-      });
-    });
-    mockMeetingUpdateMany.mockResolvedValue({ count: 1 });
-    mockPresenceUpdateMany.mockResolvedValue({ count: 1 });
-
-    const result = await reconcileOrphanedSessions();
-
-    expect(mockMeetingFindMany).toHaveBeenCalledTimes(2);
-    expect(mockMeetingFindMany).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        cursor: { id: `meeting-p1-${BATCH_SIZE}` },
-        skip: 1,
-        take: BATCH_SIZE,
-      }),
-    );
-    expect(result.processed).toBe(BATCH_SIZE + 1);
-    expect(result.reconciled).toBe(1);
+        }
+      : { call: { ended_at: endedAt.toISOString() } },
+  );
+  const first = await reconcileOrphanedSessions();
+  const second = await reconcileOrphanedSessions();
+  expect(first).toMatchObject({
+    checkpoint: head.at(-1)?.id,
+    hasMore: true,
+    reconciled: 0,
   });
+  expect(mockMeetingFindMany).toHaveBeenNthCalledWith(
+    2,
+    expect.objectContaining({
+      where: expect.objectContaining({ id: { gt: head.at(-1)?.id } }),
+      take: BATCH_SIZE,
+    }),
+  );
+  expect(second).toMatchObject({ reconciled: 1, checkpoint: null });
+});
+
+it("wraps even if the checkpoint row was deleted and advances past a failed provider read", async () => {
+  mockCheckpoint = "removed-row";
+  mockMeetingFindMany
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce(
+      Array.from({ length: BATCH_SIZE }, (_, i) => meeting(`a${i}`)),
+    );
+  mockCallGet.mockRejectedValueOnce(new Error("provider unavailable"));
+  const result = await reconcileOrphanedSessions();
+  expect(mockMeetingFindMany).toHaveBeenNthCalledWith(
+    2,
+    expect.objectContaining({
+      where: {
+        endedAt: null,
+        occurrence: { endsAt: { lt: expect.any(Date) } },
+      },
+    }),
+  );
+  expect(result).toMatchObject({ success: false, errors: 1, checkpoint: "a4" });
+});
+
+it("stops admitting reads after its short start budget without checkpointing an unstarted row", async () => {
+  jest.useFakeTimers();
+  jest.setSystemTime(new Date("2026-10-25T00:00:00Z"));
+  mockMeetingFindMany.mockResolvedValueOnce([meeting("a"), meeting("b")]);
+  mockCallGet.mockImplementationOnce(async () => {
+    jest.setSystemTime(new Date(Date.now() + 7_000));
+    return { call: { ended_at: endedAt.toISOString() } };
+  });
+  const result = await reconcileOrphanedSessions();
+  expect(mockCallGet).toHaveBeenCalledTimes(1);
+  expect(result).toMatchObject({
+    processed: 1,
+    checkpoint: "a",
+    hasMore: true,
+  });
+});
+
+it("skips an extended live room and never closes presences after losing the meeting CAS", async () => {
+  mockMeetingFindMany.mockResolvedValueOnce([
+    {
+      ...meeting("extended"),
+      occurrence: { endsAt: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+      extendedSeconds: 2 * 60 * 60,
+    },
+    meeting("lost"),
+  ]);
+  mockMeetingUpdateMany.mockResolvedValueOnce({ count: 0 });
+  const result = await reconcileOrphanedSessions();
+  expect(result.processed).toBe(1);
+  expect(mockCallGet).toHaveBeenCalledTimes(1);
+  expect(mockPresenceUpdateMany).not.toHaveBeenCalled();
 });

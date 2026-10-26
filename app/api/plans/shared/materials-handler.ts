@@ -509,6 +509,20 @@ async function discardUnreferencedMaterial(
   }
 }
 
+/** Discards a refused commit's object: only under this plan's folder, never a referenced one. */
+async function discardRefusedMaterial(
+  planType: PlanType,
+  planId: string,
+  storagePath: string,
+): Promise<void> {
+  if (
+    !storagePath.startsWith(`${materialFolder(planType, planId)}/`) ||
+    storagePath.includes("..")
+  )
+    return;
+  await discardUnreferencedMaterial(storagePath);
+}
+
 /** POST: commits an uploaded object as the plan's next material. */
 export function handleUploadMaterial(
   request: Request,
@@ -518,15 +532,16 @@ export function handleUploadMaterial(
   return answerFileRoute(async () => {
     const userId = await requireSessionUser();
     const limited = await applyRateLimit(documentCommitLimiter, userId);
+    // A rate-limited commit keeps its object: the client retries the same path.
     if (limited) return limited;
     const access = await requirePlanManager(userId, planId, config);
     const body = await parseJsonBody(request, MaterialCommitSchema);
-    const stored = await verifyMaterialObject(config.planType, planId, body);
     const whereClause: Prisma.PlanMaterialWhereInput = {
       [config.planIdField]: planId,
     };
 
     try {
+      const stored = await verifyMaterialObject(config.planType, planId, body);
       const outcome = await prisma.$transaction(async (tx) => {
         await lockPlanRowForUpdate(tx, config.planModel, planId);
         // A replay of a commit whose response was lost returns the row the
@@ -575,7 +590,12 @@ export function handleUploadMaterial(
         { status: outcome.created ? 201 : 200 },
       );
     } catch (error) {
-      await discardUnreferencedMaterial(body.storagePath);
+      // A storage timeout does not prove the object is bad; keep it for a retry.
+      const storageUnavailable =
+        error instanceof FileRouteError && error.code === "STORAGE_UNAVAILABLE";
+      if (!storageUnavailable) {
+        await discardRefusedMaterial(config.planType, planId, body.storagePath);
+      }
       throw error;
     }
   }, "plans");

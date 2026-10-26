@@ -9,7 +9,9 @@ last-reviewed: 2026-10-23
 
 # Maintenance gate and recovery for money
 
-Maintenance mode has two blocking phases, and each treats money differently. In **DEGRADED** the site stays readable with a banner, money-moving writes on the routes listed below are refused, and only the jobs in `FINANCIAL_JOB_NAMES` are held. In **OFFLINE** every page and API except a short exempt list answers 503 and every background job is held, because the database may be mid-migration. This page lists exactly which money routes and jobs each phase stops, what stays open on purpose, and the order in which to re-drive money work once maintenance ends. The phase itself lives in Redis (`maintenance:phase`), set through `/api/admin/maintenance`; see [the maintenance architecture](../../maintenance/01-architecture.md).
+Maintenance mode has two blocking phases, and each treats money differently. In **DEGRADED** the site stays readable with a banner, money-moving writes on the routes listed below are refused, and only the jobs in `FINANCIAL_JOB_NAMES` are held. In **OFFLINE** every page and API except a short exempt list answers 503 and every background job is held, because the database may be mid-migration. This page lists exactly which money routes and jobs each phase stops, what stays open on purpose, and the order in which to re-drive money work once maintenance ends. The maintenance window is durable in Postgres and published to the Redis edge cache (`maintenance:phase`) through `/api/admin/maintenance`; see [the maintenance architecture](../../maintenance/01-architecture.md).
+
+Maintenance activation retries reuse the active window's reason, ETA and bypass secret while recording the new audit reason. PATCH requires a validated non-empty reason, including ETA-only changes; that reason supplies both incident and audit text. An omitted ETA preserves the stored value; a supplied ETA is normalized to ISO. OFFLINE recovery completes its database, Redis and chat checks before resolving the incident or changing phase. Stream sessions and channel batches run sequentially across admission checks; parallelism stays within a paced channel batch so later work observes the remaining deadline.
 
 ## What each phase does to money
 
@@ -23,33 +25,31 @@ Webhooks, the health check, the auth routes and the maintenance admin API are ex
 
 ## Who enforces it
 
-| Layer           | What it checks                                                                                                                                                                                                                                           | Where                                                                              |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| The edge gate   | Every request: exempt list, OFFLINE refusal, DEGRADED write patterns, and the fail-closed list when the phase cannot be read. A request carrying the maintenance bypass secret (header `x-maintenance-bypass` or the signed cookie) passes.              | `middleware.ts` (`handleMaintenance`) using `lib/maintenance-edge.ts`              |
-| The job gate    | A cleanup twin refuses with 503 and the `phase` in the body when `assertNotInMaintenance` finds OFFLINE, or DEGRADED for a job named in `FINANCIAL_JOB_NAMES`. The phase is cached for 60 seconds, and an unreadable phase lets the job run (fail open). | `lib/cron/cleanup-route.ts`, `lib/maintenance-cron.ts`                             |
-| The door gate   | The support case doors, the support refund approval and the staff platform cancel call `assertMoneyDoorsOpen`, which refuses in DEGRADED, OFFLINE and when the phase cannot be read.                                                                     | `lib/backoffice/maintenance-gate.ts`                                               |
-| In-route checks | The console runner for the four reconcile jobs and the system-jobs runner read the phase themselves and refuse money jobs in DEGRADED and OFFLINE.                                                                                                       | `app/api/admin/reconcile/[job]/route.ts`, `app/api/admin/system-jobs/run/route.ts` |
+| Layer           | What it checks                                                                                                                                                                                                                                              | Where                                                                              |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| The edge gate   | Every request: exempt list, OFFLINE refusal, DEGRADED write patterns, and the fail-closed list when the phase cannot be read. A request carrying the maintenance bypass secret (header `x-maintenance-bypass` or the signed cookie) passes.                 | `middleware.ts` (`handleMaintenance`) using `lib/maintenance-edge.ts`              |
+| The job gate    | A cleanup twin refuses with 503 and the `phase` in the body when `assertNotInMaintenance` finds OFFLINE, or DEGRADED for a job named in `FINANCIAL_JOB_NAMES`. The phase is cached for 60 seconds; an unreadable or missing phase refuses the job with 503. | `lib/cron/cleanup-route.ts`, `lib/maintenance-cron.ts`                             |
+| The door gate   | The support case doors, the support refund approval and the staff platform cancel call `assertMoneyDoorsOpen`, which refuses in DEGRADED, OFFLINE and when the phase cannot be read.                                                                        | `lib/backoffice/maintenance-gate.ts`                                               |
+| In-route checks | The console runner for the four reconcile jobs and the system-jobs runner read the phase themselves and refuse money jobs in DEGRADED and OFFLINE.                                                                                                          | `app/api/admin/reconcile/[job]/route.ts`, `app/api/admin/system-jobs/run/route.ts` |
 
 `FINANCIAL_JOB_NAMES` (`lib/cron/financial-jobs.ts`) deliberately leaves out `sweep-stuck-webhook-events`, `reconcile-orphaned-confirmations` and `sweep-orphaned-topup-captures`, which only re-drive webhooks DEGRADED already lets through. It includes `sweep-abandoned-overage-charges`, which restores carved overage bases, so that sweep is held in DEGRADED. It leaves out `abandoned-org-top-ups`, which runs in DEGRADED; a captured top-up it finds is confirmed through `confirmTopUp`, which claims the pending row and posts under the unique `topup:<providerOrderId>` key.
 
-The edge gate reads the phase through a cache. A write always awaits the cached read, which is good for up to 180 seconds, so a phase change can take up to three minutes to reach a warm instance. A failed read serves the last confirmed state for up to 15 minutes, and only a cold instance with no confirmed state reports the phase as unreadable.
+The edge gate reads the phase through a cache. A write always awaits the cached read, which is good for up to 180 seconds, so a phase change can take up to three minutes to reach a warm instance. A failed refresh may preserve the last confirmed page presentation for up to 15 minutes, but marks it unreadable and denies non-exempt mutations. Failure responses are cached briefly before retrying. A cached successful phase is not an instantaneous cross-host barrier; in-flight work is not cancelled.
 
-## Fail-closed versus open when the phase is unreadable
+## Unreadable maintenance state
 
-When Redis cannot be read and there is no recent confirmed state, the gate marks the state `unreadable`. The routes in `FAIL_CLOSED_WHEN_UNREADABLE` then answer 503 with code `MAINTENANCE_STATE_UNREADABLE` and a `Retry-After` of 30 seconds, unless the request carries the bypass. That list holds the buyer checkout paths and the few admin and organisation doors that already need Redis for their own locks (shown in the third column below), so failing them closed costs no extra availability.
-
-The other admin money doors (organisation payout approve, hold and release; organisation invoice writes; the billing-account credit limit and overage settle; earnings hold and release; dispute updates; payout-account unfreeze; ledger reconcile; referral credits; class-series refund doors) are deliberately **not** on that list. The owner's decision is that an unreadable Redis must not lock operators out of the console, so those doors stay open when the phase is unreadable. They are still protected by the shell's checks: a required reason, one ops-log row, the second-admin approval above ₹25,000 where the door is priced, and a fresh step-up session on every one of them except earnings hold and release, dispute updates, referral credits and the class-series doors (see [admin money doors](02-admin-money-doors.md)). The doors that call `assertMoneyDoorsOpen` do fail closed on an unreadable phase.
+A missing, malformed or unreachable Redis phase is unknown. Every non-exempt mutation answers 503 with `MAINTENANCE_STATE_UNREADABLE` and `Retry-After: 30`, unless an authorized maintenance bypass applies. This includes the admin money writes; there is no separate unreadable-state allowlist. Webhooks, auth, health and maintenance control retain their explicit exemptions. Guarded cron jobs also refuse unknown state, without claiming a healthy maintenance hold. Restore readable state through the authorized control procedure before retrying writes.
 
 ## Which routes DEGRADED blocks
 
-The tables below were generated from `lib/maintenance-edge.ts`. A script reads the `WRITE_BLOCKED_IN_DEGRADED`, `FAIL_CLOSED_WHEN_UNREADABLE` and `EXEMPT_PREFIXES` arrays, then confirms each pattern with the module's own `isWriteBlockedInDegraded`, `isFailClosedWhenUnreadable` and `isMaintenanceExempt` functions so a pattern that does not behave as listed stops the script. It groups the patterns by path prefix. A `*` segment matches any one non-empty segment. Reads (`GET`, `HEAD`, `OPTIONS`) pass, except `GET /api/checkout/verify?sync=true`, which drives a capture and is blocked like a write. Re-run the script after any change to those arrays instead of editing the rows.
+The tables below describe the money patterns in `WRITE_BLOCKED_IN_DEGRADED`. Validate them against `isWriteBlockedInDegraded`, `isFailClosedWhenUnreadable` and `isMaintenanceExempt` in `lib/maintenance-edge.ts` after changing admission. A `*` matches one non-empty segment. Reads pass, except `GET /api/checkout/verify?sync=true`, which can confirm a capture. All listed non-exempt writes fail closed when maintenance state is unreadable.
 
 #### Buyer checkout, payment recovery and overage
 
 | Route pattern (writes only)       | Blocked in DEGRADED | Closed when the phase is unreadable |
 | --------------------------------- | ------------------- | ----------------------------------- |
 | `/api/checkout`                   | yes                 | yes                                 |
-| `/api/payments/disputes`          | yes                 | no                                  |
+| `/api/payments/disputes`          | yes                 | yes                                 |
 | `/api/consultant/payouts/instant` | yes                 | yes                                 |
 | `/api/payments/*/recover`         | yes                 | yes                                 |
 | `/api/recordings/*/purchase`      | yes                 | yes                                 |
@@ -61,23 +61,23 @@ The tables below were generated from `lib/maintenance-edge.ts`. A script reads t
 | -------------------------------------------- | ------------------- | ----------------------------------- |
 | `/api/admin/payouts`                         | yes                 | yes                                 |
 | `/api/admin/refunds`                         | yes                 | yes                                 |
-| `/api/admin/ops-proposals`                   | yes                 | no                                  |
-| `/api/admin/tds`                             | yes                 | no                                  |
-| `/api/admin/billing-accounts`                | yes                 | no                                  |
-| `/api/admin/org-payouts`                     | yes                 | no                                  |
-| `/api/admin/earnings`                        | yes                 | no                                  |
-| `/api/admin/disputes`                        | yes                 | no                                  |
-| `/api/admin/payout-accounts`                 | yes                 | no                                  |
-| `/api/admin/reconcile-ledgers`               | yes                 | no                                  |
-| `/api/admin/referrals/credits`               | yes                 | no                                  |
-| `/api/admin/organizations/*/invoices`        | yes                 | no                                  |
-| `/api/admin/organizations/*/billing-account` | yes                 | no                                  |
-| `/api/admin/organizations/*/overages`        | yes                 | no                                  |
-| `/api/admin/class-series/*/cancel-series`    | yes                 | no                                  |
-| `/api/admin/class-series/*/cancel-session`   | yes                 | no                                  |
-| `/api/admin/class-series/*/make-up`          | yes                 | no                                  |
-| `/api/admin/class-series/*/skip-make-up`     | yes                 | no                                  |
-| `/api/admin/class-series/sweeps`             | yes                 | no                                  |
+| `/api/admin/ops-proposals`                   | yes                 | yes                                 |
+| `/api/admin/tds`                             | yes                 | yes                                 |
+| `/api/admin/billing-accounts`                | yes                 | yes                                 |
+| `/api/admin/org-payouts`                     | yes                 | yes                                 |
+| `/api/admin/earnings`                        | yes                 | yes                                 |
+| `/api/admin/disputes`                        | yes                 | yes                                 |
+| `/api/admin/payout-accounts`                 | yes                 | yes                                 |
+| `/api/admin/reconcile-ledgers`               | yes                 | yes                                 |
+| `/api/admin/referrals/credits`               | yes                 | yes                                 |
+| `/api/admin/organizations/*/invoices`        | yes                 | yes                                 |
+| `/api/admin/organizations/*/billing-account` | yes                 | yes                                 |
+| `/api/admin/organizations/*/overages`        | yes                 | yes                                 |
+| `/api/admin/class-series/*/cancel-series`    | yes                 | yes                                 |
+| `/api/admin/class-series/*/cancel-session`   | yes                 | yes                                 |
+| `/api/admin/class-series/*/make-up`          | yes                 | yes                                 |
+| `/api/admin/class-series/*/skip-make-up`     | yes                 | yes                                 |
+| `/api/admin/class-series/sweeps`             | yes                 | yes                                 |
 
 #### Organisation money paths
 
@@ -85,12 +85,12 @@ The tables below were generated from `lib/maintenance-edge.ts`. A script reads t
 | ------------------------------------------------------ | ------------------- | ----------------------------------- |
 | `/api/organizations/*/billing-account/wallet/top-ups`  | yes                 | yes                                 |
 | `/api/organizations/*/billing-account/invoices`        | yes                 | yes                                 |
-| `/api/organizations/*/billing-account/purchase-orders` | yes                 | no                                  |
-| `/api/organizations/*/programs`                        | yes                 | no                                  |
-| `/api/organizations/*/contracts`                       | yes                 | no                                  |
-| `/api/organizations/*/rate-cards`                      | yes                 | no                                  |
+| `/api/organizations/*/billing-account/purchase-orders` | yes                 | yes                                 |
+| `/api/organizations/*/programs`                        | yes                 | yes                                 |
+| `/api/organizations/*/contracts`                       | yes                 | yes                                 |
+| `/api/organizations/*/rate-cards`                      | yes                 | yes                                 |
 | `/api/organizations/*/payouts`                         | yes                 | yes                                 |
-| `/api/organizations/*/payout-account`                  | yes                 | no                                  |
+| `/api/organizations/*/payout-account`                  | yes                 | yes                                 |
 
 The remaining 31 blocked patterns are booking, scheduling, meeting, onboarding and membership writes. Several of them (cancel, reschedule, the booking writes, trials, seat removal) can end in a refund or a charge, so DEGRADED blocks them too; the booking documents own their behaviour: `/api/appointments/*/cancel`, `/api/appointments/*/reschedule`, `/api/appointments/*/documents`, `/api/appointments/*/feedback`, `/api/bookings/consultations`, `/api/bookings/subscriptions`, `/api/bookings/webinars`, `/api/bookings/classes`, `/api/bookings/*/allocate`, `/api/bookings/*/abandon`, `/api/trials`, `/api/plans/*/materials`, `/api/stream/meetings`, `/form/onboarding`, `/onboarding/gate`, `/api/verification/documents`, `/api/verification/submit`, `/api/verification/resubmit`, `/api/scheduling/request-for-approval`, `/api/scheduling/availability`, `/api/waitlist`, `/api/referrals`, `/api/collaborations`, `/api/participants`, `/api/meetings/*/join`, `/api/meetings/*/end`, `/api/meetings/*/extend`, `/api/appointments/*/occurrences`, `/api/organizations/*/appointments/*/allocate`, `/api/organizations/*/members`, `/api/organizations/*/invitations`.
 
@@ -100,7 +100,7 @@ Exempt from every maintenance phase: `/api/webhooks/`, `/api/stream/webhooks`, `
 
 ## Re-driving money after maintenance ends
 
-Money jobs that were held resume on their own next slot, and webhook handlers that failed are re-driven by the stuck-event sweep, so nothing needs doing if you can wait for the ticker. To close the gap faster, run the jobs below by hand in this order, each as `POST /api/cleanup/<slug>?limit=10` with `Authorization: Bearer $CRON_SECRET` (or from the admin system-jobs runner). The order follows dependency: first learn what the gateway knows, then repair bookings, then money owed.
+Money jobs that were held resume on their own next slot, and webhook handlers that failed are re-driven by the stuck-event sweep, so nothing needs doing if you can wait for the ticker. To close the gap faster, run the jobs below by hand in this order, after confirming that core implements a bounded execution envelope, using `POST /api/cleanup/<slug>?limit=10` with `Authorization: Bearer $CRON_SECRET` (or from the admin system-jobs runner). The order follows dependency: first learn what the gateway knows, then repair bookings, then money owed.
 
 1. **Confirm the phase is `OFF`** and the health check answers healthy.
 2. **`sweep-stuck-webhook-events`** re-drives every Razorpay, Stream and Novu event that was received but not processed. Also read the Razorpay dashboard's webhook delivery log for the window and note any delivery that failed outright.
@@ -134,3 +134,5 @@ Then read [the money runbooks](05-money-runbooks.md) for any symptom that remain
 1. **"DEGRADED runs cron jobs normally."** Financial jobs are held in DEGRADED through `FINANCIAL_JOB_NAMES`; only non-financial jobs proceed.
 2. **Admin money doors open in DEGRADED.** The org-payout, org-invoice, earnings, dispute, payout-account, ledger-reconcile, referral-credit and class-series doors were once open during DEGRADED; they are now in `WRITE_BLOCKED_IN_DEGRADED`.
 3. **A Stripe dashboard step in recovery.** Razorpay is the only gateway; the recovery checks above are the whole list.
+
+4. **A selected unreadable-state allowlist.** Unknown state now denies every non-exempt mutation, including the admin money doors; stale page presentation cannot authorize a write.

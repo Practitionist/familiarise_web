@@ -1,3 +1,7 @@
+jest.mock("../../lib/novu/service", () => ({
+  notifyMaintenanceEnded: jest.fn(),
+  notifyMaintenanceScheduled: jest.fn(),
+}));
 /**
  * @jest-environment node
  */
@@ -9,6 +13,9 @@
  * `organizationId: null`, so an active per-org row is never the match.
  */
 
+jest.mock("../../lib/backoffice/ops-action-log", () => ({
+  recordOpsAction: jest.fn(),
+}));
 jest.mock("../../lib/redis", () => ({
   __esModule: true,
   default: { set: jest.fn(async () => "OK") },
@@ -23,7 +30,10 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: async (fn: (tx: unknown) => Promise<void>) =>
-      fn({ maintenanceWindow: { findFirst, update, updateMany, create } }),
+      fn({
+        $executeRaw: jest.fn(),
+        maintenanceWindow: { findFirst, update, updateMany, create },
+      }),
   },
 }));
 

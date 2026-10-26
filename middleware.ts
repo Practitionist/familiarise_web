@@ -96,7 +96,11 @@ function handleMaintenance(
 ): MaintenanceGate | null {
   if (
     state.unreadable &&
-    isFailClosedWhenUnreadable(pathname, req.method) &&
+    isFailClosedWhenUnreadable(
+      pathname,
+      req.method,
+      req.nextUrl.searchParams,
+    ) &&
     !validateBypass(req, null)
   ) {
     return {
