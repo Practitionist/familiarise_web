@@ -990,7 +990,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             startedAt,
           });
         },
-        status: (r) => statusFor(r),
+        status: (r) => statusFor(r, r.unapplied > 0),
         failureMessage: "Failed to reconcile invoice payments",
       }),
 

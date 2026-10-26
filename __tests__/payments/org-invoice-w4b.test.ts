@@ -229,6 +229,46 @@ function invoiceWorld(init: {
   return { tx: tx as unknown as Tx, raw: tx, state };
 }
 
+function configureStoredInvoiceOrder(
+  args: {
+    holding?: MockHolding;
+    orderStatus?: string;
+    orderAmountPaise?: number;
+    transactionTx?: Tx;
+  } = {},
+) {
+  const row = {
+    id: "inv-1",
+    status: "ISSUED",
+    invoiceNumber: "N",
+    displayCurrency: "INR",
+    paidAt: null,
+    providerPaymentOrderId: "order_existing",
+    totalPaise: 100_000,
+  };
+  mockPay.findFirst.mockResolvedValue(row);
+  mockPay.findUniqueOrThrow.mockResolvedValue(row);
+  mockFetchOrder.mockResolvedValue({
+    id: "order_existing",
+    amount: args.orderAmountPaise ?? 100_000,
+    currency: "INR",
+    status: args.orderStatus ?? "paid",
+    notes: {
+      type: "invoice_payment",
+      invoiceId: "inv-1",
+      organizationId: "org-1",
+    },
+  });
+  if (args.holding) mockReadHolding.mockResolvedValue(args.holding);
+  if (args.transactionTx) {
+    const tx = args.transactionTx;
+    mockPrisma.$transaction.mockImplementation(
+      async (run: (tx: Tx) => unknown) => run(tx),
+    );
+  }
+  return row;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockPost.mockResolvedValue({ transactionId: "t", created: true });
@@ -592,36 +632,14 @@ describe("/pay", () => {
       status: "ISSUED",
       totalPaise: 100_000,
     });
-    const row = {
-      id: "inv-1",
-      status: "ISSUED",
-      invoiceNumber: "N",
-      displayCurrency: "INR",
-      paidAt: null,
-      providerPaymentOrderId: "order_existing",
-      totalPaise: 100_000,
-    };
-    mockPay.findFirst.mockResolvedValue(row);
-    mockPay.findUniqueOrThrow.mockResolvedValue(row);
-    mockFetchOrder.mockResolvedValue({
-      id: "order_existing",
-      amount: 100_000,
-      currency: "INR",
-      status: "paid",
-      notes: {
-        type: "invoice_payment",
-        invoiceId: "inv-1",
-        organizationId: "org-1",
+    configureStoredInvoiceOrder({
+      holding: {
+        kind: "captured",
+        paymentId: "pay_existing",
+        amountPaise: 100_000,
       },
+      transactionTx: tx,
     });
-    mockReadHolding.mockResolvedValue({
-      kind: "captured",
-      paymentId: "pay_existing",
-      amountPaise: 100_000,
-    });
-    mockPrisma.$transaction.mockImplementation(
-      async (run: (tx: Tx) => unknown) => run(tx),
-    );
 
     const res = await payInvoice(
       new NextRequest("https://x.test/api", { method: "POST" }),
@@ -652,29 +670,9 @@ describe("/pay", () => {
   ] as const)(
     "does not replace a gateway-paid order with an inconclusive %s payment read",
     async (_name, holding) => {
-      const row = {
-        id: "inv-1",
-        status: "ISSUED",
-        invoiceNumber: "N",
-        displayCurrency: "INR",
-        paidAt: null,
-        providerPaymentOrderId: "order_existing",
-        totalPaise: 100_000,
-      };
-      mockPay.findFirst.mockResolvedValue(row);
-      mockPay.findUniqueOrThrow.mockResolvedValue(row);
-      mockFetchOrder.mockResolvedValue({
-        id: "order_existing",
-        amount: 100_000,
-        currency: "INR",
-        status: "paid",
-        notes: {
-          type: "invoice_payment",
-          invoiceId: "inv-1",
-          organizationId: "org-1",
-        },
+      configureStoredInvoiceOrder({
+        holding,
       });
-      mockReadHolding.mockResolvedValue(holding);
 
       const res = await payInvoice(
         new NextRequest("https://x.test/api", { method: "POST" }),
@@ -697,32 +695,12 @@ describe("/pay", () => {
       status: "ISSUED",
       totalPaise: 100_000,
     });
-    const row = {
-      id: "inv-1",
-      status: "ISSUED",
-      invoiceNumber: "N",
-      displayCurrency: "INR",
-      paidAt: null,
-      providerPaymentOrderId: "order_existing",
-      totalPaise: 100_000,
-    };
-    mockPay.findFirst.mockResolvedValue(row);
-    mockPay.findUniqueOrThrow.mockResolvedValue(row);
-    mockFetchOrder.mockResolvedValue({
-      id: "order_existing",
-      amount: 100_000,
-      currency: "INR",
-      status: "paid",
-      notes: {
-        type: "invoice_payment",
-        invoiceId: "inv-1",
-        organizationId: "org-1",
+    configureStoredInvoiceOrder({
+      holding: {
+        kind: "captured",
+        paymentId: "pay_existing",
+        amountPaise: 100_000,
       },
-    });
-    mockReadHolding.mockResolvedValue({
-      kind: "captured",
-      paymentId: "pay_existing",
-      amountPaise: 100_000,
     });
     jest
       .mocked(tx.orgAuditLog.create)
@@ -757,36 +735,14 @@ describe("/pay", () => {
 
   it("does not mint a second order when a stored order has a captured mismatch", async () => {
     const { tx } = invoiceWorld({ status: "ISSUED", totalPaise: 100_000 });
-    const row = {
-      id: "inv-1",
-      status: "ISSUED",
-      invoiceNumber: "N",
-      displayCurrency: "INR",
-      paidAt: null,
-      providerPaymentOrderId: "order_existing",
-      totalPaise: 100_000,
-    };
-    mockPay.findFirst.mockResolvedValue(row);
-    mockPay.findUniqueOrThrow.mockResolvedValue(row);
-    mockFetchOrder.mockResolvedValue({
-      id: "order_existing",
-      amount: 100_000,
-      currency: "INR",
-      status: "paid",
-      notes: {
-        type: "invoice_payment",
-        invoiceId: "inv-1",
-        organizationId: "org-1",
+    configureStoredInvoiceOrder({
+      holding: {
+        kind: "captured",
+        paymentId: "pay_mismatch",
+        amountPaise: 50_000,
       },
+      transactionTx: tx,
     });
-    mockReadHolding.mockResolvedValue({
-      kind: "captured",
-      paymentId: "pay_mismatch",
-      amountPaise: 50_000,
-    });
-    mockPrisma.$transaction.mockImplementation(
-      async (run: (tx: Tx) => unknown) => run(tx),
-    );
 
     const res = await payInvoice(
       new NextRequest("https://x.test/api", { method: "POST" }),

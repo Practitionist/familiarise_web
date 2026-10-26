@@ -107,7 +107,7 @@ async function reconcileOrgInvoicePaymentsUnlocked(
   let empty = 0;
   let failed = 0;
   const unappliedIds: string[] = [];
-  const transportErrors: string[] = [];
+  const processingErrors: string[] = [];
   let checkpoint = await readJobCheckpoint(JOB_NAME);
   if (checkpoint !== null && !checkpointSchema.safeParse(checkpoint).success) {
     checkpoint = null;
@@ -179,22 +179,28 @@ async function reconcileOrgInvoicePaymentsUnlocked(
       failed++;
       const message = `Invoice ${invoice.id} order ${invoice.providerPaymentOrderId}: ${error instanceof Error ? error.message : String(error)}`;
       errors.push(message);
-      transportErrors.push(message);
+      processingErrors.push(message);
     }
     // Failures, live orders and empty orders rotate too; the next cycle wraps
     // back through them so one unreachable order cannot pin the cohort.
     checkpoint = invoice.id;
   }
 
-  if (transportErrors.length > 0) {
+  if (candidates.length > 0 && scanned === 0) {
+    const message = "Invoice recovery budget elapsed before any order was read";
+    errors.push(message);
+    processingErrors.push(message);
+  }
+
+  if (processingErrors.length > 0) {
     reportSentryError(
       new Error(
-        `${JOB_NAME}: ${transportErrors.length} invoice recovery issue(s)`,
+        `${JOB_NAME}: ${processingErrors.length} invoice recovery issue(s)`,
       ),
       {
         subsystem: "payments",
         tags: { job: JOB_NAME },
-        extra: { errors: transportErrors.slice(0, 10) },
+        extra: { errors: processingErrors.slice(0, 10) },
       },
     );
   }
@@ -218,7 +224,7 @@ async function reconcileOrgInvoicePaymentsUnlocked(
   );
 
   return {
-    success: errors.length === 0,
+    success: processingErrors.length === 0,
     scanned,
     captured,
     paid,

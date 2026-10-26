@@ -125,6 +125,11 @@ The existing email and bell relays deliver after commit. An amount/status
 mismatch follows the canonical UNAPPLIED_RECEIPTS path for operator review;
 it never starts another charge or invents an automatic refund policy.
 
+Durably parked captures raise an operator finding and HTTP 207 without labeling
+a handled liability as a failed worker. Read/transaction failures still fail the
+run. An eligible cohort with no admitted read because its budget elapsed also
+fails, so repeated cold-start starvation cannot refresh completion health.
+
 The job has one fail-closed Postgres lease. Its execution-result checkpoint
 rotates keyset pages, including failures and open orders, then wraps. Each run
 selects at most five invoices, stops admitting rows after ten seconds from HTTP

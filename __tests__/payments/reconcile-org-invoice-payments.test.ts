@@ -184,7 +184,7 @@ describe("reconcileOrgInvoicePayments", () => {
     const result = await reconcileOrgInvoicePayments({ limit: 1 });
 
     expect(result).toMatchObject({
-      success: false,
+      success: true,
       captured: 1,
       unapplied: 1,
       checkpoint: "a",
@@ -211,10 +211,38 @@ describe("reconcileOrgInvoicePayments", () => {
     });
 
     expect(result).toMatchObject({
-      success: true,
+      success: false,
       scanned: 0,
       checkpoint: null,
     });
     expect(mockReadHolding).not.toHaveBeenCalled();
+  });
+
+  it("does not call an empty cohort a stalled worker after the deadline", async () => {
+    mockFindMany.mockResolvedValue([]);
+    const result = await reconcileOrgInvoicePayments({
+      startedAt: Date.now() - 20_000,
+    });
+    expect(result).toMatchObject({ success: true, scanned: 0, errors: [] });
+    expect(mockReadHolding).not.toHaveBeenCalled();
+  });
+
+  it("accepts an already-applied capture without duplicating the paid audit or notices", async () => {
+    mockFindMany.mockResolvedValueOnce([invoice("a")]);
+    mockReadHolding.mockResolvedValue({
+      kind: "captured",
+      paymentId: "pay_a",
+      amountPaise: 100_000,
+    });
+    mockApplyCapture.mockResolvedValue({ kind: "ALREADY_APPLIED" });
+    const result = await reconcileOrgInvoicePayments();
+    expect(result).toMatchObject({
+      success: true,
+      captured: 1,
+      paid: 0,
+      checkpoint: "a",
+    });
+    expect(mockTx.orgAuditLog.create).not.toHaveBeenCalled();
+    expect(mockAttemptNotices).not.toHaveBeenCalled();
   });
 });
