@@ -101,6 +101,16 @@ Backlog age and vendor-effect reconciliation remain separate evidence. One
 fleet monitor plus an aggregate capability probe avoids buying a cron-monitor
 seat for every worker.
 
+The ticker's bearer-protected `GET /api/health/jobs/streaks` read also scopes
+COMPLETED/FAILED history to the configured environment. A dev completion must
+never reset production's repeat-failure escalation. Both job-history endpoints
+read `NEXT_PUBLIC_SENTRY_ENVIRONMENT`, falling back to `SENTRY_ENVIRONMENT`
+only when the public variable is absent, and return 503 when the selected label
+is empty or missing. Historical untagged rows cannot establish success. This
+separates monitoring evidence; business data and job leases still share the
+database. If streak history is unavailable, the ticker retains its one-off
+failure report rather than claiming a verified repeat.
+
 Keep Sentry for error diagnostics regardless of the absence-monitor provider.
 A dedicated heartbeat service can replace or complement the fleet observer
 without replacing the scheduler or exception reporting. An independent provider

@@ -149,6 +149,14 @@ and probe must use the same environment label; untagged or preview rows do not
 establish production freshness. Verify tagged, truthful completion recording and
 active required workers before enabling the monitor.
 
+The ticker's `GET /api/health/jobs/streaks` must filter COMPLETED/FAILED history
+by the same `result.environment` as the capability probe. A dev completion in
+the shared database must not reset production's repeat-failure escalation.
+Both routes select `NEXT_PUBLIC_SENTRY_ENVIRONMENT ?? SENTRY_ENVIRONMENT` and
+return 503 when that label is absent or empty; do not fall back to combined
+history. Unknown streak history keeps one-off reporting. This scopes evidence,
+not business rows or the shared Postgres lease.
+
 Configure the external monitor with CRON_SECRET in a protected Authorization
 header, never a URL parameter. Calendar-only/config-gated jobs and business
 backlog/vendor correctness need separate checks. Verify accepted telemetry and
