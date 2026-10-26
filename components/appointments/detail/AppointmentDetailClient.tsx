@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useState, type ReactNode } from "react";
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useZonedFormat } from "@/lib/time/zoned-format";
@@ -83,12 +82,7 @@ import { ClassSessionControls } from "./ClassSessionControls";
 import { SubscriptionReturnControls } from "./SubscriptionReturnControls";
 import { SessionAttendance } from "./SessionAttendance";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
-
-// Loaded on first open so the Stream chat SDK stays off the detail page bundle.
-const AppointmentChatSheet = dynamic(
-  () => import("./AppointmentChatSheet").then((m) => m.AppointmentChatSheet),
-  { ssr: false },
-);
+import { LazyAppointmentChatSheet } from "../LazyAppointmentChatSheet";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
@@ -1136,9 +1130,7 @@ export function AppointmentDetailClient({
           and was: the consultee's detail page never did, leaving Reschedule,
           Cancel and Report issue setting state nothing was listening for. */}
       {adapter.renderDialogs()}
-      {chatTarget && (
-        <AppointmentChatSheet target={chatTarget} onClose={closeChat} />
-      )}
+      <LazyAppointmentChatSheet target={chatTarget} onClose={closeChat} />
     </DashboardErrorBoundary>
   );
 }

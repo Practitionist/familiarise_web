@@ -6,7 +6,10 @@ import { CalendarDays, List } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSession } from "@/lib/auth-client";
 import { resolveSponsoringOrgName } from "@/lib/labels/session-labels";
-import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
+import type {
+  AppointmentActionAdapter,
+  AppointmentChatTarget,
+} from "@/lib/appointments/adapter";
 import {
   CONSULTANT_JOIN_WINDOW_MS,
   CONSULTEE_JOIN_WINDOW_MS,
@@ -21,6 +24,7 @@ import { replaceUrl } from "@/lib/navigation/history";
 import { AppointmentCalendar } from "./AppointmentCalendar";
 import { AppointmentList } from "./AppointmentList";
 import { AppointmentSheet } from "./AppointmentSheet";
+import { LazyAppointmentChatSheet } from "./LazyAppointmentChatSheet";
 import {
   AppointmentsFilterBar,
   matchesTypeFilter,
@@ -194,6 +198,9 @@ export function AppointmentsShell({
     replaceQueryParam("view", value);
   };
   const [sheetVm, setSheetVm] = useState<AppointmentVM | null>(null);
+  const [chatTarget, setChatTarget] = useState<AppointmentChatTarget | null>(
+    null,
+  );
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("ALL");
   const [search, setSearch] = useState("");
   const [dateRange, setDateRange] = useState<DateRange>({ from: "", to: "" });
@@ -430,6 +437,15 @@ export function AppointmentsShell({
             : null
         }
         joinWindowMs={joinWindowMs}
+        onOpenChat={(target) => {
+          // One sheet at a time: the quick view closes as the chat opens.
+          setSheetVm(null);
+          setChatTarget(target);
+        }}
+      />
+      <LazyAppointmentChatSheet
+        target={chatTarget}
+        onClose={() => setChatTarget(null)}
       />
 
       {adapter.renderDialogs()}

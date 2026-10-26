@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, MessageSquareOff } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { ExternalLink, MessageSquareOff, X } from "lucide-react";
 import { useChatContext } from "stream-chat-react";
 import { z } from "zod";
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -17,6 +19,7 @@ import { EmptyState } from "@/components/dashboard/EmptyState";
 import { ChatSurface } from "@/components/chat/ChatSurface";
 import { ChatContainer } from "@/components/chat/ChatContainer";
 import { ChatPaneProvider } from "@/components/chat/ChatPaneContext";
+import { bookingTagQueryOptions } from "@/components/chat/BookingTag";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { scopeOrgId } from "@/lib/api/scope/parse";
 import type { AppointmentChatTarget } from "@/lib/appointments/adapter";
@@ -28,7 +31,8 @@ const openResponseSchema = z.object({
 const errorBodySchema = z.object({ error: z.string() });
 const OPEN_FAILED = "Could not open this conversation. Please try again.";
 
-const noop = () => {};
+// No list behind the conversation: the sheet's own close button is the only way out.
+const SHEET_PANE = { conversationOpen: true, openConversation: () => {} };
 
 function SheetChatLoading() {
   return (
@@ -43,9 +47,10 @@ function SheetChatLoading() {
 /** Opens the target through the same server route as the Messages deep link, then mounts that one channel. */
 function AppointmentChatPane({
   target,
-  onBack,
-}: Readonly<{ target: AppointmentChatTarget; onBack: () => void }>) {
+}: Readonly<{ target: AppointmentChatTarget }>) {
   const { client, channel, setActiveChannel } = useChatContext();
+  const queryClient = useQueryClient();
+  const tagAppointmentId = target.kind === "dm" ? target.appointmentId : null;
   const { scope } = useOrgScope({ defaultForOrgMember: "personal" });
   const organizationId = scopeOrgId(scope) ?? null;
   const body = JSON.stringify(
@@ -85,8 +90,17 @@ function AppointmentChatPane({
           return;
         }
         const { channelType, channelId } = openResponseSchema.parse(json);
+        // The tag lookup runs alongside `watch`, so the chip is ready with the composer.
+        if (tagAppointmentId) {
+          void queryClient.prefetchQuery(
+            bookingTagQueryOptions(
+              tagAppointmentId,
+              `${channelType}:${channelId}`,
+            ),
+          );
+        }
         const opened = client.channel(channelType, channelId);
-        await opened.watch();
+        if (!opened.initialized) await opened.watch();
         if (cancelled) return;
         await setActiveChannel(opened);
         setResult({ body, cid: opened.cid });
@@ -98,16 +112,7 @@ function AppointmentChatPane({
     return () => {
       cancelled = true;
     };
-  }, [body, client, setActiveChannel]);
-
-  const pane = useMemo(
-    () => ({
-      conversationOpen: true,
-      openConversation: noop,
-      backToList: onBack,
-    }),
-    [onBack],
-  );
+  }, [body, client, queryClient, setActiveChannel, tagAppointmentId]);
 
   const current = result?.body === body ? result : null;
   if (current?.error) {
@@ -125,12 +130,8 @@ function AppointmentChatPane({
     return <SheetChatLoading />;
 
   return (
-    <ChatPaneProvider value={pane}>
-      <ChatContainer
-        contextAppointmentId={
-          target.kind === "dm" ? target.appointmentId : null
-        }
-      />
+    <ChatPaneProvider value={SHEET_PANE}>
+      <ChatContainer contextAppointmentId={tagAppointmentId} />
     </ChatPaneProvider>
   );
 }
@@ -142,24 +143,23 @@ function AppointmentChatPane({
 export function AppointmentChatSheet({
   target,
   onClose,
-}: Readonly<{ target: AppointmentChatTarget | null; onClose: () => void }>) {
+}: Readonly<{ target: AppointmentChatTarget; onClose: () => void }>) {
   return (
     <Sheet
-      open={target !== null}
+      open
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
     >
       <SheetContent
         side="right"
+        hideClose
         className="flex w-full flex-col gap-0 p-0 sm:max-w-lg"
       >
-        <SheetHeader className="border-b border-border px-4 py-3 pr-12 text-left">
-          <SheetTitle className="text-base">
-            {target?.title ?? "Chat"}
-          </SheetTitle>
-          <SheetDescription asChild>
-            {target ? (
+        <SheetHeader className="flex-row items-start justify-between gap-2 space-y-0 border-b border-border py-2 pl-4 pr-2 text-left">
+          <div className="min-w-0 space-y-1 py-1">
+            <SheetTitle className="text-base">{target.title}</SheetTitle>
+            <SheetDescription asChild>
               <Link
                 href={target.messagesHref}
                 className="inline-flex w-fit items-center gap-1 text-xs font-medium text-primary underline-offset-4 hover:underline"
@@ -167,17 +167,17 @@ export function AppointmentChatSheet({
                 Open in Messages
                 <ExternalLink className="h-3 w-3" aria-hidden="true" />
               </Link>
-            ) : (
-              <span />
-            )}
-          </SheetDescription>
+            </SheetDescription>
+          </div>
+          <SheetClose className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-8 sm:w-8">
+            <X className="h-5 w-5 sm:h-4 sm:w-4" aria-hidden="true" />
+            <span className="sr-only">Close</span>
+          </SheetClose>
         </SheetHeader>
         <div className="min-h-0 flex-1">
-          {target && (
-            <ChatSurface loading={<SheetChatLoading />}>
-              <AppointmentChatPane target={target} onBack={onClose} />
-            </ChatSurface>
-          )}
+          <ChatSurface loading={<SheetChatLoading />}>
+            <AppointmentChatPane target={target} />
+          </ChatSurface>
         </div>
       </SheetContent>
     </Sheet>

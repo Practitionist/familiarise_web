@@ -3,7 +3,7 @@
  *
  * The booking tag is verified server-side: it answers only when both people in
  * the DM are parties to the appointment, picks the next (else last) session,
- * and opening a DM with an appointment context posts nothing.
+ * and opening a DM posts nothing and needs a shared booking scope.
  */
 import { NextRequest } from "next/server";
 import { pickSessionAnchor } from "@/lib/stream/booking-tag";
@@ -13,6 +13,7 @@ let mockMembers: string[] = [];
 const mockFindFirst = jest.fn();
 const mockEligible = jest.fn<Promise<boolean>, [string, string, string]>();
 const mockSendMessage = jest.fn(async () => ({}));
+const mockContexts = jest.fn();
 
 jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: async () => ({
@@ -34,11 +35,7 @@ jest.mock("../../lib/appointments/occurrences", () => ({
 }));
 jest.mock("../../lib/stream/dm-eligibility", () => ({
   ...jest.requireActual("../../lib/stream/dm-eligibility"),
-  canDirectMessage: async () => true,
-  pairBookingContexts: async () => ({
-    personalAllowed: true,
-    organizations: [],
-  }),
+  pairBookingContexts: () => mockContexts(),
   isDmChannelIdEligible: (a: string, b: string, channelId: string) =>
     mockEligible(a, b, channelId),
 }));
@@ -112,6 +109,7 @@ beforeEach(() => {
   mockMembers = ["consultee-u", "expert-u", "familiarise-support"];
   mockFindFirst.mockResolvedValue(consultation);
   mockEligible.mockResolvedValue(true);
+  mockContexts.mockResolvedValue({ personalAllowed: true, organizations: [] });
 });
 
 describe("GET /api/stream/booking-tag", () => {
@@ -200,19 +198,28 @@ describe("pickSessionAnchor", () => {
   });
 });
 
-it("opening a DM with an appointment context posts nothing", async () => {
+async function openDm(body: Record<string, unknown>) {
   const { POST } = await import("../../app/api/stream/channels/open/route");
-  const res = await POST(
+  return POST(
     new NextRequest("http://localhost/api/stream/channels/open", {
       method: "POST",
       body: JSON.stringify({
         kind: "dm",
         counterpartyUserId: "expert-u",
-        contextAppointmentId: "apt-1",
+        ...body,
       }),
     }),
   );
+}
+
+it("opening a DM with an appointment context posts nothing", async () => {
+  const res = await openDm({ contextAppointmentId: "apt-1" });
   expect(res.status).toBe(200);
   expect(mockSendMessage).not.toHaveBeenCalled();
   expect(mockFindFirst).not.toHaveBeenCalled();
+});
+
+it("refuses a DM open when the pair shares no booking scope", async () => {
+  mockContexts.mockResolvedValue({ personalAllowed: false, organizations: [] });
+  expect((await openDm({})).status).toBe(403);
 });

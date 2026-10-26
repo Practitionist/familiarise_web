@@ -128,14 +128,16 @@ export async function GET(request: NextRequest) {
   const { appointmentId, cid } = parsed.data;
 
   try {
-    const appt = await prisma.appointment.findFirst({
-      where: { id: appointmentId, deletedAt: null },
-      select: tagAppointmentSelect,
-    });
-    if (!appt) return notFound();
-
-    const counterpartyUserId = await dmCounterparty(cid, userId);
-    if (!counterpartyUserId) return notFound();
+    // Independent reads: the appointment in one joined query, the DM's members from Stream.
+    const [appt, counterpartyUserId] = await Promise.all([
+      prisma.appointment.findFirst({
+        where: { id: appointmentId, deletedAt: null },
+        select: tagAppointmentSelect,
+        relationLoadStrategy: "join",
+      }),
+      dmCounterparty(cid, userId),
+    ]);
+    if (!appt || !counterpartyUserId) return notFound();
 
     const title = resolveVerifiedBookingContextTitle(
       appt,

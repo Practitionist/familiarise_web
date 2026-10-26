@@ -42,7 +42,7 @@ export const CustomChannelHeader = () => {
 
     return (
       <div className="flex items-center px-4 py-2 border-b border-border bg-card">
-        <BackToListButton onClick={backToList} />
+        {backToList && <BackToListButton onClick={backToList} />}
         <div className="relative mr-3">
           <Avatar className="h-8 w-8">
             <AvatarImage
@@ -95,7 +95,7 @@ export const CustomChannelHeader = () => {
 
   return (
     <div className="flex items-center px-4 py-2 border-b border-border bg-card">
-      <BackToListButton onClick={backToList} />
+      {backToList && <BackToListButton onClick={backToList} />}
       <div className="flex items-center mr-3">
         <span className="text-muted-foreground mr-2">#</span>
       </div>

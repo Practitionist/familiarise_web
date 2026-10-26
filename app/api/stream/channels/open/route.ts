@@ -46,7 +46,6 @@ import {
   WEBINAR_PREFIX,
 } from "@/lib/stream-channel-ids";
 import {
-  canDirectMessage,
   DmNotPermittedError,
   pairBookingContexts,
 } from "@/lib/stream/dm-eligibility";
@@ -196,7 +195,9 @@ async function handleDmChannelOpen(
   const { counterpartyUserId } = body;
   const requestedOrgId = body.organizationId ?? null;
 
-  if (!(await canDirectMessage(userId, counterpartyUserId))) {
+  // The pair's booking scopes answer the same question as `canDirectMessage`, in one lookup.
+  const contexts = await pairBookingContexts(userId, counterpartyUserId);
+  if (!contexts.personalAllowed && contexts.organizations.length === 0) {
     streamLogger.warn("Refused DM open — no booking link", {
       userId,
       counterpartyUserId,
@@ -211,7 +212,6 @@ async function handleDmChannelOpen(
     );
   }
 
-  const contexts = await pairBookingContexts(userId, counterpartyUserId);
   const resolvedOrg = resolveDmOrganizationId(requestedOrgId, contexts);
   if ("error" in resolvedOrg) return resolvedOrg.error;
 

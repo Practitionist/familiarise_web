@@ -19,7 +19,10 @@ import {
   isDeadOccurrence,
   isDeliberateEnd,
 } from "@/lib/appointments/occurrences";
-import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
+import type {
+  AppointmentActionAdapter,
+  AppointmentChatTarget,
+} from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
@@ -44,6 +47,8 @@ interface AppointmentSheetProps {
   adapter: AppointmentActionAdapter;
   sponsoredLabel?: string | null;
   joinWindowMs?: number;
+  /** Chat actions open the chat sheet through this instead of navigating to Messages. */
+  onOpenChat?: (target: AppointmentChatTarget) => void;
 }
 
 /**
@@ -57,6 +62,7 @@ export function AppointmentSheet({
   adapter,
   sponsoredLabel,
   joinWindowMs,
+  onOpenChat,
 }: AppointmentSheetProps) {
   const router = useRouter();
   const format = useZonedFormat();
@@ -251,6 +257,20 @@ export function AppointmentSheet({
                       const destructiveClassName = item.destructive
                         ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
                         : undefined;
+                      const { chat } = item;
+                      if (chat && onOpenChat) {
+                        return (
+                          <Button
+                            key={item.key}
+                            variant="outline"
+                            size="sm"
+                            disabled={item.disabled}
+                            onClick={() => onOpenChat(chat)}
+                          >
+                            {item.label}
+                          </Button>
+                        );
+                      }
                       if (item.href && !item.disabled) {
                         return (
                           <Button

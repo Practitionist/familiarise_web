@@ -8,7 +8,7 @@
 - [User Channel Synchronization](#user-channel-synchronization)
 - [Channel Membership Rules](#channel-membership-rules)
   - [4-Part DM & Trial Policy](#4-part-dm--trial-policy)
-  - [Contextual Booking Receipt Cards](#contextual-booking-receipt-cards)
+  - [Booking Context in a Shared DM](#booking-context-in-a-shared-dm)
   - [Server-Side Authorization for Membership Changes](#server-side-authorization-for-membership-changes)
 - [Revocation and Derived Membership](#revocation-and-derived-membership)
 - [Race Condition Prevention](#race-condition-prevention)
@@ -155,8 +155,8 @@ graph TB
     Collab -->|status = ACCEPTED| EventChannel
     Host -->|channel_moderator| EventChannel
 
-    User <-->|1:1 Host DM + Booking Receipt Card| DMChannel
-    Host <-->|1:1 Host DM + Booking Receipt Card| DMChannel
+    User <-->|1:1 Host DM| DMChannel
+    Host <-->|1:1 Host DM| DMChannel
 
     style EventChannel fill:#4fc3f7
     style DMChannel fill:#81c784

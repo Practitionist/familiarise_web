@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 import { CalendarIcon, XIcon } from "lucide-react";
 import {
   MessageComposer,
@@ -24,11 +24,11 @@ type SubmitParams = Parameters<
 >[0];
 
 /** The server-verified booking for (appointment, DM); null when the server refuses it. */
-export function useBookingTag(
+export function bookingTagQueryOptions(
   appointmentId: string | null,
   cid: string | null,
 ) {
-  return useQuery({
+  return queryOptions({
     queryKey: ["booking-tag", appointmentId, cid] as const,
     enabled: Boolean(appointmentId && cid),
     staleTime: 5 * 60_000,
@@ -41,6 +41,13 @@ export function useBookingTag(
       return bookingTagSchema.parse(await res.json());
     },
   });
+}
+
+export function useBookingTag(
+  appointmentId: string | null,
+  cid: string | null,
+) {
+  return useQuery(bookingTagQueryOptions(appointmentId, cid));
 }
 
 /** The tag on a sent message, rendered only from the server's answer. */
@@ -105,15 +112,20 @@ export function BookingTagComposer({
         <div className="flex items-center gap-2 border-t border-border bg-muted/40 px-4 py-2 text-xs">
           <span
             data-testid="booking-tag-chip"
-            className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1"
+            className="inline-flex min-w-0 max-w-full items-start gap-1.5 rounded-2xl border border-border bg-background px-2.5 py-1"
           >
-            <CalendarIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            <span className="truncate">{bookingTagLabel(tag, format)}</span>
+            <CalendarIcon
+              className="mt-0.5 h-3.5 w-3.5 shrink-0"
+              aria-hidden="true"
+            />
+            <span className="min-w-0 break-words">
+              {bookingTagLabel(tag, format)}
+            </span>
             <button
               type="button"
               onClick={() => setDoneKey(tagKey)}
               aria-label="Remove booking tag"
-              className="-mr-1 rounded-full p-0.5 hover:bg-muted"
+              className="-mr-1 shrink-0 rounded-full p-0.5 hover:bg-muted"
             >
               <XIcon className="h-3 w-3" aria-hidden="true" />
             </button>

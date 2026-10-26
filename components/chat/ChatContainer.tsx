@@ -1,7 +1,7 @@
 "use client";
 
 import { MessageSquareIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Channel,
   EmptyStateIndicator,
@@ -25,6 +25,7 @@ import { StreamChatErrorBoundary } from "@/components/stream/StreamErrorBoundary
 import { useMaintenanceState } from "@/providers/MaintenanceProvider";
 import { isEventChannel, parseEventChannelId } from "@/lib/stream-channel-ids";
 import { EmptyState } from "@/components/dashboard/DataCard";
+import { withoutLegacyBookingCards } from "@/lib/stream/system-users";
 
 // Was a hand-rolled near-copy of EmptyState with different dimensions, on a
 // `bg-zinc-50` slab pressed against the sidebar's blue. ChatUnavailable already
@@ -62,6 +63,25 @@ const CHAT_COMPONENT_OVERRIDES = {
   MessageSystem: SystemMessage,
   AttachmentSelector: AttachmentSelectorOff,
   EmptyStateIndicator: ChannelEmptyState,
+};
+
+/** The loaded messages minus the retired booking cards, so a DM holding only those shows the empty state. */
+const VisibleMessageList = ({ virtualized }: { virtualized: boolean }) => {
+  const { messages } = useChannelStateContext();
+  const visible = useMemo(
+    () => withoutLegacyBookingCards(messages ?? []),
+    [messages],
+  );
+  return virtualized ? (
+    <VirtualizedMessageList
+      messages={visible}
+      Message={CustomMessage}
+      defaultItemHeight={62}
+      additionalVirtuosoProps={{ increaseViewportBy: 200, overscan: 5 }}
+    />
+  ) : (
+    <MessageList messages={visible} Message={CustomMessage} />
+  );
 };
 
 /** `contextAppointmentId` offers the booking chip in a DM both people are parties to. */
@@ -104,24 +124,6 @@ export const ChatContainer = ({
     return <EmptyChannelState />;
   }
 
-  // Choose the appropriate MessageList component based on channel traffic
-  const MessageListComponent = shouldUseVirtualized
-    ? VirtualizedMessageList
-    : MessageList;
-
-  // For VirtualizedMessageList, we need to set defaultItemHeight for optimal performance
-  const messageListProps = shouldUseVirtualized
-    ? {
-        Message: CustomMessage,
-        defaultItemHeight: 62, // Typical height of a one-line message
-        additionalVirtuosoProps: {
-          // Additional performance optimizations
-          increaseViewportBy: 200, // Render 200px outside viewport
-          overscan: 5, // Keep 5 extra items rendered
-        },
-      }
-    : { Message: CustomMessage };
-
   // Threads stay off: no `<Thread>` is mounted and `CustomMessage` replaces the
   // SDK message UI.
   return (
@@ -132,7 +134,7 @@ export const ChatContainer = ({
             <Window>
               <CustomChannelHeader />
               <SupportInterventionBanner />
-              <MessageListComponent {...messageListProps} />
+              <VisibleMessageList virtualized={shouldUseVirtualized} />
               {isChatReadOnly ? (
                 <div className="flex items-center justify-center gap-2 border-t border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
                   <AlertTriangle className="h-4 w-4 shrink-0" />

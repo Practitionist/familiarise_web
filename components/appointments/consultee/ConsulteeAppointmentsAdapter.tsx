@@ -229,7 +229,12 @@ export function chatAffordancesForVm(options: {
     }
   }
 
-  if (DM_ELIGIBLE_SET.has(vm.status) && vm.appointmentId) {
+  // A class or webinar DM follows the event's openable states, as the server's gate does.
+  const dmOpen =
+    vm.kind === "WEBINAR" || vm.kind === "CLASS"
+      ? OPENABLE_EVENT_SET.has(vm.status)
+      : DM_ELIGIBLE_SET.has(vm.status);
+  if (dmOpen && vm.appointmentId) {
     const counterpartyUserId =
       role === "consultant" ? consulteeUserIdOf(vm) : consultantUserIdOf(vm);
     if (counterpartyUserId) {

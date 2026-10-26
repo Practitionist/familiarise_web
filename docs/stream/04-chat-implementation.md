@@ -610,13 +610,14 @@ The personal navigation badge (`hooks/useChatUnreadCount.ts`) starts from Stream
 
 ### The side sheet
 
-On an appointment's detail page (consultee, consultant and the organisation views, which all render `AppointmentDetailClient`), the chat actions open a right-side sheet instead of leaving the page. The sheet is full screen on a phone.
+On an appointment's detail page (consultee, consultant and the organisation views, which all render `AppointmentDetailClient`) and in the appointments list's quick-view drawer (`AppointmentSheet`, mounted by `AppointmentsShell`), the chat actions open a right-side sheet instead of leaving the page. The sheet is full screen on a phone.
 
-- `chatAffordancesForVm` (`components/appointments/consultee/ConsulteeAppointmentsAdapter.tsx`) gives each chat action a `chat` target (`AppointmentChatTarget` in `lib/appointments/adapter.ts`) as well as its Messages `href`. The detail page opens the target in `AppointmentChatSheet`; the appointment lists still navigate to Messages.
-- The labels are **Message Consultant** / **Message Consultee** for the DM and **Class chat** / **Webinar chat** for the group channel.
-- `AppointmentChatSheet` (`components/appointments/detail/AppointmentChatSheet.tsx`) is loaded with `next/dynamic` on first open, so the chat SDK stays off the detail page bundle. It renders `ChatSurface` with the sheet's own children, so the app's one Stream client, `ChatUnavailable` and the "Reconnecting…" banner behave as they do on the Messages page.
-- Inside the surface the sheet calls `POST /api/stream/channels/open` with the same body the Messages deep link sends (including the org scope from `useOrgScope`), watches the returned channel, sets it active, and mounts `ChatContainer`. A refusal from the route is shown in the sheet.
-- `ChatPaneContext` is provided with `backToList` bound to closing the sheet, so the channel header's back arrow on a phone closes the sheet.
+- `chatAffordancesForVm` (`components/appointments/consultee/ConsulteeAppointmentsAdapter.tsx`) gives each chat action a `chat` target (`AppointmentChatTarget` in `lib/appointments/adapter.ts`) as well as its Messages `href`. The detail page and the quick view open the target through `LazyAppointmentChatSheet`; the quick view closes first, so only one sheet is open at a time. The row ⋯ menus still navigate to Messages.
+- The labels are **Message Consultant** / **Message Consultee** for the DM and **Class chat** / **Webinar chat** for the group channel. For a class or webinar the DM is offered in `OPENABLE_EVENT_STATUSES` (including `IN_PROGRESS`), the same states the server's DM gate accepts for events; consultations and subscriptions use `DM_ELIGIBLE_STATUSES`.
+- `AppointmentChatSheet` (`components/appointments/detail/AppointmentChatSheet.tsx`) is loaded with `next/dynamic` (`components/appointments/LazyAppointmentChatSheet.tsx`) on first open, so the chat SDK stays off the detail page bundle. It renders `ChatSurface` with the sheet's own children, so the app's one Stream client, `ChatUnavailable` and the "Reconnecting…" banner behave as they do on the Messages page.
+- Inside the surface the sheet calls `POST /api/stream/channels/open` with the same body the Messages deep link sends (including the org scope from `useOrgScope`), watches the returned channel (skipped when the client already watches it), sets it active, and mounts `ChatContainer`. As soon as the route answers, the booking-tag lookup is prefetched into react-query in parallel with `watch`, so the chip is ready with the composer. A refusal from the route is shown in the sheet.
+- The route answers DM eligibility from one `pairBookingContexts` lookup, which is the same question `canDirectMessage` answers.
+- The sheet provides `ChatPaneContext` without `backToList`, so the channel header shows no back arrow and the sheet's own close button (40 × 40 px on a phone) and Escape are the ways out.
 - The sheet header links **Open in Messages** to the full deep link. That link, and the deep links in notifications and emails, keep working unchanged.
 
 ### The booking tag
@@ -627,6 +628,7 @@ Opening a DM with an appointment context posts nothing. Instead the composer off
 
 - `ChatContainer` takes `contextAppointmentId`. The Messages page passes the `contextAppointmentId` URL parameter (through `ChatLayout`); the sheet passes the appointment it was opened from.
 - `BookingTagComposer` (`components/chat/BookingTag.tsx`) asks the server for the tag. The chip shows only when the server answers. If every session is over it reads "last session" instead of "next session".
+- The chip text wraps on narrow screens rather than truncating.
 - The chip uses `MessageComposer`'s `overrideSubmitHandler` to add `booking_appointment_id` to the **next** message the user sends, on both the optimistic copy and the request, so a retried send keeps it. The chip then disappears. Removing it, or sending nothing, writes nothing.
 
 ### Why a rendered tag cannot be forged
@@ -634,9 +636,10 @@ Opening a DM with an appointment context posts nothing. Instead the composer off
 Message custom fields are written by the sender's browser, so a member could put any title or date on a message. The tag therefore never reads them.
 
 - `GET /api/stream/booking-tag?appointmentId=…&cid=messaging:…` (`app/api/stream/booking-tag/route.ts`) parses its query with `bookingTagQuerySchema` and returns `{ title, kind, nextSessionAt, lastSessionAt }` or 404.
+- The appointment (one joined query) and the DM's members (one Stream `queryChannels`) are read in parallel.
 - It answers only when the DM's two human members (Familiarise Support and the retired booking-card user are ignored) are the caller and one other person, `resolveVerifiedBookingContextTitle` confirms both are parties to the appointment (consultee, consultant, or an accepted presenter collaborator on a webinar or class), and `isDmChannelIdEligible` confirms the DM is one the pair may open under the open route's org-scope rules.
 - The next session is the earliest live, non-tentative occurrence that has not ended (`pickSessionAnchor` in `lib/stream/booking-tag.ts`); with none left it is the latest one.
-- `MessageBookingTag` renders a message's tag only from that response, through react-query keyed on `(appointmentId, cid)`. It reads nothing else from the message and has no Get help link. Old server-posted cards are not rendered.
+- `MessageBookingTag` renders a message's tag only from that response, through react-query keyed on `(appointmentId, cid)`. It reads nothing else from the message and has no Get help link. Old server-posted cards are left out of the message list (`withoutLegacyBookingCards` in `lib/stream/system-users.ts`), so a DM holding only those shows the normal empty state.
 
 ### Group channel header and empty state
 

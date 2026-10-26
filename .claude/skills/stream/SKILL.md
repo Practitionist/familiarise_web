@@ -60,7 +60,7 @@ mcp__streamio__app_get_rate_limits   {}
 
 ---
 
-## 4. 4-Part DM & Trial Policy, Receipt Cards, Managed Channels & Revocation
+## 4. 4-Part DM & Trial Policy, Booking Tag, Managed Channels & Revocation
 
 1. **One Human Pair = One Canonical DM Channel**:
    - **B2C Personal Scope**: `dm-<a>-<b>` (or `dmh-<sha256>` if $> 64$ chars).
@@ -75,7 +75,7 @@ mcp__streamio__app_get_rate_limits   {}
 4. **Booking Tag, Not a Posted Card**:
    - `POST /api/stream/channels/open` posts nothing. A DM opened from an appointment shows a removable chip (`BookingTagComposer` in `components/chat/BookingTag.tsx`) that adds `booking_appointment_id` to the sender's next message only, through `MessageComposer`'s `overrideSubmitHandler`.
    - Message custom fields are client-written: a rendered tag comes only from `GET /api/stream/booking-tag` (`resolveVerifiedBookingContextTitle` for both DM humans plus `isDmChannelIdEligible`), never from message fields. Old `system-booking-context` cards are hidden.
-   - On the appointment detail page, chat actions carry an `AppointmentChatTarget` and open `AppointmentChatSheet` (one Stream client via `ChatSurface`); the Messages deep links still work.
+   - On the appointment detail page and the list quick view, chat actions carry an `AppointmentChatTarget` and open `AppointmentChatSheet` (one Stream client via `ChatSurface`); the Messages deep links still work.
 5. **Chat is text-only**:
    - The `messaging` and `team` channel types run with `uploads: false` and no base attachment grant (`upload-file`, `upload-attachment`, `create-attachment`) for any role. The `-owner` / `-any-team` attachment grants and the giphy command are kept on purpose: GIFs are attachments, and `uploads: false` is what blocks files, which go through appointment documents. The setting was applied to the shared Stream app on 2026-10-24; a post-apply dry run and a client attachment probe confirmed it. `scripts/stream/ensure-chat-text-only.ts` is dry-run by default, backs up the pre-image and re-reads the type to verify; run it with `--apply` after any control-plane restore. The community page that advertised uploads is deleted.
 6. **Managed Channels & Derived Membership**:

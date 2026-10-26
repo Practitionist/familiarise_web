@@ -7,6 +7,10 @@ import * as React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { format } from "date-fns";
+import {
+  localMessageToNewMessagePayload,
+  type LocalMessage,
+} from "stream-chat";
 
 type SubmitParams = {
   cid: string;
@@ -128,6 +132,25 @@ describe("BookingTagComposer", () => {
     );
   });
 
+  it("keeps the tag on a failed send, so the SDK retry resends it", async () => {
+    answer(200, verified);
+    renderWithQuery(<BookingTagComposer contextAppointmentId="apt-1" />);
+    await screen.findByTestId("booking-tag-chip");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(mockSendMessage).toHaveBeenCalledTimes(1));
+
+    // The failed copy the SDK stores, and the payload its retry sends from it.
+    const failed = {
+      ...mockSendMessage.mock.calls[0][0].localMessage,
+      created_at: new Date(),
+      status: "failed",
+    } as unknown as LocalMessage;
+    expect(localMessageToNewMessagePayload(failed)).toMatchObject({
+      id: "local",
+      booking_appointment_id: "apt-1",
+    });
+  });
+
   it("sends untagged once the chip is removed, or when the server refuses it", async () => {
     answer(200, verified);
     const view = renderWithQuery(
@@ -205,6 +228,10 @@ it("labels an event channel with its host, headcount and audience", () => {
   };
   render(<CustomChannelHeader />);
   expect(screen.getByText("Algebra 101")).toBeInTheDocument();
+  // Outside the Messages layout there is no list to go back to.
+  expect(
+    screen.queryByRole("button", { name: "Back to conversations" }),
+  ).not.toBeInTheDocument();
   expect(
     screen.getByText(
       "group chat · Asha (host) + 4 classmates · Everyone in this class can read this",
