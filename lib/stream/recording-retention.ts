@@ -534,13 +534,16 @@ async function findDueRecordings(
   return due;
 }
 
-/** A run that spends its whole scan budget may be leaving due rows unreached, so say so once. */
+/** A run that finds due rows but spends its whole scan budget may be leaving more unreached, so say so once. */
 function reportScanSaturation(
   scanned: number,
   dueCount: number,
   limit: number,
 ): void {
-  if (scanned < MAX_SCANNED_PER_RUN || dueCount >= limit) return;
+  // A full page with nothing due is the cursor rotating through retained rows, not a backlog.
+  if (scanned < MAX_SCANNED_PER_RUN || dueCount === 0 || dueCount >= limit) {
+    return;
+  }
   reportSentryMessage(
     `expire-recordings hit its ${MAX_SCANNED_PER_RUN}-row scan cap; due rows past it wait`,
     {
