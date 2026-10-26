@@ -636,13 +636,18 @@ async function deleteChannelBatch(
     if (!isExpectedStreamError(error)) throw error;
   }
   const existing = await existingCids(chat, cids, streamFailures);
-  if (existing.length > 0) {
-    await paceDeleteChannelsBatch(pacing);
+  if (existing.length === 0) return { deleted: 0, missing: cids.length };
+  await paceDeleteChannelsBatch(pacing);
+  try {
     await withStreamCircuitBreaker(
       () => chat.deleteChannels(existing, { hard_delete: true }),
       undefined,
       streamFailures,
     );
+  } catch (error) {
+    // Gone between the lookup and the retry: another delete got there first.
+    if (!isExpectedStreamError(error)) throw error;
+    return { deleted: 0, missing: cids.length };
   }
   return { deleted: existing.length, missing: cids.length - existing.length };
 }

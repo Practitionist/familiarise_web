@@ -446,18 +446,21 @@ describe("channel expiry provider outcomes", () => {
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
+  const pastRetentionWebinar = (id: string) => ({
+    webinar: {
+      id,
+      chatFrozenAt: null,
+      webinarPlan: { id: `plan-${id}`, collaborators: [], organization: null },
+    },
+    class: null,
+    organization: null,
+    occurrences: [{ endsAt: daysAgo(400) }],
+  });
+
   it("deletes only the event channels Stream still has when a batch names a gone one", async () => {
     mockAppointmentFindMany.mockResolvedValue([
-      {
-        webinar: {
-          id: "old-webinar",
-          chatFrozenAt: null,
-          webinarPlan: { id: "plan", collaborators: [], organization: null },
-        },
-        class: null,
-        organization: null,
-        occurrences: [{ endsAt: daysAgo(400) }],
-      },
+      pastRetentionWebinar("kept-webinar"),
+      pastRetentionWebinar("gone-webinar"),
     ]);
     mockDeleteChannels.mockRejectedValueOnce(channelsNotFound());
     mockQueryChannels.mockImplementation(
@@ -468,6 +471,7 @@ describe("channel expiry provider outcomes", () => {
     const result = await expireEventChannels();
 
     const [firstBatch] = mockDeleteChannels.mock.calls[0] as [string[]];
+    expect(firstBatch).toHaveLength(2);
     expect(mockDeleteChannels).toHaveBeenCalledTimes(2);
     expect(mockDeleteChannels.mock.calls[1]).toEqual([
       [firstBatch[0]],
@@ -476,7 +480,31 @@ describe("channel expiry provider outcomes", () => {
     expect(result).toMatchObject({
       success: true,
       deleted: 1,
-      missingChannels: firstBatch.length - 1,
+      missingChannels: 1,
+      errors: [],
+    });
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it("counts channels deleted between the lookup and the retry as missing", async () => {
+    mockAppointmentFindMany.mockResolvedValue([
+      pastRetentionWebinar("raced-webinar"),
+    ]);
+    mockDeleteChannels
+      .mockRejectedValueOnce(channelsNotFound())
+      .mockRejectedValueOnce(channelsNotFound());
+    mockQueryChannels.mockImplementation(
+      async (filter: { cid: { $in: string[] } }) =>
+        filter.cid.$in.map((cid) => ({ cid })),
+    );
+
+    const result = await expireEventChannels();
+
+    expect(mockDeleteChannels).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      success: true,
+      deleted: 0,
+      missingChannels: 1,
       errors: [],
     });
     expect(Sentry.captureException).not.toHaveBeenCalled();
