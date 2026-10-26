@@ -69,6 +69,28 @@ works when the application ticker, database or primary telemetry pipeline fails.
 A disabled Sentry cron monitor rejects check-ins; sending them does not silently
 enable it. See [Sentry's monitor contract](https://docs.sentry.io/api/crons/update-a-monitor/).
 
+## Monitor activation and allowance
+
+In Sentry's current UI, open **Monitors**, select the application project,
+search for the existing cron monitor and choose **Enable**. Older generated
+`/crons/<project>/<slug>/` links can fail after the Monitors migration. A
+configured alert route cannot receive missed-run incidents from a disabled
+monitor. Keep the ticker's five-minute schedule and three-minute check-in margin
+unless changing the reviewed detection policy.
+
+Sentry's free Developer plan permits one active cron monitor per organization;
+additional cron monitors require a paid plan with available pay-as-you-go
+capacity. A monitor activation error about a new seat can therefore be an
+allowance problem, even though the disabled monitor already exists. Verify the
+current subscription and reserve capacity, or use an approved independent
+absence monitor. Do not disable another application's monitor without confirming
+its ownership and retirement. Choosing a provider still requires a controlled
+missed-run exercise and human receipt before closing the operating gate.
+
+References: [Monitors migration](https://www.sentry.help/en/articles/15007504-monitors-alerts-guide-and-faq),
+[Developer cron limit](https://www.sentry.help/en/articles/13963931-how-do-i-can-i-get-more-crons-on-a-developer-plan)
+and [subscription controls](https://www.sentry.help/en/articles/13965037-can-i-set-up-an-on-demand-pay-as-you-go-budget-for-my-free-developer-plan).
+
 ## Safe release and verification
 
 1. Refresh the branch against current dev and verify all affected domain suites,

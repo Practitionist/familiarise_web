@@ -140,3 +140,11 @@ Keep cohort size, lost invoice-order references and measured throughput visible.
 Read `docs/maintenance/12-readiness-and-operating-gates.md` before making an
 infrastructure readiness claim: source checks, deployment, vendor effects,
 accepted check-ins, human alert receipt and restore proof are separate evidence.
+
+For Sentry cron activation, use the current Monitors UI and verify active state
+through the API; connector-generated legacy Crons links can return 404. Check the
+organization's active-monitor allowance before a drill. Developer permits one
+active cron monitor, with additional capacity requiring a paid plan and PAYG.
+Do not disable another project's monitor to make room without its owner's
+explicit retirement decision. Routing configuration, an existing disabled monitor
+and a failed activation are not accepted check-in or alert-delivery evidence.
