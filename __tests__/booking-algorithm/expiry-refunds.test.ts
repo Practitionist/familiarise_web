@@ -91,9 +91,13 @@ jest.mock("../../lib/prisma", () => {
     $queryRaw: jest.fn(async (query: { text: string }) => {
       if (
         query.text.includes('WHERE a."subscriptionId" =') &&
-        !query.text.includes("refundOwedKey")
+        !query.text.includes('p."refundOwedKey" IS NULL')
       )
-        return mockApprovedPaymentIds.map((id) => ({ id }));
+        return mockApprovedPaymentIds.map((id) => ({
+          id,
+          refundOwedKey: null,
+          refundOwedPaise: null,
+        }));
       return query.text.includes('JOIN "Subscription"') ? [] : paymentRows();
     }),
     $executeRaw: jest.fn(async (query: { values: unknown[] }) => {

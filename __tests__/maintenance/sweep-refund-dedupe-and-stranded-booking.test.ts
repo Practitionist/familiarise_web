@@ -41,10 +41,62 @@
 import { AppointmentStatus, PaymentStatus } from "@prisma/client";
 
 const refundBookingPayment = jest.fn();
+const mockDriveRefundOwed = jest.fn();
+const forwardOwedMarker = async (marker: {
+  paymentId: string;
+  key: string;
+  reason: string;
+}) => {
+  const result = await refundBookingPayment({
+    paymentId: marker.paymentId,
+    reason: marker.reason,
+    initiatedByUserId: null,
+    dedupeKey: marker.key,
+  });
+  return {
+    kind: "refunded",
+    refund: {
+      refundId: "refund-1",
+      amountRefundedPaise: result?.amountRefundedPaise ?? 150000,
+      rail: result?.rail,
+      status: "SUCCEEDED",
+    },
+  };
+};
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   __esModule: true,
   refundBookingPayment: (...a: unknown[]) =>
     refundBookingPayment(...(a as [never])),
+}));
+
+jest.mock("../../lib/payments/operations/refund-owed", () => ({
+  MAX_REFUND_OWED_ATTEMPTS: 3,
+  REFUND_OWED_SELECT: {
+    id: true,
+    refundOwedKey: true,
+    refundOwedPaise: true,
+    refundOwedReason: true,
+    refundOwedAttempts: true,
+  },
+  markerFromRow: (row: {
+    id: string;
+    refundOwedKey: string | null;
+    refundOwedPaise: number | null;
+    refundOwedReason: string | null;
+    refundOwedAttempts: number;
+  }) =>
+    row.refundOwedKey
+      ? {
+          paymentId: row.id,
+          amountPaise: row.refundOwedPaise,
+          key: row.refundOwedKey,
+          reason: row.refundOwedReason ?? "refund owed",
+          attempts: row.refundOwedAttempts,
+        }
+      : null,
+  stampRefundOwed: async () => true,
+  stampRefundsOwed: async (_tx: unknown, markers: unknown[]) => markers.length,
+  driveRefundOwed: (...args: unknown[]) => mockDriveRefundOwed(...args),
 }));
 
 // The no-show detector corroborates against Stream before moving money; one
@@ -149,9 +201,14 @@ jest.mock("../../lib/prisma", () => {
       upsert: jest.fn(async () => ({})),
       findMany: jest.fn().mockResolvedValue([]),
     },
-    $queryRaw: jest.fn(async (query: { text: string }) =>
-      query.text.includes('JOIN "Subscription"') ? [] : paymentRows(),
-    ),
+    $queryRaw: jest.fn(async (query: { text: string }) => {
+      if (query.text.includes('JOIN "Subscription"')) return [];
+      return (await paymentRows()).map((row) => ({
+        ...row,
+        refundOwedKey: null,
+        refundOwedPaise: null,
+      }));
+    }),
     $executeRaw: jest.fn(async (query: { values: unknown[] }) => {
       const ids = query.values[0];
       if (!Array.isArray(ids)) throw new Error("missing marker ids");
@@ -298,6 +355,7 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
       amountRefundedPaise: 150000,
       rail: "GATEWAY",
     });
+    mockDriveRefundOwed.mockImplementation(forwardOwedMarker);
     db.consultation.findMany.mockResolvedValue([]);
     db.subscription.findMany.mockResolvedValue([]);
     db.appointment.findMany.mockResolvedValue([]);
@@ -312,6 +370,7 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
   });
 
   it("keys the PENDING-consultation expiry arm on its own arm name", async () => {
+    db.payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
     db.consultation.findMany.mockImplementation(
       async ({ where }: { where: Record<string, unknown> }) =>
         where.status === AppointmentStatus.PENDING
@@ -335,6 +394,7 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
   // confirmed sessions, stale. It is a different arm from the PENDING expiry
   // above, so the same payment must not collide.
   it("keys the APPROVED-unallocated arm separately from the PENDING arm", async () => {
+    db.payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
     db.subscription.findMany.mockImplementation(
       async ({ where }: { where: Record<string, unknown> }) =>
         where.status === AppointmentStatus.APPROVED ? [{ id: "sub-a" }] : [],
@@ -387,6 +447,7 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
   // A shared key would let the second arm read the first arm's refund as its
   // own completed work and report "issued" while moving no money.
   it("gives four arms refunding the same payment four distinct keys", async () => {
+    db.payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
     db.consultation.findMany.mockImplementation(
       async ({ where }: { where: Record<string, unknown> }) => {
         if (where.status === AppointmentStatus.PENDING) {

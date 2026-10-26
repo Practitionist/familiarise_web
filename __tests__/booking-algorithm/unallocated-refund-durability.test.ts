@@ -19,9 +19,19 @@ let mockLegacy: string[] = [];
 let mockLegacyApproved: string[] = [];
 let mockDue = new Map<string, string[]>();
 let mockMarkers = new Map<string, string>();
+let mockMarkerPaise = new Map<string, number | null>();
+let mockMarkerAttempts = new Map<string, number>();
 let mockExpired = new Set<string>();
 let mockHistory: string[] = [];
 let mockCasWins = true;
+
+const paymentRows = (ids: string[]) =>
+  ids.map((id) => ({
+    id,
+    refundOwedKey: mockMarkers.get(id) ?? null,
+    refundOwedPaise: mockMarkerPaise.get(id) ?? null,
+    refundOwedAttempts: mockMarkerAttempts.get(id) ?? 0,
+  }));
 
 const row = (id: string) => ({
   id,
@@ -121,14 +131,14 @@ jest.mock("../../lib/prisma", () => {
       }
       if (query.text.includes('a."consultationId"')) {
         const ids = mockDue.get(String(query.values[0])) ?? [];
-        return ids.map((id) => ({ id }));
+        return paymentRows(ids);
       }
       if (
         query.text.includes('a."subscriptionId"') &&
         !query.text.includes('p."refundOwedKey" IS NULL')
       ) {
         const ids = mockDue.get(String(query.values[0])) ?? [];
-        return ids.map((id) => ({ id }));
+        return paymentRows(ids);
       }
       if (typeof limit !== "number") throw new Error("missing query bound");
       const ids = query.text.includes('JOIN "Subscription"')
@@ -140,17 +150,26 @@ jest.mock("../../lib/prisma", () => {
       if (mockFailStamp) throw new Error("stamp failed");
       const ids = query.values[0];
       const keys = query.values[1];
-      if (!Array.isArray(ids) || !Array.isArray(keys))
+      const owed = query.values[2];
+      if (!Array.isArray(ids) || !Array.isArray(keys) || !Array.isArray(owed))
         throw new Error("missing marker ids or keys");
-      ids.forEach((id, index) =>
-        mockMarkers.set(String(id), String(keys[index])),
-      );
+      ids.forEach((id, index) => {
+        const paymentId = String(id);
+        mockMarkers.set(paymentId, String(keys[index]));
+        mockMarkerPaise.set(
+          paymentId,
+          owed[index] === null ? null : Number(owed[index]),
+        );
+        mockMarkerAttempts.set(paymentId, 0);
+      });
       return ids.length;
     }),
     $transaction: jest.fn(
       async (fn: (tx: unknown) => Promise<unknown>): Promise<unknown> => {
         const before = {
           markers: new Map(mockMarkers),
+          markerPaise: new Map(mockMarkerPaise),
+          markerAttempts: new Map(mockMarkerAttempts),
           expired: new Set(mockExpired),
           history: [...mockHistory],
         };
@@ -158,6 +177,8 @@ jest.mock("../../lib/prisma", () => {
           return await fn(db);
         } catch (error) {
           mockMarkers = before.markers;
+          mockMarkerPaise = before.markerPaise;
+          mockMarkerAttempts = before.markerAttempts;
           mockExpired = before.expired;
           mockHistory = before.history;
           throw error;
@@ -216,6 +237,8 @@ beforeEach(() => {
   mockLegacyApproved = [];
   mockDue = new Map([["sub-1", ["pay-1"]]]);
   mockMarkers = new Map();
+  mockMarkerPaise = new Map();
+  mockMarkerAttempts = new Map();
   mockExpired = new Set();
   mockHistory = [];
   mockFailStamp = false;
@@ -277,6 +300,98 @@ it.each([
     );
     expect(result.refundsIssued).toBe(0);
     expect(result.success).toBe(true);
+  },
+);
+
+it.each([
+  {
+    arm: "pending consultation",
+    entityId: "consult-1",
+    paymentId: "pay-consult-1",
+    prepare: () => {
+      mockFresh = [];
+      mockDue.clear();
+      mockPendingConsultations = ["consult-1"];
+      mockDue.set("consult-1", ["pay-consult-1"]);
+    },
+  },
+  {
+    arm: "approved unallocated subscription",
+    entityId: "approved-1",
+    paymentId: "pay-approved-1",
+    prepare: () => {
+      mockFresh = [];
+      mockDue.clear();
+      mockApprovedUnallocated = ["approved-1"];
+      mockDue.set("approved-1", ["pay-approved-1"]);
+    },
+  },
+])(
+  "expires $arm without replacing an existing full-balance marker",
+  async ({ prepare, entityId, paymentId }) => {
+    prepare();
+    const key = "other-door:full-balance";
+    mockMarkers.set(paymentId, key);
+    mockMarkerPaise.set(paymentId, null);
+    mockMarkerAttempts.set(paymentId, 2);
+
+    await expireStaleRequests({ limits: { maxRequests: 2 } });
+
+    expect(
+      mockExpired.has(
+        entityId === "consult-1" ? `consultation:${entityId}` : entityId,
+      ),
+    ).toBe(true);
+    expect(mockMarkers.get(paymentId)).toBe(key);
+    expect(mockMarkerPaise.get(paymentId)).toBeNull();
+    expect(mockMarkerAttempts.get(paymentId)).toBe(2);
+    expect(mockDrive).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  {
+    arm: "pending consultation",
+    entityId: "consult-1",
+    paymentId: "pay-consult-1",
+    prepare: () => {
+      mockFresh = [];
+      mockDue.clear();
+      mockPendingConsultations = ["consult-1"];
+      mockDue.set("consult-1", ["pay-consult-1"]);
+    },
+  },
+  {
+    arm: "approved unallocated subscription",
+    entityId: "approved-1",
+    paymentId: "pay-approved-1",
+    prepare: () => {
+      mockFresh = [];
+      mockDue.clear();
+      mockApprovedUnallocated = ["approved-1"];
+      mockDue.set("approved-1", ["pay-approved-1"]);
+    },
+  },
+])(
+  "holds $arm when an existing marker only covers a partial amount",
+  async ({ prepare, entityId, paymentId }) => {
+    prepare();
+    const key = "other-door:partial";
+    mockMarkers.set(paymentId, key);
+    mockMarkerPaise.set(paymentId, 500);
+    mockMarkerAttempts.set(paymentId, 1);
+
+    await expireStaleRequests({ limits: { maxRequests: 2 } });
+
+    expect(
+      mockExpired.has(
+        entityId === "consult-1" ? `consultation:${entityId}` : entityId,
+      ),
+    ).toBe(false);
+    expect(mockMarkers.get(paymentId)).toBe(key);
+    expect(mockMarkerPaise.get(paymentId)).toBe(500);
+    expect(mockMarkerAttempts.get(paymentId)).toBe(1);
+    expect(mockDrive).not.toHaveBeenCalled();
   },
 );
 
@@ -375,9 +490,9 @@ it("boundedly backfills exact historical approved-expiry transitions under the s
   expect(mockMarkers.get("legacy-approved-pay-2")).toBe(
     "approved-unallocated:legacy-approved-pay-2",
   );
-  const scans = (prisma.$queryRaw as jest.Mock).mock.calls.map(
-    ([query]) => query as Prisma.Sql,
-  );
+  const scans = jest
+    .mocked(prisma.$queryRaw)
+    .mock.calls.map(([query]) => query);
   const legacyScan = scans.find(
     (query) =>
       query.text.includes('"Subscription"') &&

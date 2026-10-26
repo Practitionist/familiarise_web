@@ -1,5 +1,7 @@
 /** @jest-environment node */
 
+import { NextRequest } from "next/server";
+
 const mockJobFindFirst = jest.fn();
 const mockArtifactFindUnique = jest.fn();
 const mockAuditCreate = jest.fn();
@@ -65,9 +67,12 @@ beforeEach(() => {
 
 describe("data export download route", () => {
   it("creates a fresh short URL from the owned object and disables caching", async () => {
-    const response = await GET({} as never, {
-      params: Promise.resolve({ orgId: "org-1", exportId: "export-1" }),
-    });
+    const response = await GET(
+      new NextRequest("https://app.test/api/organizations/org-1/data-exports"),
+      {
+        params: Promise.resolve({ orgId: "org-1", exportId: "export-1" }),
+      },
+    );
 
     expect(mockCreateSignedUrl).toHaveBeenCalledWith(
       "org-1/export-1/1792972800000.json",
@@ -85,9 +90,12 @@ describe("data export download route", () => {
   it("never serves the legacy bearer URL when the attempt owner is missing", async () => {
     mockArtifactFindUnique.mockResolvedValue(null);
 
-    const response = await GET({} as never, {
-      params: Promise.resolve({ orgId: "org-1", exportId: "export-1" }),
-    });
+    const response = await GET(
+      new NextRequest("https://app.test/api/organizations/org-1/data-exports"),
+      {
+        params: Promise.resolve({ orgId: "org-1", exportId: "export-1" }),
+      },
+    );
 
     expect(response.status).toBe(410);
     expect(mockCreateSignedUrl).not.toHaveBeenCalled();

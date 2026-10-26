@@ -1,5 +1,7 @@
 /** @jest-environment node */
 
+import { NextRequest } from "next/server";
+
 const mockFindMany = jest.fn();
 const mockRequireOrgAccess = jest.fn();
 
@@ -43,9 +45,12 @@ beforeEach(() => {
 });
 
 it("replaces legacy raw failure details with the safe export message", async () => {
-  const response = await GET({} as never, {
-    params: Promise.resolve({ orgId: "org-1" }),
-  });
+  const response = await GET(
+    new NextRequest("https://app.test/api/organizations/org-1/data-exports"),
+    {
+      params: Promise.resolve({ orgId: "org-1" }),
+    },
+  );
 
   const body = await response.json();
   expect(body.data[0].error).toBe(

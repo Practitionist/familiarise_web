@@ -321,8 +321,14 @@ async function stageExpiredRefunds(
   const kind = ARM_WRAPPER[arm];
   const relation =
     kind === "consultation" ? "consultationId" : "subscriptionId";
-  const payments = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
-    SELECT p.id
+  const payments = await tx.$queryRaw<
+    {
+      id: string;
+      refundOwedKey: string | null;
+      refundOwedPaise: bigint | null;
+    }[]
+  >(Prisma.sql`
+    SELECT p.id, p."refundOwedKey", p."refundOwedPaise"
     FROM "Payment" p
     JOIN "Appointment" a ON a.id = p."appointmentId"
     WHERE a.${Prisma.raw(`"${relation}"`)} = ${entityId}
@@ -330,7 +336,14 @@ async function stageExpiredRefunds(
       AND p."deletedAt" IS NULL
     ORDER BY p."createdAt" ASC, p.id ASC
   `);
-  const markers = payments.map(({ id }) => expiredRefundMarker(arm, id));
+  const markers = payments.flatMap((payment) => {
+    if (payment.refundOwedKey === null)
+      return [expiredRefundMarker(arm, payment.id)];
+    // A null amount means full balance; preserve that marker's owner and retry state.
+    // Hold expiry when an existing partial marker cannot cover this obligation.
+    if (payment.refundOwedPaise === null) return [];
+    throw new Error(`${arm} payment has a partial refund marker`);
+  });
   const stamped = await stampRefundsOwed(tx, markers);
   if (stamped !== markers.length) {
     throw new Error(`${arm} refund marker changed; expiry was rolled back`);
@@ -342,7 +355,7 @@ async function stageExpiredRefunds(
 async function stageLegacyApprovedUnallocatedRefunds(
   limit: number,
 ): Promise<RefundOwedMarker[]> {
-  return withSerializableRetry(async () =>
+  return withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
         const reason = `Auto-expired: APPROVED with zero allocated sessions for more than ${PENDING_EXPIRATION_DAYS} days`;
