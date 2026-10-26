@@ -95,6 +95,14 @@ import {
 } from "../../lib/booking/request-caps";
 import { expireStaleRequests } from "../../scripts/appointments/expire-stale-requests";
 
+type ConsultationExpiryRead = {
+  where: Record<string, unknown>;
+  select?: Record<string, unknown>;
+};
+
+const isIdOnlyProjection = (select: Record<string, unknown> | undefined) =>
+  select?.id === true && Object.keys(select).length === 1;
+
 // Source-text pin (same style as approval-path-correctness.test.ts): the RFA
 // route must acquire the CONSULTEE lock before the slot atoms — direct
 // checkout uses consultee → atoms, and the reverse order here would be a
@@ -154,21 +162,24 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
   });
 
   it("expires stale consultations by id and soft-cancels their tentative slots", async () => {
-    // The partial-marker presence probe is empty, followed by the capped 48 h
-    // cohort. The 7 d pay-link fallback reads the same table later and gets [].
-    (prisma.consultation.findMany as jest.Mock)
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
-          id: "c1",
-          appointment: { id: "apt-1", organizationId: null, occurrences: [] },
-          requestedBy: { user: { id: "u1", name: "Sam" } },
-          consultationPlan: { title: "Plan" },
-        },
-        { id: "c2", appointment: { id: "apt-2" } },
-        { id: "c3", appointment: null }, // slot-less placeholder
-      ])
-      .mockResolvedValue([]);
+    const expiredRows = [
+      {
+        id: "c1",
+        appointment: { id: "apt-1", organizationId: null, occurrences: [] },
+        requestedBy: { user: { id: "u1", name: "Sam" } },
+        consultationPlan: { title: "Plan" },
+      },
+      { id: "c2", appointment: { id: "apt-2" } },
+      { id: "c3", appointment: null }, // slot-less placeholder
+    ];
+    // Both the bounded hold probe and the capped cohort share the stale WHERE;
+    // the id-only projection identifies the probe regardless of query order.
+    (prisma.consultation.findMany as jest.Mock).mockImplementation(
+      async ({ where, select }: ConsultationExpiryRead) => {
+        if (isIdOnlyProjection(select)) return [];
+        return where.status === "PENDING" ? expiredRows : [];
+      },
+    );
     // PR 2c — the sweep now refunds SUCCEEDED payments of expired rows.
     (prisma.appointment.findMany as jest.Mock).mockResolvedValue([]);
     (refundBookingPayment as jest.Mock).mockResolvedValue({

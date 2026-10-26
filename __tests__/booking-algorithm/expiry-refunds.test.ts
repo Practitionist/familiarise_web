@@ -111,6 +111,39 @@ import prisma from "../../lib/prisma";
 import { expireStaleRequests } from "../../scripts/appointments/expire-stale-requests";
 import { AppointmentStatus } from "@prisma/client";
 
+type SubscriptionExpiryRead = {
+  where: {
+    status?: string;
+    updatedAt?: unknown;
+    AND?: Array<{ status?: string; updatedAt?: unknown }>;
+  };
+  select?: Record<string, unknown>;
+};
+
+const isIdOnlyProjection = (select: Record<string, unknown> | undefined) =>
+  select?.id === true && Object.keys(select).length === 1;
+
+const isApprovedUnallocatedQuery = (where: SubscriptionExpiryRead["where"]) =>
+  (where.status === AppointmentStatus.APPROVED && "updatedAt" in where) ||
+  where.AND?.some(
+    (clause) =>
+      clause.status === AppointmentStatus.APPROVED && "updatedAt" in clause,
+  ) === true;
+
+function mockSubscriptionExpiryReads(
+  pendingRows: unknown[],
+  approvedRows: unknown[] = [],
+) {
+  (prisma.subscription.findMany as jest.Mock).mockImplementation(
+    async ({ where, select }: SubscriptionExpiryRead) => {
+      if (isApprovedUnallocatedQuery(where)) {
+        return isIdOnlyProjection(select) ? [] : approvedRows;
+      }
+      return where.status === AppointmentStatus.PENDING ? pendingRows : [];
+    },
+  );
+}
+
 describe("expiry sweep refunds (PR 2c)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -133,10 +166,7 @@ describe("expiry sweep refunds (PR 2c)", () => {
         consultantProfile: { user: { name: "Consultant", email: "" } },
       },
     };
-    (prisma.subscription.findMany as unknown as jest.Mock)
-      .mockResolvedValueOnce([richRow]) // PENDING cohort
-      .mockResolvedValueOnce([]) // Partial-marker presence probe
-      .mockResolvedValueOnce([]); // APPROVED-unallocated cohort: empty
+    mockSubscriptionExpiryReads([richRow]);
     (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
       count: 1,
     });
@@ -164,19 +194,16 @@ describe("expiry sweep refunds (PR 2c)", () => {
   });
 
   it("counts a front-door refusal as a failure without stalling the sweep", async () => {
-    (prisma.subscription.findMany as unknown as jest.Mock)
-      .mockResolvedValueOnce([
-        {
-          id: "sub-1",
-          requestedAt: new Date("2026-01-01"),
-          requestedBy: { user: { name: "B", email: "" } },
-          subscriptionPlan: {
-            consultantProfile: { user: { name: "C", email: "" } },
-          },
+    mockSubscriptionExpiryReads([
+      {
+        id: "sub-1",
+        requestedAt: new Date("2026-01-01"),
+        requestedBy: { user: { name: "B", email: "" } },
+        subscriptionPlan: {
+          consultantProfile: { user: { name: "C", email: "" } },
         },
-      ])
-      .mockResolvedValueOnce([]) // Partial-marker presence probe
-      .mockResolvedValueOnce([]); // Approved cohort
+      },
+    ]);
     (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
       count: 1,
     });
@@ -195,11 +222,7 @@ describe("expiry sweep refunds (PR 2c)", () => {
   });
 
   it("drains the immortal APPROVED-unallocated cohort (zero live confirmed slots)", async () => {
-    // Pending cohort, partial-marker probe, then APPROVED cohort.
-    (prisma.subscription.findMany as unknown as jest.Mock)
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ id: "sub-immortal" }]);
+    mockSubscriptionExpiryReads([], [{ id: "sub-immortal" }]);
     (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
       count: 1,
     });
@@ -264,10 +287,7 @@ describe("expiry sweep refunds (PR 2c)", () => {
         consultantProfile: { user: { name: "Consultant", email: "" } },
       },
     };
-    (prisma.subscription.findMany as unknown as jest.Mock)
-      .mockResolvedValueOnce([readRow]) // PENDING cohort
-      .mockResolvedValueOnce([]) // Partial-marker presence probe
-      .mockResolvedValueOnce([]); // APPROVED-unallocated cohort: empty
+    mockSubscriptionExpiryReads([readRow]);
     // "sub-latecomer" crosses the 30-day line between the read and the write.
     // A predicate-shaped write would sweep it up; an id-scoped CAS cannot.
     (prisma.subscription.updateMany as jest.Mock).mockImplementation(
