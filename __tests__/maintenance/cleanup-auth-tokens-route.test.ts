@@ -18,6 +18,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 const assertNotInMaintenance = jest.fn();
 jest.mock("../../lib/maintenance-cron", () => ({
   assertNotInMaintenance: (...a: unknown[]) => assertNotInMaintenance(...a),
+  MaintenanceUnavailableError: class MaintenanceUnavailableError extends Error {},
   MaintenanceActiveError: class MaintenanceActiveError extends Error {},
 }));
 

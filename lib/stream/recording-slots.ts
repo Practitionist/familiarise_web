@@ -885,6 +885,7 @@ function viewerBookingSelect(userId: string) {
       where: { userId, paymentStatus: "SUCCEEDED" as const, deletedAt: null },
       select: {
         amount: true,
+        paymentIntent: true,
         refunds: { select: { amountPaise: true, status: true } },
       },
     },

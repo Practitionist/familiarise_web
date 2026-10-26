@@ -22,6 +22,7 @@ jest.mock("../../lib/prisma", () => {
     },
     appointmentOccurrence: { findMany: jest.fn().mockResolvedValue([]) },
     appointment: { findMany: jest.fn().mockResolvedValue([]) },
+    $queryRaw: jest.fn(async () => []),
     notificationOutbox: { findMany: jest.fn().mockResolvedValue([]) },
     failedEmail: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),

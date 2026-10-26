@@ -44,6 +44,14 @@ const fresh = () =>
   }));
 
 describe("operational absence checks", () => {
+  it("requires an actual transfer completion within 45 minutes independently of every other capability", () => {
+    const rows = fresh().filter((row) => row.jobName !== "transfer-recordings");
+    const report = assessOperationalCompletions(rows, now);
+    expect(report.healthy).toBe(false);
+    expect(
+      report.jobs.find((job) => job.jobName === "transfer-recordings"),
+    ).toMatchObject({ overdue: true, maxAgeMinutes: 45 });
+  });
   it("one healthy job cannot conceal stopped required capabilities", () => {
     const report = assessOperationalCompletions(
       [{ jobName: "retry-failed-emails", endedAt: now }],

@@ -335,7 +335,7 @@ async function redriveOrgRevocation(
   });
   if (rejoined) return null;
   const { revokeMemberStreamAccess } =
-    await import("@/lib/enterprise/member-removal");
+    await import("@/lib/stream/org-access-revocation");
   const outcome = await revokeMemberStreamAccess({
     userId: row.userId,
     orgId: row.planId,

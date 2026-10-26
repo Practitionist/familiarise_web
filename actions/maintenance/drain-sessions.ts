@@ -1,62 +1,69 @@
-"use server";
-
 /**
  * Video Call Draining & Chat Freeze/Unfreeze for Maintenance Transitions.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
-import { RecordingService } from "@/lib/stream/recording-service";
-import {
-  getStreamChatClient,
-  getStreamVideoClient,
-  withStreamCircuitBreaker,
-} from "@/lib/stream-client";
+import { StreamClient } from "@stream-io/node-sdk";
+import { z } from "zod";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
-import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import {
+  CLASS_PREFIX,
+  getChannelTypeFromId,
+  WEBINAR_PREFIX,
+} from "@/lib/stream-channel-ids";
 import {
   chunk,
   pause,
   STREAM_BATCH_PAUSE_MS,
   STREAM_CONCURRENCY_LIMIT,
 } from "@/lib/stream/batch";
-import { getEventChannelIdsForAppointment } from "@/lib/stream/appointment-channels";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
 import { notifyMaintenanceStarted } from "@/lib/novu/service";
 import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 
 const LIVE_SESSION_WINDOW_MS = 6 * 60 * 60 * 1000;
 const MAX_DRAIN_BATCH = 200;
+const VENDOR_TIMEOUT_MS = 3_000;
+const WORK_BUDGET_MS = 12_000;
 const DRAIN_END_REASON: MeetingEndReason = "maintenance";
 
-const CONSULTANT_USER_SELECT = {
-  select: {
-    consultantProfile: {
-      select: { user: { select: { id: true } } },
-    },
-  },
-} as const;
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
-const REQUESTED_BY_USER_SELECT = {
-  select: { user: { select: { id: true } } },
-} as const;
+function maintenanceStreamClient() {
+  const config = z
+    .object({ apiKey: z.string().min(1), secret: z.string().min(1) })
+    .parse({
+      apiKey: process.env.NEXT_PUBLIC_STREAM_API_KEY,
+      secret: process.env.STREAM_API_SECRET,
+    });
+  return new StreamClient(config.apiKey, config.secret, {
+    timeout: VENDOR_TIMEOUT_MS,
+  });
+}
 
 interface DrainResult {
   drained: number;
   recordingsStopped: number;
-  notified: number;
   errors: string[];
+  remainingSessions: number;
+  remainingChannelFreezes: number;
 }
 
 export async function drainActiveSessions(): Promise<DrainResult> {
   const result: DrainResult = {
     drained: 0,
     recordingsStopped: 0,
-    notified: 0,
     errors: [],
+    remainingSessions: 0,
+    remainingChannelFreezes: 0,
   };
 
+  const window = await currentMaintenanceWindow();
+  if (!window) throw new Error("No active platform maintenance window");
+  const deadline = Date.now() + WORK_BUDGET_MS;
   const now = new Date();
   const liveSince = new Date(now.getTime() - LIVE_SESSION_WINDOW_MS);
   const activeSessions = await prisma.meeting.findMany({
@@ -69,101 +76,56 @@ export async function drainActiveSessions(): Promise<DrainResult> {
     },
     take: MAX_DRAIN_BATCH,
     orderBy: { createdAt: "desc" },
-    include: {
-      occurrence: {
-        include: {
-          appointment: {
-            include: {
-              participants: {
-                where: liveParticipant(),
-                select: { userId: true },
-              },
-              consultation: {
-                include: {
-                  consultationPlan: CONSULTANT_USER_SELECT,
-                  requestedBy: REQUESTED_BY_USER_SELECT,
-                },
-              },
-              subscription: {
-                include: {
-                  subscriptionPlan: CONSULTANT_USER_SELECT,
-                  requestedBy: REQUESTED_BY_USER_SELECT,
-                },
-              },
-              webinar: {
-                include: {
-                  webinarPlan: CONSULTANT_USER_SELECT,
-                },
-              },
-              class: {
-                include: {
-                  classPlan: CONSULTANT_USER_SELECT,
-                },
-              },
-            },
-          },
-        },
-      },
+    select: {
+      id: true,
+      streamCallId: true,
+      appointmentOccurrenceId: true,
+      isRecording: true,
     },
   });
 
-  if (activeSessions.length === 0) {
-    return result;
-  }
-
-  const allUserIds = new Set<string>();
-  const drainedSessions: typeof activeSessions = [];
+  const client = activeSessions.length ? maintenanceStreamClient() : null;
 
   for (const session of activeSessions) {
-    for (const seat of session.occurrence.appointment.participants) {
-      allUserIds.add(seat.userId);
-    }
-
-    const appointment = session.occurrence.appointment;
-    const consultantUserId =
-      appointment.consultation?.consultationPlan?.consultantProfile?.user?.id ??
-      appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.id ??
-      appointment.webinar?.webinarPlan?.consultantProfile?.user?.id ??
-      appointment.class?.classPlan?.consultantProfile?.user?.id;
-    if (consultantUserId) allUserIds.add(consultantUserId);
-
-    const consulteeUserId =
-      appointment.consultation?.requestedBy?.user?.id ??
-      appointment.subscription?.requestedBy?.user?.id;
-    if (consulteeUserId) allUserIds.add(consulteeUserId);
-
+    if (!client || Date.now() + 2 * VENDOR_TIMEOUT_MS > deadline) break;
+    const claimed = await prisma.meeting.updateMany({
+      where: {
+        id: session.id,
+        endedAt: null,
+        streamCallId: session.streamCallId,
+      },
+      data: {
+        maintenanceWindowId: window.id,
+        maintenanceChannelRecoveredAt: null,
+      },
+    });
+    if (!claimed.count) continue;
+    const call = client.video.call(
+      STREAM_CALL_TYPE,
+      toCallId(session.streamCallId),
+    );
     if (session.isRecording) {
       try {
-        await RecordingService.stopRecording(session.streamCallId);
+        await call.stopRecording({ recording_type: "composite" });
         await prisma.meeting.update({
           where: { id: session.id },
           data: { isRecording: false },
         });
         result.recordingsStopped++;
       } catch (err) {
-        Sentry.captureException(
-          err instanceof Error ? err : new Error(String(err)),
-          { tags: { subsystem: "maintenance" } },
-        );
         result.errors.push(
-          `Stop recording ${session.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
+          `Stop recording ${session.streamCallId}: ${messageOf(err)}`,
         );
+        continue;
       }
     }
 
     let endConfirmed = false;
     try {
-      const client = getStreamVideoClient();
-      const call = client.video.call(
-        STREAM_CALL_TYPE,
-        toCallId(session.streamCallId),
-      );
-      await withStreamCircuitBreaker(() => call.end());
+      await call.end();
       endConfirmed = true;
     } catch (err) {
-      result.errors.push(
-        `End call ${session.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      result.errors.push(`End call ${session.streamCallId}: ${messageOf(err)}`);
     }
 
     if (!endConfirmed) {
@@ -175,7 +137,12 @@ export async function drainActiveSessions(): Promise<DrainResult> {
       await prisma.$transaction(async (tx) => {
         await tx.meeting.update({
           where: { id: session.id },
-          data: { endedAt, endedReason: DRAIN_END_REASON },
+          data: {
+            endedAt,
+            endedReason: DRAIN_END_REASON,
+            maintenanceWindowId: window.id,
+            maintenanceChannelRecoveredAt: null,
+          },
         });
         await transitionOccurrenceCompletion(tx, {
           where: { id: session.appointmentOccurrenceId },
@@ -185,32 +152,50 @@ export async function drainActiveSessions(): Promise<DrainResult> {
         });
       });
       result.drained++;
-      drainedSessions.push(session);
     } catch (err) {
       result.errors.push(
-        `Record drained session ${session.id}: ${err instanceof Error ? err.message : String(err)}`,
+        `Record drained session ${session.id}: ${messageOf(err)}`,
       );
     }
   }
 
-  await freezeChannelsForSessions(drainedSessions, result);
+  result.remainingSessions = await prisma.meeting.count({
+    where: {
+      endedAt: null,
+      occurrence: { endsAt: { gte: liveSince }, startsAt: { lte: now } },
+    },
+  });
+  const channels = await syncMaintenanceChannels(window.id, true, deadline);
+  result.remainingChannelFreezes = channels.remaining;
+  result.errors.push(...channels.errors);
+  if (result.remainingSessions || result.remainingChannelFreezes)
+    result.errors.push(
+      "Offline setup has a remaining backlog; retry activation.",
+    );
 
-  if (allUserIds.size > 0) {
+  if (result.drained > 0) {
     try {
-      await notifyMaintenanceStarted({
-        phase: "OFFLINE",
-        reason: "Platform maintenance starting. Active calls have been ended.",
-      });
+      await notifyMaintenanceStarted(
+        {
+          phase: "OFFLINE",
+          reason:
+            "Platform maintenance starting. Active calls may be interrupted.",
+        },
+        {
+          deferAttempt: true,
+          dedupeKey: `maintenance-started:${window.id}`,
+        },
+      );
     } catch (err) {
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        { tags: { subsystem: "maintenance" }, level: "warning" },
-      );
-      result.errors.push(
-        `Notification: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      result.errors.push(`Notification: ${messageOf(err)}`);
     }
   }
+
+  if (result.errors.length)
+    Sentry.captureException(new Error(result.errors[0]), {
+      tags: { subsystem: "maintenance" },
+      extra: { errorCount: result.errors.length },
+    });
 
   console.log(
     JSON.stringify({
@@ -227,30 +212,30 @@ async function setChannelsFrozenState(
   channelIds: string[],
   frozen: boolean,
   errors: string[],
-): Promise<number> {
-  const chat = getStreamChatClient();
+  deadline: number,
+): Promise<Set<string>> {
+  const succeeded = new Set<string>();
+  if (!channelIds.length) return succeeded;
+  const chat = maintenanceStreamClient().chat;
   const label = frozen ? "freeze" : "unfreeze";
-  let succeeded = 0;
 
   for (const [batchIdx, batch] of chunk(
     channelIds,
     STREAM_CONCURRENCY_LIMIT,
   ).entries()) {
-    if (batchIdx > 0) {
-      await pause(STREAM_BATCH_PAUSE_MS);
-    }
+    const pacing = batchIdx > 0 ? STREAM_BATCH_PAUSE_MS : 0;
+    if (Date.now() + pacing + VENDOR_TIMEOUT_MS > deadline) break;
+    if (pacing) await pause(pacing);
     const outcomes = await Promise.allSettled(
       batch.map((channelId) =>
-        withStreamCircuitBreaker(() =>
-          chat
-            .channel(getChannelTypeFromId(channelId), channelId)
-            .updatePartial({ set: { frozen } }),
-        ),
+        chat
+          .channel(getChannelTypeFromId(channelId), channelId)
+          .updateChannelPartial({ set: { frozen } }),
       ),
     );
     outcomes.forEach((outcome, i) => {
       if (outcome.status === "fulfilled") {
-        succeeded++;
+        succeeded.add(batch[i]);
       } else {
         errors.push(
           `${label} ${batch[i]}: ${outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)}`,
@@ -262,80 +247,119 @@ async function setChannelsFrozenState(
   return succeeded;
 }
 
-async function freezeChannelsForSessions(
-  sessions: { occurrence: { appointmentId: string } }[],
-  result: DrainResult,
-): Promise<void> {
-  const appointmentIds = Array.from(
-    new Set(sessions.map((s) => s.occurrence.appointmentId)),
-  );
-  if (appointmentIds.length === 0) return;
-
-  try {
-    const channelIds = await getEventChannelIdsForAppointment(appointmentIds);
-    if (channelIds.length === 0) return;
-
-    await setChannelsFrozenState(channelIds, true, result.errors);
-  } catch (err) {
-    result.errors.push(
-      `Freeze chat: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-export type UnfreezeSource = "derived" | "none";
-
 export async function unfreezeChannelsAfterMaintenance(): Promise<{
   unfrozen: number;
   errors: string[];
-  source: UnfreezeSource;
+  remaining: number;
 }> {
-  const result = {
-    unfrozen: 0,
-    errors: [] as string[],
-    source: "none" as UnfreezeSource,
+  const window = await currentMaintenanceWindow();
+  if (!window) return { unfrozen: 0, errors: [], remaining: 0 };
+  const result = await syncMaintenanceChannels(window.id, false);
+  return {
+    unfrozen: result.processed,
+    errors: result.errors,
+    remaining: result.remaining,
   };
-
-  try {
-    const channelIds = await deriveChannelsToUnfreeze();
-    if (channelIds.length === 0) return result;
-    result.source = "derived";
-
-    result.unfrozen = await setChannelsFrozenState(
-      channelIds,
-      false,
-      result.errors,
-    );
-  } catch (err) {
-    result.errors.push(
-      `Unfreeze chat: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  return result;
 }
 
-async function deriveChannelsToUnfreeze(): Promise<string[]> {
-  const latestWindow = await prisma.maintenanceWindow?.findFirst?.({
-    where: { organizationId: null },
-    orderBy: { startedAt: "desc" },
-    select: { startedAt: true },
+function currentMaintenanceWindow() {
+  return prisma.maintenanceWindow.findFirst({
+    where: { organizationId: null, phase: { not: "OFF" } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
   });
-  const since =
-    latestWindow?.startedAt ?? new Date(Date.now() - LIVE_SESSION_WINDOW_MS);
+}
 
-  const drained = await prisma.meeting.findMany({
-    where: {
-      endedReason: DRAIN_END_REASON,
-      endedAt: { gte: since },
-    },
-    orderBy: { endedAt: "desc" },
-    take: MAX_DRAIN_BATCH,
-    select: { occurrence: { select: { appointmentId: true } } },
-  });
-  if (drained.length === 0) return [];
-
-  return getEventChannelIdsForAppointment(
-    Array.from(new Set(drained.map((s) => s.occurrence.appointmentId))),
-  );
+/** Recovery includes uncertain freezes; only acknowledged recovery removes pending work. */
+async function syncMaintenanceChannels(
+  windowId: string,
+  frozen: boolean,
+  deadline = Date.now() + WORK_BUDGET_MS,
+) {
+  const errors: string[] = [];
+  let processed = 0;
+  let remaining = 0;
+  try {
+    const where = {
+      maintenanceWindowId: windowId,
+      ...(frozen
+        ? { endedAt: { not: null }, maintenanceChannelFrozenAt: null }
+        : { maintenanceChannelRecoveredAt: null }),
+      occurrence: {
+        appointment: {
+          OR: [{ webinarId: { not: null } }, { classId: { not: null } }],
+        },
+      },
+    };
+    const meetings = await prisma.meeting.findMany({
+      where,
+      orderBy: { id: "asc" },
+      take: MAX_DRAIN_BATCH,
+      select: {
+        id: true,
+        occurrence: {
+          select: {
+            appointment: { select: { webinarId: true, classId: true } },
+          },
+        },
+      },
+    });
+    const rows = meetings.map((meeting) => {
+      const appointment = meeting.occurrence.appointment;
+      return {
+        id: meeting.id,
+        channelIds: [
+          ...(appointment.webinarId
+            ? [`${WEBINAR_PREFIX}${appointment.webinarId}`]
+            : []),
+          ...(appointment.classId
+            ? [`${CLASS_PREFIX}${appointment.classId}`]
+            : []),
+        ],
+      };
+    });
+    if (frozen && rows.length && Date.now() + VENDOR_TIMEOUT_MS <= deadline)
+      await prisma.meeting.updateMany({
+        where: {
+          id: { in: rows.map((row) => row.id) },
+          maintenanceWindowId: windowId,
+        },
+        data: { maintenanceChannelRecoveredAt: null },
+      });
+    const succeeded = await setChannelsFrozenState(
+      [...new Set(rows.flatMap((row) => row.channelIds))],
+      frozen,
+      errors,
+      deadline,
+    );
+    const ids = rows
+      .filter((row) => row.channelIds.every((id) => succeeded.has(id)))
+      .map((row) => row.id);
+    if (ids.length) {
+      const result = await prisma.meeting.updateMany({
+        where: {
+          id: { in: ids },
+          maintenanceWindowId: windowId,
+          ...(frozen
+            ? { maintenanceChannelFrozenAt: null }
+            : { maintenanceChannelRecoveredAt: null }),
+        },
+        data: frozen
+          ? { maintenanceChannelFrozenAt: new Date() }
+          : {
+              maintenanceChannelFrozenAt: null,
+              maintenanceChannelRecoveredAt: new Date(),
+            },
+      });
+      processed = result.count;
+    }
+    remaining = await prisma.meeting.count({ where });
+    if (remaining)
+      errors.push(
+        `${remaining} channel operation(s) remain; retry ${frozen ? "activation" : "recovery"}.`,
+      );
+  } catch (error) {
+    errors.push(`${frozen ? "Freeze" : "Unfreeze"} chat: ${messageOf(error)}`);
+  }
+  return { processed, remaining, errors };
 }

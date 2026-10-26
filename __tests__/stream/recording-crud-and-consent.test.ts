@@ -315,10 +315,10 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
       expect(
         mockRecordingUpdateManyAndReturn.mock.invocationCallOrder[0],
       ).toBeLessThan(mockDeleteRecordingAssets.mock.invocationCallOrder[0]);
-      expect(mockDeleteRecordingAssets).toHaveBeenCalledWith({
-        id: "rec-del",
-        storagePath: "recordings/rec-del.mp4",
-      });
+      expect(mockDeleteRecordingAssets).toHaveBeenCalledWith(
+        { id: "rec-del", storagePath: "recordings/rec-del.mp4" },
+        undefined,
+      );
       expect(mockRecordingUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "rec-del", status: "EXPIRED" },
