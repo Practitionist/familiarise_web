@@ -116,6 +116,21 @@ References: [Monitors migration](https://www.sentry.help/en/articles/15007504-mo
 [Developer cron limit](https://www.sentry.help/en/articles/13963931-how-do-i-can-i-get-more-crons-on-a-developer-plan)
 and [subscription controls](https://www.sentry.help/en/articles/13965037-can-i-set-up-an-on-demand-pay-as-you-go-budget-for-my-free-developer-plan).
 
+Email routing and email timing are separate gates. Familiarise's owner-approved
+Sentry project digest minimum/maximum is 60/60 seconds; the cron alert retains its
+30-minute repeat throttle. Read both policies back before a drill. A short issue
+can resolve before a delayed digest is built, and Sentry's published digest path
+excludes resolved issues. This explains a possible delivery failure; it is not
+access to the provider's internal queue. Receipt of a test notification or an
+unrelated application error does not prove the real missed-run alert arrived.
+
+Use the [ticker missed-run runbook](./00-betterstack-setup.md) for the complete
+operator procedure, including repeat-throttle timing, the reserved configuration
+window, independent restoration and ordinary-check-in recovery. Keep secrets in
+protected configuration and preserve exact issue/time evidence in the operating
+record. The runbook is reusable across companies; read their current vendor
+settings rather than assuming Familiarise's policy or account allowance applies.
+
 ## Safe release and verification
 
 1. Refresh the branch against current dev and verify all affected domain suites,

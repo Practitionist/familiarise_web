@@ -113,6 +113,15 @@ For the email map, the pre-launch delivery guard and ops alert routing, see [doc
 
 ## Operational job absence checks
 
+When documenting or verifying cron alerts, include provider delivery timing and
+repeat throttling. Familiarise's approved project-wide email digest policy is
+60/60 seconds; the cron alert repeats at most every 30 minutes. A resolved issue
+can be excluded before a digest is sent, so a successful test email or an
+unrelated error email does not close the missed-run receipt gate. Verify the
+actual issue in the received message and follow the
+[operator runbook](../../../docs/maintenance/00-betterstack-setup.md) for reserved
+configuration access, bounded restoration and the next ordinary recovery tick.
+
 `GET /api/health/jobs` is a bearer-protected read-only capability freshness probe.
 It returns 503 for missing/overdue COMPLETED evidence or an unreadable history,
 using `endedAt` and actual core job names. Required capabilities/SLOs live in
