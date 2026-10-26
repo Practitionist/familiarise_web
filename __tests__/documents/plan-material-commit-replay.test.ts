@@ -292,6 +292,16 @@ it.each([
   },
 );
 
+it("preserves an unreferenced upload when the replay lookup fails", async () => {
+  jest
+    .mocked(prisma.planMaterial.findFirst)
+    .mockRejectedValueOnce(new Error("Database unavailable"));
+  expect((await commit()).status).toBe(500);
+  expect(deletePlanMaterial).not.toHaveBeenCalled();
+  expect(verifyDirectUploadedObject).not.toHaveBeenCalled();
+  expect(prisma.$transaction).not.toHaveBeenCalled();
+});
+
 it.each([
   ["different plan", { consultationPlanId: "plan-2" }],
   [
