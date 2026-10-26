@@ -283,7 +283,7 @@ it.each([
     415,
   ],
 ])(
-  "discards an unreferenced first upload refused as %s",
+  "preserves an unreferenced first upload refused as %s",
   async (_label, input, status) => {
     expect((await commit(input)).status).toBe(status);
     expect(deletePlanMaterial).toHaveBeenCalledWith(storagePath());
