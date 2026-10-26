@@ -60,6 +60,21 @@ export function isDbConnectionOrPoolError(error: unknown): boolean {
   );
 }
 
+/** The same fault, raised by Prisma itself, so a vendor timeout in a mixed path is not mistaken for one. */
+export function isPrismaConnectionOrPoolError(error: unknown): boolean {
+  if (!isDbConnectionOrPoolError(error) || typeof error !== "object") {
+    return false;
+  }
+  const { code, name } = error as { code?: unknown; name?: unknown };
+  if (typeof code === "string" && PRISMA_CONNECTION_ERROR_CODES.has(code)) {
+    return true;
+  }
+  return (
+    typeof name === "string" &&
+    (name.startsWith("PrismaClient") || name === "DriverAdapterError")
+  );
+}
+
 async function getExecutionDelegate() {
   const { default: prisma } = await import("@/lib/prisma");
   return prisma.systemJobExecution;

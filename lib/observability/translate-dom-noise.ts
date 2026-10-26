@@ -26,8 +26,13 @@ export function isTranslateDomMutationNoise(
   translated: boolean = isPageTranslated(),
 ): boolean {
   if (!translated) return false;
-  return (event.exception?.values ?? []).some(
-    (v) =>
-      v.type === "NotFoundError" && DOM_MUTATION_MESSAGE.test(v.value ?? ""),
+  // Every linked exception must match, so a distinct app error chained to it still reports.
+  const values = event.exception?.values ?? [];
+  return (
+    values.length > 0 &&
+    values.every(
+      (v) =>
+        v.type === "NotFoundError" && DOM_MUTATION_MESSAGE.test(v.value ?? ""),
+    )
   );
 }

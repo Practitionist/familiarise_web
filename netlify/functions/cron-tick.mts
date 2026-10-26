@@ -475,7 +475,20 @@ export default async function cronTick(_req: Request): Promise<Response> {
     const error =
       "CRON_SECRET is not set — the ticker cannot authenticate to /api/cleanup/*";
     console.error(JSON.stringify({ event: "cron-tick", error }));
-    await alertMissingSecret(error);
+    await Promise.all([
+      alertMissingSecret(error),
+      emitTickSummary(
+        {
+          event: "cron-tick",
+          ok: [],
+          accepted: [],
+          lockHeld: [],
+          failed: [],
+          durationMs: Date.now() - started,
+        },
+        error,
+      ),
+    ]);
     // #1686 — a 5xx would only be re-invoked three times against the same
     // missing secret; the log line and the Sentry message are the signal.
     return jsonResponse({ error }, 200);
@@ -559,7 +572,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
  * because `lib/observability/betterstack-telemetry` pulls `@sentry/nextjs`
  * into the function bundle; same env contract, never throws.
  */
-async function emitTickSummary(body: TickBody): Promise<void> {
+async function emitTickSummary(body: TickBody, error?: string): Promise<void> {
   const token = process.env.BETTERSTACK_SOURCE_TOKEN;
   const url = process.env.BETTERSTACK_INGEST_URL;
   if (process.env.ENABLE_BETTERSTACK_TELEMETRY !== "true" || !token || !url) {
@@ -568,7 +581,7 @@ async function emitTickSummary(body: TickBody): Promise<void> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2_000);
   try {
-    await fetch(url, {
+    const res = await fetch(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -576,7 +589,7 @@ async function emitTickSummary(body: TickBody): Promise<void> {
       },
       body: JSON.stringify({
         dt: new Date().toISOString(),
-        level: body.failed.length > 0 ? "error" : "info",
+        level: error || body.failed.length > 0 ? "error" : "info",
         message: "cron-tick summary",
         category: "CRON",
         durationMs: body.durationMs,
@@ -584,9 +597,18 @@ async function emitTickSummary(body: TickBody): Promise<void> {
         acceptedCount: body.accepted.length,
         lockHeld: body.lockHeld,
         failed: body.failed,
+        ...(error ? { error } : {}),
       }),
       signal: controller.signal,
     });
+    if (!res.ok) {
+      console.error(
+        JSON.stringify({
+          event: "betterstack-summary-rejected",
+          status: res.status,
+        }),
+      );
+    }
   } catch {
     // Telemetry is best effort.
   } finally {

@@ -108,4 +108,52 @@ describe("ticker execution outcomes", () => {
       JSON.stringify({ event: "cron-checkin-rejected", status: 403 }),
     );
   });
+
+  describe("Better Stack summary line", () => {
+    beforeEach(() => {
+      process.env = {
+        ...process.env,
+        ENABLE_BETTERSTACK_TELEMETRY: "true",
+        BETTERSTACK_SOURCE_TOKEN: "tok",
+        BETTERSTACK_INGEST_URL: "https://ingest.betterstack.test",
+      };
+    });
+
+    it("logs the status of a rejected summary without the token", async () => {
+      const error = jest.spyOn(console, "error").mockImplementation(() => {});
+      const fetchImpl = jest.fn(async (input: string | URL | Request) =>
+        String(input).includes("betterstack.test")
+          ? new Response("bad token", { status: 401 })
+          : new Response("{}", {
+              status: String(input).includes("recording-transfer-background")
+                ? 202
+                : 200,
+            }),
+      );
+      await load(fetchImpl).default(new Request("https://tick.test"));
+      expect(error).toHaveBeenCalledWith(
+        JSON.stringify({ event: "betterstack-summary-rejected", status: 401 }),
+      );
+      expect(JSON.stringify(error.mock.calls)).not.toContain("tok");
+    });
+
+    it("emits an error summary when CRON_SECRET is missing", async () => {
+      jest.spyOn(console, "error").mockImplementation(() => {});
+      jest.useRealTimers();
+      delete process.env.CRON_SECRET;
+      delete process.env.SENTRY_DSN;
+      const fetchImpl = jest.fn(
+        async (_input: string | URL | Request, _init?: RequestInit) =>
+          new Response("{}", { status: 202 }),
+      );
+      await load(fetchImpl).default(new Request("https://tick.test"));
+      const summary = fetchImpl.mock.calls.find(([input]) =>
+        String(input).includes("betterstack.test"),
+      );
+      expect(summary).toBeDefined();
+      const payload = JSON.parse(String(summary?.[1]?.body));
+      expect(payload.level).toBe("error");
+      expect(payload.error).toMatch(/CRON_SECRET is not set/);
+    });
+  });
 });

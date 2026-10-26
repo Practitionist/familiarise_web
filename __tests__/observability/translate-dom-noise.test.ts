@@ -45,6 +45,21 @@ describe("translate DOM mutation noise", () => {
     expect(isTranslateDomMutationNoise({}, true)).toBe(false);
   });
 
+  it("keeps an event whose linked chain holds a distinct application error", () => {
+    const mixed = {
+      exception: {
+        values: [
+          ...removeChild.exception.values,
+          { type: "TypeError", value: "Cannot read properties of undefined" },
+        ],
+      },
+    };
+    expect(isTranslateDomMutationNoise(mixed, true)).toBe(false);
+    expect(
+      isTranslateDomMutationNoise({ exception: { values: [] } }, true),
+    ).toBe(false);
+  });
+
   it("detects the translated-ltr/rtl class on the root element", () => {
     expect(
       isPageTranslated({
