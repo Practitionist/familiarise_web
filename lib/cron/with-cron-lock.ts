@@ -146,12 +146,21 @@ async function recordJobFinish(
   }
 }
 
+// A Netlify invocation cannot outlive 60 s, so a longer lease only strands a killed run's row.
+const NETLIFY_MAX_LEASE_MS = 90_000;
+
+export function effectiveLeaseTtlMs(ttlMs: number): number {
+  return process.env.NETLIFY === "true"
+    ? Math.min(ttlMs, NETLIFY_MAX_LEASE_MS)
+    : ttlMs;
+}
+
 export async function withCronLock<T>(
   jobName: string,
   opts: CronLockOpts,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
+  const ttlMs = effectiveLeaseTtlMs(opts.ttlMs ?? DEFAULT_TTL_MS);
   let delegate: SystemJobExecutionDelegate;
 
   let executionId: string | null = null;

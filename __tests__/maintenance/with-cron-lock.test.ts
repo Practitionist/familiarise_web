@@ -7,6 +7,7 @@ import {
   CronLockHeldError,
   CronLockUnavailableError,
   LONG_JOB_TTL_MS,
+  effectiveLeaseTtlMs,
 } from "../../lib/cron/with-cron-lock";
 import prisma from "../../lib/prisma";
 import redis from "../../lib/redis";
@@ -147,6 +148,20 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
     expect(before - cutoff.getTime()).toBeGreaterThanOrEqual(
       LONG_JOB_TTL_MS - 1_000,
     );
+  });
+
+  it("caps the lease to 90 s on Netlify and leaves other hosts alone", () => {
+    const prev = process.env.NETLIFY;
+    try {
+      process.env.NETLIFY = "true";
+      expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
+      expect(effectiveLeaseTtlMs(30_000)).toBe(30_000);
+      delete process.env.NETLIFY;
+      expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(LONG_JOB_TTL_MS);
+    } finally {
+      if (prev === undefined) delete process.env.NETLIFY;
+      else process.env.NETLIFY = prev;
+    }
   });
 
   it("re-arms the lease every third of the TTL while the job runs and computes durationMs from initial acquisition", async () => {
