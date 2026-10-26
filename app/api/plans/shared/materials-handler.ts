@@ -536,18 +536,18 @@ export function handleUploadMaterial(
     if (limited) return limited;
     const access = await requirePlanManager(userId, planId, config);
     const body = await parseJsonBody(request, MaterialCommitSchema);
-    policyMimeType(body);
     const whereClause: Prisma.PlanMaterialWhereInput = {
       [config.planIdField]: planId,
     };
-    // A committed object answers retries even while storage is unavailable.
-    const committed = await prisma.planMaterial.findFirst({
-      where: { ...whereClause, storagePath: body.storagePath },
-      select: MATERIAL_PUBLIC_SELECT,
-    });
-    if (committed) return NextResponse.json({ data: committed });
 
     try {
+      policyMimeType(body);
+      // A committed object answers retries even while storage is unavailable.
+      const committed = await prisma.planMaterial.findFirst({
+        where: { ...whereClause, storagePath: body.storagePath },
+        select: MATERIAL_PUBLIC_SELECT,
+      });
+      if (committed) return NextResponse.json({ data: committed });
       const stored = await verifyMaterialObject(config.planType, planId, body);
       const outcome = await prisma.$transaction(async (tx) => {
         await lockPlanRowForUpdate(tx, config.planModel, planId);

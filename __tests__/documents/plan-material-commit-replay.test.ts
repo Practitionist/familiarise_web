@@ -272,7 +272,25 @@ it.each([
   mockRows = [material()];
   expect((await commit(input)).status).toBe(status);
   expect(mockCreate).not.toHaveBeenCalled();
+  expect(deletePlanMaterial).not.toHaveBeenCalled();
 });
+
+it.each([
+  ["oversized", body({ fileSize: 11 * 1024 * 1024 }), 413],
+  [
+    "unsupported",
+    body({ mimeType: "text/html", originalName: "Handout.html" }),
+    415,
+  ],
+])(
+  "discards an unreferenced first upload refused as %s",
+  async (_label, input, status) => {
+    expect((await commit(input)).status).toBe(status);
+    expect(deletePlanMaterial).toHaveBeenCalledWith(storagePath());
+    expect(verifyDirectUploadedObject).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  },
+);
 
 it.each([
   ["different plan", { consultationPlanId: "plan-2" }],
