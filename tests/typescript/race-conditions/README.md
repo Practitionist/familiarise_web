@@ -26,7 +26,7 @@ CHAOS_BASE_URL=https://<deploy>.netlify.app npx tsx tests/typescript/race-condit
 
 - Release `PENDING` checkout holds with `releasePendingHolds` (`DELETE /api/checkout/pending/:id`, then a CAS to `EXPIRED`). Never delete `PaymentLeg` rows under a live payment: `payment_legs_sum_to_amount` rejects it, and the leftover `PENDING` payment is later replayed as a 200.
 - A `SUCCEEDED` payment with no appointment is retired with `retireOrphanSucceededPayments`, which prefixes its `description` with `REQUIRES_MANUAL_RECOVERY: race harness fixture` so the orphan sweeps skip it.
-- Back-office scenarios log in as `CHAOS_ADMIN_EMAIL` (default `olivia.brown@protonmail.com`); a deployed target answers 428 `TWO_FACTOR_REQUIRED` unless that account has an enrolled TOTP session in the cookie cache.
+- Back-office scenarios log in as `CHAOS_ADMIN_EMAIL` (default `qa-admin-1@qa.familiarise.invalid`); a deployed target answers 428 `TWO_FACTOR_REQUIRED` unless that account has an enrolled TOTP session in the cookie cache.
 
 ## Deploy previews and `isMockPayment`
 

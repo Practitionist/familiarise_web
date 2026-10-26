@@ -46,6 +46,7 @@ import {
 } from "@/lib/payments/payouts/reconcile-cursor";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import { reportSentryMessage } from "@/lib/observability/report";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 
 // Consider payouts stuck if in PROCESSING for more than 24 hours
 const STUCK_THRESHOLD_HOURS = 24;
@@ -120,6 +121,7 @@ async function handleStuckPayoutsUnlocked(
   let skippedCount = 0;
   let retiredCount = 0;
   const retired: string[] = [];
+  const failures = createRunFailureReporter("payments");
 
   const stuckThreshold = new Date(
     Date.now() - STUCK_THRESHOLD_HOURS * 60 * 60 * 1000,
@@ -207,14 +209,13 @@ async function handleStuckPayoutsUnlocked(
             `Payout ${payout.id}: reference lookup ${ref.kind} (${ref.detail})`,
           );
           if (ref.kind === "ambiguous") {
-            reportSentryMessage(
-              "handle-stuck-payouts: several gateway payouts share one reference",
-              {
-                subsystem: "payments",
-                op: "handle-stuck-payouts",
-                level: "error",
-                extra: { payoutId: payout.id, detail: ref.detail },
-              },
+            failures.add(
+              "handle-stuck-payouts.ambiguous-reference",
+              new Error(
+                "handle-stuck-payouts: several gateway payouts share one reference",
+              ),
+              { payoutId: payout.id, detail: ref.detail },
+              { level: "error" },
             );
           }
           return;
@@ -431,6 +432,8 @@ async function handleStuckPayoutsUnlocked(
   console.log(`   Skipped: ${skippedCount}`);
 
   console.log(`   Retired (gateway does not know the id): ${retiredCount}`);
+
+  failures.flush();
 
   // One expected warning per run, never one per row per tick (#1757).
   if (retiredCount > 0) {

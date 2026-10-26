@@ -31,15 +31,33 @@ jest.mock("../../lib/prisma", () => {
     __esModule: true,
     default: {
       verification: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: "verification-0" },
+            { id: "verification-1" },
+          ]),
+        findFirst: jest.fn().mockResolvedValue(null),
         deleteMany: jest.fn().mockResolvedValue({ count: 2 }),
       },
       session: {
+        findMany: jest
+          .fn()
+          .mockResolvedValue([
+            { id: "session-0" },
+            { id: "session-1" },
+            { id: "session-2" },
+          ]),
+        findFirst: jest.fn().mockResolvedValue(null),
         deleteMany: jest.fn().mockResolvedValue({ count: 3 }),
       },
       idempotencyRecord: {
+        findMany: jest.fn().mockResolvedValue([{ id: "idempotencyRecord-0" }]),
+        findFirst: jest.fn().mockResolvedValue(null),
         deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       invitation: {
+        findFirst: jest.fn().mockResolvedValue(null),
         findMany: jest.fn().mockResolvedValue(candidates),
         updateMany: jest.fn(),
       },

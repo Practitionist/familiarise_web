@@ -544,6 +544,23 @@ describe("cron-tick failed-target reporting", () => {
   });
   afterEach(() => jest.useRealTimers());
 
+  it("reports a one-off failure as a warning on one shared fingerprint", () => {
+    const ev = buildFailedTargetEvent(
+      {
+        name: "release-earnings",
+        status: 500,
+        errorBody: "Internal Server Error - Request ID: abc",
+      },
+      false,
+    );
+    expect(ev.level).toBe("warning");
+    expect(ev.fingerprint).toEqual(["cron-tick", "target-failed-once"]);
+    expect(ev.tags).toMatchObject({
+      target: "release-earnings",
+      class: "platform",
+    });
+  });
+
   it("names the target in the message and fingerprint", () => {
     const ev = buildFailedTargetEvent({
       name: "sweep-stuck-webhook-events",

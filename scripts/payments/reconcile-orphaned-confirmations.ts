@@ -75,14 +75,17 @@ const CHANNEL_PASS_MAX_BUYER_OPS = 500;
 // ensured/failed counters stay with the caller since they govern the loop's
 // own control flow (the deferred-budget break), not this one appointment's
 // outcome.
-type OrphanChannelOutcome = "ensured" | "skipped" | "failed";
+type OrphanChannelOutcome =
+  | { kind: "ensured" }
+  | { kind: "skipped"; reason: string }
+  | { kind: "failed" };
 
 // #1708 — no retry can make this pair's channel succeed, so the row leaves the
 // `chatChannelEnsuredAt IS NULL` queue; rationale in the cron reference.
 async function markChannelTerminal(
   appointmentId: string,
   reason: string,
-): Promise<void> {
+): Promise<string> {
   await prisma.appointment.updateMany({
     where: { id: appointmentId, chatChannelEnsuredAt: null },
     data: { chatChannelEnsuredAt: new Date() },
@@ -90,6 +93,7 @@ async function markChannelTerminal(
   console.warn(
     `💬 Chat channel for appointment ${appointmentId} marked terminal: ${reason}`,
   );
+  return reason;
 }
 
 async function ensureChannelForOrphan(
@@ -99,26 +103,30 @@ async function ensureChannelForOrphan(
     const result = await ensureChannelsForAppointment(appointmentId);
     if (result.ensured) {
       console.log(`💬 Ensured chat channel for appointment ${appointmentId}`);
-      return "ensured";
+      return { kind: "ensured" };
     }
     if (result.reason === "no_channel_branch_for_appointment") {
-      await markChannelTerminal(appointmentId, result.reason);
-      return "skipped";
+      return {
+        kind: "skipped",
+        reason: await markChannelTerminal(appointmentId, result.reason),
+      };
     }
     console.warn(
       `💬 Could not ensure chat channel for appointment ${appointmentId}: ${result.reason}`,
     );
-    return "failed";
+    return { kind: "failed" };
   } catch (err) {
     if (err instanceof DmNotPermittedError) {
-      await markChannelTerminal(appointmentId, err.message);
-      return "skipped";
+      return {
+        kind: "skipped",
+        reason: await markChannelTerminal(appointmentId, "dm_not_permitted"),
+      };
     }
     console.error(
       `❌ Chat-channel ensure failed for appointment ${appointmentId}:`,
       err,
     );
-    return "failed";
+    return { kind: "failed" };
   }
 }
 
@@ -251,6 +259,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
     },
     select: {
       id: true,
+      appointmentType: true,
       // The unit the budget is spent in. `ensureChannelsForAppointment` makes
       // one Stream call per SUCCEEDED payment, so this count — the same
       // predicate it loads buyers with — is what a row costs to drive.
@@ -266,15 +275,23 @@ async function reconcileOrphanedConfirmationsUnlocked(
 
   let channelsEnsured = 0;
   let channelsFailed = 0;
-  const skippedAppointmentIds: string[] = [];
+  const skipped: {
+    appointmentId: string;
+    appointmentType: string;
+    reason: string;
+  }[] = [];
   let channelBuyerOps = 0;
   let channelsDeferred = 0;
   for (const [index, appointment] of unchanneled.entries()) {
     const outcome = await ensureChannelForOrphan(appointment.id);
-    if (outcome === "ensured") {
+    if (outcome.kind === "ensured") {
       channelsEnsured += 1;
-    } else if (outcome === "skipped") {
-      skippedAppointmentIds.push(appointment.id);
+    } else if (outcome.kind === "skipped") {
+      skipped.push({
+        appointmentId: appointment.id,
+        appointmentType: appointment.appointmentType,
+        reason: outcome.reason,
+      });
     } else {
       channelsFailed += 1;
     }
@@ -298,16 +315,19 @@ async function reconcileOrphanedConfirmationsUnlocked(
     }
   }
 
-  const channelsSkipped = skippedAppointmentIds.length;
+  const channelsSkipped = skipped.length;
   // #1708 — one warning per run that counts up, not one event per row per tick.
   if (channelsSkipped > 0) {
     Sentry.captureMessage(
-      `reconcile-orphaned-confirmations: ${channelsSkipped} appointment(s) marked terminal — DM not permitted or no channel branch`,
+      `reconcile-orphaned-confirmations: ${channelsSkipped} appointment(s) marked terminal — no retry can create their chat channel`,
       {
         level: "warning",
         fingerprint: ["reconcile-orphaned-confirmations", "dm_not_permitted"],
         tags: { subsystem: "payments" },
-        extra: { appointmentIds: skippedAppointmentIds },
+        extra: {
+          appointmentIds: skipped.map((r) => r.appointmentId),
+          skipped,
+        },
       },
     );
   }
