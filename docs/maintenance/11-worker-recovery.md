@@ -240,7 +240,9 @@ throughput, storage permissions, backlog drain or actual gateway behavior.
    does not refresh it. Independent monitoring must poll it and route an alert.
 
 Monitor configuration and human alert receipt remain separate deployment gates.
-The pending missed-run exercise is not completed by this code change. Existing
+The ticker missed-run email path has a verified receipt in the
+[operating guide](12-readiness-and-operating-gates.md#error-reporting-scheduler-absence-and-worker-completion);
+that receipt does not establish per-worker alert coverage. Existing
 storage/retention safety PRs, reminder recovery, lost invoice-order references,
 remaining Actions coverage, environment isolation and full-service restore proof
 also retain their owners. This PR does not establish a readiness percentage.
