@@ -207,3 +207,21 @@ describe("pending-payments quotes the frozen Payment.amount (#1182)", () => {
     expect(items.find((i) => i.id === "trial-free")?.amount).toBe(0);
   });
 });
+
+describe("pending-payments join-loads its four reads", () => {
+  it("each read opts into one-statement join loading and the Payment read selects no Decimal column", async () => {
+    await getPendingPayments();
+
+    for (const mocked of [
+      mockedConsultations,
+      mockedSubscriptions,
+      mockedGatewayPayments,
+      mockedTrials,
+    ]) {
+      expect(mocked.mock.calls[0][0].relationLoadStrategy).toBe("join");
+    }
+    const paymentArgs = mockedGatewayPayments.mock.calls[0][0];
+    expect(paymentArgs.include).toBeUndefined();
+    expect(paymentArgs.select).not.toHaveProperty("exchangeRateAtCheckout");
+  });
+});
