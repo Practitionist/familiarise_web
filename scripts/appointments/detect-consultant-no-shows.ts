@@ -39,7 +39,10 @@ import {
 } from "@/lib/payments/operations/refund-owed";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { startDeadline } from "@/lib/cron/run-deadline";
-import { reportSentryMessage } from "@/lib/observability/report";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 import {
   CANCELLABLE_FROM,
   transitionConsultationRequest,
@@ -515,6 +518,7 @@ async function claimConsultantNoShow(
   appointmentId: string,
   owed: RefundOwedMarker | null,
   strike: { consultantProfileId: string; organizationId: string | null },
+  failures: RunFailureReporter,
 ): Promise<boolean> {
   try {
     await prisma.$transaction(async (tx) => {
@@ -564,12 +568,12 @@ async function claimConsultantNoShow(
     // Zero rows matched (parent or occurrences) means someone else moved it
     // between the scan and this claim — the skip branch at the call site.
     if (error instanceof IllegalTransitionError) {
-      reportSentryMessage("No-show claim lost its CAS; row skipped", {
-        subsystem: "bookings",
-        op: "detect-consultant-no-shows",
-        expected: true,
-        extra: { consultationId, appointmentId },
-      });
+      failures.add(
+        "detect-consultant-no-shows",
+        new Error("No-show claim lost its CAS; row skipped"),
+        { consultationId, appointmentId },
+        { expected: true },
+      );
       return false;
     }
     throw error;
@@ -604,6 +608,7 @@ function paidPaymentOf(consultation: NoShowCandidate): PaidPayment | undefined {
 async function refundNoShowConsultation(
   consultation: NoShowCandidate,
   errors: string[],
+  failures: RunFailureReporter,
 ): Promise<{
   refundedPaise: number;
   succeeded: boolean;
@@ -639,12 +644,19 @@ async function refundNoShowConsultation(
   errors.push(msg);
   // Ops parity with every other refund-failure path: a durable signal, awaited
   // so the job's exit cannot drop it.
+  const refundError =
+    refundErr instanceof Error ? refundErr : new Error(String(refundErr));
+  failures.add("detect-consultant-no-shows.refund-failed", refundError, {
+    consultationId: consultation.id,
+    paymentId: paidPayment.id,
+  });
   await recordSystemErrorSafe({
     organizationId: null,
     category: "PAYMENT",
     summary: `No-show refund failed for consultation ${consultation.id}`,
-    err: refundErr instanceof Error ? refundErr : new Error(String(refundErr)),
+    err: refundError,
     context: { paymentId: paidPayment.id },
+    skipSentry: true,
   });
   return { refundedPaise: 0, succeeded: false, paidPayment };
 }
@@ -729,6 +741,7 @@ interface NoShowTally {
   contradicted: number;
   refusals: Array<{ consultationId: string; refusal: string }>;
   errors: string[];
+  failures: RunFailureReporter;
 }
 
 /** One candidate through the consultant-fault pass; failures land in `tally.errors`. */
@@ -771,6 +784,7 @@ async function handleNoShowCandidate(
         consultantProfileId: consultation.consultationPlan.consultantProfileId,
         organizationId: consultation.appointment?.organizationId ?? null,
       },
+      tally.failures,
     );
     if (!claimed) {
       console.log(`   ⏭️ Skipped — status changed since scan`);
@@ -779,7 +793,11 @@ async function handleNoShowCandidate(
     }
 
     const { refundedPaise, succeeded, paidPayment } =
-      await refundNoShowConsultation(consultation, tally.errors);
+      await refundNoShowConsultation(
+        consultation,
+        tally.errors,
+        tally.failures,
+      );
     if (succeeded) tally.refunded++;
 
     await notifyNoShowParties(consultation, party, refundedPaise, paidPayment);
@@ -800,6 +818,7 @@ async function detectConsultantNoShowsUnlocked(
     contradicted: 0,
     refusals: [],
     errors: [],
+    failures: createRunFailureReporter("bookings"),
   };
   const { errors } = tally;
   let bothAbsentTickets = 0;
@@ -859,6 +878,7 @@ async function detectConsultantNoShowsUnlocked(
       if (candidates.length < maxCandidates) break;
     }
   } finally {
+    tally.failures.flush();
     await reportOncePerRun(
       "Consultant no-show refused on Stream evidence",
       tally.refusals,

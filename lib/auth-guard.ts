@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
+import { needsOperatorTwoFactor } from "@/lib/auth/qa-accounts";
 import { lookupSession } from "@/lib/auth-session-lookup";
 import { SessionLookupFailedError } from "@/lib/auth/session-lookup-error";
 import prisma from "@/lib/prisma";
@@ -55,11 +56,7 @@ async function resolveGuardSession({
       new Error("stale-session cleanup did not redirect"),
     );
   }
-  if (
-    !allowUnenrolledOperator &&
-    isOperatorRole(lookup.session.user.role) &&
-    lookup.session.user.twoFactorEnabled !== true
-  ) {
+  if (!allowUnenrolledOperator && needsOperatorTwoFactor(lookup.session.user)) {
     redirect(TWO_FACTOR_SETUP_PATH);
   }
   setSentryIdentityFromSession(lookup.session);
@@ -151,7 +148,7 @@ export const TWO_FACTOR_SETUP_PATH = "/auth/two-factor/setup";
  */
 export async function requireOperator() {
   const session = await requireUserRole(["ADMIN", "STAFF"]);
-  if (session.user.twoFactorEnabled !== true) redirect(TWO_FACTOR_SETUP_PATH);
+  if (needsOperatorTwoFactor(session.user)) redirect(TWO_FACTOR_SETUP_PATH);
   return session;
 }
 
@@ -162,7 +159,7 @@ export async function requireOperatorAwaitingTwoFactor() {
   const session = await requireUserRole(["ADMIN", "STAFF"], {
     allowUnenrolledOperator: true,
   });
-  if (session.user.twoFactorEnabled === true) redirect("/dashboard");
+  if (!needsOperatorTwoFactor(session.user)) redirect("/dashboard");
   return session;
 }
 

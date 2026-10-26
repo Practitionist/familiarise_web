@@ -41,8 +41,10 @@ import { getAppUrl } from "@/lib/url";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
-import * as Sentry from "@sentry/nextjs";
-import { reportSentryError } from "@/lib/observability/report";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 
 // Reminder fires when nextInvoiceDate is within this many days. Once
@@ -73,6 +75,7 @@ async function generateSubscriptionInvoices(opts: {
   limit?: number;
   windowStart?: Date;
 }): Promise<GenerateSubscriptionInvoicesResult> {
+  const failures = createRunFailureReporter("jobs");
   const now = new Date();
   const asOf = opts.windowStart ?? now;
   const remindersSent = await sendRenewalReminders(now, opts.limit);
@@ -326,7 +329,12 @@ async function generateSubscriptionInvoices(opts: {
       }
     } catch (err) {
       failed++;
-      await reportSubscriptionFailure(sub, err, competingInvoiceNumber);
+      await reportSubscriptionFailure(
+        failures,
+        sub,
+        err,
+        competingInvoiceNumber,
+      );
     }
   }
 
@@ -340,6 +348,7 @@ async function generateSubscriptionInvoices(opts: {
     });
   }
 
+  failures.flush();
   console.log(
     `[cron] generate-subscription-invoices: ${generated} invoices, ${skipped} skipped, ${failed} failed, ${remindersSent} renewal reminders`,
   );
@@ -358,6 +367,7 @@ async function generateSubscriptionInvoices(opts: {
  * alert of its own; the cron is idempotent on its next run.
  */
 async function reportSubscriptionFailure(
+  failures: RunFailureReporter,
   sub: { id: string; contract: { organization: { id: string } } },
   err: unknown,
   competingInvoiceNumber: string | undefined,
@@ -373,12 +383,12 @@ async function reportSubscriptionFailure(
     // Serializable transaction, so the collision rolls the sequence back with
     // it. A repeating collision means the claim UPDATE stopped serialising the
     // workers, which is worth waking someone for.
-    reportSentryError(err, {
-      subsystem: "jobs",
-      op: "generate-subscription-invoices",
-      level: "error",
-      extra: { subscriptionId: sub.id, competingInvoiceNumber },
-    });
+    failures.add(
+      "generate-subscription-invoices.duplicate-number",
+      err,
+      { subscriptionId: sub.id, competingInvoiceNumber },
+      { level: "error" },
+    );
     // One capture, not two: the durable row goes through recordSystemEvent,
     // awaited so `$disconnect()` at the end of `main` cannot lose it.
     await recordSystemEventSafe({
@@ -394,8 +404,8 @@ async function reportSubscriptionFailure(
     });
     return;
   }
-  Sentry.captureException(err, {
-    tags: { subsystem: "jobs", job: "generate-subscription-invoices" },
+  failures.add("generate-subscription-invoices", err, {
+    subscriptionId: sub.id,
   });
   console.error(
     `[cron] Failed to generate invoice for subscription ${sub.id}:`,

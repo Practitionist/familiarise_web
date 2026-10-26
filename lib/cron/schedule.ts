@@ -71,6 +71,29 @@ export const TARGETS = [
 
 export type Target = (typeof TARGETS)[number];
 
+/**
+ * The `SystemJobExecution.jobName` a target's core writes when it differs from the
+ * target name; `null` means the core writes no execution row.
+ */
+const JOB_NAME_OVERRIDES: Partial<Record<Target, string | null>> = {
+  "reconcile-refunds": "reconcile-pending-refunds",
+  "abandoned-payments": "cleanup-abandoned-payments",
+  "reschedule-proposals": "expire-reschedule-proposals",
+  "appointment-reminders": "send-appointment-reminders",
+  "tentative-occurrences": "cleanup-tentative-occurrences",
+  "abandoned-org-top-ups": "cleanup-abandoned-org-top-ups",
+  "tds-return-draft": "tds-26q-draft-export",
+  "reconcile-sessions": "reconcile-orphaned-sessions",
+  "sentry-ingest-canary": null,
+  "stream-control-plane-drift": null,
+};
+
+export function jobNameFor(target: Target): string | null {
+  return target in JOB_NAME_OVERRIDES
+    ? (JOB_NAME_OVERRIDES[target] ?? null)
+    : target;
+}
+
 /** Background targets acknowledge admission; their cores record eventual completion. */
 export const TARGET_BACKGROUND_FUNCTIONS: Partial<Record<Target, string>> = {
   "transfer-recordings": "recording-transfer-background",
