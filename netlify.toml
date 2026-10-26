@@ -75,3 +75,11 @@
   for = "/fonts/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+
+# The apex netlify.app host is not a trusted auth origin; send it to the canonical domain.
+# Host-specific `from` does not match deploy-preview-N-- or branch-deploy hosts.
+[[redirects]]
+  from = "https://familiarise.netlify.app/*"
+  to = "https://familiarisenow.com/:splat"
+  status = 301
+  force = true
