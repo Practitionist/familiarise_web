@@ -230,7 +230,13 @@ function invoiceWorld(init: {
         sgstPaise: 0,
       })),
     },
-    ledgerTransaction: { findUnique: jest.fn(async () => ({ id: "issued" })) },
+    ledgerTransaction: {
+      findUnique: jest.fn(
+        async (_args: {
+          where: { idempotencyKey: string };
+        }): Promise<{ id: string } | null> => ({ id: "issued" }),
+      ),
+    },
     payment: { updateMany: jest.fn(async () => ({ count: 2 })) },
     overageEvent: { updateMany: jest.fn(async () => ({ count: 0 })) },
     organizationEarnings: { updateMany: jest.fn(async () => ({ count: 0 })) },
@@ -445,6 +451,32 @@ describe("bank transfer receipts", () => {
 });
 
 describe("gateway capture", () => {
+  it("keeps an already parked capture out of automatic settlement even when its amount now matches", async () => {
+    const { tx, raw, state } = invoiceWorld({
+      status: "ISSUED",
+      totalPaise: 118_000,
+      providerPaymentOrderId: "order_current",
+    });
+    raw.ledgerTransaction.findUnique.mockImplementation(async ({ where }) =>
+      where.idempotencyKey === "unapplied:pay_parked" ? { id: "parked" } : null,
+    );
+
+    const outcome = await applyOrgInvoiceCapture(tx, {
+      invoiceId: "inv-1",
+      gatewayPaymentId: "pay_parked",
+      capturedPaise: 118_000,
+      notesOrganizationId: "org-1",
+    });
+
+    expect(outcome).toEqual({ kind: "UNAPPLIED", reason: "ALREADY_UNAPPLIED" });
+    expect(state.status).toBe("ISSUED");
+    expect(state.providerPaymentOrderId).toBe("order_current");
+    expect(raw.organizationInvoice.updateMany).not.toHaveBeenCalled();
+    expect(raw.organizationInvoiceReceipt.create).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(mockSystemEvent).not.toHaveBeenCalled();
+  });
+
   it("preserves a newer checkout when a late capture is parked, then clears it only on settlement", async () => {
     const { tx, raw, state } = invoiceWorld({
       status: "ISSUED",

@@ -62,12 +62,15 @@ do not establish the age of an individual queued obligation. Invoice recovery
 reads at most five candidates per slot, so cohort size and lost order pointers
 remain explicit capacity and coverage concerns.
 
-At the current limit this is at most thirty order reads per day; abandoned
-orders consume those reads too. Dunning does not synchronously verify the
-gateway before suspension. Retain this as a known operating gap: measure cohort
-rotation and missed-capture age against dunning deadlines before relying on the
-healer for suspension safety. A most-recent-first scan alone would starve older
-orders rather than establish complete coverage.
+At the current limit this is at most thirty scheduled order reads per day;
+abandoned orders consume those reads too. Before config-enabled suspension,
+dunning separately reads the retained order with a bounded provider wait and
+uses canonical settlement for a discovered capture. Unavailable, live or parked
+payment evidence holds suspension. The claim also rechecks positive net debt
+and the inspected order reference transactionally. Lost historical references
+remain outside these reads, and reminders still select by invoice status.
+Measure cohort rotation and missed-capture age; neither this guard nor a
+most-recent-first scan establishes adequate recovery capacity.
 
 The public dependency health endpoint and shared heartbeat remain useful
 activity signals. One healthy job can refresh activity while another stops.

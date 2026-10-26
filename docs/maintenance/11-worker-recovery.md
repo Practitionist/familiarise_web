@@ -185,6 +185,16 @@ The attachment transaction recomputes the outstanding amount before its CAS:
 an in-flight request cannot reinstall an old-amount order after that credit.
 Payment-attempt failure callbacks retain the current reference: the same order
 can be retried, and a delayed failure must not erase a newer checkout.
+A capture with an existing unreleased unapplied receipt stays parked even if
+a later read matches the invoice balance. Automatic recovery must not settle
+those same cash funds a second time; operator reconciliation owns release.
+Before config-enabled suspension, dunning reads the retained gateway order with
+a five-second wait cap inside a ten-second run admission budget. A discovered
+capture uses the same canonical settlement and durable notices. Live, uncertain
+or parked evidence holds suspension and records a failed check. The suspension
+transaction rechecks positive net debt and CASes the inspected order reference.
+This guard reduces dependence on healer throughput; lost references and the
+status-based reminder cohorts remain explicit coverage limits.
 
 This healer covers retained order pointers. Existing bank-receipt and credit
 flows can clear a pointer while a previous checkout tab remains open. Finding

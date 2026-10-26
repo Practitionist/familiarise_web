@@ -115,6 +115,8 @@ type SubscriptionExpiryRead = {
   where: {
     status?: string;
     updatedAt?: unknown;
+    requestedAt?: unknown;
+    NOT?: unknown;
     AND?: Array<{ status?: string; updatedAt?: unknown }>;
   };
   select?: Record<string, unknown>;
@@ -139,7 +141,11 @@ function mockSubscriptionExpiryReads(
       if (isApprovedUnallocatedQuery(where)) {
         return isIdOnlyProjection(select) ? [] : approvedRows;
       }
-      return where.status === AppointmentStatus.PENDING ? pendingRows : [];
+      return where.status === AppointmentStatus.PENDING &&
+        where.requestedAt !== undefined &&
+        where.NOT !== undefined
+        ? pendingRows
+        : [];
     },
   );
 }

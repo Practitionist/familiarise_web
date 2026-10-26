@@ -91,6 +91,17 @@ The draw is an atomic compare-and-swap. `drawPurchaseOrder` (`lib/payments/billi
 
 Only organisations in `ACTIVE`, `PENDING_VERIFICATION` or `SUSPENDED` status are dunned; a `DEACTIVATED` organisation is being torn down. Stage 3 suspends at most 20 invoices per run, oldest final reminder first, so switching the flag on cannot suspend the whole backlog in one tick. The reminder count and the 7-day interval are code constants, not settings. With the flag off, dunning is notify-only and a human takes over after the third reminder.
 
+Before stage 3, the worker reads the retained gateway order. A discovered capture
+uses `applyOrgInvoiceCapture` and its existing durable notice outboxes; it does
+not issue a new charge. Live, unavailable or unapplied payment evidence holds
+suspension and increments the job failure count. New suspension work is admitted
+for ten seconds from run start, with each provider wait capped at five seconds.
+The Serializable suspension claim rechecks positive net outstanding through its
+transaction client and CASes the order reference that was inspected. A credit
+or concurrent checkout cannot inherit a stale suspension decision. This covers
+retained order IDs; it cannot discover a capture whose reference was lost.
+Earlier reminder stages still use their existing status/date cohorts.
+
 ## Credit notes
 
 A refund against an invoiced booking mints a credit note, the legal document that reverses output tax. `mintRefundCreditNote` (`lib/payments/operations/refund.ts`) is called from the refund cascade and from the gateway-refund webhook, so exactly one note is issued per refund: `CreditNote.refundId` is unique, and a replay returns the existing note. It does nothing for a payment that is not invoiced, refuses a `DRAFT` invoice (those accruals are netted on the leg instead), reverses the accrual legs in strict proportion to the refund, and takes its number from a separate gapless per-organisation series (`OrgCreditNoteCounter`). `mintInvoiceRefundCreditNote` covers the case where the organisation paid an invoice directly through the gateway and that payment was refunded. Past 30 November following the financial year of the supply the note is commercial: base amount only, every tax head zero, and the refund cascade then posts no `GST_PAYABLE` debit. The rules for the note itself are in the [tax page](../60-tax/02-gst-invoices-and-credit-notes.md); the cascade is in [refunds](../30-refunds-disputes/01-refunds.md).
@@ -124,4 +135,4 @@ Had Wipro paid nothing, dunning stage 1 marks the invoice `OVERDUE` in the windo
 2. **An `items` JSON blob on the invoice.** Lines are typed `InvoiceLineItem` rows.
 3. **`MAX(seq) + 1` numbering.** It races; numbers come from the counter upsert, and the fiscal year is reckoned in IST.
 4. **A status per reminder.** Dunning loops inside `OVERDUE`.
-5. **Dunning described as two stages only.** The job's header comment still says there is no suspend stage; the code has it behind `ENABLE_DUNNING_SUSPEND`.
+5. **Dunning described as two stages only.** Suspension is the third stage behind `ENABLE_DUNNING_SUSPEND`, with gateway and net-debt checks before its claim.
