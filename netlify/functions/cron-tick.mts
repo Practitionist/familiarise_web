@@ -27,12 +27,19 @@
 import { z } from "zod";
 import {
   dueTargets,
+  scheduleFor,
   targetRequest,
   isFirstDueTickOfHour,
   TARGET_WINDOWS,
   TARGET_BACKGROUND_FUNCTIONS,
   type Target,
 } from "../../lib/cron/schedule";
+import {
+  isPlatformErrorBody,
+  isRepeatedFailure,
+  streakReportSchema,
+  type StreakReport,
+} from "../../lib/cron/failure-streak";
 import { jobOutcomeSchema, type JobOutcome } from "../../lib/cron/job-outcome";
 
 export const config = { schedule: "*/5 * * * *" };
@@ -260,19 +267,25 @@ async function alertMissingSecret(error: string): Promise<void> {
 }
 
 /**
- * The Sentry event for one failing target. The target name is in the message
- * and fingerprint so the shared repeat filter and Sentry grouping are per target.
+ * The Sentry event for one failing target. A repeat failure is an error issue
+ * per target; a one-off is a warning on one shared fingerprint, target in tags.
  */
-export function buildFailedTargetEvent(failed: {
-  name: string;
-  status: number;
-  errorBody?: string;
-}) {
+export function buildFailedTargetEvent(
+  failed: { name: string; status: number; errorBody?: string },
+  repeated = true,
+) {
   return {
     message: `cron-tick: target ${failed.name} failed`,
-    level: "error" as const,
-    fingerprint: ["cron-tick", failed.name],
-    tags: { subsystem: "cron", op: "cron-tick", target: failed.name },
+    level: repeated ? ("error" as const) : ("warning" as const),
+    fingerprint: repeated
+      ? ["cron-tick", failed.name]
+      : ["cron-tick", "target-failed-once"],
+    tags: {
+      subsystem: "cron",
+      op: "cron-tick",
+      target: failed.name,
+      ...(isPlatformErrorBody(failed.errorBody) ? { class: "platform" } : {}),
+    },
     contexts: {
       tick: {
         target: failed.name,
@@ -290,13 +303,45 @@ export function buildFailedTargetEvent(failed: {
  * answers 200 regardless, so without this a broken sweep only shows in the log;
  * a total outage is bounded by the shared 10/hour breaker.
  */
+/** Bounded read of each failing target's last COMPLETED run; null means history unknown. */
+async function fetchStreaks(
+  baseUrl: string,
+  secret: string,
+  names: string[],
+): Promise<StreakReport | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const res = await fetch(
+      `${baseUrl}/api/health/jobs/streaks?targets=${names.map(encodeURIComponent).join(",")}`,
+      {
+        headers: { Authorization: `Bearer ${secret}` },
+        signal: controller.signal,
+      },
+    );
+    if (!res.ok) return null;
+    const parsed = streakReportSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function alertFailedTargets(
   failed: { name: string; status: number; errorBody?: string }[],
   tickStart: Date,
+  history: { baseUrl: string; secret: string },
 ): Promise<void> {
   // Judge against the tick's start: targets can run 20 s past a minute boundary.
   const due = failed.filter((f) => isFirstDueTickOfHour(f.name, tickStart));
   if (due.length === 0) return;
+  const streaks = await fetchStreaks(
+    history.baseUrl,
+    history.secret,
+    due.map((f) => f.name),
+  );
   try {
     const Sentry = await import("@sentry/node");
     const { applyErrorBudget } = await import("../../sentry.shared.config");
@@ -323,7 +368,13 @@ async function alertFailedTargets(
       },
     });
     for (const f of due) {
-      const event = buildFailedTargetEvent(f);
+      const everyMinutes = scheduleFor(f.name)?.everyMinutes ?? 5;
+      const repeated = isRepeatedFailure(
+        everyMinutes,
+        streaks?.[f.name],
+        tickStart,
+      );
+      const event = buildFailedTargetEvent(f, repeated);
       Sentry.captureMessage(event.message, event);
     }
     await Sentry.flush(2_000);
@@ -560,6 +611,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
       failedForAlert.filter((f) => reportableToSentry(f.name)),
       tickDate,
       started + 27_000,
+      { baseUrl, secret },
     ),
   ]);
 
@@ -620,11 +672,12 @@ async function boundedAlert(
   failed: Parameters<typeof alertFailedTargets>[0],
   tickDate: Date,
   deadline: number,
+  history: { baseUrl: string; secret: string },
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      alertFailedTargets(failed, tickDate),
+      alertFailedTargets(failed, tickDate, history),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, Math.max(1, deadline - Date.now()));
       }),
