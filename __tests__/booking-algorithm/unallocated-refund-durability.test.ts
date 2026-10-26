@@ -15,6 +15,7 @@ let mockFailStamp = false;
 let mockFresh: string[] = [];
 let mockPendingConsultations: string[] = [];
 let mockApprovedUnallocated: string[] = [];
+let mockNoAppointmentSubscriptions = new Set<string>();
 let mockLegacy: string[] = [];
 let mockLegacyApproved: string[] = [];
 let mockDue = new Map<string, string[]>();
@@ -36,9 +37,19 @@ const paymentRows = (ids: string[]) =>
     refundOwedAttempts: mockMarkerAttempts.get(id) ?? 0,
   }));
 
+const hasPartialRefundMarker = (entityId: string) =>
+  (mockDue.get(entityId) ?? []).some(
+    (paymentId) =>
+      mockMarkers.has(paymentId) &&
+      mockMarkerPaise.get(paymentId) !== null &&
+      mockMarkerPaise.has(paymentId),
+  );
+
 const row = (id: string) => ({
   id,
-  appointment: { id: `a-${id}`, organizationId: null, occurrences: [] },
+  appointment: mockNoAppointmentSubscriptions.has(id)
+    ? null
+    : { id: `a-${id}`, organizationId: null, occurrences: [] },
   requestedBy: { user: { id: "buyer", name: "Buyer" } },
   subscriptionPlan: {
     title: "Plan",
@@ -57,8 +68,31 @@ jest.mock("../../lib/prisma", () => {
   const db = {
     consultation: {
       findMany: jest.fn(
-        async ({ where }: { where: Prisma.ConsultationWhereInput }) =>
-          where.status === "PENDING" ? mockPendingConsultations.map(row) : [],
+        async ({
+          where,
+          take,
+          select,
+        }: {
+          where: Prisma.ConsultationWhereInput;
+          take?: number;
+          select?: Prisma.ConsultationSelect;
+        }) => {
+          if (!JSON.stringify(where).includes('"PENDING"')) return [];
+          const whereText = JSON.stringify(where);
+          const partialMarkerQuery = whereText.includes(
+            '"refundOwedPaise":{"not":null}',
+          );
+          const heldPresenceQuery =
+            partialMarkerQuery &&
+            select?.id === true &&
+            Object.keys(select).length === 1;
+          const ids = mockPendingConsultations.filter((id) =>
+            heldPresenceQuery
+              ? hasPartialRefundMarker(id)
+              : !partialMarkerQuery || !hasPartialRefundMarker(id),
+          );
+          return ids.slice(0, take ?? ids.length).map(row);
+        },
       ),
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => ({
         status: "PENDING",
@@ -72,12 +106,36 @@ jest.mock("../../lib/prisma", () => {
     },
     subscription: {
       findMany: jest.fn(
-        async ({ where }: { where: Prisma.SubscriptionWhereInput }) =>
-          where.status === "APPROVED"
-            ? mockApprovedUnallocated.map(row)
-            : where.AND && JSON.stringify(where.AND).includes("RESCHEDULED")
-              ? mockFresh.map(row)
-              : [],
+        async ({
+          where,
+          take,
+          select,
+        }: {
+          where: Prisma.SubscriptionWhereInput;
+          take?: number;
+          select?: Prisma.SubscriptionSelect;
+        }) => {
+          const whereText = JSON.stringify(where);
+          const partialMarkerQuery = whereText.includes(
+            '"refundOwedPaise":{"not":null}',
+          );
+          const heldPresenceQuery =
+            partialMarkerQuery &&
+            select?.id === true &&
+            Object.keys(select).length === 1;
+          const isApprovedCohort = whereText.includes('"APPROVED"');
+          if (isApprovedCohort) {
+            const ids = mockApprovedUnallocated.filter((id) =>
+              heldPresenceQuery
+                ? hasPartialRefundMarker(id)
+                : !partialMarkerQuery || !hasPartialRefundMarker(id),
+            );
+            return ids.slice(0, take ?? ids.length).map(row);
+          }
+          return where.AND && JSON.stringify(where.AND).includes("RESCHEDULED")
+            ? mockFresh.map(row)
+            : [];
+        },
       ),
       findFirst: jest.fn(async () => (mockFresh[0] ? row(mockFresh[0]) : null)),
       findUnique: jest.fn(async () => ({
@@ -273,6 +331,7 @@ beforeEach(() => {
   mockFresh = ["sub-1"];
   mockPendingConsultations = [];
   mockApprovedUnallocated = [];
+  mockNoAppointmentSubscriptions = new Set();
   mockLegacy = [];
   mockLegacyApproved = [];
   mockDue = new Map([["sub-1", ["pay-1"]]]);
@@ -291,6 +350,41 @@ beforeEach(() => {
   mockExpiredNotice.mockResolvedValue(undefined);
 });
 afterEach(() => jest.restoreAllMocks());
+
+it("keeps stale approved subscriptions with no appointment in the expiry cohort", async () => {
+  mockFresh = [];
+  const subscriptionId = "approved-without-appointment";
+  mockApprovedUnallocated = [subscriptionId];
+  mockNoAppointmentSubscriptions.add(subscriptionId);
+
+  await expireStaleRequests({ limits: { maxRequests: 1 } });
+
+  expect(mockExpired.has(subscriptionId)).toBe(true);
+  expect(mockHistory).toEqual([subscriptionId]);
+  const approvedCohort = (prisma.subscription.findMany as jest.Mock).mock.calls
+    .map(([args]) => args)
+    .find(
+      (args) =>
+        JSON.stringify(args.where).includes('"status":"APPROVED"') &&
+        JSON.stringify(args.where).includes('"refundOwedPaise":{"not":null}') &&
+        JSON.stringify(args.where).includes(
+          '"NOT":{"appointment":{"payment":{"some"',
+        ),
+    );
+  expect(approvedCohort.where.AND).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        NOT: {
+          appointment: {
+            payment: {
+              some: expect.any(Object),
+            },
+          },
+        },
+      }),
+    ]),
+  );
+});
 
 const expiryArms = [
   {
@@ -353,14 +447,14 @@ it.each(expiryArms)(
     const key = "other-door:full-balance";
     mockMarkers.set(paymentId, key);
     mockMarkerPaise.set(paymentId, null);
-    mockMarkerAttempts.set(paymentId, 2);
+    mockMarkerAttempts.set(paymentId, 3);
 
-    await expireStaleRequests({ limits: { maxRequests: 2 } });
+    await expireStaleRequests({ limits: { maxRequests: 1 } });
 
     expect(mockExpired.has(expiredId)).toBe(true);
     expect(mockMarkers.get(paymentId)).toBe(key);
     expect(mockMarkerPaise.get(paymentId)).toBeNull();
-    expect(mockMarkerAttempts.get(paymentId)).toBe(2);
+    expect(mockMarkerAttempts.get(paymentId)).toBe(3);
     expect(mockDrive).not.toHaveBeenCalled();
   },
 );
@@ -376,7 +470,7 @@ it.each(expiryArms)(
     mockMarkerReasons.set(paymentId, reason);
     mockMarkerAttempts.set(paymentId, 1);
 
-    await expireStaleRequests({ limits: { maxRequests: 2 } });
+    await expireStaleRequests({ limits: { maxRequests: 1 } });
 
     expect(mockExpired.has(expiredId)).toBe(false);
     expect(mockMarkers.get(paymentId)).toBe(key);
@@ -409,13 +503,15 @@ it.each(expiryArms)(
     mockMarkerReasons.set(paymentId, reason);
     mockMarkerAttempts.set(paymentId, 3);
 
-    const result = await expireStaleRequests({ limits: { maxRequests: 2 } });
+    const result = await expireStaleRequests({ limits: { maxRequests: 1 } });
 
     expect(result.success).toBe(false);
     expect(result.errors).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          `${arm === "pending consultation" ? "1 pending-consultation" : "1 approved-unallocated"} expiry request(s) held by an existing partial refund marker`,
+          arm === "pending consultation"
+            ? "Pending consultation expiry held by a partial refund marker"
+            : "Approved-unallocated expiry held by a partial refund marker",
         ),
       ]),
     );

@@ -49,5 +49,7 @@ under its existing credit-cap row lock. Failed payment attempts retain reference
 because their orders remain retryable. Clearing a local pointer does not revoke
 a provider order: late mismatched captures stay operator-reviewed liabilities,
 and the retained-pointer healer cannot discover every superseded order.
+Recompute outstanding through the attachment transaction before its CAS; a
+gateway request may have started before the credit changed the balance.
 
 Use `applyOrgInvoiceCapture` with the transaction client for webhook, checkout read-back and scheduled recovery. Keep receipt, ledger, PAID audit and notification staging atomic. The registered invoice healer rotates retained order IDs through its existing execution checkpoint; it never creates another charge or auto-refunds an unapplied capture. An empty payment list does not close a created/attempted order: checkout must not replace an open stale-amount order. Keep provider waits inside the caller's remaining budget; an SDK timeout does not cancel a gateway effect. Bank receipts and credits can clear an old order reference, so do not claim the healer discovers every historical capture. Read `docs/maintenance/11-worker-recovery.md` for cadence, bounded rotation and remaining operating gates.

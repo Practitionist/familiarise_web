@@ -242,6 +242,13 @@ class ExpiredRefundPartialMarkerError extends Error {
   }
 }
 
+const PARTIAL_REFUND_MARKER_PAYMENT = {
+  paymentStatus: PaymentStatus.SUCCEEDED,
+  deletedAt: null,
+  refundOwedKey: { not: null },
+  refundOwedPaise: { not: null },
+} satisfies Prisma.PaymentWhereInput;
+
 const ARM_WRAPPER: Record<ExpiredRefundArm, "consultation" | "subscription"> = {
   "pending-consultation": "consultation",
   "pending-subscription": "subscription",
@@ -451,19 +458,39 @@ async function expirePendingConsultations(
   );
 
   try {
+    const cohortWhere = {
+      status: AppointmentStatus.PENDING,
+      requestedAt: { lt: expirationDate },
+      // Never reap a booking whose reschedule proposal is still live or
+      // that is parked with an unplaced RESCHEDULED slot awaiting placement.
+      ...NO_UNPLACED_SLOT,
+    } satisfies Prisma.ConsultationWhereInput;
+    const appointmentWhere = {
+      rescheduleRequests: {
+        none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+      },
+    } satisfies Prisma.AppointmentWhereInput;
+    const heldPartialMarker = await prisma.consultation.findMany({
+      where: {
+        ...cohortWhere,
+        appointment: {
+          ...appointmentWhere,
+          payment: { some: PARTIAL_REFUND_MARKER_PAYMENT },
+        },
+      },
+      select: { id: true },
+      take: 1,
+    });
+    let partialMarkerHoldSeen = heldPartialMarker.length > 0;
+
     // Find stale PENDING consultations (with their appointment ids so the
     // slot release below can target exactly the expired rows).
     const staleConsultations = await prisma.consultation.findMany({
       where: {
-        status: AppointmentStatus.PENDING,
-        requestedAt: { lt: expirationDate },
-        // Never reap a booking whose reschedule proposal is still live or
-        // that is parked with an unplaced RESCHEDULED slot awaiting placement.
-        ...NO_UNPLACED_SLOT,
+        ...cohortWhere,
         appointment: {
-          rescheduleRequests: {
-            none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
-          },
+          ...appointmentWhere,
+          payment: { none: PARTIAL_REFUND_MARKER_PAYMENT },
         },
       },
       select: {
@@ -493,6 +520,11 @@ async function expirePendingConsultations(
       take: limits.maxRequests,
     });
     warnIfCapped("consultation", staleConsultations.length, limits);
+    if (partialMarkerHoldSeen) {
+      errors.push(
+        "Pending consultation expiry held by a partial refund marker",
+      );
+    }
 
     console.log(
       `Found ${staleConsultations.length} consultations in PENDING for >${PENDING_CONSULTATION_EXPIRATION_HOURS}h`,
@@ -510,7 +542,6 @@ async function expirePendingConsultations(
     const markers: RefundOwedMarker[] = [];
     let slotsReleased = 0;
     let skipped = 0;
-    let partialMarkerHolds = 0;
     for (const stale of staleConsultations) {
       try {
         const stagedForOne = await withSerializableRetry(() =>
@@ -585,7 +616,12 @@ async function expirePendingConsultations(
           throw error;
         }
         if (error instanceof ExpiredRefundPartialMarkerError) {
-          partialMarkerHolds++;
+          if (!partialMarkerHoldSeen) {
+            partialMarkerHoldSeen = true;
+            errors.push(
+              "Pending consultation expiry held by a partial refund marker",
+            );
+          }
         }
         skipped++;
       }
@@ -594,11 +630,6 @@ async function expirePendingConsultations(
       `✅ Expired ${expiredIds.length} PENDING consultations (${skipped} skipped)`,
     );
     console.log(`✅ Released ${slotsReleased} tentative slots from them`);
-    if (partialMarkerHolds > 0) {
-      errors.push(
-        `${partialMarkerHolds} pending-consultation expiry request(s) held by an existing partial refund marker`,
-      );
-    }
     const refunds = await driveExpiredRefunds(markers);
     errors.push(...refunds.failureMsgs);
 
@@ -891,11 +922,35 @@ async function expireApprovedUnallocatedSubscriptions(
   );
 
   try {
+    const cohortWhere = {
+      status: AppointmentStatus.APPROVED,
+      updatedAt: { lt: cutoff },
+      ...NO_LIVE_SESSION,
+    } satisfies Prisma.SubscriptionWhereInput;
+    const heldPartialMarker = await prisma.subscription.findMany({
+      where: {
+        ...cohortWhere,
+        appointment: {
+          payment: { some: PARTIAL_REFUND_MARKER_PAYMENT },
+        },
+      },
+      select: { id: true },
+      take: 1,
+    });
+    let partialMarkerHoldSeen = heldPartialMarker.length > 0;
+
     const stale = await prisma.subscription.findMany({
       where: {
-        status: AppointmentStatus.APPROVED,
-        updatedAt: { lt: cutoff },
-        ...NO_LIVE_SESSION,
+        AND: [
+          cohortWhere,
+          {
+            NOT: {
+              appointment: {
+                payment: { some: PARTIAL_REFUND_MARKER_PAYMENT },
+              },
+            },
+          },
+        ],
       },
       select: {
         ...EXPIRY_NOTICE_SELECT,
@@ -907,6 +962,11 @@ async function expireApprovedUnallocatedSubscriptions(
       take: limits.maxRequests,
     });
     warnIfCapped("subscription", stale.length, limits);
+    if (partialMarkerHoldSeen) {
+      errors.push(
+        "Approved-unallocated expiry held by a partial refund marker",
+      );
+    }
 
     if (stale.length === 0) {
       const refunds = await driveExpiredRefunds(legacy);
@@ -932,7 +992,6 @@ async function expireApprovedUnallocatedSubscriptions(
     const expiredIds: string[] = [];
     const markers = [...legacy];
     let skipped = 0;
-    let partialMarkerHolds = 0;
     for (const subscription of stale) {
       try {
         const stagedForOne = await withSerializableRetry(() =>
@@ -980,17 +1039,17 @@ async function expireApprovedUnallocatedSubscriptions(
           throw error;
         }
         if (error instanceof ExpiredRefundPartialMarkerError) {
-          partialMarkerHolds++;
+          if (!partialMarkerHoldSeen) {
+            partialMarkerHoldSeen = true;
+            errors.push(
+              "Approved-unallocated expiry held by a partial refund marker",
+            );
+          }
         }
         skipped++;
       }
     }
 
-    if (partialMarkerHolds > 0) {
-      errors.push(
-        `${partialMarkerHolds} approved-unallocated expiry request(s) held by an existing partial refund marker`,
-      );
-    }
     console.log(
       `✅ Expired ${expiredIds.length} APPROVED-unallocated subscriptions` +
         (skipped > 0 ? ` (${skipped} skipped)` : ""),

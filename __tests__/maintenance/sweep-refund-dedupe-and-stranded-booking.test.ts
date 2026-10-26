@@ -42,6 +42,9 @@ import { AppointmentStatus, PaymentStatus } from "@prisma/client";
 
 const refundBookingPayment = jest.fn();
 const mockDriveRefundOwed = jest.fn();
+const isPartialMarkerPresenceQuery = (
+  select: Record<string, unknown> | undefined,
+) => select?.id === true && Object.keys(select).length === 1;
 const forwardOwedMarker = async (marker: {
   paymentId: string;
   key: string;
@@ -290,6 +293,15 @@ function isThirtyDayPendingCohort(where: Record<string, unknown>): boolean {
   return where.status === AppointmentStatus.PENDING && "requestedAt" in where;
 }
 
+function isApprovedUnallocatedCohort(where: Record<string, unknown>): boolean {
+  const serialized = JSON.stringify(where);
+  return (
+    serialized.includes('"status":"APPROVED"') &&
+    serialized.includes('"updatedAt"') &&
+    serialized.includes('"NOT":{"appointment":{"payment":{"some"')
+  );
+}
+
 /** The one released-still-awaiting-replacement occurrence, as the slot states it. */
 const RELEASED_SLOT = {
   NOT: {
@@ -329,10 +341,18 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
   it("keys the PENDING-consultation expiry arm on its own arm name", async () => {
     db.payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
     db.consultation.findMany.mockImplementation(
-      async ({ where }: { where: Record<string, unknown> }) =>
-        where.status === AppointmentStatus.PENDING
+      async ({
+        where,
+        select,
+      }: {
+        where: Record<string, unknown>;
+        select: Record<string, unknown>;
+      }) => {
+        if (isPartialMarkerPresenceQuery(select)) return [];
+        return where.status === AppointmentStatus.PENDING
           ? [pendingConsultationRow("cons-p")]
-          : [],
+          : [];
+      },
     );
     db.appointment.findMany.mockResolvedValue([
       { id: "apt-c", payment: [{ id: "pay-1", paymentStatus: "SUCCEEDED" }] },
@@ -353,8 +373,16 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
   it("keys the APPROVED-unallocated arm separately from the PENDING arm", async () => {
     db.payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
     db.subscription.findMany.mockImplementation(
-      async ({ where }: { where: Record<string, unknown> }) =>
-        where.status === AppointmentStatus.APPROVED ? [{ id: "sub-a" }] : [],
+      async ({
+        where,
+        select,
+      }: {
+        where: Record<string, unknown>;
+        select: Record<string, unknown>;
+      }) => {
+        if (isPartialMarkerPresenceQuery(select)) return [];
+        return isApprovedUnallocatedCohort(where) ? [{ id: "sub-a" }] : [];
+      },
     );
     db.appointment.findMany.mockResolvedValue([
       { id: "apt-a", payment: [{ id: "pay-1", paymentStatus: "SUCCEEDED" }] },
@@ -406,7 +434,14 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
   it("gives four arms refunding the same payment four distinct keys", async () => {
     db.payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
     db.consultation.findMany.mockImplementation(
-      async ({ where }: { where: Record<string, unknown> }) => {
+      async ({
+        where,
+        select,
+      }: {
+        where: Record<string, unknown>;
+        select: Record<string, unknown>;
+      }) => {
+        if (isPartialMarkerPresenceQuery(select)) return [];
         if (where.status === AppointmentStatus.PENDING) {
           return [pendingConsultationRow("cons-p")];
         }
@@ -418,9 +453,16 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
       },
     );
     db.subscription.findMany.mockImplementation(
-      async ({ where }: { where: Record<string, unknown> }) => {
+      async ({
+        where,
+        select,
+      }: {
+        where: Record<string, unknown>;
+        select: Record<string, unknown>;
+      }) => {
+        if (isPartialMarkerPresenceQuery(select)) return [];
         if (isThirtyDayPendingCohort(where)) return [paidPlanRow("sub-p")];
-        if (where.status === AppointmentStatus.APPROVED) {
+        if (isApprovedUnallocatedCohort(where)) {
           return [{ id: "sub-a" }];
         }
         return [];

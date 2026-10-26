@@ -107,7 +107,9 @@ Keep a short marker-count race local to its request: roll back its transition an
 history, preserve the competing writer's marker/retry state, and continue later
 requests. Existing partial markers also hold only their own request; retain
 their fields and exhausted retries, and report the aggregate hold as unsuccessful
-completion while later requests proceed. Do not turn unrelated staging failures
+completion while later requests proceed. Exclude these holds before the oldest
+page limit, retaining a bounded presence probe and per-request race recheck.
+Do not turn unrelated staging failures
 into successful skips. Run the documented read-only legacy-refund cohort count
 and obtain owner review of shared seed/test exposure before rollout. Export
 expiry requires exact metadata `NoSuchKey` after removal; a generic 404 or an

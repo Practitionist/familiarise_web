@@ -135,6 +135,7 @@ describe("expiry sweep refunds (PR 2c)", () => {
     };
     (prisma.subscription.findMany as unknown as jest.Mock)
       .mockResolvedValueOnce([richRow]) // PENDING cohort
+      .mockResolvedValueOnce([]) // Partial-marker presence probe
       .mockResolvedValueOnce([]); // APPROVED-unallocated cohort: empty
     (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
       count: 1,
@@ -174,7 +175,8 @@ describe("expiry sweep refunds (PR 2c)", () => {
           },
         },
       ])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce([]) // Partial-marker presence probe
+      .mockResolvedValueOnce([]); // Approved cohort
     (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
       count: 1,
     });
@@ -193,8 +195,9 @@ describe("expiry sweep refunds (PR 2c)", () => {
   });
 
   it("drains the immortal APPROVED-unallocated cohort (zero live confirmed slots)", async () => {
-    // First findMany call = PENDING subs (none); second = APPROVED cohort.
+    // Pending cohort, partial-marker probe, then APPROVED cohort.
     (prisma.subscription.findMany as unknown as jest.Mock)
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ id: "sub-immortal" }]);
     (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
@@ -211,10 +214,17 @@ describe("expiry sweep refunds (PR 2c)", () => {
     const result = await expireStaleRequests();
 
     // Cohort filter: APPROVED + stale + zero confirmed slots.
-    const cohortCall = (prisma.subscription.findMany as jest.Mock).mock
-      .calls[1][0];
-    expect(cohortCall.where.status).toBe(AppointmentStatus.APPROVED);
-    expect(JSON.stringify(cohortCall.where.NOT)).toContain("isTentative");
+    const cohortCall = (prisma.subscription.findMany as jest.Mock).mock.calls
+      .map(([args]) => args)
+      .find((args) =>
+        (JSON.stringify(args.where.AND) ?? "").includes(
+          '"NOT":{"appointment":{"payment":{"some"',
+        ),
+      );
+    expect(JSON.stringify(cohortCall.where.AND)).toContain(
+      '"status":"APPROVED"',
+    );
+    expect(JSON.stringify(cohortCall.where.AND)).toContain("isTentative");
     // Through the CAS helper now (#1423): the from-set rides the WHERE as a
     // list, and the cohort's own predicate is repeated at write time.
     expect(prisma.subscription.updateMany).toHaveBeenCalledWith(
@@ -256,6 +266,7 @@ describe("expiry sweep refunds (PR 2c)", () => {
     };
     (prisma.subscription.findMany as unknown as jest.Mock)
       .mockResolvedValueOnce([readRow]) // PENDING cohort
+      .mockResolvedValueOnce([]) // Partial-marker presence probe
       .mockResolvedValueOnce([]); // APPROVED-unallocated cohort: empty
     // "sub-latecomer" crosses the 30-day line between the read and the write.
     // A predicate-shaped write would sweep it up; an id-scoped CAS cannot.

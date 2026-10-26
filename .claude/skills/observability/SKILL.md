@@ -139,7 +139,6 @@ interval before another drill, and keep the watchdog deadline inside the reserve
 operator window. Treat `isUpserting` as runtime metadata; do not send it as a
 restoration field or mistake its manual-edit transition for configuration drift.
 
-
 `GET /api/health/jobs` is a bearer-protected read-only capability freshness probe.
 It returns 503 for missing/overdue COMPLETED evidence or an unreadable history,
 using `endedAt` and actual core job names. Required capabilities/SLOs live in

@@ -113,6 +113,9 @@ An existing partial marker also holds only its own request, including when its
 retry attempts are exhausted. Preserve its amount, key, reason and attempts;
 continue later requests and report one aggregate hold error per arm so an
 unresolved obligation does not produce a successful completion.
+Exclude those holds before the page limit, with one bounded presence read per
+arm to retain their visibility. Preserve previously eligible requests without
+an appointment, and recheck markers transactionally for post-selection races.
 Other staging failures still fail the arm. A skipped request is not proof that
 its obligation has completed; the existing marker owner and later sweeps retain
 responsibility.
@@ -178,6 +181,8 @@ it cannot prevent an external capture after that check.
 When a booking refund issues a positive credit note, its transaction already
 locks the invoice for the cumulative credit cap. It clears the checkout reference
 only on ISSUED/OVERDUE invoices so the next Pay request uses the reduced balance.
+The attachment transaction recomputes the outstanding amount before its CAS:
+an in-flight request cannot reinstall an old-amount order after that credit.
 Payment-attempt failure callbacks retain the current reference: the same order
 can be retried, and a delayed failure must not erase a newer checkout.
 

@@ -26,7 +26,13 @@ const mockPay = {
 const mockPrisma = {
   organizationInvoice: mockPay,
   orgAuditLog: { create: jest.fn(async () => ({})) },
-  creditNote: { groupBy: jest.fn(async () => []) },
+  creditNote: {
+    groupBy: jest.fn(
+      async (): Promise<
+        { invoiceId: string; _sum: { totalPaise: bigint } }[]
+      > => [],
+    ),
+  },
   organizationInvoiceReceipt: { groupBy: jest.fn(async () => []) },
   $transaction: jest.fn(),
 };
@@ -548,6 +554,51 @@ describe("gateway capture redelivered concurrently", () => {
 });
 
 describe("/pay", () => {
+  it("does not attach an old-amount order when a credit commits during gateway creation", async () => {
+    const row = {
+      id: "inv-1",
+      status: "ISSUED",
+      invoiceNumber: "N",
+      displayCurrency: "INR",
+      paidAt: null,
+      providerPaymentOrderId: null,
+      totalPaise: 118_000,
+    };
+    mockPay.findFirst.mockResolvedValue(row);
+    mockPay.findUniqueOrThrow.mockResolvedValue(row);
+    const updateMany = jest.fn(async () => ({ count: 1 }));
+    const transactionTx = {
+      organizationInvoice: {
+        updateMany,
+        findUniqueOrThrow: mockPay.findUniqueOrThrow,
+      },
+      orgAuditLog: { create: jest.fn(async () => ({})) },
+      creditNote: mockPrisma.creditNote,
+      organizationInvoiceReceipt: mockPrisma.organizationInvoiceReceipt,
+    };
+    mockPrisma.$transaction.mockImplementation(
+      async (run: (tx: typeof transactionTx) => unknown) => run(transactionTx),
+    );
+    mockCreateOrder.mockImplementationOnce(async () => {
+      mockPrisma.creditNote.groupBy.mockResolvedValue([
+        { invoiceId: "inv-1", _sum: { totalPaise: BigInt(18_000) } },
+      ]);
+      return { id: "order_old_amount" };
+    });
+
+    const res = await payInvoice(
+      new NextRequest("https://x.test/api", { method: "POST" }),
+      { params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("INVOICE_STATE_CHANGED");
+    expect(mockCreateOrder.mock.calls[0][0].amount).toBe(118_000);
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(transactionTx.orgAuditLog.create).not.toHaveBeenCalled();
+    expect(row.providerPaymentOrderId).toBeNull();
+  });
+
   it("lets a verifying org pay the outstanding amount, not the gross", async () => {
     const row = {
       id: "inv-1",
@@ -847,12 +898,15 @@ describe("/pay", () => {
         run({
           organizationInvoice: {
             updateMany: jest.fn(async () => ({ count: 0 })),
+            findUniqueOrThrow: mockPay.findUniqueOrThrow,
             findUnique: jest.fn(async () => ({
               status: "PAID",
               providerPaymentOrderId: null,
             })),
           },
           orgAuditLog: { create: jest.fn() },
+          creditNote: mockPrisma.creditNote,
+          organizationInvoiceReceipt: mockPrisma.organizationInvoiceReceipt,
         }),
     );
 

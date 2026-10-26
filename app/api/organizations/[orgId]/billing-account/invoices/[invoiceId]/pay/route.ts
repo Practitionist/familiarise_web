@@ -167,6 +167,12 @@ export async function POST(
       const persistedOrderId = await withSerializableRetry(() =>
         prisma.$transaction(
           async (tx) => {
+            // A credit may have committed while the external order was being created.
+            if (
+              (await invoiceOutstandingPaise(tx, invoiceId)) !== amountPaise
+            ) {
+              return null;
+            }
             const claimed = await tx.organizationInvoice.updateMany({
               where: {
                 id: invoiceId,

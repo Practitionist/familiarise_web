@@ -146,6 +146,7 @@ describe("RFA active-request cap", () => {
 describe("48h PENDING consultation expiry releases pinned slots", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.subscription.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
       count: 0,
@@ -153,9 +154,10 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
   });
 
   it("expires stale consultations by id and soft-cancels their tentative slots", async () => {
-    // Once: the 48 h cohort. The 7 d pay-link fallback reads the same table
-    // later in the run and now notifies too (#1589 N-P0-03), so it gets [].
+    // The partial-marker presence probe is empty, followed by the capped 48 h
+    // cohort. The 7 d pay-link fallback reads the same table later and gets [].
     (prisma.consultation.findMany as jest.Mock)
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
           id: "c1",

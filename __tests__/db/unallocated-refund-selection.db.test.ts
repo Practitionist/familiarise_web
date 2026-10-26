@@ -89,7 +89,9 @@ beforeAll(async () => {
       entityId: "text",
       entity: "text",
       reason: "text",
+      fromStatus: "text",
       toStatus: "text",
+      actorUserId: "text",
       createdAt: "timestamptz",
     },
     Payment: {
@@ -150,7 +152,7 @@ async function plan(id: string, intent = "pay_card", age = 40) {
     id,
   ]);
   await mockClient.query(
-    "INSERT INTO \"BookingStatusHistory\" VALUES ($1, $2, $3, $4, now() - interval '40 days')",
+    'INSERT INTO "BookingStatusHistory" ("entityId", entity, reason, "toStatus", "createdAt") VALUES ($1, $2, $3, $4, now() - interval \'40 days\')',
     [id, "SUBSCRIPTION", "UNALLOCATED_48H", "EXPIRED"],
   );
   await mockClient.query(
