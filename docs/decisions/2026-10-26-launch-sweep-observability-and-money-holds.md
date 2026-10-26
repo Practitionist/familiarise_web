@@ -177,10 +177,45 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
 - **Alternatives considered:** An ADR was considered, but the rule is operating procedure for agents and belongs next to the other process references.
 - **Consequences:** The procedure is edited in one place.
 
+### ADR-13. The operations console has four levels, audited controls, an integrity panel and a per-item run log
+
+- **Status:** Accepted on 2026-10-27. The design is recorded in #2424 and will be built in a later session.
+- **Context:** Today's System Jobs page is a grid of Run Now buttons plus the last ten runs, and every run there reads "Completed". The job machinery catalog (document 11 in `docs/maintenance`) shows why: a run row records only a narrow result. Partial runs, failed runs and config skips can still be stored as COMPLETED. Held runs and skipped runs leave no row at all. Nothing links a run to the payments, refunds or payouts it touched. Operators therefore cannot answer the root-cause questions that support needs answered, such as which run tried a given refund, what the gateway said, and whether the refund is stuck.
+- **Decision:**
+  - **Four levels in the back-office:**
+    - an Overview, with ticker liveness, capability tiles, a Needs attention list and the Integrity panel;
+    - a Jobs table, which replaces the card grid;
+    - a Job detail page;
+    - a GitHub-Actions-style Run detail page.
+  - **Admin-only, audited controls:**
+    - Run now, which runs one bounded slice;
+    - Drain, which repeats slices until nothing is left, inside a time budget;
+    - Pause and Resume, a database flag the ticker checks before it dispatches, with a reason and an optional auto-resume time;
+    - Retry failed items, which requeues specific owed items and is not a blind re-run.
+    - There is no hard Stop, because a running serverless invocation cannot be killed from outside.
+  - **Integrity panel:** it shows the reconcilers' latest findings. Each run also records counters for lost compare-and-swap claims, serialization retries, deadlock and lock timeouts, pool timeouts and lease takeovers, and a spike appears in Needs attention. Postgres constraints and CAS transitions keep preventing bad states; the panel only shows evidence.
+  - **Per-item run log:** a new `SystemJobRunItem` table holds one row for each entity whose state a run changed or that a run failed on, with the outcome, a reason code, the attempt number and a short error. Rows are kept for 90 days.
+    - An entity becomes STUCK, a computed state that is not stored, after it fails in consecutive runs or after its owed marker ages out.
+    - Raw log lines stay in Better Stack, tagged with the run id.
+  - **Delivery order:**
+    1. Record the truth first: real outcomes, the stored summary, held and skipped runs, and the counters. No DDL is needed for this step.
+    2. Build the controls and the Overview.
+    3. Add the per-item table and the detail pages.
+- **Alternatives considered:**
+  - Prometheus with Grafana: there is no long-running process to scrape, and it has no per-entity drill-down.
+  - Grafana Cloud reading Postgres: it adds a second tool and another vendor holding database credentials.
+  - A simpler single table: it cannot answer per-entity root-cause questions.
+  - Grouped analytics only: rejected for the same reason.
+- **Consequences:**
+  - One schema change.
+  - Roughly a few thousand item rows a day, under a retention job.
+  - Every money and recovery job must report its touched items through one `createMany` per run.
+  - The Entity trace gains a "touched by run" row for each attempt.
+
 ## References
 
 - Pull requests, checked at these head commits: #2420 `dde4fab5e`, #2421 `4bb921760`, #2422 `3aefee918`, #2423 `22a889b24`. Re-verify a decision against the merged diff before relying on it.
-- Issues: #2171 (ADR-01), #2161 (ADR-02), #2169 (ADR-03), #2331 (ADR-04), #2065 (ADR-05), #2424 (ADR-07), #2165 and #2163 (ADR-08), #2405 (ADR-11), #2092 and #1873 (the cutover and the database split).
+- Issues: #2171 (ADR-01), #2161 (ADR-02), #2169 (ADR-03), #2331 (ADR-04), #2065 (ADR-05), #2424 (ADR-07, ADR-13), #2165 and #2163 (ADR-08), #2405 (ADR-11), #2092 and #1873 (the cutover and the database split).
 - Evidence for ADR-11: Sentry issues `FAMILIARISE_WEB-7A` and `FAMILIARISE_WEB-7B`.
 
 ## Deprecated & Superseded Approaches
