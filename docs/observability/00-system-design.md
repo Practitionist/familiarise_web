@@ -1,0 +1,201 @@
+---
+title: Observability system design
+type: explanation
+band: observability
+audience: sde2
+status: live
+last-reviewed: 2026-10-27
+---
+
+# Observability system design
+
+This page explains how the platform finds out that something went wrong, what it keeps so that a person can work out why, and which tool answers which question. It is the high-level design for the whole subsystem. The detail lives in the Sentry set (`sentry/01` to `sentry/08`), in the [job machinery catalog](../maintenance/11-job-machinery-catalog.md) and in the [2026-10-26 decisions record](../decisions/2026-10-26-launch-sweep-observability-and-money-holds.md). Behaviour that is not on `dev` yet is labelled **(arrives with #N)** or **(planned)**.
+
+## 1. Three questions, three layers
+
+An operator asks one of three questions, and each is answered by a different tool. Using the wrong tool is the usual mistake, because each tool is blind to the other two questions.
+
+| Question                                      | Layer                                                  | Why the other layers cannot answer it                                                                                                |
+| --------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| What failed, in which code, for which user?   | Sentry                                                 | Needs an exception or a deliberate report. A refund sitting in `PENDING` for a day throws nothing.                                   |
+| What did not run?                             | Better Stack, plus the Sentry cron monitor `cron-tick` | A job that never starts produces no error, so Sentry stays silent.                                                                   |
+| What happened to this payment or this booking | The back-office Entity trace and job run metrics       | Sentry holds at most a capped sample per run, and Better Stack only knows the ticker and the health probes. **(arrives with #2422)** |
+
+A worked example shows the split. On Monday 26 October 2026 at 10:00 IST (04:30 UTC) Hannah Anderson cancels Priya Anderson's one-hour consultation. Priya paid ₹1,180 (118,000 paise: ₹1,000 plus 18 % GST), and her refund does not arrive. If the refund sweep threw, Sentry holds the error. If the refund sweep stopped being scheduled, Better Stack's probe of `/api/health/jobs` turns red within the sweep's 45-minute completion budget. If neither happened and the gateway simply never confirmed the refund, only the payment's own rows can say so, and the Entity trace is the page that reads them together **(arrives with #2422)**.
+
+## 2. The picture
+
+```mermaid
+flowchart LR
+    subgraph Sources["Signal sources"]
+        APP["Server, edge and client code<br/>(Sentry SDK)"]
+        CANARY["Ingest canary<br/>(raw envelope)"]
+        TICK["cron-tick ticker<br/>(Netlify, every 5 min)"]
+        JOBS["Job cores<br/>(withCronLock)"]
+        DOMAIN["Domain tables<br/>Payment, Refund, ledger, booking history"]
+    end
+
+    subgraph Stores["Stores and sinks"]
+        SENTRY["Sentry<br/>errors, traces, logs"]
+        MONITOR["Sentry cron monitor<br/>cron-tick"]
+        BS["Better Stack<br/>uptime monitors and tick summary log"]
+        SJE[("SystemJobExecution")]
+        SE[("SystemEvent")]
+        MAIL["Operator email<br/>(Resend)"]
+    end
+
+    subgraph Probes["Read endpoints"]
+        H1["/api/health"]
+        H2["/api/health/jobs"]
+        H3["/api/health/jobs/streaks"]
+    end
+
+    subgraph Humans["Who looks"]
+        ENG["Engineer on call"]
+        OPS["Admin and staff<br/>back-office"]
+    end
+
+    APP -->|errors, 10 percent traces, logs| SENTRY
+    CANARY -->|probe, never via SDK| SENTRY
+    CANARY -->|unhealthy verdict| MAIL
+    TICK -->|check-in each tick| MONITOR
+    TICK -->|one summary line per tick| BS
+    TICK -->|failed target warning or error| SENTRY
+    TICK -->|asks for last COMPLETED| H3
+    TICK -->|POST /api/cleanup/job| JOBS
+    JOBS -->|lease and finish row| SJE
+    JOBS -->|durable findings| SE
+    JOBS -->|once per run| SENTRY
+    SJE --> H2
+    SJE --> H3
+    BS -->|polls| H1
+    BS -->|polls with bearer| H2
+    SENTRY --> ENG
+    MONITOR --> ENG
+    BS --> ENG
+    MAIL --> ENG
+    SJE --> OPS
+    SE --> OPS
+    DOMAIN -->|read only, one query per source| OPS
+```
+
+The Entity trace and the Run metrics card are the only readers of the domain tables in this picture, and both arrive with #2422. Everything else drawn here is on `dev`.
+
+## 3. Signal sources and sinks
+
+| Signal                    | Produced by                                                                                                                               | Lands in                                                                                 | Notes                                                                                                                                                                                                                            |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Errors and warnings       | `initSentry()` in `sentry.shared.config.ts`, called by `sentry.server.config.ts`, `sentry.edge.config.ts` and `instrumentation-client.ts` | Sentry issues                                                                            | Application code reports through `reportSentryError` and `reportSentryMessage` in `lib/observability/report.ts`, which apply the `subsystem`, `op` and `expected` tags.                                                          |
+| Traces                    | The same SDK, through `tracesSampler`                                                                                                     | Sentry performance                                                                       | Production keeps about 10 % of ordinary requests, 50 % of `/api/webhooks/`, `/api/payments/` and `/api/checkout`, 2 % of `/api/cleanup/`, and none of `/api/health`.                                                             |
+| Sentry Logs               | `Sentry.logger.*`, enabled by `enableLogs: true`                                                                                          | Sentry Logs                                                                              | `beforeSendLog` drops `debug` and `trace` in production and scrubs the rest (`scrubSentryLog` in `lib/observability/sentry-scrubber.ts`). Logs do not draw on the error quota.                                                   |
+| Ingest canary             | `sentry-ingest-canary` target, `lib/observability/ingest-canary.ts`                                                                       | A raw envelope to Sentry's ingest endpoint; an email through Resend when it is unhealthy | Runs every 6 hours (360 minutes in `lib/cron/schedule.ts`). It asserts on the HTTP response, never on the dashboard. See `sentry/06-ingest-canary.md`.                                                                           |
+| Ticker check-in           | `sendCheckIn()` in `netlify/functions/cron-tick.mts`                                                                                      | The Sentry cron monitor `cron-tick`                                                      | Five-minute schedule, three-minute margin, failure threshold 3, recovery threshold 1. A missed check-in raises an issue even though no code ran.                                                                                 |
+| Per-tick summary          | `emitTickSummary()` in the same file                                                                                                      | Better Stack Telemetry, one JSON line per tick                                           | Only when `ENABLE_BETTERSTACK_TELEMETRY` is `true` and the source token and ingest URL are set. Carries the ok, accepted, lock-held and failed target lists.                                                                     |
+| Uptime and absence probes | Better Stack HTTP monitors                                                                                                                | Better Stack incidents and email                                                         | `/api/health` is the public liveness and dependency check. `/api/health/jobs` is the bearer-protected completion-freshness check. Whether each monitor exists is a deployment gate (`docs/maintenance/00-betterstack-setup.md`). |
+| Fleet heartbeat           | `touchRedisHeartbeat()` in `lib/cron/with-cron-lock.ts`                                                                                   | The Redis key `cron:heartbeat:last`                                                      | A liveness hint shown by `/api/health` (`cron.stale` after 45 minutes). It is not a lock and never proves a particular job ran.                                                                                                  |
+| Job run record            | `withCronLock()`                                                                                                                          | `SystemJobExecution`                                                                     | One row per lease: status, times, error text and a `result` of `outcome`, `environment` and an optional `checkpoint`. Kept 90 days by `prune-system-job-executions`.                                                             |
+| Durable findings          | `recordSystemEvent` and `recordSystemError` in `lib/enterprise/system-events.ts`                                                          | `SystemEvent`                                                                            | The row is the truth and Sentry is the pager. Kept 400 days (`lib/observability/system-event-retention.ts`). Each insert is also mirrored to Better Stack Telemetry when the flag is on.                                         |
+| Entity history            | Money, booking, support and audit tables written by the domain code                                                                       | The Entity trace **(arrives with #2422)**                                                | Read only. One bounded query per source, in sequence, because `PG_POOL_MAX=1` on Netlify.                                                                                                                                        |
+
+### 3.1 The health endpoints
+
+Three routes expose job health, and they have different callers.
+
+- `/api/health` (`app/api/health/route.ts`) is public. It reports `status` as `healthy` or `degraded`, together with the database, Redis, maintenance phase, Stream status and the cron heartbeat age.
+- `/api/health/jobs` (`app/api/health/jobs/route.ts`) requires `Authorization: Bearer <CRON_SECRET>`. It reads the newest `COMPLETED` `endedAt` for each of the 17 capabilities in `OPERATIONAL_COMPLETION_REQUIREMENTS` (`lib/cron/operational-health.ts`) and answers 503 when any is overdue, when the environment label is unset, or when history cannot be read. Only rows whose `result.environment` matches the serving deployment count, so a preview run cannot mask a stopped production job.
+- `/api/health/jobs/streaks` (`app/api/health/jobs/streaks/route.ts`) is bearer-protected and read-only. The ticker calls it once per tick, for failing targets only, and it returns each target's last `COMPLETED` start within seven days. It exists for the escalation rule in section 6.
+
+## 4. The layers compared
+
+| Layer                                                 | What it stores                                                                    | Retention                                                                               | Quota or cost today                                                                                                            | Who sees it                                                                                                                          | How it alerts                                                                                            |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| Sentry                                                | Error and warning events, sampled traces, Sentry Logs, the cron monitor           | 30-day lookback on the free Developer plan (checked on sentry.io/pricing on 2026-10-27) | Developer plan: 5,000 errors, 5M spans, 5 GB of logs and one cron monitor a month. Errors are the scarce one.                  | Engineers in the Sentry project. Admin and staff see recent issues for one user on User 360, which needs identity stamping to be on. | A high-priority alert workflow filtered to `production`, and the `cron-tick` missed-check-in.            |
+| Better Stack                                          | Uptime checks of `/api/health` and `/api/health/jobs`, the per-tick summary lines | Set by the vendor's plan; not recorded in this repository                               | Free plan: three-minute checks, email alerts only (`docs/maintenance/00-betterstack-setup.md`).                                | Engineers and the owner; the public status page shows incidents it creates for OFFLINE maintenance.                                  | Email on a failed probe. It creates and resolves an incident when maintenance enters and leaves OFFLINE. |
+| `SystemJobExecution`, `SystemEvent`                   | Job runs, and durable findings with a `context` JSON                              | 90 days for runs, 400 days for events                                                   | Postgres storage only. The pruning jobs are Actions-scheduled and currently budget-blocked, so the tables grow until they run. | Admin only: the System Jobs page and executions API (`systemJobs.manage`) and the system events API.                                 | None by itself. The health probes read it, and a finding row is paired with a Sentry report.             |
+| Entity trace and Run metrics **(arrives with #2422)** | Nothing. It reads the domain and audit tables and `SystemJobExecution`            | Whatever those tables keep                                                              | No vendor cost. A trace costs 10 to 17 statements, about one second at 95 ms a round trip.                                     | Admin and staff (`payments.read`). Run metrics are admin only. Organisation members see nothing today.                               | None. It is pull, not push.                                                                              |
+
+Organisation members have no view of any of these layers. An organisation money timeline is a later phase of the operations console (section 9).
+
+## 5. Quota rules
+
+The free Sentry plan allows 5,000 errors a month, and an exhausted allowance once blinded the platform for six days (`sentry/06-ingest-canary.md`). These rules keep real errors inside it. Each names what enforces it.
+
+| Rule                                                 | Enforcer                                                                                                                                                                                                                        |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One report per run, never one per row                | `createRunFailureReporter` in `lib/observability/run-failures.ts` collects failures and flushes one event per failing operation, with the count and ten sample ids in `extra`. A jest test pins the jobs that use it.           |
+| Fixed fingerprints                                   | Reports pass `fingerprint: [subsystem, op]`. `applyErrorBudget` in `sentry.shared.config.ts` also forces a fixed family for Upstash quota, cron lock, Prisma pool and `SystemEvent` write failures, so one outage is one issue. |
+| A repetition is throttled; a set is aggregated       | `beforeSend` in `sentry.shared.config.ts` lets the first event for a key through and then one an hour per process (`INFRA_THROTTLE_MS`), and caps a process at 10 non-fatal events an hour. `fatal` events skip the cap.        |
+| Expected failures go to logs, not issues             | `markExpected` and `expected: true` re-level a modelled refusal to a warning in `beforeSend`, and `applyErrorBudget` drops an expected event at `info`. The console and Sentry Logs keep the line.                              |
+| Previews send errors only                            | `isBelowErrorOnPreview` drops warnings and info on previews, and `isThinnedOnPreview` keeps 10 % of ordinary preview errors while exempting uncaught Next server errors.                                                        |
+| Config-skip warnings are deduplicated                | `reportConfigSkip` in `lib/cron/config-skip.ts` logs every run and warns Sentry only on the first hourly slot of the job's window, so a daily job warns about once a day.                                                       |
+| Boot-time configuration warnings go to Sentry Logs   | A missing key at boot is logged and sent as a `Sentry.logger.warn`, never as an issue, and only in production. The first user is `AUTH_CAPTCHA_DISABLED` in `lib/auth/captcha.ts` **(arrives with #2423)**.                     |
+| Browsers' CSP reports are not sent until enforcement | `next.config.mjs` builds the `report-uri` directive only when `ENABLE_CSP_ENFORCE` is `true`, because a report bypasses every SDK hook and is a billable event. `__tests__/lib/csp-report-gate.test.ts` pins it.                |
+| The canary does not cost a stream of events          | The canary posts a raw envelope on a 6-hour cadence with a fixed fingerprint and is never reported through the SDK. `reportableToSentry` in `netlify/functions/cron-tick.mts` keeps its own failing run out of Sentry.          |
+
+## 6. Ticker failure escalation
+
+The ticker answers 200 to Netlify whatever happens, because Netlify re-invokes a scheduled function that returns 5xx. It therefore reports target failures itself, in `alertFailedTargets` (`netlify/functions/cron-tick.mts`).
+
+A failing target is judged only on its own first due tick of an hour (`isFirstDueTickOfHour` in `lib/cron/schedule.ts`), so one target produces at most one report an hour. The report is one of two shapes, chosen by `isRepeatedFailure` in `lib/cron/failure-streak.ts`:
+
+- **A grouped warning** is the default. All one-off failures share the fingerprint `cron-tick` / `target-failed-once`, with the target name in the `target` tag. When the failing body is Netlify's own error page (`Internal Server Error - Request ID`), the event also carries `class: platform`. One grouped issue can therefore hold many targets, and a one-off costs no new issue and no new email.
+- **A per-target error** is raised only when the target has had no `COMPLETED` run for three times its own cadence (`STREAK_CADENCES`). Its fingerprint is `cron-tick` / `<target>`, so each broken target is its own issue.
+
+For example, `reconcile-refunds` runs every 15 minutes at offset 5, so its slots are :05, :20, :35 and :50 UTC and its first slot of an hour is :05. Three cadences are 45 minutes. At 05:05 UTC (10:35 IST) on Monday 26 October 2026 the target answers 500.
+
+| Last `COMPLETED` start of `reconcile-pending-refunds` | Gap at 05:05 UTC | Result                                                      |
+| ----------------------------------------------------- | ---------------- | ----------------------------------------------------------- |
+| 04:50 UTC                                             | 15 minutes       | Grouped warning `target-failed-once`.                       |
+| 04:05 UTC                                             | 60 minutes       | Error issue for `reconcile-refunds`.                        |
+| No row in the last 7 days                             | not known        | Grouped warning, because unknown history is never a repeat. |
+
+The ticker reads that history from `/api/health/jobs/streaks` with a two-second bound. An unreachable endpoint also counts as unknown. Two limits follow from the design. A platform 5xx leaves no `SystemJobExecution` row, so the test is the absence of a recent `COMPLETED` row and not a run of `FAILED` rows. And because the test reads `COMPLETED` rows, a job whose row says `COMPLETED` while its HTTP answer fails is never escalated (section 7).
+
+The `cron-tick` monitor is separate and unchanged. It catches the ticker going silent, and it needs three bad check-ins in a row to open an issue, because the first tick after every deploy aborts most targets.
+
+## 7. Known gap: a run can record COMPLETED when it was only partly done
+
+A run's stored status comes from `jobOutcome()` in `lib/cron/job-outcome.ts`, and a job's own `success: true` outranks every counter. A sweep that returns `success: true` with `stillFailing: 3` is stored as `COMPLETED`, and so is a run that looked at nothing or skipped for missing configuration. Held, refused and 409 runs write no row at all. As a consequence the completion probe, the streak escalation and the Run metrics card all over-report health for those jobs. Recording the true outcome is Phase 1 of the operations console (section 9). The per-job list is in section 4 of the machinery catalog.
+
+## 8. Identity and privacy
+
+An error is useful only if it can be attributed to a person and an organisation, and attaching a person to an event is personal-data processing. Request-scoped stamping is opt-in (`SENTRY_IDENTITY_ENABLED` must be exactly `on`), is currently off, and is gated on a data-protection determination. The synthetic canary event never carries a person. The design, the lawful-basis reasoning and the cross-border transfer question live in [sentry/05-identity-and-triage.md](./sentry/05-identity-and-triage.md) and [sentry/08-error-telemetry-privacy-reference.md](./sentry/08-error-telemetry-privacy-reference.md). This page does not repeat them.
+
+## 9. Planned: the operations console (not built)
+
+Nothing in this section exists on `dev`. It records the design accepted as ADR-13 and tracked in issue #2424, so that the build starts from the owner's decisions.
+
+- **Four levels in the back-office:** an Overview (ticker liveness, capability tiles, a Needs attention list and an Integrity panel), a Jobs table that replaces the card grid, a Job detail page, and a Run detail page in the style of a CI run.
+- **Admin-only, audited controls:** Run now (one bounded slice), Drain (repeat slices inside a time budget), Pause and Resume (a database flag the ticker checks before dispatching, with a reason and an optional auto-resume time), and Retry failed items (requeues specific owed items, not a blind re-run). There is no hard Stop, because a running serverless invocation cannot be killed from outside.
+- **Integrity panel:** the reconcilers' latest findings, plus per-run counters for lost compare-and-swap claims, serialization retries, deadlock and lock timeouts, pool timeouts and lease takeovers. Postgres constraints and compare-and-swap transitions keep preventing bad states; the panel only shows evidence.
+- **Per-item run log:** a new table, `SystemJobRunItem`, with one row for each entity a run changed or failed on, holding the outcome, a reason code, the attempt number and a short error, kept for 90 days. An entity is **STUCK**, a computed state that is not stored, after it fails in consecutive runs or after its owed marker ages out.
+- **Delivery order:** record the truth first (real outcomes, the stored summary, held and skipped runs, the counters; no DDL), then the controls and the Overview, then the per-item table and the detail pages.
+
+The console is pull, not push. Alerting stays in Sentry and Better Stack.
+
+## Where in code
+
+| Concern                                  | File                                                                                                                                |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| SDK initialisation, budget and scrubbing | `sentry.shared.config.ts`, `lib/observability/sentry-scrubber.ts`                                                                   |
+| Reporting helpers                        | `lib/observability/report.ts`, `lib/observability/run-failures.ts`, `lib/observability/standing-finding.ts`                         |
+| Ingest canary                            | `lib/observability/ingest-canary.ts`, `lib/observability/ingest-alert.ts`                                                           |
+| Ticker, check-in, summary and escalation | `netlify/functions/cron-tick.mts`, `lib/cron/failure-streak.ts`, `lib/cron/schedule.ts`                                             |
+| Run record and lease                     | `lib/cron/with-cron-lock.ts`, `lib/cron/job-outcome.ts`, `lib/cron/cleanup-route.ts`                                                |
+| Health endpoints and completion budgets  | `app/api/health/route.ts`, `app/api/health/jobs/route.ts`, `app/api/health/jobs/streaks/route.ts`, `lib/cron/operational-health.ts` |
+| Durable findings                         | `lib/enterprise/system-events.ts`, `lib/observability/system-event-retention.ts`                                                    |
+| Better Stack telemetry                   | `lib/observability/betterstack-telemetry.ts`                                                                                        |
+
+## Related
+
+The Sentry set is indexed in [README.md](./README.md). The ticker drill is in [the Better Stack guide](../maintenance/00-betterstack-setup.md#ticker-missed-run-alerts). Issues: #2424 (operations console), #2165 and #2402 (ticker and job visibility).
+
+## Deprecated & Superseded Approaches
+
+| Superseded approach                              | Why it was superseded                                                                                              | What to do with residue                                                                          |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| An ingest canary every 30 minutes                | It cost about 1,440 events a month on a 5,000 quota. The cadence is now 6 hours and the issue is archived.         | Delete any text or config that says 30 minutes.                                                  |
+| CSP reports sent while the policy is report-only | Reports bypass every SDK hook and each is a billable event.                                                        | Keep the report directive gated on `ENABLE_CSP_ENFORCE`.                                         |
+| Redis locks for cron jobs                        | Redis is often the outage, and a lock there fails open or closed wrongly. The lease is a `SystemJobExecution` row. | Delete any Redis lock in a job. Redis keeps only the heartbeat timestamp.                        |
+| Capturing to Sentry once per failing row         | A systemic fault spent the quota in a day.                                                                         | Use `createRunFailureReporter`, with `skipSentry: true` on the per-row `recordSystemError` call. |
+| A Sentry error for every failing ticker target   | Noise, and an email for each new issue.                                                                            | Use the grouped warning and the streak test.                                                     |

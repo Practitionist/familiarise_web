@@ -1,162 +1,54 @@
 ---
 name: observability
-description: Work on this repo's error-tracking and telemetry subsystem — the Sentry wiring, the request-scoped user/org identity that makes an error attributable, the back-office issue lookup, the 30-minute ingest canary and its out-of-band alert, source-map upload, the action/job failure sink, and how to actually prove an event arrives (deploy-preview browser probes, raw envelope reads, the evidence ladder). Use when the user says "the error isn't showing up in Sentry", "Sentry isn't working", "which user hit this error", "no events in Sentry", "we lost that error", "error tracking", "observability", "telemetry", "triage an issue", "Sentry quota", "ingest", "canary", "alert on errors", "source maps", "user id on the event", or is touching sentry.shared.config.ts, lib/observability/, lib/backoffice/user-360.ts, jobs/observability/, app/api/cleanup/sentry-ingest-canary/, instrumentation.ts, netlify/functions/cron-tick.mts, or next.config.mjs's withSentryConfig block.
+description: Work on this repo's error-tracking and telemetry subsystem — the Sentry wiring, the request-scoped user/org identity that makes an error attributable, the back-office issue lookup, the ingest canary and its out-of-band alert, source-map upload, the action/job failure sink, how to actually prove an event arrives (deploy-preview browser probes, raw envelope reads, the evidence ladder), and the job telemetry around it (the cron-tick ticker and its Sentry check-in, the Better Stack summary and monitors, /api/health/jobs and its streaks route, the entity trace and job run metrics, the operations console design). Use when the user says "the error isn't showing up in Sentry", "Sentry isn't working", "which user hit this error", "no events in Sentry", "we lost that error", "error tracking", "observability", "telemetry", "triage an issue", "Sentry quota", "ingest", "canary", "alert on errors", "source maps", "user id on the event", "the job didn't run", "Better Stack", "entity trace", "operations console", or is touching sentry.shared.config.ts, lib/observability/, lib/backoffice/user-360.ts, lib/backoffice/entity-trace.ts, jobs/observability/, app/api/cleanup/sentry-ingest-canary/, app/api/health/, lib/cron/failure-streak.ts, instrumentation.ts, netlify/functions/cron-tick.mts, or next.config.mjs's withSentryConfig block.
 ---
 
 # Observability
 
-## Native worker SDK imports
+The index for the error-tracking and job-telemetry domain: how an event leaves a route, how it comes to name a person and an organisation, how a missed or half-done job becomes visible, and how any of that is proven rather than assumed. The whole-subsystem design is `docs/observability/00-system-design.md`, the per-topic facts live in `docs/observability/sentry/`, and the money-adjacent consequences live under `/finance`. This skill holds the non-negotiables and the decision procedure, and the detail sits in the references below.
 
-Shared capture, logger and flush helpers used by standalone Node ESM workers import
-`@sentry/core`; initialization remains in `sentry.shared.config.ts`. Keep Core and
-the Next SDK at matching pinned versions and update them together. The Next SDK's
-10.76.0 Node export is CommonJS, and its dynamic generic re-exports do not appear
-in a native ESM namespace. Do not add runtime duck-typing or a second telemetry
-policy to hide that failure. Run `native-sentry-runtime.test.ts` with the real SDK
-and an in-memory transport; a mocked SDK cannot establish export interoperability,
-privacy scrubbing or draining. A 202 response and invocation receipt do not prove
-either worker completion or a successful telemetry flush.
+## Where to read
 
-The index for the error-tracking domain: how an event leaves a route, how it comes to name a person and an organisation, and how any of that is proven rather than assumed. The facts live in `docs/observability/sentry/`; this skill holds the doctrine and the decision procedure, and the money-adjacent consequences live under `/finance`.
-
-| Reference                                                 | Purpose                                                                                                                                                                                                                                                | Read it when                                                                                  |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `references/diagnosing.md`                                | The branching procedure for "this event is wrong or missing" — is the code even reporting, is the SDK initialised, is Sentry accepting, is the identity attached — with the response that ends each branch.                                            | First, for any report of a missing, duplicated, unattributed or unverifiable error.           |
-| `docs/observability/sentry/01-setup-and-configuration.md` | The DSNs, where the code lives, source maps and the `SENTRY_*` coordinates, and what does and does not reach Sentry today.                                                                                                                             | Before changing configuration, or when asked what is actually instrumented.                   |
-| `docs/observability/sentry/02-conventions.md`             | Why a modelled refusal is a warning and not an error, which tags carry meaning, why `SystemEvent` is the row and Sentry the pager, why transient platform failures are breadcrumbs.                                                                    | Before adding a `throw`, a `reportSentry*` call, or a new tag.                                |
-| `docs/observability/sentry/04-triage-runbook.md`          | The working routine for clearing an issue list.                                                                                                                                                                                                        | When asked to triage, prioritise or burn down the Sentry issue queue.                         |
-| `docs/observability/sentry/05-identity-and-triage.md`     | Request-scoped user/org stamping and its DPDP obligations, the back-office lookup by `user.id`, the `dataCollection` allowlist, and why the identity is a stable cuid rather than an email.                                                            | Before changing what is attached to an event, or when adding a surface that reports errors.   |
-| `docs/observability/sentry/06-ingest-canary.md`           | The canary and the 2026-09-22 quota outage that forced it: the six verdicts and the two that hide an outage, the two-header partial-outage trap, why it emails rather than reports, and why an upgrade clears the quota without waiting for the month. | When Sentry looks broken or empty, before concluding it is quiet, or when wiring any monitor. |
-| `docs/observability/sentry/07-verifying-end-to-end.md`    | The evidence ladder, the deploy-preview probe procedure, the isolated-world trap, and how to state a verification claim honestly.                                                                                                                      | Before claiming an observability change is verified.                                          |
-| `docs/maintenance/11-job-machinery-catalog.md`            | What each job records and reports, the gaps, and the three layers (see the 2026-10-26 ADR in `docs/decisions/`).                                                                                                                                       | Before changing what a job reports, the ticker alerting, or the operations dashboard.         |
+| Reference                                                 | Read it when                                                                                                                                                                                                     |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `references/diagnosing.md`                                | First, for any report of a missing, duplicated, unattributed or unverifiable error. It is the branching procedure from "is the code even reporting" to "is the identity attached".                               |
+| `references/sentry.md`                                    | Changing the Sentry setup or quota posture, adding a throw, a report call or a tag, touching the canary, or proving an event arrived. It holds the full non-negotiables and the 2026-10 error-budget guardrails. |
+| `references/job-telemetry.md`                             | Changing what a job records or reports, the ticker (check-in, summary, streak escalation), the lease, a health endpoint, a Better Stack or Sentry cron monitor, or running the missed-run drill.                 |
+| `references/entity-trace-and-console.md`                  | Extending the entity trace or the Run metrics card, or building the operations console (#2424, ADR-13).                                                                                                          |
+| `docs/observability/00-system-design.md`                  | The HLD: signal sources and sinks, the three questions, quota rules, ticker escalation, the planned console.                                                                                                     |
+| `docs/observability/sentry/01-setup-and-configuration.md` | The DSNs, where the code lives, source maps and the `SENTRY_*` coordinates, and what does and does not reach Sentry today.                                                                                       |
+| `docs/observability/sentry/02-conventions.md`             | Why a modelled refusal is a warning and not an error, which tags carry meaning, why `SystemEvent` is the row and Sentry the pager, why transient platform failures are breadcrumbs.                              |
+| `docs/observability/sentry/04-triage-runbook.md`          | Triaging, prioritising or burning down the Sentry issue queue.                                                                                                                                                   |
+| `docs/observability/sentry/05-identity-and-triage.md`     | Changing what is attached to an event, or adding a surface that reports errors: user/org stamping, its DPDP obligations, the `dataCollection` allowlist, why the identity is a stable cuid and not an email.     |
+| `docs/observability/sentry/06-ingest-canary.md`           | Sentry looks broken or empty, before concluding it is quiet, or when wiring any monitor: the six verdicts, the two-header partial-outage trap, why the canary emails rather than reports.                        |
+| `docs/observability/sentry/07-verifying-end-to-end.md`    | Before claiming an observability change is verified: the evidence ladder, the deploy-preview probe, the isolated-world trap.                                                                                     |
+| `docs/maintenance/11-job-machinery-catalog.md`            | Before changing what a job reports, the ticker alerting, or the operations dashboard: what each job records, the gaps, and the dashboard specification (see the 2026-10-26 ADR in `docs/decisions/`).            |
 
 ## Non-negotiables
 
-An error must be attributable before it is debuggable, and nothing in this domain is verified until the evidence is named. Concretely, the following are not preferences.
+The full reasoning for each rule is in `references/sentry.md` and `references/job-telemetry.md`.
 
-**Name the rung of evidence you reached.** "The code calls `reportSentryError`" proves intent. "The envelope on the wire carried `user.id`" proves the SDK serialised the identity. "The event is queryable in Sentry" proves the lot. These are different claims with very different value, and collapsing them is how six days of dead error ingestion went unnoticed. `references/diagnosing.md` has the ladder and the procedure; `07` has the detail.
+- **Name the rung of evidence you reached.** Calling `reportSentryError` proves intent, the wire envelope proves serialisation, and a queryable event proves the lot. Never collapse them.
+- **Worker helpers import `@sentry/core`.** Standalone Node ESM workers keep Core and the Next SDK at matching pinned versions, and `__tests__/observability/native-sentry-runtime.test.ts` runs with the real SDK; a 202 or an invocation receipt proves neither completion nor flush.
+- **Never hardcode a Sentry coordinate.** Read organisation, project and URLs from the environment, by slug. A DSN literal in source is a history-rewrite failure.
+- **The org id is in the DSN host and the project id is the last path segment.** Both are sixteen digits. Slugs go in config and ids come out of the DSN.
+- **Unset token is off; empty token is broken on.** Gate token paths on presence, not truthiness.
+- **The SDK is not on `window`.** Attach a listener from a `<script>` in the page's main world, because a DevTools evaluation runs in an isolated world and looks identical to "Sentry is not initialised".
+- **A 2xx is not acceptance, and acceptance is not queryability.** Read `x-sentry-rate-limits`; a working session or transaction stream is no evidence that errors are taken.
+- **A monitor that cannot silence itself must fail open, and one that repeats must be gated.** The canary emails, once per distinct state, and its Redis-backed state fails open.
+- **A check that reports its own failure through the failing system is not a check.**
+- **Modelled refusals are warnings.** A `BUSINESS_ERROR_CODES` code is `expected: true`, re-levelled by `beforeSend`, and never an error event.
+- **A repetition is throttled; a set is aggregated.** Never aggregate a repetition, and remember that a shared `fingerprint` groups events without saving any.
+- **Never capture to Sentry per row.** Collect failures with `createRunFailureReporter` and flush once per run, with a stable fingerprint and a ten-id sample.
+- **Never attach a person to a synthetic event.** The canary carries no user, org, IP or URL.
+- **The identity disclosure is opt-in and off.** `SENTRY_IDENTITY_ENABLED` must be exactly `on`; `Users: 0` is the expected state.
+- **`SystemEvent` is the row; Sentry is the pager.** When they disagree, believe the row.
+- **Scrub everything.** Spans, metrics and Sentry Logs go through `lib/observability/sentry-scrubber.ts`, and `console.*` bypasses the scrubber, so never log raw payloads or full Prisma errors.
+- **A job's row is not proof the work finished.** A run can record `COMPLETED` for partial work until #2424 Phase 1; do not build a new alert on that status without stating it.
+- **Escalate a ticker failure only on repeats.** A one-off is a grouped warning, and a per-target error needs three cadences with no `COMPLETED` run.
+- **Cron mutual exclusion is Postgres only.** Never add a Redis lock or a Redis failure counter for a job.
+- **The entity trace and the metrics card are read-only.** One bounded query per source, run in sequence, and skip a source that needs an unindexed JSON scan.
 
-**Never hardcode a Sentry coordinate.** Organisation, project, API URL and web URL are read from the environment with a `||` default to the live project. Slugs, not ids — the two project ids in circulation are neither valid slugs. A new literal is a review failure, and a DSN literal in source is a history-rewrite failure.
+## Entity trace and job run metrics
 
-**The org id is in the DSN host; the project id is the DSN's last path segment.** They are both sixteen digits and both in that one string, and the org's appears as `o<orgId>` in the host. A reader has already mistaken the org id for a project id here, and the dead project id from the 2026-09-20 mis-rotation shared its first ten digits with the org id so the two read as siblings. Slugs go in config; ids come out of the DSN; the CI guard's `EXPECTED_SENTRY_PROJECT_ID` is a non-secret repository **variable** for exactly this reason, and it is named the way it is because `LIVE_SENTRY_PROJECT` was ambiguous. `01` has the full four-way taxonomy.
-
-**Unset token is off; empty token is broken on.** Gate token-using paths on presence, not truthiness of a configured-looking string. An empty `SENTRY_API_TOKEN` silently enables authenticated REST calls that fail every time.
-
-**The SDK is not on `window`.** `sentry.shared.config.ts` deliberately keeps it off the global scope, so there is no `window.Sentry` to poke at and never will be. The observable surface is the HTTP layer, and the only reliable place to attach a listener is a `<script>` in the page's own main world — a DevTools-protocol evaluation runs in an isolated world where your injected `error` never reaches the page's listeners, which looks identical to "Sentry is not initialised".
-
-**A 2xx from Sentry is not proof of acceptance, and acceptance is not proof of queryability.** The ingest canary treats `200` plus a drop notice as a distinct `dropped-despite-2xx` verdict precisely because Sentry does 2xx-and-drop. And read `x-sentry-rate-limits`: it names the limited categories and omits the healthy ones, so a working session or transaction stream is no evidence at all that errors are being taken. That partial outage is the 2026-09-22 incident.
-
-**A monitor that cannot silence itself must fail open, and one that repeats must be gated.** The canary emails, because a check reporting through the failing system is not a check — which means it must also _cooldown_: one email per distinct state, re-armed on change, re-asserted daily. An alert nobody reads is the same as no alert. And its Redis-backed state fails **open**: a duplicate email costs a glance, a suppressed one costs an outage nobody was told about.
-
-**A check that reports its own failure through the failing system is not a check.** The canary emails through Resend. If the monitor's first stop is the thing it monitors, the monitor is decorative.
-
-**Modelled refusals are warnings.** A full webinar, a credit shortfall, a consent gate — a `BUSINESS_ERROR_CODES`-registered code is `expected: true`, gets re-levelled to warning by `beforeSend`, and must not be an error event. A quota is 5,000 errors a month on Developer; mislabelled business outcomes are how that gets spent in a day, and `INFRA_THROTTLE_MS` in the shared config exists because it happened on 2026-09-21.
-
-**A repetition is throttled; a set is aggregated.** Throttle when one failure recurs (the evidence is one real stack trace; a count would have to be invented, and would under-report exactly when you are sizing an incident). Aggregate when one run found many distinct things (the set is the fact, the ids are the evidence). Never aggregate a repetition. And note that **grouping into one issue is not grouping into one event** — a shared `fingerprint` leaves N events costing N, which is how the ingest canary came to cost 8,640 events a month before its cadence was cut to 30.
-
-**Never attach a person to a synthetic event.** The canary carries a fixed fingerprint so runs collapse into one issue, and carries no user, org, IP or URL. Test events are not evidence about anyone, and a stable user cuid is pseudonymous personal data with DPDP obligations attached — the disclosure sign-off is tracked in `05` and is not optional.
-
-**The identity disclosure is opt-in and currently off.** `SENTRY_IDENTITY_ENABLED` must be exactly `on`; everything else, including `true`, `1`, `yes` and `ON`, is off, and the default is off. The code and all six call sites are in place and inert, so `Users: 0` is the expected state, not a bug. Do not "fix" a context that looks configured — verify the value is literally `on`. Turning it on is blocked on a DPDP determination, not on engineering: consent justifies the processing, and a cross-border transfer to a US region is a separate gate that only a legal answer closes.
-
-**`SystemEvent` is the row; Sentry is the pager.** For money paths the database row is the truth and survives in `SystemEvent`; Sentry is the notification of it. When they disagree, believe the row. See `/finance`.
-
-**Spans, metrics, and logs go through the shared PII scrubber.** In addition to `beforeSend` and `beforeSendTransaction`, `sentry.shared.config.ts` wires `beforeSendSpan` and `beforeSendLog` through `lib/observability/sentry-scrubber.ts` so span descriptions/attributes and structured `Sentry.logger.*` entries never leak raw PII (emails, phones, tokens, PAN/GSTIN, or gateway secrets). Money/booking/cron critical paths instrument latency and throughput via `Sentry.startSpan` and `Sentry.metrics` (`lib/observability/`). Server-side `console.error`/`console.warn` reach Netlify function logs outside Sentry's scrubber (`#1127`), so never log raw payloads or full Prisma error objects to `console.*`.
-
-## Error budget guardrails (#1933)
-
-### The incident (2026-09-23 to 2026-10-02)
-
-Sentry ingested zero errors from 2026-09-23 until 2026-10-02 because the free Developer plan (`am3_f`) allows 5,000 errors per billing month and 5,428 had been used by 2026-09-22, mostly from the 2026-09-21 and 2026-09-22 Upstash incident flood. The billing period starts on the 19th, so the current one runs 2026-09-19 to 2026-10-18. Sentry answered every error envelope with HTTP 429 and the header `x-sentry-rate-limits: 60:default;error;security;attachment:organization:error_usage_exceeded`, while transactions, spans and logs kept being accepted, which is why the dashboards looked alive. A real production 500 in the Requests inbox left no Sentry trace at all, and only the Netlify function logs showed it. The diagnosis is the comment on issue #1933.
-
-The ingest canary did not alert during the outage because it moved into `lib/cron/cleanup-registry.ts` in #1920 (it was not removed) and first reached production on 2026-10-02 through release #1925.
-
-### How to diagnose next time
-
-Climb the evidence ladder in this order. First, read the stats API, which separates `rate_limited`, `filtered` and `client_discard` from `accepted`: `/api/0/organizations/practitionist/stats_v2/?field=sum(quantity)&groupBy=outcome&groupBy=category&interval=1d&statsPeriod=14d`. Second, send one labelled probe envelope to the DSN endpoint and read the rate-limit header on the response. Third, read the quota from the organisation subscription. Fourth, confirm that only the error category stopped, because transactions and logs continuing to arrive is the signature of quota exhaustion rather than a broken DSN.
-
-### Volume profile before the outage
-
-The following table shows where the errors of the 30 days before the outage came from, and it is the reason the guardrails target floods rather than individual bugs.
-
-| Source                            | Share of errors |
-| --------------------------------- | --------------- |
-| Upstash and CronLock floods       | 54%             |
-| Prisma pool and connection errors | 10%             |
-| Per-row repeats inside sweeps     | 29%             |
-| Real bugs                         | about 5%        |
-| Browser                           | 2%              |
-
-The preview environment produced 15% of all errors, and a quiet month sits at roughly 1,500 errors.
-
-### The guardrails shipped in #1938
-
-The guardrails below keep real errors inside the allowance, and every one of them is a drop in `beforeSend` or a rule at the capture site, so a dropped event never counts against quota.
-
-`sentry.shared.config.ts` applies its limits in the `beforeSend` budget stage. A per-key throttle lets the first event for each key through and then at most one per `INFRA_THROTTLE_MS` (one hour) per process, where the key is the exception type, the message with ids and numbers normalised away, and the top in-app frame. A per-process circuit breaker allows at most 10 events per rolling hour and logs a console warning when it opens; `fatal` events skip the breaker by owner decision, because a `WALLET_BALANCE_DRIFT` page must never lose to noise. The Upstash quota, cron lock (`cron-lock-unavailable`), Prisma pool exhaustion and `SystemEvent` write failures each get a fixed fingerprint family (`upstash-quota`, `prisma-pool-exhaustion`, `system-events-write-failed`), so one outage is one issue however many routes hit it. An `expected` event at level `info` is dropped, and `ignoreErrors` has a few extra entries. The throttle is in memory on purpose, because Redis is often the thing that is down.
-
-Previews thin ordinary errors to 10% in `beforeSend` (`isThinnedOnPreview`), and every other environment, including one where `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is unset (a bare job runner or a test), keeps 100%. The thinning is in `beforeSend` rather than `sampleRate` because the SDK samples before that hook and cannot see the mechanism: an uncaught throw in a Next server wrapper (`auto.function.nextjs.*` with `handled: false`: `onRequestError`, server components, route handlers, server actions) is exempt, since a preview exists to surface exactly those. A global `sampleRate: 0.1` dropped nine in ten of them, and an earlier version keyed on "not production" dropped 90% of errors wherever the variable was unset. The variable is read instead of `NODE_ENV` because `NODE_ENV` is `production` on previews too. `instrumentation.ts` exports its own `onRequestError`: it calls `Sentry.captureRequestError` and then hands a 2-second flush to Next's `after()`, because the SDK's own post-capture flush rides Vercel's or Cloudflare's `waitUntil` and does nothing on Netlify, where the function can freeze with the envelope in flight (the `network_error` client discards in the project stats are consistent with that failure). With no request scope it returns the flush so Next awaits it.
-
-Sweeps aggregate once per run in `settle-cancelled-sessions`, `retry-auto-refunds`, `expire-reschedule-proposals` and `reconcile-ledgers`; the freeze behaviour of the reconciler is unchanged, and drift still pages even if the first freeze throws. The cleanup-route catch-all is throttled per job. These guardrails sit next to the span and log scrubbing and the dead-letter alerting added in #1932 and the atomic cron lock added in #1935, and they do not replace either.
-
-The rule for new code is to never capture per row. A loop that can fail on many rows keeps a per-row `console.error` that logs `scrubStringValue(message)` from `lib/observability/sentry-scrubber.ts` rather than the raw error, because console output bypasses Sentry's scrubber. It collects the failures and, after the loop, emits one `reportSentryError` with a stable `fingerprint` and `extra: { failed, sample }` holding the count and the first ten ids. A repetition of one failure is throttled and a set of distinct failures is aggregated, as the non-negotiables above describe.
-
-The ingest canary also warns before the quota is gone, and it runs that check after the urgent ingest-down alert so that alert still fits inside the roughly 26 second function ceiling. When `SENTRY_STATS_TOKEN` (an `org:read` token) is set, each canary run reads the accepted error count for the current billing period and emails once per period when it reaches 70% of `SENTRY_ERROR_QUOTA` (default 5000). `SENTRY_QUOTA_PERIOD_START_DAY` (default 19) sets the day the period starts, and an unset token skips the check silently.
-
-### Sentry-side state on 2026-10-02
-
-The high-priority alert workflow 3606037 now filters on `environment: production`; in the new API it is a workflow at `organizations/practitionist/workflows/3606037/`, not an alert rule. Rule 6031144 (`pool_exhaustion`) is unchanged, spike protection is on, and the inbound filters for browser extensions, web crawlers, React hydration errors, chunk-load errors and legacy browsers are on. A DSN key rate limit of 30 per hour was attempted and is silently ignored on the free plan, because the PUT returns 200 while `rateLimit` stays null. Inbound error-message filters for the flood families were deliberately not added, because they would drop the first event as well and blind a real outage like 2026-09-25.
-
-### Still to do (owner)
-
-The owner still has to create an `org:read` Sentry token and set `SENTRY_STATS_TOKEN` on Netlify production, with the optional `SENTRY_QUOTA_PERIOD_START_DAY` and `SENTRY_ERROR_QUOTA`. In one to two months the owner plans to upgrade to the Team plan (US$26 a month billed annually, 50,000 errors, pay-as-you-go), and at that point the DSN key rate limit and the 10% preview sample should be revisited. Issue #1933 stays open until then.
-
-For the email map, the pre-launch delivery guard and ops alert routing, see [docs/email/README.md](../../../docs/email/README.md).
-
-## Operational job absence checks
-
-Ticker liveness needs an enabled, unmuted `cron-tick` monitor and an enabled
-notification alert connected to that exact monitor source. Verify the operator
-recipient and production environment; a general high-priority issue rule is not
-delivery proof. Read back both configurations, observe an accepted normal
-check-in, then prove one controlled missed-check-in notification reaches the
-operator and restore the normal configuration. Do not stop production jobs,
-create another paid monitor, or disable another project's monitor for the drill.
-Serialize the watchdog and `finally` cleanup through one restoration routine;
-compare current state before writing and escalate unexpected drift. Without
-verified conditional updates, arrange exclusive operator configuration access.
-Preserve the required monitor identity fields and complete configuration in the
-update payload, changing only the drill settings back to their saved values.
-Record unavailable cron-update access as pending; alert-write access alone does
-not enable the cron source. See the
-[ticker missed-run runbook](../../../docs/maintenance/00-betterstack-setup.md#ticker-missed-run-alerts).
-
-Check project email digest timing as well as the alert route. Familiarise's
-owner-approved minimum/maximum is 60/60 seconds; these are project-wide email
-settings, separate from the cron alert's 30-minute repeat throttle. Sentry's
-published digest path excludes resolved issues, so a brief incident can disappear
-before an email is built. A successful test notification proves only that test
-path. Verify receipt of the actual missed-check-in issue, wait out its repeat
-interval before another drill, and keep the watchdog deadline inside the reserved
-operator window. Treat `isUpserting` as runtime metadata; do not send it as a
-restoration field or mistake its manual-edit transition for configuration drift.
-
-`GET /api/health/jobs` is a bearer-protected read-only capability freshness probe.
-It returns 503 for missing/overdue COMPLETED evidence or an unreadable history,
-using `endedAt` and actual core job names. Required capabilities/SLOs live in
-`lib/cron/operational-health.ts`; they are monitoring policy, not another schedule.
-The shared heartbeat, a RUNNING attempt, an accepted background dispatch, or an
-HTTP 200 from the public health route cannot replace this evidence. The recorder
-and probe must use the same environment label; untagged or preview rows do not
-establish production freshness. Verify tagged, truthful completion recording and
-active required workers before enabling the monitor.
-
-Configure the external monitor with CRON_SECRET in a protected Authorization
-header, never a URL parameter. Calendar-only/config-gated jobs and business
-backlog/vendor correctness need separate checks. Verify accepted telemetry and
-actual alert delivery after deployment; tests establish probe behavior, not that
-the vendor monitor is configured. Verify that worker maintenance refusals and
-held outcomes cannot record COMPLETED evidence before activation. The probe keeps
-reading during maintenance; suppress notifications externally without advancing
-successful-work freshness.
-
-`SystemEvent` history retention has one bounded core in `lib/observability/system-event-retention.ts`. Preserve its existing 400-day cutoff, repeat eligibility during deletion and carry the caller deadline through lease admission and CLI slices. Its Actions owner is currently budget-blocked; a configured cadence does not prove execution. See [compliance and event-retention workers](../../../docs/maintenance/compliance-retention-workers.md) for operator recovery and the scheduler cutover gate.
+Sentry answers "what failed", Better Stack and the ticker check-in answer "what did not run", and the read-only entity trace (`lib/backoffice/entity-trace.ts`) with the Run metrics card (`lib/backoffice/job-run-metrics.ts`) answers "what happened to this payment or booking". They arrive with #2422. Read `references/entity-trace-and-console.md` before extending either one, and `docs/observability/three-layers.md` once it lands.

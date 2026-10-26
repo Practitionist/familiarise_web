@@ -251,10 +251,16 @@ strategy documents to the individual slow-query investigations.
 
 How errors, findings and job failures reach a human. The Sentry set records the one project and its DSNs, the reporting conventions that keep modelled refusals out of the fault list, the GitHub Actions failure sink and the day it started delivering, and the triage runbook that turns a sweep into decisions.
 
+- [observability/README.md](./observability/README.md) - The index of this folder, with a reading order by question
+- [00-system-design.md](./observability/00-system-design.md) - The whole subsystem: signal sources and sinks, the three questions and their layers, quota rules, ticker failure escalation, and the planned operations console
 - [sentry/01-setup-and-configuration.md](./observability/sentry/01-setup-and-configuration.md) - The project, the two DSN variables and who reads each, the SDK files and knobs, the source-map token history
 - [sentry/02-conventions.md](./observability/sentry/02-conventions.md) - `expected:true` for modelled outcomes, findings as messages, the tags that carry meaning, SystemEvent versus Sentry, what an issue status means
 - [sentry/03-actions-failure-sink.md](./observability/sentry/03-actions-failure-sink.md) - `notify-ops-failure.sh`, the envelope endpoint, the dead DSN that silenced it for three weeks, how to tell it is working
 - [sentry/04-triage-runbook.md](./observability/sentry/04-triage-runbook.md) - Scope by release, attribute every issue to one of three causes, decide with a written reason, the chronic ids, the tools
+- [sentry/05-identity-and-triage.md](./observability/sentry/05-identity-and-triage.md) - Request-scoped user and organisation stamping, the back-office lookup, and the data-protection gate
+- [sentry/06-ingest-canary.md](./observability/sentry/06-ingest-canary.md) - The 2026-09-22 quota outage, the six canary verdicts and why the canary emails instead of reporting
+- [sentry/07-verifying-end-to-end.md](./observability/sentry/07-verifying-end-to-end.md) - The evidence ladder and the deploy-preview probe procedure
+- [sentry/08-error-telemetry-privacy-reference.md](./observability/sentry/08-error-telemetry-privacy-reference.md) - The privacy and lawful-basis reasoning for sending error data to a hosted vendor
 - [maintenance/11-job-machinery-catalog.md](./maintenance/11-job-machinery-catalog.md) - How every scheduled job runs, what each run records and reports, the observability gaps, and the operations dashboard spec
 - [2026-10-26-launch-sweep-observability-and-money-holds.md](./decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) - ADR-01 to ADR-12: money holds, invoice healing, tax identity, auth abuse controls, the three observability layers, ticker escalation and the Sentry quota posture
 

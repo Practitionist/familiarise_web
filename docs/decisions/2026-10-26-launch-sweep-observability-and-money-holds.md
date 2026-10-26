@@ -121,7 +121,7 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
 
 ### ADR-08. A ticker target failure escalates only on repeats
 
-- **Status:** Accepted — implementation in PR #2420 (open, verified at its current head).
+- **Status:** Accepted — implemented and merged to `dev` in PR #2420.
 - **Context:** The ticker reported every failing target as a Sentry error, at most once an hour. A one-off failure is often Netlify's own 500 page with a Request ID, not a bug, and each new error issue sends an email and spends free-plan quota. The ticker keeps no state between ticks.
 - **Decision:**
   - A one-off target failure is written to the Better Stack per-tick summary line and to one grouped Sentry warning with fingerprint `cron-tick` / `target-failed-once`, the target in its `target` tag, marked `class: platform` when the body is Netlify's own error page.
@@ -137,7 +137,7 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
 
 ### ADR-09. Sentry quota posture on the free plan
 
-- **Status:** Accepted — partly on `dev` already; the preview rule is in PR #2420 (open) and the boot-warning rule is in PR #2423 (open).
+- **Status:** Accepted — on `dev` already, except the boot-warning rule, whose first user is in PR #2423 (open). The preview rule merged in PR #2420.
 - **Context:** On 2026-09-22 the plan's 5,000-error monthly allowance was spent and error ingestion stopped for six days (see the ingest-canary page). The owner's accounting of the causes is approximate: the Upstash request-cap reports in `dispatch-outbound-webhooks` (about 2,650), per-run reconciler warnings (about 1,150), `CronLockUnavailableError` (about 1,350), the ingest canary every 30 minutes (about 1,440 a month) and report-only CSP reports. The fixes shipped as #1938, #2129, #2130, #1935 and #2321. The owner reports usage on 2026-10-26 of about 225 errors in 7 days.
 - **Decision:**
   - Errors are sent once per run with fixed fingerprints.
@@ -148,7 +148,7 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
 - **Alternatives considered:** Upgrading to the Team plan: it removes the pressure without removing the noise, and the owner rejected it.
 - **Consequences:**
   - A job that must be seen cannot rely on a Sentry warning; it needs a durable row or an alert on another channel.
-  - Seven jobs can still emit one event per row and break the once-per-run rule: three call `Sentry.captureException` inside their loops and four report per row through `recordSystemErrorSafe` or `reportSentryMessage` (section 4.2 of the catalog).
+  - The seven jobs that reported once per row now collect failures and report once per run (section 4.2 of the catalog).
 
 ### ADR-10. The apex `netlify.app` host redirects to `familiarisenow.com`
 
