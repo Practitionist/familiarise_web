@@ -286,7 +286,7 @@ it.each([
   "preserves an unreferenced first upload refused as %s",
   async (_label, input, status) => {
     expect((await commit(input)).status).toBe(status);
-    expect(deletePlanMaterial).toHaveBeenCalledWith(storagePath());
+    expect(deletePlanMaterial).not.toHaveBeenCalled();
     expect(verifyDirectUploadedObject).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
   },
