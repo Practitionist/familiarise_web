@@ -165,6 +165,7 @@ true } })`: history stays readable, nobody can post. After a successful
   request and paced with a `10_000ms` delay between 100-CID chunks to stay well
   under Stream's `60/min` `DeleteChannels` rate limit. The retention window uses
   `resolveEventRetentionDays` (`organization.chatRetentionDays ?? organization.streamRecordingRetentionDays ?? 90`).
+  Nothing records that a channel was already deleted, so later runs send the same CIDs again. Stream refuses a batch that names a channel it no longer has, with a 404 "channels not found" (code 16), so `deleteChannelBatch` treats that refusal as a cue: it looks up which CIDs still exist (`queryChannels`, 30 per page), deletes only those, and counts the rest in `missingChannels`. The run stays successful. Any other error still fails the batch and is reported once per run.
 
 A webinar or class may span multiple appointments across cohorts but owns
 **one** event channel, so its age is computed from the **latest** slot `endsAt`

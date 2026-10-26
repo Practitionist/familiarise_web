@@ -25,6 +25,7 @@ import {
   STREAM_BATCH_LIMIT,
   STREAM_BATCH_PAUSE_MS,
   STREAM_CONCURRENCY_LIMIT,
+  STREAM_QUERY_CHANNELS_LIMIT,
 } from "../../lib/stream/batch";
 import { readJobCheckpoint, withCronLock } from "../../lib/cron/with-cron-lock";
 import {
@@ -584,6 +585,68 @@ async function paceDeleteChannelsBatch(
   pacing.lastCallAt = Date.now();
 }
 
+/** The cids among `cids` that Stream still has; `queryChannels` pages are capped at 30. */
+async function existingCids(
+  chat: ReturnType<typeof getStreamChatClient>,
+  cids: string[],
+  streamFailures: RunFailureReporter,
+): Promise<string[]> {
+  const found: string[] = [];
+  for (const page of chunk(cids, STREAM_QUERY_CHANNELS_LIMIT)) {
+    const channels = await withStreamCircuitBreaker(
+      () =>
+        chat.queryChannels(
+          { cid: { $in: page } },
+          {},
+          {
+            limit: STREAM_QUERY_CHANNELS_LIMIT,
+            state: false,
+            watch: false,
+            presence: false,
+          },
+        ),
+      undefined,
+      streamFailures,
+    );
+    for (const channel of channels) found.push(channel.cid);
+  }
+  return found;
+}
+
+/**
+ * Hard-deletes a batch of channels. Nothing records a past delete, so a batch
+ * can name channels already gone; Stream refuses such a batch as "channels not
+ * found", and then only the cids it still has are deleted.
+ */
+async function deleteChannelBatch(
+  chat: ReturnType<typeof getStreamChatClient>,
+  cids: string[],
+  pacing: DeletePacingState,
+  streamFailures: RunFailureReporter,
+): Promise<{ deleted: number; missing: number }> {
+  await paceDeleteChannelsBatch(pacing);
+  try {
+    await withStreamCircuitBreaker(
+      () => chat.deleteChannels(cids, { hard_delete: true }),
+      undefined,
+      streamFailures,
+    );
+    return { deleted: cids.length, missing: 0 };
+  } catch (error) {
+    if (!isExpectedStreamError(error)) throw error;
+  }
+  const existing = await existingCids(chat, cids, streamFailures);
+  if (existing.length > 0) {
+    await paceDeleteChannelsBatch(pacing);
+    await withStreamCircuitBreaker(
+      () => chat.deleteChannels(existing, { hard_delete: true }),
+      undefined,
+      streamFailures,
+    );
+  }
+  return { deleted: existing.length, missing: cids.length - existing.length };
+}
+
 async function runDmStage(
   chat: ReturnType<typeof getStreamChatClient>,
   result: ExpireEventChannelsResult,
@@ -652,23 +715,19 @@ async function runDmStage(
 
   // Same batching as the event stage; `deleteChannels` caps at 100 cids.
   for (const batch of chunk(toDelete, STREAM_BATCH_LIMIT)) {
-    await paceDeleteChannelsBatch(deletePacing);
     const cids = batch.map(
       (pair) => `${getChannelTypeFromId(pair.channelId)}:${pair.channelId}`,
     );
     try {
-      await withStreamCircuitBreaker(
-        () => chat.deleteChannels(cids, { hard_delete: true }),
-        undefined,
+      const { missing } = await deleteChannelBatch(
+        chat,
+        cids,
+        deletePacing,
         streamFailures,
       );
-      // Counts channels SENT for deletion, not channels that existed to delete.
-      // `deleteChannels` is idempotent and returns a task id rather than a
-      // per-cid outcome, so a pair that crossed retention is re-sent on every
-      // run until it ages past the scan window — bounded by `lookbackFrom`
-      // (largest configured retention + 60 days), not unbounded, but real. The
-      // name says requests because that is what the number is.
-      result.dmDeleteRequests += cids.length;
+      result.missingChannels += missing;
+      // A pair past retention is re-sent every run until it ages out of `lookbackFrom`; already-gone channels count as missing.
+      result.dmDeleteRequests += cids.length - missing;
     } catch (error) {
       result.success = false;
       result.errors.push(
@@ -996,17 +1055,18 @@ async function deleteEvents(
   streamFailures: RunFailureReporter,
 ) {
   for (const batch of chunk(toDelete, STREAM_BATCH_LIMIT)) {
-    await paceDeleteChannelsBatch(deletePacing);
     const cids = batch.map(
       (channelId) => `${getChannelTypeFromId(channelId)}:${channelId}`,
     );
     try {
-      await withStreamCircuitBreaker(
-        () => chat.deleteChannels(cids, { hard_delete: true }),
-        undefined,
+      const { deleted, missing } = await deleteChannelBatch(
+        chat,
+        cids,
+        deletePacing,
         streamFailures,
       );
-      result.deleted += cids.length;
+      result.deleted += deleted;
+      result.missingChannels += missing;
     } catch (error) {
       result.success = false;
       result.errors.push(

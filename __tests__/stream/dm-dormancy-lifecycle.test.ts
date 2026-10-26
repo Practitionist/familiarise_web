@@ -31,6 +31,7 @@ const mockConsultationUpdateMany = jest.fn();
 const mockSubscriptionUpdateMany = jest.fn();
 const mockUpdatePartial = jest.fn();
 const mockDeleteChannels = jest.fn();
+const mockQueryChannels = jest.fn();
 const mockSendMessage = jest.fn();
 /**
  * Captures `(type, id)` for every `client.channel()` call.
@@ -87,6 +88,7 @@ jest.mock("../../lib/stream-client", () => ({
       };
     },
     deleteChannels: (...a: unknown[]) => mockDeleteChannels(...a),
+    queryChannels: (...a: unknown[]) => mockQueryChannels(...a),
   }),
   withStreamCircuitBreaker: jest.requireActual<
     typeof import("../../lib/stream-client")
@@ -157,6 +159,7 @@ beforeEach(() => {
   mockSubscriptionUpdateMany.mockResolvedValue({ count: 1 });
   mockUpdatePartial.mockResolvedValue(undefined);
   mockDeleteChannels.mockResolvedValue(undefined);
+  mockQueryChannels.mockResolvedValue([]);
   mockSendMessage.mockResolvedValue(undefined);
   mockChannel.mockReset();
 });
@@ -418,6 +421,64 @@ describe("channel expiry provider outcomes", () => {
     });
     expect(mockConsultationUpdateMany).not.toHaveBeenCalled();
     expect(mockSubscriptionUpdateMany).not.toHaveBeenCalled();
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  const channelsNotFound = () =>
+    Object.assign(new Error("DeleteChannels failed: channels not found"), {
+      status: 404,
+      code: 16,
+    });
+
+  it("counts an already-deleted DM as missing instead of failing the run", async () => {
+    mockConsultationFindMany.mockResolvedValue([consultation("gone", 400)]);
+    mockDeleteChannels.mockRejectedValueOnce(channelsNotFound());
+
+    const result = await expireEventChannels();
+
+    expect(result).toMatchObject({
+      success: true,
+      missingChannels: 1,
+      dmDeleteRequests: 0,
+      errors: [],
+    });
+    expect(mockDeleteChannels).toHaveBeenCalledTimes(1);
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it("deletes only the event channels Stream still has when a batch names a gone one", async () => {
+    mockAppointmentFindMany.mockResolvedValue([
+      {
+        webinar: {
+          id: "old-webinar",
+          chatFrozenAt: null,
+          webinarPlan: { id: "plan", collaborators: [], organization: null },
+        },
+        class: null,
+        organization: null,
+        occurrences: [{ endsAt: daysAgo(400) }],
+      },
+    ]);
+    mockDeleteChannels.mockRejectedValueOnce(channelsNotFound());
+    mockQueryChannels.mockImplementation(
+      async (filter: { cid: { $in: string[] } }) =>
+        filter.cid.$in.slice(0, 1).map((cid) => ({ cid })),
+    );
+
+    const result = await expireEventChannels();
+
+    const [firstBatch] = mockDeleteChannels.mock.calls[0] as [string[]];
+    expect(mockDeleteChannels).toHaveBeenCalledTimes(2);
+    expect(mockDeleteChannels.mock.calls[1]).toEqual([
+      [firstBatch[0]],
+      { hard_delete: true },
+    ]);
+    expect(result).toMatchObject({
+      success: true,
+      deleted: 1,
+      missingChannels: firstBatch.length - 1,
+      errors: [],
+    });
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 

@@ -314,16 +314,20 @@ describe("expireRecordings", () => {
     expect(Math.round(ageDays)).toBe(30);
   });
 
-  it("warns once when the scan cap is spent before the due limit is reached", async () => {
-    const notDue = (id: string) => ({
+  it.each([
+    ["stays quiet when a full page holds nothing due", 0, 0],
+    ["warns once when a full page holds due rows below the limit", 3, 1],
+  ])("%s", async (_name, dueOnPage, warnings) => {
+    const old = new Date(Date.now() - 400 * 24 * 3600_000);
+    const notDue = (id: string, at: Date = new Date()) => ({
       id,
-      recordedAt: new Date(),
+      recordedAt: at,
       organizationId: null,
       organization: null,
       meeting: {
-        endedAt: new Date(),
+        endedAt: at,
         occurrence: {
-          endsAt: new Date(),
+          endsAt: at,
           appointment: {
             consultationId: null,
             webinarId: "w",
@@ -341,7 +345,9 @@ describe("expireRecordings", () => {
       async (args: { orderBy?: unknown; select?: object }) => {
         if (!("meeting" in (args.select ?? {}))) return [];
         page += 1;
-        return Array.from({ length: 25 }, (_, i) => notDue(`p${page}-${i}`));
+        return Array.from({ length: 25 }, (_, i) =>
+          notDue(`p${page}-${i}`, i < dueOnPage ? old : new Date()),
+        );
       },
     );
 
@@ -354,7 +360,7 @@ describe("expireRecordings", () => {
     ).mock.calls.filter(([, ctx]) =>
       (ctx as { fingerprint: string[] }).fingerprint.includes("scan-cap"),
     );
-    expect(scanCapWarnings).toHaveLength(1);
+    expect(scanCapWarnings).toHaveLength(warnings);
   });
 
   const lapsedRow = (id: string, filename = `${id}.mp4`) => ({
