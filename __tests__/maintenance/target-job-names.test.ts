@@ -37,11 +37,9 @@ describe("ticker target to SystemJobExecution jobName", () => {
     "%s resolves to a jobName its core writes, or is explicitly null",
     (target) => {
       const jobName = jobNameFor(target);
-      if (jobName === null) {
-        expect(locksDirectly(target)).toBe(false);
-      } else {
-        expect(writesRow(jobName)).toBe(true);
-      }
+      const holds =
+        jobName === null ? !locksDirectly(target) : writesRow(jobName);
+      expect(holds).toBe(true);
     },
   );
 });
