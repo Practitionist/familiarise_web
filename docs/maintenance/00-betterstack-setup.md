@@ -588,6 +588,18 @@ This evidence closes the ticker missed-run gate only. Keep the ingest canary's
 independent email path and the per-capability completion probe: a Sentry outage
 and an individual stopped worker have different detection requirements.
 
+### Recorded end-to-end verification
+
+On 26 October 2026, the bounded drill produced missed-check-in issue
+`FAMILIARISE_WEB-7Q` at 12:18 UTC. Its production workflow triggered at 12:19 UTC
+and its matching email reached the operator's inbox at 12:20:08 UTC. Normal
+monitor settings were restored at 12:18:15 UTC; the independent watchdog verified
+them, and the ordinary 12:20 production check-in recovered the monitor. The
+approved project email delay was 60/60 seconds and the alert repeat throttle
+remained 30 minutes. This is receipt evidence for the ticker path; the broader
+independent-monitor and worker-completion scope remains open in the
+[operating record](https://github.com/Practitionist/familiarise_web/issues/2156#issuecomment-6401498922).
+
 References: [Sentry HTTP check-ins and alert routing](https://docs.sentry.io/product/monitors-and-alerts/monitors/crons/getting-started/http/),
 [cron-monitor update API](https://docs.sentry.io/api/crons/update-a-monitor/),
 and [the independent ingest canary](../observability/sentry/06-ingest-canary.md).
