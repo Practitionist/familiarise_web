@@ -35,6 +35,7 @@ const WINDOW: Record<
   ok: { label: "On time", tone: "success" },
   missed: { label: "Missed", tone: "critical" },
   unscheduled: { label: "Not scheduled", tone: "neutral" },
+  "no-runs": { label: "No runs here", tone: "neutral" },
 };
 
 const BASIS: Record<NonNullable<JobRunMetric["missed"]["basis"]>, string> = {
@@ -91,6 +92,8 @@ export function JobRunMetrics({
     );
   }
   const missed = metrics.jobs.filter((j) => j.missed.state === "missed");
+  // Most jobs do not record item counts yet; an all-zero column reads as "did nothing".
+  const itemsRecorded = metrics.jobs.some((j) => j.itemsProcessed > 0);
   return (
     <Section
       title="Run metrics, last 7 days"
@@ -137,7 +140,9 @@ export function JobRunMetrics({
             <TableHead className="text-right">Held</TableHead>
             <TableHead className="text-right">p50</TableHead>
             <TableHead className="text-right">p95</TableHead>
-            <TableHead className="text-right">Items</TableHead>
+            {itemsRecorded && (
+              <TableHead className="text-right">Items</TableHead>
+            )}
             <TableHead>Last success</TableHead>
             <TableHead>Window</TableHead>
             <TableHead>Daily</TableHead>
@@ -165,9 +170,11 @@ export function JobRunMetrics({
               <TableCell className="text-right tabular-nums">
                 {duration(job.p95Ms)}
               </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {job.itemsProcessed}
-              </TableCell>
+              {itemsRecorded && (
+                <TableCell className="text-right tabular-nums">
+                  {job.itemsProcessed}
+                </TableCell>
+              )}
               <TableCell className="whitespace-nowrap text-xs">
                 {job.lastSuccessAt
                   ? new Date(job.lastSuccessAt).toLocaleString()

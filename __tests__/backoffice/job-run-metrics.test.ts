@@ -119,3 +119,31 @@ it("folds counts, rounds percentiles, fills IST days and sorts missed jobs first
   expect(metrics.jobs[0].missed.state).toBe("missed");
   expect(metrics.jobs.at(-1)?.jobName).toBe("prune-audit-logs");
 });
+
+it("reports no-runs instead of missed when a non-production deployment has no success of its own", () => {
+  const input = {
+    now,
+    counts: [
+      {
+        jobName: "prune-audit-logs",
+        status: "COMPLETED" as const,
+        count: 1,
+        itemsProcessed: 0,
+      },
+    ],
+    percentiles: [],
+    daily: [],
+    lastSuccess: [],
+  };
+  const preview = buildJobRunMetrics({ ...input, environment: "preview" });
+  expect(
+    preview.jobs.find((j) => j.jobName === "prune-audit-logs")?.missed,
+  ).toEqual({ state: "no-runs", basis: null });
+  const production = buildJobRunMetrics({
+    ...input,
+    environment: "production",
+  });
+  expect(
+    production.jobs.find((j) => j.jobName === "prune-audit-logs")?.missed.state,
+  ).not.toBe("no-runs");
+});

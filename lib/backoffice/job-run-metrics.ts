@@ -23,8 +23,12 @@ const IST_OFFSET_MS = 330 * MINUTE_MS;
 const WINDOW_SEARCH_DAYS = 400;
 
 export interface MissedWindow {
-  /** `unscheduled`: no SLO and no ticker cadence, so nothing to miss. */
-  state: "ok" | "missed" | "unscheduled";
+  /**
+   * `unscheduled`: no SLO and no ticker cadence, so nothing to miss.
+   * `no-runs`: a non-production deployment has no successful run of its own,
+   * so the window cannot be judged there.
+   */
+  state: "ok" | "missed" | "unscheduled" | "no-runs";
   basis: "slo" | "interval" | "window" | null;
 }
 
@@ -173,11 +177,14 @@ export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
       p95Ms: roundMs(pct?.p95),
       itemsProcessed: mine.reduce((s, c) => s + c.itemsProcessed, 0),
       lastSuccessAt: last?.toISOString() ?? null,
-      missed: assessMissedWindow({
-        jobName,
-        lastSuccessAt: last,
-        now: input.now,
-      }),
+      missed:
+        !last && input.environment !== "production"
+          ? { state: "no-runs", basis: null }
+          : assessMissedWindow({
+              jobName,
+              lastSuccessAt: last,
+              now: input.now,
+            }),
       daily: days.map((day) => ({
         day,
         runs: perDay.get(day)?.runs ?? 0,
