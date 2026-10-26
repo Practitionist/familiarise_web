@@ -41,11 +41,11 @@ selection limit does not prove a byte-size, snapshot-isolation or runtime bound.
 
 ## Routes and user workflow
 
-| Verb | Path under `/api/organizations/[orgId]` | Behavior                                                                                                                                              |
-| ---- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| POST | `/data-exports`                         | Validates requested kind, applies the per-organization request limiter, commits PENDING plus request audit and returns 202                            |
-| GET  | `/data-exports`                         | Lists at most 50 jobs from the last 30 days, newest first, filtered by grants; failed rows expose fixed safe error text                               |
-| GET  | `/data-exports/[exportId]/download`     | Requires READY, current grants, unexpired job and matching exact artifact owner; audits the authorized signing attempt and returns `{url, expiresAt}` |
+| Verb | Path under `/api/organizations/[orgId]` | Behavior                                                                                                                                                       |
+| ---- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST | `/data-exports`                         | Validates requested kind, applies the per-organization request limiter, commits PENDING plus request audit and returns 202                                     |
+| GET  | `/data-exports`                         | Lists at most 50 jobs from the last 30 days, newest first, filtered by grants; failed rows expose fixed safe error text                                        |
+| GET  | `/data-exports/[exportId]/download`     | Requires READY, current grants and exact ownership; audits successful signing after its expiry check, then rechecks expiry before returning `{url, expiresAt}` |
 
 A request is limited to one export per organization per 24 hours through
 `orgDataExportLimiter`; this is a rate limiter, not a database uniqueness
