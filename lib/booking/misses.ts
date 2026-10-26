@@ -44,7 +44,7 @@ export const AWAITING_HUMAN = {
   OR: [
     { outcome: { in: ["INCONCLUSIVE", "HOST_ABSENT"] } },
     { outcome: null, meeting: { endedReason: "maintenance" } },
-    // A free session nobody attended has no money to hold, so it completes.
+    // Nobody joined or no room, on a paid booking; a free one has no money to hold and completes.
     {
       outcome: { in: ["NOBODY_JOINED", "OFFLINE"] },
       appointment: {
