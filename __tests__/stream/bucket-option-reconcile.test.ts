@@ -19,6 +19,7 @@ import {
 
 const getBucket = jest.fn();
 const updateBucket = jest.fn().mockResolvedValue({ error: null });
+const createBucket = jest.fn();
 const list = jest.fn().mockResolvedValue({ data: [], error: null });
 
 jest.mock("../../lib/supabase-storage-core", () => {
@@ -31,7 +32,6 @@ describe("ensureBucketExists option reconciliation", () => {
   let ensureBucketExists: (
     name: string,
     options?: {
-      public?: boolean;
       allowedMimeTypes?: string[];
       fileSizeLimit?: number;
     },
@@ -45,7 +45,12 @@ describe("ensureBucketExists option reconciliation", () => {
 
     jest.doMock("@supabase/supabase-js", () => ({
       createClient: () => ({
-        storage: { from: () => ({ list }), getBucket, updateBucket },
+        storage: {
+          from: () => ({ list }),
+          getBucket,
+          updateBucket,
+          createBucket,
+        },
       }),
     }));
 
@@ -75,7 +80,6 @@ describe("ensureBucketExists option reconciliation", () => {
     getBucket.mockResolvedValue(bucket());
     await ensureBucketExists(BUCKET, {
       fileSizeLimit: MAX_FILE_BYTES,
-      public: false,
       allowedMimeTypes: [
         ...ALLOWED_FILE_MIME_TYPES,
         "application/octet-stream",
@@ -103,7 +107,6 @@ describe("ensureBucketExists option reconciliation", () => {
   it("writes nothing when every option already matches", async () => {
     getBucket.mockResolvedValue(bucket());
     await ensureBucketExists(BUCKET, {
-      public: false,
       fileSizeLimit: MAX_FILE_BYTES,
       allowedMimeTypes: [...ALLOWED_FILE_MIME_TYPES],
     });
@@ -154,13 +157,21 @@ describe("ensureBucketExists option reconciliation", () => {
     await expect(ensureBucketExists(BUCKET)).resolves.toBe(false);
   });
 
-  it("fails provisioning when a visibility change cannot be applied", async () => {
+  it("fails provisioning when the registry visibility cannot be applied", async () => {
     getBucket.mockResolvedValue(bucket({ public: true }));
     updateBucket.mockResolvedValueOnce({
       error: { message: "forbidden" },
     });
-    await expect(ensureBucketExists(BUCKET, { public: false })).resolves.toBe(
-      false,
-    );
+    await expect(ensureBucketExists(BUCKET)).resolves.toBe(false);
+  });
+
+  it("succeeds when a concurrent first create wins the race", async () => {
+    list.mockResolvedValue({
+      data: null,
+      error: { message: "Bucket not found" },
+    });
+    createBucket.mockResolvedValue({ error: { message: "already exists" } });
+    getBucket.mockResolvedValue(bucket());
+    await expect(ensureBucketExists(BUCKET)).resolves.toBe(true);
   });
 });

@@ -87,7 +87,6 @@ describe("support attachment magic bytes", () => {
 
   it("configures the private bucket from the same allowlist the picker uses", () => {
     expect(SUPPORT_EVIDENCE_BUCKET_OPTIONS).toEqual({
-      public: false,
       fileSizeLimit: 20 * 1024 * 1024,
       allowedMimeTypes: [...SUPPORT_ATTACHMENT_MIME_TYPES],
     });

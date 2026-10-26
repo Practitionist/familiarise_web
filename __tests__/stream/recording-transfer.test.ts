@@ -31,6 +31,7 @@ jest.mock("../../lib/storage/r2-client", () => ({
   streamMultipartToR2: jest.fn(),
   headR2Object: jest.fn(),
   deleteR2Object: jest.fn().mockResolvedValue({ success: true }),
+  isR2Configured: () => false,
 }));
 
 import prisma from "../../lib/prisma";

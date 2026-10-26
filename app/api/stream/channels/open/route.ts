@@ -35,13 +35,10 @@
  *
  * Both arms are idempotent — an existing channel is returned untouched.
  */
-import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 
-import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import {
   CLASS_PREFIX,
@@ -49,10 +46,8 @@ import {
   WEBINAR_PREFIX,
 } from "@/lib/stream-channel-ids";
 import {
-  canDirectMessage,
   DmNotPermittedError,
   pairBookingContexts,
-  resolveVerifiedBookingContextTitle,
 } from "@/lib/stream/dm-eligibility";
 import { DM_ELIGIBLE_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 import { applyRateLimit, streamApiLimiter } from "@/lib/rate-limit";
@@ -66,10 +61,11 @@ import {
   isEventParticipant,
 } from "@/lib/stream/event-channel-service";
 import { getStreamChatClient } from "@/lib/stream-client";
+import { getDmChannelId } from "@/lib/stream-utils";
+import { readDmChannel } from "@/lib/stream/dm-channel-read";
 import { streamLogger } from "@/lib/stream-logger";
 import { collabChannelAccess } from "@/lib/stream/channel-access";
 import { Refusal } from "@/lib/errors/refusal";
-import { BOOKING_CONTEXT_STREAM_USER } from "@/lib/stream/system-users";
 
 const bodySchema = z.discriminatedUnion("kind", [
   z.object({
@@ -77,8 +73,6 @@ const bodySchema = z.discriminatedUnion("kind", [
     counterpartyUserId: z.string().min(1),
     /** Funding context. Absent or null = personal. */
     organizationId: z.string().min(1).nullable().optional(),
-    /** Optional appointment context to post a booking receipt card in the shared 1:1 DM. */
-    contextAppointmentId: z.string().min(1).optional(),
   }),
   z.object({
     kind: z.literal("event"),
@@ -91,17 +85,6 @@ const bodySchema = z.discriminatedUnion("kind", [
     classPlanId: z.string().min(1).optional(),
   }),
 ]);
-
-function buildBookingContextMessageId(
-  channelId: string,
-  appointmentId: string,
-): string {
-  const digest = createHash("sha256")
-    .update(`${channelId}:${appointmentId}`)
-    .digest("hex")
-    .slice(0, 32);
-  return `booking-ctx-${digest}`;
-}
 
 const collabChannelRefusals = {
   orgDeactivated: new Refusal({
@@ -122,138 +105,6 @@ function refusalJson(refusal: Refusal): NextResponse {
     { error: refusal.userMessage, code: refusal.code },
     { status: refusal.httpStatus },
   );
-}
-
-async function postBookingContextCardIfAbsent(
-  channelId: string,
-  userId: string,
-  counterpartyUserId: string,
-  contextAppointmentId: string,
-): Promise<void> {
-  if (!prisma.appointment?.findFirst) return;
-
-  try {
-    const collaboratorSelect = {
-      where: {
-        status: "ACCEPTED" as const,
-        consultantProfile: { deletedAt: null },
-      },
-      select: {
-        tier: true,
-        consultantProfile: { select: { userId: true } },
-      },
-    };
-    const appt = await prisma.appointment.findFirst({
-      where: { id: contextAppointmentId, deletedAt: null },
-      select: {
-        id: true,
-        appointmentType: true,
-        occurrences: {
-          where: { deletedAt: null },
-          orderBy: { startsAt: "asc" },
-          take: 1,
-          select: { startsAt: true, endsAt: true },
-        },
-        participants: {
-          where: liveParticipant(),
-          select: { userId: true, role: true },
-        },
-        consultation: {
-          select: {
-            id: true,
-            status: true,
-            requestedBy: { select: { userId: true } },
-            consultationPlan: {
-              select: {
-                title: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-          },
-        },
-        subscription: {
-          select: {
-            id: true,
-            status: true,
-            requestedBy: { select: { userId: true } },
-            subscriptionPlan: {
-              select: {
-                title: true,
-                consultantProfile: { select: { userId: true } },
-              },
-            },
-          },
-        },
-        webinar: {
-          select: {
-            id: true,
-            status: true,
-            webinarPlan: {
-              select: {
-                title: true,
-                consultantProfile: { select: { userId: true } },
-                collaborators: collaboratorSelect,
-              },
-            },
-          },
-        },
-        class: {
-          select: {
-            id: true,
-            status: true,
-            classPlan: {
-              select: {
-                title: true,
-                consultantProfile: { select: { userId: true } },
-                collaborators: collaboratorSelect,
-              },
-            },
-          },
-        },
-      },
-    });
-    if (!appt) return;
-
-    const title = resolveVerifiedBookingContextTitle(
-      appt,
-      userId,
-      counterpartyUserId,
-    );
-    if (!title) return;
-
-    const client = getStreamChatClient();
-    const channel = client.channel("messaging", channelId);
-    const messageId = buildBookingContextMessageId(channelId, appt.id);
-    const slotStart = appt.occurrences?.[0]?.startsAt ?? null;
-    // Posted as the server-only booking user, so the card cannot be forged from a client.
-    await client.upsertUser({ ...BOOKING_CONTEXT_STREAM_USER, role: "user" });
-    const messagePayload: Record<string, unknown> = {
-      id: messageId,
-      user_id: BOOKING_CONTEXT_STREAM_USER.id,
-      text: `Booking context: ${title}`,
-      booking_appointment_id: appt.id,
-      booking_type: appt.appointmentType,
-      booking_title: title,
-      ...(slotStart ? { booking_starts_at: slotStart.toISOString() } : {}),
-    };
-
-    await channel.sendMessage(messagePayload);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const isDuplicate = /already exists|duplicate/i.test(message);
-    if (isDuplicate) {
-      streamLogger.debug("Booking context card already present on DM open", {
-        channelId,
-        contextAppointmentId,
-      });
-    } else {
-      streamLogger.warn("Failed to post booking context card on DM open", {
-        channelId,
-        contextAppointmentId,
-        error: message,
-      });
-    }
-  }
 }
 
 async function handleCollabChannelOpen(
@@ -339,14 +190,40 @@ function resolveDmOrganizationId(
   };
 }
 
+/** Whether the DM already holds both people under this org stamp, so nothing needs creating. */
+async function isDmReady(
+  userId: string,
+  counterpartyUserId: string,
+  organizationId: string | null,
+): Promise<boolean> {
+  const channelId = getDmChannelId(userId, counterpartyUserId, organizationId);
+  const dm = await readDmChannel(channelId, userId);
+  return Boolean(
+    dm?.humans.includes(counterpartyUserId) &&
+    dm.organizationId === organizationId,
+  );
+}
+
 async function handleDmChannelOpen(
   userId: string,
   body: Extract<z.infer<typeof bodySchema>, { kind: "dm" }>,
 ): Promise<NextResponse> {
-  const { counterpartyUserId, contextAppointmentId } = body;
+  const { counterpartyUserId } = body;
   const requestedOrgId = body.organizationId ?? null;
 
-  if (!(await canDirectMessage(userId, counterpartyUserId))) {
+  // The pair's booking scopes answer the same question as `canDirectMessage`, in one
+  // lookup; the requested scope's DM is read alongside and only used once that passes.
+  const speculativeReady =
+    userId === counterpartyUserId
+      ? Promise.resolve(false)
+      : isDmReady(userId, counterpartyUserId, requestedOrgId).catch(
+          () => false,
+        );
+  const [contexts, readyForRequested] = await Promise.all([
+    pairBookingContexts(userId, counterpartyUserId),
+    speculativeReady,
+  ]);
+  if (!contexts.personalAllowed && contexts.organizations.length === 0) {
     streamLogger.warn("Refused DM open — no booking link", {
       userId,
       counterpartyUserId,
@@ -361,24 +238,29 @@ async function handleDmChannelOpen(
     );
   }
 
-  const contexts = await pairBookingContexts(userId, counterpartyUserId);
   const resolvedOrg = resolveDmOrganizationId(requestedOrgId, contexts);
   if ("error" in resolvedOrg) return resolvedOrg.error;
+  const { organizationId } = resolvedOrg;
+
+  // An existing DM with both people needs no user upserts or create call.
+  const ready =
+    organizationId === requestedOrgId
+      ? readyForRequested
+      : await isDmReady(userId, counterpartyUserId, organizationId).catch(
+          () => false,
+        );
+  if (ready) {
+    return NextResponse.json({
+      channelType: "messaging",
+      channelId: getDmChannelId(userId, counterpartyUserId, organizationId),
+    });
+  }
 
   const { channelId } = await createDirectMessageChannel(
     userId,
     counterpartyUserId,
-    resolvedOrg.organizationId,
+    organizationId,
   );
-
-  if (contextAppointmentId) {
-    await postBookingContextCardIfAbsent(
-      channelId,
-      userId,
-      counterpartyUserId,
-      contextAppointmentId,
-    );
-  }
 
   return NextResponse.json({ channelType: "messaging", channelId });
 }

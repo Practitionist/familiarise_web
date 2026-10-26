@@ -23,9 +23,25 @@ import {
   assertValidUpdateUserPermissions,
 } from "@/lib/stream/video-contracts";
 import { reportSentryError } from "@/lib/observability/report";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 /** The only capabilities Stream's UpdateUserPermissions accepts; any other name fails the whole request. */
 const PUBLISH_PERMISSIONS = STREAM_PUBLISH_PERMISSIONS;
+
+/** A refusal repeating inside this window followed the client's self-heal provisioning, so the room is not coming. */
+const ROOM_HEAL_WINDOW_MS = 120_000;
+const lastRoomRefusalAt = new Map<string, number>();
+
+/** First refusal of a meeting is the room awaiting the client's self-heal; a repeat inside the window is not. */
+function isRepeatRoomRefusal(meetingId: string): boolean {
+  const now = Date.now();
+  for (const [id, at] of lastRoomRefusalAt) {
+    if (now - at > ROOM_HEAL_WINDOW_MS) lastRoomRefusalAt.delete(id);
+  }
+  const repeat = lastRoomRefusalAt.has(meetingId);
+  lastRoomRefusalAt.set(meetingId, now);
+  return repeat;
+}
 
 /**
  * True only when Stream reports the user already holds `role`; any read failure answers false
@@ -140,11 +156,17 @@ export async function POST(
     });
 
     if (!admitted) {
-      reportSentryError(new Error("ROOM_NOT_PROVISIONED"), {
-        subsystem: "stream",
-        op: "meetings.join",
-        extra: { meetingId },
-      });
+      if (isRepeatRoomRefusal(meetingId)) {
+        captureThrottled(
+          `meetings.join.roomNotProvisioned:${meetingId}`,
+          new Error("ROOM_NOT_PROVISIONED"),
+          { subsystem: "stream", op: "meetings.join", extra: { meetingId } },
+        );
+      } else {
+        streamLogger.warn("Meeting room not provisioned; awaiting self-heal", {
+          meetingId,
+        });
+      }
       return NextResponse.json(
         {
           error:

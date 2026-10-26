@@ -3,6 +3,7 @@ import { PaymentStatus, Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import type { FundingRail } from "@/lib/payments/funding-rail";
+import { GATEWAY_NOT_FOUND } from "@/lib/payments/core/types";
 import { refundBookingPayment } from "./booking-refund";
 import {
   findDedupedRefund,
@@ -122,8 +123,8 @@ export type RefundOwedOutcome =
   | { kind: "settled" }
   /** A live dispute owns the payment; the marker waits for it. */
   | { kind: "blocked" }
-  /** Kept for the sweep; `stuck` once the attempt budget is spent. */
-  | { kind: "failed"; error: unknown; stuck: boolean };
+  /** Kept for the sweep; `stuck` once the attempt budget is spent, `permanent` when no retry can succeed. */
+  | { kind: "failed"; error: unknown; stuck: boolean; permanent: boolean };
 
 export type DrivenRefund = {
   refundId: string;
@@ -175,8 +176,12 @@ export async function driveRefundOwed(
       if (error.code === "REFUND_BLOCKED_BY_DISPUTE")
         return { kind: "blocked" };
     }
-    const stuck = await countFailedAttempt(marker, error);
-    return { kind: "failed", error, stuck };
+    // The gateway has no such payment: retrying only adds FAILED refund rows.
+    const permanent =
+      error instanceof RefundGatewayError &&
+      error.gatewayCode === GATEWAY_NOT_FOUND;
+    const stuck = await countFailedAttempt(marker, error, permanent);
+    return { kind: "failed", error, stuck, permanent };
   }
 }
 
@@ -201,12 +206,19 @@ async function clearRefundOwed(marker: RefundOwedMarker): Promise<void> {
     });
 }
 
-/** Counts one failed drive by CAS on the attempt it read; only the drive that hits the cap pages. */
+/**
+ * Counts one failed drive by CAS on the attempt it read; a permanent failure
+ * spends the whole budget at once. Only the drive that hits the cap pages.
+ */
 async function countFailedAttempt(
   marker: RefundOwedMarker,
   error: unknown,
+  permanent: boolean,
 ): Promise<boolean> {
   const attempts = marker.attempts ?? 0;
+  const next = permanent
+    ? Math.max(attempts + 1, MAX_REFUND_OWED_ATTEMPTS)
+    : attempts + 1;
   const counted = await prisma.payment
     .updateMany({
       where: {
@@ -214,16 +226,18 @@ async function countFailedAttempt(
         refundOwedKey: marker.key,
         refundOwedAttempts: attempts,
       },
-      data: { refundOwedAttempts: attempts + 1 },
+      data: { refundOwedAttempts: next },
     })
     .then((r) => r.count === 1)
     .catch(() => false);
-  const stuck = attempts + 1 >= MAX_REFUND_OWED_ATTEMPTS;
+  const stuck = next >= MAX_REFUND_OWED_ATTEMPTS;
   if (counted && stuck) {
     await recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
-      summary: `Refund owed on payment ${marker.paymentId} failed ${attempts + 1} times — refund by hand`,
+      summary: permanent
+        ? `Refund owed on payment ${marker.paymentId} names a payment the gateway does not know — refund by hand`
+        : `Refund owed on payment ${marker.paymentId} failed ${attempts + 1} times — refund by hand`,
       err: error,
       context: {
         paymentId: marker.paymentId,

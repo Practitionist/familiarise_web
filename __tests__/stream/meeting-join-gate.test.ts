@@ -113,12 +113,14 @@ import { POST } from "../../app/api/meetings/[meetingId]/join/route";
 // The mocked class — `instanceof` in the route must match what we throw here.
 import { StreamUnavailableError } from "../../lib/stream-client";
 import { reportSentryError } from "../../lib/observability/report";
+import { resetThrottledCaptureForTesting } from "../../lib/observability/throttled-capture";
 
 const params = Promise.resolve({ meetingId: "slot-abc" });
 const req = {} as never;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  resetThrottledCaptureForTesting();
   sequence = [];
   mockGetSession.mockResolvedValue({
     user: { id: "user_1", banned: false },
@@ -214,20 +216,56 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     });
   });
 
-  it("refuses a Meeting row whose Stream call is missing with a typed 409", async () => {
+  it("refuses a Meeting row whose Stream call is missing with a typed 409, without spending an error event", async () => {
     mockUpdateCallMembers.mockRejectedValue(
       Object.assign(new Error("Can't find call"), { status: 404, code: 16 }),
     );
 
-    const res = await POST(req, { params });
+    const res = await POST(req, {
+      params: Promise.resolve({ meetingId: "slot-first-refusal" }),
+    });
 
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("ROOM_NOT_PROVISIONED");
     expect(mockGetOrCreate).not.toHaveBeenCalled();
+    expect(reportSentryError).not.toHaveBeenCalled();
+  });
+
+  it("reports ROOM_NOT_PROVISIONED when the room is still missing after the client's self-heal", async () => {
+    mockUpdateCallMembers.mockRejectedValue(
+      Object.assign(new Error("Can't find call"), { status: 404, code: 16 }),
+    );
+    const repeatParams = Promise.resolve({
+      meetingId: "slot-never-provisions",
+    });
+
+    await POST(req, { params: repeatParams });
+    expect(reportSentryError).not.toHaveBeenCalled();
+
+    const res = await POST(req, { params: repeatParams });
+
+    expect(res.status).toBe(409);
+    expect(reportSentryError).toHaveBeenCalledTimes(1);
     expect(reportSentryError).toHaveBeenCalledWith(
       new Error("ROOM_NOT_PROVISIONED"),
       expect.objectContaining({ op: "meetings.join" }),
     );
+  });
+
+  it("treats a refusal after the heal window as a fresh first refusal", async () => {
+    mockUpdateCallMembers.mockRejectedValue(
+      Object.assign(new Error("Can't find call"), { status: 404, code: 16 }),
+    );
+    const windowParams = Promise.resolve({ meetingId: "slot-window" });
+    const now = jest.spyOn(Date, "now");
+
+    now.mockReturnValue(1_000_000);
+    await POST(req, { params: windowParams });
+    now.mockReturnValue(1_000_000 + 121_000);
+    await POST(req, { params: windowParams });
+    now.mockRestore();
+
+    expect(reportSentryError).not.toHaveBeenCalled();
   });
 
   it("treats a bare 404 without Stream's not-found code as a fault", async () => {

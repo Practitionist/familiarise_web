@@ -3,12 +3,16 @@
  */
 
 const deleteR2Object = jest.fn();
+const listR2Keys = jest.fn();
+let r2Configured = false;
 const removeObjects = jest.fn();
 const list = jest.fn();
 
 jest.mock("../../lib/storage/r2-client", () => ({
   createR2PresignedGetUrl: jest.fn(),
   deleteR2Object: (...args: unknown[]) => deleteR2Object(...args),
+  listR2Keys: (...args: unknown[]) => listR2Keys(...args),
+  isR2Configured: () => r2Configured,
 }));
 
 jest.mock("../../lib/supabase-storage-core", () => ({
@@ -85,5 +89,36 @@ describe("deleteRecordingAssets", () => {
     });
     expect(result).toEqual({ success: false, error: "R2 DELETE failed" });
     expect(removeObjects).not.toHaveBeenCalled();
+  });
+
+  it("sweeps every object under the recording's prefix and fails while any survives", async () => {
+    r2Configured = true;
+    list.mockResolvedValue({ data: [], error: null });
+    removeObjects.mockResolvedValue(true);
+    listR2Keys.mockResolvedValue({
+      keys: [
+        "recordings/rec-1/attempt-1.mp4",
+        "recordings/rec-1/attempt-2.mp4",
+      ],
+      truncated: false,
+    });
+    deleteR2Object
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: false, error: "R2 DELETE failed" });
+    const reporter: RunFailureReporter = { add: jest.fn(), flush: jest.fn() };
+
+    const result = await deleteRecordingAssets(
+      { id: "rec-1", storagePath: null },
+      reporter,
+    );
+
+    expect(listR2Keys).toHaveBeenCalledWith(
+      expect.objectContaining({ prefix: "recordings/rec-1/" }),
+    );
+    expect(deleteR2Object).toHaveBeenCalledTimes(2);
+    expect(result.success).toBe(false);
+    expect(reporter.add).toHaveBeenCalledTimes(1);
+    expect(streamLogger.error).not.toHaveBeenCalled();
+    r2Configured = false;
   });
 });

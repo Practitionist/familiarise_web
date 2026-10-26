@@ -73,11 +73,13 @@ jest.mock("../../lib/observability/report", () => ({
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   readJobCheckpoint: jest.fn().mockResolvedValue(null),
   withCronLock: (_job: string, _opts: unknown, run: () => unknown) => run(),
+  readJobCheckpoint: () => Promise.resolve(null),
 }));
 jest.mock("../../lib/storage/r2-client", () => ({
   deleteR2Object: jest.fn(),
   streamMultipartToR2: jest.fn(),
   headR2Object: jest.fn(),
+  isR2Configured: () => false,
 }));
 jest.mock("../../lib/stream/recording-stream-delete", () => ({
   deleteStreamRecordingCopy: (...args: unknown[]) =>
@@ -186,6 +188,12 @@ function matches(where: Prisma.RecordingWhereInput = {}) {
     typeof where.status === "object" &&
     Array.isArray(where.status.notIn) &&
     where.status.notIn.includes(row.status)
+  )
+    return false;
+  if (
+    typeof where.status === "object" &&
+    typeof where.status.not === "string" &&
+    where.status.not === row.status
   )
     return false;
   if (where.purchases && row.purchased) return false;
@@ -428,7 +436,8 @@ it("keeps the admin request open until a failed expired asset is deleted on retr
   expect(objects.size).toBe(0);
   expect(deleteR2Object).toHaveBeenCalledTimes(3);
   expect(mockUpdateManyAndReturn).toHaveBeenLastCalledWith(
-    expect.objectContaining({ data: { status: "EXPIRED", recordingUrl: "" } }),
+    // The row was already EXPIRED, so the retry claim re-captures it without restamping removal.
+    expect.objectContaining({ data: { recordingUrl: "" } }),
   );
 });
 

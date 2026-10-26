@@ -31,6 +31,7 @@ import {
   channelHasSupportMember,
   getChannelDisplayInfo,
   isUsableDmChannel,
+  lastVisibleMessage,
 } from "./utils/channelUtils";
 import { appendUniqueChannels, insertChannelAtTop } from "./utils/channelList";
 import { useChatPane } from "./ChatPaneContext";
@@ -79,9 +80,7 @@ const ChannelItem = memo(
     const hasUnread = unreadCount > 0;
 
     // Last message preview and timestamp
-    const messages = channel.state.messages;
-    const lastMessage =
-      messages.length > 0 ? messages[messages.length - 1] : null;
+    const lastMessage = lastVisibleMessage(channel.state.messages);
     const lastMessageText = lastMessage?.text
       ? lastMessage.text.length > 30
         ? lastMessage.text.substring(0, 30) + "..."
@@ -329,10 +328,6 @@ export const ChatSidebar = () => {
     scopeRef.current = scope;
   }, [scope]);
   const searchParams = useSearchParams();
-  const contextAppointmentId =
-    searchParams?.get("contextAppointmentId") ??
-    searchParams?.get("appointmentId") ??
-    null;
   const counterpartyUserId =
     searchParams?.get("counterpartyUserId") ??
     searchParams?.get("peerUserId") ??
@@ -857,7 +852,7 @@ export const ChatSidebar = () => {
   useEffect(() => {
     if (!client?.userID || !hasDeepLink) return;
     const pinnedOrgId = scopeOrgId(scope);
-    const deepLinkKey = `${client.userID}::${counterpartyUserId ?? ""}::${contextAppointmentId ?? ""}::${deepLinkEventType ?? ""}::${deepLinkEventId ?? ""}::${deepLinkChannelId ?? ""}::${pinnedOrgId ?? "personal"}`;
+    const deepLinkKey = `${client.userID}::${counterpartyUserId ?? ""}::${deepLinkEventType ?? ""}::${deepLinkEventId ?? ""}::${deepLinkChannelId ?? ""}::${pinnedOrgId ?? "personal"}`;
     if (deepLinkHandledRef.current === deepLinkKey) return;
     deepLinkHandledRef.current = deepLinkKey;
     initialSelectionDoneRef.current = true;
@@ -952,7 +947,6 @@ export const ChatSidebar = () => {
               kind: "dm",
               counterpartyUserId,
               peerUserId: counterpartyUserId,
-              ...(contextAppointmentId ? { contextAppointmentId } : {}),
               organizationId: pinnedOrgId ?? null,
             },
             "dm",
@@ -996,7 +990,6 @@ export const ChatSidebar = () => {
     client,
     hasDeepLink,
     counterpartyUserId,
-    contextAppointmentId,
     deepLinkEventType,
     deepLinkEventId,
     deepLinkChannelId,
