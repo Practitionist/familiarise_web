@@ -15,6 +15,7 @@ import { sendOrgInvoiceOverdueEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { readRazorpayOrderHolding } from "@/lib/payments/core/razorpay";
 import {
   applyOrgInvoiceCapture,
@@ -422,7 +423,12 @@ async function dunning(opts: {
         if (await recoverBeforeSuspension(inv, suspensionDeadline)) continue;
       } catch (error) {
         stats.failed += 1;
-        console.error("[dunning] suspension payment check held:", error);
+        console.error(
+          "[dunning] suspension payment check held:",
+          scrubStringValue(
+            error instanceof Error ? error.message : String(error),
+          ),
+        );
         continue;
       }
       // #812 — claim + audit in one Serializable tx, mirroring Stage 1, so two
