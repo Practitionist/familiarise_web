@@ -35,14 +35,14 @@ A cleanup call authenticates with CRON_SECRET, checks maintenance admission
 and enters its canonical leased core. Postgres mutual exclusion applies to
 the same job name; domain CAS and external idempotency must protect repeated
 or cross-job operations. A timed-out caller does not establish that the
-worker stopped. Persistent409s require finding the owner and progress, not
+worker stopped. Persistent 409s require finding the owner and progress, not
 deleting the lease.
 
 Inspect the core result, execution history, failed/held dispatcher buckets
-and committed domain effects. A ticker200 or an Actions workflow marked
+and committed domain effects. A ticker 200 or an Actions workflow marked
 active is insufficient. The current shared heartbeat can remain green while
 one required capability has stopped. See the independent completion probe
-and alert-delivery deployment gates in issue2308 before declaring health.
+and alert-delivery operating gates in the linked maintenance runbooks before declaring health.
 
 For a manual recovery, use the authenticated canonical cleanup or admin
 door with a bounded limit and operator reason where supported. Do not run

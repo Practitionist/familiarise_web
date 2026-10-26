@@ -2,7 +2,7 @@
 
 This guide explains the implemented infrastructure, why its boundaries exist, and how to adapt the design to another product. Read it before changing a cron, a reconciliation query, maintenance admission, or hosting. The source files linked below own behavior; the [generated job inventory](../maintenance/04-cron-jobs-reference.md) owns the configured roster. Configuration, reviewed code, deployment, accepted execution and completed business obligations are separate evidence.
 
-The maintenance and scheduling changes described here belong to the reviewed landing candidate. Deploy its readers only after the additive schema and maintenance edge-state prerequisites below. The Stream scheduler handoff remains pending; its requested cadences are explicitly separated from current ownership.
+This guide describes current source contracts. Deployment and business-effect evidence remain separate: verify the required database schema and maintenance edge state before new readers, and verify actual worker effects after deployment. The Stream lifecycle catalog now dispatches through the ticker; its Netlify-only background destinations are a portability constraint.
 
 ## 1. The system in one picture
 
@@ -121,6 +121,8 @@ A failed refund attempt is not a separate refund liability. Durable owed markers
 
 The authenticated, no-store `/api/health/jobs` probe checks successful capabilities in the intended Sentry deployment environment. It is implemented; external scheduling, accepted responses and actual alert delivery are deployment evidence. Keep calendar-only work and backlog deadlines separately visible. Sentry check-in acceptance and monitor enablement must be checked; a disabled monitor, a dropped capture or an always-200 ticker cannot be an independent alarm.
 
+The ticker missed-check-in email path has a [recorded end-to-end verification](../maintenance/00-betterstack-setup.md#recorded-end-to-end-verification). Recheck monitor enablement, notification routing and ordinary recovery when operating it; that receipt does not prove every capability or survive a Sentry outage. The same runbook records digest timing and the bounded restoration drill so another operator can repeat it safely.
+
 Use bounded once-per-run Sentry reports. Native workers use the generic Core SDK APIs with the shared privacy/configuration policy. Capture tests alias a mocked `@sentry/core` to the mocked `@sentry/nextjs`; partial mocks use actual Core to avoid circular framework imports.
 
 ## 8. Maintenance is an operator-controlled workflow
@@ -142,28 +144,30 @@ Before the first deployment, apply the reviewed additive schema before readers. 
 
 One shared Postgres project serves environments and worktrees. Never infer that a branch's schema is safe to push. Generate a read-only live diff, separate the intended additive delta from existing drift, and inspect SQL-owned constraints/indexes/triggers separately. Never execute the whole diagnostic drift plan.
 
-The maintenance addition is five nullable columns, two new tables, six explicit indexes and three foreign keys, with no backfill. The checked-in [operator SQL](../maintenance/maintenance-remediation-schema.sql) must precede deployments selecting those fields. Existing Stream A–D fields are not part of this addition and must not be replayed as a second migration. Record the exact schema SHA and live catalog confirmation.
+The maintenance schema and persistent edge-state bootstrap have already been applied to the shared project under operator control. For a fresh environment, the checked-in [operator SQL](../maintenance/maintenance-remediation-schema.sql) adds five nullable columns, two tables, six indexes and three foreign keys, with no backfill; verify its exact required delta and live catalog before deploying readers. Do not replay already-applied Stream schema changes or an unrelated diagnostic drift plan. Record the exact schema SHA and catalog confirmation.
 
 Sidecar replacement runs dependent statements in order inside one transaction per file with a short lock timeout. A failed ADD must not leave its preceding DROP committed. A lock timeout limits waiting, not statement execution or total runtime. Existing-table ordinary index builds block writes; concurrent builds need a distinct outside-transaction operator plan with validity checks. Do not translate a small reviewed rollout into a universal migration recipe. See the [schema cutover guide](../prisma/02-schema-freeze-and-migration-cutover.md).
 
 Rollback of application code cannot erase business effects already committed. Prefer a compatible forward repair, keep durable obligations and exact source identities, and use the verified operator recovery procedure. Schema application and real worker execution require their own authorization.
 
-## 10. Stream handoff: current gap and planned acceptance
+## 10. Active Stream ticker ownership and execution limits
 
-The recording core and background adapter exist, but automatic R2 copying is not enabled on the ticker. The remaining operational Actions clocks are budget-blocked. A source retained only by Stream can disappear after its two-week storage lifetime; this differs from the application's 90/365-day retention ([Stream storage](https://getstream.io/video/docs/api/recording/storage/)).
+The ticker now dispatches the Stream recording and lifecycle jobs. Their moved Actions steps are removed. Automatic workers currently depend on Netlify as the active cron host: the catalog points to Netlify function URLs. A host migration needs a compatible long-worker destination before switching the active scheduler; preserving Netlify as standby alone does not make these targets portable.
 
-| Capability                                                                                                                 | Requested S1 cadence; not yet active ticker ownership         |
-| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `transfer-recordings`                                                                                                      | Every 15 minutes, dispatching the existing background adapter |
-| `reconcile-sessions` HTTP slug / `reconcile-orphaned-sessions` execution                                                   | Every 30 minutes                                              |
-| `expire-recordings`, `reconcile-orphaned-recordings`, `wind-down-deactivated-orgs`, `stream-sync`, `expire-event-channels` | Bounded daily-window slices                                   |
-| `stream-control-plane-drift`, `reconcile-stream-memberships`                                                               | Keep their existing ticker targets and windows                |
+| Capability                                                                                                                 | Current configured cadence / destination                 |
+| -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `transfer-recordings`                                                                                                      | Every 15 minutes; `recording-transfer-background`        |
+| `reconcile-sessions` HTTP slug / `reconcile-orphaned-sessions` execution                                                   | Every 30 minutes; bounded registered core                |
+| `expire-recordings`, `reconcile-orphaned-recordings`, `wind-down-deactivated-orgs`, `stream-sync`, `expire-event-channels` | Staggered daily windows; `stream-maintenance-background` |
+| `stream-control-plane-drift`, `reconcile-stream-memberships`                                                               | Hourly slices in their configured daily windows          |
 
-Before handoff, bound every core's actual vendor/related work, prove tail progress across unchanged/error prefixes, register event-channel expiry, fix and expose its operational failures, remove the moved Actions steps, and add capability/expiry-horizon health. Existing long scans are not made bounded by adding `?limit=` to the URL. Historical event-channel failure summaries do not retain the failing operation, so a root cause must not be invented.
+The [catalog](../../lib/cron/schedule.ts) owns exact offsets, windows, limits and destinations. The planned dispatch wave is capped by `MAX_TARGETS_PER_TICK=10`; cadence tests examine every tick of a week, and calendar-boundary scenarios remain relevant when changing windows. A wave is not a worker concurrency queue or proof of capacity.
 
-Transfer claims consume an attempt before work. A crashed TRANSFERRING attempt remains consumed when reclaimed; a fresh claim needs its next attempt identity. Tests must exercise claim/crash/stale-reclaim/retry and ensure an old attempt cannot publish over the new one. One admitted copy per 15-minute run gives a theoretical ceiling of 96/day, not a measured service rate. An alarm must inspect oldest untransferred source expiry even when recent executions succeeded.
+Stream-managed recording files have a [two-week source lifetime](https://getstream.io/video/docs/api/recording/storage/). An application's later retention date cannot extend that source lifetime. Copy completion must therefore be measured against each recording's source expiry, even when recent job executions succeeded.
 
-Require deployed background packaging/authentication evidence, one authorized copy with matching object/row state, successive distinct-row progress, confirmed source deadlines and alert delivery. Failed cleanup of an unpublished completed object needs durable ownership or a reviewed manual recovery procedure; an incomplete-multipart lifecycle rule does not clean every completed orphan. The [recording worker runbook](../stream/recording-background-worker.md) owns those gates.
+Transfer claims consume an attempt before work. A stale crashed claim keeps its consumed attempt, and a fresh claim uses its next attempt identity. Conditional publication prevents the old attempt from overwriting a newer owner. The fail-closed 15-minute lease admits one copy at a time, with at most one recording per invocation. The theoretical 96 admissions/day is not measured successful throughput. The bounded 72-hour/attempt-risk alarm conditionally stamps each recording at most once every six hours, preserves retry timing and excludes already-expired sources.
+
+HTTP 202 acknowledges dispatch only. Verify eventual owned execution, AVAILABLE/PLATFORM state and matching R2 bytes separately; the domain's production verification owns that evidence. Failed cleanup of unpublished attempt objects still needs the documented operator recovery procedure: incomplete-multipart lifecycle rules do not remove all completed orphan objects. The [recording worker runbook](../stream/recording-background-worker.md) documents packaging, active-host, copy, alarm, capacity and cleanup checks. Do not invoke shared-data workers from a deploy preview to test these contracts.
 
 ## 11. Reusing this design in another company
 

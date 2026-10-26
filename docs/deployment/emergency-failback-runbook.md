@@ -22,7 +22,7 @@ Postgres job leases, domain claims/CAS and external idempotency keys remain nece
 2. Keep custom domains attached to Netlify and verify a valid certificate and intended host routing before cutover. Record certificate expiry and test renewal while traffic is on the primary host. A certificate issued by Cloudflare Origin CA requires Cloudflare proxying; direct public clients must receive a publicly trusted certificate. Do not infer TLS readiness from the default netlify.app domain alone.
 3. Establish independent control of traffic routing. Record the actual DNS/proxy configuration, access and propagation behavior. The target RTO requires a measured rehearsal from outside both compute vendors.
 4. Verify auth secrets, cookie/domain policy, OAuth redirects, webhook endpoints and vendor credentials on both hosts. Shared state makes continuity possible but does not prove correct configuration.
-5. Implement and verify the new host's scheduler adapter, including its own fleet preference read and authenticated worker dispatch. The current Netlify implementation alone does not establish that another host observes the switch.
+5. Implement and verify the new host's scheduler adapter, including its own fleet preference read and authenticated worker dispatch. Replace Netlify-specific background destinations for Stream copy/lifecycle work before cutover, with equivalent runtime, lease and completion checks. The current Netlify implementation alone does not establish that another host observes the switch.
 6. Size the database budget across live traffic, standby probes and background workers. Netlify retains PG_POOL_MAX=1; a multi-request host uses a bounded shared pool. Preserve direct storage transfers for large binaries and host-scoped trusted IP headers.
 7. Configure independent worker-completion/absence monitoring and vendor backlog checks. Record expected normal holds, calendar windows and manual recovery procedures. A dispatcher HTTP 200 does not establish readiness.
 
@@ -66,7 +66,7 @@ Record observed traffic RTO, worker recovery time, missing capabilities and any 
 
 ## Sources and boundaries
 
-The fleet behavior above is checked against the ticker on dev 702f8bcd3, 2026-10-23. The [deployment guide](README.md) describes portability requirements; [Netlify schedules](https://docs.netlify.com/build/functions/scheduled-functions/) and [function limits](https://docs.netlify.com/build/functions/configuration/) describe the scheduler/runtime boundaries. Redis preference, job lease and traffic routing are separate controls.
+The fleet behavior above is checked against `otherActivePlatform` in the current Netlify ticker; revalidate it when changing the adapter. The [deployment guide](README.md) describes portability requirements; [Netlify schedules](https://docs.netlify.com/build/functions/scheduled-functions/) and [function limits](https://docs.netlify.com/build/functions/configuration/) describe the scheduler/runtime boundaries. Redis preference, job lease and traffic routing are separate controls.
 
 ## Deprecated & Superseded Approaches
 

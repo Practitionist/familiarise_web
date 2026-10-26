@@ -30,7 +30,7 @@
  * the same job collapse safely (the second waits, observes status =
  * PROCESSING, skips).
  *
- * Schedule: every 10 minutes via `.github/workflows/process-data-exports.yml`.
+ * Dispatched every ten minutes through the registered cleanup route on the ticker.
  */
 
 import prisma from "../../lib/prisma";
