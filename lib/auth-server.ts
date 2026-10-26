@@ -1,7 +1,7 @@
 import { cookies, headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { renderMemo } from "@/lib/render-memo";
-import { isOperatorRole } from "@/lib/auth/operator-session-policy";
+import { needsOperatorTwoFactor } from "@/lib/auth/qa-accounts";
 import {
   classifyMissingSession,
   verifiedSessionToken,
@@ -59,15 +59,13 @@ const memoizedResolve = renderMemo(resolveSession);
  * `SessionLookupFailedError` (a 503 refusal) when the lookup itself failed,
  * so an outage never reads as signed out.
  *
- * A STAFF/ADMIN session without an enrolled second factor reads as null
- * unless `allowUnenrolledOperator` is set: only `lookupSession`, behind the
- * page guards and `requireApiAuth`, opts in to answer with the 2FA setup
- * redirect or a 428.
+ * A STAFF/ADMIN session without an enrolled second factor (QA operators off
+ * production aside) reads as null unless `allowUnenrolledOperator` is set:
+ * only `lookupSession`, behind the page guards and `requireApiAuth`, opts in
+ * to answer with the 2FA setup redirect or a 428.
  */
 export async function getSession({ allowUnenrolledOperator = false } = {}) {
   const session = await memoizedResolve();
   if (allowUnenrolledOperator || !session) return session;
-  const unenrolled =
-    isOperatorRole(session.user.role) && session.user.twoFactorEnabled !== true;
-  return unenrolled ? null : session;
+  return needsOperatorTwoFactor(session.user) ? null : session;
 }

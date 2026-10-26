@@ -227,6 +227,11 @@ role inline fail closed: an operator session without 2FA comes back as `null`,
 so they answer 401. The sign-in page sends such an operator straight to
 `/auth/two-factor/setup`.
 
+Each of these gates asks `needsOperatorTwoFactor` (`lib/auth/qa-accounts.ts`),
+which lets designated QA operators through on previews and local development
+only; production enforces 2FA for every operator
+([staff-onboarding.md §9](./staff-onboarding.md#9-two-factor-policy-seeds-and-qa-operators)).
+
 ## 5. Flows
 
 ### 5.1 Consumer sign-up, email verification and email sign-in
