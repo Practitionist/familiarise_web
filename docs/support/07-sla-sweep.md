@@ -95,7 +95,7 @@ If a build or gate fails, inspect `pg_index.indisvalid`; use `DROP INDEX CONCURR
 on that invalid index outside a transaction, rerun the file, and verify the gate
 passes before deploying. Do not wrap the complete script in a transaction. Treat rollout as held until the owner confirms the column and valid index exist;
 check the live catalog read-only before every handoff.
-The compound index is not a measured guarantee for the null-first sort or runtime.
+The reviewed B-tree uses default ascending nulls-last ordering, while the polling query asks for ascending nulls-first. PostgreSQL may sort eligible candidates before applying the returned-row cap; the cap is not a bound on physical scans or sort work. This is a known capacity limitation, not a cursor-correctness guarantee. Benchmark the actual cohort before choosing a null/non-null query split or a dedicated nulls-first sidecar index, keeping the cursor semantics and Prisma/sidecar ownership consistent. See [PostgreSQL index ordering](https://www.postgresql.org/docs/17/indexes-ordering.html).
 
 ### 3. Problem-to-incident cascade
 
