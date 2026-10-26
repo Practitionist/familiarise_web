@@ -353,7 +353,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           detected: r.detected,
           refunded: r.refunded,
           contradicted: r.contradicted,
-          bothAbsentTickets: r.bothAbsentTickets,
         }),
         failureMessage: "Failed to detect consultant no-shows",
       }),
