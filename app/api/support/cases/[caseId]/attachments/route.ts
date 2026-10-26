@@ -208,6 +208,17 @@ export async function POST(req: NextRequest, context: Context) {
   }
 }
 
+async function evidenceResponseClosed(
+  evidenceRequestId: string | null,
+): Promise<boolean> {
+  if (!evidenceRequestId) return false;
+  const request = await prisma.supportCaseEvidenceRequest.findUnique({
+    where: { id: evidenceRequestId },
+    select: { respondedAt: true, cancelledAt: true },
+  });
+  return !request || !!request.respondedAt || !!request.cancelledAt;
+}
+
 export async function PUT(req: NextRequest, context: Context) {
   const id = await parseRouteParams(CaseIdParams, context.params, {
     route: ROUTE,
@@ -243,17 +254,11 @@ export async function PUT(req: NextRequest, context: Context) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (attachment.completedAt)
     return NextResponse.json({ data: { id: attachment.id } });
-  if (attachment.evidenceRequestId) {
-    const request = await prisma.supportCaseEvidenceRequest.findUnique({
-      where: { id: attachment.evidenceRequestId },
-      select: { respondedAt: true, cancelledAt: true },
-    });
-    if (!request || request.respondedAt || request.cancelledAt)
-      return NextResponse.json(
-        { error: "This evidence response is already final" },
-        { status: 409 },
-      );
-  }
+  if (await evidenceResponseClosed(attachment.evidenceRequestId))
+    return NextResponse.json(
+      { error: "This evidence response is already final" },
+      { status: 409 },
+    );
   const info = await adminStorage()
     .from(SUPPORT_EVIDENCE_BUCKET)
     .info(attachment.storagePath);
@@ -302,20 +307,34 @@ export async function PUT(req: NextRequest, context: Context) {
       });
       if (!request || request.respondedAt || request.cancelledAt) return null;
     }
-    return tx.supportCaseAttachment.updateMany({
+    const moved = await tx.supportCaseAttachment.updateMany({
       where: { id: attachment.id, completedAt: null, deletedAt: null },
       data: { completedAt: new Date() },
     });
+    return moved.count > 0;
   });
-  if (!completed)
-    return NextResponse.json(
-      {
-        error:
-          "The case or evidence request changed. Refresh before confirming the file.",
+  if (!completed) {
+    // Completed live evidence remains an idempotent replay after case/request closure.
+    const replayed = await prisma.supportCaseAttachment.findFirst({
+      where: {
+        id: attachment.id,
+        caseId,
+        uploadedById: auth.session.user.id,
+        completedAt: { not: null },
+        deletedAt: null,
       },
-      { status: 409 },
-    );
+      select: { id: true },
+    });
+    if (!replayed)
+      return NextResponse.json(
+        {
+          error:
+            "The case, evidence request or upload changed. Refresh before confirming the file.",
+        },
+        { status: 409 },
+      );
+  }
   return NextResponse.json({
-    data: { id: attachment.id, completed: completed.count > 0 },
+    data: { id: attachment.id, completed: true },
   });
 }

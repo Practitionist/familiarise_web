@@ -34,6 +34,19 @@ outcomes and `X-Job-Outcome` distinguish partial failure and intentional holds.
 Different jobs can still touch the same row: preserve CAS, transactional staging
 and vendor idempotency, and test cross-job races and sequential replay.
 
+Support attachment cleanup shares the existing row with upload finalisation.
+Only already grace-eligible objects enter its at-most-100-path ownership batches:
+conditionally tombstone expired pending rows, reread live references, then remove
+unprotected objects outside a transaction. Never delete from an orphan snapshot
+alone or revive a tombstone after an ambiguous storage failure. A later sweep
+retries grace-eligible bytes; fresh rejected objects retain their seven-day grace.
+Process ownership and removal batches sequentially to bound vendor pressure.
+Keep finalisation's in-transaction evidence-response recheck even when preflight
+validation is extracted into a helper; transaction reads must use its tx client.
+This fence does not bound whole-bucket listing; see
+[attachment ownership](../../../docs/support/04-evidence-and-attachments.md#finalisation-and-cleanup-ownership)
+for the current flow.
+
 The scheduled ticker has a 30-second budget, distinct from its HTTP workers.
 A timeout or expired lease does not cancel vendor effects. Fleet selection fails
 open on absent/unreadable `ops:active_cron_platform`, so it is not an exactly-once
