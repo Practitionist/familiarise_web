@@ -62,9 +62,11 @@ artifact lifetime using a fresh clock after the owner lookup. If signing or
 audit latency crosses the artifact deadline, the route returns `EXPORT_EXPIRED`
 without returning the URL.
 
-`DATA_EXPORT_DOWNLOAD_REQUESTED` records the authorized signing attempt, including
-an attempt whose audit latency later crosses the expiry deadline. It does not
-assert that the URL was returned or that the recipient read any bytes.
+`DATA_EXPORT_DOWNLOAD_REQUESTED` is written after signing succeeds and the
+post-signing expiry check passes. Signing failures and requests that expire
+before or during signing write no audit row. The row can still exist if audit
+latency later crosses the deadline; it does not assert that the URL was returned
+or that the recipient read any bytes.
 
 An issued signed URL remains a bearer capability under the provider's contract.
 Changing a member's role prevents a new authorized download but does not

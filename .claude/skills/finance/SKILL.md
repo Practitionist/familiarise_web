@@ -39,4 +39,9 @@ Detailed invariants and regime facts live in `references/doctrine.md`; verificat
 
 ## Invoice capture recovery
 
+Lock a payable invoice without invalidating its current order while validating a
+gateway capture. Park an amount mismatch without clearing a newer checkout;
+successful PAID settlement clears the reference. Keep bank/credit invalidation
+semantics separate from the capture lock.
+
 Use `applyOrgInvoiceCapture` with the transaction client for webhook, checkout read-back and scheduled recovery. Keep receipt, ledger, PAID audit and notification staging atomic. The registered invoice healer rotates retained order IDs through its existing execution checkpoint; it never creates another charge or auto-refunds an unapplied capture. An empty payment list does not close a created/attempted order: checkout must not replace an open stale-amount order. Keep provider waits inside the caller's remaining budget; an SDK timeout does not cancel a gateway effect. Bank receipts and credits can clear an old order reference, so do not claim the healer discovers every historical capture. Read `docs/maintenance/11-worker-recovery.md` for cadence, bounded rotation and remaining operating gates.

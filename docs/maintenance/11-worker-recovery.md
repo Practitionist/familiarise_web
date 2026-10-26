@@ -135,6 +135,9 @@ the receipt, journal, PAID transition, audit and durable notification staging.
 The existing email and bell relays deliver after commit. An amount/status
 mismatch follows the canonical UNAPPLIED_RECEIPTS path for operator review;
 it never starts another charge or invents an automatic refund policy.
+The capture locks the payable invoice without clearing its current order
+reference. A mismatched late capture preserves a newer checkout; the PAID
+transition clears the reference only when settlement succeeds.
 
 Durably parked captures raise an operator finding and HTTP 207 without labeling
 a handled liability as a failed worker. Read/transaction failures still fail the

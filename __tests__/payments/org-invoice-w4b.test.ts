@@ -126,9 +126,11 @@ function invoiceWorld(init: {
   totalPaise: number;
   creditedPaise?: number;
   billedPayments?: number;
+  providerPaymentOrderId?: string;
 }) {
   const state = {
     status: init.status,
+    providerPaymentOrderId: init.providerPaymentOrderId ?? null,
     receipts: [] as { amountPaise: number; reference: string }[],
   };
   const row = () => ({
@@ -140,6 +142,7 @@ function invoiceWorld(init: {
     subtotalPaise: Math.round(init.totalPaise / 1.18),
     displayCurrency: "INR",
     providerPaymentId: null,
+    providerPaymentOrderId: state.providerPaymentOrderId,
     irn: null,
     organization: { name: "Acme" },
     _count: {
@@ -154,12 +157,15 @@ function invoiceWorld(init: {
       data,
     }: {
       where: { status?: { in: string[] } };
-      data: { status?: string };
+      data: { status?: string; providerPaymentOrderId?: string | null };
     }) => {
       if (where.status && !where.status.in.includes(state.status)) {
         return { count: 0 };
       }
       if (data.status) state.status = data.status;
+      if (data.providerPaymentOrderId !== undefined) {
+        state.providerPaymentOrderId = data.providerPaymentOrderId;
+      }
       return { count: 1 };
     },
   );
@@ -433,6 +439,49 @@ describe("bank transfer receipts", () => {
 });
 
 describe("gateway capture", () => {
+  it("preserves a newer checkout when a late capture is parked, then clears it only on settlement", async () => {
+    const { tx, raw, state } = invoiceWorld({
+      status: "ISSUED",
+      totalPaise: 118_000,
+      creditedPaise: 18_000,
+      providerPaymentOrderId: "order_current_net",
+    });
+
+    expect(
+      await applyOrgInvoiceCapture(tx, {
+        invoiceId: "inv-1",
+        gatewayPaymentId: "pay_old_gross",
+        capturedPaise: 118_000,
+        notesOrganizationId: "org-1",
+      }),
+    ).toEqual({ kind: "UNAPPLIED", reason: "AMOUNT_MISMATCH" });
+    expect(state.providerPaymentOrderId).toBe("order_current_net");
+    expect(state.status).toBe("ISSUED");
+    expect(raw.organizationInvoiceReceipt.create).not.toHaveBeenCalled();
+    expect(posted()[0]).toMatchObject({
+      idempotencyKey: "unapplied:pay_old_gross",
+    });
+
+    expect(
+      (
+        await applyOrgInvoiceCapture(tx, {
+          invoiceId: "inv-1",
+          gatewayPaymentId: "pay_current_net",
+          capturedPaise: 100_000,
+          notesOrganizationId: "org-1",
+        })
+      ).kind,
+    ).toBe("PAID");
+    expect(state.providerPaymentOrderId).toBeNull();
+    expect(state.status).toBe("PAID");
+    expect(state.receipts).toEqual([
+      expect.objectContaining({
+        reference: "pay_current_net",
+        amountPaise: 100_000,
+      }),
+    ]);
+  });
+
   it("settles only the outstanding amount and parks anything else once", async () => {
     const { tx, state } = invoiceWorld({
       status: "ISSUED",

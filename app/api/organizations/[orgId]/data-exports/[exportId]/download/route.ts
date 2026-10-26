@@ -2,8 +2,8 @@
  * GET /api/organizations/[orgId]/data-exports/[exportId]/download
  *
  * Returns a Supabase Storage signed URL for the export bundle when
- * status=READY and the bundle hasn't expired. The route writes a
- * `DATA_EXPORT_DOWNLOAD_REQUESTED` audit row for the authorized signing attempt.
+ * status=READY and the bundle hasn't expired. Successful, unexpired signing
+ * writes DATA_EXPORT_DOWNLOAD_REQUESTED; audit latency can still prevent return.
  *
  * Gate: an export grant, and the job's kind must be one the caller holds
  * A MAINTAINER cannot pull a finance bundle.

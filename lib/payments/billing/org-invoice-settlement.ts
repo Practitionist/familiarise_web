@@ -322,7 +322,12 @@ export async function applyOrgInvoiceCapture(
     return receipt !== null || current.providerPaymentId === gatewayPaymentId;
   };
   if (await alreadyApplied()) return { kind: "ALREADY_APPLIED" };
-  if (!(await lockPayableInvoice(tx, invoiceId))) {
+  // Lock without invalidating a current checkout when this capture cannot settle.
+  const locked = await tx.organizationInvoice.updateMany({
+    where: { id: invoiceId, status: { in: [...PAYABLE_STATUSES] } },
+    data: { updatedAt: new Date() },
+  });
+  if (locked.count !== 1) {
     // A concurrent delivery of this capture may have settled it while we waited on the lock.
     if (await alreadyApplied()) return { kind: "ALREADY_APPLIED" };
     return park("INVOICE_NOT_PAYABLE", { status: invoice.status });
