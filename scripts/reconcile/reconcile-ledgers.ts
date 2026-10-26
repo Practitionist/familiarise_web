@@ -7,6 +7,10 @@ import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import {
+  releaseReconciledWalletFreezes,
+  type WalletAccountRef,
+} from "@/lib/payments/wallet-freeze";
+import {
   orgInvoiceGstFindings,
   walletOverageGstFindings,
   staleClawbackFindings,
@@ -156,6 +160,8 @@ type StepCtx = {
   db: SnapshotTx;
   cursor?: string;
   nextCursor?: string;
+  /** Wallet-step accounts whose cache equals their journal in this page's snapshot. */
+  inSyncWallets?: WalletAccountRef[];
 };
 
 const RECONCILE_PAGE_SIZE = 100;
@@ -233,6 +239,7 @@ export function walletDriftFindings(scope: {
 }): Promise<{
   findings: Finding[];
   accountsChecked: number;
+  inSync: WalletAccountRef[];
   nextCursor?: string;
 }> {
   return prisma.$transaction(
@@ -257,17 +264,25 @@ export function walletDriftFindings(scope: {
           currency: true,
         },
       });
-      if (accounts.length === 0) return { findings: [], accountsChecked: 0 };
+      if (accounts.length === 0) {
+        return { findings: [], accountsChecked: 0, inSync: [] };
+      }
 
       const totals = await walletTotalsByOrgCurrency(tx, [
         ...new Set(accounts.map((account) => account.ownerOrgId)),
       ]);
       const findings: Finding[] = [];
+      const inSync: WalletAccountRef[] = [];
       for (const acct of accounts) {
         const walletTotal =
           totals.get(`${acct.ownerOrgId}:${acct.currency}`) ?? 0;
         const bal = acct.walletBalance ?? 0;
-        if (walletTotal !== bal) {
+        if (walletTotal === bal) {
+          inSync.push({
+            billingAccountId: acct.id,
+            organizationId: acct.ownerOrgId,
+          });
+        } else {
           findings.push({
             kind: "WALLET_BALANCE_DRIFT",
             billingAccountId: acct.id,
@@ -281,6 +296,7 @@ export function walletDriftFindings(scope: {
       return {
         findings,
         accountsChecked: accounts.length,
+        inSync,
         ...(scope.take && accounts.length === scope.take
           ? { nextCursor: accounts.at(-1)?.id }
           : {}),
@@ -295,12 +311,14 @@ export function walletDriftFindings(scope: {
 }
 
 async function stepWalletBalance(ctx: StepCtx): Promise<void> {
-  const { findings, accountsChecked, nextCursor } = await walletDriftFindings({
-    organizationId: ctx.opts.organizationId,
-    afterId: ctx.cursor,
-    take: RECONCILE_PAGE_SIZE,
-  });
+  const { findings, accountsChecked, inSync, nextCursor } =
+    await walletDriftFindings({
+      organizationId: ctx.opts.organizationId,
+      afterId: ctx.cursor,
+      take: RECONCILE_PAGE_SIZE,
+    });
   ctx.nextCursor = nextCursor;
+  ctx.inSyncWallets = inSync;
   ctx.counts.accountsChecked += accountsChecked;
   ctx.findings.push(...findings);
 }
@@ -1859,6 +1877,7 @@ async function runComparisonPage(
       await page.opts.onWalletDrift?.(reportId, page.findings);
       page.findings = [];
     }
+    await releaseReconciledWalletFreezes(reportId, page.inSyncWallets ?? []);
   } else {
     await prisma.$transaction(
       async (tx) => {
