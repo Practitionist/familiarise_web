@@ -44,7 +44,7 @@ const PRISMA_CONNECTION_ERROR_CODES = new Set([
   "P2024",
 ]);
 
-function isDbConnectionOrPoolError(error: unknown): boolean {
+export function isDbConnectionOrPoolError(error: unknown): boolean {
   if (isPoolExhaustion(error)) return true;
   if (!error || typeof error !== "object") return false;
   const code = (error as { code?: unknown }).code;
