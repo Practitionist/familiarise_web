@@ -24,6 +24,8 @@ let mockMarkerAttempts = new Map<string, number>();
 let mockExpired = new Set<string>();
 let mockHistory: string[] = [];
 let mockCasWins = true;
+let mockMarkerRacePaymentId: string | null = null;
+let mockMarkerRaceObserved = false;
 
 const paymentRows = (ids: string[]) =>
   ids.map((id) => ({
@@ -153,6 +155,17 @@ jest.mock("../../lib/prisma", () => {
       const owed = query.values[2];
       if (!Array.isArray(ids) || !Array.isArray(keys) || !Array.isArray(owed))
         throw new Error("missing marker ids or keys");
+      if (
+        mockMarkerRacePaymentId &&
+        !mockMarkerRaceObserved &&
+        ids.map(String).includes(mockMarkerRacePaymentId)
+      ) {
+        mockMarkerRaceObserved = true;
+        mockMarkers.set(mockMarkerRacePaymentId, "other-door:concurrent");
+        mockMarkerPaise.set(mockMarkerRacePaymentId, null);
+        mockMarkerAttempts.set(mockMarkerRacePaymentId, 4);
+        return Number(ids.length) - 1;
+      }
       ids.forEach((id, index) => {
         const paymentId = String(id);
         mockMarkers.set(paymentId, String(keys[index]));
@@ -176,11 +189,25 @@ jest.mock("../../lib/prisma", () => {
         try {
           return await fn(db);
         } catch (error) {
+          const racedMarker =
+            mockMarkerRaceObserved && mockMarkerRacePaymentId
+              ? {
+                  id: mockMarkerRacePaymentId,
+                  key: mockMarkers.get(mockMarkerRacePaymentId),
+                  paise: mockMarkerPaise.get(mockMarkerRacePaymentId),
+                  attempts: mockMarkerAttempts.get(mockMarkerRacePaymentId),
+                }
+              : null;
           mockMarkers = before.markers;
           mockMarkerPaise = before.markerPaise;
           mockMarkerAttempts = before.markerAttempts;
           mockExpired = before.expired;
           mockHistory = before.history;
+          if (racedMarker?.key !== undefined) {
+            mockMarkers.set(racedMarker.id, racedMarker.key);
+            mockMarkerPaise.set(racedMarker.id, racedMarker.paise ?? null);
+            mockMarkerAttempts.set(racedMarker.id, racedMarker.attempts ?? 0);
+          }
           throw error;
         }
       },
@@ -243,6 +270,8 @@ beforeEach(() => {
   mockHistory = [];
   mockFailStamp = false;
   mockCasWins = true;
+  mockMarkerRacePaymentId = null;
+  mockMarkerRaceObserved = false;
   mockDrive.mockResolvedValue({ kind: "settled" });
   mockFlush.mockResolvedValue(undefined);
   mockExpiredNotice.mockResolvedValue(undefined);
@@ -351,6 +380,8 @@ it.each(expiryArms)(
 
     expect(mockExpired.size).toBe(0);
     expect(mockMarkers.has(paymentId)).toBe(false);
+    expect(mockHistory).toEqual([]);
+    expect(mockExpiredNotice).not.toHaveBeenCalled();
     expect(result.success).toBe(false);
     expect(mockDrive).not.toHaveBeenCalled();
   },
@@ -364,10 +395,41 @@ it.each(expiryArms)(
 
     await expireStaleRequests({ limits: { maxRequests: 2 } });
 
+    expect(mockExpired.size).toBe(0);
+    expect(mockHistory).toEqual([]);
     expect(mockMarkers.size).toBe(0);
     expect(mockDrive).not.toHaveBeenCalled();
   },
 );
+
+it("rolls back one request on a marker-count race and continues to the next consultation", async () => {
+  mockFresh = [];
+  mockDue.clear();
+  mockPendingConsultations = ["consult-race", "consult-later"];
+  mockDue.set("consult-race", ["pay-race"]);
+  mockDue.set("consult-later", ["pay-later"]);
+  mockMarkerRacePaymentId = "pay-race";
+
+  const result = await expireStaleRequests({ limits: { maxRequests: 2 } });
+
+  expect(result.consultationsExpired).toBe(1);
+  expect(result.errors).toEqual([]);
+  expect(mockExpired.has("consultation:consult-race")).toBe(false);
+  expect(mockExpired.has("consultation:consult-later")).toBe(true);
+  expect(mockHistory).toEqual(["consult-later"]);
+  expect(mockMarkers.get("pay-race")).toBe("other-door:concurrent");
+  expect(mockMarkerPaise.get("pay-race")).toBeNull();
+  expect(mockMarkerAttempts.get("pay-race")).toBe(4);
+  expect(mockMarkers.get("pay-later")).toBe("pending-consultation:pay-later");
+  expect(mockDrive).toHaveBeenCalledTimes(1);
+  expect(mockDrive).toHaveBeenCalledWith(
+    expect.objectContaining({
+      paymentId: "pay-later",
+      key: "pending-consultation:pay-later",
+      amountPaise: null,
+    }),
+  );
+});
 
 it("leaves the committed consultation refund marker durable if notification fails", async () => {
   mockPendingConsultations = ["consult-1"];

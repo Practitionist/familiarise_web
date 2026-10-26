@@ -131,6 +131,16 @@ protected configuration and preserve exact issue/time evidence in the operating
 record. The runbook is reusable across companies; read their current vendor
 settings rather than assuming Familiarise's policy or account allowance applies.
 
+The latest bounded exercise on 26 October 2026 produced a real missed-check-in
+incident at 12:18 UTC. The production workflow triggered at 12:19 UTC, and its
+matching email reached the operator's inbox at 12:20:08 UTC. Normal monitor
+settings were restored by 12:18:15 UTC, independently checked by the watchdog,
+and the ordinary 12:20 production check-in recovered the monitor. Evidence and
+the broader remaining monitoring scope live in the
+[operating record](https://github.com/Practitionist/familiarise_web/issues/2156#issuecomment-6401498922).
+This proves the ticker's missed-run email path, not individual worker completion
+or an independent observer surviving a Sentry outage.
+
 ## Safe release and verification
 
 1. Refresh the branch against current dev and verify all affected domain suites,

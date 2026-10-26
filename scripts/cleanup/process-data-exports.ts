@@ -1,33 +1,6 @@
 /**
- * DPDP §11 Data Export Worker — Core Logic
- *
- * Claims PENDING or stale PROCESSING `OrgDataExportJob` rows and builds a JSON bundle
- * containing every org-scoped entity (members, contracts, programs,
- * invoices, earnings, payouts, audit-log). The bundle is uploaded to
- * Supabase Storage under an attempt-specific immutable path. A durable owner
- * row records that exact object until confirmed expiry deletion; downloads
- * receive a fresh short signed URL only after current authorization checks.
- *
- * Why a JSON bundle (not zipped JSON+CSV)
- * --------------------------------------
- * The plan originally called for `adm-zip` + an 8-CSV companion set.
- * In v1 we ship the JSON-only path because:
- *   1. Compliance reviewers (the actual DPDP §11 audience) prefer JSON
- *      — easier to grep, no separator escaping ambiguity.
- *   2. Adding `adm-zip` as a hard dependency is a footprint hit the
- *      caller doesn't actually need; integrators that want CSV can
- *      convert the JSON locally with `jq -r '@csv'`.
- *   3. The bundle is signed-URL gated for 7 days — long enough to
- *      run any post-export ETL.
- * The contract is forward-compatible: future versions can return a
- * zip with the same file naming scheme, and the dashboard's existing
- * "Download bundle" link will keep working.
- *
- * The cron lease prevents normal overlap. The job's expected status and
- * monotonic startedAt token still guard every claim, finalization, and failure
- * transition so a reclaimed attempt cannot publish over its successor.
- *
- * Schedule: every 10 minutes via `.github/workflows/process-data-exports.yml`.
+ * Owns each immutable export object until confirmed removal. Only the current
+ * status/startedAt attempt may publish or fail its job.
  */
 
 import prisma from "../../lib/prisma";
@@ -45,11 +18,14 @@ import { adminStorage, removeObjects } from "../../lib/supabase-storage-core";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import type { OrgDataExportKind } from "@prisma/client";
+import { z } from "zod";
 import {
   bundleKinds,
   canHandleExportKind,
   type DataExportKind,
 } from "@/lib/enterprise/data-export-kinds";
+
+const missingExportObjectSchema = z.object({ code: z.literal("NoSuchKey") });
 
 export interface DataExportResult {
   picked: number;
@@ -565,10 +541,13 @@ async function expireExportArtifacts(
       continue;
     }
     try {
-      const { data: stillExists, error } = await adminStorage()
+      const { data: metadata, error } = await adminStorage()
         .from(artifact.bucket)
-        .exists(artifact.storagePath);
-      if (error || stillExists !== false) {
+        .info(artifact.storagePath);
+      if (
+        metadata !== null ||
+        !missingExportObjectSchema.safeParse(error).success
+      ) {
         recordExpiryFailure(result, artifact.exportJobId);
         continue;
       }

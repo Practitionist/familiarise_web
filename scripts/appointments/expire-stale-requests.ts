@@ -230,6 +230,12 @@ export interface ExpireStaleRequestsResult {
 type ExpiredRefundArm =
   "pending-consultation" | "pending-subscription" | "approved-unallocated";
 
+class ExpiredRefundMarkerRaceError extends Error {
+  constructor(arm: ExpiredRefundArm) {
+    super(`${arm} refund marker changed; expiry was rolled back`);
+  }
+}
+
 const ARM_WRAPPER: Record<ExpiredRefundArm, "consultation" | "subscription"> = {
   "pending-consultation": "consultation",
   "pending-subscription": "subscription",
@@ -346,7 +352,7 @@ async function stageExpiredRefunds(
   });
   const stamped = await stampRefundsOwed(tx, markers);
   if (stamped !== markers.length) {
-    throw new Error(`${arm} refund marker changed; expiry was rolled back`);
+    throw new ExpiredRefundMarkerRaceError(arm);
   }
   return markers;
 }
@@ -564,7 +570,12 @@ async function expirePendingConsultations(
           });
         }
       } catch (error) {
-        if (!(error instanceof IllegalTransitionError)) throw error;
+        if (
+          !(error instanceof IllegalTransitionError) &&
+          !(error instanceof ExpiredRefundMarkerRaceError)
+        ) {
+          throw error;
+        }
         skipped++;
       }
     }
@@ -944,7 +955,12 @@ async function expireApprovedUnallocatedSubscriptions(
         );
         if (notice) await notifyConsulteeRequestExpired(notice);
       } catch (error) {
-        if (!(error instanceof IllegalTransitionError)) throw error;
+        if (
+          !(error instanceof IllegalTransitionError) &&
+          !(error instanceof ExpiredRefundMarkerRaceError)
+        ) {
+          throw error;
+        }
         skipped++;
       }
     }

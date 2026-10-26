@@ -58,7 +58,9 @@ ownership is missing; and 503 for a reported signing failure. A kind the caller
 does not hold reads as absent. Responses carrying download information are
 `private, no-store` and vary by Cookie. A successful response signs only the
 exact owned bucket/path, for at most 60 seconds and capped by the remaining
-artifact lifetime at signing preparation.
+artifact lifetime using a fresh clock after the owner lookup. If signing or
+audit latency crosses the artifact deadline, the route returns `EXPORT_EXPIRED`
+without returning the URL.
 
 An issued signed URL remains a bearer capability under the provider's contract.
 Changing a member's role prevents a new authorized download but does not
@@ -128,8 +130,10 @@ unpublished and superseded uploads. Cleanup avoids deleting the exact attempt
 while the job still reports it as PROCESSING.
 
 Remove failure, uncertain presence, permission error or local commit failure
-retains the owner and makes the run unsuccessful. Only a successful exact-path
-absence read permits retiring the owner and marking the matching published job
+retains the owner and makes the run unsuccessful. After removal reports success,
+an exact `info()` read must identify `NoSuchKey`. A missing bucket, generic 404,
+ambiguous response or `exists()` false value with an error does not qualify.
+Only that key-specific absence permits retiring the owner and marking the matching published job
 EXPIRED transactionally. A parent deletion does not remove that obligation.
 This grace assumes invocation and transport lifetimes remain far shorter than
 seven days; the row cap and admission deadline do not cancel a vendor call that

@@ -8,7 +8,7 @@ const mockJobUpdateMany = jest.fn();
 const mockArtifactCreate = jest.fn();
 const mockAuditCreate = jest.fn();
 const mockMembershipFindUnique = jest.fn();
-const mockExists = jest.fn();
+const mockInfo = jest.fn();
 const mockRemoveObjects = jest.fn();
 const mockRecordSystemError = jest.fn();
 const mockStageReadyEmail = jest.fn();
@@ -57,7 +57,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 jest.mock("../../lib/supabase-storage-core", () => ({
   adminStorage: () => ({
-    from: () => ({ exists: (...args: unknown[]) => mockExists(...args) }),
+    from: () => ({ info: (...args: unknown[]) => mockInfo(...args) }),
   }),
   removeObjects: (...args: unknown[]) => mockRemoveObjects(...args),
 }));
@@ -127,13 +127,13 @@ beforeEach(() => {
   mockAttemptNotification.mockResolvedValue({ success: true });
   mockStorageUpload.mockResolvedValue({ error: null });
   mockRemoveObjects.mockResolvedValue(true);
-  mockExists.mockResolvedValue({ data: false, error: null });
+  mockInfo.mockResolvedValue({ data: null, error: { code: "NoSuchKey" } });
 });
 
 describe("export artifact expiry", () => {
   it("retains the owner when remove reports success but exact-path read-back is uncertain", async () => {
-    mockExists.mockResolvedValue({
-      data: false,
+    mockInfo.mockResolvedValue({
+      data: null,
       error: { message: "permission denied" },
     });
 
@@ -142,7 +142,7 @@ describe("export artifact expiry", () => {
     expect(mockRemoveObjects).toHaveBeenCalledWith(artifact.bucket, [
       artifact.storagePath,
     ]);
-    expect(mockExists).toHaveBeenCalledWith(artifact.storagePath);
+    expect(mockInfo).toHaveBeenCalledWith(artifact.storagePath);
     expect(mockArtifactDeleteMany).not.toHaveBeenCalled();
     expect(mockJobUpdateMany).not.toHaveBeenCalled();
     expect(result).toMatchObject({ expiryFailed: 1, success: false });
@@ -159,6 +159,25 @@ describe("export artifact expiry", () => {
       },
     });
   });
+
+  it.each([
+    { data: null, error: { code: "NoSuchBucket", status: 404 } },
+    { data: null, error: { originalError: { status: 404 } } },
+    { data: null, error: { code: "InvalidJWT", status: 401 } },
+    { data: null, error: null },
+    { data: { id: "still-present" }, error: null },
+  ])(
+    "retains ownership for ambiguous or present metadata: %j",
+    async (readBack) => {
+      mockInfo.mockResolvedValue(readBack);
+
+      const result = await processDataExports();
+
+      expect(mockArtifactDeleteMany).not.toHaveBeenCalled();
+      expect(mockJobUpdateMany).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ expiryFailed: 1, success: false });
+    },
+  );
 
   it("does not create an artifact or upload when the claim CAS loses", async () => {
     mockArtifactFindMany.mockResolvedValue([]);

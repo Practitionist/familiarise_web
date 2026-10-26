@@ -3,11 +3,10 @@
  *
  * Returns a Supabase Storage signed URL for the export bundle when
  * status=READY and the bundle hasn't expired. The route writes a
- * `DATA_EXPORT_DOWNLOADED` audit row before issuing the redirect so
- * the audit trail captures "who pulled what bundle when".
+ * `DATA_EXPORT_DOWNLOADED` audit row before returning the URL.
  *
  * Gate: an export grant, and the job's kind must be one the caller holds
- * (#1527 decision 4) — a MAINTAINER can't pull a finance bundle.
+ * A MAINTAINER cannot pull a finance bundle.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -28,6 +27,16 @@ function privateResponse(response: NextResponse): NextResponse {
   response.headers.set("Cache-Control", "private, no-store");
   response.headers.set("Vary", "Cookie");
   return response;
+}
+
+function expiredExportResponse(): NextResponse {
+  return privateJson(
+    {
+      error: "Export bundle has expired; request a fresh one",
+      code: "EXPORT_EXPIRED",
+    },
+    { status: 410 },
+  );
 }
 
 export async function GET(
@@ -61,15 +70,8 @@ export async function GET(
       { status: 409 },
     );
   }
-  const now = new Date();
-  if (job.expiresAt <= now) {
-    return privateJson(
-      {
-        error: "Export bundle has expired; request a fresh one",
-        code: "EXPORT_EXPIRED",
-      },
-      { status: 410 },
-    );
+  if (job.expiresAt.getTime() <= Date.now()) {
+    return expiredExportResponse();
   }
 
   const artifact = await prisma.orgDataExportArtifact.findUnique({
@@ -89,20 +91,17 @@ export async function GET(
   }
   const expiresIn = Math.min(
     60,
-    Math.floor((artifact.expiresAt.getTime() - now.getTime()) / 1000),
+    Math.floor((artifact.expiresAt.getTime() - Date.now()) / 1000),
   );
   if (expiresIn < 1) {
-    return privateJson(
-      {
-        error: "Export bundle has expired; request a fresh one",
-        code: "EXPORT_EXPIRED",
-      },
-      { status: 410 },
-    );
+    return expiredExportResponse();
   }
   const { data: signed, error: signError } = await adminStorage()
     .from(artifact.bucket)
     .createSignedUrl(artifact.storagePath, expiresIn);
+  if (artifact.expiresAt.getTime() <= Date.now()) {
+    return expiredExportResponse();
+  }
   if (signError || !signed) {
     return privateJson(
       {
@@ -127,5 +126,8 @@ export async function GET(
     },
   });
 
+  if (artifact.expiresAt.getTime() <= Date.now()) {
+    return expiredExportResponse();
+  }
   return privateJson({ url: signed.signedUrl, expiresAt: job.expiresAt });
 }

@@ -81,9 +81,11 @@ seven days; changing those runtimes requires reviewing that assumption.
 
 The same core processes a bounded expiry slice and rotates deletion attempts so
 an unavailable object cannot monopolize the eligible prefix. A remove helper's
-boolean alone is insufficient: the export path also requires a successful exact
-presence read reporting absence. A failed, ambiguous or still-present result
-keeps the owner eligible. Only after confirmed removal does a transaction retire
+boolean alone is insufficient: the export path also reads exact-path metadata
+with `info()` and requires a `NoSuchKey` error validated at the boundary. A
+missing bucket, generic HTTP 404, failed read or still-present object retains the
+owner. `exists()` can return false alongside an error, so its boolean alone is
+not deletion evidence. Only after confirmed removal does a transaction retire
 that owner and expire the matching published job. Failed notification delivery
 never reverses READY.
 
@@ -92,6 +94,10 @@ organization access, export kind, READY and expiry, then signs the owner's exact
 path for a short interval. A role change prevents a new download grant; an
 already issued signed link remains usable under the storage provider's token
 and caching contract. Expiry of a download token is not deletion of its bytes.
+The requested signing lifetime is calculated after the owner lookup, using a
+fresh clock reading and a sixty-second cap. The route refuses to return the URL
+if the artifact expires during signing or the audit write. This is an issuance
+check; provider-side token expiry and revocation remain the provider's contract.
 
 ## Expiry and refund responsibility
 
@@ -101,6 +107,11 @@ history and the full remaining refund obligation using the existing payment
 marker and arm-specific idempotency key. Failure to stage the complete marker
 set rolls back that transition. Notification errors or process death after
 commit cannot remove the owed refund.
+A concurrent marker-count mismatch rolls back and skips only that request,
+preserving the other writer's key and retry state while later requests proceed.
+Other staging failures still fail the arm. A skipped request is not proof that
+its obligation has completed; the existing marker owner and later sweeps retain
+responsibility.
 
 After commit, `driveRefundOwed` invokes the canonical refund door. The existing
 `retry-auto-refunds` sweep owns unfinished markers; stable keys preserve replay

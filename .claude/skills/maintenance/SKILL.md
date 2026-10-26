@@ -87,4 +87,11 @@ Read [worker recovery](../../../docs/maintenance/11-worker-recovery.md) before c
 
 Pending-consultation and approved-unallocated expiry commit full-remaining owed-refund markers in the same transaction as the winning EXPIRED transition. Reuse existing arm keys and refund retry ownership. Unpaid pending-subscriptions still exclude successful payments; do not broaden money eligibility. Completion freshness for these workers is not proof of backlog drain or actual alert receipt.
 
+Keep a short marker-count race local to its request: roll back its transition and
+history, preserve the competing writer's marker/retry state, and continue later
+requests. Do not turn unrelated staging failures into successful skips. Export
+expiry requires exact metadata `NoSuchKey` after removal; a generic 404 or an
+`exists()` false value with an error is insufficient. Download lifetimes use a
+fresh post-lookup clock and must be rechecked after signing and audit latency.
+
 Invoice capture recovery runs through the registered `reconcile-org-invoice-payments` core, its fail-closed Postgres lease and execution-result checkpoint. It rotates at most five retained order references per four-hour slot, with ten-second row admission and five-second provider waits. Existing settlement stages durable notices; relays deliver them. Preserve the six spare calendar slots and test every tick across 400 days when changing this schedule. Twelve-hour completion health is execution evidence, not a per-invoice recovery SLO; lost order references and cohort capacity remain separate gates. See `docs/maintenance/11-worker-recovery.md` and `12-readiness-and-operating-gates.md`.
