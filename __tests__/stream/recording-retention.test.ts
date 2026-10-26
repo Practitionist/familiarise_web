@@ -29,6 +29,7 @@ jest.mock("../../lib/stream/recording-storage", () => ({
   deleteRecordingAssets: jest.fn(),
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
+  readJobCheckpoint: jest.fn().mockResolvedValue(null),
   withCronLock: (_job: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
 jest.mock("../../lib/observability/report", () => ({
@@ -254,10 +255,9 @@ describe("expireRecordings", () => {
         },
       }),
     );
-    expect(mockRecording.findMany.mock.calls[1][0].orderBy).toEqual([
-      { recordedAt: "asc" },
-      { id: "asc" },
-    ]);
+    expect(mockRecording.findMany.mock.calls[1][0].orderBy).toEqual({
+      id: "asc",
+    });
     expect(mockAuditCreate.mock.calls[0][0].data.details).toEqual({
       recordingIds: ["r1"],
       count: 1,
@@ -314,16 +314,20 @@ describe("expireRecordings", () => {
     expect(Math.round(ageDays)).toBe(30);
   });
 
-  it("warns once when the scan cap is spent before the due limit is reached", async () => {
-    const notDue = (id: string) => ({
+  it.each([
+    ["stays quiet when a full page holds nothing due", 0, 0],
+    ["warns once when a full page holds due rows below the limit", 3, 1],
+  ])("%s", async (_name, dueOnPage, warnings) => {
+    const old = new Date(Date.now() - 400 * 24 * 3600_000);
+    const notDue = (id: string, at: Date = new Date()) => ({
       id,
-      recordedAt: new Date(),
+      recordedAt: at,
       organizationId: null,
       organization: null,
       meeting: {
-        endedAt: new Date(),
+        endedAt: at,
         occurrence: {
-          endsAt: new Date(),
+          endsAt: at,
           appointment: {
             consultationId: null,
             webinarId: "w",
@@ -338,27 +342,31 @@ describe("expireRecordings", () => {
     mockRecording.updateMany.mockResolvedValue({ count: 0 });
     let page = 0;
     mockRecording.findMany.mockImplementation(
-      async (args: { orderBy?: unknown }) => {
-        if (!Array.isArray(args.orderBy)) return [];
+      async (args: { orderBy?: unknown; select?: object }) => {
+        if (!("meeting" in (args.select ?? {}))) return [];
         page += 1;
-        return Array.from({ length: 200 }, (_, i) => notDue(`p${page}-${i}`));
+        return Array.from({ length: 25 }, (_, i) =>
+          notDue(`p${page}-${i}`, i < dueOnPage ? old : new Date()),
+        );
       },
     );
 
     const result = await expireRecordings();
 
-    expect(result.scanned).toBe(5_000);
+    expect(result.scanned).toBe(25);
+    expect(JSON.parse(result.checkpoint ?? "{}").due).toBe("p1-24");
     const scanCapWarnings = (
       reportSentryMessage as jest.Mock
     ).mock.calls.filter(([, ctx]) =>
       (ctx as { fingerprint: string[] }).fingerprint.includes("scan-cap"),
     );
-    expect(scanCapWarnings).toHaveLength(1);
+    expect(scanCapWarnings).toHaveLength(warnings);
   });
 
   const lapsedRow = (id: string, filename = `${id}.mp4`) => ({
     id,
     streamCallId: `call-${id}`,
+    recordedAt: new Date(Date.now() - 3 * 24 * 3600_000),
     streamRecordingId: filename,
   });
   const listed = (filename: string) => ({
@@ -391,7 +399,7 @@ describe("expireRecordings", () => {
 
     await expireRecordings();
 
-    expect(mockRecording.findMany.mock.calls[0][0].take).toBe(200);
+    expect(mockRecording.findMany.mock.calls[0][0].take).toBe(10);
     expect(mockRecording.updateMany).toHaveBeenCalledWith({
       where: { id: "live", status: "READY", storageType: "STREAM_S3" },
       data: expect.objectContaining({
@@ -399,7 +407,7 @@ describe("expireRecordings", () => {
         streamUrlExpiresAt: expect.any(Date),
       }),
     });
-    expect(lapsedWrite().where.OR).toContainEqual({ id: { in: ["gone"] } });
+    expect(lapsedWrite().where.id).toEqual({ in: ["gone"] });
   });
 
   it("keeps a row READY when its listing fails, counts it, and reports once per run", async () => {
@@ -415,10 +423,7 @@ describe("expireRecordings", () => {
     const result = await expireRecordings();
 
     // Only the age and no-call-id arms remain: no failed row is named.
-    expect(lapsedWrite().where.OR).toEqual([
-      { recordedAt: { lt: expect.any(Date) } },
-      { streamCallId: null },
-    ]);
+    expect(lapsedWrite().where.id).toEqual({ in: [] });
     expect(result).toMatchObject({ failed: 3, success: false });
     const failureReports = (reportSentryMessage as jest.Mock).mock.calls.filter(
       ([, ctx]) =>
@@ -436,9 +441,7 @@ describe("expireRecordings", () => {
 
     const result = await expireRecordings();
 
-    expect(lapsedWrite().where.OR).toContainEqual({
-      id: { in: ["unknown-call"] },
-    });
+    expect(lapsedWrite().where.id).toEqual({ in: ["unknown-call"] });
     expect(result.failed).toBe(0);
   });
 

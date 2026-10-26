@@ -14,10 +14,16 @@
  */
 
 /** Refund rows that have taken money out, or are about to. */
-const RETURNED_REFUND_STATUSES = new Set(["SUCCEEDED", "PENDING"]);
+export const RETURNED_REFUND_STATUSES: ReadonlySet<string> = new Set([
+  "SUCCEEDED",
+  "PENDING",
+]);
 
 /** Dispute verdicts where the bank has already pulled the funds. */
-const RETURNED_DISPUTE_STATUSES = new Set(["LOST", "CHARGE_REFUNDED"]);
+export const RETURNED_DISPUTE_STATUSES: ReadonlySet<string> = new Set([
+  "LOST",
+  "CHARGE_REFUNDED",
+]);
 
 type AmountWithStatus = { amountPaise: number; status: string };
 

@@ -1,12 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
-import type { RunFailureReporter } from "@/lib/observability/run-failures";
-import type { ChannelFilters, StreamChat } from "stream-chat";
+import type { StreamChat } from "stream-chat";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
   getStreamChatClient,
-  getStreamVideoClient,
   isExpectedStreamError,
   withStreamCircuitBreaker,
   StreamUnavailableError,
@@ -27,17 +25,14 @@ import {
   addRemainingMembers,
   createMemberChunk,
   forEachChunk,
-  queryChannelsPaged,
 } from "@/lib/stream/batch";
 import {
   DEFAULT_RETENTION_DAYS,
   isPastRetention,
 } from "@/lib/stream/channel-lifecycle";
-import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { OPENABLE_EVENT_STATUSES } from "@/lib/stream/dm-eligibility-statuses";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { isUpsertRefusal } from "@/lib/stream/connect-failure";
-import type { MeetingEndReason } from "@/lib/meetings/end-reasons";
 
 export const STREAM_SERVER_TRUSTED = Symbol.for(
   "familiarise.stream.serverTrusted",
@@ -704,100 +699,6 @@ export async function eventParticipantsAmong(
     for (const p of appointment.participants) admitted.add(p.userId);
   }
   return admitted;
-}
-
-export async function queryOrgTaggedChannels(
-  chat: StreamChat,
-  organizationId: string,
-  extraFilter?: Record<string, unknown>,
-) {
-  const filter = {
-    ...extraFilter,
-    organization_id: { $eq: organizationId },
-  } as unknown as ChannelFilters;
-  return queryChannelsPaged((opts) =>
-    chat.queryChannels(filter, [{ last_message_at: -1 }], opts),
-  );
-}
-
-async function endSingleStreamVideoCall(
-  video: ReturnType<typeof getStreamVideoClient>["video"],
-  call: { id: string; streamCallId: string },
-  options: {
-    now: Date;
-    endedReason: MeetingEndReason;
-    errorPrefix: string;
-    useCircuitBreaker?: boolean;
-    failures?: RunFailureReporter;
-  },
-  errors: string[],
-): Promise<boolean> {
-  let counted = false;
-  let ended = false;
-  try {
-    const endCall = () =>
-      video.call(STREAM_CALL_TYPE, toCallId(call.streamCallId)).end();
-    await (options.useCircuitBreaker
-      ? withStreamCircuitBreaker(endCall, undefined, options.failures)
-      : endCall());
-    ended = true;
-    counted = true;
-  } catch (err) {
-    if (isExpectedStreamError(err)) {
-      ended = true;
-    } else {
-      errors.push(
-        `${options.errorPrefix} call ${call.streamCallId}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
-  if (ended && prisma.meeting?.updateMany) {
-    try {
-      await prisma.meeting.updateMany({
-        where: { id: call.id, endedAt: null },
-        data: { endedAt: options.now, endedReason: options.endedReason },
-      });
-    } catch (dbErr) {
-      errors.push(
-        `${options.errorPrefix} meeting update ${call.id}: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`,
-      );
-    }
-  }
-  return counted;
-}
-
-export async function endActiveStreamVideoCalls(
-  calls: { id: string; streamCallId: string }[],
-  options: {
-    now: Date;
-    endedReason: MeetingEndReason;
-    errorPrefix: string;
-    useCircuitBreaker?: boolean;
-    failures?: RunFailureReporter;
-  },
-): Promise<{ callsEnded: number; errors: string[] }> {
-  let callsEnded = 0;
-  const errors: string[] = [];
-  if (calls.length === 0) return { callsEnded, errors };
-
-  try {
-    const video = getStreamVideoClient().video;
-    for (const call of calls) {
-      const counted = await endSingleStreamVideoCall(
-        video,
-        call,
-        options,
-        errors,
-      );
-      if (counted) callsEnded++;
-    }
-  } catch (err) {
-    errors.push(
-      `${options.errorPrefix} video client: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-
-  return { callsEnded, errors };
 }
 
 export function resolveStreamScopeFilter(searchParams: URLSearchParams): {

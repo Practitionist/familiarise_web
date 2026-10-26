@@ -6,7 +6,7 @@ Start with the [infrastructure architecture and operating model](../start-here/1
 
 The active platform ticker dispatches registered bounded jobs. Postgres owns job leases, execution history, transactional obligations and database invariants. Redis owns short-lived interactive mutexes, request limits, maintenance edge state and active-host preference. A timeout, lease expiry or host switch does not cancel work already in flight; business CAS and vendor idempotency protect overlapping effects.
 
-Remaining operational Actions jobs keep their existing owner until an explicit scheduler handoff. They are currently budget-blocked. Source configuration and a registered handler do not establish live execution. The pending Stream handoff is described separately from current ownership in the architecture guide.
+Remaining operational Actions jobs keep their existing owner until an explicit scheduler handoff. They are currently budget-blocked. Source configuration and a registered handler do not establish live execution. The architecture guide describes the configured Stream ticker cadences and their Netlify background targets.
 
 | Maintenance state        | Policy                                                                                                 |
 | ------------------------ | ------------------------------------------------------------------------------------------------------ |
@@ -34,11 +34,11 @@ Activation never implicitly cancels bookings. Cancellation requires a separate e
 | [10 — Cron and reconciliation](./10-cron-and-reconciliation-reference.md) | Dispatch/status contracts, sidecars, ledger checkpoints and host concerns       |
 | [Schedule catalog](./schedule-catalog.md)                                 | Catalog ownership and generated documentation                                   |
 | [Bounded housekeeping](./housekeeping-bounds.md)                          | Retention eligibility, per-phase limits and continuation semantics              |
-| [Compliance/retention workers](./compliance-retention-workers.md)         | Consent, breach digest staging and execution retention                          |
+| [Messaging retention](./messaging-retention.md)                           | Job-history retention, bounded payload scrubbing and replay races               |
 | [Recording worker](../stream/recording-background-worker.md)              | Narrow background adapter, source expiry and activation evidence                |
 | [Deployment/failback](../deployment/README.md)                            | Runtime differences, one active scheduler and standby recovery                  |
 
-Some linked worker guides arrive with their corresponding independent implementation changes. Land the documented train in order; do not publish an index that silently treats a proposed worker as deployed.
+Link a worker guide when its implementation is present; keep proposed activation work separate from the current inventory.
 
 ## Verification and maintenance of these docs
 

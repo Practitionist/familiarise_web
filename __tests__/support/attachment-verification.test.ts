@@ -87,7 +87,6 @@ describe("support attachment magic bytes", () => {
 
   it("configures the private bucket from the same allowlist the picker uses", () => {
     expect(SUPPORT_EVIDENCE_BUCKET_OPTIONS).toEqual({
-      public: false,
       fileSizeLimit: 20 * 1024 * 1024,
       allowedMimeTypes: [...SUPPORT_ATTACHMENT_MIME_TYPES],
     });
@@ -157,7 +156,12 @@ describe("PUT completes an upload only when its bytes match", () => {
       "support-cases/case-1/file-1",
     ]);
     expect(db.supportCaseAttachment.updateMany).toHaveBeenCalledWith({
-      where: { id: "file-1", completedAt: null, deletedAt: null },
+      where: {
+        id: "file-1",
+        storagePath: "support-cases/case-1/file-1",
+        completedAt: null,
+        deletedAt: null,
+      },
       data: { deletedAt: expect.any(Date) },
     });
   });

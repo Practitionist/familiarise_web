@@ -18,6 +18,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_name: string, _opts: unknown, run: () => unknown) => run(),
+  readJobCheckpoint: jest.fn(async () => null),
 }));
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: { info: jest.fn(), warn: jest.fn() },
@@ -32,6 +33,7 @@ jest.mock("../../lib/storage/r2-client", () => ({
   streamMultipartToR2: jest.fn(),
   headR2Object: jest.fn().mockResolvedValue({ contentLength: 100 }),
   deleteR2Object: jest.fn().mockResolvedValue({ success: true }),
+  isR2Configured: () => false,
 }));
 
 import { transferRecording } from "../../lib/stream/recording-transfer-service";
@@ -171,10 +173,10 @@ it("defers retention after a transfer claim, then expires and purges the complet
   await expect(copy).resolves.toEqual({ status: "copied" });
   expect(state.status).toBe(RecordingStatus.AVAILABLE);
   expect((await expireRecordings({ limit: 1 })).expired).toBe(1);
-  expect(deleteRecordingAssets).toHaveBeenCalledWith({
-    id: "race",
-    storagePath: "recordings/race/attempt-1.mp4",
-  });
+  expect(deleteRecordingAssets).toHaveBeenCalledWith(
+    { id: "race", storagePath: "recordings/race/attempt-1.mp4" },
+    expect.objectContaining({ flush: expect.any(Function) }),
+  );
   expect(state.status).toBe(RecordingStatus.EXPIRED);
   expect(state.storagePath).toBeNull();
 });

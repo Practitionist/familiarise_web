@@ -26,6 +26,8 @@ and `GET /get-session` answers 503 instead of `200 null` when the lookup failed
 `/api/auth/clear-stale-session`, because only a route handler can delete
 cookies.
 
+Expired sessions and verification tokens are rejected by their runtime expiry checks. Housekeeping is separate: `cleanupAuthTokens` removes at most 100 expired verification, session and idempotency rows per arm by default, and examines at most 100 lapsed invitations. The maximum explicit limit is 500 per arm. Deletion repeats expiry after selection, so a refreshed row survives. Invitation expiry still conditionally claims PENDING and commits its audit row in the same transaction. A shared 16-second start budget and `hasMore` describe continuation; neither cleanup nor a successful batch establishes that the entire backlog is drained. See [housekeeping bounds](../maintenance/housekeeping-bounds.md).
+
 ## 2. Server composition (`lib/auth.ts`)
 
 ```mermaid

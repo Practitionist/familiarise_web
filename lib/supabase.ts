@@ -2,7 +2,10 @@ import "server-only";
 import * as Sentry from "@sentry/nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { bucketPolicyFor } from "@/lib/storage/bucket-policies";
+import {
+  BUCKET_POLICIES,
+  bucketPolicyFor,
+} from "@/lib/storage/bucket-policies";
 
 // Storage wire types derived from the supabase-js client surface (do NOT
 // reintroduce `@supabase/storage-js`: supabase-js does not re-export
@@ -493,15 +496,9 @@ interface OrganizationBrandingUploadOptions {
   file: File;
 }
 
-// Allowed MIME types for organization branding images.
-// SVG is included so brand teams can upload crisp vector logos; JPEG/PNG/WebP
-// cover photographic banners.
-const ALLOWED_ORG_BRANDING_IMAGE_TYPES = [
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/webp",
-  "image/svg+xml",
+// The bucket registry owns the list: photographic types plus SVG for logos.
+const ALLOWED_ORG_BRANDING_IMAGE_TYPES: string[] = [
+  ...BUCKET_POLICIES["organization-images"].allowedMimeTypes,
 ];
 
 const ORG_LOGO_MAX_SIZE = 2 * 1024 * 1024; // 2MB
@@ -539,11 +536,6 @@ const uploadOrganizationBrandingImage = async (
     upsert: true,
     replaceFolder: true,
     fileNameFor: buildOrgBrandingFileName,
-    ensureBucket: {
-      public: true,
-      allowedMimeTypes: ALLOWED_ORG_BRANDING_IMAGE_TYPES,
-      fileSizeLimit: ORG_BANNER_MAX_SIZE,
-    },
     errors: {
       type: "File type not supported. Please use JPEG, PNG, WebP, or SVG.",
       bucketNotReady: `Organization images storage bucket not found. Please create an '${ORG_BRANDING_BUCKET}' bucket in your Supabase dashboard.`,
@@ -731,7 +723,6 @@ const uploadRecordingPreviewAsset = async (
     cacheControl: "31536000",
     // Fixed stem ⇒ upsert overwrites; extension follows the declared MIME.
     fileNameFor: () => `${kind}.${ext}`,
-    ensureBucket: { public: true },
     errors: {
       bucketNotReady: `Preview storage bucket '${RECORDING_PREVIEWS_BUCKET}' not found.`,
       size: isClip

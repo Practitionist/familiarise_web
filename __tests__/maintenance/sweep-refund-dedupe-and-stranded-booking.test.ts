@@ -107,6 +107,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 
 jest.mock("../../lib/prisma", () => {
+  const paymentRows = jest.fn(async (): Promise<{ id: string }[]> => []);
   const db: Record<string, unknown> = {
     consultation: {
       findMany: jest.fn().mockResolvedValue([]),
@@ -124,7 +125,7 @@ jest.mock("../../lib/prisma", () => {
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
     payment: {
-      findMany: jest.fn().mockResolvedValue([]),
+      findMany: paymentRows,
       updateMany: async () => ({ count: 1 }),
     },
     refund: {
@@ -148,6 +149,14 @@ jest.mock("../../lib/prisma", () => {
       upsert: jest.fn(async () => ({})),
       findMany: jest.fn().mockResolvedValue([]),
     },
+    $queryRaw: jest.fn(async (query: { text: string }) =>
+      query.text.includes('JOIN "Subscription"') ? [] : paymentRows(),
+    ),
+    $executeRaw: jest.fn(async (query: { values: unknown[] }) => {
+      const ids = query.values[0];
+      if (!Array.isArray(ids)) throw new Error("missing marker ids");
+      return ids.length;
+    }),
     $disconnect: jest.fn(),
   };
   // Every arm runs its CAS callback against this same client.

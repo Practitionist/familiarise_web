@@ -101,6 +101,32 @@ describe("iterateOpenCalls", () => {
   });
 });
 
+describe("open-call scan window", () => {
+  it("filters to calls created since the cutoff when one is given", async () => {
+    mockQueryCalls.mockResolvedValue(page(3));
+    const since = new Date("2026-10-11T00:00:00.000Z");
+
+    await anyOpenCallMemberHolds(client, CALL_MEMBER_ROLE, {
+      createdSince: since,
+    });
+
+    expect(mockQueryCalls.mock.calls[0][0].filter_conditions).toEqual({
+      ended_at: null,
+      created_at: { $gte: "2026-10-11T00:00:00.000Z" },
+    });
+  });
+
+  it("scans every open call when no cutoff is given (the backfill)", async () => {
+    mockQueryCalls.mockResolvedValue(page(3));
+
+    for await (const _ of iterateOpenCalls(client)) void _;
+
+    expect(mockQueryCalls.mock.calls[0][0].filter_conditions).toEqual({
+      ended_at: null,
+    });
+  });
+});
+
 describe("anyOpenCallMemberHolds", () => {
   it("reports the members missing the role, with their calls", async () => {
     mockQueryCalls.mockResolvedValue(page(2));

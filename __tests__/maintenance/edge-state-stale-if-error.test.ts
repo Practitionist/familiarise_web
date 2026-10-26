@@ -55,8 +55,8 @@ it("serves the last confirmed state when a later read fails", async () => {
   nowMs += 4 * 60_000;
   fetchSpy.mockRejectedValue(new Error("The operation was aborted"));
   const state = await edge.getMaintenanceState();
-  expect(state).toEqual(OFF);
-  expect(state.unreadable).toBeUndefined();
+  expect(state).toEqual({ ...OFF, unreadable: true });
+  expect(state.unreadable).toBe(true);
 });
 
 it("retries a failed read once before giving up", async () => {
@@ -101,7 +101,10 @@ it("never serves the stale fallback past the 15-minute window from cache", async
   // A failure 10 s before the window closes serves the fallback once...
   nowMs += 15 * 60_000 - 10_000;
   fetchSpy.mockRejectedValue(new Error("redis down"));
-  await expect(edge.getMaintenanceState()).resolves.toEqual(OFF);
+  await expect(edge.getMaintenanceState()).resolves.toEqual({
+    ...OFF,
+    unreadable: true,
+  });
 
   // ...and 20 s later the cached fallback has expired, so the read fails closed.
   nowMs += 20_000;
