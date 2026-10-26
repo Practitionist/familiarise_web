@@ -46,7 +46,10 @@ Every fiscal-year and monthly-period boundary in the compliance pipeline — `in
 
 ## Supplier state is GSTIN-first
 
-`resolveSupplierStateCode` reads the platform's own state of registration from the first two digits of `PLATFORM_GSTIN`, and falls back to the registered office's state in `lib/company.ts` (`REGISTERED_OFFICE.stateCode`, 06 Haryana) only while no GSTIN is set. If the GSTIN's state contradicts the registered office, the mint fails closed exactly as a missing GSTIN does — no document is issued, and a `SystemEvent` names both values so an operator can fix the configuration rather than ship a document whose printed address and tax heads disagree. There is no environment override for the state.
+`resolveSupplierStateCode` reads the platform's own state of registration from the first two digits of `PLATFORM_GSTIN`, and falls back to the registered office's state in `lib/company.ts` (`REGISTERED_OFFICE.stateCode`, 06 Haryana) only while no GSTIN is set. There is no environment override for the state. The two failure paths differ:
+
+- **No GSTIN, or a malformed one.** `getPlatformSupplier()` returns null, so `mintConsumerInvoice` issues no consumer invoice and sends one `CONSUMER_INVOICE_MINT_DISABLED` warning per process. Organisation invoices are still created, on the registered office's state, but every invoice and credit-note PDF route answers 503 `SUPPLIER_GSTIN_UNCONFIGURED` and the IRP uploader skips its run.
+- **A GSTIN whose state contradicts the registered office.** Nothing is issued. The consumer mint returns without a document and records a system error naming both values ("supplier state is ambiguous"). `createOrgInvoice` reports the mismatch to Sentry and answers 503 `INVOICE_SERVICE_UNAVAILABLE`. The rollup, subscription and IRP jobs throw or skip on `SupplierStateMismatchError`. Fix the GSTIN or `lib/company.ts`; never pick one of the two.
 
 ## One legal identity on every document
 

@@ -1,6 +1,5 @@
 import { captcha } from "better-auth/plugins";
 import * as Sentry from "@sentry/nextjs";
-import type { RuntimeEnv } from "@/lib/request-ip";
 
 /**
  * The endpoints that send mail to an address the caller types in. Sign-in is
@@ -53,14 +52,18 @@ export function turnstileCaptcha(keys: {
 }
 
 /**
- * The hostname a production token must have been minted on. The plugin
- * matches exactly, so per-PR preview hostnames (and Cloudflare's test keys,
- * which report example.com) get no hostname check.
+ * The hostname a production token must have been minted on. Production is
+ * read from the build-inlined Sentry environment, because Netlify's CONTEXT
+ * is build-time only. The plugin matches exactly, so per-PR preview
+ * hostnames (and Cloudflare's test keys, which report example.com) get none.
  */
-export function turnstileHostnames(env: RuntimeEnv): string[] | undefined {
-  if (env.CONTEXT !== "production" || !env.BETTER_AUTH_URL) return undefined;
+export function turnstileHostnames(env: {
+  sentryEnvironment: string | undefined;
+  authUrl: string | undefined;
+}): string[] | undefined {
+  if (env.sentryEnvironment !== "production" || !env.authUrl) return undefined;
   try {
-    return [new URL(env.BETTER_AUTH_URL).hostname];
+    return [new URL(env.authUrl).hostname];
   } catch {
     return undefined;
   }

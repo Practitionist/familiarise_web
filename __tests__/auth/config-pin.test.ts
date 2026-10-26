@@ -138,14 +138,14 @@ describe("lib/auth.ts config pin", () => {
     ).toEqual([]);
     expect(
       turnstileHostnames({
-        CONTEXT: "production",
-        BETTER_AUTH_URL: "https://familiarisenow.com",
+        sentryEnvironment: "production",
+        authUrl: "https://familiarisenow.com",
       }),
     ).toEqual(["familiarisenow.com"]);
     expect(
       turnstileHostnames({
-        CONTEXT: "deploy-preview",
-        BETTER_AUTH_URL: "https://familiarisenow.com",
+        sentryEnvironment: "preview",
+        authUrl: "https://familiarisenow.com",
       }),
     ).toBeUndefined();
   });

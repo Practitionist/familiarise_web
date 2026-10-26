@@ -159,8 +159,9 @@ nothing until the password has matched, and it is the main conversion path.
   sign-up, password-reset requests and code resends stop; sign-in keeps
   working. The auth logger sends at most one Sentry event per message per 5
   minutes per instance.
-- **Hostname check.** In the Netlify production context the plugin's
-  `allowedHostnames` holds the hostname of `BETTER_AUTH_URL`, so a token
+- **Hostname check.** When `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is `production`
+  (Netlify's `CONTEXT` is build-time only, so it cannot be read at runtime),
+  the plugin's `allowedHostnames` holds the hostname of `BETTER_AUTH_URL`, so a token
   minted on another site is refused. The plugin matches hostnames exactly, so
   deploy previews (one hostname per PR) get no hostname check, and Cloudflare's
   test keys, which report `example.com`, keep working there.
@@ -227,8 +228,10 @@ per submitted address, each in a fixed 15-minute window:
 `deliver()` refuses a send when the recipient has already had 5 mails of the
 same type in the last 24 hours, for the types a stranger can aim at any
 address: `EMAIL_VERIFICATION`, `PASSWORD_RESET` and
-`EXISTING_ACCOUNT_SIGN_UP` (`lib/email/recipient-cap.ts`). Staff invitations
-are sent as `STAFF_INVITE` and are not capped. Auth mail is sent after the
+`EXISTING_ACCOUNT_SIGN_UP` (`lib/email/recipient-cap.ts`). Staff
+invitations are sent as `STAFF_INVITE` and capped in their own bucket, because
+a forgot-password request for an operator who has not enrolled 2FA also sends
+one, and a reset flood must not spend the invitation's budget. Auth mail is sent after the
 response, so the endpoint cannot say whether a mail was dropped; instead the
 verify-email and forgot-password pages always state the limit ("You can
 request at most 5 codes a day"), which reveals nothing about the address. See
