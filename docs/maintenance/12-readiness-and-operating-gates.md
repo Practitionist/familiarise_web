@@ -108,8 +108,8 @@ additional cron monitors require a paid plan with available pay-as-you-go
 capacity. A monitor activation error about a new seat can therefore be an
 allowance problem, even though the disabled monitor already exists. Verify the
 current subscription and reserve capacity, or use an approved independent
-absence monitor. Do not disable another application's monitor without confirming
-its ownership and retirement. Choosing a provider still requires a controlled
+absence monitor. Disable another application's monitor only after its owner
+explicitly authorizes its retirement. Choosing a provider still requires a controlled
 missed-run exercise and human receipt before closing the operating gate.
 
 References: [Monitors migration](https://www.sentry.help/en/articles/15007504-monitors-alerts-guide-and-faq),
