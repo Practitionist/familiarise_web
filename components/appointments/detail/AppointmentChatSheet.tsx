@@ -154,9 +154,9 @@ export function AppointmentChatSheet({
       <SheetContent
         side="right"
         hideClose
-        className="flex w-full flex-col gap-0 p-0 sm:max-w-lg"
+        className="flex h-dvh max-h-dvh w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-lg"
       >
-        <SheetHeader className="flex-row items-start justify-between gap-2 space-y-0 border-b border-border py-2 pl-4 pr-2 text-left">
+        <SheetHeader className="shrink-0 flex-row items-start justify-between gap-2 space-y-0 border-b border-border py-2 pl-4 pr-2 text-left">
           <div className="min-w-0 space-y-1 py-1">
             <SheetTitle className="text-base">{target.title}</SheetTitle>
             <SheetDescription asChild>
@@ -174,7 +174,7 @@ export function AppointmentChatSheet({
             <span className="sr-only">Close</span>
           </SheetClose>
         </SheetHeader>
-        <div className="min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ChatSurface loading={<SheetChatLoading />}>
             <AppointmentChatPane target={target} />
           </ChatSurface>

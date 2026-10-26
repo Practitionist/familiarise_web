@@ -134,7 +134,7 @@ export const ChatContainer = ({
             <Window>
               <CustomChannelHeader />
               <SupportInterventionBanner />
-              {/* The SDK's empty state is height:100%; this region keeps it from pushing the composer out of view. */}
+              {/* Only the message list scrolls; the SDK's height:100% empty state must not push the composer out. */}
               <div className="flex min-h-0 w-full flex-1 flex-col">
                 <VisibleMessageList virtualized={shouldUseVirtualized} />
               </div>
@@ -144,13 +144,13 @@ export const ChatContainer = ({
                   <span>Chat is temporarily read-only during maintenance.</span>
                 </div>
               ) : (
-                <>
+                <div className="w-full shrink-0">
                   <AppointmentDocumentsHint />
                   <ComposerDraftPersistence />
                   <BookingTagComposer
                     contextAppointmentId={contextAppointmentId}
                   />
-                </>
+                </div>
               )}
             </Window>
           </WithComponents>
