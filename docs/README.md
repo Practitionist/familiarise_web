@@ -255,6 +255,8 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [sentry/02-conventions.md](./observability/sentry/02-conventions.md) - `expected:true` for modelled outcomes, findings as messages, the tags that carry meaning, SystemEvent versus Sentry, what an issue status means
 - [sentry/03-actions-failure-sink.md](./observability/sentry/03-actions-failure-sink.md) - `notify-ops-failure.sh`, the envelope endpoint, the dead DSN that silenced it for three weeks, how to tell it is working
 - [sentry/04-triage-runbook.md](./observability/sentry/04-triage-runbook.md) - Scope by release, attribute every issue to one of three causes, decide with a written reason, the chronic ids, the tools
+- [maintenance/11-job-machinery-catalog.md](./maintenance/11-job-machinery-catalog.md) - How every scheduled job runs, what each run records and reports, the observability gaps, and the operations dashboard spec
+- [2026-10-26-launch-sweep-observability-and-money-holds.md](./decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) - ADR-01 to ADR-12: money holds, invoice healing, tax identity, auth abuse controls, the three observability layers, ticker escalation and the Sentry quota posture
 
 ---
 
