@@ -111,6 +111,10 @@ ticker sends `limit=50` unless `TARGET_LIMITS` overrides it, for example 10 for
 `abandoned-payments`. A `null` override sends no limit to a route that takes
 none, such as `reconcile-ledgers`.
 
+## Job history and messaging retention
+
+`prune-system-job-executions` is currently owned by the daily Actions workflow. Its registered HTTP core accepts `?limit=` and always runs bounded: default 100, maximum 500 rows per phase, eight phases, and a 16-second start budget. `hasMore` indicates continuation; it is not a failure or a drained-backlog guarantee. The existing CLI repeats at most 40 slices of 500 within a 16-second start budget and stops on no progress. No ticker activation or retention-window change is implied. Final mutations repeat eligibility so an admin-requeued message is preserved, and scrubbing keeps the delivery/legacy retention clocks unchanged. See [the execution and replay contract](../../../../docs/maintenance/messaging-retention.md).
+
 ## Adding a job
 
 Never create 3-layer wrappers. A job has one implementation, registered in
