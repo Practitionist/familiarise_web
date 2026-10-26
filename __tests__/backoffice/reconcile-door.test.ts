@@ -21,7 +21,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: { opsActionLog: { create: (a: unknown) => create(a) } },
 }));
-jest.mock("../../lib/maintenance-edge", () => ({
+jest.mock("../../lib/maintenance", () => ({
   getMaintenanceState: async () => ({ phase: "OFF" }),
 }));
 jest.mock("../../scripts/refunds/reconcile-pending-refunds", () => {
