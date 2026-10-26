@@ -108,7 +108,8 @@ history, preserve the competing writer's marker/retry state, and continue later
 requests. Existing partial markers also hold only their own request; retain
 their fields and exhausted retries, and report the aggregate hold as unsuccessful
 completion while later requests proceed. Exclude these holds before the oldest
-page limit, retaining a bounded presence probe and per-request race recheck.
+page limit, checking their presence after selection and rechecking each request
+transactionally for races.
 Do not turn unrelated staging failures
 into successful skips. Run the documented read-only legacy-refund cohort count
 and obtain owner review of shared seed/test exposure before rollout. Export

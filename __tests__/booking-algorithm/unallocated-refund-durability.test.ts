@@ -28,6 +28,8 @@ let mockHistory: string[] = [];
 let mockCasWins = true;
 let mockMarkerRacePaymentId: string | null = null;
 let mockMarkerRaceObserved = false;
+let mockBeforeConsultationCohortRead: (() => void) | null = null;
+let mockBeforeApprovedCohortRead: (() => void) | null = null;
 
 const paymentRows = (ids: string[]) =>
   ids.map((id) => ({
@@ -86,6 +88,10 @@ jest.mock("../../lib/prisma", () => {
             partialMarkerQuery &&
             select?.id === true &&
             Object.keys(select).length === 1;
+          if (partialMarkerQuery && !heldPresenceQuery) {
+            mockBeforeConsultationCohortRead?.();
+            mockBeforeConsultationCohortRead = null;
+          }
           const ids = mockPendingConsultations.filter((id) =>
             heldPresenceQuery
               ? hasPartialRefundMarker(id)
@@ -125,6 +131,10 @@ jest.mock("../../lib/prisma", () => {
             Object.keys(select).length === 1;
           const isApprovedCohort = whereText.includes('"APPROVED"');
           if (isApprovedCohort) {
+            if (partialMarkerQuery && !heldPresenceQuery) {
+              mockBeforeApprovedCohortRead?.();
+              mockBeforeApprovedCohortRead = null;
+            }
             const ids = mockApprovedUnallocated.filter((id) =>
               heldPresenceQuery
                 ? hasPartialRefundMarker(id)
@@ -345,6 +355,8 @@ beforeEach(() => {
   mockCasWins = true;
   mockMarkerRacePaymentId = null;
   mockMarkerRaceObserved = false;
+  mockBeforeConsultationCohortRead = null;
+  mockBeforeApprovedCohortRead = null;
   mockDrive.mockResolvedValue({ kind: "settled" });
   mockFlush.mockResolvedValue(undefined);
   mockExpiredNotice.mockResolvedValue(undefined);
@@ -535,6 +547,38 @@ it.each(expiryArms)(
     expect(mockExpiredNotice).toHaveBeenCalledWith(
       expect.objectContaining({ appointmentId: `a-${laterId}` }),
     );
+  },
+);
+
+it.each(expiryArms)(
+  "reports a hold when a partial marker arrives before $arm candidate selection",
+  async ({ arm, prepare, expiredId, paymentId }) => {
+    prepare();
+    const installMarker = () => {
+      mockMarkers.set(paymentId, "other-door:concurrent-partial");
+      mockMarkerPaise.set(paymentId, 500);
+      mockMarkerAttempts.set(paymentId, 3);
+    };
+    if (arm === "pending consultation") {
+      mockBeforeConsultationCohortRead = installMarker;
+    } else {
+      mockBeforeApprovedCohortRead = installMarker;
+    }
+
+    const result = await expireStaleRequests({ limits: { maxRequests: 1 } });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("partial refund marker"),
+      ]),
+    );
+    expect(mockExpired.has(expiredId)).toBe(false);
+    expect(mockHistory).toEqual([]);
+    expect(mockMarkers.get(paymentId)).toBe("other-door:concurrent-partial");
+    expect(mockMarkerPaise.get(paymentId)).toBe(500);
+    expect(mockMarkerAttempts.get(paymentId)).toBe(3);
+    expect(mockDrive).not.toHaveBeenCalled();
   },
 );
 

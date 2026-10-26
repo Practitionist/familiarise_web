@@ -470,18 +470,6 @@ async function expirePendingConsultations(
         none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
       },
     } satisfies Prisma.AppointmentWhereInput;
-    const heldPartialMarker = await prisma.consultation.findMany({
-      where: {
-        ...cohortWhere,
-        appointment: {
-          ...appointmentWhere,
-          payment: { some: PARTIAL_REFUND_MARKER_PAYMENT },
-        },
-      },
-      select: { id: true },
-      take: 1,
-    });
-    let partialMarkerHoldSeen = heldPartialMarker.length > 0;
 
     // Find stale PENDING consultations (with their appointment ids so the
     // slot release below can target exactly the expired rows).
@@ -519,6 +507,18 @@ async function expirePendingConsultations(
       orderBy: { requestedAt: "asc" },
       take: limits.maxRequests,
     });
+    const heldPartialMarker = await prisma.consultation.findMany({
+      where: {
+        ...cohortWhere,
+        appointment: {
+          ...appointmentWhere,
+          payment: { some: PARTIAL_REFUND_MARKER_PAYMENT },
+        },
+      },
+      select: { id: true },
+      take: 1,
+    });
+    let partialMarkerHoldSeen = heldPartialMarker.length > 0;
     warnIfCapped("consultation", staleConsultations.length, limits);
     if (partialMarkerHoldSeen) {
       errors.push(
@@ -927,17 +927,6 @@ async function expireApprovedUnallocatedSubscriptions(
       updatedAt: { lt: cutoff },
       ...NO_LIVE_SESSION,
     } satisfies Prisma.SubscriptionWhereInput;
-    const heldPartialMarker = await prisma.subscription.findMany({
-      where: {
-        ...cohortWhere,
-        appointment: {
-          payment: { some: PARTIAL_REFUND_MARKER_PAYMENT },
-        },
-      },
-      select: { id: true },
-      take: 1,
-    });
-    let partialMarkerHoldSeen = heldPartialMarker.length > 0;
 
     const stale = await prisma.subscription.findMany({
       where: {
@@ -961,6 +950,17 @@ async function expireApprovedUnallocatedSubscriptions(
       orderBy: { updatedAt: "asc" },
       take: limits.maxRequests,
     });
+    const heldPartialMarker = await prisma.subscription.findMany({
+      where: {
+        ...cohortWhere,
+        appointment: {
+          payment: { some: PARTIAL_REFUND_MARKER_PAYMENT },
+        },
+      },
+      select: { id: true },
+      take: 1,
+    });
+    let partialMarkerHoldSeen = heldPartialMarker.length > 0;
     warnIfCapped("subscription", stale.length, limits);
     if (partialMarkerHoldSeen) {
       errors.push(

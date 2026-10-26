@@ -113,8 +113,8 @@ An existing partial marker also holds only its own request, including when its
 retry attempts are exhausted. Preserve its amount, key, reason and attempts;
 continue later requests and report one aggregate hold error per arm so an
 unresolved obligation does not produce a successful completion.
-Exclude those holds before the page limit, with one bounded presence read per
-arm to retain their visibility. Preserve previously eligible requests without
+Exclude those holds before the page limit, with one bounded presence read after
+selection per arm to retain their visibility. Preserve previously eligible requests without
 an appointment, and recheck markers transactionally for post-selection races.
 Other staging failures still fail the arm. A skipped request is not proof that
 its obligation has completed; the existing marker owner and later sweeps retain
