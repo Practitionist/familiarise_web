@@ -8,7 +8,7 @@
 - [User Channel Synchronization](#user-channel-synchronization)
 - [Channel Membership Rules](#channel-membership-rules)
   - [4-Part DM & Trial Policy](#4-part-dm--trial-policy)
-  - [Contextual Booking Receipt Cards](#contextual-booking-receipt-cards)
+  - [Booking Context in a Shared DM](#booking-context-in-a-shared-dm)
   - [Server-Side Authorization for Membership Changes](#server-side-authorization-for-membership-changes)
 - [Revocation and Derived Membership](#revocation-and-derived-membership)
 - [Race Condition Prevention](#race-condition-prevention)
@@ -119,14 +119,9 @@ Familiarise enforces a deterministic 4-part communication policy across all book
    - **No DM eligibility:** `canDirectMessage` and `pairBookingContexts` exclude any consultation or subscription whose appointment is a `TRIAL` (`excludeTrialBooking` in `lib/stream/dm-eligibility-statuses.ts`). A relationship made only of trials never opens a DM. Asynchronous DM access opens when the learner holds a paid, eligible booking.
    - **No in-call chat:** `isInCallChatAllowed("TRIAL")` is false (`lib/meetings/room-ready.ts`); `app/meetings/[id]/components/MeetingRoom.tsx` hides the chat and Q&A tabs and the stage Q&A route answers 403 (`trial_chat_disabled`).
 
-### Contextual Booking Receipt Cards
+### Booking Context in a Shared DM
 
-Because repeat bookings between the same consultant and consultee share a single `dm-` or `dmo-` thread, `POST /api/stream/channels/open` supports an optional `contextAppointmentId` parameter to disambiguate which booking a conversation turn refers to:
-
-- When `contextAppointmentId` is passed (for example, from **"Message Consultant"** / **"Message Consultee"** CTAs on an appointment card via `chatAffordancesForVm`), the server verifies that the appointment is non-deleted, in an eligible status, and links `(userId, counterpartyUserId)`.
-- The server then posts an idempotent message into the shared DM with deterministic message ID (`id: booking-ctx-${appointmentId}-${eventType}` / `buildBookingContextMessageId(channelId, appointmentId)` hashed to $\le 64$ chars) and `booking_context` metadata (`booking_appointment_id`, `booking_type`, `booking_title`, `booking_starts_at`).
-- If the receipt card for that appointment was already posted, Stream rejects the duplicate message ID and `postBookingContextCardIfAbsent` treats the duplicate as a clean no-op.
-- The card is posted as the server-only Stream user `system-booking-context` (`BOOKING_CONTEXT_STREAM_USER` in `lib/stream/system-users.ts`), not as the caller. No token is ever minted for that user. `components/chat/CustomMessage.tsx` renders the receipt card only when the message author is that user (`isBookingContextAuthor`), so a member cannot forge a card by setting custom fields on their own message. The `system-` prefix keeps the user out of `stream-sync` deletion and out of reconciler removal.
+Repeat bookings between the same two people share one `dm-` or `dmo-` thread. `POST /api/stream/channels/open` posts nothing into it. When a DM is opened from an appointment, the composer offers a removable "About: <title> · next session …" chip that tags the sender's next message with `booking_appointment_id`, and the tag is rendered only from the server-verified `GET /api/stream/booking-tag` answer. See [04. Chat Implementation](./04-chat-implementation.md#appointment-chat-sheet-and-booking-tag).
 
 ### Server-Side Authorization for Membership Changes
 
@@ -160,8 +155,8 @@ graph TB
     Collab -->|status = ACCEPTED| EventChannel
     Host -->|channel_moderator| EventChannel
 
-    User <-->|1:1 Host DM + Booking Receipt Card| DMChannel
-    Host <-->|1:1 Host DM + Booking Receipt Card| DMChannel
+    User <-->|1:1 Host DM| DMChannel
+    Host <-->|1:1 Host DM| DMChannel
 
     style EventChannel fill:#4fc3f7
     style DMChannel fill:#81c784
@@ -721,11 +716,11 @@ if (existingChannel.name !== expectedName) {
 
 ## Deprecated & Superseded Approaches
 
-- **Per-Booking `consultation-{id}` and `subscription-{id}` Channels**: Retired in favor of one canonical 1:1 DM channel per `(consultant, consultee, orgScope)` tuple (`dm-<a>-<b>` / `dmo-<orgHash>-<pairHash>`). Per-booking channels fragmented conversation history across repeat sessions, caused sidebar clutter, and complicated post-session follow-up. Disambiguation across multiple bookings now uses idempotent `booking-ctx-` receipt cards posted into the shared DM via `POST /api/stream/channels/open`.
+- **Per-Booking `consultation-{id}` and `subscription-{id}` Channels**: Retired in favor of one canonical 1:1 DM channel per `(consultant, consultee, orgScope)` tuple (`dm-<a>-<b>` / `dmo-<orgHash>-<pairHash>`). Per-booking channels fragmented conversation history across repeat sessions, caused sidebar clutter, and complicated post-session follow-up. Disambiguation across multiple bookings now uses the verified booking tag on the message that refers to a booking.
 - **Direct Messages and In-Call Chat on Free Trials (`TRIAL`)**: Superseded by the trial rules above: no provisioning (`skipped: "trial_chat_blocked"` in `lib/payments/webhooks/ensure-channels.ts`), no DM eligibility (`excludeTrialBooking`) and no in-call chat (`isInCallChatAllowed`). Asynchronous messaging opens only on paid/confirmed bookings (`DM_ELIGIBLE_STATUSES = ["APPROVED", "SCHEDULED", "COMPLETED"]`).
 - **Client-Cooperative Revocation via the Sync Gates**: Revocation once waited for the affected user's browser to run `syncUserEventChannels`, behind the server `initialSyncCompletedUsers` set, the `stream_sync_<id>` session flag and a `force` parameter. Replaced by synchronous revocation, the `StreamRevocationRetry` queue and the daily reconciler. Remove any residue.
 - **Unfreeze-on-Open for Collaborator Channels**: `createCollaboratorChannel` used to clear `frozen` on every open, undoing wind-down and moderation freezes. It is now get-or-create only and the open route refuses a frozen channel.
-- **Caller-Authored Booking Cards**: Cards posted as the opening user and recognised by forgeable custom fields. Now posted as `system-booking-context` and rendered only for that author.
+- **Server-Posted Booking Cards (`booking-ctx-`, `system-booking-context`)**: Opening a DM from an appointment used to post a receipt card as a server user named "Familiarise". People read it as a support message, it showed a Get help link and a duplicate title line, its date was the first session rather than the next, and it was written for both people even when nobody replied. Replaced by the booking tag on the sender's next message. Old cards in Stream are hidden by `CustomMessage`, and `LEGACY_BOOKING_CONTEXT_USER_ID` survives only for that and to keep the user out of DM member counts.
 - **DM "Clear chat" and Manual Adds on Managed Channels**: Truncate wiped a DM thread for both sides, and any creator could add members by hand. Both are refused or hidden on managed channels.
 - **Opening DMs on `APPROVED_PENDING_PAYMENT` Bookings**: Retired so unpaid booking requests cannot initiate chat before payment settles.
 - **Unpaginated `queryChannels({ limit: 100 })` Reconciliation Loops**: Superseded by `queryChannelsPaged` (`lib/stream/batch.ts`), which pages at Stream's hard 30-channel per-request ceiling sorted by `created_at` ascending so memberships beyond the 30th channel are never silently skipped during revocation sweeps.

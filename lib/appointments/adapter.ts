@@ -21,6 +21,12 @@ export interface PrimaryAction {
   busy?: boolean;
 }
 
+/** A chat the detail page opens in its side sheet; `messagesHref` is the full Messages deep link. */
+export type AppointmentChatTarget = { title: string; messagesHref: string } & (
+  | { kind: "dm"; counterpartyUserId: string; appointmentId: string }
+  | { kind: "event"; eventType: "webinar" | "class"; eventId: string }
+);
+
 export interface OverflowItem {
   key: string;
   label: string;
@@ -33,6 +39,8 @@ export interface OverflowItem {
   href?: string;
   destructive?: boolean;
   disabled?: boolean;
+  /** Set on chat actions: the detail page opens this in a sheet instead of navigating. */
+  chat?: AppointmentChatTarget;
 }
 
 export interface AppointmentActionAdapter {
