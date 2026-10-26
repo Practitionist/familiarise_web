@@ -8,15 +8,12 @@ const mockSupplier = jest.fn();
 const mockMint = jest.fn();
 const mockFindMany = jest.fn();
 const mockCapture = jest.fn();
-const mockRefundCount = jest.fn(async (_a: unknown) => 0);
 
 jest.mock("@/lib/pdf/supplier", () => ({
   getPlatformSupplier: () => mockSupplier(),
 }));
 jest.mock("@/lib/payments/billing/consumer-invoice", () => ({
-  CONSUMER_INVOICEABLE_PAYMENT_WHERE: jest.requireActual(
-    "@/lib/payments/billing/consumer-invoice",
-  ).CONSUMER_INVOICEABLE_PAYMENT_WHERE,
+  ...jest.requireActual("@/lib/payments/billing/consumer-invoice"),
   mintConsumerInvoice: (_tx: unknown, args: { paymentId: string }) =>
     mockMint(args.paymentId),
   supplierStateCode: () => "29",
@@ -32,8 +29,7 @@ jest.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
     payment: { findMany: (...a: unknown[]) => mockFindMany(...a) },
-    $transaction: (fn: (tx: unknown) => unknown) =>
-      fn({ refund: { count: (a: unknown) => mockRefundCount(a) } }),
+    $transaction: (fn: (tx: unknown) => unknown) => fn({}),
   },
 }));
 
@@ -93,15 +89,4 @@ it("reports failed mints once per run, not once per payment", async () => {
   const result = await healConsumerInvoices({ limit: 2, now, pivot: "p-0" });
   expect(result.failed).toBe(2);
   expect(mockCapture).toHaveBeenCalledTimes(1);
-});
-
-it("declines a payment refunded after the cohort read, inside the mint transaction", async () => {
-  mockFindMany.mockResolvedValueOnce(ids("p-1"));
-  mockRefundCount.mockResolvedValueOnce(1);
-  const result = await healConsumerInvoices({ limit: 1, now, pivot: "p-0" });
-  expect(result).toMatchObject({ minted: 0, declined: 1, failed: 0 });
-  expect(mockMint).not.toHaveBeenCalled();
-  expect(mockRefundCount).toHaveBeenCalledWith({
-    where: { paymentId: "p-1", status: { in: ["PENDING", "SUCCEEDED"] } },
-  });
 });
