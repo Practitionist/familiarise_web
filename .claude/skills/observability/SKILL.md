@@ -131,3 +131,12 @@ the vendor monitor is configured. Verify that worker maintenance refusals and
 held outcomes cannot record COMPLETED evidence before activation. The probe keeps
 reading during maintenance; suppress notifications externally without advancing
 successful-work freshness.
+
+Export and stale-request workers require successful completions within 45 minutes.
+Retained-order invoice recovery runs every four hours with a twelve-hour
+completion budget; it reads at most five candidates per slot. These policies
+measure execution freshness, not per-obligation recovery age or queue drain.
+Keep cohort size, lost invoice-order references and measured throughput visible.
+Read `docs/maintenance/12-readiness-and-operating-gates.md` before making an
+infrastructure readiness claim: source checks, deployment, vendor effects,
+accepted check-ins, human alert receipt and restore proof are separate evidence.

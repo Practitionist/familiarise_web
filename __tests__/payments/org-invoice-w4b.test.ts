@@ -724,7 +724,9 @@ describe("/pay", () => {
       paymentId: "pay_existing",
       amountPaise: 100_000,
     });
-    tx.orgAuditLog.create.mockRejectedValueOnce(new Error("audit unavailable"));
+    jest
+      .mocked(tx.orgAuditLog.create)
+      .mockRejectedValueOnce(new Error("audit unavailable"));
     mockPrisma.$transaction.mockImplementation(
       async (run: (tx: Tx) => unknown) => {
         const beforeStatus = state.status;

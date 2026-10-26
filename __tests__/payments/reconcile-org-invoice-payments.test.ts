@@ -34,7 +34,8 @@ jest.mock("@/lib/prisma", () => ({
 jest.mock("@/lib/cron/with-cron-lock", () => ({
   LONG_JOB_TTL_MS: 35 * 60 * 1000,
   readJobCheckpoint: (...args: unknown[]) => mockReadCheckpoint(...args),
-  withCronLock: (...args: unknown[]) => mockWithCronLock(...args),
+  withCronLock: (name: string, options: unknown, run: () => Promise<unknown>) =>
+    mockWithCronLock(name, options, run),
 }));
 jest.mock("@/lib/db/serializable-retry", () => ({
   withSerializableRetry: (run: () => Promise<unknown>) => run(),
@@ -51,7 +52,8 @@ jest.mock("@/lib/observability/report", () => ({
   reportSentryError: (...args: unknown[]) => mockReport(...args),
 }));
 jest.mock("@/lib/observability/standing-finding", () => ({
-  reportStandingFinding: (...args: unknown[]) => mockStandingFinding(...args),
+  reportStandingFinding: (args: { ids: string[] }, report: () => void) =>
+    mockStandingFinding(args, report),
 }));
 
 import { reconcileOrgInvoicePayments } from "@/lib/payments/billing/reconcile-invoice-payments";
