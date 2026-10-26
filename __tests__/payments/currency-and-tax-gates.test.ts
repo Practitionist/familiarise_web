@@ -51,17 +51,21 @@ import {
   deriveConsumerInvoiceTax,
   deriveConsumerCreditNoteAmounts,
   mintConsumerInvoice,
-  resolveSupplierStateCode,
   type ConsumerCreditNoteAmounts,
 } from "../../lib/payments/billing/consumer-invoice";
-import { getPlatformSupplier } from "../../lib/pdf/supplier";
+import {
+  getPlatformSupplier,
+  resolveSupplierStateCode,
+} from "../../lib/pdf/supplier";
 import { REGISTERED_OFFICE } from "../../lib/company";
-import { recordSystemError } from "../../lib/enterprise/system-events";
 
 // The mint's fail-closed branch is the only I/O-bearing path pinned here; the
 // supplier config, the system-event write and Sentry are all stubbed so the
 // assertion is about the decision, not the plumbing.
-jest.mock("../../lib/pdf/supplier", () => ({ getPlatformSupplier: jest.fn() }));
+jest.mock("../../lib/pdf/supplier", () => ({
+  ...jest.requireActual("../../lib/pdf/supplier"),
+  getPlatformSupplier: jest.fn(),
+}));
 jest.mock("../../lib/enterprise/system-events", () => {
   const recordSystemError = jest.fn().mockResolvedValue(undefined);
   return {
@@ -335,55 +339,6 @@ describe("the supplier's own state", () => {
     );
     expect(resolved.stateCode).toBeNull();
     expect(resolved.mismatch).toEqual({ fromGstin: "29", registered: "06" });
-  });
-
-  it("mints nothing and records the fault when the two disagree", async () => {
-    (getPlatformSupplier as jest.Mock).mockReturnValue({
-      name: "Practitionist (OPC) Private Limited",
-      gstin: KARNATAKA_GSTIN,
-      address: "Gurgaon, Haryana",
-    });
-    const create = jest.fn();
-    const tx = {
-      consumerInvoice: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        create,
-      },
-      payment: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: "pay_1",
-          amount: 118_000,
-          taxAmount: 18_000,
-          currency: "INR",
-          paymentStatus: "SUCCEEDED",
-          deletedAt: null,
-          buyerCountry: "IN",
-          consumerStateCode: "29",
-          billableToOrgInvoiceId: null,
-          createdAt: new Date("2026-08-10T06:00:00Z"),
-          userId: "usr_1",
-          legs: [],
-          creditUsages: [],
-          user: {
-            id: "usr_1",
-            name: "A Buyer",
-            email: "buyer@example.com",
-            address: null,
-            city: null,
-            consulteeProfile: { billingStateCode: "29" },
-          },
-        }),
-      },
-    } as unknown as Parameters<typeof mintConsumerInvoice>[0];
-
-    const result = await mintConsumerInvoice(tx, { paymentId: "pay_1" });
-    expect(result.consumerInvoiceId).toBeNull();
-    expect(create).not.toHaveBeenCalled();
-    expect(recordSystemError).toHaveBeenCalledWith(
-      expect.objectContaining({
-        summary: expect.stringMatching(/supplier state is ambiguous/i),
-      }),
-    );
   });
 });
 

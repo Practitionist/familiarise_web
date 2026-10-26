@@ -20,6 +20,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 let supplierConfigured = true;
 jest.mock("../../lib/pdf/supplier", () => ({
+  ...jest.requireActual("../../lib/pdf/supplier"),
   getPlatformSupplier: () =>
     supplierConfigured
       ? {

@@ -19,6 +19,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 // The export refuses to write without the platform's own supplier identity;
 // here it is configured, so the run proceeds.
 jest.mock("../../lib/pdf/supplier", () => ({
+  ...jest.requireActual("../../lib/pdf/supplier"),
   getPlatformSupplier: () => ({
     name: "Practitionist (OPC) Private Limited",
     gstin: "06AAFCF1234Q1ZN",

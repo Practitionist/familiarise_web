@@ -26,10 +26,7 @@ import {
   reportSentryError,
   reportSentryMessage,
 } from "@/lib/observability/report";
-import {
-  recordSystemEventSafe,
-  recordSystemErrorSafe,
-} from "@/lib/enterprise/system-events";
+import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { numericStateCode } from "@/lib/compliance/state-codes";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
@@ -39,7 +36,11 @@ import {
   isPastGstCreditNoteCutoff,
 } from "@/lib/compliance/gst-credit-note-cutoff";
 import { REGISTERED_OFFICE } from "@/lib/company";
-import { getPlatformSupplier } from "@/lib/pdf/supplier";
+import {
+  configuredGstin,
+  getPlatformSupplier,
+  resolveSupplierStateCode,
+} from "@/lib/pdf/supplier";
 import { generateConsumerInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { generateConsumerCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import type {
@@ -83,7 +84,7 @@ export interface ConsumerInvoiceTax {
  * absent state produces an intra-state (CGST+SGST) document, not IGST.
  *
  * @param buyerStateCode alpha or numeric; normalised here.
- * @param supplierStateCode the platform's own state, as `resolveSupplierStateCode` settled it.
+ * @param supplierStateCode the platform's own state (the GSTIN's first two digits).
  */
 export function deriveConsumerInvoiceTax(params: {
   /** Tax-inclusive amount the buyer was charged, paise. */
@@ -173,50 +174,23 @@ export function deriveConsumerInvoiceTax(params: {
   };
 }
 
-/**
- * Resolve the platform's OWN state for a statutory document.
- *
- * PURE. The first two digits of a GSTIN are the state of registration by law,
- * so the GSTIN is authoritative; the registered office's state is the
- * fallback while no GSTIN is set. A disagreement means the GSTIN belongs to
- * another registration than the address the documents print, and it decides
- * CGST+SGST against IGST on a gapless Rule 46 number that cannot be corrected
- * in place, so the caller fails closed rather than pick one.
- */
-export function resolveSupplierStateCode(
-  gstin: string | null | undefined,
-  registeredStateCode: string,
-): {
-  stateCode: string | null;
-  mismatch: { fromGstin: string; registered: string } | null;
-} {
-  const fromGstin = numericStateCode(gstin, null);
-  const registered = numericStateCode(null, registeredStateCode);
-  if (fromGstin && registered && fromGstin !== registered) {
-    return { stateCode: null, mismatch: { fromGstin, registered } };
-  }
-  return { stateCode: fromGstin ?? registered, mismatch: null };
-}
-
-function mismatchMessage(mismatch: {
-  fromGstin: string;
-  registered: string;
-}): string {
-  return `Supplier state is ambiguous: PLATFORM_GSTIN says "${mismatch.fromGstin}", the registered office in lib/company.ts says "${mismatch.registered}".`;
-}
-
 /** The GSTIN and the registered office disagree; the caller refuses, it never picks one. */
 export class SupplierStateMismatchError extends Error {
   constructor(readonly mismatch: { fromGstin: string; registered: string }) {
-    super(mismatchMessage(mismatch));
+    super(
+      `Supplier state is ambiguous: PLATFORM_GSTIN says "${mismatch.fromGstin}", the registered office in lib/company.ts says "${mismatch.registered}".`,
+    );
     this.name = "SupplierStateMismatchError";
   }
 }
 
-/** The platform's own numeric state for the org rails, GSTIN-first like the B2C mint. */
+/**
+ * The platform's own numeric state for the org rails: the GSTIN's, or the
+ * registered office's while no GSTIN is set. Throws on a GSTIN from another state.
+ */
 export function supplierStateCode(): string {
   const { stateCode, mismatch } = resolveSupplierStateCode(
-    getPlatformSupplier()?.gstin,
+    configuredGstin(),
     REGISTERED_OFFICE.stateCode,
   );
   if (mismatch) throw new SupplierStateMismatchError(mismatch);
@@ -339,7 +313,7 @@ export async function mintConsumerInvoice(
         JSON.stringify({
           event: "consumer_invoice_supplier_unconfigured",
           reason:
-            "PLATFORM_GSTIN is unset or malformed; consumer tax invoices are not being issued.",
+            "PLATFORM_GSTIN is unset, malformed, or from another state than the registered office; consumer tax invoices are not being issued.",
         }),
       );
       // #1757 — the console line alone left the gate invisible on real
@@ -353,7 +327,7 @@ export async function mintConsumerInvoice(
         extra: {
           env: "PLATFORM_GSTIN",
           reason:
-            "PLATFORM_GSTIN is unset or malformed; consumer tax invoices are not being issued (fail-open, pre-launch posture).",
+            "PLATFORM_GSTIN is unset, malformed, or from another state than the registered office; consumer tax invoices are not being issued.",
           skippedMints: supplierUnconfiguredSkips,
           firstSkippedPaymentId: payment.id,
         },
@@ -377,31 +351,9 @@ export async function mintConsumerInvoice(
     payment.user.consulteeProfile?.billingStateCode ?? null;
   const buyerStateCode = declaredStateCode ?? profileStateCode;
 
-  const { stateCode: supplierStateCode, mismatch } = resolveSupplierStateCode(
-    supplier.gstin,
-    REGISTERED_OFFICE.stateCode,
-  );
-  if (mismatch) {
-    // Fail closed exactly like a missing PLATFORM_GSTIN: minting under the
-    // wrong state puts IGST on an intra-state supply (or the reverse) and the
-    // document then contradicts the GST_PAYABLE credit settlement posted.
-    const ambiguous = new Error(mismatchMessage(mismatch));
-    reportSentryError(ambiguous, {
-      subsystem: "payments",
-      level: "warning",
-      tags: { feature: "consumer-invoice" },
-      extra: { paymentId: payment.id, ...mismatch },
-    });
-    await recordSystemErrorSafe({
-      organizationId: null,
-      category: "PAYMENT",
-      summary: "Consumer tax invoice not minted: supplier state is ambiguous",
-      err: ambiguous,
-      context: { paymentId: payment.id, ...mismatch },
-      db: tx,
-    });
-    return { consumerInvoiceId: null };
-  }
+  // getPlatformSupplier() only returns a GSTIN from the registered office's state.
+  const supplierStateCode =
+    numericStateCode(supplier.gstin, null) ?? REGISTERED_OFFICE.stateCode;
 
   const tax = deriveConsumerInvoiceTax({
     totalPaise,
@@ -440,7 +392,7 @@ export async function mintConsumerInvoice(
       supplierAddress: supplier.address,
       // The same variable the derivation above used, so the stored state and
       // the heads on the document can never disagree.
-      supplierStateCode: supplierStateCode ?? "00",
+      supplierStateCode,
       buyerName: payment.user.name ?? payment.user.email,
       buyerEmail: payment.user.email,
       buyerAddress,

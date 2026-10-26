@@ -5,7 +5,8 @@
  */
 
 import { isValidGstin } from "@/lib/compliance/gst";
-import { COMPANY_INFO } from "@/lib/company";
+import { numericStateCode } from "@/lib/compliance/state-codes";
+import { COMPANY_INFO, REGISTERED_OFFICE } from "@/lib/company";
 import { billingEmail } from "@/lib/email/config";
 
 export interface PlatformSupplier {
@@ -15,14 +16,48 @@ export interface PlatformSupplier {
   email: string;
 }
 
+/** The refusal every statutory-document reader answers when `getPlatformSupplier()` is null. */
+export const SUPPLIER_UNAVAILABLE_MESSAGE =
+  "PLATFORM_GSTIN is unset, malformed, or registered in a state other than the registered office; the platform cannot issue statutory documents.";
+
+/** PLATFORM_GSTIN when it is well-formed, whatever its state. */
+export function configuredGstin(): string | null {
+  const gstin = process.env.PLATFORM_GSTIN?.trim();
+  return gstin && isValidGstin(gstin) ? gstin : null;
+}
+
 /**
- * The supplier identity, or null when PLATFORM_GSTIN is unset or malformed.
- * Fail-closed: callers choose their own refusal (a 503 on a download route,
- * a skipped IRP run) rather than mint a document without a real GSTIN.
+ * PURE. The supplier's own GST state: the GSTIN's first two digits, which are
+ * the state of registration by law, or the registered office's while no GSTIN
+ * is set. A GSTIN from another state contradicts the address every document
+ * prints, so it resolves to no state and the caller refuses.
+ */
+export function resolveSupplierStateCode(
+  gstin: string | null | undefined,
+  registeredStateCode: string,
+): {
+  stateCode: string | null;
+  mismatch: { fromGstin: string; registered: string } | null;
+} {
+  const fromGstin = numericStateCode(gstin, null);
+  const registered = numericStateCode(null, registeredStateCode);
+  if (fromGstin && registered && fromGstin !== registered) {
+    return { stateCode: null, mismatch: { fromGstin, registered } };
+  }
+  return { stateCode: fromGstin ?? registered, mismatch: null };
+}
+
+/**
+ * The supplier identity, or null when PLATFORM_GSTIN is unset, malformed, or
+ * from a state other than the registered office's. Fail-closed: every GST
+ * document reader refuses (a 503, a skipped run) rather than mint one.
  */
 export function getPlatformSupplier(): PlatformSupplier | null {
-  const gstin = process.env.PLATFORM_GSTIN?.trim();
-  if (!gstin || !isValidGstin(gstin)) return null;
+  const gstin = configuredGstin();
+  if (!gstin) return null;
+  if (resolveSupplierStateCode(gstin, REGISTERED_OFFICE.stateCode).mismatch) {
+    return null;
+  }
   return {
     name: COMPANY_INFO.name,
     gstin,

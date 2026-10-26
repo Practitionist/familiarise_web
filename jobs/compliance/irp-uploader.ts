@@ -32,25 +32,18 @@ import { buildIrpPayload } from "@/lib/compliance/irp-payload";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
 import * as Sentry from "@sentry/nextjs";
-import { isValidGstin } from "@/lib/compliance/gst";
-import { supplierStateCode } from "@/lib/payments/billing/consumer-invoice";
-import { COMPANY_INFO, REGISTERED_OFFICE } from "@/lib/company";
+import { REGISTERED_OFFICE } from "@/lib/company";
+import { getPlatformSupplier } from "@/lib/pdf/supplier";
 
-// The legal entity and registered office come from lib/company.ts; only the
-// GSTIN is env. A malformed or unset PLATFORM_GSTIN skips the run.
-const SELLER = (() => {
-  const gstin = process.env.PLATFORM_GSTIN?.trim();
-  return {
-    gstin: gstin && isValidGstin(gstin) ? gstin : null,
-    legalName: COMPANY_INFO.name,
-    address1: REGISTERED_OFFICE.line1,
-    location: REGISTERED_OFFICE.city,
-    pincode: REGISTERED_OFFICE.pincode,
-  };
-})();
-
-/** The per-run seller identity: the validated GSTIN plus the state resolved from it (#1447). */
-type SellerIdentity = { gstin: string; stateCode: string };
+/** The seller block: the legal entity in lib/company.ts with the gated GSTIN. */
+type SellerIdentity = {
+  gstin: string;
+  legalName: string;
+  address1: string;
+  location: string;
+  pincode: string;
+  stateCode: string;
+};
 
 // #476 — entry-level cron lock, fail-closed: an IRN is a statutory object
 // registered with the government and cancellable only inside a 24-hour window,
@@ -102,7 +95,7 @@ function buildPayloadFor(
       stateCode: candidate.organization.taxInfo?.gstStateCode ?? null,
       hsnDefault: candidate.organization.taxInfo?.hsnDefault ?? "999293",
     },
-    seller: { ...SELLER, ...seller },
+    seller,
   });
 }
 
@@ -263,23 +256,21 @@ async function runIrpUploaderUnlocked(opts: {
   console.log("[cron][irp-uploader] starting");
   Sentry.logger.info("job:irp-uploader started");
 
-  // Config gate before any invoice is touched: a missing/malformed
-  // PLATFORM_GSTIN is an ENV outage, not a per-invoice defect — failing each
-  // candidate permanently (MAP: seller GSTIN missing) would burn the whole
-  // queue on a fixable config slip.
-  const sellerGstin = SELLER.gstin;
-  if (!sellerGstin) {
+  // Config gate before any invoice is touched: an unset, malformed or
+  // wrong-state PLATFORM_GSTIN is an ENV outage, not a per-invoice defect, so
+  // the run is skipped and every row stays PENDING.
+  const supplier = getPlatformSupplier();
+  if (!supplier) {
     return configSkip("PLATFORM_GSTIN not configured", opts.windowStart);
   }
-  // GSTIN-first seller state; a GSTIN that contradicts the registered office is
-  // the same config outage as a missing GSTIN, so every row stays PENDING.
-  let seller: SellerIdentity;
-  try {
-    seller = { gstin: sellerGstin, stateCode: supplierStateCode() };
-  } catch (err) {
-    console.error(`[cron][irp-uploader] ${String(err)} — skipping run`);
-    return { processed: 0, failed: 0, skippedRows: 0 };
-  }
+  const seller: SellerIdentity = {
+    gstin: supplier.gstin,
+    legalName: supplier.name,
+    address1: REGISTERED_OFFICE.line1,
+    location: REGISTERED_OFFICE.city,
+    pincode: REGISTERED_OFFICE.pincode,
+    stateCode: REGISTERED_OFFICE.stateCode,
+  };
   // CR #1234 r5 — preflight the FULL provider configuration. generateIrn
   // marks rows FAILED on a missing CLEARTAX_* credential, so an auth outage
   // would burn all twelve retries per pending invoice and permanently fail

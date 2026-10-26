@@ -29,11 +29,17 @@ describe("platform supplier identity", () => {
     expect(supplierStateCode()).toBe("06");
   });
 
-  it("issues nothing without a well-formed GSTIN, and refuses one from another state", () => {
+  it("issues nothing without a well-formed GSTIN", () => {
     process.env.PLATFORM_GSTIN = "not-a-gstin";
     expect(getPlatformSupplier()).toBeNull();
+  });
 
+  // Every GST document reader (the invoice and credit-note PDF routes, the
+  // consumer mint, the register, IRP) goes through getPlatformSupplier(); the
+  // org rails go through supplierStateCode().
+  it("refuses a well-formed GSTIN from another state on every reader", () => {
     process.env.PLATFORM_GSTIN = "29AAFCF1234Q1ZN";
+    expect(getPlatformSupplier()).toBeNull();
     expect(() => supplierStateCode()).toThrow(SupplierStateMismatchError);
   });
 });
