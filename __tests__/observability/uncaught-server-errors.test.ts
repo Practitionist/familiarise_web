@@ -27,6 +27,7 @@ jest.mock("next/server", () => ({
 import { onRequestError } from "../../instrumentation";
 import {
   initSentry,
+  isBelowErrorOnPreview,
   isThinnedOnPreview,
   isUncaughtNextServerError,
   resetSentryBudgetState,
@@ -196,5 +197,26 @@ describe("onRequestError keeps the function alive until the envelope is out", ()
 
     await handedOff;
     expect(delivered).toHaveLength(1);
+  });
+});
+
+describe("previews send errors only", () => {
+  const prev = process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
+    else process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = prev;
+  });
+
+  it("drops warning and info on preview and keeps error and fatal", () => {
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "preview";
+    expect(isBelowErrorOnPreview({ level: "warning" })).toBe(true);
+    expect(isBelowErrorOnPreview({ level: "info" })).toBe(true);
+    expect(isBelowErrorOnPreview({ level: "error" })).toBe(false);
+    expect(isBelowErrorOnPreview({ level: "fatal" })).toBe(false);
+  });
+
+  it("leaves production untouched", () => {
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
+    expect(isBelowErrorOnPreview({ level: "warning" })).toBe(false);
   });
 });

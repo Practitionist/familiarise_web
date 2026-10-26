@@ -1,7 +1,11 @@
 import type { Channel } from "stream-chat";
 import prisma from "@/lib/prisma";
 import { isPrivileged } from "@/lib/auth-helpers";
-import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
+import {
+  isDbConnectionOrPoolError,
+  readJobCheckpoint,
+  withCronLock,
+} from "@/lib/cron/with-cron-lock";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -39,8 +43,11 @@ export interface MembershipReconcileResult {
   channelsSkippedSuspicious: number;
   membersRemoved: number;
   failures: number;
-  /** `created_at` of the last channel examined; null once the walk reached the newest channel. */
-  checkpoint: string | null;
+  /**
+   * `created_at` of the last channel examined; null once the walk reached the newest channel.
+   * Omitted when the run could not start, so the previous run's checkpoint stays in force.
+   */
+  checkpoint?: string | null;
   errors: string[];
 }
 
@@ -211,7 +218,24 @@ async function reconcileUnlocked(opts: {
   };
   const failureSample: string[] = [];
   const chat = getStreamChatClient();
-  let after = await readJobCheckpoint(MEMBERSHIP_RECONCILE_JOB);
+  let after: string | null;
+  try {
+    after = await readJobCheckpoint(MEMBERSHIP_RECONCILE_JOB);
+  } catch (error) {
+    if (!isDbConnectionOrPoolError(error)) throw error;
+    // Transient Postgres fault before any work: the windowed job retries next tick.
+    reportSentryError(error, {
+      subsystem: "stream",
+      op: "reconcile-memberships-checkpoint",
+      level: "warning",
+      fingerprint: ["stream", "reconcile-memberships", "checkpoint-transient"],
+    });
+    delete result.checkpoint;
+    result.errors = [
+      `checkpoint read: ${error instanceof Error ? error.message : String(error)}`,
+    ];
+    return result;
+  }
   let reachedEnd = false;
 
   try {

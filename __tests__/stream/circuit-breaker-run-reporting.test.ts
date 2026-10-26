@@ -6,6 +6,7 @@ jest.mock("../../lib/redis", () => ({
     run: (...args: unknown[]) => mockRun(...args),
   }),
 }));
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import * as Sentry from "@sentry/nextjs";

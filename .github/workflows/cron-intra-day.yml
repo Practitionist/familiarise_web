@@ -5,12 +5,8 @@ permissions:
 
 on:
   schedule:
-    # Every 30 minutes: orphaned meeting sessions reconciliation
-    - cron: "25,55 * * * *"
     # Hourly: DPDP breach deadline alerts, occurrence availability
     - cron: "17 * * * *"
-    # Every 6 hours: recording copy to R2
-    - cron: "33 */6 * * *"
   workflow_dispatch:
     inputs:
       job:
@@ -81,22 +77,13 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|reconcile-orphaned-sessions|databreach-deadline-alerts|reconcile-occurrence-availability|transfer-recordings)
+            ""|all|databreach-deadline-alerts|reconcile-occurrence-availability)
               ;;
             *)
               echo "::error::Unknown intra-day job slug '${INPUT_JOB}'"
               exit 1
               ;;
           esac
-
-      - name: Reconcile orphaned sessions
-        id: reconcile-orphaned-sessions
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '25,55 * * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'reconcile-orphaned-sessions'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/meetings/reconcile-orphaned-sessions.ts
 
       - name: Data-breach deadline alerts
         id: databreach-deadline-alerts
@@ -116,15 +103,6 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/appointments/reconcile-occurrence-availability.ts
 
-      - name: Transfer recordings
-        id: transfer-recordings
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '33 */6 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'transfer-recordings'))
-        timeout-minutes: 45
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/stream/transfer-recordings.ts
-
       - name: Check job outcomes and notify on failure
         if: always()
         env:
@@ -135,10 +113,8 @@ jobs:
         run: |
           failed=0
           for entry in \
-            "reconcile-orphaned-sessions:${{ steps.reconcile-orphaned-sessions.outcome }}" \
             "databreach-deadline-alerts:${{ steps.databreach-deadline-alerts.outcome }}" \
-            "reconcile-occurrence-availability:${{ steps.reconcile-occurrence-availability.outcome }}" \
-            "transfer-recordings:${{ steps.transfer-recordings.outcome }}"
+            "reconcile-occurrence-availability:${{ steps.reconcile-occurrence-availability.outcome }}"
           do
             job_name="${entry%%:*}"
             outcome="${entry#*:}"

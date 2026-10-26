@@ -36,6 +36,7 @@ jest.mock("../../lib/email", () => ({
 const mockCaptureMessage = jest.fn();
 const mockCaptureException = jest.fn();
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   captureMessage: (...args: unknown[]) => mockCaptureMessage(...args),
   captureException: (...args: unknown[]) => mockCaptureException(...args),

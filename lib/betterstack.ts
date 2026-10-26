@@ -8,6 +8,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { z } from "zod";
 import { SENDERS } from "@/lib/email/config";
 
 const BETTERSTACK_API_URL = "https://uptime.betterstack.com/api/v2";
@@ -28,6 +29,7 @@ async function betterstackRequest(
 
   const res = await fetch(`${BETTERSTACK_API_URL}${path}`, {
     ...options,
+    signal: AbortSignal.timeout(3_000),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
@@ -66,10 +68,12 @@ export async function createIncident(
       }),
     });
 
-    if (!res) return null;
+    if (!res?.ok) return null;
 
-    const data = await res.json();
-    const incidentId = data?.data?.id;
+    const data = z
+      .object({ data: z.object({ id: z.string() }) })
+      .parse(await res.json());
+    const incidentId = data.data.id;
 
     console.log(
       JSON.stringify({
@@ -95,9 +99,12 @@ export async function createIncident(
  */
 export async function resolveIncident(incidentId: string): Promise<boolean> {
   try {
-    const res = await betterstackRequest(`/incidents/${incidentId}/resolve`, {
-      method: "POST",
-    });
+    const res = await betterstackRequest(
+      `/incidents/${encodeURIComponent(incidentId)}/resolve`,
+      {
+        method: "POST",
+      },
+    );
 
     if (!res) return false;
 
