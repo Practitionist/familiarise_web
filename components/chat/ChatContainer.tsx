@@ -134,7 +134,10 @@ export const ChatContainer = ({
             <Window>
               <CustomChannelHeader />
               <SupportInterventionBanner />
-              <VisibleMessageList virtualized={shouldUseVirtualized} />
+              {/* The SDK's empty state is height:100%; this region keeps it from pushing the composer out of view. */}
+              <div className="flex min-h-0 w-full flex-1 flex-col">
+                <VisibleMessageList virtualized={shouldUseVirtualized} />
+              </div>
               {isChatReadOnly ? (
                 <div className="flex items-center justify-center gap-2 border-t border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning-foreground">
                   <AlertTriangle className="h-4 w-4 shrink-0" />
