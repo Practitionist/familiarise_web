@@ -3,7 +3,7 @@
 The scheduler supplies opportunities to work. Postgres owns the work and its
 history. A successful HTTP request, an acquired lease and a completed business
 obligation are three different observations. This guide explains the contracts
-used by the export and booking-expiry workers; see the
+used by the export, booking-expiry and invoice-capture workers; see the
 [generated inventory](04-cron-jobs-reference.md) for the complete configured
 roster and the [scheduler reference](10-cron-and-reconciliation-reference.md)
 for dispatch, maintenance admission and lease behavior.
@@ -115,6 +115,48 @@ no live or successful refund under the original key, all before the page limit.
 Legacy consultation expiry history is shared with abandoned-payment cleanup;
 those ambiguous rows require owner review instead of automatic new refunds.
 
+## Invoice captures and uncertain checkout state
+
+`reconcile-org-invoice-payments` reads the stored gateway order for ISSUED or
+OVERDUE invoices and passes a captured INR payment through
+`applyOrgInvoiceCapture`. The existing Serializable settlement transaction owns
+the receipt, journal, PAID transition, audit and durable notification staging.
+The existing email and bell relays deliver after commit. An amount/status
+mismatch follows the canonical UNAPPLIED_RECEIPTS path for operator review;
+it never starts another charge or invents an automatic refund policy.
+
+The job has one fail-closed Postgres lease. Its execution-result checkpoint
+rotates keyset pages, including failures and open orders, then wraps. Each run
+selects at most five invoices, stops admitting rows after ten seconds from HTTP
+entry and waits at most five seconds for a provider read. These are admission
+and await bounds; a timeout does not cancel an SDK request or a database effect.
+There is no new polling column or independent queue.
+
+The ticker supplies six opportunities a day, at 03:55, 07:55, 11:55, 15:55,
+19:55 and 23:55 UTC, with a 24-second HTTP abort. Some existing hours already
+occupy all 120 dispatch slots. The four-hour phase fits the ten-target calendar
+bound without weakening existing cadences or moving Stream work. At five rows
+per run, the upper bound is 30 candidate reads per day, less under slow/error
+conditions. For N continuously eligible invoices, one rotation takes at least
+`ceil(N / 5) * 4 hours`; this is not a four-hour per-invoice recovery SLO.
+Measure the eligible cohort and recovery age before raising volume. A successful
+run within twelve hours only establishes that this capability is executing.
+
+The tenant pay route also checks an existing paid/stale-amount order before
+returning another checkout. Gateway errors and inconclusive paid-order reads
+fail closed. An empty payment list does not close an unpaid order: a still-open
+order with a different amount returns a conflict. New orders are attached by
+CAS to a still-payable invoice, with audit in the same transaction; a concurrent
+winner is read back and validated. Gateway calls wait at most five seconds each
+under a twenty-second request budget. Failed attachment never hands out an
+unowned order. The final invoice/order/outstanding check fences local races;
+it cannot prevent an external capture after that check.
+
+This healer covers retained order pointers. Existing bank-receipt and credit
+flows can clear a pointer while a previous checkout tab remains open. Finding
+an unlogged later capture against such a lost pointer is still a separate
+recovery gap; neither this job nor its healthy completion claims to close it.
+
 ## Failure boundaries and review evidence
 
 | Interruption or race                          | Durable fact / recovery                                                       |
@@ -156,7 +198,7 @@ throughput, storage permissions, backlog drain or actual gateway behavior.
 
 Monitor configuration and human alert receipt remain separate deployment gates.
 The pending missed-run exercise is not completed by this code change. Existing
-storage/retention safety PRs, reminder recovery, missing invoice-capture healing,
+storage/retention safety PRs, reminder recovery, lost invoice-order references,
 remaining Actions coverage, environment isolation and full-service restore proof
 also retain their owners. This PR does not establish a readiness percentage.
 
@@ -166,6 +208,7 @@ Verified on 2026-10-26:
 
 - [Supabase private asset downloads](https://supabase.com/docs/guides/storage/serving/downloads): signed URLs are temporary bearer access, distinct from application authorization.
 - [Supabase standard uploads](https://supabase.com/docs/guides/storage/uploads/standard-uploads): enabling upsert permits overwrites; immutable attempt paths avoid shared-key replacement.
+- [Razorpay order read-back](https://razorpay.com/docs/api/orders/fetch-with-id/) and [order payments](https://razorpay.com/docs/api/orders/fetch-payments/): server-side order and capture evidence are read separately; an empty payment list does not close an order.
 - [Prisma v7 transactions](https://docs.prisma.io/docs/orm/v7/prisma-client/queries/transactions): atomic writes and optimistic concurrency checks; keep interactive transactions short and use their transaction client.
 
 ## Deprecated & Superseded Approaches

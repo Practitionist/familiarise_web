@@ -216,6 +216,12 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       staleInvitationsExpired: result.staleInvitationsExpired,
     };
   },
+  "reconcile-org-invoice-payments": async () => {
+    const { reconcileOrgInvoicePayments } =
+      await import("@/lib/payments/billing/reconcile-invoice-payments");
+    const result = await reconcileOrgInvoicePayments();
+    return { ...result, totalProcessed: result.scanned };
+  },
   "reconcile-payment-status": async () => {
     const result = await reconcilePaymentStatus();
     return {

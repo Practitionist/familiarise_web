@@ -25,6 +25,7 @@ const mockPay = {
 };
 const mockPrisma = {
   organizationInvoice: mockPay,
+  orgAuditLog: { create: jest.fn(async () => ({})) },
   creditNote: { groupBy: jest.fn(async () => []) },
   organizationInvoiceReceipt: { groupBy: jest.fn(async () => []) },
   $transaction: jest.fn(),
@@ -67,12 +68,34 @@ jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: jest.fn(async () => null),
   moneyOpsLimiter: {},
 }));
-const mockCreateOrder = jest.fn(async (_p: { amount: number }) => ({
-  id: "order_new",
-}));
+const mockCreateOrder = jest.fn(
+  async (_p: { amount: number }, _timeoutMs?: number) => ({
+    id: "order_new",
+  }),
+);
+type MockOrder = {
+  id: string;
+  amount: number;
+  currency: string;
+  status: string;
+  notes: Record<string, string>;
+};
+type MockHolding =
+  | { kind: "captured"; paymentId: string; amountPaise: number }
+  | { kind: "live" | "empty" };
+const mockFetchOrder = jest.fn<Promise<MockOrder | null>, [string, number?]>(
+  async () => null,
+);
+const mockReadHolding = jest.fn<Promise<MockHolding>, [string, number?]>(
+  async () => ({ kind: "empty" }),
+);
 jest.mock("../../lib/payments/core/razorpay", () => ({
-  createRazorpayOrder: (p: { amount: number }) => mockCreateOrder(p),
-  fetchRazorpayOrder: jest.fn(async () => null),
+  createRazorpayOrder: (p: { amount: number }, timeoutMs?: number) =>
+    mockCreateOrder(p, timeoutMs),
+  fetchRazorpayOrder: (orderId: string, timeoutMs?: number) =>
+    mockFetchOrder(orderId, timeoutMs),
+  readRazorpayOrderHolding: (orderId: string, timeoutMs?: number) =>
+    mockReadHolding(orderId, timeoutMs),
 }));
 
 import { NextRequest } from "next/server";
@@ -209,6 +232,10 @@ function invoiceWorld(init: {
 beforeEach(() => {
   jest.clearAllMocks();
   mockPost.mockResolvedValue({ transactionId: "t", created: true });
+  mockFetchOrder.mockResolvedValue(null);
+  mockReadHolding.mockResolvedValue({ kind: "empty" });
+  mockPrisma.creditNote.groupBy.mockResolvedValue([]);
+  mockPrisma.organizationInvoiceReceipt.groupBy.mockResolvedValue([]);
 });
 
 describe("platform void", () => {
@@ -444,10 +471,25 @@ describe("/pay", () => {
     };
     mockPay.findFirst.mockResolvedValue(row);
     mockPay.findUniqueOrThrow.mockResolvedValue(row);
-    mockPrisma.creditNote.groupBy.mockResolvedValueOnce([
+    mockPrisma.creditNote.groupBy.mockResolvedValue([
       { invoiceId: "inv-1", _sum: { totalPaise: BigInt(18_000) } },
     ] as never);
-    mockPrisma.$transaction.mockResolvedValue(undefined);
+    const transactionTx = {
+      organizationInvoice: {
+        updateMany: jest.fn(async () => ({ count: 1 })),
+        findUnique: jest.fn(async () => ({
+          status: "ISSUED",
+          providerPaymentOrderId: "order_new",
+        })),
+        findUniqueOrThrow: mockPay.findUniqueOrThrow,
+      },
+      orgAuditLog: { create: jest.fn(async () => ({})) },
+      creditNote: mockPrisma.creditNote,
+      organizationInvoiceReceipt: mockPrisma.organizationInvoiceReceipt,
+    };
+    mockPrisma.$transaction.mockImplementation(
+      async (run: (tx: typeof transactionTx) => unknown) => run(transactionTx),
+    );
 
     const res = await payInvoice(
       new NextRequest("https://x.test/api", { method: "POST" }),
@@ -458,7 +500,365 @@ describe("/pay", () => {
 
     expect(res.status).toBe(200);
     expect(mockCreateOrder.mock.calls[0][0].amount).toBe(100_000);
+    expect(mockCreateOrder.mock.calls[0][1]).toBeLessThanOrEqual(5_000);
+    expect(mockCreateOrder.mock.calls[0][1]).toBeGreaterThan(0);
     expect((await res.json()).amountPaise).toBe(100_000);
+  });
+
+  it("does not replace an open order with no payment when its amount is stale", async () => {
+    const row = {
+      id: "inv-1",
+      status: "ISSUED",
+      invoiceNumber: "N",
+      displayCurrency: "INR",
+      paidAt: null,
+      providerPaymentOrderId: "order_old",
+      totalPaise: 100_000,
+    };
+    mockPay.findFirst.mockResolvedValue(row);
+    mockPay.findUniqueOrThrow.mockResolvedValue(row);
+    mockFetchOrder.mockResolvedValue({
+      id: "order_old",
+      amount: 50_000,
+      currency: "INR",
+      status: "created",
+      notes: {
+        type: "invoice_payment",
+        invoiceId: "inv-1",
+        organizationId: "org-1",
+      },
+    });
+    mockReadHolding.mockResolvedValue({ kind: "empty" });
+
+    const res = await payInvoice(
+      new NextRequest("https://x.test/api", { method: "POST" }),
+      { params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "ORDER_AMOUNT_CHANGED" });
+    const [, timeoutMs] = mockFetchOrder.mock.calls[0];
+    expect(timeoutMs).toBeGreaterThan(0);
+    expect(timeoutMs).toBeLessThanOrEqual(5_000);
+    expect(mockReadHolding).toHaveBeenCalledWith(
+      "order_old",
+      expect.any(Number),
+    );
+    expect(mockCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("stops gateway reads when the route's provider budget is exhausted", async () => {
+    jest.useFakeTimers();
+    const row = {
+      id: "inv-1",
+      status: "ISSUED",
+      invoiceNumber: "N",
+      displayCurrency: "INR",
+      paidAt: null,
+      providerPaymentOrderId: "order_old",
+      totalPaise: 100_000,
+    };
+    mockPay.findFirst.mockResolvedValue(row);
+    mockPay.findUniqueOrThrow.mockResolvedValue(row);
+    mockFetchOrder.mockImplementation(async () => {
+      await jest.advanceTimersByTimeAsync(20_001);
+      return {
+        id: "order_old",
+        amount: 50_000,
+        currency: "INR",
+        status: "created",
+        notes: {
+          type: "invoice_payment",
+          invoiceId: "inv-1",
+          organizationId: "org-1",
+        },
+      };
+    });
+
+    const res = await payInvoice(
+      new NextRequest("https://x.test/api", { method: "POST" }),
+      { params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }) },
+    );
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: "ORDER_UNCONFIRMED" });
+    expect(mockReadHolding).not.toHaveBeenCalled();
+    expect(mockCreateOrder).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it("settles a captured stored order instead of minting a second checkout", async () => {
+    const { tx, state } = invoiceWorld({
+      status: "ISSUED",
+      totalPaise: 100_000,
+    });
+    const row = {
+      id: "inv-1",
+      status: "ISSUED",
+      invoiceNumber: "N",
+      displayCurrency: "INR",
+      paidAt: null,
+      providerPaymentOrderId: "order_existing",
+      totalPaise: 100_000,
+    };
+    mockPay.findFirst.mockResolvedValue(row);
+    mockPay.findUniqueOrThrow.mockResolvedValue(row);
+    mockFetchOrder.mockResolvedValue({
+      id: "order_existing",
+      amount: 100_000,
+      currency: "INR",
+      status: "paid",
+      notes: {
+        type: "invoice_payment",
+        invoiceId: "inv-1",
+        organizationId: "org-1",
+      },
+    });
+    mockReadHolding.mockResolvedValue({
+      kind: "captured",
+      paymentId: "pay_existing",
+      amountPaise: 100_000,
+    });
+    mockPrisma.$transaction.mockImplementation(
+      async (run: (tx: Tx) => unknown) => run(tx),
+    );
+
+    const res = await payInvoice(
+      new NextRequest("https://x.test/api", { method: "POST" }),
+      { params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "INVOICE_ALREADY_PAID" });
+    expect(mockCreateOrder).not.toHaveBeenCalled();
+    expect(state.status).toBe("PAID");
+    expect(tx.orgAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: "INVOICE_PAID" }),
+      }),
+    );
+    expect(mockPrisma.orgAuditLog.create).not.toHaveBeenCalled();
+    expect(state.receipts).toMatchObject([
+      { amountPaise: 100_000, reference: "pay_existing" },
+    ]);
+    expect(posted().map((p) => p.idempotencyKey)).toContain(
+      "invoicepaid:inv-1",
+    );
+  });
+
+  it.each([
+    ["empty", { kind: "empty" }],
+    ["live", { kind: "live" }],
+  ] as const)(
+    "does not replace a gateway-paid order with an inconclusive %s payment read",
+    async (_name, holding) => {
+      const row = {
+        id: "inv-1",
+        status: "ISSUED",
+        invoiceNumber: "N",
+        displayCurrency: "INR",
+        paidAt: null,
+        providerPaymentOrderId: "order_existing",
+        totalPaise: 100_000,
+      };
+      mockPay.findFirst.mockResolvedValue(row);
+      mockPay.findUniqueOrThrow.mockResolvedValue(row);
+      mockFetchOrder.mockResolvedValue({
+        id: "order_existing",
+        amount: 100_000,
+        currency: "INR",
+        status: "paid",
+        notes: {
+          type: "invoice_payment",
+          invoiceId: "inv-1",
+          organizationId: "org-1",
+        },
+      });
+      mockReadHolding.mockResolvedValue(holding);
+
+      const res = await payInvoice(
+        new NextRequest("https://x.test/api", { method: "POST" }),
+        { params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }) },
+      );
+
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({
+        code:
+          holding.kind === "live"
+            ? "PAYMENT_IN_PROGRESS"
+            : "PAYMENT_CAPTURE_UNCONFIRMED",
+      });
+      expect(mockCreateOrder).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rolls back capture recovery when its business audit cannot be committed", async () => {
+    const { tx, state } = invoiceWorld({
+      status: "ISSUED",
+      totalPaise: 100_000,
+    });
+    const row = {
+      id: "inv-1",
+      status: "ISSUED",
+      invoiceNumber: "N",
+      displayCurrency: "INR",
+      paidAt: null,
+      providerPaymentOrderId: "order_existing",
+      totalPaise: 100_000,
+    };
+    mockPay.findFirst.mockResolvedValue(row);
+    mockPay.findUniqueOrThrow.mockResolvedValue(row);
+    mockFetchOrder.mockResolvedValue({
+      id: "order_existing",
+      amount: 100_000,
+      currency: "INR",
+      status: "paid",
+      notes: {
+        type: "invoice_payment",
+        invoiceId: "inv-1",
+        organizationId: "org-1",
+      },
+    });
+    mockReadHolding.mockResolvedValue({
+      kind: "captured",
+      paymentId: "pay_existing",
+      amountPaise: 100_000,
+    });
+    tx.orgAuditLog.create.mockRejectedValueOnce(new Error("audit unavailable"));
+    mockPrisma.$transaction.mockImplementation(
+      async (run: (tx: Tx) => unknown) => {
+        const beforeStatus = state.status;
+        const beforeReceipts = [...state.receipts];
+        try {
+          return await run(tx);
+        } catch (error) {
+          state.status = beforeStatus;
+          state.receipts.splice(0, state.receipts.length, ...beforeReceipts);
+          throw error;
+        }
+      },
+    );
+
+    const res = await payInvoice(
+      new NextRequest("https://x.test/api", { method: "POST" }),
+      { params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }) },
+    );
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({
+      code: "PAYMENT_RECOVERY_UNCONFIRMED",
+    });
+    expect(mockCreateOrder).not.toHaveBeenCalled();
+    expect(state.status).toBe("ISSUED");
+    expect(state.receipts).toHaveLength(0);
+  });
+
+  it("does not mint a second order when a stored order has a captured mismatch", async () => {
+    const { tx } = invoiceWorld({ status: "ISSUED", totalPaise: 100_000 });
+    const row = {
+      id: "inv-1",
+      status: "ISSUED",
+      invoiceNumber: "N",
+      displayCurrency: "INR",
+      paidAt: null,
+      providerPaymentOrderId: "order_existing",
+      totalPaise: 100_000,
+    };
+    mockPay.findFirst.mockResolvedValue(row);
+    mockPay.findUniqueOrThrow.mockResolvedValue(row);
+    mockFetchOrder.mockResolvedValue({
+      id: "order_existing",
+      amount: 100_000,
+      currency: "INR",
+      status: "paid",
+      notes: {
+        type: "invoice_payment",
+        invoiceId: "inv-1",
+        organizationId: "org-1",
+      },
+    });
+    mockReadHolding.mockResolvedValue({
+      kind: "captured",
+      paymentId: "pay_mismatch",
+      amountPaise: 50_000,
+    });
+    mockPrisma.$transaction.mockImplementation(
+      async (run: (tx: Tx) => unknown) => run(tx),
+    );
+
+    const res = await payInvoice(
+      new NextRequest("https://x.test/api", { method: "POST" }),
+      { params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }) },
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "PAYMENT_CAPTURE_REQUIRES_REVIEW",
+    });
+    expect(mockCreateOrder).not.toHaveBeenCalled();
+    expect(mockSystemEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the stored order cannot be read", async () => {
+    const row = {
+      id: "inv-1",
+      status: "ISSUED",
+      invoiceNumber: "N",
+      displayCurrency: "INR",
+      paidAt: null,
+      providerPaymentOrderId: "order_existing",
+      totalPaise: 100_000,
+    };
+    mockPay.findFirst.mockResolvedValue(row);
+    mockPay.findUniqueOrThrow.mockResolvedValue(row);
+    mockFetchOrder.mockRejectedValue(new Error("gateway unavailable"));
+
+    const res = await payInvoice(
+      new NextRequest("https://x.test/api", { method: "POST" }),
+      { params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }) },
+    );
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ code: "ORDER_UNCONFIRMED" });
+    expect(mockCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("does not return a newly minted order if another payment settled the invoice first", async () => {
+    const row = {
+      id: "inv-1",
+      status: "ISSUED",
+      invoiceNumber: "N",
+      displayCurrency: "INR",
+      paidAt: null,
+      providerPaymentOrderId: null,
+      totalPaise: 100_000,
+    };
+    mockPay.findFirst.mockResolvedValue(row);
+    mockPay.findUniqueOrThrow.mockResolvedValue(row);
+    mockPrisma.$transaction.mockImplementationOnce(
+      async (run: (tx: unknown) => unknown) =>
+        run({
+          organizationInvoice: {
+            updateMany: jest.fn(async () => ({ count: 0 })),
+            findUnique: jest.fn(async () => ({
+              status: "PAID",
+              providerPaymentOrderId: null,
+            })),
+          },
+          orgAuditLog: { create: jest.fn() },
+        }),
+    );
+
+    const res = await payInvoice(
+      new NextRequest("https://x.test/api", { method: "POST" }),
+      { params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }) },
+    );
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({ code: "INVOICE_STATE_CHANGED" });
+    expect(mockCreateOrder).toHaveBeenCalledTimes(1);
+    expect(body).not.toHaveProperty("razorpayOrderId");
   });
 });
 

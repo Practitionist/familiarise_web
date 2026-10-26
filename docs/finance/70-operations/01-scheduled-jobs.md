@@ -67,6 +67,17 @@ The tables below were generated from `netlify/functions/cron-tick.mts`, `lib/cro
 | `handle-stuck-payouts`    | every 2 h, even hours at :40 | 5              | 24 s    | yes              | Asks RazorpayX about payouts stuck in `PROCESSING` and retries or fails them.                           |
 | `reconcile-payout-status` | every 2 h, odd hours at :40  | 8              | 24 s    | yes              | Reconciles `PENDING` and `PROCESSING` payouts older than 48 h with RazorpayX in three rotating cohorts. |
 
+#### Retained invoice-order recovery
+
+`reconcile-org-invoice-payments` runs every four hours at :55 (03:55, 07:55,
+11:55, 15:55, 19:55 and 23:55 UTC), selecting at most five stored invoice order
+IDs per run with a 24-second HTTP abort and a fail-closed Postgres lease. It
+uses the canonical invoice settlement transaction; existing relays deliver the
+staged notices. These spare phases preserve every existing cadence and the
+calendar's ten-target bound. Five candidates per slot is at most thirty reads
+per day; measure cohort size and recovery age before treating this as adequate
+capacity. See [worker recovery](../../maintenance/11-worker-recovery.md#invoice-captures-and-uncertain-checkout-state).
+
 #### Calendar windows
 
 | Job (slug)                        | Schedule (UTC)                                                    | Bite (`limit`) | Timeout | Held in DEGRADED | What it does                                                                                                                                                                                                                                               |

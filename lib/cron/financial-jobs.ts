@@ -23,6 +23,7 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "cleanup-abandoned-payments",
   "release-earnings",
   "reconcile-payment-status",
+  "reconcile-org-invoice-payments",
   "sync-payment-earnings",
   "generate-subscription-invoices",
   "settle-invoice-accruals",

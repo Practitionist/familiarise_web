@@ -64,6 +64,24 @@ describe("operational absence checks", () => {
       });
     },
   );
+  it("marks invoice recovery overdue after three missed four-hour slots", () => {
+    const rows = fresh().map((row) =>
+      row.jobName === "reconcile-org-invoice-payments"
+        ? { ...row, endedAt: new Date(now.getTime() - 12 * 60 * 60 * 1000) }
+        : row,
+    );
+    expect(assessOperationalCompletions(rows, now).healthy).toBe(true);
+    const report = assessOperationalCompletions(
+      rows,
+      new Date(now.getTime() + 1),
+    );
+    expect(
+      report.jobs.find(
+        (job) => job.jobName === "reconcile-org-invoice-payments",
+      ),
+    ).toMatchObject({ overdue: true, maxAgeMinutes: 720 });
+  });
+
   it("one healthy job cannot conceal stopped required capabilities", () => {
     const report = assessOperationalCompletions(
       [{ jobName: "retry-failed-emails", endedAt: now }],

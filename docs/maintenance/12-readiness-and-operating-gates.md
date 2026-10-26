@@ -1,0 +1,110 @@
+# Readiness and operating gates
+
+Production readiness is evidence about a deployed system under normal operation
+and failure. Source inspection, mocked tests, merged code, deployed code and
+verified effects are distinct states. This guide defines the evidence needed for
+the infrastructure and maintenance machinery; the [worker contracts](11-worker-recovery.md)
+and [generated inventory](04-cron-jobs-reference.md) define its implementation.
+
+## Evidence required before declaring a capability ready
+
+| Gate                 | Evidence                                                                                 | Insufficient substitute                                  |
+| -------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Source correctness   | Domain and mock-dependent suites, typecheck and review of actual failure paths           | A test of only the edited happy path                     |
+| Schema compatibility | Exact reviewed additive SQL, catalog read-back and required-schema check                 | Generated Prisma client or a whole-database drift script |
+| Deployment           | The active host's published SHA and runtime configuration                                | A merged dev SHA or a preview deployment                 |
+| Automatic execution  | Environment-scoped successful core completions under the owning clock                    | A cron expression, heartbeat or 202 admission            |
+| Business recovery    | Real expected effects and retained obligations after a representative failure            | No-op success or counters alone                          |
+| Human notification   | A controlled absence alert received by the responsible operator, followed by restoration | Routing configuration or SDK capture assertions          |
+| Capacity             | Arrival rate, backlog age and recovery throughput within agreed limits                   | A row limit, ten dispatches or an invocation timeout     |
+| Disaster recovery    | Restored data with reconciliation and a tested host failback                             | A backup enabled toggle or a second build target         |
+
+Store dated execution receipts and current owners in the operational tracker.
+Do not put customer identities, credentials or storage bearer URLs into source
+or public evidence. A readiness score is an estimate, not a substitute for any
+of these acceptance gates.
+
+## Priority order
+
+| Priority | Core machinery                              | Acceptance                                                                                                                                                      |
+| -------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0       | Scheduler absence detection                 | An enabled monitor accepts production check-ins; a controlled missed-run exercise reaches the operator, then normal monitoring is restored                      |
+| P1       | Capture, refund and durable worker recovery | Money transitions and obligations commit together; unknown gateway results remain recoverable; interrupted workers retry without publishing a successor's state |
+| P1       | Storage deletion and retention safety       | Exact ownership survives parent deletion; ambiguous provider responses retain deletion responsibility; concurrent refreshes survive housekeeping                |
+| P1       | Environment isolation                       | Production data and vendor targets are separated from development and previews; deployed fingerprints prove separation                                          |
+| P1       | Required automatic jobs                     | Every required capability has a working clock and completion/age evidence; migrate remaining blocked batch work with bounded execution and one scheduler        |
+| P2       | Throughput and recovery capacity            | Representative duration, connection pressure, oldest obligation age and outage catch-up satisfy the operating budget                                            |
+| P2       | Monitoring quality and restore/failback     | Per-capability absence and backlog signals complement shared activity; restore and standby procedures are exercised                                             |
+
+A P0 finding requires production evidence. A missing acceptance receipt is a
+readiness gap, not proof that a customer incident occurred. Keep optional
+features behind core recovery, safety and operator visibility.
+
+## Scheduler capacity and completion signals
+
+`lib/cron/schedule.ts` is the configured source for intervals, UTC phases,
+calendar windows, batch limits and HTTP aborts. The calendar test checks every
+five-minute tick over 400 days against the ten-target design bound. There are
+already fully occupied hours. Adding a job needs a proven slot or an explicit
+capacity change; arbitrarily increasing the cap is not capacity evidence.
+
+The ticker counts admission separately for background adapters. A core's
+Postgres lease and its domain claims protect different scopes. An expired
+lease, a platform timeout or an HTTP disconnect does not cancel a vendor call.
+Different jobs still require compatible row-level CAS and durable obligations.
+Fleet selection may fail open, so it cannot supply exactly-once effects.
+
+`/api/health/jobs` checks successful completions for the current configured
+environment. Export and stale-request processing have forty-five-minute
+completion budgets. Retained-order invoice recovery has a twelve-hour budget
+for its four-hour cadence. These thresholds detect stopped capabilities; they
+do not establish the age of an individual queued obligation. Invoice recovery
+reads at most five candidates per slot, so cohort size and lost order pointers
+remain explicit capacity and coverage concerns.
+
+The public dependency health endpoint and shared heartbeat remain useful
+activity signals. One healthy job can refresh activity while another stops.
+Configure an independent per-capability absence probe and ensure the alert path
+works when the application ticker, database or primary telemetry pipeline fails.
+A disabled Sentry cron monitor rejects check-ins; sending them does not silently
+enable it. See [Sentry's monitor contract](https://docs.sentry.io/api/crons/update-a-monitor/).
+
+## Safe release and verification
+
+1. Refresh the branch against current dev and verify all affected domain suites,
+   including every suite mocking changed modules. Preserve independent PR bases.
+2. Have the release owner apply only reviewed schema prerequisites and confirm
+   the catalog. Quiesce old writers when backfilling storage ownership. Preserve
+   retained obligations during rollback; never resume an incompatible writer.
+3. Use the established release flow and confirm the active host's published
+   source. Keep Stream production-effect verification with its domain owner.
+4. Observe successful automatic core completions and inspect the actual business
+   effects. Exercise a representative interruption without creating live money
+   movements or deleting customer data as a test.
+5. Confirm missed-run notification receipt, recovery and restored monitor state.
+   Record the actual result instead of marking a runbook as operational proof.
+
+Changes to SQL, Redis, environment state and deployment/merges remain owner
+controlled. Do not operate on the shared database to make an unverified test
+pass. Network-denied Jest validates local logic and mocks, not provider behavior.
+
+## Adapting the architecture elsewhere
+
+Keep one canonical job implementation, a small platform scheduler adapter,
+Postgres leases, transaction-owned obligations, vendor idempotency and independent
+absence monitoring. Match worker durations, pools, upload limits and background
+execution to the new host. A hosting switch must preserve an executable standby
+and a tested failback path. Copy the contracts and failure tests before copying
+cadences: traffic, legal retention, provider behavior and operating ownership
+belong to the receiving service.
+
+## Deprecated & Superseded Approaches
+
+A single percentage, healthy shared heartbeat, passing mock suite or merged PR
+was sometimes treated as overall readiness. Each proves only its own layer;
+retain separate deployment, business-effect, alert and recovery receipts.
+
+Running the same money job from both Actions and a platform scheduler does not
+supply resilience by itself. Leases cannot cancel late effects, and retries
+cannot recover an obligation that was never recorded. Prefer one owning clock
+and durable, replay-safe recovery.

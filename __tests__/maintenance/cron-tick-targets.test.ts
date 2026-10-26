@@ -246,6 +246,20 @@ describe("cron-tick dueTargets cadence", () => {
       );
   });
 
+  it("gives invoice capture recovery six spare slots a day without changing other cadences", () => {
+    const name = "reconcile-org-invoice-payments";
+    const slots = [];
+    for (let minute = 0; minute < 24 * 60; minute += 5) {
+      const time = new Date(Date.UTC(2026, 10, 1, 0, minute));
+      if (dueTargets(time).includes(name)) slots.push(minute);
+    }
+    expect(slots).toEqual([235, 475, 715, 955, 1195, 1435]);
+    expect(targetRequest("https://site.test", name)).toEqual({
+      url: "https://site.test/api/cleanup/reconcile-org-invoice-payments?limit=5",
+      timeoutMs: 24_000,
+    });
+  });
+
   it("never fires more than MAX_TARGETS_PER_TICK on any tick of 400 days, windows included", () => {
     expect(MAX_TARGETS_PER_TICK).toBe(10);
     // 400 days from 2026-11-01 cover every month start, every weekday and every quarter start.

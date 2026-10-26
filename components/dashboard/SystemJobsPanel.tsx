@@ -226,10 +226,17 @@ const SYSTEM_JOBS: SystemJob[] = [
   },
   // Reconciliation
   {
+    id: "reconcile-org-invoice-payments",
+    name: "Recover Invoice Payments",
+    description: "Recover captured invoice orders after missed webhooks",
+    schedule: "Every 4 hours",
+    category: "Reconciliation",
+  },
+  {
     id: "reconcile-payment-status",
     name: "Reconcile Payment Status",
     description: "Query Razorpay for actual status on stale PENDING payments",
-    schedule: "Every 30 minutes",
+    schedule: "Every 15 minutes",
     category: "Reconciliation",
   },
   {

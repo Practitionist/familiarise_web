@@ -1,169 +1,111 @@
-# Maintenance Mode Documentation
+# Infrastructure and maintenance
 
-Familiarise's maintenance mode system provides two-tier protection (DEGRADED and OFFLINE) for planned downtime. It uses Redis for edge-fast reads and Prisma for audit trails, with fail-open design ensuring the site stays up if Redis becomes unreachable.
+The application keeps business obligations in Postgres and uses scheduled workers
+to advance them. The ticker admits bounded work; leases, conditional updates,
+transactional outboxes and vendor idempotency protect retries. Recent scheduler
+activity alone does not establish successful recovery or human alert delivery.
 
-## Quick Reference
+Start with the [scheduler and reconciliation reference](10-cron-and-reconciliation-reference.md),
+[worker recovery contracts](11-worker-recovery.md) and
+[readiness and operating gates](12-readiness-and-operating-gates.md).
+The [generated inventory](04-cron-jobs-reference.md) derives job ownership,
+entrypoints, bounds and maintenance gates from source; regenerate it with
+`npm run cron:reference` after catalog or registry changes.
 
-| Mode         | User Experience                 | Reads | Writes    | Webhooks     | Cron Jobs | BetterStack           |
-| ------------ | ------------------------------- | ----- | --------- | ------------ | --------- | --------------------- |
-| **OFF**      | Normal operation                | Yes   | Yes       | Yes          | Yes       | No incident           |
-| **DEGRADED** | Warning banner, site functional | Yes   | Yes (gap) | Yes          | Yes (gap) | No incident           |
-| **OFFLINE**  | Full maintenance page           | No    | No        | Yes (exempt) | Yes (gap) | Auto-creates incident |
+## Runtime responsibilities
 
-**Key gaps**: DEGRADED does not block writes. Cron jobs bypass middleware entirely in all modes.
-
-## Table of Contents
-
-0. [BetterStack Setup Guide](./00-betterstack-setup.md) -- **Start here**: full from-scratch setup: account, monitors, status page, API token
-1. [Architecture](./01-architecture.md) -- System design, data flow, key files
-2. [DEGRADED vs OFFLINE](./02-degraded-vs-offline.md) -- What each phase blocks (with tables)
-3. [Business Risks](./03-business-risks.md) -- Money-at-stake analysis
-4. [Cron Jobs Reference](./04-cron-jobs-reference.md) -- Job catalogue: all 73 scheduled jobs, entrypoints, lock modes, schedules, what each mutates
-5. [Webhook Behavior](./05-webhook-behavior.md) -- Payment webhook handling during downtime
-6. [Pre-Maintenance Checklist](./06-pre-maintenance-checklist.md) -- Step-by-step operational checklist
-7. [Post-Maintenance Recovery](./07-post-maintenance-recovery.md) -- Verification and reconciliation steps
-8. [SDK Update Guide](./08-sdk-update-guide.md) -- Detailed per-package update guide
-9. [Future Improvements](./09-future-improvements.md) -- Planned code changes for better protection
-10. [Cron, Sidecars and Reconciliation Reference](./10-cron-and-reconciliation-reference.md) -- Scheduling mechanics: response codes, `?limit=`, lease durations, phase staggering, the Postgres sidecars, reconciler rules, known doc-vs-code drift. Pairs with [04](./04-cron-jobs-reference.md)
-
----
-
-## End-to-End Cron, Maintenance & Outbox Architecture (Old vs. New Double ASCII Diagram)
-
-### 1.1 Pre-Hardening Architecture (With All 10 Audited Production Flaws Highlighted)
-
-```text
-+===================================================================================================+
-|                        PRODUCERS (API Routes, Webhooks, Server Actions, Jobs)                     |
-+===================================================================================================+
-   |                                                |
-   | (~10% Money/Booking paths pass `tx`)           | (~90% Lifecycle/Booking/Org paths omit `tx`)
-   v                                                v
-+------------------------------------------------+ +------------------------------------------------+
-| INSIDE `Serializable` $transaction (PG_POOL=1) | | OUTSIDE $transaction (Post-Commit Dual Write)  |
-|  [FLAW #1] Runs 2x React Email SSR (`render` + | |  [FLAW #2] Crash/freeze after DB commit loses  |
-|  `plainText`) + sequential User/Suppression    | |  the email & Novu bell completely.             |
-|  queries while holding Serializable locks!     | +------------------------------------------------+
-+------------------------------------------------+                          |
-   |                                                                        |
-   +-----------------------------------+------------------------------------+
-                                       |
-         +-----------------------------+-----------------------------+
-         |                                                           |
-         v (Email Path: `lib/email/deliver.ts`)                      v (In-App Bell Path: `lib/novu/outbox.ts`)
-+--------------------------------------------------+       +--------------------------------------------------+
-| Postgres: `FailedEmail` & `FailedEmailBatch`     |       | Postgres: `NotificationOutbox`                   |
-| - Inserts `status: PENDING, nextRetryAt: NOW()`  |       | - Upserts `status: PENDING, nextRetryAt: NOW()`  |
-| - [FLAW #3] NO inline lease grace window!        |       | - [FLAW #3] NO inline lease grace window!        |
-| - [FLAW #4] `headers` (`List-Unsubscribe`) NOT   |       | - [FLAW #6] `deriveTransactionId` misses 5 keys  |
-|   rebuilt on retry -> stripped on relay replay!  |       |   (`invoiceNumber`, `exportId`, `providerId`,    |
-| - [FLAW #5] Never pruned! Full HTML/text bodies  |       |   `feedbackId`, `streamCallId`) & omits fallback |
-|   for every `SENT` email accumulate forever!     |       |   to `row.id` when `transactionId` is null!      |
-+--------------------------------------------------+       +--------------------------------------------------+
-         |                           |                               |                           |
-         | Inline Fast-Path (3-5s)   | Relay (Every 15m, limit=20)   | Inline Fast-Path (5s)     | Relay (Every 5m, limit=20)
-         | [RACE CONDITION!]         | [6s timeout in cron-tick!]    | [RACE CONDITION!]         | [6s timeout in cron-tick!]
-         +-------------+-------------+                               +-------------+-------------+
-                       |                                                           |
-                       v                                                           v
-+--------------------------------------------------+       +--------------------------------------------------+
-| Resend API (`POST /emails`, `/emails/batch`)     |       | Novu Cloud API (16 Multiplexed Workflow Families)|
-| - [FLAW #7] `idempotencyKeyFor()` hashes         |       | - [FLAW #8] `syncSubscriber` (on dashboard mount)|
-|   `to + subject + html` instead of `row.id`!     |       |   & `updateSubscriberPreferences` overwrite      |
-|   Resend caches keys 24h -> SILENTLY DROPS any   |       |   disjoint keys in `subscriber.data`, wiping out |
-|   2nd identical email sent within 24 hours!      |       |   muted preferences on every dashboard load!     |
-| - [FLAW #9] Exhausting 5 transient attempts ->   |       | - [FLAW #10] All 18 `ORG_*` workflows omit       |
-|   `DEAD_LETTER` emits ZERO Sentry error alerts!  |       |   `NotificationScope` (`organizationId`) -> org  |
-|   `NovuError.body` echoes PII to Sentry!         |       |   alerts NEVER show under Org tab in `<Inbox />`!|
-+--------------------------------------------------+       +--------------------------------------------------+
-
-+===================================================================================================+
-|                     CRON & MAINTENANCE INFRASTRUCTURE (Post-`c4e85c003` State)                    |
-+===================================================================================================+
-  Netlify `cron-tick.mts` (*/5 * * * *)                      GitHub Actions (42 Scheduled Workflows)
-  - Uses `minute % every < 5` (ZERO stagger):                - `c4e85c003` deleted 17 GHA backstop workflows
-    * `:00` & `:30` -> fires ALL 18/19 targets at once!        for ticker jobs without raising ticker timeouts!
-    * `:15` & `:45` -> fires 16/17 targets at once!          - `cron-heartbeat.yml` runs 1x/day at 04:40 UTC:
-    * `:05, :25, :35, :55` -> fires ZERO targets (33% idle!)   ONLY writer of `redis.set("cron:heartbeat:last")`!
-  - `keep-warm.mts` only warms 3 instances -> 15+ cold       - `/api/health` checks `cron:heartbeat:last` with
-    starts stampede PgBouncer & hit 6s abort ceiling!          6h threshold -> `cron.stale: true` 18h/day!
-  - Warm container bug: 1 failed tick loads `@sentry/node`   - `withCronLock` in Postgres (`SystemJobExecution`)
-    and patches global `fetch` for all future warm ticks!      has NO partial unique index on `(jobName) WHERE
-                                                               status = 'RUNNING'` -> P0 TOCTOU lock race!
+```mermaid
+flowchart TD
+  A[API and webhook producers] --> B[Postgres domain state and durable outboxes]
+  C[Active platform ticker] --> D[Authenticated cleanup registry]
+  E[Authenticated operator run door] --> F[Canonical job core]
+  D --> F
+  F --> G[Postgres lease and domain CAS]
+  G --> B
+  B --> H[Bounded vendor delivery and reconciliation]
+  H --> B
+  B --> I[Environment-scoped completion health]
+  C --> J[Scheduler check-ins]
+  I --> K[Independent monitor and operator alert]
+  J --> K
 ```
 
-### 1.2 Target Production Architecture (Improvised, Decoupled & Hardened)
+There is one active operational scheduler, selected by
+`ops:active_cron_platform`. The fleet selection fails open when missing or
+unreadable, so domain correctness cannot depend on that switch alone. Keep
+Netlify's standby configuration and adapters buildable. Recording background
+adapters require Netlify as the active cron host until an equivalent execution
+target is supplied; Stream's domain documentation owns those details.
 
-```text
-+===================================================================================================+
-|                     PRODUCERS (API Routes, Webhooks, Server Actions, Jobs)                        |
-+===================================================================================================+
-   |
-   | 1. Pre-render React Email OUTSIDE Serializable $transaction (single-pass `render` + `toPlainText(html)`)
-   | 2. Evaluate all User & Org NotificationPreferences in Postgres/App BEFORE staging (Single Source of Truth)
-   | 3. Inside `$transaction(tx)`: insert lightweight Outbox row with:
-   |    - `status: "PENDING"`, `nextRetryAt: NOW() + 60s` (inline lease grace window — prevents relay race!)
-   |    - Reconstructed RFC 8058 `List-Unsubscribe` + `List-Unsubscribe-Post` headers on relay retry
-   |    - `transactionId: derivedKey ?? row.id` (guaranteed idempotency key for every single/org workflow)
-   |    - `NotificationScope` (`scope: "org", organizationId`) on all 18 `ORG_*` workflows
-   v
-+---------------------------------------------------------------------------------------------------+
-|                        CONSOLIDATED OUTBOX LAYER (Postgres + Partial Indexes)                     |
-|  1. `FailedEmail` & `FailedEmailBatch` (Resend Email Outbox)                                      |
-|  2. `NotificationOutbox` (Novu In-App Feed Outbox)                                                |
-|  3. `OutboundWebhookDelivery` (Enterprise Customer Webhooks)                                      |
-|  * Bounded concurrency (`CONCURRENCY = 5`) + multi-recipient `resend.batch.send` (up to 100/call) |
-|  * Outbox-row-scoped `Idempotency-Key: <EMAIL_TYPE>/<row.id>` (never drops legitimate repeats)    |
-|  * Automated retention pruning in `prune-system-job-executions`:                                  |
-|    - Null `htmlBody`/`textBody` on `SENT` emails after 7d; delete terminal outbox rows after 30d  |
-+---------------------------------------------------------------------------------------------------+
-   |
-   v
-+===================================================================================================+
-|                  STAGGERED CRON & LOCKING ENGINE (Netlify Ticker + GitHub Actions)                |
-+===================================================================================================+
-  Netlify `cron-tick.mts` (Every 5m, Phase-Staggered):
-  - Slot `:00, :15, :30, :45` (6 targets) | Slot `:05, :20, :35, :50` (6 targets) | Slot `:10, :25, :40, :55` (6 targets)
-  - Max 10 concurrent targets per tick (pinned by `__tests__/maintenance/cron-tick-targets.test.ts`); 0% idle ticks!
-  - Per-target timeout raised from 6s -> 15s; `tracePropagationTargets: []` prevents warm container fetch pollution.
-  - Atomic Postgres lock: `CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key" ON "SystemJobExecution"("jobName") WHERE status = 'RUNNING'`
-  - `/api/health` queries `pickFresherTimestamp(redisHeartbeat, SystemJobExecution.startedAt)` -> 0% false-stale rate!
+GitHub Actions owns repository CI, security and release checks, plus the
+remaining configured non-money batch jobs. Those batch jobs need actual execution
+and budget evidence. A configured workflow or a passing HTTP admission does not
+prove that its business effect occurred. Migrate ownership in one reviewed
+cutover; do not schedule the same core on both platforms by default.
 
-+===================================================================================================+
-|                CONSOLIDATED SENTRY v10 OBSERVABILITY (Errors + Traces + Logs + Metrics)           |
-+===================================================================================================+
-  - `tracesSampler`: 0% `/api/health` & `/_next`, 2% `/api/cleanup/*`, 10% default, 50% `/api/webhooks/*` & `/api/payments/*`
-  - `beforeSend`, `beforeSendTransaction`, `beforeSendSpan`, `beforeSendLog`: unified `sentry-scrubber.ts`
-    (strips `NovuError.body`, regex-redacts emails/tokens in messages/breadcrumbs, strips `culture.timezone`)
-  - `Sentry.startSpan({ op: "queue.process" })` + `Sentry.metrics.count/gauge` on email & Novu drains
-  - P0 Alerting: `level: "error"` (`expected: false`) whenever `FailedEmail` or `NotificationOutbox` hits `DEAD_LETTER`
-```
+## Maintenance admission
 
----
+| State                        | User routes                                                         | Cron and background work                                        |
+| ---------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------- |
+| OFF                          | Normal authenticated and authorized behavior                        | Normal job admission                                            |
+| DEGRADED                     | Reads continue; the middleware blocks its configured mutation paths | Financial jobs are held; permitted non-money jobs continue      |
+| OFFLINE                      | Non-exempt requests receive a maintenance response                  | Guarded jobs are held; exemptions remain explicit               |
+| Unreadable maintenance state | Sensitive paths fail closed according to the edge policy            | Maintenance guards refuse admission with an unavailable outcome |
 
-## Emergency Contacts
+Webhooks, health and control surfaces have deliberate exemptions; consult the
+[phase rules](02-degraded-vs-offline.md) and [webhook behavior](05-webhook-behavior.md).
+The edge policy and cron guard are separate gates. Starting maintenance does not
+cancel an invocation or vendor request already in flight. Admin bypass cookies
+are signed, short-lived grants, not a raw-secret cookie. Use the authenticated
+maintenance controls and the checklist before any schema operation.
 
-| Role           | Contact | Notes                                        |
-| -------------- | ------- | -------------------------------------------- |
-| Platform Admin | _TBD_   | Primary escalation for maintenance decisions |
-| DevOps Lead    | _TBD_   | Infrastructure and deployment issues         |
-| Payment Ops    | _TBD_   | Payment reconciliation and refund issues     |
+Cron mutual exclusion uses `SystemJobExecution` in Postgres, not Redis. A
+fail-closed core never runs when lease acquisition is unavailable. Different
+jobs can still touch the same domain row, so each winning transition must retain
+its CAS predicate and commit the obligations it creates on the transaction
+client. With `PG_POOL_MAX=1`, a global Prisma query inside that transaction can
+deadlock. A timeout is not vendor cancellation; use durable obligations and
+stable retry identities to recover uncertain effects.
 
-## Quick Commands
+## Signals and recovery
 
-**Start DEGRADED mode** (admin dashboard):
-`Dashboard > Maintenance > Start Degraded Mode`
+`GET /api/health` describes dependency and maintenance observations. Its shared
+heartbeat is activity evidence and can be refreshed by other jobs; it is not a
+per-capability completion guarantee. Authenticated `GET /api/health/jobs` checks
+successful completions in the configured deployment environment, with a separate
+budget for each required capability. Neither response proves backlog drain.
 
-**Start OFFLINE mode** (admin dashboard):
-`Dashboard > Maintenance > Start Offline Mode`
+Sentry scheduler check-ins and independent absence checks must reach a human
+when work stops. Follow the [monitor setup guide](00-betterstack-setup.md) and
+[Sentry evidence guide](../observability/sentry/07-verifying-end-to-end.md)
+for monitor configuration and the evidence needed from a controlled exercise. Retain evidence of actual alert receipt,
+restoration, bounded backlog recovery and backup/failback exercises. Never stop
+production recovery merely to manufacture an alert.
 
-**Bypass during maintenance** (for admin testing):
+## Domain guides
 
-- Header: `x-maintenance-bypass: <secret>`
-- Cookie: `maintenance_bypass=<secret>`
+0. [BetterStack setup](00-betterstack-setup.md)
+1. [Maintenance architecture](01-architecture.md)
+2. [DEGRADED and OFFLINE](02-degraded-vs-offline.md)
+3. [Business risks](03-business-risks.md)
+4. [Generated job inventory](04-cron-jobs-reference.md)
+5. [Webhook behavior](05-webhook-behavior.md)
+6. [Pre-maintenance checklist](06-pre-maintenance-checklist.md)
+7. [Post-maintenance recovery](07-post-maintenance-recovery.md)
+8. [SDK updates](08-sdk-update-guide.md)
+9. [Future improvements](09-future-improvements.md)
+10. [Scheduler, sidecars and reconciliation](10-cron-and-reconciliation-reference.md)
+11. [Worker recovery and durable obligations](11-worker-recovery.md)
+12. [Readiness and operating gates](12-readiness-and-operating-gates.md)
 
-**Health check**: `GET /api/health` -- returns maintenance state + BetterStack connectivity
+## Deprecated & Superseded Approaches
 
-```json
-{ "status": "healthy", "maintenance": { "phase": "OFF" }, "betterstack": { "configured": true, "reachable": true, "monitors": [...] } }
-```
+Older guidance treated DEGRADED as a banner only and claimed cron work bypassed
+all maintenance protection. Current middleware and job guards enforce distinct
+admission policies; neither cancels work already admitted.
+
+Historical diagrams also described a shared heartbeat as eliminating false
+staleness, fixed-size scheduler groups as universal, and proposed delivery changes
+as fully deployed. Use the source-derived roster, environment-scoped capability
+checks and operating evidence instead. Redis cron locks, raw-secret bypass
+cookies and a second scheduler as a correctness guarantee are superseded.
