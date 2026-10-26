@@ -539,6 +539,7 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
         })),
       };
       db.__tx.creditNote = { groupBy: jest.fn(async () => []) };
+      db.__tx.ledgerTransaction = { findUnique: jest.fn(async () => null) };
       db.__tx.membership = { findMany: jest.fn(async () => []) };
       db.__tx.overageEvent = {
         updateMany: jest.fn(async () => ({ count: 0 })),
