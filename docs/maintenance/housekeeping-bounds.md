@@ -29,6 +29,11 @@ Tests cover selected-page bounds, refreshed-row preservation, replay eligibility
 
 The auth-token and webhook phases share the bounded delete-page executor in `lib/cron/run-deadline.ts`. Callers retain their eligibility predicates and error labels. A continuation-probe failure preserves committed deletion counts and visible remaining work.
 
+Worktrees use the canonical shared dependencies, including the generated Prisma
+client. Regenerate from the checked branch’s schema before typechecking when
+model sets differ, with one compiler at a time. This updates local types only;
+the shared database still requires its separate owner-reviewed rollout.
+
 ## Deprecated & Superseded Approaches
 
 These workers formerly used unbounded deleteMany/groupBy scans, and onboarding expiry lived inline in the registry. The canonical onboarding core now owns both its bound and lease. Omitting a limit no longer requests an unlimited backlog. An execution lease alone was never a substitute for the final eligibility predicate or atomic audit evidence.
