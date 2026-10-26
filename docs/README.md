@@ -251,6 +251,7 @@ strategy documents to the individual slow-query investigations.
 
 How errors, findings and job failures reach a human. The Sentry set records the one project and its DSNs, the reporting conventions that keep modelled refusals out of the fault list, the GitHub Actions failure sink and the day it started delivering, and the triage runbook that turns a sweep into decisions.
 
+- [three-layers.md](./observability/three-layers.md) - Sentry for failures, Better Stack for jobs that did not run, and the entity trace and job run metrics for what happened to one payment, with a worked missing-refund trace
 - [sentry/01-setup-and-configuration.md](./observability/sentry/01-setup-and-configuration.md) - The project, the two DSN variables and who reads each, the SDK files and knobs, the source-map token history
 - [sentry/02-conventions.md](./observability/sentry/02-conventions.md) - `expected:true` for modelled outcomes, findings as messages, the tags that carry meaning, SystemEvent versus Sentry, what an issue status means
 - [sentry/03-actions-failure-sink.md](./observability/sentry/03-actions-failure-sink.md) - `notify-ops-failure.sh`, the envelope endpoint, the dead DSN that silenced it for three weeks, how to tell it is working
