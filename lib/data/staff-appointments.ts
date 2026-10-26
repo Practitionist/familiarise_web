@@ -275,6 +275,7 @@ export async function getStaffAppointments(
     issuesCount,
   ] = await Promise.all([
     prisma.appointment.findMany({
+      relationLoadStrategy: "join",
       where: listWhere,
       include: {
         // #1486 / #1527 — read-only: a reschedule still waiting on a party.
