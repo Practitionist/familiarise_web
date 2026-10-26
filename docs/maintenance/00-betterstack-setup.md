@@ -503,6 +503,27 @@ updates. If that operation is unavailable, use the documented API with a valid
 scoped credential or an authenticated operator session. Record an access failure
 as pending work; a saved alert cannot compensate for a disabled monitor.
 
+### Email delivery timing
+
+Familiarise's approved project policy is `digestsMinDelay: 60` and
+`digestsMaxDelay: 60` seconds. Read these fields from the project settings API
+before a drill. They apply to all issue-alert email in this Sentry project;
+changing them requires the project owner's decision. The alert's 30-minute
+repeat throttle is a separate setting and remains in force.
+
+A short incident can recover before a delayed email digest is built. Sentry's
+published digest implementation excludes resolved issues; an accepted check-in,
+created issue or workflow trigger therefore does not establish email delivery.
+This is a diagnostic possibility, not access to Sentry's internal delivery logs.
+Verify the actual received message and its issue identity, including a digest's
+body, rather than substituting a separate test notification or application error.
+
+Before repeating a drill, inspect the alert's `lastTriggered` time and repeat
+interval. A regression of the same issue inside that interval may be throttled.
+Wait for an ordinary check-in after the interval before starting another bounded
+drill; do not silently remove the production throttle. Keep the exclusive
+configuration window long enough to include the watchdog's restoration deadline.
+
 ### Prove a missed-run alert reaches a human
 
 1. Observe an ordinary production check-in accepted by Sentry. Record its time,
@@ -556,6 +577,13 @@ as pending work; a saved alert cannot compensate for a disabled monitor.
    temporary environment; a separate environment would not prove the
    production-filtered route and would keep missing after its sender stopped.
 
+An API config edit sets Sentry's `isUpserting` marker to false; a later SDK/HTTP
+configuration upsert sets it true again. This is vendor-managed runtime metadata,
+not a writable restoration field. Verify normal scheduling/identity/mute settings
+immediately, then observe the next ordinary check-in and its configuration upsert.
+Restore only the drill's temporary fields; retain an owner-approved permanent
+email-delivery policy rather than reverting it to a previously superseded value.
+
 This evidence closes the ticker missed-run gate only. Keep the ingest canary's
 independent email path and the per-capability completion probe: a Sentry outage
 and an individual stopped worker have different detection requirements.
@@ -563,3 +591,7 @@ and an individual stopped worker have different detection requirements.
 References: [Sentry HTTP check-ins and alert routing](https://docs.sentry.io/product/monitors-and-alerts/monitors/crons/getting-started/http/),
 [cron-monitor update API](https://docs.sentry.io/api/crons/update-a-monitor/),
 and [the independent ingest canary](../observability/sentry/06-ingest-canary.md).
+Email behavior and supported delay bounds:
+[digest construction](https://github.com/getsentry/sentry/blob/master/src/sentry/digests/notifications.py),
+[project settings validation](https://github.com/getsentry/sentry/blob/master/src/sentry/core/endpoints/project_details.py),
+and [monitor update semantics](https://github.com/getsentry/sentry/blob/master/src/sentry/monitors/validators.py).

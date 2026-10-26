@@ -129,6 +129,16 @@ Record unavailable cron-update access as pending; alert-write access alone does
 not enable the cron source. See the
 [ticker missed-run runbook](../../../docs/maintenance/00-betterstack-setup.md#ticker-missed-run-alerts).
 
+Check project email digest timing as well as the alert route. Familiarise's
+owner-approved minimum/maximum is 60/60 seconds; these are project-wide email
+settings, separate from the cron alert's 30-minute repeat throttle. Sentry's
+published digest path excludes resolved issues, so a brief incident can disappear
+before an email is built. A successful test notification proves only that test
+path. Verify receipt of the actual missed-check-in issue, wait out its repeat
+interval before another drill, and keep the watchdog deadline inside the reserved
+operator window. Treat `isUpserting` as runtime metadata; do not send it as a
+restoration field or mistake its manual-edit transition for configuration drift.
+
 `GET /api/health/jobs` is a bearer-protected read-only capability freshness probe.
 It returns 503 for missing/overdue COMPLETED evidence or an unreadable history,
 using `endedAt` and actual core job names. Required capabilities/SLOs live in
