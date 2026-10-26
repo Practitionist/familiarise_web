@@ -18,7 +18,7 @@ Netlify distinguishes legacy request billing from credit-based compute and web-r
 
 ## 3. Exposure in this repo
 
-- `netlify/functions/cron-tick.mts` fires every five minutes (`*/5 * * * *`), about 8,640 ticks a month, each fanning out to due targets in `lib/cron/schedule.ts`. Cadence tests bound planned waves to `MAX_TARGETS_PER_TICK=10`; this is not runtime truncation or a worker concurrency queue. It answers 200 regardless of individual target results. Use completed capabilities and the structured failure buckets for health.
+- `netlify/functions/cron-tick.mts` fires every five minutes (`*/5 * * * *`), about 8,640 ticks a month, each fanning out to due targets in `lib/cron/schedule.ts`. Cadence tests bound planned waves to `MAX_TARGETS_PER_TICK=10`. If the due wave exceeds that ceiling, `dueTargets` omits `reconcile-ledgers` for that tick and retains the other targets. This specific ledger deferral is not a general truncation or worker concurrency queue. It answers 200 regardless of individual target results. Use completed capabilities and the structured failure buckets for health.
 - `next.config.mjs` sets `experimental.preloadEntriesOnStart: false` and `experimental.appDocumentPreloading: false`; turning either on makes `NextNodeServer` load route entries on every cold container (20 to 34 s of GB-seconds and 504 timeouts). `__tests__/lib/next-config-preload.test.ts` pins this.
 - A prior memory increase did not resolve the entry-preloading stall. Changing allocation needs new latency measurements and account-specific pricing; usage growth alone does not establish the invoice delta.
 - `app/page.tsx` uses `revalidate = 3600`, not `force-dynamic`, so the CDN serves marketing traffic.

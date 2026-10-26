@@ -32,16 +32,18 @@ Postgres job leases, domain claims/CAS and external idempotency keys remain nece
 
 Confirm the standby SHA, certificate, auth, application health and database reachability using read-only checks. Inspect whether the failed primary is still running workers. Disable its automatic trigger through that platform's control plane when reachable; keep the old host's in-flight work visible in execution history.
 
-Read the current scheduler preference using an authenticated Upstash REST GET. Do not print credentials or place them in a URL. The following commands are operator actions for an authorized incident, not automatic maintenance steps.
+Read the current scheduler preference using an authenticated Upstash REST GET. Normalize a trailing slash before appending the command path, as described by the [REST API semantics](https://upstash.com/docs/redis/features/restapi#api-semantics). Do not print credentials or place them in a URL. The following commands are operator actions for an authorized incident, not automatic maintenance steps.
 
 ```bash
-curl --fail-with-body --silent --show-error   "${UPSTASH_REDIS_REST_URL}/get/ops%3Aactive_cron_platform"   -H "Authorization: Bearer ${UPSTASH_REDIS_REST_TOKEN}"
+OPS_REDIS_BASE="${UPSTASH_REDIS_REST_URL%/}"
+curl --fail-with-body --silent --show-error   "${OPS_REDIS_BASE}/get/ops%3Aactive_cron_platform"   -H "Authorization: Bearer ${UPSTASH_REDIS_REST_TOKEN}"
 ```
 
 ### 2. Select Netlify for subsequent ticks
 
 ```bash
-curl --fail-with-body --silent --show-error -X POST   "${UPSTASH_REDIS_REST_URL}/set/ops%3Aactive_cron_platform/netlify"   -H "Authorization: Bearer ${UPSTASH_REDIS_REST_TOKEN}"
+OPS_REDIS_BASE="${UPSTASH_REDIS_REST_URL%/}"
+curl --fail-with-body --silent --show-error -X POST   "${OPS_REDIS_BASE}/set/ops%3Aactive_cron_platform/netlify"   -H "Authorization: Bearer ${UPSTASH_REDIS_REST_TOKEN}"
 ```
 
 Require an OK response and read back the key. Then inspect Netlify tick logs for the expected selection and target results. A failed write or read is an ambiguous handoff; because Netlify fails open, it may already be dispatching. Do not infer that the old host stopped.

@@ -119,10 +119,13 @@ sequenceDiagram
 ```
 
 > **Trade-off — async job + expiring URL, not a synchronous download.**
-> The bundle is an 8-entity, full-org snapshot (members, contracts,
-> programs, invoices, earnings, payouts, audit log). Streaming that
-> inline off the `POST` would hold a request open for an unbounded build
-> and pin financial PII in the response buffer. Instead the worker writes
+> `PEOPLE` exports members, memberships, audit log and the consent-exclusion
+> count; `FINANCE` exports contracts, programs, invoices, earnings and payouts.
+> Both include organization metadata, generation time, schema version and kinds.
+> Only legacy `FULL` includes both sets. The current worker builds the internal
+> org snapshot before selecting the output fields; kind filtering does not
+> bound those internal reads. Streaming the build inline off the `POST` would
+> hold the request open. Instead the worker writes
 > it to object storage behind a **7-day signed URL** (`createSignedUrl`),
 > so the heavy build is off the request path and the PII lives behind a
 > short-lived, revocable link rather than a permanent download route. The
