@@ -40,8 +40,8 @@ redundant, though harmless.
 Non-operator seeded users share one password: `SEED_PASSWORD` env, else the seed
 default (`prisma/seedFiles/1a-create-users.ts`). ADMIN and STAFF accounts use the
 `SEED_OPERATOR_PASSWORD` value from your local `.env`; ask the lead.
-Off production, use a QA operator (`patrick.brown@gmail.com` as ADMIN,
-`maria.brown@gmail.com` as STAFF), which needs no authenticator code; see
+Off production, use a QA operator (`qa-admin-2@qa.familiarise.invalid` as ADMIN,
+`qa-staff-1@qa.familiarise.invalid` as STAFF), which needs no authenticator code; see
 `docs/authentication/staff-onboarding.md` §9.
 
 Seeded org shapes (`prisma/seedFiles/14a-create-organizations.ts`):

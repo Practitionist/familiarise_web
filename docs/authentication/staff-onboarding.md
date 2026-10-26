@@ -250,21 +250,23 @@ The rules the code enforces:
 
 Production enforces 2FA for every operator. On deploy previews, branch deploys and local development, a short list of designated QA operator accounts is let through without a second factor, so back-office QA needs no authenticator:
 
-- **The rule.** `isQaOperatorExemptFrom2fa(user, env)` in `lib/auth/qa-accounts.ts` is true only when the user is `STAFF` or `ADMIN`, their email is one of the exact addresses in `QA_OPERATOR_EMAILS`, and the build-inlined `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is `preview` or `development`. That variable is `production` on the Netlify production context, `preview` on deploy previews and branch deploys, and `development` in the `dev` context and the local `.env`. A missing, empty or unrecognised value enforces 2FA, so a host that forgets to set it fails closed. Netlify's `CONTEXT` is not used because it exists only at build time.
+- **The rule.** `isQaOperatorExemptFrom2fa(user, env)` in `lib/auth/qa-accounts.ts` is true only when the user is `STAFF` or `ADMIN`, their email is one of the exact addresses in `QA_OPERATOR_EMAILS` and is on the reserved `qa.familiarise.invalid` domain, and the build-inlined `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is `preview` or `development`. That variable is `production` on the Netlify production context, `preview` on deploy previews and branch deploys, and `development` in the `dev` context and the local `.env`. A missing, empty or unrecognised value enforces 2FA, so a host that forgets to set it fails closed. Netlify's `CONTEXT` is not used because it exists only at build time.
 - **Why it is so narrow.** Every deploy preview and every local checkout talks to the same production Postgres database, and preview URLs are public. Skipping 2FA for every operator whenever the deployment is not production would let one leaked real-admin password reach the production back office through any preview URL. So a real operator is enforced on every deployment, and a QA account is enforced on production.
 - **Where it applies.** One helper, `needsOperatorTwoFactor`, feeds every gate that confines an unenrolled operator: `requireApiAuth`'s 428 precondition (`lib/auth-helpers.ts`), `requireOperator` and the page guards (`lib/auth-guard.ts`), `getSession()` (`lib/auth-server.ts`), and the auth pages' signed-in redirect (`app/auth/useSignedInRedirect.ts`). `session.create.before` in `lib/auth.ts` logs one `console.info` line per exempted sign-in (user id and environment, no Sentry event).
 - **What does not change.** Sign-in rate limits, the per-account throttle, captcha, the one-hour session cap for an operator without 2FA, and step-up are untouched. Step-up still asks an operator for an authenticator code, so a QA operator who needs a fresh session for a sensitive action signs in again, which counts as fresh for 15 minutes. A QA account that has enrolled 2FA still meets the TOTP challenge, because the exemption only skips enrolment.
 
-The designated accounts are four seeded operators (the live seed of 2026-09-14), none of them enrolled in 2FA. Their passwords are `SEED_OPERATOR_PASSWORD` from the local `.env`; never copy the value into a doc, prompt or PR.
+Every seeded operator lives on `qa.familiarise.invalid`. `.invalid` is a top-level domain reserved by RFC 2606 that never resolves, so no mail is ever delivered there: nobody outside can receive a password reset, a setup link or a lockout email for these accounts, and nobody can register a real inbox that collides with one. The exemption checks the domain as well as the exact address, so a public-mailbox address can never be exempted even if someone adds one to the list. QA signs in with the password alone, `SEED_OPERATOR_PASSWORD` from the local `.env`; never copy the value into a doc, prompt or PR. Because no reset mail can arrive, a forgotten or rotated password is fixed by reseeding or by the owner, not through forgot-password.
 
-| Role  | Account                    |
-| ----- | -------------------------- |
-| ADMIN | `patrick.brown@gmail.com`  |
-| STAFF | `maria.brown@gmail.com`    |
-| STAFF | `nathan.brown@hotmail.com` |
-| STAFF | `natalie.brown@yahoo.com`  |
+Four of the seven seeded operators are exempt and have no 2FA enrolled; the seed (`prisma/seedFiles/1a-create-users.ts`) leaves exactly these unenrolled and pre-enrols the rest.
 
-The list holds exact addresses, not a domain suffix, because the seed uses public mail domains that real operators could share. To add or retire a QA account, edit `QA_OPERATOR_EMAILS` and this table in the same change, and check the live operator list (read-only) first.
+| Role  | Account                             |
+| ----- | ----------------------------------- |
+| ADMIN | `qa-admin-2@qa.familiarise.invalid` |
+| STAFF | `qa-staff-1@qa.familiarise.invalid` |
+| STAFF | `qa-staff-3@qa.familiarise.invalid` |
+| STAFF | `qa-staff-4@qa.familiarise.invalid` |
+
+The other three, `qa-admin-1`, `qa-admin-3` and `qa-staff-2`, keep TOTP and are the accounts to use when testing the 2FA flows themselves. To add or retire a QA account, edit `QA_OPERATOR_EMAILS` and this table in the same change, and check the live operator list (read-only) first.
 
 ## Deprecated & Superseded Approaches
 

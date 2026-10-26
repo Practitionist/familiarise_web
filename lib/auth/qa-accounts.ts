@@ -1,16 +1,26 @@
 import { z } from "zod";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 
-/**
- * Seeded QA operators that sign in without TOTP off production. Exact
- * addresses only: their domains are public mail hosts, so no suffix is safe.
- */
+/** RFC 2606 reserved domain: nothing is delivered there, so no reset can land. */
+export const QA_OPERATOR_DOMAIN = "qa.familiarise.invalid";
+
+/** Seeded QA operators that sign in without TOTP off production. */
 const QA_OPERATOR_EMAILS: ReadonlySet<string> = new Set([
-  "patrick.brown@gmail.com",
-  "maria.brown@gmail.com",
-  "nathan.brown@hotmail.com",
-  "natalie.brown@yahoo.com",
+  `qa-admin-2@${QA_OPERATOR_DOMAIN}`,
+  `qa-staff-1@${QA_OPERATOR_DOMAIN}`,
+  `qa-staff-3@${QA_OPERATOR_DOMAIN}`,
+  `qa-staff-4@${QA_OPERATOR_DOMAIN}`,
 ]);
+
+/** True for a listed QA operator address on the reserved domain. */
+export function isQaOperatorEmail(email: string | null | undefined): boolean {
+  const normalized = email?.trim().toLowerCase();
+  return (
+    !!normalized &&
+    normalized.endsWith(`@${QA_OPERATOR_DOMAIN}`) &&
+    QA_OPERATOR_EMAILS.has(normalized)
+  );
+}
 
 /** The non-production deploy environments; unset or anything else enforces 2FA. */
 const nonProductionEnvironment = z.enum(["preview", "development"]);
@@ -40,8 +50,7 @@ export function isQaOperatorExemptFrom2fa(
   if (!nonProductionEnvironment.safeParse(env.sentryEnvironment).success) {
     return false;
   }
-  const email = user.email?.trim().toLowerCase();
-  return !!email && QA_OPERATOR_EMAILS.has(email);
+  return isQaOperatorEmail(user.email);
 }
 
 /** True when an operator must enrol 2FA before any operator power. */
