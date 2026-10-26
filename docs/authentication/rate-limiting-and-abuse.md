@@ -159,6 +159,11 @@ nothing until the password has matched, and it is the main conversion path.
   sign-up, password-reset requests and code resends stop; sign-in keeps
   working. The auth logger sends at most one Sentry event per message per 5
   minutes per instance.
+- **Hostname check.** In the Netlify production context the plugin's
+  `allowedHostnames` holds the hostname of `BETTER_AUTH_URL`, so a token
+  minted on another site is refused. The plugin matches hostnames exactly, so
+  deploy previews (one hostname per PR) get no hostname check, and Cloudflare's
+  test keys, which report `example.com`, keep working there.
 - **Configuration.** Both `TURNSTILE_SECRET_KEY` and
   `NEXT_PUBLIC_TURNSTILE_SITE_KEY` must be set. With either one unset the
   plugin is not installed and the widget is not rendered, so the two halves
@@ -184,23 +189,36 @@ on deploy previews:
 
 ### Per-account sign-in throttle
 
-`lib/auth/account-throttle.ts` counts wrong passwords per submitted address,
-whichever IP sends them, so distributed credential stuffing against one
-account is bounded by time rather than by the attacker's IP count.
+`lib/auth/account-throttle.ts` slows repeated wrong passwords for one address
+without handing a stranger a way to lock its owner out. It keeps two counters
+per submitted address, each in a fixed 15-minute window:
 
+| Scope                                          | Key                                                  | Waits                                          |
+| ---------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------- |
+| The address, from anywhere                     | `rl:acct:signin:<sha256(lower(trim(email)))>`        | 30 s from 10 failures, 2 min from 20 (the cap) |
+| The address from one network prefix (/24, /48) | `rl:acct:signin:net:<sha256(email + "\|" + prefix)>` | 15 min from 40 failures                        |
+
+- **Why two scopes.** A botnet spread over many networks can only push the
+  address-wide wait to 2 minutes, which keeps credential stuffing to roughly
+  25 guesses per 15 minutes per account. The 15-minute wait lands only on the
+  prefix doing the guessing, so 40 wrong passwords from a stranger's network
+  never lock out the owner signing in from home. The prefix is the trusted
+  client IP from `lib/request-ip.ts`, cut to /24 for IPv4 and /48 for IPv6.
+- **Example.** An attacker on `203.0.113.0/24` sends 40 wrong passwords for
+  `asha@example.com`. Their next try waits 15 minutes. Asha, on
+  `198.51.100.0/24`, waits at most 2 minutes, and a password reset clears
+  both counters for her prefix.
 - **Counting.** An `INVALID_EMAIL_OR_PASSWORD` answer on `/sign-in/email`
-  increments `rl:acct:signin:<sha256(lower(trim(email)))>` in a fixed
-  15-minute window. A successful sign-in, a pending 2FA challenge (the
-  password matched) or a completed password reset deletes the counter.
-- **Escalation.** At 10 failures the next attempt waits 30 seconds, at 20 it
-  waits 2 minutes, and from 40 on it waits 15 minutes. These are growing
-  `Retry-After` windows, never a server-side sleep and never a permanent lock,
-  and password reset keeps working throughout.
-- **The answer.** While a wait is pending, the plugin's `onRequest` answers
-  before the password is hashed, with a 429 that is byte-for-byte BetterAuth's
-  own per-IP 429 (`X-Retry-After`, mirrored into `Retry-After`). The key is the
-  submitted address whether or not an account exists, so the 429 is not an
-  enumeration oracle.
+  increments both counters. A successful sign-in, a pending 2FA challenge (the
+  password matched) or a completed password reset deletes the address-wide
+  counter and the caller's prefix counter. These are growing `Retry-After`
+  windows, never a server-side sleep and never a permanent lock.
+- **The answer.** The gate is a Better Auth `hooks.before` on the parsed
+  body, so JSON and `application/x-www-form-urlencoded` sign-ins are gated
+  alike, before the password is hashed. While a wait is pending it answers a
+  429 that is byte-for-byte BetterAuth's own per-IP 429 (`X-Retry-After`,
+  mirrored into `Retry-After`). The key is the submitted address whether or
+  not an account exists, so the 429 is not an enumeration oracle.
 - **Fails open.** A Redis error or a reply slower than 500 ms lets the attempt
   through and sends a throttled Sentry event (`auth:account-throttle`).
 
@@ -209,9 +227,12 @@ account is bounded by time rather than by the attacker's IP count.
 `deliver()` refuses a send when the recipient has already had 5 mails of the
 same type in the last 24 hours, for the types a stranger can aim at any
 address: `EMAIL_VERIFICATION`, `PASSWORD_RESET` and
-`EXISTING_ACCOUNT_SIGN_UP` (`lib/email/recipient-cap.ts`). The HTTP answer
-does not change, because the auth endpoints already answer the same way
-whether or not a mail went out. See [the email README](../email/README.md).
+`EXISTING_ACCOUNT_SIGN_UP` (`lib/email/recipient-cap.ts`). Staff invitations
+are sent as `STAFF_INVITE` and are not capped. Auth mail is sent after the
+response, so the endpoint cannot say whether a mail was dropped; instead the
+verify-email and forgot-password pages always state the limit ("You can
+request at most 5 codes a day"), which reveals nothing about the address. See
+[the email README](../email/README.md).
 
 ### Enumeration safety
 
@@ -282,6 +303,9 @@ attacker's account. Mitigations:
 - **Per-IP-only auth limits:** every auth budget was keyed on the client IP, so
   a proxy pool got a fresh budget per address. Turnstile, the per-account
   throttle and the per-recipient cap now key on something else.
+- **A 15-minute wait per address from anywhere:** a stranger could re-arm it
+  with 40 wrong passwords and keep the owner out. The long wait now applies
+  per network prefix only.
 - **Hourly mail caps in `lib/auth.ts`** (`rl:mail:{reset|verify}`, 3 per hour)
   and the `existingAccountNoticeLimiter` (2 per hour): replaced by the one
   daily cap inside `deliver()`.

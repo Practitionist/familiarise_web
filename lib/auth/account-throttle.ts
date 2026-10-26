@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { BetterAuthPlugin } from "better-auth";
 import { createAuthMiddleware, isAPIError } from "better-auth/api";
+import { normalizeIP } from "@better-auth/core/utils/ip";
 import { z } from "zod";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 import {
@@ -8,16 +9,21 @@ import {
   STORE_TIMEOUT_MS,
   withTimeout,
 } from "@/lib/auth/rate-limit";
+import { clientIpFrom } from "@/lib/request-ip";
 
 const SIGN_IN_PATH = "/sign-in/email";
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
 
-/** Wrong passwords for one address in the window → seconds the next try waits. */
-export const SIGN_IN_THROTTLE_TIERS = [
-  { failures: 40, waitSeconds: 15 * 60 },
+/**
+ * Wrong passwords for one address in the window → seconds the next try waits.
+ * Per address from anywhere the wait stays short, so a stranger cannot lock a
+ * victim out; the long wait applies only to the network prefix doing the guessing.
+ */
+export const ACCOUNT_TIERS = [
   { failures: 20, waitSeconds: 2 * 60 },
   { failures: 10, waitSeconds: 30 },
 ] as const;
+export const PREFIX_TIERS = [{ failures: 40, waitSeconds: 15 * 60 }] as const;
 
 /** The subset of the Upstash client (and `lib/redis-mock`) this throttle uses. */
 export interface AccountThrottleRedis {
@@ -29,22 +35,41 @@ export interface AccountThrottleRedis {
 
 const SignInBodySchema = z.object({ email: z.string().min(1) });
 
-export function signInWaitSeconds(failures: number): number {
-  return (
-    SIGN_IN_THROTTLE_TIERS.find((tier) => failures >= tier.failures)
-      ?.waitSeconds ?? 0
-  );
+type Tier = { failures: number; waitSeconds: number };
+
+export function waitSecondsFor(
+  tiers: readonly Tier[],
+  failures: number,
+): number {
+  return tiers.find((tier) => failures >= tier.failures)?.waitSeconds ?? 0;
+}
+
+/** The client's /24 (IPv4) or /48 (IPv6), from the header this runtime trusts. */
+export function networkPrefix(headers: Headers | undefined): string {
+  if (!headers) return "unknown_ip";
+  const ip = normalizeIP(clientIpFrom(headers), { ipv6Subnet: 48 });
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip)
+    ? `${ip.split(".").slice(0, 3).join(".")}.0/24`
+    : ip;
 }
 
 // Hashed: Redis is plaintext at rest. Keyed on the submitted address whether
 // or not an account exists, so the 429 says nothing about who is registered.
-function keysFor(email: string): { count: string; lock: string } {
-  const digest = createHash("sha256")
-    .update(email.trim().toLowerCase())
+function keysFor(email: string, prefix: string) {
+  const address = email.trim().toLowerCase();
+  const account = createHash("sha256").update(address).digest("hex");
+  const scoped = createHash("sha256")
+    .update(`${address}|${prefix}`)
     .digest("hex");
   return {
-    count: `rl:acct:signin:${digest}`,
-    lock: `rl:acct:signin:lock:${digest}`,
+    account: {
+      count: `rl:acct:signin:${account}`,
+      lock: `rl:acct:signin:lock:${account}`,
+    },
+    prefix: {
+      count: `rl:acct:signin:net:${scoped}`,
+      lock: `rl:acct:signin:net:lock:${scoped}`,
+    },
   };
 }
 
@@ -63,18 +88,9 @@ function tooManyRequests(retryAfterSeconds: number): Response {
   );
 }
 
-async function submittedEmail(request: Request): Promise<string | null> {
-  try {
-    const body = SignInBodySchema.safeParse(await request.clone().json());
-    return body.success ? body.data.email : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Soft per-account throttle on password sign-in: growing `Retry-After`
- * windows, never a lockout. Fails open when Redis is slow or down.
+ * Soft throttle on password sign-in: growing `Retry-After` windows, never a
+ * lockout a stranger can hold. Fails open when Redis is slow or down.
  */
 export function createSignInThrottle(
   getRedis: () => Promise<AccountThrottleRedis>,
@@ -95,66 +111,95 @@ export function createSignInThrottle(
     }
   }
 
-  async function retryAfterSeconds(email: string): Promise<number | null> {
+  async function retryAfterSeconds(
+    email: string,
+    prefix: string,
+  ): Promise<number | null> {
+    const keys = keysFor(email, prefix);
     const ttlMs = await withRedis(
-      (redis) => redis.pttl(keysFor(email).lock),
+      async (redis) =>
+        Math.max(
+          ...(await Promise.all([
+            redis.pttl(keys.account.lock),
+            redis.pttl(keys.prefix.lock),
+          ])),
+        ),
       -2,
     );
     return ttlMs > 0 ? Math.ceil(ttlMs / 1000) : null;
   }
 
-  async function recordFailure(email: string): Promise<void> {
-    const keys = keysFor(email);
+  async function recordFailure(email: string, prefix: string): Promise<void> {
+    const keys = keysFor(email, prefix);
+    const window = [String(FAILURE_WINDOW_MS)];
     await withRedis(async (redis) => {
-      const failures = Number(
-        await redis.eval(
-          CONSUME_SCRIPT,
-          [keys.count],
-          [String(FAILURE_WINDOW_MS)],
-        ),
+      const [account, scoped] = await Promise.all([
+        redis.eval(CONSUME_SCRIPT, [keys.account.count], window),
+        redis.eval(CONSUME_SCRIPT, [keys.prefix.count], window),
+      ]);
+      const locks: Array<[string, number]> = [
+        [keys.account.lock, waitSecondsFor(ACCOUNT_TIERS, Number(account))],
+        [keys.prefix.lock, waitSecondsFor(PREFIX_TIERS, Number(scoped))],
+      ];
+      await Promise.all(
+        locks
+          .filter(([, wait]) => wait > 0)
+          .map(([key, wait]) => redis.set(key, "1", { px: wait * 1000 })),
       );
-      const wait = signInWaitSeconds(failures);
-      if (wait > 0) await redis.set(keys.lock, "1", { px: wait * 1000 });
     }, undefined);
   }
 
-  /** A successful sign-in or a completed password reset starts the count over. */
-  async function clear(email: string): Promise<void> {
-    const keys = keysFor(email);
-    await withRedis((redis) => redis.del(keys.count, keys.lock), 0);
+  /** A successful sign-in or a completed password reset clears the address and its caller's prefix. */
+  async function clear(email: string, prefix: string): Promise<void> {
+    const keys = keysFor(email, prefix);
+    await withRedis(
+      (redis) =>
+        redis.del(
+          keys.account.count,
+          keys.account.lock,
+          keys.prefix.count,
+          keys.prefix.lock,
+        ),
+      0,
+    );
   }
 
   const plugin = {
     id: "account-sign-in-throttle",
-    // HTTP only: runs before the password is hashed or compared.
-    onRequest: async (request, ctx) => {
-      if (request.method !== "POST") return;
-      const basePath = ctx.options.basePath ?? "/api/auth";
-      if (new URL(request.url).pathname !== `${basePath}${SIGN_IN_PATH}`) {
-        return;
-      }
-      const email = await submittedEmail(request);
-      if (!email) return;
-      const wait = await retryAfterSeconds(email);
-      return wait === null ? undefined : { response: tooManyRequests(wait) };
-    },
     hooks: {
+      // The parsed body, so JSON and form-encoded sign-ins are gated alike,
+      // before the password is hashed or compared.
+      before: [
+        {
+          matcher: (ctx) => ctx.path === SIGN_IN_PATH,
+          handler: createAuthMiddleware(async (ctx) => {
+            const body = SignInBodySchema.safeParse(ctx.body);
+            if (!body.success) return;
+            const wait = await retryAfterSeconds(
+              body.data.email,
+              networkPrefix(ctx.headers),
+            );
+            if (wait !== null) return tooManyRequests(wait);
+          }),
+        },
+      ],
       after: [
         {
           matcher: (ctx) => ctx.path === SIGN_IN_PATH,
           handler: createAuthMiddleware(async (ctx) => {
             const body = SignInBodySchema.safeParse(ctx.body);
             if (!body.success) return;
+            const prefix = networkPrefix(ctx.headers);
             const returned = ctx.context.returned;
             if (isAPIError(returned)) {
               if (returned.body?.code === "INVALID_EMAIL_OR_PASSWORD") {
-                await recordFailure(body.data.email);
+                await recordFailure(body.data.email, prefix);
               }
               return;
             }
             if (returned instanceof Error) return;
             // A session, or a pending 2FA challenge: the password matched.
-            await clear(body.data.email);
+            await clear(body.data.email, prefix);
           }),
         },
       ],

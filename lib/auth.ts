@@ -49,8 +49,8 @@ import {
 } from "@/lib/auth/session-lifetime";
 import { supersededSessionRevocation } from "@/lib/auth/supersede-session";
 import { breachedPasswordCheck } from "@/lib/auth/password-policy";
-import { signInThrottle } from "@/lib/auth/account-throttle";
-import { turnstileCaptcha } from "@/lib/auth/captcha";
+import { networkPrefix, signInThrottle } from "@/lib/auth/account-throttle";
+import { turnstileCaptcha, turnstileHostnames } from "@/lib/auth/captcha";
 import {
   PASSWORD_MAX_BYTES,
   PASSWORD_MIN_LENGTH,
@@ -249,8 +249,8 @@ export const auth = betterAuth({
     // holds no session, so nothing needs preserving. (changePassword keeps
     // the current session via `revokeOtherSessions: true` instead.)
     revokeSessionsOnPasswordReset: true,
-    onPasswordReset: async ({ user }) => {
-      await signInThrottle.clear(user.email);
+    onPasswordReset: async ({ user }, request) => {
+      await signInThrottle.clear(user.email, networkPrefix(request?.headers));
       await onPasswordReset(user);
     },
   },
@@ -560,6 +560,7 @@ export const auth = betterAuth({
     ...turnstileCaptcha({
       secretKey: process.env.TURNSTILE_SECRET_KEY,
       siteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
+      allowedHostnames: turnstileHostnames(process.env),
     }),
 
     // Growing Retry-After on repeated wrong passwords for one address.

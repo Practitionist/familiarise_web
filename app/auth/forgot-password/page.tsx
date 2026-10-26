@@ -14,6 +14,7 @@ import {
   type AuthActionTarget,
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
+import { RECIPIENT_DAILY_CAP } from "@/lib/email/recipient-cap-policy";
 import {
   TurnstileWidget,
   awaitingCaptcha,
@@ -93,7 +94,7 @@ export default function ForgotPassword() {
         });
       } else {
         // The server answers the same way whether or not the address exists.
-        const successMessage = `If an account exists for ${email}, we've sent a reset link. It works once and expires in 30 minutes.`;
+        const successMessage = `If an account exists for ${email}, we've sent a reset link. It works once and expires in 30 minutes. You can request at most ${RECIPIENT_DAILY_CAP} links a day.`;
         setMessage({ kind: "success", text: successMessage });
         settle({ title: "Request Sent", description: successMessage });
       }

@@ -16,6 +16,7 @@ import { auth } from "../../lib/auth";
 import {
   CAPTCHA_PROTECTED_PATHS,
   turnstileCaptcha,
+  turnstileHostnames,
 } from "../../lib/auth/captcha";
 
 const options: BetterAuthOptions = auth.options;
@@ -125,5 +126,17 @@ describe("lib/auth.ts config pin", () => {
         siteKey: undefined,
       }),
     ).toEqual([]);
+    expect(
+      turnstileHostnames({
+        CONTEXT: "production",
+        BETTER_AUTH_URL: "https://familiarisenow.com",
+      }),
+    ).toEqual(["familiarisenow.com"]);
+    expect(
+      turnstileHostnames({
+        CONTEXT: "deploy-preview",
+        BETTER_AUTH_URL: "https://familiarisenow.com",
+      }),
+    ).toBeUndefined();
   });
 });

@@ -15,6 +15,7 @@ import {
   type AuthActionTarget,
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
+import { RECIPIENT_DAILY_CAP } from "@/lib/email/recipient-cap-policy";
 import {
   TurnstileWidget,
   awaitingCaptcha,
@@ -139,7 +140,9 @@ function VerifyEmailContent() {
       setCooldown(RESEND_COOLDOWN_SECONDS);
       toast({
         title: "Code sent",
-        description: `If ${target} is waiting to be verified, a new code is on its way. It expires in 10 minutes.`,
+        // Always shown: the cap is enforced after the response, and naming
+        // it only when hit would reveal that the address has an account.
+        description: `If ${target} can receive mail and is waiting to be verified, a new code is on its way. It expires in 10 minutes. You can request at most ${RECIPIENT_DAILY_CAP} codes a day.`,
       });
     } catch {
       setErrorCopy(humanizeAuthError("verify", { status: 0 }));

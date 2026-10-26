@@ -173,7 +173,8 @@ export const sendPasswordResetEmail = defineDirectEmailSender<{
   userId?: string;
   invite?: boolean;
 }>(({ email, name, token, userId, invite = false }) => ({
-  emailType: "PASSWORD_RESET",
+  // Its own type: the per-recipient cap must not drop a staff invitation.
+  emailType: invite ? "STAFF_INVITE" : "PASSWORD_RESET",
   element: PasswordResetEmail({
     name,
     resetLink: `${getAppUrl()}/auth/reset-password?token=${encodeURIComponent(token)}`,

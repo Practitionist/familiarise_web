@@ -1,5 +1,6 @@
 import { captcha } from "better-auth/plugins";
 import { reportSentryMessage } from "@/lib/observability/report";
+import type { RuntimeEnv } from "@/lib/request-ip";
 
 /**
  * The endpoints that send mail to an address the caller types in. Sign-in is
@@ -19,6 +20,7 @@ export const CAPTCHA_PROTECTED_PATHS = [
 export function turnstileCaptcha(keys: {
   secretKey: string | undefined;
   siteKey: string | undefined;
+  allowedHostnames?: string[];
 }) {
   const secretKey = keys.secretKey?.trim();
   const siteKey = keys.siteKey?.trim();
@@ -28,6 +30,7 @@ export function turnstileCaptcha(keys: {
         provider: "cloudflare-turnstile",
         secretKey,
         endpoints: CAPTCHA_PROTECTED_PATHS,
+        allowedHostnames: keys.allowedHostnames,
       }),
     ];
   }
@@ -50,4 +53,18 @@ export function turnstileCaptcha(keys: {
     });
   }
   return [];
+}
+
+/**
+ * The hostname a production token must have been minted on. The plugin
+ * matches exactly, so per-PR preview hostnames (and Cloudflare's test keys,
+ * which report example.com) get no hostname check.
+ */
+export function turnstileHostnames(env: RuntimeEnv): string[] | undefined {
+  if (env.CONTEXT !== "production" || !env.BETTER_AUTH_URL) return undefined;
+  try {
+    return [new URL(env.BETTER_AUTH_URL).hostname];
+  } catch {
+    return undefined;
+  }
 }

@@ -311,5 +311,6 @@ describe("per-recipient daily cap", () => {
     expect(mockCreate).toHaveBeenCalledTimes(5);
     expect(mockSend).toHaveBeenCalledTimes(5);
     expect((await deliver(reset, "WELCOME")).success).toBe(true);
+    expect((await deliver(reset, "STAFF_INVITE")).success).toBe(true);
   });
 });

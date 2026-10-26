@@ -1,16 +1,10 @@
 import { createHash } from "node:crypto";
 import { makeLimiter } from "@/lib/rate-limit";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
-
-/** Mail a stranger can aim at any address by typing it into a public auth form. */
-export const RECIPIENT_CAPPED_EMAIL_TYPES: ReadonlySet<string> = new Set([
-  "EMAIL_VERIFICATION",
-  "PASSWORD_RESET",
-  "EXISTING_ACCOUNT_SIGN_UP",
-]);
-
-/** Per address, per email type, per rolling 24 hours. */
-export const RECIPIENT_DAILY_CAP = 5;
+import {
+  RECIPIENT_CAPPED_EMAIL_TYPES,
+  RECIPIENT_DAILY_CAP,
+} from "./recipient-cap-policy";
 
 // Built on first capped send, so importing the send core never touches Redis.
 let recipientLimiter: ReturnType<typeof makeLimiter> | null = null;
