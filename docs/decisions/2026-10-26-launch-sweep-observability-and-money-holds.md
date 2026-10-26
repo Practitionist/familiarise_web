@@ -1,6 +1,6 @@
 # ADR: Launch sweep decisions — money holds, tax identity, abuse controls and operational visibility
 
-- **Status**: Accepted. Eleven decisions below are accepted; the implementation of most is in pull requests that are still open and is labelled on each decision. Decision 12 lives in the workflow skill.
+- **Status**: Accepted. Eleven decisions are recorded in full below, and the implementation of most is in pull requests that are still open, labelled on each decision. ADR-12 is a pointer: its rules live in the workflow skill.
 - **Date**: 2026-10-26
 - **Author**: teetangh
 - **Related**: [Job machinery catalog and dashboard spec](../maintenance/11-job-machinery-catalog.md), [Session outcomes](2026-09-25-session-outcomes.md), [Ingest canary and the 2026-09-22 quota outage](../observability/sentry/06-ingest-canary.md), [Cron, sidecars and reconciliation reference](../maintenance/10-cron-and-reconciliation-reference.md)
@@ -148,7 +148,7 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
 - **Alternatives considered:** Upgrading to the Team plan: it removes the pressure without removing the noise, and the owner rejected it.
 - **Consequences:**
   - A job that must be seen cannot rely on a Sentry warning; it needs a durable row or an alert on another channel.
-  - Four jobs still capture inside their loops and break the once-per-run rule (section 4.2 of the catalog).
+  - Seven jobs can still emit one event per row and break the once-per-run rule: three call `Sentry.captureException` inside their loops and four report per row through `recordSystemErrorSafe` or `reportSentryMessage` (section 4.2 of the catalog).
 
 ### ADR-10. The apex `netlify.app` host redirects to `familiarisenow.com`
 

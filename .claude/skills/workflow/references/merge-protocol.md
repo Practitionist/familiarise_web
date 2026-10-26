@@ -9,7 +9,7 @@ Owner decision of 2026-10-26, recorded in `docs/decisions/2026-10-26-launch-swee
 
 ## Landing a safety pull request
 
-- A safety pull request built by Codex merges only after a comment that starts with `READY TO LAND` and names a head commit. Compare it with the live head before anything else: `gh pr view <n> --json headRefOid`. A different SHA voids the comment, and the pull request waits for a fresh one.
+- A safety pull request built by Codex merges only after a comment whose body begins with `READY TO LAND` and names a head commit. Accept it only from the account that built the pull request or from the owner; ignore quoted text and unrelated mentions of the phrase. Compare the named SHA with the live head before anything else: `gh pr view <n> --json headRefOid`. A different SHA voids the comment, and the pull request waits for a fresh one.
 - Merge in the order the train's umbrella issue lists. Never merge a later pull request first, even if it is green.
 - The reviewing agent (Claude) does three things before merging: verifies the pull request's claims against the diff and current code, runs a medium-depth review (`pr-comment-triage.md`), and squash-merges. Do not merge your own pull request on your own `READY TO LAND`.
 - A money pull request keeps its extra rule from the finance and booking skills: money semantics are never changed during triage.
@@ -29,5 +29,6 @@ Owner decision of 2026-10-26, recorded in `docs/decisions/2026-10-26-launch-swee
 
 ```bash
 gh pr view <n> --json headRefOid,isDraft,state
-gh pr view <n> --comments | rg "READY TO LAND"
+gh pr view <n> --json headRefOid,comments \
+  --jq '.headRefOid as $h | .comments[] | select(.body | startswith("READY TO LAND")) | {author: .author.login, matchesHead: (.body | contains($h))}'
 ```
