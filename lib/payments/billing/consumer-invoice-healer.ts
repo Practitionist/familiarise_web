@@ -17,7 +17,6 @@ import {
   CONSUMER_INVOICEABLE_PAYMENT_WHERE,
   CREDIT_NOTE_REFUND_STATUSES,
   mintConsumerInvoice,
-  supplierStateCode,
 } from "@/lib/payments/billing/consumer-invoice";
 import { getPlatformSupplier } from "@/lib/pdf/supplier";
 
@@ -47,6 +46,7 @@ export async function healConsumerInvoices(opts: {
   now?: Date;
   pivot?: string;
 }): Promise<HealConsumerInvoicesResult> {
+  // Null for an unset, malformed or wrong-state GSTIN: the run skips, no row is touched.
   if (!getPlatformSupplier()) {
     const skipped: ConfigSkip = "PLATFORM_GSTIN not configured";
     reportConfigSkip(
@@ -57,9 +57,6 @@ export async function healConsumerInvoices(opts: {
     );
     return { scanned: 0, minted: 0, declined: 0, failed: 0, skipped };
   }
-  // A GSTIN whose state contradicts the registered office throws once here, not per payment.
-  supplierStateCode();
-
   // Fail-closed: every mint takes a number from the gapless Rule 46 series.
   return withCronLock(
     "heal-consumer-invoices",

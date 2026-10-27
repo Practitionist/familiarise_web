@@ -10,13 +10,13 @@ const mockFindMany = jest.fn();
 const mockCapture = jest.fn();
 
 jest.mock("@/lib/pdf/supplier", () => ({
+  ...jest.requireActual("@/lib/pdf/supplier"),
   getPlatformSupplier: () => mockSupplier(),
 }));
 jest.mock("@/lib/payments/billing/consumer-invoice", () => ({
   ...jest.requireActual("@/lib/payments/billing/consumer-invoice"),
   mintConsumerInvoice: (_tx: unknown, args: { paymentId: string }) =>
     mockMint(args.paymentId),
-  supplierStateCode: () => "29",
 }));
 jest.mock("@/lib/cron/with-cron-lock", () => ({
   withCronLock: (_k: string, _o: unknown, fn: () => unknown) => fn(),

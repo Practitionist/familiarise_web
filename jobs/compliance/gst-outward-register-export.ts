@@ -36,7 +36,10 @@ import {
 } from "@/lib/payments/billing/consumer-invoice";
 import { uploadPrivateFinanceObject } from "@/lib/storage/private-finance-object";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
-import { getPlatformSupplier } from "@/lib/pdf/supplier";
+import {
+  SUPPLIER_UNAVAILABLE_MESSAGE,
+  getPlatformSupplier,
+} from "@/lib/pdf/supplier";
 import {
   previousIstCalendarMonthStart,
   nextMonthStart,
@@ -328,9 +331,7 @@ export async function runGstOutwardRegisterExport(opts: {
   // would read as a month with no B2C supplies — a silent understatement
   // rather than a visible failure.
   if (!getPlatformSupplier()) {
-    throw new Error(
-      "PLATFORM_GSTIN is not configured; the platform cannot issue statutory documents.",
-    );
+    throw new Error(SUPPLIER_UNAVAILABLE_MESSAGE);
   }
   // Fail-CLOSED, unlike the read-only compliance drafts. The healer inside
   // allocates numbers from a gapless statutory series, and two concurrent

@@ -48,7 +48,14 @@ Every fiscal-year and monthly-period boundary in the compliance pipeline — `in
 
 ## Supplier state is GSTIN-first
 
-`resolveSupplierStateCode` reads the platform's own state of registration from the first two digits of `PLATFORM_GSTIN`, and falls back to the `SUPPLIER_STATE_CODE` environment variable only when the GSTIN itself carries no state. If the two disagree, the mint fails closed exactly as a missing GSTIN does — no document is issued, and a `SystemEvent` names both conflicting values so an operator can fix the configuration rather than shipping a document with an internally inconsistent state.
+`resolveSupplierStateCode` reads the platform's own state of registration from the first two digits of `PLATFORM_GSTIN`, and falls back to the registered office's state in `lib/company.ts` (`REGISTERED_OFFICE.stateCode`, 06 Haryana) only while no GSTIN is set. There is no environment override for the state. The two failure paths differ:
+
+- **No GSTIN, or a malformed one.** `getPlatformSupplier()` returns null, so `mintConsumerInvoice` issues no consumer invoice and sends one `CONSUMER_INVOICE_MINT_DISABLED` warning per process, every invoice and credit-note PDF route answers 503 `SUPPLIER_GSTIN_UNCONFIGURED`, the outward register refuses and the IRP uploader skips its run. Organisation invoices are still created, on the registered office's state.
+- **A GSTIN whose state contradicts the registered office.** Every GST document refuses. `getPlatformSupplier()` returns null for it too, so the consumer mint, the PDF routes, the register and IRP refuse exactly as above. `supplierStateCode()` throws `SupplierStateMismatchError`, so `createOrgInvoice` reports to Sentry and answers 503 `INVOICE_SERVICE_UNAVAILABLE`, and the rollup and subscription jobs throw. Fix the GSTIN or `lib/company.ts`; never pick one of the two.
+
+## One legal identity on every document
+
+The supplier is Practitionist (OPC) Private Limited, Haryana. `lib/company.ts` holds the legal name, CIN and registered office (`COMPANY_INFO`, `REGISTERED_OFFICE`), and `getPlatformSupplier()` (tax invoices and credit notes), the IRP uploader's `SellerDtls` and the public pages all read it. Only the GSTIN and the LUT are deployment config. Never hardcode an entity name or address in a renderer or job.
 
 ## The outward register, not an in-app GSTR builder
 
