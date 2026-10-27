@@ -833,6 +833,60 @@ describe("/pay", () => {
     );
   });
 
+  it("refuses a concurrent stale-amount winner that still requires replacement", async () => {
+    const initial = {
+      id: "inv-1",
+      status: "ISSUED",
+      invoiceNumber: "N",
+      displayCurrency: "INR",
+      paidAt: null,
+      providerPaymentOrderId: null,
+      totalPaise: 100_000,
+    };
+    const winner = { ...initial, providerPaymentOrderId: "order_winner_old" };
+    mockPay.findFirst.mockResolvedValue(initial);
+    mockPay.findUniqueOrThrow.mockResolvedValue(winner);
+    mockPay.findUnique.mockResolvedValue(winner);
+    const transactionTx = {
+      organizationInvoice: {
+        updateMany: jest.fn(async () => ({ count: 0 })),
+        findUnique: jest.fn(async () => winner),
+        findUniqueOrThrow: mockPay.findUniqueOrThrow,
+      },
+      creditNote: mockPrisma.creditNote,
+      organizationInvoiceReceipt: mockPrisma.organizationInvoiceReceipt,
+    };
+    mockPrisma.$transaction.mockImplementation(
+      async (run: (tx: typeof transactionTx) => unknown) => run(transactionTx),
+    );
+    mockFetchOrder.mockResolvedValue({
+      id: "order_winner_old",
+      amount: 50_000,
+      currency: "INR",
+      status: "created",
+      notes: {
+        type: "invoice_payment",
+        invoiceId: "inv-1",
+        organizationId: "org-1",
+      },
+    });
+    mockReadHolding.mockResolvedValue({ kind: "empty" });
+
+    const res = await payInvoice(
+      new NextRequest("https://x.test/api", { method: "POST" }),
+      { params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }) },
+    );
+
+    expect(res.status).toBe(409);
+    const payload = await res.json();
+    expect(payload.code).toBe("INVOICE_STATE_CHANGED");
+    expect(payload).not.toHaveProperty("razorpayOrderId");
+    expect(mockReadHolding).toHaveBeenCalledWith(
+      "order_winner_old",
+      expect.any(Number),
+    );
+  });
+
   it("stops gateway reads when the route's provider budget is exhausted", async () => {
     jest.useFakeTimers();
     const row = {

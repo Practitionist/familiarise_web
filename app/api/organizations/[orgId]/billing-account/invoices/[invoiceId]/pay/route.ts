@@ -238,6 +238,15 @@ export async function POST(
           startedAt,
         });
         if ("response" in winner) return winner.response;
+        if (winner.orderId === null) {
+          return NextResponse.json(
+            {
+              error: "Invoice payment state changed; reload the invoice",
+              code: "INVOICE_STATE_CHANGED",
+            },
+            { status: 409 },
+          );
+        }
       }
     } catch (err) {
       if (
