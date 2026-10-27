@@ -92,7 +92,7 @@ Inbound (practitionist.com):
 
 - [x] Subdomain architecture active in `lib/email/config.ts`: `mail.familiarisenow.com` (transactional/ops) and `news.familiarisenow.com` (newsletter)
 - [ ] Inbound mail for the product domain and the role addresses: decide and configure per #2434
-- [ ] Root SPF (`v=spf1 -all`) is published in Netlify DNS. The live `_dmarc` record is `v=DMARC1; p=none` with aggregate reports (`rua`) going to a personal inbox; moving `rua` to a role address is a pre-launch item in #2434.
+- [ ] Publish the root SPF record (`v=spf1 -all`) in Netlify DNS; as of 2026-10-27 the apex has no TXT record, so the root domain can be spoofed. The live `_dmarc` record is `v=DMARC1; p=none` with aggregate reports (`rua`) going to a personal inbox; moving `rua` to a role address is a pre-launch item in #2434.
 
 ### Step 2: Resend Subdomain Verification & Webhook Registration
 

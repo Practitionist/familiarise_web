@@ -242,12 +242,12 @@ Enforced in `lib/email/delivery-guard.ts` across `stage()`, `attempt()`, `retry-
 - **Allowlist Matching**: Permits recipients on `familiarisenow.com` (and its subdomains) or explicit entries in comma-separated `EMAIL_ALLOWLIST` (exact addresses or `@domain`/`domain`). If any recipient in `to`, `cc`, or `bcc` is disallowed, the entire message is held in `FailedEmail` as `DEAD_LETTER` (`lastError = "held:pre-launch"`).
 - **Production Launch Requirement**: Set `EMAIL_DELIVERY_MODE=live` in both Netlify production environment variables AND GitHub repository variables (`cron-intra-day.yml`, `cron-daily.yml`).
 
-| Host                               | Type     | Value                                                                              | Purpose                                                            |
-| ---------------------------------- | -------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `@` (apex)                         | TXT      | `v=spf1 -all`                                                                      | Prevents spoofing on non-sending root domain                       |
-| `_dmarc`                           | TXT      | `v=DMARC1; p=none; rua=<personal inbox>`                                           | Live policy is monitor-only; rua moves to a role address per #2434 |
-| `resend._domainkey.mail` / `.news` | TXT      | Resend DKIM public keys                                                            | Signs transactional (`mail.`) and newsletter (`news.`) traffic     |
-| `send.mail` / `send.news`          | MX + TXT | `feedback-smtp.ap-northeast-1.amazonses.com` + `v=spf1 include:amazonses.com ~all` | Return-Path bounce handling and SPF alignment                      |
+| Host                               | Type     | Value                                                                              | Purpose                                                                            |
+| ---------------------------------- | -------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `@` (apex)                         | TXT      | `v=spf1 -all`                                                                      | Prevents spoofing on non-sending root domain. Not yet published (pre-launch item). |
+| `_dmarc`                           | TXT      | `v=DMARC1; p=none; rua=<personal inbox>`                                           | Live policy is monitor-only; rua moves to a role address per #2434                 |
+| `resend._domainkey.mail` / `.news` | TXT      | Resend DKIM public keys                                                            | Signs transactional (`mail.`) and newsletter (`news.`) traffic                     |
+| `send.mail` / `send.news`          | MX + TXT | `feedback-smtp.ap-northeast-1.amazonses.com` + `v=spf1 include:amazonses.com ~all` | Return-Path bounce handling and SPF alignment                                      |
 
 ---
 
