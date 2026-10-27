@@ -1,0 +1,19 @@
+#2423 re-check, case 4a evidence
+Preview : https://deploy-preview-2423--familiarise.netlify.app (Netlify deploy 6adfe8f372ef2a7b5a3dbdd8, head 0aa36858478419d6db9a087bc79e9e8daebbfa4e)
+Captured: 2026-10-27 00:12 UTC, from the page console of /auth/forgot-password (one tab, signed out)
+
+Request:
+  POST /api/auth/request-password-reset
+  content-type: application/json        (no x-captcha-response header)
+  {"email":"qa-2423-recheck-nonexistent@qa.familiarise.invalid","redirectTo":"/auth/reset-password"}
+
+Response:
+  400
+  {"message":"Missing CAPTCHA response","code":"MISSING_RESPONSE"}
+
+Same endpoint from the form (widget state "Security check complete."), address qa-2423-1793054951@qa.familiarise.invalid:
+  request header x-captcha-response: XXXX.DUMMY.TOKEN.XXXX  (Cloudflare test-key token)
+  200 {"status":true,"message":"If this email exists in our system, check your email for the reset link"}
+
+Previous round (head 395f9601f), same call without the header:
+  200 {"status":true,"message":"If this email exists in our system, check your email for the reset link"}
