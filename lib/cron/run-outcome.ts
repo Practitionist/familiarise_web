@@ -90,7 +90,13 @@ export function routeOutcome(
   return { outcome: "completed" };
 }
 
-const ITEM_KEYS = [
+/** A job's own item and error counts for its run row. */
+export interface RunItemCounts {
+  processed: number;
+  errors?: number;
+}
+
+export const ITEM_KEYS = [
   "itemsProcessed",
   "totalProcessed",
   "processed",

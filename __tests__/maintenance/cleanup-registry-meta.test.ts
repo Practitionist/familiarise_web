@@ -14,6 +14,7 @@ import { CLEANUP_JOB_BUILDERS } from "@/lib/cron/cleanup-registry";
 import { backgroundJobSchema } from "@/lib/cron/dispatch-background";
 import { JOB_CATEGORIES } from "@/lib/cron/job-categories";
 import { systemJobCards } from "@/lib/cron/job-catalog";
+import { ITEM_KEYS } from "@/lib/cron/run-outcome";
 
 const ROOT = path.join(__dirname, "..", "..");
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -42,5 +43,55 @@ describe("cleanup registry metadata", () => {
     expect(read("components/dashboard/SystemJobsPanel.tsx")).not.toMatch(
       /cleanup-registry|SYSTEM_JOBS/,
     );
+  });
+
+  describe("run item counts", () => {
+    // Entries with no `summarize` whose core result itself carries a recognised item key.
+    const RAW_KEYED = [
+      "prune-system-events",
+      "advance-program-cycles",
+      "auto-renew-contracts",
+      "expire-contracts",
+      "heal-consumer-invoices",
+      "irp-uploader",
+      "prune-audit-logs",
+      "reconcile-org-invoice-payments",
+      "reconcile-sessions",
+      "timeout-member-overages",
+      "wallet-low-balance",
+    ];
+    const registry = read("lib/cron/cleanup-registry.ts");
+    const blocks = new Map(
+      registry
+        .split(/ {2}\/\/ @cleanup-twin (\S+)\n/)
+        .slice(1)
+        .reduce<Array<[string, string]>>((acc, part, i, all) => {
+          if (i % 2 === 0) acc.push([part, all[i + 1]]);
+          return acc;
+        }, []),
+    );
+    const hasItemKey = (text: string) =>
+      ITEM_KEYS.some((key) => new RegExp(`\\b${key}:`).test(text));
+
+    it("gives every job a recognised item key or an items hook", () => {
+      const missing = [...blocks]
+        .filter(([slug, block]) => {
+          if (block.includes("items:")) return false;
+          if (block.includes("dispatchBackgroundJob(")) return false;
+          if (RAW_KEYED.includes(slug)) return false;
+          const summarize = /summarize:[\s\S]*?failureMessage/.exec(block);
+          return !(summarize && hasItemKey(summarize[0]));
+        })
+        .map(([slug]) => slug);
+      expect(missing).toEqual([]);
+    });
+
+    it("keeps the raw-keyed list to entries with neither summarize nor items", () => {
+      expect(blocks.size).toBe(slugs.length);
+      for (const slug of RAW_KEYED) {
+        const block = blocks.get(slug) ?? "";
+        expect(block).not.toMatch(/summarize:|items:/);
+      }
+    });
   });
 });

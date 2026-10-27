@@ -27,6 +27,12 @@ import {
 } from "@/lib/cron/job-categories";
 import type { Tone } from "@/lib/ui/tone";
 import {
+  formatDuration,
+  outcomeLabel,
+  scalarFields,
+  summaryFields,
+} from "@/lib/cron/run-display";
+import {
   CreditCard,
   Clock,
   RefreshCw,
@@ -125,18 +131,16 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
           <TooltipProvider delayDuration={150}>
             <Tooltip>
               <TooltipTrigger asChild>
-                {/* A disabled button fires no pointer events, so the span carries the tooltip. */}
-                <span className="block w-full" tabIndex={0}>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled
-                    className="w-full"
-                  >
-                    <Play className="mr-2 h-4 w-4" />
-                    Run Now
-                  </Button>
-                </span>
+                {/* aria-disabled, not disabled: a disabled button is unfocusable and fires no pointer events, so the tooltip would never show. */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-disabled="true"
+                  className="w-full cursor-not-allowed opacity-50"
+                >
+                  <Play className="mr-2 h-4 w-4" />
+                  Run Now
+                </Button>
               </TooltipTrigger>
               <TooltipContent className="max-w-xs text-xs">
                 {job.runBlocked}
@@ -176,6 +180,8 @@ interface JobExecution {
   status: "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
   startedAt: string;
   completedAt: string | null;
+  durationMs: number | null;
+  itemsProcessed: number | null;
   result: Record<string, unknown> | null;
   errorMessage: string | null;
   triggeredBy: {
@@ -189,7 +195,10 @@ interface SystemJobsPanelProps {
   jobs: SystemJobCard[];
 }
 
-export function SystemJobsPanel({ className, jobs }: SystemJobsPanelProps) {
+export function SystemJobsPanel({
+  className,
+  jobs,
+}: Readonly<SystemJobsPanelProps>) {
   const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set());
   const [executions, setExecutions] = useState<JobExecution[]>([]);
   const [loadingExecutions, setLoadingExecutions] = useState(true);
@@ -247,31 +256,15 @@ export function SystemJobsPanel({ className, jobs }: SystemJobsPanelProps) {
         return;
       }
 
-      // Format result message
-      const stats = [];
-      if (result.totalProcessed !== undefined)
-        stats.push(`Processed: ${result.totalProcessed}`);
-      if (result.cleanedCount !== undefined)
-        stats.push(`Cleaned: ${result.cleanedCount}`);
-      if (result.updatedCount !== undefined)
-        stats.push(`Updated: ${result.updatedCount}`);
-      if (result.createdCount !== undefined)
-        stats.push(`Created: ${result.createdCount}`);
-      if (result.reconciledCount !== undefined)
-        stats.push(`Reconciled: ${result.reconciledCount}`);
-      if (result.releasedCount !== undefined)
-        stats.push(`Released: ${result.releasedCount}`);
-      if (result.errorCount !== undefined || result.errors?.length) {
-        stats.push(
-          `Errors: ${result.errorCount || result.errors?.length || 0}`,
-        );
-      }
+      const outcome = outcomeLabel(response.headers.get("x-run-outcome"));
+      const counts = scalarFields(result, 5);
+      const failed = outcome === "Failed" || outcome === "Partial";
 
       toast({
-        title: `${job.title} completed`,
+        title: `${job.title} ${outcome?.toLowerCase() ?? "completed"}`,
         description:
-          stats.length > 0 ? stats.join(" | ") : "Job completed successfully",
-        variant: "default",
+          counts.length > 0 ? counts.join(" | ") : (outcome ?? "Job finished"),
+        variant: failed ? "destructive" : "default",
       });
 
       // Check for critical alerts
@@ -361,14 +354,20 @@ export function SystemJobsPanel({ className, jobs }: SystemJobsPanelProps) {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {execution.result && (
-                      <span className="text-xs text-muted-foreground/70">
-                        {Object.entries(execution.result)
-                          .slice(0, 2)
-                          .map(([k, v]) => `${k}: ${v}`)
-                          .join(", ")}
-                      </span>
-                    )}
+                    <span className="text-xs text-muted-foreground/70">
+                      {[
+                        outcomeLabel(execution.result?.outcome),
+                        ...summaryFields(execution.result, 3),
+                        execution.itemsProcessed !== null
+                          ? `items: ${execution.itemsProcessed}`
+                          : null,
+                        execution.durationMs !== null
+                          ? formatDuration(execution.durationMs)
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(", ")}
+                    </span>
                     <StatusBadge
                       {...(execution.status === "COMPLETED" &&
                       execution.result?.outcome === "attention"

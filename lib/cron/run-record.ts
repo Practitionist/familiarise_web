@@ -4,6 +4,7 @@ import {
   jobEnvironment,
   runItems,
   statusOfOutcome,
+  type RunItemCounts,
   type RunOutcome,
 } from "@/lib/cron/run-outcome";
 
@@ -24,6 +25,8 @@ export interface RouteRunRecord {
   reason?: string;
   httpStatus: number;
   summary?: unknown;
+  /** The job's own counts; they win over the generic summary-key extractor. */
+  items?: RunItemCounts;
   holderRunId?: string | null;
 }
 
@@ -45,6 +48,18 @@ async function summaryJson(
   }
   const { toInputJson } = await import("@/lib/webhooks/event-log");
   return toInputJson(JSON.parse(text));
+}
+
+function itemColumns(record: RouteRunRecord): {
+  itemsProcessed: number | null;
+  errorCount: number | null;
+} {
+  const generic = runItems(record.summary);
+  if (!record.items) return generic;
+  return {
+    itemsProcessed: record.items.processed,
+    errorCount: record.items.errors ?? generic.errorCount,
+  };
 }
 
 /**
@@ -72,13 +87,13 @@ export async function recordRouteRun(
     };
     const { default: prisma } = await import("@/lib/prisma");
     if (run.finished.size > 0) {
-      const items = runItems(record.summary);
+      const items = itemColumns(record);
       for (const [id, checkpoint] of run.finished) {
         await prisma.systemJobExecution.updateMany({
           where: { id, status: { in: ["COMPLETED", "FAILED", "CANCELLED"] } },
           data: {
             status,
-            result: { ...base, ...(checkpoint ?? {}) },
+            result: { ...base, ...checkpoint },
             itemsProcessed: items.itemsProcessed,
             errorCount: items.errorCount,
           },

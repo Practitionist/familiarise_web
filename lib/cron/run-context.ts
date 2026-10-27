@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   emptyRunCounters,
-  noteRunCounter,
   setRunCounterSink,
   type RunCounters,
 } from "@/lib/cron/run-counters";
@@ -52,7 +51,7 @@ export function currentRun(): RunContext | undefined {
   return storage.getStore();
 }
 
-export const noteCounter = noteRunCounter;
+export { noteRunCounter as noteCounter } from "@/lib/cron/run-counters";
 
 export function noteRunId(id: string): void {
   storage.getStore()?.runIds.push(id);

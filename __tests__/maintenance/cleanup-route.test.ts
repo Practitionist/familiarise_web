@@ -413,6 +413,25 @@ describe("cleanupRoute run record", () => {
     expect(executions.create).not.toHaveBeenCalled();
   });
 
+  it("records the job's own item counts when its summary has no recognised key", async () => {
+    const { POST } = cleanupRoute({
+      job: "expire-reschedule-proposals",
+      run: async () => {
+        noteRunId("exec-3");
+        noteRunFinished("exec-3", null);
+        return { proposalsExpired: 6 };
+      },
+      items: (r) => ({ processed: r.proposalsExpired }),
+    });
+
+    await POST(request());
+    expect(executions.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ itemsProcessed: 6, errorCount: null }),
+      }),
+    );
+  });
+
   it("records findings with no failing item as COMPLETED/attention, and findings with failures as partial", async () => {
     const route = (errors: string[]) =>
       cleanupRoute({

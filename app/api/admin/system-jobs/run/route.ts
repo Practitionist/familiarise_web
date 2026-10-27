@@ -91,6 +91,12 @@ function runStatusOf(res: NextResponse): RunStatus {
   }
 }
 
+/** Hands the recorded run outcome to the console so it can name it. */
+function outcomeHeaders(res: NextResponse): Record<string, string> {
+  const outcome = res.headers.get("x-run-outcome");
+  return outcome ? { "X-Run-Outcome": outcome } : {};
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const auth = await requireBackofficeSurface("systemJobs.manage");
@@ -220,10 +226,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           message:
             "Queued for processing. Check execution history for completion.",
         },
-        { status: 202 },
+        { status: 202, headers: outcomeHeaders(res) },
       );
     }
-    return NextResponse.json(body, { status: res.status });
+    return NextResponse.json(body, {
+      status: res.status,
+      headers: outcomeHeaders(res),
+    });
   } catch (error) {
     const runtimeError =
       error instanceof Error ? error : new Error(String(error));

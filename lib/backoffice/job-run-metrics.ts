@@ -128,9 +128,7 @@ export function assessMissedWindow(args: {
   const { jobName, lastSuccessAt, now } = args;
   const schedule = scheduleForJob(jobName);
   const windowMissed =
-    schedule !== undefined &&
-    schedule.window !== null &&
-    missedWindow(schedule, lastSuccessAt, now);
+    schedule?.window && missedWindow(schedule, lastSuccessAt, now);
   if (OPERATIONAL_COMPLETION_REQUIREMENTS.some((r) => r.jobName === jobName)) {
     if (windowMissed) return { state: "missed", basis: "window" };
     const { jobs } = assessOperationalCompletions(

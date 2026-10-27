@@ -102,6 +102,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             startedAt,
           });
         },
+        items: (r) => ({ processed: r.expiredSampled }),
         failureMessage: "Consent retention slice failed",
       }),
   },
@@ -125,6 +126,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             startedAt,
           });
         },
+        items: (r) => ({ processed: r.atRisk }),
         failureMessage: "Data breach deadline alert staging failed",
       }),
   },
@@ -182,6 +184,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         }),
         unauthorizedMessage:
           "Please provide a valid authorization header with the CRON_SECRET",
+        items: (r) => ({ processed: r.reaped + r.confirmed + r.kept }),
         failureMessage: "Cleanup failed",
       }),
   },
@@ -269,6 +272,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           ),
         unauthorizedMessage:
           "Please provide a valid authorization header with the CRON_SECRET",
+        items: (r) => ({
+          processed:
+            r.paymentCleanup.totalProcessed +
+            r.consultationCleanup.totalProcessed +
+            r.paymentReminders.totalProcessed,
+        }),
         failureMessage: "Cleanup job failed",
       }),
   },
@@ -297,6 +306,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           sideChargeCount: r.sideChargeCount,
         }),
         status: (r) => (r.totalOrphaned > 0 ? 500 : 200),
+        items: (r) => ({ processed: r.totalOrphaned }),
         failureMessage: "Failed to check for orphaned payments",
       }),
   },
@@ -351,6 +361,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           reminders24h: r.reminders24h,
           reminders1h: r.reminders1h,
         }),
+        items: (r) => ({ processed: r.reminders24h + r.reminders1h }),
         failureMessage: "Failed to send appointment reminders",
       }),
   },
@@ -469,6 +480,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           consultationsCompleted: r.consultationsCompleted,
           subscriptionsCompleted: r.subscriptionsCompleted,
         }),
+        items: (r) => ({
+          processed:
+            r.webinarsCompleted +
+            r.classesCompleted +
+            r.consultationsCompleted +
+            r.subscriptionsCompleted,
+        }),
         failureMessage: "Failed to auto-complete appointments",
       }),
   },
@@ -502,6 +520,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           remaining: r.remaining,
         }),
         status: (r) => statusFor(r, r.failed > 0),
+        items: (r) => ({
+          processed: r.consultantPayoutsMinted + r.org.payoutsCreated,
+        }),
         failureMessage: "Failed to create payout batch",
       }),
   },
@@ -533,6 +554,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           refunded: r.refunded,
           contradicted: r.contradicted,
         }),
+        items: (r) => ({ processed: r.detected }),
         failureMessage: "Failed to detect consultant no-shows",
       }),
   },
@@ -612,6 +634,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           });
         },
         status: (r) => statusFor({}, r.failed > 0),
+        items: (r) => ({ processed: r.scannedStage1 + r.scannedStage2 }),
         failureMessage: "Failed to run dunning",
       }),
   },
@@ -701,6 +724,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           });
         },
         summarize: (r) => ({ deleted: r.deleted, hasMore: r.hasMore }),
+        items: (r) => ({ processed: r.deleted }),
         failureMessage: "Failed to expire onboarding drafts",
       }),
   },
@@ -728,6 +752,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           breakagePaise: r.breakagePaise,
           failed: r.failed,
         }),
+        items: (r) => ({ processed: r.expired }),
         failureMessage: "Failed to expire referral credits",
       }),
   },
@@ -765,6 +790,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           unallocatedHasMore: r.unallocatedHasMore,
           unallocatedRefundsDeferred: r.unallocatedRefundsDeferred,
         }),
+        items: (r) => ({
+          processed:
+            r.consultationsExpired +
+            r.subscriptionsExpired +
+            r.paymentPendingExpired,
+        }),
         failureMessage: "Failed to expire stale requests",
       }),
   },
@@ -789,6 +820,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           });
         },
         summarize: (r) => ({ trialsExpired: r.trialsExpired }),
+        items: (r) => ({ processed: r.trialsExpired }),
         failureMessage: "Failed to expire unpaid trial sessions",
       }),
   },
@@ -843,6 +875,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           warnings: r.warnings,
         }),
         status: () => 200,
+        items: (r) => ({ processed: r.documentCount }),
         failureMessage: "Failed to export the GST outward-supplies register",
       }),
   },
@@ -867,6 +900,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           });
         },
         status: (r) => statusFor({}, r.failed > 0),
+        items: (r) => ({ processed: r.generated + r.skipped }),
         failureMessage: "Failed to generate subscription invoices",
       }),
   },
@@ -968,6 +1002,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             await import("@/jobs/compliance/msme-payment-alerts");
           return runMsmePaymentAlerts();
         },
+        items: (r) => ({ processed: r.atRisk }),
         failureMessage: "Failed to send MSME payment alerts",
       }),
   },
@@ -993,6 +1028,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           succeeded: r.succeeded,
           failed: r.failed,
         }),
+        items: (r) => ({ processed: r.picked }),
         failureMessage: "Data export tick failed",
       }),
   },
@@ -1081,6 +1117,14 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           notificationOutboxPruned: r.notificationOutboxPruned,
           emailEventsPruned: r.emailEventsPruned,
           hasMore: r.hasMore,
+        }),
+        items: (r) => ({
+          processed:
+            r.pruned +
+            r.failedEmailsPruned +
+            r.failedEmailBatchesPruned +
+            r.notificationOutboxPruned +
+            r.emailEventsPruned,
         }),
         failureMessage: "System job execution prune failed",
       }),
@@ -1177,6 +1221,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           byReason: r.byReason,
         }),
         status: (r) => statusFor(r),
+        items: (r) => ({
+          processed: r.tombstoned + r.purged,
+          errors: r.failedTombstones + r.failedStorage + r.failedRows,
+        }),
         failureMessage: "Document purge failed",
       }),
   },
@@ -1203,6 +1251,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           missingFilesFound: r.missingFilesFound,
         }),
         needsAttention: (r) => r.missingFilesFound > 0,
+        items: (r) => ({
+          processed: r.orphanedFilesFound + r.missingFilesFound,
+        }),
         failureMessage: "Failed to reconcile document storage",
       }),
   },
@@ -1229,6 +1280,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             r.byStatus.FEE_MISMATCH +
             r.byStatus.UNMATCHED >
           0,
+        items: (r) => ({ processed: r.fetched }),
         failureMessage: "Failed to reconcile gateway settlements",
       }),
   },
@@ -1308,6 +1360,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           frozenWallets: r.frozenWallets.length,
         }),
         needsAttention: (r) => r.status !== "RUNNING" && !r.report.ok,
+        items: (r) => ({
+          processed: r.report.summary?.discrepanciesCount ?? 0,
+          errors: r.report.summary?.unbaselinedCount ?? 0,
+        }),
         failureMessage: "Failed to run ledger reconciliation",
       }),
   },
@@ -1335,6 +1391,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           topUpSessionsPlaced: r.topUps.sessionsPlaced,
         }),
         needsAttention: (r) => r.doubleBookingsDetected > 0,
+        items: (r) => ({
+          processed:
+            r.tentativeFlagsCleared +
+            r.doubleBookingsDetected +
+            r.topUps.placed,
+        }),
         failureMessage: "Failed to reconcile slot availability",
       }),
   },
@@ -1589,6 +1651,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           organizationEarningsReleased: r.organizationEarningsReleased,
           errorCount: r.errorCount,
         }),
+        items: (r) => ({
+          processed: r.releasedCount + r.organizationEarningsReleased,
+        }),
         failureMessage: "Failed to release earnings",
       }),
   },
@@ -1616,6 +1681,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           proposalsExpired: r.proposalsExpired,
           proposalsExpiredUnrestored: r.proposalsExpiredUnrestored,
         }),
+        items: (r) => ({ processed: r.proposalsExpired }),
         failureMessage: "Failed to expire reschedule proposals",
       }),
   },
@@ -1745,6 +1811,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           checkpoint: r.checkpoint,
         }),
         status: (r) => (r.failures > 0 ? 207 : 200),
+        items: (r) => ({
+          processed: r.channelsScanned,
+          errors: r.failures,
+        }),
         failureMessage: "Failed to reconcile Stream channel memberships",
       }),
   },
@@ -1813,6 +1883,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           };
         },
         status: (result) => (result.healthy ? 200 : 503),
+        items: (r) => ({ processed: 1, errors: r.healthy ? 0 : 1 }),
         failureMessage:
           "The Sentry ingest canary route failed to run. This is a fault in the canary, not a verdict about Sentry — check the log line above.",
       }),
@@ -1896,6 +1967,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           settled: r.settled,
           errors: r.errors,
         }),
+        items: (r) => ({ processed: r.incidents }),
         failureMessage: "Failed to settle declared platform incidents",
       }),
   },
@@ -1926,6 +1998,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           remaining: r.remaining,
         }),
         status: (r) => statusFor({}, r.failed > 0),
+        items: (r) => ({ processed: r.orgsProcessed }),
         failureMessage: "Failed to settle invoice accruals",
       }),
   },
@@ -1954,6 +2027,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         }),
         // Drift is already reported once to Sentry by the detector; 207 only marks the run.
         needsAttention: (r) => r.drifted,
+        items: (r) => ({ processed: r.findings.length }),
         failureMessage: "Failed to check the Stream control plane for drift",
       }),
   },
@@ -2122,6 +2196,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           errors: r.errors.length,
         }),
         status: (r) => statusFor(r, r.errors.length > 0),
+        items: (r) => ({
+          processed: r.unlinkedDeleted + r.remindersSent + r.staleClosed,
+        }),
         failureMessage: "Failed to sweep verification",
       }),
   },
@@ -2200,6 +2277,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           storagePath: r.storagePath,
         }),
         status: () => 200,
+        items: (r) => ({ processed: r.deducteeCount }),
         failureMessage: "Failed to export the TDS return draft",
       }),
   },
@@ -2226,6 +2304,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           slotsReleased: r.slotsReleased,
           appointmentsAffected: r.appointmentsAffected,
         }),
+        items: (r) => ({ processed: r.slotsReleased }),
         failureMessage: "Failed to cleanup tentative slots",
       }),
   },

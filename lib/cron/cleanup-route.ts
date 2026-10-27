@@ -25,7 +25,11 @@ import {
   schedulerTrigger,
   withRunContext,
 } from "@/lib/cron/run-context";
-import { routeOutcome, type RunOutcome } from "@/lib/cron/run-outcome";
+import {
+  routeOutcome,
+  type RunItemCounts,
+  type RunOutcome,
+} from "@/lib/cron/run-outcome";
 import { recordRouteRun, type RouteRunRecord } from "@/lib/cron/run-record";
 
 /**
@@ -303,6 +307,46 @@ function cleanupFailure(
   };
 }
 
+/** Null when the bearer is valid (naming the trigger on the active run); else the 401 result. */
+function refuseUnauthorized(
+  req: NextRequest,
+  job: string,
+  unauthorizedMessage: string | undefined,
+): CleanupExecutionResult | null {
+  const authHeader = req.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+  if (!cronSecret || !bearerMatches(authHeader, cronSecret)) {
+    console.warn(`Unauthorized ${job} attempt`);
+    return {
+      body: unauthorizedMessage
+        ? { error: "Unauthorized", message: unauthorizedMessage }
+        : { error: "Unauthorized" },
+      status: 401,
+      ok: true,
+      outcome: "failure",
+    };
+  }
+  // An authenticated dispatcher (the admin door's background hop) names the trigger.
+  const trigger = runTriggerSchema.safeParse(req.headers.get("x-run-trigger"));
+  const active = currentRun();
+  if (trigger.success && active) active.triggeredBy = trigger.data;
+  return null;
+}
+
+/** A 207 raised only by the needs-attention flag, with no item failing. */
+function isFindingsOnly(
+  result: object,
+  summary: object,
+  flagged: boolean,
+): boolean {
+  return (
+    flagged &&
+    jobOutcome(result) === "success" &&
+    !hasItemFailures(result) &&
+    !hasItemFailures(summary)
+  );
+}
+
 /**
  * Every job under `app/api/cleanup/*` needs the same HTTP twin: a
  * CRON_SECRET bearer check, a maintenance-phase guard, structured start/finish
@@ -323,6 +367,8 @@ export function cleanupRoute<T extends object>(
     run: (req: NextRequest, ctx: { startedAt: number }) => Promise<T>;
     /** What to log on finish; defaults to the whole result. */
     summarize?: (result: T) => Record<string, unknown>;
+    /** Item and error counts for the run row; wins over the generic summary-key extractor. */
+    items?: (result: T) => RunItemCounts;
     failureMessage?: string;
     /** Extra `message` field on the 401 body, for routes that carry one. */
     unauthorizedMessage?: string;
@@ -343,6 +389,7 @@ export function cleanupRoute<T extends object>(
     job,
     run,
     summarize,
+    items,
     status,
     needsAttention,
     failureMessage,
@@ -356,27 +403,8 @@ export function cleanupRoute<T extends object>(
     const startedAt = Date.now();
     try {
       if (authorize) {
-        const authHeader = req.headers.get("authorization");
-        const cronSecret =
-          process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
-
-        if (!cronSecret || !bearerMatches(authHeader, cronSecret)) {
-          console.warn(`Unauthorized ${job} attempt`);
-          return {
-            body: unauthorizedMessage
-              ? { error: "Unauthorized", message: unauthorizedMessage }
-              : { error: "Unauthorized" },
-            status: 401,
-            ok: true,
-            outcome: "failure",
-          };
-        }
-        // An authenticated dispatcher (the admin door's background hop) names the trigger.
-        const trigger = runTriggerSchema.safeParse(
-          req.headers.get("x-run-trigger"),
-        );
-        const active = currentRun();
-        if (trigger.success && active) active.triggeredBy = trigger.data;
+        const refused = refuseUnauthorized(req, job, unauthorizedMessage);
+        if (refused) return refused;
       }
       // The cron core is shared with the jobs/** entrypoint, which exits on
       // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
@@ -399,13 +427,17 @@ export function cleanupRoute<T extends object>(
       const responseStatus = status
         ? status(result)
         : statusFor(result, flagged);
-      const findingsOnly =
-        flagged &&
-        jobOutcome(result) === "success" &&
-        !hasItemFailures(result) &&
-        !hasItemFailures(summary);
-      const verdict = routeOutcome(result, responseStatus, findingsOnly);
-      await record({ ...verdict, httpStatus: responseStatus, summary });
+      const verdict = routeOutcome(
+        result,
+        responseStatus,
+        isFindingsOnly(result, summary, flagged),
+      );
+      await record({
+        ...verdict,
+        httpStatus: responseStatus,
+        summary,
+        items: items?.(result),
+      });
       return {
         body: result,
         status: responseStatus,
