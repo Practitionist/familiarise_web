@@ -1,0 +1,25 @@
+#2427 re-check, case 3 evidence
+Preview : https://deploy-preview-2427--familiarise.netlify.app (Netlify deploy 6adfe74dbe29254e5f20d0d2, head 0c36194e9533f3aef9fd20a1edebeb28826e6f60)
+Account : seeded consultee (Aarav Brown), consultee dashboard home, one tab, hard navigation after sign-in
+Captured: 2026-10-26 23:59 UTC (Chrome devtools MCP; hash values redacted)
+
+--- Network, order of events (Novu-related only) ---
+POST https://<preview>/api/novu/subscriber                                   200   (sync, returns subscriberHash)
+POST https://api.novu.co/v1/inbox/session                                    201   (ONE session call, after the sync)
+OPTIONS/GET https://api.novu.co/v1/inbox/notifications/count?filters=...     204 / 304 / 200
+(bell opened)
+GET  https://api.novu.co/v1/inbox/notifications?limit=10&archived=false&snoozed=false   200
+
+--- POST https://api.novu.co/v1/inbox/session : request payload (redacted) ---
+{
+  "applicationIdentifier": "<app id>",
+  "subscriberHash": "<redacted: 64 hex characters>",
+  "subscriber": { "subscriberId": "<consultee user id>", "timezone": "Asia/Calcutta" }
+}
+--- response: 201, body {"data":{"applicationIdentifier":..,"token":..,"totalUnreadCount":0,"unreadCount":{"total":0,...},"isDevelopmentMode":true,...}}
+
+--- Console (all navigations of the tab, includePreservedMessages) ---
+msgid=56 [issue] Lazy-loaded images should have explicit dimensions (count: 1)
+No [error] entries. No "Failed to load resource ... 400". No "valid HMAC hash".
+
+--- Any 400 on api.novu.co in the whole tab history: none.
