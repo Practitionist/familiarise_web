@@ -9,8 +9,6 @@ import type { PrismaLike } from "@/lib/prisma";
  * this file is the consumer-side: "given an org, may it do X?"
  */
 
-import type { Prisma, PrismaClient } from "@prisma/client";
-
 /** Hard cap on member count for orgs that have not yet verified a
  *  domain. Picks a number high enough for a founding team to onboard
  *  and small enough that domain squatting attacks are uneconomical. */
