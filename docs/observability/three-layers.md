@@ -83,7 +83,7 @@ A trace issues one statement per source, and it skips any source that has nothin
 
 The Run metrics card sits at the top of the System Jobs page, which requires `systemJobs.manage` and is therefore admin-only. For each job, it reads the last seven days of `SystemJobExecution` and shows the following:
 
-- The number of runs, split by the stored outcome (`result.outcome`): succeeded (`completed`), partial (a `FAILED` row that finished with some items failing), failed (every other `FAILED` row), held (a `CANCELLED` row that found another run's lease) and skipped (a `CANCELLED` row that stood down for a configuration skip, a maintenance refusal or a pause). A row from before outcomes were recorded has no outcome and counts by its status alone.
+- The number of runs, split by the stored outcome (`result.outcome`): succeeded (`completed`, with `attention` runs counted inside it and shown amber), partial (a `FAILED` row that finished with some items failing), failed (every other `FAILED` row), held (a `CANCELLED` row that found another run's lease) and skipped (a `CANCELLED` row that stood down for a configuration skip, a maintenance refusal or a pause). A row from before outcomes were recorded has no outcome and counts by its status alone.
 - The p50 and p95 duration of finished runs.
 - The sum of `itemsProcessed`.
 - The time of the last finished run, which includes partial runs because they ran to the end.

@@ -159,15 +159,16 @@ The `cron-tick` monitor is separate and unchanged. It catches the ticker going s
 
 A run's HTTP status, not the job's own boolean, decides what is stored. `cleanupRoute()` derives the outcome from the status it answers (`routeOutcome` in `lib/cron/run-outcome.ts`) and `recordRouteRun()` (`lib/cron/run-record.ts`) rewrites the row once, so the row and the response agree. The outcome is stored in `result.outcome` and maps to a status:
 
-| Outcome     | Status      | Meaning                                                                                               |
-| ----------- | ----------- | ----------------------------------------------------------------------------------------------------- |
-| `completed` | `COMPLETED` | Answered 2xx other than 207.                                                                          |
-| `partial`   | `FAILED`    | Answered 207. It ran to the end with some items failing, and counts as a failure for the streak rule. |
-| `failed`    | `FAILED`    | Answered 400 or above, threw, or was taken over after its lease expired.                              |
-| `held`      | `CANCELLED` | Another run held the lease (409). The row stores `holderRunId`.                                       |
-| `skipped`   | `CANCELLED` | A configuration skip, or a core that declined.                                                        |
-| `refused`   | `CANCELLED` | The maintenance phase refused the run.                                                                |
-| `paused`    | `CANCELLED` | Reserved for the pause control of Phase 2; nothing writes it yet.                                     |
+| Outcome     | Status      | Meaning                                                                                                                                                                      |
+| ----------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `completed` | `COMPLETED` | Answered 2xx other than 207.                                                                                                                                                 |
+| `attention` | `COMPLETED` | Answered 207 through the route's `needsAttention` with no item failing: findings for a person. It counts as a success for streaks and paging and shows amber in the console. |
+| `partial`   | `FAILED`    | Any other 207. It ran to the end with some items failing, and counts as a failure for the streak rule.                                                                       |
+| `failed`    | `FAILED`    | Answered 400 or above, threw, or was taken over after its lease expired.                                                                                                     |
+| `held`      | `CANCELLED` | Another run held the lease (409). The row stores `holderRunId`.                                                                                                              |
+| `skipped`   | `CANCELLED` | A configuration skip, or a core that declined.                                                                                                                               |
+| `refused`   | `CANCELLED` | The maintenance phase refused the run.                                                                                                                                       |
+| `paused`    | `CANCELLED` | Reserved for the pause control of Phase 2; nothing writes it yet.                                                                                                            |
 
 Three identifiers link the layers. The **run id** is the `SystemJobExecution` row id: it is set as the Sentry tag `job_run_id`, written into `SystemEvent.context.jobRunId`, and named by a later run as `takenOverBy` or `holderRunId`. The **tick id** is a UUID the ticker sends as `x-tick-id`; it is on every run row it dispatched, in the ticker's console line and in the Better Stack summary. The **ops-log id** (`result.opsActionLogId`) joins an admin-started run to its audit entry, and `triggeredBy` is `admin:<userId>` for such a run. Each run also stores six counters, `casMiss`, `serializationRetry`, `deadlockOrLockTimeout`, `poolTimeout`, `leaseLost` and `leaseTakeover`, as evidence for the Integrity panel. Postgres still prevents the bad states; the counters only show how contended a run was.
 
