@@ -418,17 +418,15 @@ async function processDataExportsUnlocked(): Promise<DataExportResult> {
       staged.emailRows,
       "ORG_DATA_EXPORT_READY",
       EMAIL_BUDGET_MS.JOB,
-    ).catch((error) =>
+    ).catch(() =>
       console.error(
-        `[process-data-exports] email attempt failed for ${job.id}:`,
-        error,
+        `[process-data-exports] email attempt failed for ${job.id}`,
       ),
     );
     for (const row of staged.notificationRows) {
-      await attemptTrigger(row).catch((error) =>
+      await attemptTrigger(row).catch(() =>
         console.error(
-          `[process-data-exports] notification attempt failed for ${job.id}:`,
-          error,
+          `[process-data-exports] notification attempt failed for ${job.id}`,
         ),
       );
     }

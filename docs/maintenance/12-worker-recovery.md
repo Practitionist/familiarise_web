@@ -62,6 +62,8 @@ bytes: uploads use separate paths without upsert. The publication transaction
 stages the existing delivery obligations along with READY and its audit. Vendor
 notification delivery happens outside that transaction. A process death after
 commit leaves the existing relays responsible for notification delivery.
+Postcommit delivery logs retain the operation and export ID, never raw provider
+exceptions or transport payloads. Notice failure still preserves READY.
 
 Organization-visible failure text is a fixed safe message. Engineering-only
 system events carry diagnostics keyed by export ID. Neither public results nor

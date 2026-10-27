@@ -244,7 +244,7 @@ describe("export artifact expiry", () => {
     expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps READY when post-commit email and notification attempts throw", async () => {
+  it("keeps READY and transport errors private when post-commit notices fail", async () => {
     const originalUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const originalServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://storage.example";
@@ -270,10 +270,11 @@ describe("export artifact expiry", () => {
     mockStageReadyNotification.mockResolvedValue([
       { id: "notice-1", status: "PENDING" },
     ]);
-    mockAttemptStaged.mockRejectedValue(new Error("mail provider unavailable"));
-    mockAttemptNotification.mockRejectedValue(
-      new Error("notification provider unavailable"),
-    );
+    const privateDetail =
+      "recipient@example.test Bearer provider-token ?token=export-token";
+    mockAttemptStaged.mockRejectedValue(new Error(privateDetail));
+    mockAttemptNotification.mockRejectedValue(new Error(privateDetail));
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
 
     try {
       const result = await processDataExports();
@@ -283,7 +284,16 @@ describe("export artifact expiry", () => {
       expect(mockJobUpdateMany.mock.calls[1][0].data.status).toBe("READY");
       expect(mockAttemptStaged).toHaveBeenCalledTimes(1);
       expect(mockAttemptNotification).toHaveBeenCalledTimes(1);
+      expect(errorLog).toHaveBeenCalledTimes(2);
+      for (const args of errorLog.mock.calls) {
+        expect(args.every((value) => typeof value === "string")).toBe(true);
+        expect(args.join(" ")).toContain("export-ready");
+        expect(args.join(" ")).not.toContain("recipient@example.test");
+        expect(args.join(" ")).not.toContain("provider-token");
+        expect(args.join(" ")).not.toContain("export-token");
+      }
     } finally {
+      errorLog.mockRestore();
       if (originalUrl === undefined)
         delete process.env.NEXT_PUBLIC_SUPABASE_URL;
       else process.env.NEXT_PUBLIC_SUPABASE_URL = originalUrl;
