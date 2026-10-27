@@ -59,7 +59,8 @@ RESOLVED cases with `resolvedAt` at least 28 days old move to CLOSED with `close
 The auto-close arm examines at most `limit * HELD_OPEN_SCAN_FACTOR` candidates and
 closes at most `limit` cases. It selects never-attempted cases first, then the
 oldest `autoCloseLastAttemptAt`, with `resolvedAt` and ID as stable tie breakers.
-A conditional database stamp commits before each closing transaction, so a held
+A conditional Prisma `updateMany` stamp commits before each closing transaction,
+checking the selected attempt time, RESOLVED status, cutoff and tombstone. A held
 case or failed transaction rotates across later runs and process restarts. A
 stale claim, reopened case or tombstone cannot take that attempt. The stamp changes
 only polling metadata; `resolvedAt` and `updatedAt` retain their business meaning.

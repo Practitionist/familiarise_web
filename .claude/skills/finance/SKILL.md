@@ -39,23 +39,28 @@ Detailed invariants and regime facts live in `references/doctrine.md`; verificat
 
 ## Invoice capture recovery
 
-Lock a payable invoice without invalidating its current order while validating a
-gateway capture. Park an amount mismatch without clearing a newer checkout;
-successful PAID settlement clears the reference. Keep bank/credit invalidation
-semantics separate from the capture lock.
+Lock a payable invoice without invalidating its current order. Booking-refund
+credits and bank receipts retain the reference until gateway inspection; gateway
+settlement clears it only when the captured payment has been accounted for.
+The existing healer also reads PAID invoices with a retained reference, parks any
+additional capture through canonical settlement and retires the exact inspected
+pointer with its audit in one transaction. Live payments, read errors and
+inconsistent paid-order evidence retain the pointer.
 
-A positive booking-refund credit clears a payable invoice's checkout reference
-under its existing credit-cap row lock. Failed payment attempts retain references
-because their orders remain retryable. Clearing a local pointer does not revoke
-a provider order: late mismatched captures stay operator-reviewed liabilities,
-and the retained-pointer healer cannot discover every superseded order.
-Recompute outstanding through the attachment transaction before its CAS; a
-gateway request may have started before the credit changed the balance.
-An unreleased unapplied receipt keeps that capture in operator recovery; never
-automatically settle it again just because a later amount comparison matches.
-Before dunning suspension, read the retained gateway order within the bounded
-admission budget; recover captures canonically and hold uncertain/live/parked
-evidence. Recheck positive net debt and the inspected order inside the claim
-transaction. Reminder cohorts and lost historical order IDs need separate review.
+Checkout may replace a stale-amount unpaid order only after its bounded payment
+read is empty. CAS the inspected order ID and recompute current debt inside the
+attachment transaction; retain the replaced ID in the initiation audit. A provider
+read is no cancellation: an old tab can still capture later with a lost webhook.
+The healer does not consume audit history. Void/overage-credit clearers remain
+separate coverage limits; do not claim discovery of every superseded order.
 
-Use `applyOrgInvoiceCapture` with the transaction client for webhook, checkout read-back and scheduled recovery. Keep receipt, ledger, PAID audit and notification staging atomic. The registered invoice healer rotates retained order IDs through its existing execution checkpoint; it never creates another charge or auto-refunds an unapplied capture. An empty payment list does not close a created/attempted order: checkout must not replace an open stale-amount order. Keep provider waits inside the caller's remaining budget; an SDK timeout does not cancel a gateway effect. Bank receipts and credits can clear an old order reference, so do not claim the healer discovers every historical capture. Read `docs/maintenance/12-worker-recovery.md` for cadence, bounded rotation and remaining operating gates.
+Use `applyOrgInvoiceCapture` with the transaction client for webhook, checkout
+read-back and recovery. Keep receipt, journal, PAID audit and notification staging
+atomic. An unreleased unapplied receipt stays in operator recovery; a later amount
+match must not settle it again. Failed payment attempts retain retryable order
+references. Keep provider waits inside the remaining admission budget and gateway
+calls outside transactions. An SDK timeout does not cancel a provider effect.
+Before dunning suspension, inspect the retained order and hold live, uncertain or
+parked evidence, then recheck debt/order identity inside the claim transaction.
+The suspension budget starts at stage entry, independently of earlier reminders.
+Read `docs/maintenance/12-worker-recovery.md` for cadence, rotation and limits.

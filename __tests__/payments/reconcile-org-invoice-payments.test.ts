@@ -5,6 +5,8 @@
 const mockFindMany = jest.fn();
 const mockTransaction = jest.fn();
 const mockReadHolding = jest.fn();
+const mockFetchOrder = jest.fn();
+const mockRetire = jest.fn();
 const mockApplyCapture = jest.fn();
 const mockAttemptNotices = jest.fn();
 const mockReadCheckpoint = jest.fn();
@@ -20,7 +22,10 @@ const mockWithCronLock = jest.fn(
   async (_name: string, _options: unknown, run: () => Promise<unknown>) =>
     run(),
 );
-const mockTx = { orgAuditLog: { create: jest.fn() } };
+const mockTx = {
+  orgAuditLog: { create: jest.fn() },
+  organizationInvoice: { updateMany: mockRetire },
+};
 
 jest.mock("@/lib/prisma", () => ({
   __esModule: true,
@@ -41,6 +46,7 @@ jest.mock("@/lib/db/serializable-retry", () => ({
   withSerializableRetry: (run: () => Promise<unknown>) => run(),
 }));
 jest.mock("@/lib/payments/core/razorpay", () => ({
+  fetchRazorpayOrder: (...args: unknown[]) => mockFetchOrder(...args),
   readRazorpayOrderHolding: (...args: unknown[]) => mockReadHolding(...args),
 }));
 jest.mock("@/lib/payments/billing/org-invoice-settlement", () => ({
@@ -61,6 +67,7 @@ import { reconcileOrgInvoicePayments } from "@/lib/payments/billing/reconcile-in
 const invoice = (id: string) => ({
   id,
   organizationId: "org-1",
+  status: "ISSUED",
   providerPaymentOrderId: `order_${id}`,
 });
 
@@ -72,6 +79,9 @@ function rowsAfter(afterId: string | undefined, take: number) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockReadCheckpoint.mockResolvedValue(null);
+  mockRetire.mockResolvedValue({ count: 0 });
+  mockFetchOrder.mockResolvedValue(null);
+  mockTx.orgAuditLog.create.mockResolvedValue({});
   mockTransaction.mockImplementation((run: (tx: typeof mockTx) => unknown) =>
     run(mockTx),
   );
@@ -82,6 +92,144 @@ beforeEach(() => {
 });
 
 describe("reconcileOrgInvoicePayments", () => {
+  it("includes retained bank-paid pointers and retires an accounted capture only by exact paid-order CAS", async () => {
+    mockFindMany.mockResolvedValue([{ ...invoice("a"), status: "PAID" }]);
+    mockReadHolding.mockResolvedValue({
+      kind: "captured",
+      paymentId: "pay_bank_race",
+      amountPaise: 100_000,
+    });
+    mockApplyCapture.mockResolvedValue({
+      kind: "UNAPPLIED",
+      reason: "INVOICE_NOT_PAYABLE",
+    });
+    mockRetire.mockResolvedValue({ count: 1 });
+    const result = await reconcileOrgInvoicePayments({ limit: 1 });
+    expect(result).toMatchObject({
+      success: true,
+      captured: 1,
+      unapplied: 1,
+      paid: 0,
+    });
+    expect(mockFindMany.mock.calls[0][0].where.status.in).toContain("PAID");
+    expect(mockRetire).toHaveBeenCalledWith({
+      where: {
+        id: "a",
+        organizationId: "org-1",
+        status: "PAID",
+        providerPaymentOrderId: "order_a",
+      },
+      data: { providerPaymentOrderId: null },
+    });
+    expect(mockApplyCapture.mock.invocationCallOrder[0]).toBeLessThan(
+      mockRetire.mock.invocationCallOrder[0],
+    );
+    expect(mockTx.orgAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: "INVOICE_PAYMENT_ORDER_RETIRED",
+        }),
+      }),
+    );
+  });
+
+  it("does not clear a paid pointer before captured liability commits", async () => {
+    mockFindMany.mockResolvedValue([{ ...invoice("a"), status: "PAID" }]);
+    mockReadHolding.mockResolvedValue({
+      kind: "captured",
+      paymentId: "pay_a",
+      amountPaise: 100_000,
+    });
+    mockApplyCapture.mockRejectedValueOnce(new Error("ledger unavailable"));
+    expect(await reconcileOrgInvoicePayments({ limit: 1 })).toMatchObject({
+      success: false,
+      failed: 1,
+    });
+    expect(mockRetire).not.toHaveBeenCalled();
+  });
+
+  it("does not erase a successor order or audit a lost retirement CAS", async () => {
+    mockFindMany.mockResolvedValue([{ ...invoice("a"), status: "PAID" }]);
+    mockReadHolding.mockResolvedValue({
+      kind: "captured",
+      paymentId: "pay_a",
+      amountPaise: 100_000,
+    });
+    mockApplyCapture.mockResolvedValue({ kind: "ALREADY_APPLIED" });
+    mockRetire.mockResolvedValue({ count: 0 });
+    expect(await reconcileOrgInvoicePayments({ limit: 1 })).toMatchObject({
+      success: true,
+    });
+    expect(mockRetire.mock.calls[0][0].where.providerPaymentOrderId).toBe(
+      "order_a",
+    );
+    expect(mockTx.orgAuditLog.create).not.toHaveBeenCalled();
+  });
+
+  it.each(["live", "error"])(
+    "keeps a bank-paid order after a %s payment read",
+    async (kind) => {
+      mockFindMany.mockResolvedValue([{ ...invoice("a"), status: "PAID" }]);
+      if (kind === "error")
+        mockReadHolding.mockRejectedValueOnce(new Error("read timeout"));
+      else mockReadHolding.mockResolvedValueOnce({ kind: "live" });
+      await reconcileOrgInvoicePayments({ limit: 1 });
+      expect(mockRetire).not.toHaveBeenCalled();
+      expect(mockTx.orgAuditLog.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["paid", "missing"])(
+    "keeps an apparently empty bank-paid order when the order is %s",
+    async (state) => {
+      mockFindMany.mockResolvedValue([{ ...invoice("a"), status: "PAID" }]);
+      mockReadHolding.mockResolvedValueOnce({ kind: "empty" });
+      mockFetchOrder.mockResolvedValueOnce(
+        state === "missing"
+          ? null
+          : {
+              id: "order_a",
+              status: "paid",
+              currency: "INR",
+              notes: {
+                type: "invoice_payment",
+                invoiceId: "a",
+                organizationId: "org-1",
+              },
+            },
+      );
+      expect(await reconcileOrgInvoicePayments({ limit: 1 })).toMatchObject({
+        success: false,
+        failed: 1,
+      });
+      expect(mockRetire).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retires an empty bank-paid order only after confirming its identity and unpaid status", async () => {
+    mockFindMany.mockResolvedValue([{ ...invoice("a"), status: "PAID" }]);
+    mockReadHolding.mockResolvedValueOnce({ kind: "empty" });
+    mockFetchOrder.mockResolvedValueOnce({
+      id: "order_a",
+      status: "created",
+      currency: "INR",
+      notes: {
+        type: "invoice_payment",
+        invoiceId: "a",
+        organizationId: "org-1",
+      },
+    });
+    mockRetire.mockResolvedValue({ count: 1 });
+    expect(await reconcileOrgInvoicePayments({ limit: 1 })).toMatchObject({
+      success: true,
+      empty: 1,
+    });
+    expect(mockFetchOrder.mock.invocationCallOrder[0]).toBeLessThan(
+      mockRetire.mock.invocationCallOrder[0],
+    );
+    expect(mockApplyCapture).not.toHaveBeenCalled();
+  });
+
   it("passes a captured INR payment through canonical settlement and leaves staged notices to relays", async () => {
     mockReadHolding.mockResolvedValue({
       kind: "captured",

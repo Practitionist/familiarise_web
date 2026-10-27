@@ -53,21 +53,26 @@ For each rolled `CHARGE_ORG` overage event the rollup moves the event `PENDING` 
 
 Each door below is a `withOpsAction` door (ADMIN, step-up, reason, one ops-log row), and above ₹25,000 each needs a second admin; see [admin money doors](../70-operations/02-admin-money-doors.md).
 
-- **Gateway payment.** The tenant `POST .../invoices/[invoiceId]/pay` mints a Razorpay order for `invoiceOutstandingPaise` (the total less issued credit notes and receipts). It reuses a cached order only while the invoice is unpaid and the amount is unchanged; a stored paid order is checked for its captured payment before another order can be minted. The `reconcile-org-invoice-payments` ticker job rotates through ISSUED and OVERDUE invoices with stored Razorpay order IDs, recovering captures whose webhook was missed. It selects up to five candidates at 03:55, 07:55, 11:55, 15:55, 19:55 and 23:55 UTC; see [worker recovery](../../maintenance/12-worker-recovery.md#invoice-captures-and-uncertain-checkout-state) for admission limits, queue rotation and the lost-reference coverage boundary. Both paths use `applyOrgInvoiceCapture` (`lib/payments/billing/org-invoice-settlement.ts`), which posts `invoicepaid:<invoiceId>` (`Dr GATEWAY_CLEARING / Cr ORG_RECEIVABLE`) for the captured amount in the same transaction that writes the receipt and flips the status. A capture that does not equal the outstanding amount cannot settle the invoice: it is parked in `UNAPPLIED_RECEIPTS` with one `SystemEvent` (`ORG_INVOICE_CAPTURE_UNAPPLIED`) and never auto-refunded. An organisation awaiting verification may pay; a suspended one may not.
+- **Gateway payment.** The tenant `POST .../invoices/[invoiceId]/pay` mints a Razorpay order for `invoiceOutstandingPaise` (the total less issued credit notes and receipts). It reuses a cached order only while the invoice is unpaid and the amount is unchanged; a stored paid order is checked for its captured payment before another order can be minted. The `reconcile-org-invoice-payments` ticker job rotates through ISSUED, OVERDUE and retained-pointer PAID invoices with stored Razorpay order IDs, recovering captures whose webhook was missed. It selects up to five candidates at 03:55, 07:55, 11:55, 15:55, 19:55 and 23:55 UTC; see [worker recovery](../../maintenance/12-worker-recovery.md#invoice-captures-and-uncertain-checkout-state) for admission limits, queue rotation and the lost-reference coverage boundary. Both paths use `applyOrgInvoiceCapture` (`lib/payments/billing/org-invoice-settlement.ts`), which posts `invoicepaid:<invoiceId>` (`Dr GATEWAY_CLEARING / Cr ORG_RECEIVABLE`) for the captured amount in the same transaction that writes the receipt and flips the status. A capture that does not equal the outstanding amount cannot settle the invoice: it is parked in `UNAPPLIED_RECEIPTS` with one `SystemEvent` (`ORG_INVOICE_CAPTURE_UNAPPLIED`) and never auto-refunded. An organisation awaiting verification may pay; a suspended one may not.
 
-An existing `created` or `attempted` order with a different amount returns a
-conflict rather than being replaced on an empty payment list alone. When a
-member-booking refund issues a positive credit note, the invoice's existing
-credit-cap row lock also protects clearing the old checkout reference on a
-payable invoice; the next Pay request uses the reduced balance. A failed payment
-attempt retains the reference because the order can still be retried.
+A booking-refund credit or bank receipt retains the existing checkout reference,
+so the healer and dunning can still discover a capture whose webhook is missing.
+Bank settlement preserves the reference even after PAID. The healer parks any
+additional captured money canonically, then retires only the inspected PAID/order
+reference and its audit together. Live or unconfirmed evidence stays retryable;
+an apparently empty PAID order needs identity and unpaid-status confirmation too.
 
-Clearing a local reference does not cancel the provider order. A checkout tab
-from before a bank receipt or credit note can remain usable; a later capture is
-checked against the current balance and may be parked for operator review.
-Lost captures against superseded references remain outside this healer's
-selector, so this invalidation does not prove single-charge behavior across
-different orders. Historical stale references still require operator review.
+An unpaid stale-amount order is replaced only after a bounded gateway payment
+inspection finds no live or captured payment. Attachment CASes the inspected ID,
+rechecks current debt and records the replaced ID in its initiation audit. Failed
+payment attempts retain their reference. This prevents the permanent stale-amount
+Pay conflict without discarding an already visible capture.
+
+Inspection does not revoke an external order. A checkout tab can capture after
+the read/replacement; if its webhook is also lost, audit history aids operators
+but is not consumed by this healer. VOID/overage-credit clearers and older lost
+references remain separate limits. See the [worker contract](../../maintenance/12-worker-recovery.md#invoice-captures-and-uncertain-checkout-state)
+and its primary provider references before claiming single-charge behavior.
 
 - **Bank-transfer receipt.** `POST .../invoices/[invoiceId]/payments` (`recordBankTransferReceipt`) records a UTR, an amount (part-payments allowed) and a received-on date as an `OrganizationInvoiceReceipt` (the UTR is unique per organisation), posts `invoicereceipt:<receiptId>` as `Dr CASH / Cr ORG_RECEIVABLE`, and once nothing is outstanding settles the invoice through `settleOrgInvoicePaid`, the same transition a gateway capture uses (owner notice, `CHARGE_ORG` overages to `CHARGED`, release of parked trust earnings).
 - **Void is a credit note.** `POST .../invoices/[invoiceId]/void` (`voidOrgInvoice`) moves an `ISSUED` or `OVERDUE` invoice to `VOID` with a compare-and-set, mints a credit note for what the invoice still carries, and returns the purchase-order draw. `mode: "REBILL"` clears the bookings' `billableToOrgInvoiceId` so the next rollup bills them again and no revenue is reversed. `mode: "FORGIVE"` posts `invoice-voided:<invoiceId>`, writing the receivable off against the note's GST (`GST_PAYABLE`) and the rest against `PLATFORM_FEE`, and the experts keep their share. A paid invoice answers `INVOICE_PAID_USE_REFUND`, and one with receipts answers `INVOICE_PART_PAID_USE_REFUND`.
@@ -95,7 +100,8 @@ Before stage 3, the worker reads the retained gateway order. A discovered captur
 uses `applyOrgInvoiceCapture` and its existing durable notice outboxes; it does
 not issue a new charge. Live, unavailable or unapplied payment evidence holds
 suspension and increments the job failure count. New suspension work is admitted
-for ten seconds from run start, with each provider wait capped at five seconds.
+for ten seconds from entry to stage 3, after reminder work, with each provider
+wait capped at five seconds.
 The Serializable suspension claim rechecks positive net outstanding through its
 transaction client and CASes the order reference that was inspected. A credit
 or concurrent checkout cannot inherit a stale suspension decision. This covers

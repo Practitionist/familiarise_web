@@ -1,5 +1,4 @@
 /** @jest-environment node */
-import type { Prisma } from "@prisma/client";
 const mockReleaseEarnings = jest.fn(
   async (_db: unknown, _side: string, ids: string[]) => ({
     released: ids,
@@ -77,8 +76,7 @@ jest.mock("../../lib/prisma", () => {
     supportFinancialRecommendation: { findFirst: jest.fn() },
   };
   const db = {
-    supportCase: { findMany: jest.fn() },
-    $executeRaw: jest.fn(async () => 1),
+    supportCase: { findMany: jest.fn(), updateMany: jest.fn() },
     dispute: { findMany: jest.fn(async () => []) },
     user: { findMany: jest.fn(async () => []) },
     notificationOutbox: { findMany: jest.fn(async () => []) },
@@ -99,8 +97,7 @@ jest.mock("../../lib/prisma", () => {
 import { runSupportSlaSweep } from "../../lib/support/sla-sweep";
 
 type MockDb = {
-  supportCase: { findMany: jest.Mock };
-  $executeRaw: jest.Mock;
+  supportCase: { findMany: jest.Mock; updateMany: jest.Mock };
   $transaction: jest.Mock;
   tx: {
     supportCase: { updateMany: jest.Mock };
@@ -124,7 +121,6 @@ const holdApplied = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  db.$executeRaw.mockResolvedValue(1);
   db.$transaction.mockImplementation(
     (run: (tx: MockDb["tx"]) => Promise<unknown>) => run(db.tx),
   );
@@ -136,6 +132,7 @@ beforeEach(() => {
       args.where.status === "RESOLVED" ? [{ id: "case" }] : [],
   );
   db.tx.supportCase.updateMany.mockResolvedValue({ count: 1 });
+  db.supportCase.updateMany.mockResolvedValue({ count: 1 });
   db.tx.supportCaseEvent.findMany.mockResolvedValue([holdApplied]);
   db.tx.supportCaseEvent.create.mockResolvedValue({});
   db.tx.earningsHold.findMany.mockResolvedValue([
@@ -429,26 +426,61 @@ function durableAutoCloseRows(heldCount: number, tailCount: number) {
         .slice(0, args.take);
     },
   );
-  db.$executeRaw.mockImplementation(async (query: Prisma.Sql) => {
-    const [attemptedAt, id, cutoff, previousAttempt] = query.values;
-    if (!(attemptedAt instanceof Date) || typeof id !== "string")
-      throw new Error("Unexpected auto-close polling stamp");
-    const row = rows.find((candidate) => candidate.id === id);
-    if (
-      !row ||
-      row.status !== "RESOLVED" ||
-      row.deletedAt ||
-      !(cutoff instanceof Date) ||
-      row.resolvedAt > cutoff
-    )
-      return 0;
-    const previousTime =
-      previousAttempt instanceof Date ? previousAttempt.getTime() : null;
-    if ((row.autoCloseLastAttemptAt?.getTime() ?? null) !== previousTime)
-      return 0;
-    row.autoCloseLastAttemptAt = attemptedAt;
-    return 1;
-  });
+  db.supportCase.updateMany.mockImplementation(
+    async (query: {
+      where: {
+        id: string;
+        status: string;
+        resolvedAt: { lte: Date };
+        deletedAt: null;
+        autoCloseLastAttemptAt: Date | null;
+        updatedAt: Date;
+      };
+      data: { autoCloseLastAttemptAt: Date; updatedAt: Date };
+    }) => {
+      const attemptedAt = query.data.autoCloseLastAttemptAt;
+      const {
+        id,
+        status,
+        resolvedAt,
+        deletedAt,
+        autoCloseLastAttemptAt,
+        updatedAt,
+      } = query.where;
+      const cutoff = resolvedAt.lte;
+      if (
+        !(attemptedAt instanceof Date) ||
+        typeof id !== "string" ||
+        status !== "RESOLVED" ||
+        deletedAt !== null ||
+        !(updatedAt instanceof Date) ||
+        query.data.updatedAt.getTime() !== updatedAt.getTime()
+      ) {
+        throw new Error("Unexpected auto-close polling stamp");
+      }
+      const row = rows.find((candidate) => candidate.id === id);
+      if (
+        !row ||
+        row.status !== "RESOLVED" ||
+        row.deletedAt ||
+        !(cutoff instanceof Date) ||
+        row.resolvedAt > cutoff
+      ) {
+        return { count: 0 };
+      }
+      const previousTime =
+        autoCloseLastAttemptAt instanceof Date
+          ? autoCloseLastAttemptAt.getTime()
+          : null;
+      if ((row.autoCloseLastAttemptAt?.getTime() ?? null) !== previousTime) {
+        return { count: 0 };
+      }
+      if (row.updatedAt.getTime() !== updatedAt.getTime()) return { count: 0 };
+      row.autoCloseLastAttemptAt = attemptedAt;
+      row.updatedAt = query.data.updatedAt;
+      return { count: 1 };
+    },
+  );
   db.tx.supportCase.updateMany.mockImplementation(
     async (query: { where: { id: string } }) => {
       const row = rows.find((candidate) => candidate.id === query.where.id);
@@ -541,19 +573,47 @@ it("preserves resolvedAt and updatedAt when a held attempt rotates", async () =>
   await runSupportSlaSweep({ now, limit: 1 });
   expect(rows[0]).toMatchObject(clocks);
   expect(rows[0]?.autoCloseLastAttemptAt).toBeInstanceOf(Date);
-  const query: Prisma.Sql = db.$executeRaw.mock.calls[0][0];
-  expect(query.text).toMatch(
-    /UPDATE "SupportCase" SET "autoCloseLastAttemptAt" =/,
-  );
-  expect(query.text).not.toMatch(/SET "updatedAt"|SET "resolvedAt"/);
-  expect(query.text).toContain('"autoCloseLastAttemptAt" IS NOT DISTINCT FROM');
+  expect(db.supportCase.updateMany).toHaveBeenCalledWith({
+    where: {
+      id: "held-0",
+      status: "RESOLVED",
+      resolvedAt: { lte: new Date(now.getTime() - 28 * 86_400_000) },
+      deletedAt: null,
+      autoCloseLastAttemptAt: null,
+      updatedAt: rows[0]?.updatedAt,
+    },
+    data: {
+      autoCloseLastAttemptAt: expect.any(Date),
+      updatedAt: rows[0]?.updatedAt,
+    },
+  });
+});
+
+it("does not stamp after a concurrent business update changes updatedAt", async () => {
+  const rows = durableAutoCloseRows(0, 1);
+  const stamp = db.supportCase.updateMany.getMockImplementation();
+  if (!stamp) throw new Error("Missing stamp mock");
+  db.supportCase.updateMany.mockImplementationOnce((query) => {
+    const row = rows[0];
+    if (!row) throw new Error("Missing candidate");
+    row.updatedAt = new Date(now.getTime() + 1);
+    return stamp(query);
+  });
+
+  const result = await runSupportSlaSweep({ now, limit: 1 });
+
+  expect(result.autoClosedCount).toBe(0);
+  expect(db.$transaction).not.toHaveBeenCalled();
+  expect(rows[0]?.status).toBe("RESOLVED");
+  expect(rows[0]?.autoCloseLastAttemptAt).toBeNull();
+  expect(rows[0]?.updatedAt).toEqual(new Date(now.getTime() + 1));
 });
 
 it("does not enter the closing transaction after losing the progress CAS", async () => {
   const rows = durableAutoCloseRows(0, 1);
-  const stamp = db.$executeRaw.getMockImplementation();
+  const stamp = db.supportCase.updateMany.getMockImplementation();
   if (!stamp) throw new Error("Missing stamp mock");
-  db.$executeRaw.mockImplementationOnce((query: Prisma.Sql) => {
+  db.supportCase.updateMany.mockImplementationOnce((query) => {
     const row = rows[0];
     if (!row) throw new Error("Missing candidate");
     row.autoCloseLastAttemptAt = new Date(now);
@@ -568,9 +628,9 @@ it("does not enter the closing transaction after losing the progress CAS", async
 
 it("does not close a row tombstoned between selection and progress stamping", async () => {
   const rows = durableAutoCloseRows(0, 1);
-  const stamp = db.$executeRaw.getMockImplementation();
+  const stamp = db.supportCase.updateMany.getMockImplementation();
   if (!stamp) throw new Error("Missing stamp mock");
-  db.$executeRaw.mockImplementationOnce((query: Prisma.Sql) => {
+  db.supportCase.updateMany.mockImplementationOnce((query) => {
     const row = rows[0];
     if (!row) throw new Error("Missing candidate");
     row.deletedAt = now;
@@ -591,7 +651,7 @@ it("does not stamp or query auto-close candidates after earlier arms consume the
   });
   expect(result.autoClosedCount).toBe(0);
   expect(result.autoCloseHasMore).toBe(true);
-  expect(db.$executeRaw).not.toHaveBeenCalled();
+  expect(db.supportCase.updateMany).not.toHaveBeenCalled();
   expect(rows.every((row) => row.autoCloseLastAttemptAt === null)).toBe(true);
   expect(result.success).toBe(true);
 });
@@ -608,7 +668,7 @@ it("stops admission after a slow attempt and leaves later rows unstamped", async
   const result = await runSupportSlaSweep({ now, limit: 1 });
   expect(result.autoCloseHeldOpen).toBe(1);
   expect(result.autoCloseHasMore).toBe(true);
-  expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+  expect(db.supportCase.updateMany).toHaveBeenCalledTimes(1);
   expect(rows[0]?.autoCloseLastAttemptAt).toBeInstanceOf(Date);
   expect(rows[1]?.autoCloseLastAttemptAt).toBeNull();
 });
@@ -618,7 +678,7 @@ it("leaves selected rows unstamped once enough cases close", async () => {
   const result = await runSupportSlaSweep({ now, limit: 1 });
   expect(result.autoClosedCount).toBe(1);
   expect(result.autoCloseHasMore).toBe(true);
-  expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+  expect(db.supportCase.updateMany).toHaveBeenCalledTimes(1);
   expect(rows[1]?.autoCloseLastAttemptAt).toBeNull();
   expect(rows[2]?.autoCloseLastAttemptAt).toBeNull();
 });

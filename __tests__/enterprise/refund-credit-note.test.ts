@@ -110,7 +110,7 @@ const INVOICED_PAYMENT = {
 
 describe("mintRefundCreditNote", () => {
   it.each(["ISSUED", "OVERDUE"])(
-    "mints a credit and retires the old checkout amount on an %s invoice",
+    "mints a credit and preserves gateway recovery of an %s invoice",
     async (invoiceStatus) => {
       const tx = mockTx({ payment: INVOICED_PAYMENT, invoiceStatus });
       const res = await mintRefundCreditNote(tx as never, {
@@ -134,14 +134,8 @@ describe("mintRefundCreditNote", () => {
       // 16-character limit; "ACME-CN-2026-0001" (17 chars) was itself a breach.
       expect(data.creditNoteNumber).toBe("ACM-CN-2026-0001");
       expect(data.creditNoteNumber.length).toBeLessThanOrEqual(16);
-      expect(tx._invoice.providerPaymentOrderId).toBeNull();
-      expect(tx.organizationInvoice.updateMany).toHaveBeenCalledWith({
-        where: { id: "inv1", status: { in: ["ISSUED", "OVERDUE"] } },
-        data: { providerPaymentOrderId: null },
-      });
-      expect(tx._creditNoteCreate.mock.invocationCallOrder[0]).toBeLessThan(
-        tx.organizationInvoice.updateMany.mock.invocationCallOrder[0],
-      );
+      expect(tx._invoice.providerPaymentOrderId).toBe("order_old_amount");
+      expect(tx.organizationInvoice.updateMany).not.toHaveBeenCalled();
     },
   );
 

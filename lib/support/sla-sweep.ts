@@ -1,4 +1,3 @@
-import { Prisma } from "@prisma/client";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
@@ -574,7 +573,11 @@ type AutoCloseResult = Pick<
 >;
 
 async function attemptAutoCloseCase(
-  c: { id: string; autoCloseLastAttemptAt: Date | null },
+  c: {
+    id: string;
+    autoCloseLastAttemptAt: Date | null;
+    updatedAt: Date;
+  },
   now: Date,
   autoCloseCutoff: Date,
   doors: () => Promise<string | null>,
@@ -583,13 +586,18 @@ async function attemptAutoCloseCase(
   const attemptedAt = new Date(
     Math.max(Date.now(), (c.autoCloseLastAttemptAt?.getTime() ?? 0) + 1),
   );
-  const stamped = await prisma.$executeRaw(Prisma.sql`
-    UPDATE "SupportCase" SET "autoCloseLastAttemptAt" = ${attemptedAt}
-    WHERE id = ${c.id} AND status = 'RESOLVED'::"SupportCaseStatus"
-      AND "resolvedAt" <= ${autoCloseCutoff} AND "deletedAt" IS NULL
-      AND "autoCloseLastAttemptAt" IS NOT DISTINCT FROM ${c.autoCloseLastAttemptAt}
-  `);
-  if (stamped === 0) return 0;
+  const stamped = await prisma.supportCase.updateMany({
+    where: {
+      id: c.id,
+      status: "RESOLVED",
+      resolvedAt: { lte: autoCloseCutoff },
+      deletedAt: null,
+      autoCloseLastAttemptAt: c.autoCloseLastAttemptAt,
+      updatedAt: c.updatedAt,
+    },
+    data: { autoCloseLastAttemptAt: attemptedAt, updatedAt: c.updatedAt },
+  });
+  if (stamped.count === 0) return 0;
   return prisma.$transaction(
     async (tx) => {
       const refused = await autoCloseRefusalTx(tx, c.id, doors);
@@ -670,7 +678,7 @@ async function autoCloseResolvedRows(
       { resolvedAt: "asc" },
       { id: "asc" },
     ],
-    select: { id: true, autoCloseLastAttemptAt: true },
+    select: { id: true, autoCloseLastAttemptAt: true, updatedAt: true },
     take: readCap,
   });
   let examined = 0;

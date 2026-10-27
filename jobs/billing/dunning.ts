@@ -195,7 +195,6 @@ async function dunning(opts: {
     failed: 0,
   };
   const now = new Date();
-  const suspensionDeadline = Date.now() + 10_000;
   const asOf = opts.windowStart ?? now;
   let attempted = 0;
   const budgetLeft = () =>
@@ -372,6 +371,7 @@ async function dunning(opts: {
   // (both sides gated on the same ENABLE_DUNNING_SUSPEND flag). Paying the invoice (status leaves OVERDUE)
   // lifts the suspension naturally — nothing un-stamps a paid invoice.
   if (SUSPEND_ENABLED) {
+    const suspensionDeadline = Date.now() + 10_000;
     const suspendCutoff = new Date(asOf.getTime() - SUSPEND_GRACE_MS);
     const suspendedThisWindow = opts.windowStart
       ? await prisma.organizationInvoice.count({

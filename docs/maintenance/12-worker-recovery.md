@@ -141,16 +141,17 @@ transaction, without changing its key or resetting retired attempts.
 
 ## Invoice captures and uncertain checkout state
 
-`reconcile-org-invoice-payments` reads the stored gateway order for ISSUED or
-OVERDUE invoices and passes a captured INR payment through
+`reconcile-org-invoice-payments` reads the stored gateway order for ISSUED, OVERDUE or retained-pointer
+PAID invoices and passes a captured INR payment through
 `applyOrgInvoiceCapture`. The existing Serializable settlement transaction owns
 the receipt, journal, PAID transition, audit and durable notification staging.
 The existing email and bell relays deliver after commit. An amount/status
 mismatch follows the canonical UNAPPLIED_RECEIPTS path for operator review;
 it never starts another charge or invents an automatic refund policy.
 The capture locks the payable invoice without clearing its current order
-reference. A mismatched late capture preserves a newer checkout; the PAID
-transition clears the reference only when settlement succeeds.
+reference. A mismatched late capture preserves a newer checkout; gateway
+settlement clears it only after capture accounting. Bank settlement retains it
+for gateway inspection.
 
 Durably parked captures raise an operator finding and HTTP 207 without labeling
 a handled liability as a failed worker. Read/transaction failures still fail the
@@ -168,7 +169,7 @@ The ticker supplies six opportunities a day, at 03:55, 07:55, 11:55, 15:55,
 19:55 and 23:55 UTC, with a 24-second HTTP abort. Some existing hours already
 occupy all 120 dispatch slots. The four-hour phase fits the ten-target calendar
 bound without weakening existing cadences or moving Stream work. At five rows
-per run, the upper bound is 30 candidate reads per day, less under slow/error
+per run, the upper bound is 30 candidate inspections per day, less under slow/error
 conditions. For N continuously eligible invoices, one rotation takes at least
 `ceil(N / 5) * 4 hours`; this is not a four-hour per-invoice recovery SLO.
 Measure the eligible cohort and recovery age before raising volume. A successful
@@ -177,35 +178,48 @@ run within twelve hours only establishes that this capability is executing.
 The tenant pay route also checks an existing paid/stale-amount order before
 returning another checkout. Gateway errors and inconclusive paid-order reads
 fail closed. An empty payment list does not close an unpaid order: a still-open
-order with a different amount returns a conflict. New orders are attached by
+order with a different amount is replaced only after a bounded payment read
+confirms no live payment or capture. New orders are attached by
 CAS to a still-payable invoice, with audit in the same transaction; a concurrent
 winner is read back and validated. Gateway calls wait at most five seconds each
 under a twenty-second request budget. Failed attachment never hands out an
 unowned order. The final invoice/order/outstanding check fences local races;
 it cannot prevent an external capture after that check.
 
-When a booking refund issues a positive credit note, its transaction already
-locks the invoice for the cumulative credit cap. It clears the checkout reference
-only on ISSUED/OVERDUE invoices so the next Pay request uses the reduced balance.
-The attachment transaction recomputes the outstanding amount before its CAS:
-an in-flight request cannot reinstall an old-amount order after that credit.
-Payment-attempt failure callbacks retain the current reference: the same order
-can be retried, and a delayed failure must not erase a newer checkout.
+Booking-refund credit notes and bank receipts preserve the old order reference,
+including when bank receipts settle the invoice PAID. No gateway call runs inside
+those transactions. The healer includes retained PAID references: an additional
+capture goes through canonical settlement into UNAPPLIED_RECEIPTS, then the exact
+PAID/order pointer is conditionally retired with its audit in that transaction.
+An empty payment read requires a second order read confirming identity, currency
+and created/attempted status before retirement. A paid order with no visible
+capture, a live payment or unreadable evidence retains the pointer.
+
+Checkout inspects before replacing a stale-amount unpaid order. Attachment CASes
+the inspected ID, recomputes debt and records the replaced ID in its initiation
+audit. Concurrent credit changes cannot install an old-amount order.
+Payment-attempt failure callbacks preserve the current reference.
 A capture with an existing unreleased unapplied receipt stays parked even if
 a later read matches the invoice balance. Automatic recovery must not settle
 those same cash funds a second time; operator reconciliation owns release.
 Before config-enabled suspension, dunning reads the retained gateway order with
-a five-second wait cap inside a ten-second run admission budget. A discovered
+a five-second wait cap inside a ten-second stage admission budget, starting
+when the suspension stage begins. A discovered
 capture uses the same canonical settlement and durable notices. Live, uncertain
 or parked evidence holds suspension and records a failed check. The suspension
 transaction rechecks positive net debt and CASes the inspected order reference.
 This guard reduces dependence on healer throughput; lost references and the
 status-based reminder cohorts remain explicit coverage limits.
 
-This healer covers retained order pointers. Existing bank-receipt and credit
-flows can clear a pointer while a previous checkout tab remains open. Finding
-an unlogged later capture against such a lost pointer is still a separate
-recovery gap; neither this job nor its healthy completion claims to close it.
+These reads protect captures already visible at inspection, not later provider
+effects. [Razorpay order states](https://razorpay.com/docs/api/orders/fetch-with-id/?preferred-country=IN)
+keep created/attempted orders payable; changing the local pointer never revokes an
+old checkout tab. A capture after inspection/replacement can still need a webhook
+or operator recovery. Retirement/initiation audits retain the order ID for
+forensics, not an automatically consumed history. Invoice VOID and overage-credit
+paths still clear their references outside this adjustment flow. Healthy completion
+does not prove those gaps closed. The [order-payments endpoint](https://razorpay.com/docs/api/orders/fetch-payments/?preferred-country=IN)
+is the read boundary; no charge, capture or refund is initiated by inspection.
 
 ## Failure boundaries and review evidence
 
