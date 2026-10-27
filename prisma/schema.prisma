@@ -408,6 +408,7 @@ model SupportCase {
   acknowledgedAt    DateTime? @db.Timestamptz
   resolutionDueAt   DateTime? @db.Timestamptz
   resolvedAt        DateTime? @db.Timestamptz
+  autoCloseLastAttemptAt DateTime? @db.Timestamptz
   closedAt          DateTime? @db.Timestamptz
   deletedAt         DateTime? @db.Timestamptz
   firstAgentReplyAt DateTime? @db.Timestamptz
@@ -459,6 +460,7 @@ model SupportCase {
   @@index([organizationId, status])
   @@index([assignedToId, status])
   @@index([status, lastMessageAt])
+  @@index([status, autoCloseLastAttemptAt, resolvedAt, id])
   @@index([acknowledgedAt, ackDueAt])
   @@index([resolvedAt, resolutionDueAt])
   @@index([resolvedAt, statutoryDueAt])

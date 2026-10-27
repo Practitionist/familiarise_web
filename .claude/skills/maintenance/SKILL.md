@@ -126,6 +126,10 @@ Auth tokens/invitations, webhook archive, onboarding drafts and audit retention 
 
 Auth-token and webhook page executions share `deleteBoundedPage`: preserve the shared start budget, caller-owned eligibility predicates and committed counts when the continuation probe fails.
 
+## Support auto-close progress
+
+Preserve support refusal, payout-release and chat-ending transactions. Rotate admitted auto-close attempts with the nullable `SupportCase.autoCloseLastAttemptAt` eligibility/prior-attempt CAS stamp; never change business clocks to poll. Expected recommendation/maintenance holds have bounded samples, while unreadable maintenance remains failure. The 16-second start budget covers only auto-close. The owner applies the exact additive SQL before readers; use read-only catalog verification and the current [sweep runbook](../../../docs/support/07-sla-sweep.md#auto-close-schema-rollout).
+
 ## Direct upload commit retries
 
 For plan-material commits, check session, rate limit, current plan-management access and payload/file policy before replaying by plan type, plan ID and storage path. Return committed rows before storage probes. Pre-verification policy rejection preserves the upload: a corrected concurrent retry may commit it, and a reference count cannot fence external deletion. Keep the committed-row lookup outside cleanup catches so database errors preserve the upload too. First-attach verification stays outside the transaction, inside its existing refusal-cleanup try/catch; the locked transaction repeats replay before the material cap and insert. Run the full document suites and direct mock dependants with `--maxWorkers=2`; see `docs/documents/README.md` for the replay and orphan-cleanup limits.
