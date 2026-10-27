@@ -52,9 +52,13 @@ export async function GET(req: NextRequest) {
       system: "System",
     };
 
+    // An admin run records `admin:<userId>` (or `admin-drain:<userId>`); older rows hold a bare user id.
+    const userIdOf = (triggeredBy: string) =>
+      /^admin(?:-drain)?:(.+)$/.exec(triggeredBy)?.[1] ?? triggeredBy;
+
     // Get user info for user-triggered executions (excluding system trigger labels)
     const triggeredByIds = executions
-      .map((e) => e.triggeredBy)
+      .map((e) => (e.triggeredBy ? userIdOf(e.triggeredBy) : null))
       .filter(
         (id): id is string =>
           typeof id === "string" &&
@@ -89,7 +93,7 @@ export async function GET(req: NextRequest) {
               name: SYSTEM_TRIGGER_LABELS[execution.triggeredBy],
               email: null,
             }
-          : userMap.get(execution.triggeredBy) || {
+          : userMap.get(userIdOf(execution.triggeredBy)) || {
               id: execution.triggeredBy,
               name: "Deleted User",
               email: null,
@@ -110,7 +114,10 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     console.error("Error fetching job executions:", error);
     return NextResponse.json(
       { error: "Failed to fetch job executions" },

@@ -14,7 +14,11 @@ import {
 } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { isFinancialJob } from "@/lib/cron/financial-jobs";
+import {
+  JOB_CATEGORIES,
+  type JobCategory,
+  type SystemJobCard,
+} from "@/lib/cron/job-categories";
 import type { Tone } from "@/lib/ui/tone";
 import {
   CreditCard,
@@ -30,292 +34,28 @@ import {
   Database,
   Bell,
   History,
+  Receipt,
+  ShieldCheck,
+  Mail,
+  Video,
+  LifeBuoy,
 } from "lucide-react";
 
-// Job configuration
-export interface SystemJob {
-  id: string;
-  name: string;
-  description: string;
-  schedule: string;
-  category:
-    | "Payments"
-    | "Refunds"
-    | "Disputes"
-    | "Earnings"
-    | "Appointments"
-    | "Payouts"
-    | "Cleanup"
-    | "Reconciliation"
-    | "Alerts";
-}
-
-const SYSTEM_JOBS: SystemJob[] = [
-  {
-    id: "consent-retention-sweeper",
-    name: "Consent Retention Slice",
-    description:
-      "Examine one expired-retention slice; deletion requires the existing delete gate",
-    schedule: "Weekly (Actions currently budget-blocked)",
-    category: "Cleanup",
-  },
-  {
-    id: "databreach-deadline-alerts",
-    name: "Breach Deadline Alert Slice",
-    description:
-      "Stage the next bounded recipient slice of the oldest unfinished deadline digest",
-    schedule: "Hourly (Actions currently budget-blocked)",
-    category: "Alerts",
-  },
-  {
-    id: "prune-system-events",
-    name: "System Event Retention Slice",
-    description:
-      "Remove one oldest-first slice beyond the existing 400-day retention policy",
-    schedule: "Daily (Actions currently budget-blocked)",
-    category: "Cleanup",
-  },
-  {
-    id: "maintenance-booking-remediation",
-    name: "Maintenance booking remediation",
-    description:
-      "Process one explicitly confirmed booking cancellation; held until maintenance ends.",
-    schedule: "Every 15 minutes",
-    category: "Appointments",
-  },
-  // Payments
-  {
-    id: "cleanup-abandoned-payments",
-    name: "Cleanup Abandoned Payments",
-    description: "Cancel abandoned payment intents and expire pending payments",
-    schedule: "Every 15 minutes",
-    category: "Payments",
-  },
-  {
-    id: "cleanup-approval-payments",
-    name: "Cleanup Approval Payments",
-    description: "Expire lapsed approval pay-links",
-    schedule: "Hourly",
-    category: "Payments",
-  },
-  // Refunds
-  {
-    id: "reconcile-refunds",
-    name: "Reconcile Pending Refunds",
-    description: "Sync refund status with Razorpay",
-    schedule: "Every 15 minutes",
-    category: "Refunds",
-  },
-  // Disputes
-  {
-    id: "reconcile-disputes",
-    name: "Reconcile Disputes",
-    description: "Sync dispute status with Razorpay and track urgent deadlines",
-    schedule: "Every 6 hours",
-    category: "Disputes",
-  },
-  // Earnings
-  {
-    id: "sync-payment-earnings",
-    name: "Sync Payment to Earnings",
-    description: "Create missing earnings records for succeeded payments",
-    schedule: "Hourly",
-    category: "Earnings",
-  },
-  {
-    id: "release-earnings",
-    name: "Release Earnings from Hold",
-    description: "Move PENDING earnings to READY after hold period",
-    schedule: "Hourly",
-    category: "Earnings",
-  },
-  // Payouts
-  {
-    id: "create-payout-batch",
-    name: "Create Payout Batch",
-    description: "Create weekly payout batches for eligible experts",
-    schedule: "Weekly (Mon 8PM UTC)",
-    category: "Payouts",
-  },
-  {
-    id: "process-payouts",
-    name: "Process Payouts",
-    description: "Send approved payouts via RazorpayX",
-    schedule: "Weekly (Mon 9PM UTC)",
-    category: "Payouts",
-  },
-  {
-    id: "handle-stuck-payouts",
-    name: "Handle Stuck Payouts",
-    description: "Retry payouts stuck in PROCESSING >24h, query gateway status",
-    schedule: "Every 4 hours",
-    category: "Payouts",
-  },
-  {
-    id: "reconcile-payout-status",
-    name: "Reconcile Payout Status",
-    description: "Sync PENDING/PROCESSING payout status with gateways",
-    schedule: "Every 6 hours",
-    category: "Reconciliation",
-  },
-  {
-    id: "heal-consumer-invoices",
-    name: "Heal Consumer Invoices",
-    description:
-      "Mint missing consumer tax invoices for captured, unrefunded payments (90-day lookback)",
-    schedule: "Every 6 hours",
-    category: "Reconciliation",
-  },
-  // Alerts
-  {
-    id: "alert-orphaned-payments",
-    name: "Alert Orphaned Payments",
-    description: "Find SUCCEEDED payments with no appointment (CRITICAL)",
-    schedule: "Every 6 hours",
-    category: "Alerts",
-  },
-  // Cleanup
-  {
-    id: "transfer-recordings",
-    name: "Copy Recordings",
-    description: "Queue the next session recording for permanent storage",
-    schedule: "Every 15 minutes",
-    category: "Cleanup",
-  },
-  {
-    id: "auth-tokens",
-    name: "Auth Token Cleanup",
-    description:
-      "Delete expired sessions, verification tokens, password reset tokens",
-    schedule: "Daily",
-    category: "Cleanup",
-  },
-  {
-    id: "tentative-occurrences",
-    name: "Tentative Occurrence Cleanup",
-    description: "Release occurrences held for abandoned booking flows >7 days",
-    schedule: "Every 2 hours",
-    category: "Cleanup",
-  },
-  {
-    id: "expire-stale-requests",
-    name: "Expire Stale Requests",
-    description:
-      "Auto-expire PENDING requests >30 days, APPROVED_PENDING_PAYMENT >7 days",
-    schedule: "Daily",
-    category: "Cleanup",
-  },
-  {
-    id: "archive-webhook-events",
-    name: "Archive Webhook Events",
-    description: "Delete processed webhook events >30 days",
-    schedule: "Weekly",
-    category: "Cleanup",
-  },
-  {
-    id: "expire-recordings",
-    name: "Expire Recordings",
-    description: "Queue recording retention and asset cleanup",
-    schedule: "Daily, 00:00–03:00 UTC",
-    category: "Cleanup",
-  },
-  {
-    id: "expire-event-channels",
-    name: "Expire Event Channels",
-    description: "Queue ended event and dormant conversation cleanup",
-    schedule: "Daily, 08:00–11:00 UTC",
-    category: "Cleanup",
-  },
-  {
-    id: "stream-sync",
-    name: "Sync Stream Users",
-    description:
-      "Queue a comparison of Stream principals against database ownership",
-    schedule: "Daily, 08:00–11:00 UTC",
-    category: "Cleanup",
-  },
-  {
-    id: "wind-down-deactivated-orgs",
-    name: "Wind Down Organizations",
-    description:
-      "Queue Stream access and recording cleanup for deactivated organizations",
-    schedule: "Daily, 03:00–06:00 UTC",
-    category: "Cleanup",
-  },
-  {
-    id: "reconcile-orphaned-recordings",
-    name: "Recover Missing Recordings",
-    description: "Queue recovery of missing recording webhook deliveries",
-    schedule: "Daily, 00:00–03:00 UTC",
-    category: "Reconciliation",
-  },
-  {
-    id: "reconcile-orphaned-sessions",
-    name: "Reconcile Ended Sessions",
-    description: "Recover overdue meeting end and presence state",
-    schedule: "Every 30 minutes",
-    category: "Reconciliation",
-  },
-  // Reconciliation
-  {
-    id: "reconcile-org-invoice-payments",
-    name: "Recover Invoice Payments",
-    description: "Recover captured invoice orders after missed webhooks",
-    schedule: "Every 4 hours",
-    category: "Reconciliation",
-  },
-  {
-    id: "reconcile-payment-status",
-    name: "Reconcile Payment Status",
-    description: "Query Razorpay for actual status on stale PENDING payments",
-    schedule: "Every 15 minutes",
-    category: "Reconciliation",
-  },
-  {
-    id: "reconcile-occurrence-availability",
-    name: "Reconcile Occurrence Availability",
-    description: "Fix tentative flags, detect double-bookings",
-    schedule: "Hourly",
-    category: "Reconciliation",
-  },
-  {
-    id: "purge-deleted-documents",
-    name: "Purge Deleted Documents",
-    description:
-      "Tombstone session documents past retention, then purge tombstones past the grace window",
-    schedule: "Daily",
-    category: "Reconciliation",
-  },
-  {
-    id: "reconcile-document-storage",
-    name: "Reconcile Document Storage",
-    description: "Find orphaned/missing files in Supabase storage",
-    schedule: "Daily",
-    category: "Reconciliation",
-  },
-  // Appointments
-  {
-    id: "auto-complete-appointments",
-    name: "Auto-Complete Appointments",
-    description: "Move appointments to COMPLETED after session ends",
-    schedule: "Hourly",
-    category: "Appointments",
-  },
-];
-
-const CATEGORY_CONFIG: Record<
-  SystemJob["category"],
-  { icon: typeof CreditCard }
-> = {
-  Payments: { icon: CreditCard },
-  Refunds: { icon: RefreshCw },
-  Disputes: { icon: AlertTriangle },
-  Earnings: { icon: DollarSign },
-  Appointments: { icon: Calendar },
-  Payouts: { icon: Wallet },
-  Cleanup: { icon: Trash2 },
-  Reconciliation: { icon: Database },
-  Alerts: { icon: Bell },
+const CATEGORY_ICONS: Record<JobCategory, typeof CreditCard> = {
+  Payments: CreditCard,
+  Refunds: RefreshCw,
+  Disputes: AlertTriangle,
+  Earnings: DollarSign,
+  Payouts: Wallet,
+  Billing: Receipt,
+  Compliance: ShieldCheck,
+  Appointments: Calendar,
+  Messaging: Mail,
+  Recordings: Video,
+  Support: LifeBuoy,
+  Reconciliation: Database,
+  Alerts: Bell,
+  Cleanup: Trash2,
 };
 
 const EXECUTION_STATUS: Record<
@@ -325,39 +65,17 @@ const EXECUTION_STATUS: Record<
   COMPLETED: { label: "Completed", tone: "success" },
   FAILED: { label: "Failed", tone: "critical" },
   RUNNING: { label: "Running", tone: "info" },
+  CANCELLED: { label: "Stood down", tone: "neutral" },
 };
 
-/**
- * #1527 QA B10 — money-list jobs that only expire unpaid orders and links.
- * Maintenance still holds them with the money jobs, but no balance moves, so
- * the reason every run asks for is enough.
- */
-const NO_TYPED_CONFIRM = new Set([
-  "cleanup-abandoned-payments",
-  "cleanup-approval-payments",
-]);
-
-/**
- * #1527 Q10 — a money job moves or mutates real balances, so running one by
- * hand needs a typed confirmation: the payout pair asks for "RUN PAYOUTS",
- * any other money job for its own id.
- */
-export function runConfirmPhrase(
-  job: Pick<SystemJob, "id" | "category">,
-): string | undefined {
-  if (!isFinancialJob(job.id) || NO_TYPED_CONFIRM.has(job.id)) return undefined;
-  return job.category === "Payouts" ? "RUN PAYOUTS" : job.id;
-}
-
 interface JobCardProps {
-  job: SystemJob;
+  job: SystemJobCard;
   isRunning: boolean;
   onRun: () => void;
 }
 
 function JobCard({ job, isRunning, onRun }: JobCardProps) {
-  const config = CATEGORY_CONFIG[job.category];
-  const Icon = config.icon;
+  const Icon = CATEGORY_ICONS[job.category];
 
   return (
     <motion.div
@@ -373,7 +91,7 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
             </div>
             <div>
               <h3 className="font-semibold text-foreground text-sm">
-                {job.name}
+                {job.title}
               </h3>
               <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-xs font-medium bg-muted text-muted-foreground">
                 {job.category}
@@ -419,7 +137,7 @@ interface JobExecution {
   id: string;
   jobId: string;
   jobName: string;
-  status: "RUNNING" | "COMPLETED" | "FAILED";
+  status: "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
   startedAt: string;
   completedAt: string | null;
   result: Record<string, unknown> | null;
@@ -431,9 +149,11 @@ interface JobExecution {
 
 interface SystemJobsPanelProps {
   className?: string;
+  /** Built on the server from the cleanup registry. */
+  jobs: SystemJobCard[];
 }
 
-export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
+export function SystemJobsPanel({ className, jobs }: SystemJobsPanelProps) {
   const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set());
   const [executions, setExecutions] = useState<JobExecution[]>([]);
   const [loadingExecutions, setLoadingExecutions] = useState(true);
@@ -462,9 +182,9 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
 
   // #1527 Q10 — every "Run now" asks for a reason (the route writes it to the
   // audit log); a money job also needs a typed confirmation.
-  const [confirmJob, setConfirmJob] = useState<SystemJob | null>(null);
+  const [confirmJob, setConfirmJob] = useState<SystemJobCard | null>(null);
 
-  const handleRunJob = async (job: SystemJob, reason: string) => {
+  const handleRunJob = async (job: SystemJobCard, reason: string) => {
     setRunningJobs((prev) => new Set(prev).add(job.id));
 
     try {
@@ -484,7 +204,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
       // #1846 N6 — the payout jobs answer 202 and finish after the response.
       if (result.dispatched) {
         toast({
-          title: `${job.name} ${result.accepted ? "queued" : "started"}`,
+          title: `${job.title} ${result.accepted ? "queued" : "started"}`,
           description: result.message,
           variant: "default",
         });
@@ -512,7 +232,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
       }
 
       toast({
-        title: `${job.name} completed`,
+        title: `${job.title} completed`,
         description:
           stats.length > 0 ? stats.join(" | ") : "Job completed successfully",
         variant: "default",
@@ -536,17 +256,11 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
     }
   };
 
-  // Group jobs by category
-  const jobsByCategory = SYSTEM_JOBS.reduce(
-    (acc, job) => {
-      if (!acc[job.category]) acc[job.category] = [];
-      acc[job.category].push(job);
-      return acc;
-    },
-    {} as Record<string, SystemJob[]>,
+  const categories = JOB_CATEGORIES.filter((category) =>
+    jobs.some((job) => job.category === category),
   );
-
-  const categories = Object.keys(jobsByCategory) as SystemJob["category"][];
+  const jobsIn = (category: JobCategory) =>
+    jobs.filter((job) => job.category === category);
 
   const formatExecutionTime = (dateString: string) => {
     const date = new Date(dateString);
@@ -633,18 +347,18 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
         <div key={category}>
           <div className="flex items-center gap-2 mb-4">
             {(() => {
-              const Icon = CATEGORY_CONFIG[category].icon;
+              const Icon = CATEGORY_ICONS[category];
               return <Icon className="h-5 w-5 text-muted-foreground/70" />;
             })()}
             <h2 className="text-fluid-xl font-semibold tracking-tight text-foreground">
               {category}
             </h2>
             <span className="text-sm text-muted-foreground/70">
-              ({jobsByCategory[category].length} jobs)
+              ({jobsIn(category).length} jobs)
             </span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {jobsByCategory[category].map((job) => (
+            {jobsIn(category).map((job) => (
               <JobCard
                 key={job.id}
                 job={job}
@@ -661,12 +375,12 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
           key={confirmJob.id}
           open
           onOpenChange={(open) => !open && setConfirmJob(null)}
-          title={`Run ${confirmJob.name} now?`}
-          description={`${confirmJob.description}. It normally runs ${confirmJob.schedule.toLowerCase()}.`}
+          title={`Run ${confirmJob.title} now?`}
+          description={`${confirmJob.description}. Schedule: ${confirmJob.schedule}.`}
           confirmLabel="Run now"
-          tone={runConfirmPhrase(confirmJob) ? "destructive" : "default"}
+          tone={confirmJob.confirmPhrase ? "destructive" : "default"}
           requireReason={{ label: "Why run it by hand?" }}
-          requireTyped={runConfirmPhrase(confirmJob)}
+          requireTyped={confirmJob.confirmPhrase ?? undefined}
           onConfirm={async ({ reason }) => {
             await handleRunJob(confirmJob, reason ?? "");
             setConfirmJob(null);

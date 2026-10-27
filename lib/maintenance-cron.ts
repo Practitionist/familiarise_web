@@ -9,7 +9,7 @@ import { flushJobSentry } from "@/lib/observability/job-sentry";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 import { FINANCIAL_JOB_NAMES } from "@/lib/cron/financial-jobs";
 
-export { FINANCIAL_JOB_NAMES, isFinancialJob } from "@/lib/cron/financial-jobs";
+export { FINANCIAL_JOB_NAMES } from "@/lib/cron/financial-jobs";
 
 export type BlockingMaintenancePhase = "OFFLINE" | "DEGRADED";
 
