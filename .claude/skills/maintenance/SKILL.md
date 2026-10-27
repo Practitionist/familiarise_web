@@ -111,6 +111,8 @@ missing generated model and a missing live table are different failures.
 
 The Jest configuration keeps an explicit `@/` source mapping while retaining Next.js’s default mocks and transforms. Run targeted suites through the repository config. A CLI `--moduleNameMapper` replaces the entire map and can discard `server-only`, asset and Redis-edge mocks; do not use it as a shortcut for alias resolution.
 
+Pure server-job suites use `@jest-environment node`, matching their deployed runtime. Transitive Next.js request imports require Node's web globals; do not hide an import failure by adding browser polyfills to backend tests.
+
 When merging a worker migration, port its roster, limit, timeout and ledger-yield changes into the shared catalog; do not restore the adapter’s former inline schedule. Check generated output against the same inputs before and after generator refactors. Keep blank workflow names within their own source block and preserve escaped Markdown pipes. See `references/cron-ticker.md` for the current document-purge schedule and mocked verification boundary.
 
 Stream background adapters currently target Netlify function URLs. Automatic
