@@ -35,6 +35,7 @@ import {
   mintConsumerInvoice,
 } from "@/lib/payments/billing/consumer-invoice";
 import { uploadPrivateFinanceObject } from "@/lib/storage/private-finance-object";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import {
   SUPPLIER_UNAVAILABLE_MESSAGE,
   getPlatformSupplier,
@@ -102,11 +103,16 @@ async function ensureConsumerInvoicesForPeriod(
   let minted = 0;
   let skipped = 0;
   for (const candidate of candidates) {
-    const result = await prisma.$transaction((tx) =>
-      mintConsumerInvoice(tx, { paymentId: candidate.id }),
-    );
-    if (result.consumerInvoiceId) minted += 1;
-    else skipped += 1;
+    try {
+      const result = await prisma.$transaction((tx) =>
+        mintConsumerInvoice(tx, { paymentId: candidate.id }),
+      );
+      if (result.consumerInvoiceId) minted += 1;
+      else skipped += 1;
+    } catch (error) {
+      // Another minter won this payment; its number rolled back with the loser.
+      if (!isUniqueViolationOn(error, "paymentId")) throw error;
+    }
   }
   return { minted, skipped };
 }

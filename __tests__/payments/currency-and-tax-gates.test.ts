@@ -368,6 +368,7 @@ describe("a payment with no declared state", () => {
           userId: "usr_1",
           legs: [{ source: "CARD" }],
           creditUsages: [],
+          refunds: [],
           user: {
             id: "usr_1",
             name: "A Buyer",
@@ -389,6 +390,47 @@ describe("a payment with no declared state", () => {
           buyerStateCode: "27",
           placeOfSupply: "27",
           igstPaise: 18_000,
+        }),
+      }),
+    );
+  });
+});
+
+describe("a capture whose payment was refunded before the invoice", () => {
+  it("mints nothing and takes no number, because the refund could get no credit note", async () => {
+    (getPlatformSupplier as jest.Mock).mockReturnValue({
+      name: "Familiarise",
+      gstin: "29AABCU9603R1ZM",
+      address: "Bengaluru, Karnataka",
+    });
+    const create = jest.fn(async () => ({ id: "inv_1" }));
+    const counter = jest.fn(async () => ({ nextSeq: 2 }));
+    const paymentFind = jest.fn(async () => ({
+      id: "pay_refunded",
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+      billableToOrgInvoiceId: null,
+      legs: [{ source: "CARD" }],
+      creditUsages: [],
+      refunds: [{ id: "rf_1" }],
+    }));
+    const tx = {
+      consumerInvoice: { findUnique: jest.fn(async () => null), create },
+      platformInvoiceCounter: { upsert: counter },
+      payment: { findUnique: paymentFind },
+    } as unknown as Parameters<typeof mintConsumerInvoice>[0];
+
+    const result = await mintConsumerInvoice(tx, { paymentId: "pay_refunded" });
+
+    expect(result.consumerInvoiceId).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+    expect(counter).not.toHaveBeenCalled();
+    expect(paymentFind).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          refunds: expect.objectContaining({
+            where: { status: { in: ["PENDING", "SUCCEEDED"] } },
+          }),
         }),
       }),
     );
@@ -419,6 +461,7 @@ describe("the mint gate is visible (#1757)", () => {
       userId: "usr_1",
       legs: [],
       creditUsages: [],
+      refunds: [],
       user: {
         id: "usr_1",
         name: "A Buyer",

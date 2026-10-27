@@ -44,6 +44,7 @@ import {
 import { generateConsumerInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { generateConsumerCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import type {
+  RefundStatus,
   PaymentLegSource,
   PlaceOfSupplySource,
   Prisma,
@@ -207,6 +208,12 @@ const ORG_FUNDED_LEG_SOURCES: readonly PaymentLegSource[] = [
   "OVERAGE_INVOICE_ACCRUAL",
 ];
 
+/** Refund states that owe a credit note; an invoice is never minted after one exists. */
+export const CREDIT_NOTE_REFUND_STATUSES: RefundStatus[] = [
+  "PENDING",
+  "SUCCEEDED",
+];
+
 /** The static half of {@link mintConsumerInvoice}'s eligibility, so a bounded
  *  healer never spends its bite on payments the consumer series always skips. */
 export const CONSUMER_INVOICEABLE_PAYMENT_WHERE = {
@@ -275,6 +282,11 @@ export async function mintConsumerInvoice(
       userId: true,
       legs: { select: { source: true } },
       creditUsages: { select: { originalAmount: true } },
+      refunds: {
+        where: { status: { in: CREDIT_NOTE_REFUND_STATUSES } },
+        select: { id: true },
+        take: 1,
+      },
       user: {
         select: {
           id: true,
@@ -292,6 +304,8 @@ export async function mintConsumerInvoice(
   if (payment.deletedAt !== null || payment.paymentStatus !== "SUCCEEDED") {
     return { consumerInvoiceId: null };
   }
+  // A refund here would get no credit note, so a refunded supply is left to ops.
+  if (payment.refunds.length > 0) return { consumerInvoiceId: null };
 
   // Org-funded supplies are invoiced to the organization, on the org series.
   if (

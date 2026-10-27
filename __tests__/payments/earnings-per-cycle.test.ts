@@ -64,9 +64,7 @@ jest.mock("../../lib/prisma", () => {
       create: jest.fn().mockResolvedValue({ id: "ltxn-1" }),
     },
     ledgerAccount: {
-      upsert: jest.fn(async ({ where }: { where: { id: string } }) => ({
-        id: where.id,
-      })),
+      createMany: jest.fn(async () => ({ count: 0 })),
     },
     // B2C take rate: no fee schedule row (marketplace fallback), no waiver, no stored owner.
     platformFeeSchedule: { findFirst: jest.fn().mockResolvedValue(null) },
