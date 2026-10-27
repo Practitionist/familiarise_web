@@ -18,7 +18,10 @@ import {
   renderOrgCreditNotePdf,
   type CreditNotePdfData,
 } from "@/lib/pdf/credit-note-renderer";
-import { getPlatformSupplier } from "@/lib/pdf/supplier";
+import {
+  SUPPLIER_UNAVAILABLE_MESSAGE,
+  getPlatformSupplier,
+} from "@/lib/pdf/supplier";
 
 export async function GET(
   _req: NextRequest,
@@ -40,8 +43,7 @@ export async function GET(
   if (!supplier) {
     return NextResponse.json(
       {
-        error:
-          "PLATFORM_GSTIN is not configured; the platform cannot issue statutory documents.",
+        error: SUPPLIER_UNAVAILABLE_MESSAGE,
         code: "SUPPLIER_GSTIN_UNCONFIGURED",
       },
       { status: 503 },

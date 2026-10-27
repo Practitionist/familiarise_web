@@ -187,7 +187,6 @@ graph TD
 
 | File                             | Purpose                                                       |
 | -------------------------------- | ------------------------------------------------------------- |
-| `providers/NovuProvider.tsx`     | Client-side Novu SDK wrapper, auth-gated                      |
 | `hooks/useNovuSubscriberSync.ts` | Auto-syncs user to Novu on dashboard mount (30-min staleTime) |
 
 ### API Routes

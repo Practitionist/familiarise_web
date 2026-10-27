@@ -106,11 +106,7 @@ jest.mock("../../lib/prisma", () => {
       create: jest.fn().mockResolvedValue({ id: "ltxn-1" }),
     },
     ledgerAccount: {
-      upsert: jest
-        .fn()
-        .mockImplementation(async ({ where }: { where: { id: string } }) => ({
-          id: where.id,
-        })),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     paymentLeg: {
       findMany: jest.fn().mockResolvedValue([]),

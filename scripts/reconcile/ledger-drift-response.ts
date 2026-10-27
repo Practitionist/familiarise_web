@@ -62,7 +62,7 @@ export async function respondToLedgerDrift(
   );
 }
 
-/** The logical report pages once per standing-finding window, including freeze failures. */
+/** Pages when a billing account newly drifts; an ongoing drift is re-paged only weekly, whatever the report. */
 export async function reportWalletDriftFreeze(
   reportId: string,
   findings: Finding[],
@@ -75,8 +75,10 @@ export async function reportWalletDriftFreeze(
     const message = `WALLET_BALANCE_DRIFT — ${walletDrift.length} billing account(s) drifting, spend frozen for ${frozenWallets.length}`;
     await reportStandingFinding(
       {
-        key: `reconcile-ledgers:wallet-drift:${reportId}`,
-        ids: [reportId],
+        key: "reconcile-ledgers:wallet-drift",
+        ids: walletDrift.flatMap((f) =>
+          f.billingAccountId ? [f.billingAccountId] : [],
+        ),
         message,
         windowMs: LEDGER_FINDING_WINDOW_MS,
       },

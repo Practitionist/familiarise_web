@@ -1,6 +1,7 @@
 "use client";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { traceHref } from "@/lib/backoffice/entity-trace-types";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { Button } from "@/components/ui/button";
@@ -191,12 +192,20 @@ export function PaymentsPage() {
   ];
 
   const renderRowActions = (payment: Payment) => (
-    <Link
-      href={`${basePath}/payments/${payment.id}`}
-      className="font-medium text-foreground hover:text-muted-foreground"
-    >
-      View
-    </Link>
+    <span className="flex gap-3">
+      <Link
+        href={`${basePath}/payments/${payment.id}`}
+        className="font-medium text-foreground hover:text-muted-foreground"
+      >
+        View
+      </Link>
+      <Link
+        href={traceHref(basePath, "payment", payment.id)}
+        className="font-medium text-foreground hover:text-muted-foreground"
+      >
+        Trace
+      </Link>
+    </span>
   );
 
   if (error) {

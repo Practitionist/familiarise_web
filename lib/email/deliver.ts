@@ -14,6 +14,7 @@ import {
   terminalSendReason,
 } from "./classify";
 import { idempotencyKeyFor } from "./idempotency";
+import { EmailRecipientCappedError, overRecipientCap } from "./recipient-cap";
 import { EmailSuppressedError, findSuppression } from "./suppression";
 import {
   EmailHeldError,
@@ -383,12 +384,20 @@ export async function attempt(
  * that owns a transaction calls the two phases itself, staging inside it and
  * attempting after commit, because an attempt inside the transaction would
  * send before the business write is durable.
+ * Auth mail past its per-recipient daily cap is dropped before staging
+ * (`recipient-cap.ts`).
  */
 export async function deliver(
   message: RenderedEmail,
   emailType: string,
   opts: DeliverOptions = {},
 ): Promise<DeliverResult> {
+  if (await overRecipientCap(message.to, emailType)) {
+    console.warn(
+      JSON.stringify({ event: "email_recipient_capped", emailType }),
+    );
+    return { success: false, error: new EmailRecipientCappedError() };
+  }
   const staged = await stage(message, emailType, {
     entityRef: opts.entityRef,
   });

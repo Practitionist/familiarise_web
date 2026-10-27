@@ -9,15 +9,20 @@
  * the NIC schema anyway. Pins the gate and the typed output.
  */
 
-import { buildIrpPayload, type BuildIrpPayloadInput } from "@/lib/compliance/irp-payload";
+import {
+  buildIrpPayload,
+  type BuildIrpPayloadInput,
+} from "@/lib/compliance/irp-payload";
+import { COMPANY_INFO, REGISTERED_OFFICE } from "@/lib/company";
 
+// The seller block the uploader builds from lib/company.ts.
 const seller = {
-  gstin: "29AAFCF1234Q1ZN",
-  legalName: "Familiarise Technologies Private Limited",
-  address1: "Koramangala 1st Block",
-  location: "Bangalore",
-  pincode: "560034",
-  stateCode: "KA",
+  gstin: "06AAFCF1234Q1ZN", // Haryana (06)
+  legalName: COMPANY_INFO.name,
+  address1: REGISTERED_OFFICE.line1,
+  location: REGISTERED_OFFICE.city,
+  pincode: REGISTERED_OFFICE.pincode,
+  stateCode: REGISTERED_OFFICE.stateCode,
 };
 
 function crnBase(): BuildIrpPayloadInput {
@@ -33,7 +38,7 @@ function crnBase(): BuildIrpPayloadInput {
       igstPaise: 0,
       totalPaise: 5900,
       hsnCode: "998314",
-      placeOfSupply: "KA",
+      placeOfSupply: "HR",
     },
     lineItems: [
       {
@@ -46,8 +51,8 @@ function crnBase(): BuildIrpPayloadInput {
     ],
     buyer: {
       name: "Acme Corp",
-      gstin: "29ABCDE1234F1Z5",
-      stateCode: "KA",
+      gstin: "06ABCDE1234F1Z5",
+      stateCode: "HR",
       hsnDefault: "999293",
     },
     seller,
