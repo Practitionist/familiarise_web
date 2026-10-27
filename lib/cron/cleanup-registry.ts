@@ -40,8 +40,6 @@ const MAX_TENTATIVE_SLOTS = 200;
 const MAX_REFERRAL_VESTS = 50;
 /** Expired credits per breakage run; one Serializable transaction each. */
 const MAX_REFERRAL_BREAKAGE = 500;
-/** Abandoned onboarding drafts are deleted after this many idle days. */
-const ONBOARDING_DRAFT_TTL_DAYS = 90;
 /** Payouts minted per rail per batch slice; each is one transaction. */
 const MAX_PAYOUT_BATCH_UNITS = 10;
 /** Disbursements per rail per run; each is a gateway round trip. */
@@ -58,6 +56,8 @@ const MAX_STUCK_PAYOUT_POLLS = 5;
 const MAX_PAYOUT_STATUS_POLLS = 8;
 /** Consumer invoices the GST register healer may mint per run; one transaction each. */
 const MAX_GST_HEALER_MINTS = 25;
+/** Un-invoiced consumer payments minted per run; one transaction each. */
+const MAX_CONSUMER_INVOICE_HEALS = 25;
 /** Document rows a single purge run may process; each costs one storage delete. */
 const MAX_DOCUMENT_PURGE_ROWS = 200;
 
@@ -72,6 +72,49 @@ const MAX_DOCUMENT_PURGE_ROWS = 200;
  */
 export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
   {
+    // @cleanup-twin consent-retention-sweeper
+    "consent-retention-sweeper": () =>
+      cleanupRoute({
+        job: "consent-retention-sweeper",
+        run: async (req, { startedAt }) => {
+          const { runConsentRetentionSweeper } =
+            await import("@/lib/compliance/consent-retention");
+          return runConsentRetentionSweeper({
+            limit: parseLimitParamOrDefault(req, 100),
+            startedAt,
+          });
+        },
+        failureMessage: "Consent retention slice failed",
+      }),
+    // @cleanup-twin databreach-deadline-alerts
+    "databreach-deadline-alerts": () =>
+      cleanupRoute({
+        job: "databreach-deadline-alerts",
+        run: async (req, { startedAt }) => {
+          const { runDataBreachDeadlineAlerts } =
+            await import("@/lib/compliance/databreach-deadline-alerts");
+          return runDataBreachDeadlineAlerts({
+            limit: parseLimitParamOrDefault(req, 5),
+            startedAt,
+          });
+        },
+        failureMessage: "Data breach deadline alert staging failed",
+      }),
+    // @cleanup-twin prune-system-events
+    "prune-system-events": () =>
+      cleanupRoute({
+        job: "prune-system-events",
+        run: async (req, { startedAt }) => {
+          const { pruneSystemEvents } =
+            await import("@/lib/observability/system-event-retention");
+          return pruneSystemEvents({
+            limit: parseLimitParamOrDefault(req, 100),
+            startedAt,
+          });
+        },
+        failureMessage: "System event retention slice failed",
+      }),
+
     // @cleanup-twin abandoned-org-top-ups
     "abandoned-org-top-ups": () =>
       cleanupRoute({
@@ -235,12 +278,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "archive-webhook-events": () =>
       cleanupRoute({
         job: "archive-webhook-events",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { archiveWebhookEvents } =
             await import("@/scripts/cleanup/archive-webhook-events");
-          return archiveWebhookEvents();
+          return archiveWebhookEvents({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
         },
         summarize: (r) => ({
+          hasMore: r.hasMore,
           processedEventsDeleted: r.processedEventsDeleted,
           terminalUnprocessedDeleted: r.terminalUnprocessedDeleted,
           failedEventsDeleted: r.failedEventsDeleted,
@@ -254,12 +301,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "auth-tokens": () =>
       cleanupRoute({
         job: "cleanup-auth-tokens",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { cleanupAuthTokens } =
             await import("@/lib/auth/cleanup-auth-tokens");
-          return cleanupAuthTokens();
+          return cleanupAuthTokens({ limit: parseLimitParam(req), startedAt });
         },
         summarize: (r) => ({
+          hasMore: r.hasMore,
           verificationTokensDeleted: r.verificationTokensDeleted,
           sessionsDeleted: r.sessionsDeleted,
           idempotencyRecordsDeleted: r.idempotencyRecordsDeleted,
@@ -353,7 +401,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           detected: r.detected,
           refunded: r.refunded,
           contradicted: r.contradicted,
-          bothAbsentTickets: r.bothAbsentTickets,
         }),
         failureMessage: "Failed to detect consultant no-shows",
       }),
@@ -458,24 +505,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "expire-onboarding-drafts": () =>
       cleanupRoute({
         job: "expire-onboarding-drafts",
-        run: async () => {
-          const { default: prisma } = await import("@/lib/prisma");
-          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
-          return withCronLock(
-            "expire-onboarding-drafts",
-            { failMode: "open" },
-            async () => {
-              const cutoff = new Date(
-                Date.now() - ONBOARDING_DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000,
-              );
-              const { count } = await prisma.onboardingDraft.deleteMany({
-                where: { updatedAt: { lt: cutoff } },
-              });
-              return { success: true, deleted: count };
-            },
-          );
+        run: async (req, { startedAt }) => {
+          const { expireOnboardingDrafts } =
+            await import("@/scripts/cleanup/expire-onboarding-drafts");
+          return expireOnboardingDrafts({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
         },
-        summarize: (r) => ({ deleted: r.deleted }),
+        summarize: (r) => ({ deleted: r.deleted, hasMore: r.hasMore }),
         failureMessage: "Failed to expire onboarding drafts",
       }),
 
@@ -615,6 +653,23 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to handle stuck payouts",
       }),
 
+    // @cleanup-twin heal-consumer-invoices
+    "heal-consumer-invoices": () =>
+      cleanupRoute({
+        job: "heal-consumer-invoices",
+        run: async (req, { startedAt }) => {
+          const { healConsumerInvoices } =
+            await import("@/lib/payments/billing/consumer-invoice-healer");
+          return healConsumerInvoices({
+            limit: parseLimitParamOrDefault(req, MAX_CONSUMER_INVOICE_HEALS),
+            windowStart: parseWindowStartParam(req),
+            startedAt,
+          });
+        },
+        status: (r) => statusFor({}, r.failed > 0),
+        failureMessage: "Failed to heal consumer tax invoices",
+      }),
+
     // @cleanup-twin irp-uploader
     "irp-uploader": () =>
       cleanupRoute({
@@ -687,10 +742,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "prune-audit-logs": () =>
       cleanupRoute({
         job: "prune-audit-logs",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { pruneAuditLogs } =
             await import("@/scripts/cleanup/prune-audit-logs");
-          return pruneAuditLogs();
+          return pruneAuditLogs({ limit: parseLimitParam(req), startedAt });
         },
         failureMessage: "Audit prune failed",
       }),
@@ -699,22 +754,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "prune-system-job-executions": () =>
       cleanupRoute({
         job: "prune-system-job-executions",
-        run: async () => {
+        run: async (req, { startedAt }) => {
           const { pruneSystemJobExecutions } =
             await import("@/scripts/cleanup/prune-system-job-executions");
-          return pruneSystemJobExecutions();
+          return pruneSystemJobExecutions({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
         },
         summarize: (r) => ({
           pruned: r.pruned,
           stranded: r.stranded,
-          failedEmailsBodyScrubbed: r.failedEmailsBodyScrubbed ?? 0,
-          failedEmailBatchesScrubbed: r.failedEmailBatchesScrubbed ?? 0,
-          failedEmailsPruned: r.failedEmailsPruned ?? 0,
-          failedEmailBatchesPruned: r.failedEmailBatchesPruned ?? 0,
-          notificationOutboxPruned: r.notificationOutboxPruned ?? 0,
-          emailEventsPruned: r.emailEventsPruned ?? 0,
+          failedEmailsBodyScrubbed: r.failedEmailsBodyScrubbed,
+          failedEmailBatchesScrubbed: r.failedEmailBatchesScrubbed,
+          failedEmailsPruned: r.failedEmailsPruned,
+          failedEmailBatchesPruned: r.failedEmailBatchesPruned,
+          notificationOutboxPruned: r.notificationOutboxPruned,
+          emailEventsPruned: r.emailEventsPruned,
+          hasMore: r.hasMore,
         }),
-        status: () => 200,
         failureMessage: "System job execution prune failed",
       }),
 

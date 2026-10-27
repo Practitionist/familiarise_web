@@ -91,7 +91,6 @@ flowchart TB
 
     subgraph CLIENT["CLIENT-SIDE — LIVE"]
         direction TB
-        CL_PROV["providers/NovuProvider.tsx\nWraps app with NovuSDKProvider\nAuth-gated rendering"]
         CL_INBOX["components/notifications/\nNotificationInbox.tsx\nBell icon + unread badge\nClick → redirect URL"]
         CL_HOOK["hooks/useNovuSubscriberSync.ts\nReact Query, 30min staleTime\nPOST /api/novu/subscriber"]
         CL_PREFS["components/notifications/\nNotificationPreferencesPanel.tsx\n3 channels + 7 categories\n+ quiet hours"]
@@ -454,23 +453,23 @@ The two relays are the outbox halves of #1654: every email and every Novu trigge
 
 ### LIVE (fully working)
 
-| Component                                      | Files                                                                                                            |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Resend email client                            | `lib/email/index.ts`, `lib/email/deliver.ts`, `lib/email/config.ts`                                              |
-| 10 React Email templates behind 11 senders     | `emails/auth/`, `emails/payments/`, `emails/organizations/`, `emails/waitlist/`, `emails/components/`            |
-| Novu client + service + workflows + subscriber | `lib/novu/*.ts`                                                                                                  |
-| Novu React provider + bell icon + sync hook    | `providers/NovuProvider.tsx`, `components/notifications/NotificationInbox.tsx`, `hooks/useNovuSubscriberSync.ts` |
-| Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx`                                                      |
-| Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                                    |
-| Subscriber sync API                            | `app/api/novu/subscriber/route.ts` (POST)                                                                        |
-| Waitlist double opt-in confirm/unsubscribe     | `lib/waitlist/tokens.ts`, `lib/waitlist/service.ts`                                                              |
-| Admin waitlist broadcast                       | `app/api/admin/waitlist/broadcast/route.ts`                                                                      |
-| Appointment reminders cron                     | `app/api/cleanup/appointment-reminders/route.ts`                                                                 |
-| Auto-complete + notify                         | `scripts/appointments/auto-complete-appointments.ts`                                                             |
-| Stream recording webhook                       | `app/api/stream/webhooks/route.ts`                                                                               |
-| Stream main webhook                            | `app/api/stream/webhooks/route.ts`                                                                               |
-| Announcements + broadcast                      | `app/api/announcements/route.ts`                                                                                 |
-| 30+ notification trigger wiring                | Various API routes and services                                                                                  |
+| Component                                      | Files                                                                                                 |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Resend email client                            | `lib/email/index.ts`, `lib/email/deliver.ts`, `lib/email/config.ts`                                   |
+| 10 React Email templates behind 11 senders     | `emails/auth/`, `emails/payments/`, `emails/organizations/`, `emails/waitlist/`, `emails/components/` |
+| Novu client + service + workflows + subscriber | `lib/novu/*.ts`                                                                                       |
+| Novu inbox + bell icon + sync hook             | `components/notifications/NotificationInbox.tsx`, `hooks/useNovuSubscriberSync.ts`                    |
+| Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx`                                           |
+| Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                         |
+| Subscriber sync API                            | `app/api/novu/subscriber/route.ts` (POST)                                                             |
+| Waitlist double opt-in confirm/unsubscribe     | `lib/waitlist/tokens.ts`, `lib/waitlist/service.ts`                                                   |
+| Admin waitlist broadcast                       | `app/api/admin/waitlist/broadcast/route.ts`                                                           |
+| Appointment reminders cron                     | `app/api/cleanup/appointment-reminders/route.ts`                                                      |
+| Auto-complete + notify                         | `scripts/appointments/auto-complete-appointments.ts`                                                  |
+| Stream recording webhook                       | `app/api/stream/webhooks/route.ts`                                                                    |
+| Stream main webhook                            | `app/api/stream/webhooks/route.ts`                                                                    |
+| Announcements + broadcast                      | `app/api/announcements/route.ts`                                                                      |
+| 30+ notification trigger wiring                | Various API routes and services                                                                       |
 
 ### STUB (placeholder code, no functionality)
 

@@ -54,6 +54,7 @@ export const TARGETS = [
   "advance-program-cycles",
   "auto-renew-contracts",
   "irp-uploader",
+  "heal-consumer-invoices",
   "sweep-abandoned-overage-charges",
   "expire-contracts",
   "msme-payment-alerts",
@@ -70,6 +71,29 @@ export const TARGETS = [
 ] as const;
 
 export type Target = (typeof TARGETS)[number];
+
+/**
+ * The `SystemJobExecution.jobName` a target's core writes when it differs from the
+ * target name; `null` means the core writes no execution row.
+ */
+const JOB_NAME_OVERRIDES: Partial<Record<Target, string | null>> = {
+  "reconcile-refunds": "reconcile-pending-refunds",
+  "abandoned-payments": "cleanup-abandoned-payments",
+  "reschedule-proposals": "expire-reschedule-proposals",
+  "appointment-reminders": "send-appointment-reminders",
+  "tentative-occurrences": "cleanup-tentative-occurrences",
+  "abandoned-org-top-ups": "cleanup-abandoned-org-top-ups",
+  "tds-return-draft": "tds-26q-draft-export",
+  "reconcile-sessions": "reconcile-orphaned-sessions",
+  "sentry-ingest-canary": null,
+  "stream-control-plane-drift": null,
+};
+
+export function jobNameFor(target: Target): string | null {
+  return target in JOB_NAME_OVERRIDES
+    ? (JOB_NAME_OVERRIDES[target] ?? null)
+    : target;
+}
 
 /** Background targets acknowledge admission; their cores record eventual completion. */
 export const TARGET_BACKGROUND_FUNCTIONS: Partial<Record<Target, string>> = {
@@ -120,6 +144,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "advance-program-cycles": 25,
   "auto-renew-contracts": 10,
   "irp-uploader": 10,
+  "heal-consumer-invoices": 25,
   "sweep-abandoned-overage-charges": 25,
   "expire-contracts": 10,
   "msme-payment-alerts": null,
@@ -190,6 +215,7 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "advance-program-cycles": 60,
   "auto-renew-contracts": 60,
   "irp-uploader": 60,
+  "heal-consumer-invoices": 360,
   "sweep-abandoned-overage-charges": 60,
   "expire-contracts": 60,
   "msme-payment-alerts": 60,
@@ -256,6 +282,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "advance-program-cycles": 15,
   "auto-renew-contracts": 20,
   "irp-uploader": 25,
+  "heal-consumer-invoices": 110,
   "sweep-abandoned-overage-charges": 30,
   "expire-contracts": 35,
   "msme-payment-alerts": 45,
@@ -332,6 +359,8 @@ export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   "advance-program-cycles": DAILY_0300,
   "auto-renew-contracts": DAILY_0300,
   "irp-uploader": DAILY_0300,
+  // All day; the window starts on the first slot so a missing GSTIN warns once a day.
+  "heal-consumer-invoices": { startMinuteUtc: 110, windowMinutes: 1440 },
   "sweep-abandoned-overage-charges": DAILY_0300,
   "expire-contracts": DAILY_0300,
   "msme-payment-alerts": { startMinuteUtc: 180, windowMinutes: 60 },
@@ -433,6 +462,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "advance-program-cycles": 20_000,
   "auto-renew-contracts": 20_000,
   "irp-uploader": 20_000,
+  "heal-consumer-invoices": 20_000,
   "sweep-abandoned-overage-charges": 20_000,
   "expire-contracts": 20_000,
   "msme-payment-alerts": 20_000,

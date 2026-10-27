@@ -38,6 +38,10 @@ import {
   requireSeedOperatorPassword,
 } from "./config";
 import { buildSeedOperatorTwoFactorRow } from "./seed-two-factor";
+import {
+  QA_OPERATOR_DOMAIN,
+  isQaOperatorEmail,
+} from "../../lib/auth/qa-accounts";
 
 // Non-operator users share the fixture default; ADMIN/STAFF use SEED_OPERATOR_PASSWORD.
 const RAW_SEED_PASSWORD = process.env.SEED_PASSWORD?.trim();
@@ -592,8 +596,12 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
     }[userRole];
 
     try {
-      // Generate consistent name and email from index
-      const { name, email } = generateNameAndEmail(i);
+      const { name, email: generatedEmail } = generateNameAndEmail(i);
+      // Operators live on the reserved QA domain so no real inbox can reset them.
+      const email =
+        userRole === "ADMIN" || userRole === "STAFF"
+          ? `qa-${userRole.toLowerCase()}-${roleOrdinal}@${QA_OPERATOR_DOMAIN}`
+          : generatedEmail;
       const country = generateCountry();
       const city = generateCity(country);
       const gender = faker.helpers.arrayElement(GENDERS);
@@ -663,12 +671,12 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
           create: createConsulteeProfileData(),
         };
       } else if (userRole === "STAFF") {
-        userData.twoFactorEnabled = true;
+        userData.twoFactorEnabled = !isQaOperatorEmail(userData.email);
         userData.staffProfile = {
           create: createStaffProfileData(),
         };
       } else if (userRole === "ADMIN") {
-        userData.twoFactorEnabled = true;
+        userData.twoFactorEnabled = !isQaOperatorEmail(userData.email);
         userData.adminProfile = {
           create: createAdminProfileData(adminIndex - 1),
         };
@@ -765,8 +773,10 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
     }
   }
 
+  // QA operators stay unenrolled: off production they sign in without TOTP.
   const operators = users.filter(
-    (u) => u.role === "STAFF" || u.role === "ADMIN",
+    (u) =>
+      (u.role === "STAFF" || u.role === "ADMIN") && !isQaOperatorEmail(u.email),
   );
   await Promise.all(
     operators.map(async (operator) =>

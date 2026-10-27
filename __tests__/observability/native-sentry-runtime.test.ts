@@ -16,6 +16,7 @@ it("captures, scrubs and flushes native ESM job telemetry through the shared SDK
     "sentry.shared.config",
     "lib/observability/expected",
     "lib/observability/sentry-scrubber",
+    "lib/observability/translate-dom-noise",
     "lib/observability/report",
     "lib/observability/job-sentry",
     "lib/cron/cron-lock-errors",

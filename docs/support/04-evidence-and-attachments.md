@@ -100,8 +100,8 @@ sequenceDiagram
     U->>API: PUT confirm
     API->>ST: object info and first 512 bytes
     alt size, type or first bytes do not match
-        API->>ST: remove object
-        API->>DB: tombstone row
+        API->>DB: CAS pending live row to tombstone
+        API->>ST: remove object only after winning claim
         API-->>U: 400
     else match
         API->>DB: CAS case updatedAt, set completedAt
@@ -111,10 +111,32 @@ sequenceDiagram
 
 - **Who may upload.** Staff with `tickets.manage`; anyone who can correspond on the case; and, for an evidence attachment, the request's recipient while still an eligible party (`attachmentCaseAccess()`). An attachment belongs to at most one message or one evidence request; the database enforces it with `support_case_attachment_shape`.
 - **Closed records.** Upload is refused (409 "This evidence record is closed") on a CLOSED case or a cancelled or answered request.
-- **Confirm.** `PUT` is idempotent. An unreadable head returns 503 and can be retried; a mismatch discards the object and tombstones the row.
+- **Confirm.** `PUT` is idempotent for completed live evidence, including after case/request closure. Pending evidence still fails on closure. An unreadable head returns 503 and can be retried; a mismatch claims the pending row before removing bytes. A finaliser that loses ownership to cleanup returns 409.
 - **Listing.** Only completed, non-deleted files are listed; customers never see files on internal notes.
 - **Delete.** An uploader may withdraw only a pending upload. Submitted evidence stays with the case (409 once the file is completed, the case is decided or closed).
 - **Retention.** Files are deleted by the [180-day purge](08-privacy-and-retention.md#the-180-day-evidence-purge) or on [erasure](08-privacy-and-retention.md#erasure). The daily storage reconciliation (`scripts/cleanup/reconcile-document-storage.ts`) protects only objects whose row is live (not tombstoned, and completed or pending for under 24 hours) and removes other objects older than 7 days.
+
+### Finalisation and cleanup ownership
+
+The pending row exists before its direct upload URL is issued. Finalisation
+requires `deletedAt IS NULL`; cleanup conditionally tombstones expired pending
+rows and rereads live references before each removal batch of at most 100 paths.
+A completed row wins over a stale orphan snapshot, while a cleanup claim prevents
+an in-flight finaliser from publishing bytes that are being removed.
+
+Storage deletion happens outside the finalisation transaction. Failed or
+interrupted deletion retains the tombstone for a later grace-eligible sweep;
+finalisation cannot revive it, and the user needs a new upload. A fresh rejected
+object whose immediate removal fails still waits for the existing seven-day
+object grace. Unique server-generated paths and retained tombstones prevent reuse.
+
+Finalisation repeats evidence eligibility using its transaction client after the
+separate preflight read. Ownership/removal batches run sequentially. The crawler
+still lists whole buckets: the 100-path batch size does not bound its complete
+invocation. Verify both finalisation/cleanup race orderings and completed replay
+before changing these rules; `__tests__/support/attachment-ownership.test.ts`
+covers those cases. Rollback must retain tombstones and cannot restore bytes
+already removed by storage.
 
 ## Invariants
 
@@ -126,6 +148,7 @@ sequenceDiagram
 | One request per `(caseId, clientActionId)`.                                          | The database: `@@unique([caseId, clientActionId])`.                        | `__tests__/support/lifecycle-decisions.test.ts`                                                                      |
 | An attachment hangs off at most one message or request; size is not negative.        | The database: `support_case_attachment_shape`.                             | No dedicated test.                                                                                                   |
 | A file's first bytes match its type.                                                 | App: `headMatchesMimeType()` at confirm.                                   | `__tests__/support/attachment-verification.test.ts`                                                                  |
+| Finalisation and cleanup cannot both own the same pending row.                       | App: conditional completion/tombstone and live-reference readback.         | `__tests__/support/attachment-ownership.test.ts`                                                                     |
 | Files are served only through access-checked, 60-second signed links.                | App: `attachmentDownload()`.                                               | `__tests__/support/route-authz-matrix.test.ts`                                                                       |
 
 The 20-file cap has no dedicated test.

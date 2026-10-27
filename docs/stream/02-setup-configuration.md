@@ -209,7 +209,7 @@ Stream enforces strict per-minute rate limits per endpoint at the application le
 | `ExportUsers`        | **60 / min**     | Compliance / DSAR export workflows                                            |
 | `UpdateUsers`        | **300 / min**    | `actions/stream/chat/user.action.ts` (`upsertUsersToStream`, 100-user chunks) |
 | `UpdateUsersPartial` | **300 / min**    | User profile and role synchronization                                         |
-| `SendMessage`        | **1,000 / min**  | `app/api/stream/channels/open/route.ts` (`booking-ctx-` receipt cards)        |
+| `SendMessage`        | **1,000 / min**  | `lib/stream/support-intervention.ts`, `lib/stream/system-message.ts`          |
 | `QueryChannels`      | **10,000 / min** | `lib/stream/batch.ts` (`queryChannelsPaged`, 30-channel page ceiling)         |
 
 > [!IMPORTANT]

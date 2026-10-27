@@ -483,7 +483,7 @@ The recording playback, manage, publish, preview, start, stop and sync routes, t
 
 ## Replay sales
 
-A host can publish a recording as a replay, but purchase is not open yet. The public replay page (`/explore/recordings/[slug]`) shows "Coming soon" with "Replays can't be bought yet. Attendees of the session can watch it from their dashboard." to anyone without access, and "You can watch the full recording." to anyone with it. The purchase route and the `RecordingPurchase` model exist, and a pending or succeeded purchase exempts a recording from retention, but the storefront does not offer checkout.
+Replays are not sold at launch: recordings are included with the booking. Publishing is closed (there is no publish endpoint), so no recording is listed, `/explore/recordings` shows "Replays aren't on sale yet", and the purchase route refuses every recording as not listed. The `RecordingPurchase` model and its settlement path remain, and a pending or succeeded purchase would still exempt a recording from retention. Replays return as a `ReplayListing` product that groups a webinar run's or a class batch's recordings (#2412); see [the marketplace doc](./recordings-marketplace.md).
 
 ## Storage
 

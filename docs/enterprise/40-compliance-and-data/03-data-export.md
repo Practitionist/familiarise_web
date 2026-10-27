@@ -9,10 +9,11 @@ last-reviewed: 2026-06-05
 # Org-wide data export (DPDP §11)
 
 Familiarise honours DPDP §11 right-to-access at the organization level
-via an async export job (the `OrgDataExportJob` model). OWNER +
-BILLING_ADMIN can request a JSON bundle of every entity scoped to their
-org; the worker builds the bundle, uploads it to Supabase Storage, and
-emails the requester with a 7-day signed-URL link.
+via an async export job (the `OrgDataExportJob` model). OWNER or MAINTAINER
+can request a `PEOPLE` bundle; OWNER or BILLING_ADMIN can request a
+`FINANCE` bundle. The worker builds only the requested org-scoped bundle,
+uploads it to Supabase Storage, and notifies the requester and active
+owners with a 7-day signed-URL link. Only legacy `FULL` jobs combine both kinds.
 
 > DPDP Act §11 (web-validated 2026-06-05) is the data principal's
 > right of access: a summary of the personal data being processed plus
@@ -79,20 +80,25 @@ immediately and a cron builds the bundle out-of-band. The states are
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Officer as BILLING_ADMIN / OWNER
+    actor Officer as MAINTAINER / BILLING_ADMIN / OWNER
     participant API as /data-exports route
     participant Job as OrgDataExportJob
     participant Worker as processDataExports<br/>(~10-min cron)
     participant Store as Supabase Storage
 
-    Officer->>API: POST /data-exports
+    alt PEOPLE: MAINTAINER or OWNER
+        Officer->>API: POST /data-exports {kind: PEOPLE}
+    else FINANCE: BILLING_ADMIN or OWNER
+        Officer->>API: POST /data-exports {kind: FINANCE}
+    end
+    API->>API: require permission for requested kind
     API->>Job: insert · status=PENDING<br/>audit DATA_EXPORT_REQUESTED
     API-->>Officer: 202 { export: PENDING }
 
     loop every ~10 min
         Worker->>Job: findFirst PENDING (oldest)
         Worker->>Job: claim → PROCESSING (startedAt)<br/>2nd tick sees PROCESSING & skips
-        Worker->>Worker: build bundle<br/>($transaction, 8-entity snapshot)
+        Worker->>Worker: recheck requester grant<br/>build requested-kind snapshot
         alt build + upload OK
             Worker->>Store: upload {orgId}/{jobId}.json
             Store-->>Worker: createSignedUrl (7-day TTL)
@@ -104,7 +110,7 @@ sequenceDiagram
     end
 
     Officer->>API: GET /data-exports/[id]/download
-    API->>Job: check status + expiry
+    API->>Job: check stored kind permission + status + expiry
     alt READY & now < expiresAt
         API-->>Officer: { url, expiresAt }<br/>audit DATA_EXPORT_DOWNLOADED
     else past expiresAt
@@ -113,10 +119,13 @@ sequenceDiagram
 ```
 
 > **Trade-off — async job + expiring URL, not a synchronous download.**
-> The bundle is an 8-entity, full-org snapshot (members, contracts,
-> programs, invoices, earnings, payouts, audit log). Streaming that
-> inline off the `POST` would hold a request open for an unbounded build
-> and pin financial PII in the response buffer. Instead the worker writes
+> `PEOPLE` exports members, memberships, audit log and the consent-exclusion
+> count; `FINANCE` exports contracts, programs, invoices, earnings and payouts.
+> Both include organization metadata, generation time, schema version and kinds.
+> Only legacy `FULL` includes both sets. The current worker builds the internal
+> org snapshot before selecting the output fields; kind filtering does not
+> bound those internal reads. Streaming the build inline off the `POST` would
+> hold the request open. Instead the worker writes
 > it to object storage behind a **7-day signed URL** (`createSignedUrl`),
 > so the heavy build is off the request path and the PII lives behind a
 > short-lived, revocable link rather than a permanent download route. The
@@ -127,9 +136,9 @@ sequenceDiagram
 
 **Persona — Wipro's compliance officer files a DPDP §11 access
 request.** Wipro (a SPONSOR enterprise in the design-partner set) gets a
-regulator query and needs a full snapshot of the org-scoped personal
-data the platform holds. Their compliance officer — who holds
-BILLING_ADMIN, the governance floor these routes require — hits
+regulator query and needs a finance snapshot of the org-scoped
+contracts, invoices, earnings and payouts. Their billing officer — who holds
+BILLING_ADMIN — requests the `FINANCE` bundle through
 `POST /data-exports`, gets a `202`, and polls the dashboard until the
 job flips `READY`. The 7-day signed URL is long enough to run their
 post-export ETL; after that the link lapses to `EXPIRED` and a fresh
@@ -139,7 +148,7 @@ per-data-principal §12 _erasure_ path is separate (see
 
 ## Routes
 
-Three endpoints form the request-poll-download lifecycle of a DPDP §11 export bundle; all are gated to OWNER or BILLING_ADMIN because every bundle contains financial PII.
+Three endpoints form the request-poll-download lifecycle. Access depends on the requested or stored bundle kind; a people export does not grant access to finance data.
 
 | Verb   | Path                                                          | Behaviour                                                                                                                                                   |
 | ------ | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -149,43 +158,63 @@ Three endpoints form the request-poll-download lifecycle of a DPDP §11 export b
 
 All three call `requireOrgAccess(orgId, { permission: ["dataExports.people", "dataExports.finance"] })`,
 so a caller needs at least one export key. Each bundle has a kind: the
-`people` bundle needs `dataExports.people` (OWNER, MAINTAINER) and the
-`finance` bundle needs `dataExports.finance` (OWNER, BILLING_ADMIN),
+`PEOPLE` bundle needs `dataExports.people` (OWNER, MAINTAINER) and the
+`FINANCE` bundle needs `dataExports.finance` (OWNER, BILLING_ADMIN),
 because it carries financial PII. A caller may request, list and download
 only the kinds they hold. A legacy `FULL` job, written before the split,
 carries both bundles, so listing or downloading it needs both keys, which
-in practice means an OWNER; a new request accepts only `people` or
-`finance` and can never create a `FULL` job.
+in practice means an OWNER; a new request accepts only `PEOPLE` or
+`FINANCE` and can never create a `FULL` job.
 
-The worker logic lives in `scripts/cleanup/process-data-exports.ts`
-(`processDataExports`). It is scheduled as a GitHub Actions cron
-(`.github/workflows/process-data-exports.yml`, every ~10 min) via the
-thin wrapper `jobs/cleanup/process-data-exports.ts`; the same logic is
-also reachable as a `CRON_SECRET`-gated manual trigger at
-`POST /api/cleanup/process-data-exports`.
+The worker logic lives in scripts/cleanup/process-data-exports.ts
+(processDataExports). The Netlify ticker dispatches its registered
+CRON_SECRET-gated POST /api/cleanup/process-data-exports door every ten
+minutes. The same canonical implementation serves explicit operator runs;
+there is no separate Actions wrapper or data-export workflow.
 
 ## Bundle shape
 
-Flat JSON, schemaVersion `1`. Top-level keys:
+Flat JSON, schemaVersion `1`. New requests select one kind; keys from the
+other kind are absent. These examples show the top-level shape with empty
+collections.
+
+`PEOPLE`:
 
 ```json
 {
   "organizationId": "org_xxx",
   "generatedAt": "2026-05-15T10:00:00.000Z",
   "schemaVersion": 1,
-  "organization": { ... },
-  "members": [ { id, name, email } ],
-  "memberships": [ ... ],
-  "contracts": [ ... ],
-  "programs": [ ... ],
-  "invoices": [ ... ],
-  "earnings": [ ... ],
-  "payouts": [ ... ],
-  "auditLog": [ ... ]
+  "kinds": ["PEOPLE"],
+  "organization": { "id": "org_xxx" },
+  "members": [],
+  "memberships": [],
+  "auditLog": [],
+  "excludedForConsent": 0
 }
 ```
 
-The audit log included reflects the platform-wide retention policy
+`FINANCE`:
+
+```json
+{
+  "organizationId": "org_xxx",
+  "generatedAt": "2026-05-15T10:00:00.000Z",
+  "schemaVersion": 1,
+  "kinds": ["FINANCE"],
+  "organization": { "id": "org_xxx" },
+  "contracts": [],
+  "programs": [],
+  "invoices": [],
+  "earnings": [],
+  "payouts": []
+}
+```
+
+An existing `FULL` job combines both sets and declares both entries in `kinds`.
+New requests do not accept `FULL`.
+
+When included in a people export, the audit log reflects the platform-wide retention policy
 (7y for INVOICE / PAYOUT / WALLET / CONTRACT / CONSENT; 2y for
 everything else — see `scripts/cleanup/prune-audit-logs.ts`). Older
 rows have already been pruned by the `prune-audit-logs` cron and are
@@ -232,14 +261,16 @@ env vars to be configured even locally.
 ## Verification
 
 ```bash
-# As OWNER or BILLING_ADMIN — returns 202
+# As OWNER or BILLING_ADMIN, request FINANCE — returns 202
 curl -X POST $BASE/api/organizations/$ORG/data-exports \
-  -H "Cookie: $OWNER_COOKIE"
+  -H "Cookie: $OWNER_COOKIE" \
+  -H "Content-Type: application/json" \
+  --data '{"kind":"FINANCE"}'
 # 202 {"export":{"id":"...","status":"PENDING", ...}}
 
-# Trigger the worker manually (the GitHub Actions cron runs it ≤10 min
-# otherwise). This HTTP route is CRON_SECRET-gated and shares the global
-# Prisma client — it does NOT disconnect, unlike the standalone job wrapper.
+# Authorized operator recovery only; the ticker normally dispatches every ten
+# minutes. This CRON_SECRET-gated route runs the canonical worker; a successful
+# request is not evidence that every queued export completed.
 curl -X POST $BASE/api/cleanup/process-data-exports \
   -H "Authorization: Bearer $CRON_SECRET"
 

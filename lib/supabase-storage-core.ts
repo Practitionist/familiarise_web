@@ -6,6 +6,9 @@
  * import storage from here. `lib/supabase.ts` re-exports every name unchanged.
  */
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { z } from "zod";
+
+const missingObjectErrorSchema = z.object({ code: z.literal("NoSuchKey") });
 
 import {
   bucketPolicyFor,
@@ -273,11 +276,7 @@ export const ensureBucketExists = async (
   }
 };
 
-/**
- * Remove objects; true only when every path is gone afterwards. Storage's batch
- * delete answers with just the rows it removed, so each path missing from that
- * answer is re-checked and counts as removed only if it no longer exists.
- */
+/** Confirms every key via a deletion receipt or explicit missing-key metadata. */
 export const removeObjects = async (
   bucket: string,
   paths: string[],
@@ -293,9 +292,17 @@ export const removeObjects = async (
     const removed = new Set((data ?? []).map((object) => object.name));
     for (const path of paths) {
       if (removed.has(path)) continue;
-      const { data: present } = await api.exists(path);
-      if (present) {
-        console.error(`Storage remove left ${bucket}/${path} in place`);
+      // HEAD can hide the error code; metadata must identify a missing key explicitly.
+      const { data: metadata, error: metadataError } = await api.info(path);
+      if (
+        metadata !== null ||
+        !missingObjectErrorSchema.safeParse(metadataError).success
+      ) {
+        console.error(
+          `Storage remove could not confirm absence of ${bucket}/${path}`,
+          metadataError?.message ??
+            "Object is present or absence is unconfirmed",
+        );
         return false;
       }
     }

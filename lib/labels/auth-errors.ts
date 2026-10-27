@@ -390,6 +390,17 @@ export const AUTH_ERROR_COPY = {
     "Please wait a moment, then try again.",
     "retry",
   ),
+  // Better Auth's captcha plugin (Turnstile on sign-up, reset and resend).
+  MISSING_RESPONSE: entry(
+    "Complete the security check",
+    "Wait for the security check above the button to finish, then try again. If it never appears, a privacy extension or network filter may be blocking challenges.cloudflare.com; try another browser or contact support.",
+    "contact-support",
+  ),
+  VERIFICATION_FAILED: entry(
+    "The security check didn't pass",
+    "Please try again. If it keeps failing, a privacy extension or network filter may be blocking challenges.cloudflare.com; try another browser or contact support.",
+    "contact-support",
+  ),
   TWO_FACTOR_REQUIRED: entry(
     "Set up two-factor authentication",
     "Staff accounts need a second factor before you can continue.",

@@ -7,14 +7,13 @@ import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 // ISR — same rationale as /explore/experts: anonymous, session-free listing;
-// prerendered HTML off the CDN. Publish/unpublish purge on demand at the
-// write sites (see publish route follow-up).
+// prerendered HTML off the CDN. Unpublish purges on demand at its write site.
 export const revalidate = 300;
 
 export const metadata = {
   title: "Recordings Library | Familiarise",
   description:
-    "Buy recorded webinars and classes from verified consultants — learn on your schedule.",
+    "Recorded webinars and classes from verified consultants. Replays are not on sale yet; attendees watch their sessions from their dashboard.",
 };
 
 function formatPrice(paise: number): string {
@@ -32,10 +31,9 @@ async function RecordingsGrid() {
     return (
       <div className="py-24 text-center text-muted-foreground">
         <PlayCircle className="mx-auto mb-4 h-12 w-12 opacity-40" />
-        <p className="text-lg font-medium">No published recordings yet</p>
+        <p className="text-lg font-medium">Replays aren&apos;t on sale yet</p>
         <p className="mt-1 text-sm">
-          Consultants can publish webinar and class replays from their
-          dashboard.
+          Attendees can watch their session recordings from their dashboard.
         </p>
       </div>
     );

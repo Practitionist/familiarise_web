@@ -34,6 +34,12 @@ import {
   type AuthActionTarget,
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
+import {
+  TurnstileWidget,
+  awaitingCaptcha,
+  captchaHeaders,
+  useTurnstile,
+} from "@/components/auth/Turnstile";
 import { markExpectedUnreachable } from "@/lib/auth/expected-auth-failures";
 import { cn } from "@/utils/tailwind";
 import Link from "next/link";
@@ -116,6 +122,7 @@ function SignUpContent() {
   // The catalog's "what to do next" for the last failure.
   const [errorAction, setErrorAction] = useState<AuthErrorAction | null>(null);
   const retryAfter = useRetryAfterCapture();
+  const captcha = useTurnstile();
   const refParamCheck = useReferralCodeCheck(
     referralCode ?? "",
     !!referralCode,
@@ -251,6 +258,16 @@ function SignUpContent() {
       toast({ title: "Passwords do not match", variant: "destructive" });
       return;
     }
+    if (awaitingCaptcha(captcha)) {
+      const copy = humanizeAuthError("signup", { code: "MISSING_RESPONSE" });
+      setErrorAction(copy.action ?? null);
+      toast({
+        title: copy.title,
+        description: copy.description,
+        variant: "destructive",
+      });
+      return;
+    }
     setIsLoading(true);
     const settle = pendingToast({ title: "Creating account..." });
 
@@ -286,7 +303,10 @@ function SignUpContent() {
         email,
         password,
         // `onResponse` here is how the `Retry-After` header is read.
-        fetchOptions: retryAfter.fetchOptions,
+        fetchOptions: {
+          ...retryAfter.fetchOptions,
+          headers: captchaHeaders(captcha),
+        },
       });
       applyResult(error);
     } catch (error: unknown) {
@@ -315,6 +335,7 @@ function SignUpContent() {
         variant: "destructive",
       });
     } finally {
+      captcha.reset();
       setIsLoading(false);
     }
   };
@@ -463,6 +484,7 @@ function SignUpContent() {
                   : `: ${referralCheckText(refParamCheck)}`}
               </output>
             )}
+            {!ssoCheck?.enforceSSO && <TurnstileWidget handle={captcha} />}
             {!ssoCheck?.enforceSSO && (
               <Button
                 type="submit"

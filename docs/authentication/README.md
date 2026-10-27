@@ -30,8 +30,12 @@ it, an org owner proves it by signing in before enforcement can be turned on,
 and users who sign in through it join the organization automatically and pass
 the onboarding gate. Every tab of a browser follows sign-out and account
 switches. Rate limiting for `/api/auth/*` is BetterAuth's own limiter, stored
-in Upstash. There is no captcha, no email or SMS second factor, no account
-lockout on passwords, no break-glass account and no impersonation.
+in Upstash. Cloudflare Turnstile guards the three endpoints that send mail to a
+typed-in address (sign-up, password-reset request, code resend), repeated wrong
+passwords for one address earn growing waits of up to 15 minutes, and
+`deliver()` caps auth mail per recipient per day. There is no captcha on
+sign-in, no email or SMS second factor, no permanent account lockout on
+passwords, no break-glass account and no impersonation.
 
 ## System context (HLD)
 
@@ -89,7 +93,7 @@ flowchart LR
 | ↳ [multi-tab](./architecture.md#59-multi-tab-identity-sync)  | Sign-out broadcast, account switches, `X-Expected-User`                                                             |
 | [staff-onboarding.md](./staff-onboarding.md)                 | Adding, suspending or recovering a staff/admin account                                                              |
 | [sso.md](./sso.md)                                           | Enterprise OIDC: registration, approval, proof, enforcement, JIT, secret encryption                                 |
-| [rate-limiting-and-abuse.md](./rate-limiting-and-abuse.md)   | Budgets, the Upstash store, breached-password check, enumeration safety, accepted risks                             |
+| [rate-limiting-and-abuse.md](./rate-limiting-and-abuse.md)   | Budgets, Turnstile and its env vars and test keys, the account throttle, the mail cap, enumeration safety           |
 | [errors.md](./errors.md)                                     | Adding or changing what a customer is told                                                                          |
 | [failure-modes.md](./failure-modes.md)                       | Before on-call. What breaks when a dependency fails, and the runbooks                                               |
 | [redirects-and-navigation.md](./redirects-and-navigation.md) | Changing auth-page redirects, sign-out navigation or dashboard entry points                                         |
@@ -108,7 +112,9 @@ Onboarding after sign-in (the wizard and `/onboarding/gate`) is in
 2. **Every operator power is behind 2FA.** Until the operator has an
    authenticator, the app's `getSession()` reads their session as signed out,
    `requireApiAuth` answers 428 `TWO_FACTOR_REQUIRED`, `requireOperator`
-   redirects to enrolment, and the session lasts at most an hour.
+   redirects to enrolment, and the session lasts at most an hour. The one
+   exception is a designated QA operator off production
+   ([staff-onboarding.md §9](./staff-onboarding.md#9-two-factor-policy-seeds-and-qa-operators)).
 3. **Sensitive writes need a fresh proof.** Credential, factor, payout, refund
    and IAM changes answer 403 `REAUTH_REQUIRED` unless the session was opened
    or re-authenticated in the last 15 minutes.

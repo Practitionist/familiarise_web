@@ -144,3 +144,5 @@ If the block is quota, that is a legitimate, dated answer — and the canary is 
 - **Grouping ≠ saving.** A shared `fingerprint` gives N events one issue with a count and costs N. The canary did exactly this and still cost 8,640 events a month until its cadence was cut to 30.
 
 **E5** — Check whether the `ignoreErrors`/`denyUrls` lists and the breadcrumb path are doing their job, then consider a second sink. `system_events` in Postgres already holds the audit row for money paths, and `lib/observability/betterstack-telemetry.ts` has an out-of-band path that is currently disabled.
+
+Known filtered noise: Better Auth `State not found` (listed in `EXPECTED_AUTH_FAILURE_MESSAGES`), and `removeChild` / `insertBefore` `NotFoundError` on a page whose `<html>` has a `translated-ltr` or `translated-rtl` class (`lib/observability/translate-dom-noise.ts`). Add a new expected family there with a narrow predicate, never a broad `ignoreErrors` regex.

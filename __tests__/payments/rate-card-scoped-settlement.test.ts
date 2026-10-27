@@ -68,7 +68,7 @@ jest.mock("../../lib/prisma", () => {
   const mockTx = {
     ledgerAccount: {
       findFirst: jest.fn().mockResolvedValue(null),
-      upsert: jest.fn().mockResolvedValue({ id: "ledger-1" }),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     supportCase: { findMany: jest.fn(async () => []) },
     ledgerTransaction: { findUnique: jest.fn().mockResolvedValue(null) },

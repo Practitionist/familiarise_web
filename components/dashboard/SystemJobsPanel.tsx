@@ -52,6 +52,30 @@ export interface SystemJob {
 
 const SYSTEM_JOBS: SystemJob[] = [
   {
+    id: "consent-retention-sweeper",
+    name: "Consent Retention Slice",
+    description:
+      "Examine one expired-retention slice; deletion requires the existing delete gate",
+    schedule: "Weekly (Actions currently budget-blocked)",
+    category: "Cleanup",
+  },
+  {
+    id: "databreach-deadline-alerts",
+    name: "Breach Deadline Alert Slice",
+    description:
+      "Stage the next bounded recipient slice of the oldest unfinished deadline digest",
+    schedule: "Hourly (Actions currently budget-blocked)",
+    category: "Alerts",
+  },
+  {
+    id: "prune-system-events",
+    name: "System Event Retention Slice",
+    description:
+      "Remove one oldest-first slice beyond the existing 400-day retention policy",
+    schedule: "Daily (Actions currently budget-blocked)",
+    category: "Cleanup",
+  },
+  {
     id: "maintenance-booking-remediation",
     name: "Maintenance booking remediation",
     description:
@@ -131,6 +155,14 @@ const SYSTEM_JOBS: SystemJob[] = [
     id: "reconcile-payout-status",
     name: "Reconcile Payout Status",
     description: "Sync PENDING/PROCESSING payout status with gateways",
+    schedule: "Every 6 hours",
+    category: "Reconciliation",
+  },
+  {
+    id: "heal-consumer-invoices",
+    name: "Heal Consumer Invoices",
+    description:
+      "Mint missing consumer tax invoices for captured, unrefunded payments (90-day lookback)",
     schedule: "Every 6 hours",
     category: "Reconciliation",
   },
