@@ -242,12 +242,12 @@ Enforced in `lib/email/delivery-guard.ts` across `stage()`, `attempt()`, `retry-
 - **Allowlist Matching**: Permits recipients on `familiarisenow.com` (and its subdomains) or explicit entries in comma-separated `EMAIL_ALLOWLIST` (exact addresses or `@domain`/`domain`). If any recipient in `to`, `cc`, or `bcc` is disallowed, the entire message is held in `FailedEmail` as `DEAD_LETTER` (`lastError = "held:pre-launch"`).
 - **Production Launch Requirement**: Set `EMAIL_DELIVERY_MODE=live` in both Netlify production environment variables AND GitHub repository variables (`cron-intra-day.yml`, `cron-daily.yml`).
 
-| Host                               | Type     | Value                                                                              | Purpose                                                        |
-| ---------------------------------- | -------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `@` (apex)                         | TXT      | `v=spf1 -all`                                                                      | Prevents spoofing on non-sending root domain                   |
-| `_dmarc`                           | TXT      | `v=DMARC1; p=quarantine; rua=mailto:dmarc@familiarisenow.com`                      | Enforces DMARC alignment and aggregate reporting               |
-| `resend._domainkey.mail` / `.news` | TXT      | Resend DKIM public keys                                                            | Signs transactional (`mail.`) and newsletter (`news.`) traffic |
-| `send.mail` / `send.news`          | MX + TXT | `feedback-smtp.ap-northeast-1.amazonses.com` + `v=spf1 include:amazonses.com ~all` | Return-Path bounce handling and SPF alignment                  |
+| Host                               | Type     | Value                                                                              | Purpose                                                            |
+| ---------------------------------- | -------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `@` (apex)                         | TXT      | `v=spf1 -all`                                                                      | Prevents spoofing on non-sending root domain                       |
+| `_dmarc`                           | TXT      | `v=DMARC1; p=none; rua=<personal inbox>`                                           | Live policy is monitor-only; rua moves to a role address per #2434 |
+| `resend._domainkey.mail` / `.news` | TXT      | Resend DKIM public keys                                                            | Signs transactional (`mail.`) and newsletter (`news.`) traffic     |
+| `send.mail` / `send.news`          | MX + TXT | `feedback-smtp.ap-northeast-1.amazonses.com` + `v=spf1 include:amazonses.com ~all` | Return-Path bounce handling and SPF alignment                      |
 
 ---
 
@@ -275,4 +275,4 @@ flowchart LR
 - **Immediate `nextRetryAt: NOW()` on Outbox Insert & Content-Hashed Retry Keys**: Superseded by `nextRetryAt: NOW() + 60s` inline lease grace windows and `<EMAIL_TYPE>/failed-email/<row.id>` keys (`idempotencyKeyFor(..., row.id)`), eliminating concurrent inline-vs-relay races and preventing Resend's 24-hour payload hash cache from silently dropping legitimate repeat emails.
 - **Dropping RFC 8058 Unsubscribe Headers on Relay Retries & Mutating DB on `GET /api/waitlist/unsubscribe`**: Superseded by stateless `reconstructUnsubscribeHeaders(row)` header extraction on retry and read-only HTML confirmation on `GET /api/waitlist/unsubscribe` so link scanners cannot trigger false unsubscribes.
 - **Per-Row Loop Sentry Captures in Outbox Sweepers & Non-Transactional Webhook Suppression**: Superseded by per-tick alert aggregation in `runEmailRetryTick` (`email.outbox.dead_letter` gauge + `postOpsChat`) and single-`$transaction(tx)` `EmailEvent` + `EmailSuppression` writes with 30-day batched pruning.
-- **Inbound forwarding via ImprovMX (planned, never configured)**: the design routed `support@`, `ops@`, `dpdp@`, `billing@` and `dmarc@` on `familiarisenow.com` to the operator inbox through MX records `mx1.improvmx.com` (10) and `mx2.improvmx.com` (20). Those records were never created, so the addresses never received mail. Delete any residual references instead of configuring them.
+- **Inbound forwarding via ImprovMX (planned, never configured)**: the design routed `support@`, `ops@`, `dpdp@`, `billing@` and `dmarc@` on `familiarisenow.com` to the operator inbox through MX records `mx1.improvmx.com` (10) and `mx2.improvmx.com` (20). No `dmarc@` mailbox ever existed. Those records were never created, so the addresses never received mail. Delete any residual references instead of configuring them.

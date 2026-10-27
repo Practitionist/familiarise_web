@@ -1,6 +1,6 @@
 # Pre-Production Checklist — Email, Notifications & Newsletter
 
-> Production readiness runbook for outbound email (`lib/email/`), Novu in-app feed notifications (`lib/novu/`), ImprovMX inbound routing, DMARC/SPF/DKIM alignment, scheduled outbox relays, and environment variables.
+> Production readiness runbook for outbound email (`lib/email/`), Novu in-app feed notifications (`lib/novu/`), DMARC/SPF/DKIM alignment, scheduled outbox relays, and environment variables.
 
 **Last Updated**: 2026-10-11
 **Live Domain**: `familiarisenow.com` (Netlify DNS)
@@ -9,10 +9,10 @@
 
 ## Table of Contents
 
-- [Sending Domains, Inbound Routing & DMARC Architecture](#sending-domains-inbound-routing--dmarc-architecture)
+- [Sending Domains & DMARC Architecture](#sending-domains--dmarc-architecture)
 - [Service Free Tier Limits & Quotas](#service-free-tier-limits--quotas)
 - [Pre-Launch Checklist (Free Tier, \$0/month)](#pre-launch-checklist-free-tier-0month)
-- [DNS Setup for Resend, ImprovMX & DMARC](#dns-setup-for-resend-improvmx--dmarc)
+- [DNS Setup for Resend & DMARC](#dns-setup-for-resend--dmarc)
 - [Novu Environment & Workflow Configuration](#novu-environment--workflow-configuration)
 - [Scheduled Outbox Drains & Sweep Cadences](#scheduled-outbox-drains--sweep-cadences)
 - [Environment Variables](#environment-variables)
@@ -24,9 +24,9 @@
 
 ---
 
-## Sending Domains, Inbound Routing & DMARC Architecture
+## Sending Domains & DMARC Architecture
 
-Outbound mail splits sender reputations across two dedicated Resend subdomains on `familiarisenow.com` (dispatched from Resend region `ap-northeast-1` Tokyo), while inbound operator mailboxes route through ImprovMX on the root apex `@`:
+Outbound mail splits sender reputations across two dedicated Resend subdomains on `familiarisenow.com` (dispatched from Resend region `ap-northeast-1` Tokyo), while `familiarisenow.com` itself is send-only (it has no MX record) and every inbound address is `connect@practitionist.com` (`SUPPORT_EMAIL`):
 
 ```text
 Outbound Transactional & Ops (@mail.familiarisenow.com):
@@ -37,16 +37,13 @@ Outbound Transactional & Ops (@mail.familiarisenow.com):
   finance@mail.familiarisenow.com        -- Org billing receipts, invoices, wallet low, overage due
   dpdp@mail.familiarisenow.com           -- DPDP compliance & data-export notifications
   noreply@mail.familiarisenow.com        -- Automated system notifications
-  system@mail.familiarisenow.com         -- Familiarise Ops alerts (Reply-To: ops@familiarisenow.com)
+  system@mail.familiarisenow.com         -- Familiarise Ops alerts (Reply-To: connect@practitionist.com)
 
 Outbound Bulk / Waitlist (@news.familiarisenow.com):
   newsletter@news.familiarisenow.com     -- Waitlist confirmation, welcome & broadcasts
 
-Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
+Inbound (practitionist.com):
   connect@practitionist.com              -- The one live mailbox (SUPPORT_EMAIL): Reply-To, support, contact, billing, grievance and compliance alerts
-  dpdp@familiarisenow.com                -- Privacy & DPDP statutory contact
-  billing@familiarisenow.com             -- Optional alias; tax invoices print BILLING_EMAIL, which equals SUPPORT_EMAIL
-  dmarc@familiarisenow.com               -- Aggregate DMARC reports (rua=mailto:dmarc@familiarisenow.com)
 ```
 
 ---
@@ -94,8 +91,8 @@ Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
 ### Step 1: Domain & Inbound Forwarding
 
 - [x] Subdomain architecture active in `lib/email/config.ts`: `mail.familiarisenow.com` (transactional/ops) and `news.familiarisenow.com` (newsletter)
-- [ ] Configure ImprovMX forwarding for `support@`, `ops@`, `dpdp@`, `billing@`, and `dmarc@` on `familiarisenow.com`
-- [ ] Publish root SPF (`v=spf1 -all`) and DMARC (`v=DMARC1; p=quarantine; rua=mailto:dmarc@familiarisenow.com`) TXT records in Netlify DNS
+- [ ] Inbound mail for the product domain and the role addresses: decide and configure per #2434
+- [ ] Root SPF (`v=spf1 -all`) is published in Netlify DNS. The live `_dmarc` record is `v=DMARC1; p=none` with aggregate reports (`rua`) going to a personal inbox; moving `rua` to a role address is a pre-launch item in #2434.
 
 ### Step 2: Resend Subdomain Verification & Webhook Registration
 
@@ -129,21 +126,20 @@ Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
 
 ---
 
-## DNS Setup for Resend, ImprovMX & DMARC
+## DNS Setup for Resend & DMARC
 
 Publish all records below in **Netlify DNS** (`familiarisenow.com` zone):
 
-| Type | Host                     | Value                                                         | Purpose                                                    |
-| ---- | ------------------------ | ------------------------------------------------------------- | ---------------------------------------------------------- |
-| MX   | `@`                      | `mx1.improvmx.com` (priority 10), `mx2.improvmx.com` (20)     | Inbound forwarding (`support@`, `ops@`, `dpdp@`, `dmarc@`) |
-| TXT  | `@`                      | `v=spf1 -all`                                                 | Prevents spoofing on non-sending root apex                 |
-| TXT  | `_dmarc`                 | `v=DMARC1; p=quarantine; rua=mailto:dmarc@familiarisenow.com` | Enforces domain DMARC policy & aggregate reports           |
-| TXT  | `resend._domainkey.mail` | `p=MIGfMA0GCSq...` (from Resend dashboard)                    | DKIM public key for transactional mail                     |
-| TXT  | `send.mail`              | `v=spf1 include:amazonses.com ~all`                           | SPF authorization for transactional envelope sender        |
-| MX   | `send.mail`              | `feedback-smtp.ap-northeast-1.amazonses.com` (priority 10)    | Return-Path bounce handling for transactional mail         |
-| TXT  | `resend._domainkey.news` | `p=MIGfMA0GCSq...` (from Resend dashboard)                    | DKIM public key for newsletter mail                        |
-| TXT  | `send.news`              | `v=spf1 include:amazonses.com ~all`                           | SPF authorization for newsletter envelope sender           |
-| MX   | `send.news`              | `feedback-smtp.ap-northeast-1.amazonses.com` (priority 10)    | Return-Path bounce handling for newsletter mail            |
+| Type | Host                     | Value                                                      | Purpose                                                            |
+| ---- | ------------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------ |
+| TXT  | `@`                      | `v=spf1 -all`                                              | Prevents spoofing on non-sending root apex                         |
+| TXT  | `_dmarc`                 | `v=DMARC1; p=none; rua=<personal inbox>`                   | Live policy is monitor-only; rua moves to a role address per #2434 |
+| TXT  | `resend._domainkey.mail` | `p=MIGfMA0GCSq...` (from Resend dashboard)                 | DKIM public key for transactional mail                             |
+| TXT  | `send.mail`              | `v=spf1 include:amazonses.com ~all`                        | SPF authorization for transactional envelope sender                |
+| MX   | `send.mail`              | `feedback-smtp.ap-northeast-1.amazonses.com` (priority 10) | Return-Path bounce handling for transactional mail                 |
+| TXT  | `resend._domainkey.news` | `p=MIGfMA0GCSq...` (from Resend dashboard)                 | DKIM public key for newsletter mail                                |
+| TXT  | `send.news`              | `v=spf1 include:amazonses.com ~all`                        | SPF authorization for newsletter envelope sender                   |
+| MX   | `send.news`              | `feedback-smtp.ap-northeast-1.amazonses.com` (priority 10) | Return-Path bounce handling for newsletter mail                    |
 
 ---
 
@@ -235,7 +231,8 @@ _Kit free tier covers 10K subscribers. Creator (\$39/mo) is only needed for auto
 
 ## Deprecated & Superseded Approaches
 
-- **Sending From Unowned `@familiarise.com` & Unrouted Root Mailboxes**: Replaced by `mail.familiarisenow.com` and `news.familiarisenow.com` verified in Resend (`ap-northeast-1`), paired with ImprovMX inbound routing on `@familiarisenow.com` and `_dmarc` `p=quarantine`.
+- **Sending From Unowned `@familiarise.com` & Unrouted Root Mailboxes**: Replaced by `mail.familiarisenow.com` and `news.familiarisenow.com` verified in Resend (`ap-northeast-1`), with the live `_dmarc` policy at `p=none`.
 - **Standalone Sub-Hourly GitHub Actions Workflows (`cron-notifications.yml`, `cron-auto-complete.yml`)**: Superseded by phase-staggered dispatch in `netlify/functions/cron-tick.mts` (`drain-notification-outbox` every 10m at `:05`, `retry-failed-emails` every 15m at `:00`, `appointment-reminders` every 15m at `:10`, `auto-complete-appointments` every 30m at `:15`), avoiding GitHub Actions sub-hourly scheduling lag and duplicate cron workflows.
 - **Replaying 422 Invalid-Domain Sends Across Backoff**: Superseded by `terminalSendReason()` dead-lettering 422 validation errors immediately on attempt 1.
 - **Env-driven sender domains and contact addresses**: `EMAIL_TRANSACTIONAL_DOMAIN`, `EMAIL_NEWSLETTER_DOMAIN`, `NEXT_PUBLIC_SUPPORT_EMAIL`, `CONTACT_INBOX_ADDRESS`, `BILLING_EMAIL` and `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` were replaced by constants in `lib/company.ts`. The footer and newsletters always print the registered-office postal line, and the broadcast route no longer refuses with 412 when it is missing. Remove any leftover copies from Netlify.
+- **Inbound forwarding via ImprovMX (planned, never configured)**: `support@`, `ops@`, `dpdp@`, `billing@` and `dmarc@` on `familiarisenow.com` were to be forwarded through ImprovMX MX records. The records were never created, so none of those addresses received mail; inbound mail is tracked in #2434.
