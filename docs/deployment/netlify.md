@@ -60,7 +60,7 @@ flowchart LR
   TICK["netlify/functions/cron-tick.mts<br/>every 5 min → POST /api/cleanup/[job]"]
   DB[("Supabase Postgres — ONE project serves dev AND prod<br/>DATABASE_URL, PG_POOL_MAX=1")]
   REDIS[("Upstash Redis<br/>UPSTASH_REDIS_REST_URL — locks, circuit breaker")]
-  RZP[("Razorpay<br/>RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET")]
+  RZP[("Razorpay<br/>RAZORPAY_KEY_ID / RAZORPAY_SECRET")]
   STREAM[("Stream — chat + video<br/>STREAM_API_KEY / STREAM_API_SECRET")]
   NOVU[("Novu — in-app bell<br/>NOVU_DEVELOPMENT_KEY or NOVU_PRODUCTION_KEY,<br/>resolved from NEXT_PUBLIC_SENTRY_ENVIRONMENT<br/>NEXT_PUBLIC_NOVU_APP_ID (client)")]
   RESEND[("Resend — transactional email<br/>RESEND_API_KEY")]
@@ -138,7 +138,7 @@ The production branch is named `prod` (not `main` or `master`). This is intentio
 
 All env vars live in the Netlify dashboard and are injected at build time.
 They are **not committed to the repo** (`.env` is gitignored).
-The `.env.sample` file is the canonical reference for what vars are needed.
+The `.env.sample` file is the canonical reference for what vars are needed. It is grouped into eight sections (core runtime, vendors, compliance and encryption, ops and observability, pre-launch guards and feature flags, seed only, build only, platform-provided), and `__tests__/maintenance/env-sample-coverage.test.ts` fails when code reads a key that is missing from it.
 
 ### Critical auth variables
 

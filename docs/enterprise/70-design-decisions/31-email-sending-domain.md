@@ -45,3 +45,7 @@ Third, `familiarisenow.com` — the domain the company does own and the live sit
 ## Relations
 
 Builds on ADR 27 (state-as-outbox with a scheduled ticker) — `FailedEmail` is the same durable-state pattern as `OutboundWebhookDelivery`, drained by a worker rather than a broker — and ADR 30 (Novu templates as code), which is why Novu is not a candidate for the email channel. Closes the email-sending half of #1298.
+
+## Deprecated & Superseded Approaches
+
+- **Env-read sender and contact identity (decisions 2 and 4 as first written)**: the sending domains, support mailbox, contact inbox, billing contact and postal address were once read from `EMAIL_TRANSACTIONAL_DOMAIN`, `EMAIL_NEWSLETTER_DOMAIN`, `NEXT_PUBLIC_SUPPORT_EMAIL`, `CONTACT_INBOX_ADDRESS`, `BILLING_EMAIL` and `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS`. They are now constants in `lib/company.ts` (`SUPPORT_EMAIL` is `support@familiarisenow.com`, and the contact inbox and billing contact equal it), and `lib/email/config.ts` returns them. The postal line is the registered office and is always printed, so the broadcast refusal for a missing address was removed. Changing any of these is a code change, and the old env keys can be deleted from every environment.

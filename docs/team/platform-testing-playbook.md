@@ -153,17 +153,17 @@ graph LR
    - Ask the team lead for the actual values
    - Key variables you need to know about (don't worry about the values yet):
 
-   | Variable                                  | What It Does                             |
-   | ----------------------------------------- | ---------------------------------------- |
-   | `DATABASE_URL`                            | Connects to Supabase PostgreSQL database |
-   | `NEXT_PUBLIC_STREAM_API_KEY`              | Stream.io video/chat (public key)        |
-   | `STREAM_API_SECRET`                       | Stream.io server-side key                |
-   | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | Razorpay payment gateway                 |
-   | `STRIPE_SECRET_KEY`                       | Stripe payment gateway                   |
-   | `RESEND_API_KEY`                          | Email sending                            |
-   | `NOVU_API_KEY`                            | In-app notifications                     |
-   | `UPSTASH_REDIS_*`                         | Redis for caching and rate limiting      |
-   | `BETTER_AUTH_SECRET`                      | Authentication encryption key            |
+   | Variable                              | What It Does                             |
+   | ------------------------------------- | ---------------------------------------- |
+   | `DATABASE_URL`                        | Connects to Supabase PostgreSQL database |
+   | `NEXT_PUBLIC_STREAM_API_KEY`          | Stream.io video/chat (public key)        |
+   | `STREAM_API_SECRET`                   | Stream.io server-side key                |
+   | `RAZORPAY_KEY_ID` / `RAZORPAY_SECRET` | Razorpay payment gateway                 |
+   | `STRIPE_SECRET_KEY`                   | Stripe payment gateway                   |
+   | `RESEND_API_KEY`                      | Email sending                            |
+   | `NOVU_API_KEY`                        | In-app notifications                     |
+   | `UPSTASH_REDIS_*`                     | Redis for caching and rate limiting      |
+   | `BETTER_AUTH_SECRET`                  | Authentication encryption key            |
 
 4. **Run the development server:**
 

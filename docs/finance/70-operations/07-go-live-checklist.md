@@ -122,5 +122,5 @@ Run `npx tsx scripts/smoke/org-payout-sandbox-smoke.ts` with a RazorpayX test ke
 
 1. **The top-level `payment_capture: 1` order parameter.** Orders now set the nested `payment` capture options (`holdCaptureSettings` in `lib/payments/core/razorpay.ts`).
 2. **Webhook secret rotation without a grace slot.** Both products now have a `_PREVIOUS` slot.
-3. **`RAZORPAY_KEY_SECRET` as the secret name.** `RAZORPAY_SECRET` is the name; only the `reconcile-payment-status` script still accepts the legacy spelling as a fallback, and new environments must not rely on it.
+3. **`RAZORPAY_KEY_SECRET` as the secret name.** `RAZORPAY_SECRET` is the only name any code reads; the legacy spelling is no longer accepted anywhere, including the `reconcile-payment-status` script.
 4. **A purge that clears `isVerified` on `OrganizationPayoutAccount`.** That table has `status`, not `isVerified`.

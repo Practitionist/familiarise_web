@@ -180,9 +180,10 @@ and the seed.
 
 **What broke.** The consent retention sweeper was described as "a daily cron"
 that "purges rows" — in the module docblock, twice in the org consent
-dashboard, and in the org consent route. It is **weekly**, and **count-only
-unless `DPDP_SWEEPER_DELETE=true`**, in which case it deletes in capped batches.
-In the default posture nothing is deleted at all.
+dashboard, and in the org consent route. It is **weekly**, and it **deletes by
+default** in capped batches; `?dryRun=1` on `/api/cleanup/consent-retention-sweeper`
+(or `--dry-run` on the job script) only counts. The old `DPDP_SWEEPER_DELETE`
+opt-in no longer exists, so the admin system-jobs Run button deletes too.
 
 The dashboard also told users retention runs "7 years from grant **or
 withdrawal**" while the code ran it from the grant only.

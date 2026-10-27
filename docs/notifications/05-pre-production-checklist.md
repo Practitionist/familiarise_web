@@ -46,7 +46,7 @@ Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
   support@familiarisenow.com             -- Default Reply-To & customer support inbox
   ops@familiarisenow.com                 -- Reply-To for ops/canary/quota/compliance alerts (OPS_EMAIL)
   dpdp@familiarisenow.com                -- Privacy & DPDP statutory contact
-  billing@familiarisenow.com             -- Supplier invoice & finance contact
+  billing@familiarisenow.com             -- Finance alias; tax invoices print BILLING_EMAIL, which is support@ today
   dmarc@familiarisenow.com               -- Aggregate DMARC reports (rua=mailto:dmarc@familiarisenow.com)
 ```
 
@@ -181,27 +181,22 @@ Every target routes through `/api/cleanup/[job]`, authenticates via `CRON_SECRET
 
 Set these in **Netlify Dashboard → Site → Environment Variables** (and matching GitHub Actions secrets/variables where noted):
 
-| Variable                     | Value / Source                                               | Required                                                 |
-| ---------------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
-| `NEXT_PUBLIC_APP_URL`        | `https://familiarisenow.com`                                 | Yes                                                      |
-| `EMAIL_DELIVERY_MODE`        | `live` at launch (defaults to `allowlist` pre-launch)        | Yes (Netlify + GitHub Actions variables)                 |
-| `EMAIL_ALLOWLIST`            | Comma-separated emails/`@domains` allowed pre-launch         | Optional (used when `EMAIL_DELIVERY_MODE != live`)       |
-| `RESEND_API_KEY`             | Resend API key (`re_...`)                                    | Yes (Netlify + GitHub Actions secrets)                   |
-| `RESEND_WEBHOOK_SECRET`      | Svix signing secret (`whsec_...`)                            | Yes (Netlify production context)                         |
-| `EMAIL_TRANSACTIONAL_DOMAIN` | `mail.familiarisenow.com`                                    | Optional (default)                                       |
-| `EMAIL_NEWSLETTER_DOMAIN`    | `news.familiarisenow.com`                                    | Optional (default)                                       |
-| `NEXT_PUBLIC_SUPPORT_EMAIL`  | `support@familiarisenow.com`                                 | Optional (default)                                       |
-| `CONTACT_INBOX_ADDRESS`      | Defaults to `NEXT_PUBLIC_SUPPORT_EMAIL`                      | Optional                                                 |
-| `BILLING_EMAIL`              | `billing@familiarisenow.com` (fallback: `supportEmail()`)    | Optional                                                 |
-| `OBSERVABILITY_ALERT_EMAIL`  | Ops recipient for Sentry canary/quota alerts                 | Optional (fallback: `supportEmail()`)                    |
-| `DATABREACH_ALERT_EMAIL`     | Compliance recipient for DPDP 72h alerts                     | Yes                                                      |
-| `MSME_ALERT_EMAIL`           | Finance recipient for MSME Section 43B(h) alerts             | Yes                                                      |
-| `SLACK_OPS_WEBHOOK_URL`      | Slack incoming webhook for dead-letter & ops fallback alerts | Optional (recommended)                                   |
-| `NOVU_DEVELOPMENT_KEY`       | Novu Development secret key                                  | Yes                                                      |
-| `NOVU_PRODUCTION_KEY`        | Novu Production secret key                                   | Yes (Netlify production + GitHub Actions secrets)        |
-| `NEXT_PUBLIC_NOVU_APP_ID`    | Novu Application Identifier                                  | Yes                                                      |
-| `CRON_SECRET`                | `openssl rand -hex 32`                                       | Yes (Netlify + GitHub Actions secrets)                   |
-| `WAITLIST_HMAC_SECRET`       | `openssl rand -hex 32`                                       | Yes (signs stateless email & waitlist unsubscribe links) |
+| Variable                    | Value / Source                                               | Required                                                 |
+| --------------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`       | `https://familiarisenow.com`                                 | Yes                                                      |
+| `EMAIL_DELIVERY_MODE`       | `live` at launch (defaults to `allowlist` pre-launch)        | Yes (Netlify + GitHub Actions variables)                 |
+| `EMAIL_ALLOWLIST`           | Comma-separated emails/`@domains` allowed pre-launch         | Optional (used when `EMAIL_DELIVERY_MODE != live`)       |
+| `RESEND_API_KEY`            | Resend API key (`re_...`)                                    | Yes (Netlify + GitHub Actions secrets)                   |
+| `RESEND_WEBHOOK_SECRET`     | Svix signing secret (`whsec_...`)                            | Yes (Netlify production context)                         |
+| `OBSERVABILITY_ALERT_EMAIL` | Ops recipient for Sentry canary/quota alerts                 | Optional (fallback: `supportEmail()`)                    |
+| `DATABREACH_ALERT_EMAIL`    | Compliance recipient for DPDP 72h alerts                     | Yes                                                      |
+| `MSME_ALERT_EMAIL`          | Finance recipient for MSME Section 43B(h) alerts             | Yes                                                      |
+| `SLACK_OPS_WEBHOOK_URL`     | Slack incoming webhook for dead-letter & ops fallback alerts | Optional (recommended)                                   |
+| `NOVU_DEVELOPMENT_KEY`      | Novu Development secret key                                  | Yes                                                      |
+| `NOVU_PRODUCTION_KEY`       | Novu Production secret key                                   | Yes (Netlify production + GitHub Actions secrets)        |
+| `NEXT_PUBLIC_NOVU_APP_ID`   | Novu Application Identifier                                  | Yes                                                      |
+| `CRON_SECRET`               | `openssl rand -hex 32`                                       | Yes (Netlify + GitHub Actions secrets)                   |
+| `WAITLIST_HMAC_SECRET`      | `openssl rand -hex 32`                                       | Yes (signs stateless email & waitlist unsubscribe links) |
 
 ---
 
@@ -246,3 +241,4 @@ _Kit free tier covers 10K subscribers. Creator (\$39/mo) is only needed for auto
 - **Sending From Unowned `@familiarise.com` & Unrouted Root Mailboxes**: Replaced by `mail.familiarisenow.com` and `news.familiarisenow.com` verified in Resend (`ap-northeast-1`), paired with ImprovMX inbound routing on `@familiarisenow.com` and `_dmarc` `p=quarantine`.
 - **Standalone Sub-Hourly GitHub Actions Workflows (`cron-notifications.yml`, `cron-auto-complete.yml`)**: Superseded by phase-staggered dispatch in `netlify/functions/cron-tick.mts` (`drain-notification-outbox` every 10m at `:05`, `retry-failed-emails` every 15m at `:00`, `appointment-reminders` every 15m at `:10`, `auto-complete-appointments` every 30m at `:15`), avoiding GitHub Actions sub-hourly scheduling lag and duplicate cron workflows.
 - **Replaying 422 Invalid-Domain Sends Across Backoff**: Superseded by `terminalSendReason()` dead-lettering 422 validation errors immediately on attempt 1.
+- **Env-driven sender domains and contact addresses**: `EMAIL_TRANSACTIONAL_DOMAIN`, `EMAIL_NEWSLETTER_DOMAIN`, `NEXT_PUBLIC_SUPPORT_EMAIL`, `CONTACT_INBOX_ADDRESS`, `BILLING_EMAIL` and `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` were replaced by constants in `lib/company.ts`. The footer and newsletters always print the registered-office postal line, and the broadcast route no longer refuses with 412 when it is missing. Remove any leftover copies from Netlify.

@@ -83,7 +83,7 @@ The job holds its lock fail-closed and is a financial job, like the register exp
 | Organisation invoice     | `<PREFIX>-<FY>-<SEQ4>`    | `WIPRO-2026-0001`  | per organisation and fiscal year |
 | Organisation credit note | `<PREFIX>-CN-<FY>-<SEQ4>` | `WIP-CN-2026-0001` | per organisation and fiscal year |
 
-The consumer series is platform-wide because the supplier is the platform. `PLATFORM_INVOICE_PREFIX` sets the prefix and defaults to `FAM`. Organisation documents take the organisation's `invoiceNumberPrefix` or its slug. `fitPrefixToRule46` (`lib/payments/billing/invoice-numbering.ts`) shortens the prefix so the whole number never exceeds the sixteen characters that Rules 46(b) and 53 allow. The `-CN-` infix costs three more characters, so a credit note's prefix is shorter than its invoice's: the slug `wipro` fits whole in an invoice number and is cut to `WIP` in a credit note. The credit-note series is separate from the invoice series because Rule 53 requires it. The fiscal year in a number is the year in which the financial year starts, reckoned in India time, so a document issued on 31 March 2027 at 23:00 IST is numbered in FY 2026. Each allocation is an atomic upsert on a counter table (`platform_invoice_counters`, `platform_credit_note_counters`, `org_invoice_counters`, `org_credit_note_counters`) that returns the pre-increment value.
+The consumer series is platform-wide because the supplier is the platform. The constant `PLATFORM_INVOICE_PREFIX` in `lib/company.ts` sets the prefix to `FAM`; it is not an environment variable, so renaming the series is a code change. Organisation documents take the organisation's `invoiceNumberPrefix` or its slug. `fitPrefixToRule46` (`lib/payments/billing/invoice-numbering.ts`) shortens the prefix so the whole number never exceeds the sixteen characters that Rules 46(b) and 53 allow. The `-CN-` infix costs three more characters, so a credit note's prefix is shorter than its invoice's: the slug `wipro` fits whole in an invoice number and is cut to `WIP` in a credit note. The credit-note series is separate from the invoice series because Rule 53 requires it. The fiscal year in a number is the year in which the financial year starts, reckoned in India time, so a document issued on 31 March 2027 at 23:00 IST is numbered in FY 2026. Each allocation is an atomic upsert on a counter table (`platform_invoice_counters`, `platform_credit_note_counters`, `org_invoice_counters`, `org_credit_note_counters`) that returns the pre-increment value.
 
 ## Credit notes
 
@@ -107,7 +107,7 @@ The refund cascade pins one clock (`cascadeNow`) across the credit-note mint and
 
 ## The outward-supplies register
 
-`gst-outward-register-export` (`jobs/compliance/gst-outward-register-export.ts`) runs from the Netlify ticker in hourly slices on the 2nd of each month (04:00 to 23:00 UTC), for the previous India calendar month, ahead of the 11th-of-the-month GSTR-1 deadline. Every slice repeats the whole export, so a later slice only refreshes the file. It does four things in order.
+`gst-outward-register-export` (`jobs/compliance/gst-outward-register-export.ts`) runs from the Netlify ticker in hourly slices on the 2nd of each month (04:00 to 23:00 UTC), for the previous India calendar month by default, ahead of the 11th-of-the-month GSTR-1 deadline. Every slice repeats the whole export, so a later slice only refreshes the file. It does four things in order.
 
 1. **Heals.** Up to 25 `SUCCEEDED` payments in the period with no consumer invoice are minted, oldest first. Organisation-funded and zero-value payments are filtered out of the candidates so they cannot fill a slice. A non-zero count is warned about, because it means the checkout mint missed something.
 2. **Reads** every consumer invoice, issued organisation invoice, consumer credit note and issued organisation credit note in the period, except commercial credit notes (they reverse no tax, so they are not GSTR-1 documents; their count is warned about), and shapes them into one register through the pure builder in `lib/compliance/gst-outward-register.ts`.
@@ -118,7 +118,7 @@ The CSV header is fixed because the accountant's import template depends on it: 
 
 The job holds its cron lock fail-closed and is in `FINANCIAL_JOB_NAMES`, because its healer allocates numbers from a gapless series. Two concurrent runs would each see a payment as un-invoiced and take a number, and one would lose the unique constraint, leaving a gap that cannot be filled. Not producing the register is recoverable; a gap is not.
 
-An administrator fetches a month through `GET /api/admin/compliance/gst-register?period=2026-10`. The route is ADMIN-only, rebuilds the storage path with `gstOutwardRegisterCsvStoragePath`, answers 404 for a month the job has not produced, and otherwise redirects to a signed URL that expires after ten minutes. A file produced through the manual window override (`GST_REGISTER_PERIOD_START` and `GST_REGISTER_PERIOD_END`) is not a calendar month, so no `period` names it and the route cannot fetch it.
+An administrator fetches a month through `GET /api/admin/compliance/gst-register?period=2026-10`. The route is ADMIN-only, rebuilds the storage path with `gstOutwardRegisterCsvStoragePath`, answers 404 for a month the job has not produced, and otherwise redirects to a signed URL that expires after ten minutes. To rebuild another month, call `/api/cleanup/gst-outward-register-export?period=YYYY-MM` with the cron bearer secret; the month is reckoned in India time, and a malformed value answers 400 `INVALID_PERIOD`. Because every run covers exactly one calendar month, the admin route can fetch any file the job has written.
 
 ## Downloading a document
 
@@ -131,7 +131,7 @@ Both routes authorise the payment's own buyer or an operator, apply the `moneyOp
 
 ## E-invoicing for organisation invoices
 
-A B2B `OrganizationInvoice` with a buyer GSTIN is eligible for an Invoice Reference Number. The `irp-uploader` job (`jobs/compliance/irp-uploader.ts`) runs in the ticker's daily window from 03:00 UTC with ten invoices per slice and sends PENDING invoices issued within the last 30 days through ClearTax. It runs only when the platform GSTIN and the `CLEARTAX_API_KEY`, `CLEARTAX_GSP_TOKEN` and `CLEARTAX_GSTIN` settings are all present; otherwise it touches no invoice and reports a skip. There is no separate enable flag. Personal invoices are outside e-invoicing. An IRN can be cancelled only within 24 hours, so the job holds its lock fail-closed and is a financial job.
+A B2B `OrganizationInvoice` with a buyer GSTIN is eligible for an Invoice Reference Number. The `irp-uploader` job (`jobs/compliance/irp-uploader.ts`) runs in the ticker's daily window from 03:00 UTC with ten invoices per slice and sends PENDING invoices issued within the last 30 days through ClearTax. It runs only when `PLATFORM_GSTIN` (which it sends to ClearTax as the supplier GSTIN), `CLEARTAX_API_KEY` and `CLEARTAX_GSP_TOKEN` are all present; otherwise it touches no invoice and reports a skip. There is no separate enable flag. Personal invoices are outside e-invoicing. An IRN can be cancelled only within 24 hours, so the job holds its lock fail-closed and is a financial job.
 
 ## Rules and their enforcers
 
@@ -169,3 +169,4 @@ A B2B `OrganizationInvoice` with a buyer GSTIN is eligible for an Invoice Refere
 - **Zero-rating on browser language.** Detecting the buyer's country from `Accept-Language` zero-rated every `en-US` browser. It was removed.
 - **Independent clock reads** across credit-note minting and the ledger's GST reversal. They are one pinned `cascadeNow` now.
 - **Database writes through the global client** inside the mint error handlers. They pass the enclosing transaction (`db: tx`) so a single-connection pool cannot deadlock.
+- **Environment overrides for the register window and the series.** `GST_REGISTER_PERIOD_START`, `GST_REGISTER_PERIOD_END`, `PLATFORM_INVOICE_PREFIX` and `CLEARTAX_GSTIN` no longer exist. The month is the `?period=YYYY-MM` argument, the prefix is a constant in `lib/company.ts`, and the IRP uses `PLATFORM_GSTIN`.

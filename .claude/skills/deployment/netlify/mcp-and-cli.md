@@ -90,7 +90,7 @@ comm -23 /tmp/b /tmp/a   # in .env only
 comm -13 /tmp/b /tmp/a   # on Netlify only
 ```
 
-On 2026-09-12 the `.env`-only keys were `NEXT_PUBLIC_TEST_USERID`, `SEED_PASSWORD`, the four `R2_*` keys for the unimplemented recording bucket (#1314), and a dead `REDIS_URL` that nothing reads (the code and production both use `UPSTASH_REDIS_REST_URL`/`_TOKEN`); the Netlify-only keys were build and observability configuration. `comm` needs the same collation on both inputs, hence `LC_ALL=C`.
+On 2026-09-12 the `.env`-only keys were `SEED_PASSWORD`, a since-deleted test-user id, the four `R2_*` keys for the unimplemented recording bucket (#1314), and a dead `REDIS_URL` that nothing reads (the code and production both use `UPSTASH_REDIS_REST_URL`/`_TOKEN`); the Netlify-only keys were build and observability configuration. `comm` needs the same collation on both inputs, hence `LC_ALL=C`.
 
 ## Recipes added in the week of 2026-09-14
 

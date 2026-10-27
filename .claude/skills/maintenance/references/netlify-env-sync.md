@@ -31,15 +31,15 @@ Make the Netlify production deployment's env vars correct, complete, and secure,
 
 ## Step 2 — Categorize every variable
 
-| Category                    | Test                                                                                                           | Action                                                                                                                     |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **Missing from Netlify**    | In `.env`, not on Netlify                                                                                      | Add with the `.env` value (rewrite URLs per below first)                                                                   |
-| **Localhost value on prod** | Value contains `localhost`, `127.0.0.1`, or plain `http://`                                                    | Rewrite to the production URL (`BETTER_AUTH_URL`, `BETTER_AUTH_TRUSTED_ORIGINS`, `NEXT_PUBLIC_APP_URL`, any URL-typed var) |
-| **Dev/test-only on prod**   | `SEED_PASSWORD`, `NEXT_PUBLIC_TEST_USERID`, `REDIS_URL` (localhost redis — prod uses `UPSTASH_REDIS_REST_URL`) | Remove from Netlify                                                                                                        |
-| **Wrong value**             | `NODE_ENV` ≠ `production`; empty strings; values that look truncated                                           | Fix `NODE_ENV`; flag the rest                                                                                              |
-| **Test keys / pre-launch**  | `rzp_test_*`, `sk_test_*`, empty OAuth                                                                         | **Flag only — never auto-fix**                                                                                             |
-| **Netlify-only**            | On Netlify, not in `.env` (`CI`, `NODE_VERSION`, Netlify-injected build vars)                                  | List, don't touch                                                                                                          |
-| **In sync**                 | Same key, appropriate value both sides                                                                         | Count only                                                                                                                 |
+| Category                    | Test                                                                                | Action                                                                                                                     |
+| --------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **Missing from Netlify**    | In `.env`, not on Netlify                                                           | Add with the `.env` value (rewrite URLs per below first)                                                                   |
+| **Localhost value on prod** | Value contains `localhost`, `127.0.0.1`, or plain `http://`                         | Rewrite to the production URL (`BETTER_AUTH_URL`, `BETTER_AUTH_TRUSTED_ORIGINS`, `NEXT_PUBLIC_APP_URL`, any URL-typed var) |
+| **Dev/test-only on prod**   | `SEED_PASSWORD`, `REDIS_URL` (localhost redis — prod uses `UPSTASH_REDIS_REST_URL`) | Remove from Netlify                                                                                                        |
+| **Wrong value**             | `NODE_ENV` ≠ `production`; empty strings; values that look truncated                | Fix `NODE_ENV`; flag the rest                                                                                              |
+| **Test keys / pre-launch**  | `rzp_test_*`, `sk_test_*`, empty OAuth                                              | **Flag only — never auto-fix**                                                                                             |
+| **Netlify-only**            | On Netlify, not in `.env` (`CI`, `NODE_VERSION`, Netlify-injected build vars)       | List, don't touch                                                                                                          |
+| **In sync**                 | Same key, appropriate value both sides                                              | Count only                                                                                                                 |
 
 Security sweep while categorizing: every `NEXT_PUBLIC_*` value ships to the browser — if one holds what looks like a secret (not a publishable key), flag it **critical**.
 
@@ -80,6 +80,6 @@ Re-run `npx netlify-cli env:list --context production --plain` and confirm every
 
 - [ ] Every `.env` var is on Netlify or intentionally dev-only
 - [ ] No `localhost`/`127.0.0.1` values in the production context
-- [ ] `NODE_ENV=production`; no `SEED_PASSWORD`/`NEXT_PUBLIC_TEST_USERID`/localhost `REDIS_URL`
+- [ ] `NODE_ENV=production`; no `SEED_PASSWORD`/localhost `REDIS_URL`
 - [ ] All `NEXT_PUBLIC_*` values are safe to expose
 - [ ] No secret was printed unmasked anywhere in the conversation

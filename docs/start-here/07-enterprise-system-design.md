@@ -2031,7 +2031,7 @@ flowchart TD
 
 Withdrawal is an irreversible event on an artifact. Re-granting creates a new artifact; it does not rewrite the prior evidence. `withdrawConsent` can target a single purpose and accepted legacy aliases, moves `auditRetainedUntil` to at least seven calendar years after withdrawal, and clears Stream's local sync cache where relevant. Withdrawal does not erase already collected data by itself.
 
-`jobs/compliance/consent-retention-sweeper.ts` counts expired rows weekly. Deletion is disabled unless `DPDP_SWEEPER_DELETE=true`; enabled runs delete in bounded batches. The default therefore reports expired evidence and deletes none. The distinct `scripts/cleanup/prune-audit-logs.ts` policy prunes org audit rows at category-specific age thresholds: seven years for financial/compliance categories and two years for other categories. Neither worker is a general data-retention engine for every model.
+`jobs/compliance/consent-retention-sweeper.ts` runs weekly and deletes expired rows in bounded batches. Adding `?dryRun=1` to its cleanup route (or `--dry-run` to the script) makes a run only count them, and the admin system-jobs Run button, which passes no argument, deletes. The distinct `scripts/cleanup/prune-audit-logs.ts` policy prunes org audit rows at category-specific age thresholds: seven years for financial/compliance categories and two years for other categories. Neither worker is a general data-retention engine for every model.
 
 | Transition       | Durable write                                     | Follow-up                                   | Failure behavior                                 |
 | ---------------- | ------------------------------------------------- | ------------------------------------------- | ------------------------------------------------ |
@@ -3133,7 +3133,7 @@ The replacement separates organizational discovery, capability and service visib
 
 #### Consent retention as a generic daily destructive purge
 
-Older compliance notes describe a generic daily purge. The current consent-retention worker runs weekly and counts expired evidence by default. Deletion requires `DPDP_SWEEPER_DELETE=true` and occurs in bounded batches. This is distinct from category-specific organization audit pruning and from a general policy for every data model.
+Older compliance notes describe a generic daily purge. The current consent-retention worker runs weekly and deletes expired evidence in bounded batches by default; `?dryRun=1` only counts. This is distinct from category-specific organization audit pruning and from a general policy for every data model.
 
 The replacement is to state the actual worker, schedule, default and data class. A row being past its retention timestamp does not prove it was deleted by the default run. Similarly, consent withdrawal records the change in processing permission; it is not itself an erasure of all historical records. Treating these operations as one generic cleanup obscures both retained evidence and uncompleted deletion work.
 

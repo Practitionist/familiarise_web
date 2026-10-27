@@ -289,7 +289,7 @@ sequenceDiagram
 
 ## Resend Direct Emails
 
-These emails bypass Novu and are sent directly through Resend, through `lib/email/index.ts`'s eleven sender functions. Every sender renders a React Email template (or, for the contact inquiry, builds inline HTML) and calls `deliver()` in `lib/email/deliver.ts`, the single send core described in [01-architecture.md](./01-architecture.md). The `From` addresses below are the defaults `SENDERS` returns when `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NEWSLETTER_DOMAIN` are unset (`mail.familiarisenow.com` / `news.familiarisenow.com`).
+These emails bypass Novu and are sent directly through Resend, through `lib/email/index.ts`'s eleven sender functions. Every sender renders a React Email template (or, for the contact inquiry, builds inline HTML) and calls `deliver()` in `lib/email/deliver.ts`, the single send core described in [01-architecture.md](./01-architecture.md). The `From` addresses below are what `SENDERS` returns, built on the `EMAIL_TRANSACTIONAL_DOMAIN` (`mail.familiarisenow.com`) and `EMAIL_NEWSLETTER_DOMAIN` (`news.familiarisenow.com`) constants in `lib/company.ts`.
 
 ### Auth Emails (`lib/email/index.ts`)
 
@@ -318,7 +318,7 @@ These emails bypass Novu and are sent directly through Resend, through `lib/emai
 
 ### Contact Inquiry (`lib/email/index.ts`)
 
-`sendContactInquiryEmail({firstName, lastName, email, phone?, subject, message, category?})` routes a `/contactus` submission to `contactInboxAddress()` (defaults to `supportEmail()`) with the visitor's address on Reply-To. It builds an inline HTML table rather than rendering a React Email template, and inherits the same `FailedEmail` retry path as every other sender, so a Resend outage does not lose the lead.
+`sendContactInquiryEmail({firstName, lastName, email, phone?, subject, message, category?})` routes a `/contactus` submission to `contactInboxAddress()` (the `CONTACT_INBOX_ADDRESS` constant, equal to `SUPPORT_EMAIL`) with the visitor's address on Reply-To. It builds an inline HTML table rather than rendering a React Email template, and inherits the same `FailedEmail` retry path as every other sender, so a Resend outage does not lose the lead.
 
 ### POST /api/novu/subscriber
 
