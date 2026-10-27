@@ -2151,16 +2151,16 @@ Every attempt retains its exact bucket/path owner for seven days, including fail
 
 #### 7.5.3. Operations and remaining limits
 
-| Boundary                     | Implemented behavior                                                         | Operating requirement                                                                                            |
-| ---------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Worker interruption          | Reclaim a stale PROCESSING attempt with a new fenced token                   | Confirm automatic completion; a recent no-op is not backlog proof                                                |
-| Publication/delivery failure | Preserve atomic READY and durable notice obligations                         | Inspect the existing relays and actual recipient delivery                                                        |
-| Artifact expiry              | Rotate exact owners and retain failed deletion work                          | Inspect remote absence and oldest outstanding deletion age                                                       |
-| Download expiry/revocation   | Current grants and short new URL; refuse issuance after deadline             | An issued bearer URL follows provider validity/caching                                                           |
-| Deployment/rollback          | Additive owner table and exact legacy-pointer backfill before the new reader | Owner quiesces old writers, applies only reviewed SQL and reads back the catalog; preserve ownership on rollback |
-| Large organizations          | One selected bundle is built in memory                                       | Measure representative size, runtime, transport and outage catch-up                                              |
+| Boundary                     | Implemented behavior                                                  | Operating requirement                                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Worker interruption          | Reclaim a stale PROCESSING attempt with a new fenced token            | Confirm automatic completion; a recent no-op is not backlog proof                                                                      |
+| Publication/delivery failure | Preserve atomic READY and durable notice obligations                  | Inspect the existing relays and actual recipient delivery                                                                              |
+| Artifact expiry              | Rotate exact owners and retain failed deletion work                   | Inspect remote absence and oldest outstanding deletion age                                                                             |
+| Download expiry/revocation   | Current grants and short new URL; refuse issuance after deadline      | An issued bearer URL follows provider validity/caching                                                                                 |
+| Deployment/rollback          | Additive owner table before the new reader; no retrospective adoption | Owner applies only reviewed additive SQL and reads back the catalog; reset mock data before cutover and preserve ownership on rollback |
+| Large organizations          | One selected bundle is built in memory                                | Measure representative size, runtime, transport and outage catch-up                                                                    |
 
-The exact rollout and failure contracts live in [data exports](../enterprise/40-compliance-and-data/03-data-export.md), [worker recovery](../maintenance/11-worker-recovery.md) and [operating gates](../maintenance/12-readiness-and-operating-gates.md). Code and mocked tests establish implementation behavior; they do not establish the applied schema, deployed throughput, storage permissions or recipient receipt.
+The exact rollout and failure contracts live in [data exports](../enterprise/40-compliance-and-data/03-data-export.md), [worker recovery](../maintenance/12-worker-recovery.md) and [operating gates](../maintenance/13-readiness-and-operating-gates.md). Code and mocked tests establish implementation behavior; they do not establish the applied schema, deployed throughput, storage permissions or recipient receipt.
 
 #### 7.5.4. Privacy-safe audit surfaces
 

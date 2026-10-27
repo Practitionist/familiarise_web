@@ -130,11 +130,12 @@ rails, attempt ceilings or operator handoff. The already hardened 48-hour paid
 unallocated arm keeps its existing contract. The unpaid pending-subscription
 cohort continues to exclude successful payments in both selection and mutation.
 
-Legacy approved-unallocated recovery requires the exact automated transition
-reason and no actor, positive refundable balance, no existing owed marker and
-no live or successful refund under the original key, all before the page limit.
-Legacy consultation expiry history is shared with abandoned-payment cleanup;
-those ambiguous rows require owner review instead of automatic new refunds.
+Already-expired rows without an owed marker are not selected for retrospective
+staging. Neither the sweep nor the single-plan admin door reconstructs a refund
+obligation from historical expiry rows. The cutover resets mock data; no cohort
+approval, backfill or deployment-time stamping is part of this rollout.
+The admin door can still retry a marker already committed by the normal expiry
+transaction, without changing its key or resetting retired attempts.
 
 ## Invoice captures and uncertain checkout state
 
@@ -224,26 +225,17 @@ throughput, storage permissions, backlog drain or actual gateway behavior.
 
 ## Deployment and operating gates
 
-1. The release owner reviews and applies only the additive artifact table/index
-   DDL and exact legacy URL backfill supplied with the PR. Quiesce export work
-   for the backfill. Unrecognized pointers are a stop condition; investigate
-   their exact identity instead of guessing a bucket.
-2. Read back the catalog, run the read-only schema-required check and verify the
-   legacy rows have exact owners before deploying readers that require them.
-   Prisma client generation does not apply the schema. Coding agents do not run
-   this SQL, schema push, Redis writes or environment changes.
-3. Deploy through the existing release flow. The old application must not resume
-   writing legacy unowned artifacts during a rollback; reconcile that boundary
-   before reverting code. Preserve artifact rows and bytes while investigating.
-   Before enabling this version's legacy refund recovery, run the read-only
-   [cohort preflight](refund-recovery-preflight.sql). It uses the worker's exact
-   eligibility predicates without LIMIT and groups counts by gateway and
-   `isMockPayment`, including missing gateway-payment IDs. Dev/prod share this
-   database: a non-mock flag alone does not prove live origin. The owner must
-   review seed/test exposure and approve the eligible cohort before deployment;
-   this query stages no marker and drives no refund. Zero rows mean an empty
-   current snapshot, not a future guarantee. Timeout or missing catalog data is
-   unavailable evidence and must be resolved before rollout.
+1. The release owner applies only the reviewed additive artifact table/index
+   DDL in `prisma/sql/org-data-export-artifacts.sql` after code readiness.
+   There is no data migration or retrospective marker creation. Existing mock
+   rows are reset through the owner's cutover procedure, not repaired by this PR.
+2. Read back the catalog and run the read-only required-schema check before
+   deploying readers. Prisma client generation does not apply the schema.
+   Coding agents do not apply SQL, push schema, or change Redis/environment state.
+3. Deploy through the existing release flow. New export attempts create their
+   own exact artifact owner. An old pointer without an owner is not adopted or
+   served by fallback. Preserve owned artifacts and bytes on rollback; an
+   incompatible old writer must not create new unowned artifacts.
 4. Verify actual worker completion and a bounded representative export on the
    deployed host, then inspect expiry retries, oldest eligible work and refund
    obligations. Whole-bundle size and outage catch-up need measured evidence.
@@ -254,7 +246,7 @@ throughput, storage permissions, backlog drain or actual gateway behavior.
 
 Monitor configuration and human alert receipt remain separate deployment gates.
 The ticker missed-run email path has a verified receipt in the
-[operating guide](12-readiness-and-operating-gates.md#error-reporting-scheduler-absence-and-worker-completion);
+[operating guide](13-readiness-and-operating-gates.md#error-reporting-scheduler-absence-and-worker-completion);
 that receipt does not establish per-worker alert coverage. Existing
 storage/retention safety PRs, reminder recovery, lost invoice-order references,
 remaining Actions coverage, environment isolation and full-service restore proof

@@ -659,35 +659,19 @@ it("leaves the committed consultation refund marker durable if notification fail
   expect(mockDrive).not.toHaveBeenCalled();
 });
 
-it("boundedly backfills exact historical approved-expiry transitions under the stable refund key", async () => {
-  mockLegacyApproved = ["legacy-approved-pay-1", "legacy-approved-pay-2"];
+it("leaves preexisting approved-expiry rows unmarked and undriven", async () => {
+  mockLegacyApproved = ["old-approved-pay-1", "old-approved-pay-2"];
   mockFresh = [];
   mockDue.clear();
 
   await expireStaleRequests({ limits: { maxRequests: 1 } });
-
-  expect([...mockMarkers]).toEqual([
-    ["legacy-approved-pay-1", "approved-unallocated:legacy-approved-pay-1"],
-  ]);
   await expireStaleRequests({ limits: { maxRequests: 1 } });
-  expect(mockMarkers.get("legacy-approved-pay-2")).toBe(
-    "approved-unallocated:legacy-approved-pay-2",
-  );
-  const scans = jest.mocked(prisma.$queryRaw).mock.calls.map(([query]) => {
-    if (!("text" in query))
-      throw new Error("Expected a parameterized SQL query");
-    return query;
-  });
-  const legacyScan = scans.find(
-    (query) =>
-      query.text.includes('"Subscription"') &&
-      query.text.includes('h."fromStatus"'),
-  );
-  expect(legacyScan).toBeDefined();
-  expect(legacyScan?.text).toContain('h."actorUserId" IS NULL');
-  expect(legacyScan?.text.indexOf("GREATEST")).toBeLessThan(
-    legacyScan?.text.indexOf("LIMIT") ?? -1,
-  );
+
+  expect(mockMarkers.size).toBe(0);
+  expect(mockExpired.size).toBe(0);
+  expect(mockHistory).toEqual([]);
+  expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  expect(mockDrive).not.toHaveBeenCalled();
 });
 
 it("commits expiry/history/bell and full-balance marker before any drive", async () => {
@@ -782,8 +766,9 @@ it("stages nothing for a lost allocation/reschedule CAS", async () => {
   expect(mockDrive).not.toHaveBeenCalled();
 });
 
-it("shares the deadline across legacy and fresh phases", async () => {
-  mockLegacy = ["legacy-1"];
+it("shares the deadline across current transitions and inline delivery", async () => {
+  mockFresh = ["sub-1", "sub-2"];
+  mockDue.set("sub-2", ["pay-2"]);
   mockDrive.mockImplementation(async () => {
     mockNow += 16_000;
     return { kind: "settled" };
@@ -794,14 +779,25 @@ it("shares the deadline across legacy and fresh phases", async () => {
   expect(result.unallocatedRefundsDeferred).toBe(1);
 });
 
-it("advances a capped legacy cohort across invocations without a cursor", async () => {
+it("does not stage or drive old unallocated-expiry rows on repeated ticks", async () => {
   mockFresh = [];
   mockLegacy = ["a", "b", "c"];
   const first = await expireStaleRequests({ limits: { maxRequests: 2 } });
-  expect(first.unallocatedHasMore).toBe(true);
-  expect([...mockMarkers.keys()]).toEqual(["a", "b"]);
   await expireStaleRequests({ limits: { maxRequests: 2 } });
-  expect([...mockMarkers.keys()]).toEqual(["a", "b", "c"]);
+  expect(first.unallocatedHasMore).toBe(false);
+  expect(mockMarkers.size).toBe(0);
+  expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  expect(mockDrive).not.toHaveBeenCalled();
+});
+
+it("does not stamp an old unmarked expiry through the single-plan admin door", async () => {
+  mockFresh = [];
+  mockLegacy = ["old-unmarked"];
+  const result = await expireUnallocatedPaidSubscriptionForOne("sub-1");
+  expect(result.expired).toBe(false);
+  expect(mockMarkers.size).toBe(0);
+  expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  expect(mockDrive).not.toHaveBeenCalled();
 });
 
 it("keeps an in-flight refund visible as deferred work", async () => {

@@ -32,6 +32,8 @@ The platform's outward supply defaults to SAC **999293** (commercial training an
 
 `ConsumerInvoice` and `ConsumerCreditNote` run on a platform-wide gapless series, not a per-buyer one, because the platform is the supplier of record. Invoices are numbered `FAM-<FY>-<SEQ5>` (for example `FAM-2026-00001`, ceiling 99,999 per fiscal year); credit notes are numbered `FAM-CN-<FY>-<SEQ4>` (for example `FAM-CN-2026-0001`, ceiling 9,999 per fiscal year) on a separate series because CGST Rule 53 requires it. Both series use `PLATFORM_INVOICE_PREFIX` (default `FAM`), capped to sixteen characters by `fitPrefixToRule46`, and both allocate their sequence number only after the idempotency probe on `paymentId` confirms no document already exists — allocating first and probing second would leave a permanent gap in a gapless series on a webhook redelivery.
 
+A consumer invoice the capture path missed (an unset `PLATFORM_GSTIN`, a crash after commit) is minted by `heal-consumer-invoices` (`lib/payments/billing/consumer-invoice-healer.ts`): every six hours, 25 payments per run, payments created in the last 90 days with no pending or succeeded refund (a refunded supply needs its invoice and credit note together, so ops mint it), read from a random id pivot so a declined payment cannot starve the rest. A race with the capture path's own mint loses the `paymentId` unique and rolls its counter increment back, so the series keeps no gap. The invoice's `supplyDate` is the payment date and `issuedAt` is the healing run.
+
 ## Credit notes have a statutory deadline: CGST s.34(2)
 
 Under CGST Act s.34(2), as amended by the Finance Act 2022, a credit note can reduce output tax only if it is declared by 30 November following the end of the financial year in which the supply was made, or by the annual-return date if that is earlier. `lib/compliance/gst-credit-note-cutoff.ts` computes that cutoff in IST from the supply date (the annual-return date is not tracked, so the November date is the one the code enforces). Past the cutoff, `mintRefundCreditNote`, `mintInvoiceRefundCreditNote` and `mintConsumerCreditNote` issue a commercial credit note instead: it carries the base amount only, every tax head is zero, and its reason starts with "Commercial credit note". The refund cascade's GST step and the free-credit reversal stop debiting `GST_PAYABLE` for the same refund, so the GST portion lands on `PLATFORM_FEE` as a platform cost. The early refund branch for parked captures never posted GST and is untouched.
@@ -46,7 +48,14 @@ Every fiscal-year and monthly-period boundary in the compliance pipeline — `in
 
 ## Supplier state is GSTIN-first
 
-`resolveSupplierStateCode` reads the platform's own state of registration from the first two digits of `PLATFORM_GSTIN`, and falls back to the `SUPPLIER_STATE_CODE` environment variable only when the GSTIN itself carries no state. If the two disagree, the mint fails closed exactly as a missing GSTIN does — no document is issued, and a `SystemEvent` names both conflicting values so an operator can fix the configuration rather than shipping a document with an internally inconsistent state.
+`resolveSupplierStateCode` reads the platform's own state of registration from the first two digits of `PLATFORM_GSTIN`, and falls back to the registered office's state in `lib/company.ts` (`REGISTERED_OFFICE.stateCode`, 06 Haryana) only while no GSTIN is set. There is no environment override for the state. The two failure paths differ:
+
+- **No GSTIN, or a malformed one.** `getPlatformSupplier()` returns null, so `mintConsumerInvoice` issues no consumer invoice and sends one `CONSUMER_INVOICE_MINT_DISABLED` warning per process, every invoice and credit-note PDF route answers 503 `SUPPLIER_GSTIN_UNCONFIGURED`, the outward register refuses and the IRP uploader skips its run. Organisation invoices are still created, on the registered office's state.
+- **A GSTIN whose state contradicts the registered office.** Every GST document refuses. `getPlatformSupplier()` returns null for it too, so the consumer mint, the PDF routes, the register and IRP refuse exactly as above. `supplierStateCode()` throws `SupplierStateMismatchError`, so `createOrgInvoice` reports to Sentry and answers 503 `INVOICE_SERVICE_UNAVAILABLE`, and the rollup and subscription jobs throw. Fix the GSTIN or `lib/company.ts`; never pick one of the two.
+
+## One legal identity on every document
+
+The supplier is Practitionist (OPC) Private Limited, Haryana. `lib/company.ts` holds the legal name, CIN and registered office (`COMPANY_INFO`, `REGISTERED_OFFICE`), and `getPlatformSupplier()` (tax invoices and credit notes), the IRP uploader's `SellerDtls` and the public pages all read it. Only the GSTIN and the LUT are deployment config. Never hardcode an entity name or address in a renderer or job.
 
 ## The outward register, not an in-app GSTR builder
 

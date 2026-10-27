@@ -13,6 +13,7 @@ import { ErrorState } from "@/components/dashboard/ErrorState";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { traceHref } from "@/lib/backoffice/entity-trace-types";
 import { disputeStatus } from "@/lib/labels/backoffice-labels";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import {
@@ -129,11 +130,18 @@ export function PaymentDetailPage({
         title="Payment details"
         back={{ href: `${basePath}/money/payments`, label: "Payments" }}
         actions={
-          canRefund ? (
-            <Button variant="outline" onClick={() => setRefundOpen(true)}>
-              Issue refund
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" asChild>
+              <Link href={traceHref(basePath, "payment", payment.id)}>
+                Trace
+              </Link>
             </Button>
-          ) : undefined
+            {canRefund && (
+              <Button variant="outline" onClick={() => setRefundOpen(true)}>
+                Issue refund
+              </Button>
+            )}
+          </div>
         }
       />
       {refundOpen && canRefund && (

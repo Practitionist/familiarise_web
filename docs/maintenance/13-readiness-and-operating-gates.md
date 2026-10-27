@@ -3,7 +3,7 @@
 Production readiness is evidence about a deployed system under normal operation
 and failure. Source inspection, mocked tests, merged code, deployed code and
 verified effects are distinct states. This guide defines the evidence needed for
-the infrastructure and maintenance machinery; the [worker contracts](11-worker-recovery.md)
+the infrastructure and maintenance machinery; the [worker contracts](12-worker-recovery.md)
 and [generated inventory](04-cron-jobs-reference.md) define its implementation.
 
 ## Evidence required before declaring a capability ready
@@ -171,8 +171,9 @@ or an independent observer surviving a Sentry outage.
 1. Refresh the branch against current dev and verify all affected domain suites,
    including every suite mocking changed modules. Preserve independent PR bases.
 2. Have the release owner apply only reviewed schema prerequisites and confirm
-   the catalog. Quiesce old writers when backfilling storage ownership. Preserve
-   retained obligations during rollback; never resume an incompatible writer.
+   the catalog. The cutover resets mock rows; this change adopts no old artifacts
+   and creates no obligations from historical expiry rows. Preserve retained
+   obligations during rollback; never resume an incompatible writer.
 3. Use the established release flow and confirm the active host's published
    source. Keep Stream production-effect verification with its domain owner.
 4. Observe successful automatic core completions and inspect the actual business

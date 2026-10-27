@@ -540,6 +540,15 @@ export function handleUploadMaterial(
       [config.planIdField]: planId,
     };
 
+    // A corrected retry may commit this same upload; preflight refusal preserves it.
+    policyMimeType(body);
+    // A lookup failure is ambiguous; keep the uploaded object for a retry.
+    const committed = await prisma.planMaterial.findFirst({
+      where: { ...whereClause, storagePath: body.storagePath },
+      select: MATERIAL_PUBLIC_SELECT,
+    });
+    if (committed) return NextResponse.json({ data: committed });
+
     try {
       const stored = await verifyMaterialObject(config.planType, planId, body);
       const outcome = await prisma.$transaction(async (tx) => {

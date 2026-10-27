@@ -19,8 +19,6 @@ import { notifyAccountSecurityNotice } from "@/lib/novu/service";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
-import { captureThrottled } from "@/lib/observability/throttled-capture";
-import { existingAccountNoticeLimiter } from "@/lib/rate-limit";
 
 /** How long an email verification code stays valid. */
 export const VERIFICATION_CODE_TTL_SECONDS = 10 * 60;
@@ -179,25 +177,12 @@ export async function sendVerificationCode(
 
 /**
  * `emailAndPassword.onExistingUserSignUp`: the sign-up response is the same
- * as for a new address, and the owner learns someone tried. Throttled per
- * recipient so the form cannot be used to flood one inbox.
+ * as for a new address, and the owner learns someone tried. `deliver()` caps
+ * it per recipient so the form cannot be used to flood one inbox.
  */
 export async function notifyExistingAccountSignUp(
   user: LifecycleUser,
 ): Promise<void> {
-  const recipientKey = createHash("sha256")
-    .update(user.email.toLowerCase())
-    .digest("hex");
-  try {
-    const { success } = await existingAccountNoticeLimiter.limit(recipientKey);
-    if (!success) return;
-  } catch (error) {
-    captureThrottled("auth:existing-account-notice-limiter", error, {
-      subsystem: "auth",
-      op: "existing-account-notice-limit",
-      level: "warning",
-    });
-  }
   await sendExistingAccountEmail({ email: user.email, userId: user.id }).catch(
     (error) => {
       reportAuthFailure(error, "existing-account-email");

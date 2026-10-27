@@ -250,6 +250,19 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.errors.length,
     };
   },
+  "heal-consumer-invoices": async () => {
+    const { healConsumerInvoices } =
+      await import("@/lib/payments/billing/consumer-invoice-healer");
+    const result = await healConsumerInvoices({ limit: 25 });
+    return {
+      success: result.failed === 0,
+      scanned: result.scanned,
+      minted: result.minted,
+      declined: result.declined,
+      failed: result.failed,
+      skipped: result.skipped ?? null,
+    };
+  },
   "reconcile-payout-status": async () => {
     const result = await reconcilePayoutStatus();
     return {

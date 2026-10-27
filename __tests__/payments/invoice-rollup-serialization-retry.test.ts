@@ -110,7 +110,7 @@ beforeEach(() => {
     billingAccountId: "ba_1",
     dataResidencyRegion: "IN",
     paymentTermsDays: 30,
-    taxInfo: { gstStateCode: "29", gstin: null, hsnDefault: null },
+    taxInfo: { gstStateCode: "06", gstin: null, hsnDefault: null },
   });
   mockNotifyIssued.mockResolvedValue([{ id: "ob_1" }]);
   mockDispatchWebhook.mockResolvedValue({ enqueuedCount: 1 });
@@ -193,17 +193,15 @@ describe("settleInvoiceAccruals — exhausted retries", () => {
   });
 });
 
-// #1447 — the rollup read SUPPLIER_STATE_CODE ?? "KA" while the B2C mint was
-// GSTIN-first; with only PLATFORM_GSTIN set the invoice must carry its state.
+// The rollup reads the supplier state from PLATFORM_GSTIN, like the B2C mint.
 describe("rollupOrgInvoiceAccruals — supplier state", () => {
   const OLD_ENV = process.env;
   afterAll(() => {
     process.env = OLD_ENV;
   });
 
-  it("writes the GSTIN's state when SUPPLIER_STATE_CODE is unset", async () => {
-    process.env = { ...OLD_ENV, PLATFORM_GSTIN: "29AAFCF1234Q1ZN" };
-    delete process.env.SUPPLIER_STATE_CODE;
+  it("writes the GSTIN's state", async () => {
+    process.env = { ...OLD_ENV, PLATFORM_GSTIN: "06AAFCF1234Q1ZN" };
     const invoiceCreate = jest.fn().mockResolvedValue({ id: "inv_9" });
     mockTransaction.mockImplementation(async (fn) =>
       fn({
@@ -222,9 +220,9 @@ describe("rollupOrgInvoiceAccruals — supplier state", () => {
 
     await rollupOrgInvoiceAccruals({ organizationId: "org_1" });
 
-    // Buyer state 29 matches the GSTIN-derived supplier state: intra-state.
+    // Buyer state 06 matches the GSTIN-derived supplier state: intra-state.
     expect(invoiceCreate.mock.calls[0][0].data).toMatchObject({
-      placeOfSupply: "29",
+      placeOfSupply: "06",
       cgstPaise: 90,
       sgstPaise: 90,
     });
@@ -321,8 +319,7 @@ describe("rollupOrgInvoiceAccruals — overage chargeStatus filter", () => {
 describe("rollupOrgInvoiceAccruals — buyer GSTIN drives the tax head", () => {
   const OLD_ENV = process.env;
   beforeEach(() => {
-    process.env = { ...OLD_ENV, PLATFORM_GSTIN: "29AAFCF1234Q1ZN" };
-    delete process.env.SUPPLIER_STATE_CODE;
+    process.env = { ...OLD_ENV, PLATFORM_GSTIN: "06AAFCF1234Q1ZN" };
   });
   afterAll(() => {
     process.env = OLD_ENV;
@@ -330,7 +327,7 @@ describe("rollupOrgInvoiceAccruals — buyer GSTIN drives the tax head", () => {
 
   // The leg already carries its 180p of GST; the invoice splits it, never adds more.
   it.each([
-    ["29AAAAA0000A1Z5", { cgstPaise: 90, sgstPaise: 90, igstPaise: 0 }],
+    ["06AAAAA0000A1Z5", { cgstPaise: 90, sgstPaise: 90, igstPaise: 0 }],
     ["27AAAAA0000A1Z5", { cgstPaise: 0, sgstPaise: 0, igstPaise: 180 }],
   ])("GSTIN %s with a null state", async (gstin, heads) => {
     mockOrgFindUnique.mockResolvedValue({
@@ -392,7 +389,7 @@ describe("rollupOrgInvoiceAccruals — PO coverage", () => {
       dataResidencyRegion: "IN",
       paymentTermsDays: 30,
       requiresPO: true,
-      taxInfo: { gstStateCode: "29", gstin: null, hsnDefault: null },
+      taxInfo: { gstStateCode: "06", gstin: null, hsnDefault: null },
     });
     const { tx, invoiceCreate } = issuingTx({});
     mockTransaction.mockImplementation(async (fn) => fn(tx));

@@ -6,8 +6,8 @@ transactional outboxes and vendor idempotency protect retries. Recent scheduler
 activity alone does not establish successful recovery or human alert delivery.
 
 Start with the [scheduler and reconciliation reference](10-cron-and-reconciliation-reference.md),
-[worker recovery contracts](11-worker-recovery.md) and
-[readiness and operating gates](12-readiness-and-operating-gates.md).
+[worker recovery contracts](12-worker-recovery.md) and
+[readiness and operating gates](13-readiness-and-operating-gates.md).
 The [generated inventory](04-cron-jobs-reference.md) derives job ownership,
 entrypoints, bounds and maintenance gates from source; regenerate it with
 `npm run cron:reference` after catalog or registry changes.
@@ -95,8 +95,9 @@ production recovery merely to manufacture an alert.
 8. [SDK updates](08-sdk-update-guide.md)
 9. [Future improvements](09-future-improvements.md)
 10. [Scheduler, sidecars and reconciliation](10-cron-and-reconciliation-reference.md)
-11. [Worker recovery and durable obligations](11-worker-recovery.md)
-12. [Readiness and operating gates](12-readiness-and-operating-gates.md)
+11. [Job machinery and dashboard design](11-job-machinery-catalog.md)
+12. [Worker recovery and durable obligations](12-worker-recovery.md)
+13. [Readiness and operating gates](13-readiness-and-operating-gates.md)
 
 Additional bounded-worker guides:
 

@@ -158,6 +158,14 @@ const SYSTEM_JOBS: SystemJob[] = [
     schedule: "Every 6 hours",
     category: "Reconciliation",
   },
+  {
+    id: "heal-consumer-invoices",
+    name: "Heal Consumer Invoices",
+    description:
+      "Mint missing consumer tax invoices for captured, unrefunded payments (90-day lookback)",
+    schedule: "Every 6 hours",
+    category: "Reconciliation",
+  },
   // Alerts
   {
     id: "alert-orphaned-payments",

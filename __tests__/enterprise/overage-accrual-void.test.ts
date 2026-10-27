@@ -239,17 +239,19 @@ function world(invoicedChildIds: string[] = []) {
       ),
     },
     ledgerAccount: {
-      upsert: jest.fn(
+      createMany: jest.fn(
         async ({
-          create,
+          data,
         }: {
-          create: { id: string; kind: string; organizationId: string | null };
+          data: { id: string; kind: string; organizationId: string | null }[];
         }) => {
-          accounts.set(create.id, {
-            kind: create.kind,
-            organizationId: create.organizationId,
-          });
-          return {};
+          for (const row of data) {
+            accounts.set(row.id, {
+              kind: row.kind,
+              organizationId: row.organizationId,
+            });
+          }
+          return { count: data.length };
         },
       ),
     },

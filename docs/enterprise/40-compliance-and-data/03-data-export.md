@@ -147,14 +147,14 @@ has already started.
 
 ## Rollout, verification and operations
 
-The release owner applies the reviewed additive table/index SQL and exact legacy
-URL backfill before deploying the new reader. Quiesce the old worker while
-backfilling and verify the reviewed project origin. Unrecognized or conflicting
-legacy paths abort the transaction. New code uses artifact ownership exclusively;
-it never falls back to the old `fileUrl`. Reverting code requires keeping old
-workers from producing new unowned artifacts after that migration.
+The release owner applies only `prisma/sql/org-data-export-artifacts.sql` and
+verifies the live catalog before deploying the new reader. Mock data is reset
+before cutover; this rollout neither adopts old URLs nor migrates old artifact
+ownership. New attempts record their own owner before uploading. An ownerless
+stored URL is never a download fallback. Preserve owned artifacts on rollback
+and keep incompatible old writers from creating new unowned objects.
 
-The [worker recovery guide](../../maintenance/11-worker-recovery.md) contains the
+The [worker recovery guide](../../maintenance/12-worker-recovery.md) contains the
 full failure matrix and operating gates. `/api/health/jobs` requires an owned
 successful export-core completion within 45 minutes in the current deployment
 environment. That does not measure oldest queued work, sufficient drain rate,

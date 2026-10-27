@@ -370,56 +370,6 @@ async function stageExpiredRefunds(
   return markers;
 }
 
-/** Recover paid approved-subscription expiries whose exact history reason identifies this arm. */
-async function stageLegacyApprovedUnallocatedRefunds(
-  limit: number,
-): Promise<RefundOwedMarker[]> {
-  return withSerializableRetry(() =>
-    prisma.$transaction(
-      async (tx) => {
-        const reason = `Auto-expired: APPROVED with zero allocated sessions for more than ${PENDING_EXPIRATION_DAYS} days`;
-        const rows = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
-          SELECT p.id
-          FROM "Payment" p
-          JOIN "Appointment" a ON a.id = p."appointmentId"
-          JOIN "Subscription" request ON request.id = a."subscriptionId"
-          WHERE request."requestStatus" = 'EXPIRED'
-            AND p."paymentStatus" = 'SUCCEEDED'
-            AND p."deletedAt" IS NULL
-            AND p."refundOwedKey" IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM "Refund" prior
-              WHERE prior."dedupeKey" = ${expiredRefundKey("approved-unallocated", "")} || p.id
-                AND prior.status IN ('SUCCEEDED', 'PENDING')
-            )
-            AND ${refundableBalancePaiseSql(Prisma.sql`p.id`, Prisma.sql`p.amount`)} > 0
-            AND EXISTS (
-              SELECT 1 FROM "BookingStatusHistory" h
-              WHERE h."entityId" = request.id
-                AND h.entity = 'SUBSCRIPTION'
-                AND h."fromStatus" = 'APPROVED'
-                AND h."toStatus" = 'EXPIRED'
-                AND h."actorUserId" IS NULL
-                AND h.reason = ${reason}
-            )
-          ORDER BY p."createdAt" ASC, p.id ASC
-          LIMIT ${limit + 1}
-        `);
-        const eligible = rows.slice(0, limit);
-        const markers = eligible.map(({ id }) =>
-          expiredRefundMarker("approved-unallocated", id),
-        );
-        const stamped = await stampRefundsOwed(tx, markers);
-        if (stamped !== markers.length) {
-          throw new Error("approved-unallocated legacy refund marker changed");
-        }
-        return markers;
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    ),
-  );
-}
-
 async function driveExpiredRefunds(markers: readonly RefundOwedMarker[]) {
   const out = { issued: 0, failures: 0, failureMsgs: [] as string[] };
   for (const marker of markers) {
@@ -909,14 +859,6 @@ async function expireApprovedUnallocatedSubscriptions(
   errors: string[];
 }> {
   const errors: string[] = [];
-  let legacy: RefundOwedMarker[] = [];
-  try {
-    legacy = await stageLegacyApprovedUnallocatedRefunds(limits.maxRequests);
-  } catch (error) {
-    errors.push(
-      `Failed to stage legacy approved-unallocated refunds: ${error}`,
-    );
-  }
   const cutoff = new Date(
     Date.now() - PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
@@ -969,14 +911,7 @@ async function expireApprovedUnallocatedSubscriptions(
     }
 
     if (stale.length === 0) {
-      const refunds = await driveExpiredRefunds(legacy);
-      errors.push(...refunds.failureMsgs);
-      return {
-        expired: 0,
-        issued: refunds.issued,
-        failures: refunds.failures,
-        errors,
-      };
+      return { expired: 0, issued: 0, failures: 0, errors };
     }
 
     console.log(
@@ -990,7 +925,7 @@ async function expireApprovedUnallocatedSubscriptions(
     // moves through the CAS helper, and the refund is handed exactly the ids
     // the helper transitioned.
     const expiredIds: string[] = [];
-    const markers = [...legacy];
+    const markers: RefundOwedMarker[] = [];
     let skipped = 0;
     for (const subscription of stale) {
       try {
@@ -1162,45 +1097,6 @@ async function stageUnallocatedRefunds(
     );
   }
   return markers;
-}
-
-// Raw SQL uses physical names: Subscription.status maps to requestStatus.
-/** Bounded recovery of proven expiry obligations, with no liability age cutoff. */
-async function stageLegacyUnallocatedRefunds(
-  limit: number,
-  pastDeadline: () => boolean,
-  subscriptionId?: string,
-) {
-  return withSerializableRetry(async () => {
-    if (pastDeadline()) return { markers: [], hasMore: true };
-    return prisma.$transaction(
-      async (tx) => {
-        const rows = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
-        SELECT p.id FROM "Payment" p
-        JOIN "Appointment" a ON a.id = p."appointmentId"
-        JOIN "Subscription" s ON s.id = a."subscriptionId"
-        WHERE s."requestStatus" = 'EXPIRED'
-          ${subscriptionId ? Prisma.sql`AND s.id = ${subscriptionId}` : Prisma.empty}
-          AND ${unstampedUnallocatedRefundPredicate()}
-          AND EXISTS (
-            SELECT 1 FROM "BookingStatusHistory" h
-            WHERE h."entityId" = s.id AND h.entity = 'SUBSCRIPTION'
-              AND h.reason = 'UNALLOCATED_48H' AND h."toStatus" = 'EXPIRED'
-          )
-        ORDER BY p."createdAt" ASC, p.id ASC
-        LIMIT ${limit + 1}
-      `);
-        return {
-          markers: await stageUnallocatedRefunds(
-            tx,
-            rows.slice(0, limit).map((row) => row.id),
-          ),
-          hasMore: rows.length > limit,
-        };
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
-  });
 }
 
 /** Retained obligations remain visible even when retired or owned by another refund door. */
@@ -1424,11 +1320,6 @@ export async function expireUnallocatedPaidSubscriptionForOne(
             pastDeadline,
           )
         : null;
-      const legacy = await stageLegacyUnallocatedRefunds(
-        DEFAULT_RUN_LIMITS.maxRequests,
-        pastDeadline,
-        subscriptionId,
-      );
       const persisted = pastDeadline()
         ? []
         : await prisma.payment.findMany({
@@ -1472,7 +1363,6 @@ export async function expireUnallocatedPaidSubscriptionForOne(
         failures: refunds.failures,
         errors: refunds.failureMsgs,
         hasMore:
-          legacy.hasMore ||
           refunds.deferred > 0 ||
           refunds.failures > 0 ||
           persisted.length > DEFAULT_RUN_LIMITS.maxRequests ||
@@ -1536,7 +1426,7 @@ async function stageFreshUnallocatedRefunds(
   return out;
 }
 
-/** Legacy and fresh staging share admission with sequential refund delivery. */
+/** Current expiry staging shares admission with sequential refund delivery. */
 async function expireUnallocatedPaidSubscriptions(
   limits: StaleRequestRunLimits,
 ) {
@@ -1548,18 +1438,12 @@ async function expireUnallocatedPaidSubscriptions(
     hasMore: false,
     deferred: 0,
   };
-  // Shared by legacy staging, fresh expiries and inline drives; this is an
+  // Shared by current expiries and inline drives; this is an
   // admission deadline for this family, not cancellation of work in flight.
   const pastDeadline = startDeadline();
   const cohort = unallocatedCohort();
   const markers: RefundOwedMarker[] = [];
   try {
-    const legacy = await stageLegacyUnallocatedRefunds(
-      limits.maxRequests,
-      pastDeadline,
-    );
-    markers.push(...legacy.markers);
-    out.hasMore = legacy.hasMore;
     if (pastDeadline()) {
       out.hasMore = true;
     } else {
