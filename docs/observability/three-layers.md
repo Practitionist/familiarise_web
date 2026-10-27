@@ -109,6 +109,16 @@ Suppose a learner writes in on 26 October: "My consultation was cancelled on the
 4. **Check what the money did afterwards.** When the refund has succeeded, a "Refund cascade applied" row and a credit note row should follow it. If the consultant had already been paid, a payout clawback row should follow as well. If these rows are missing after a successful refund, the earnings and documents were not adjusted, and you should raise this through the money runbooks.
 5. **Write down the answer.** Paste the trace URL into the support case, so that the next person who opens the case sees the same timeline.
 
+## Fixing the system and fixing the customer
+
+The three layers answer questions about the platform. A fourth need sits on top of them, and the owner stated it on 2026-10-28: Sentry and Better Stack fix the **system**, and the operations console fixes the **customer**.
+
+- Sentry gives one grouped issue per failure class. A failing sweep appears once, grouped by the failing step, with at most ten sample ids in `extra.sample`. It carries no user identity, because identity is stamped only on request-scoped events. Better Stack gets one aggregate line per tick. That is the right shape for finding a broken code path, and the wrong shape for finding one learner's stuck refund.
+- The console shows the specific item. For a learner whose ₹1,500 (150,000 paise) refund has failed three times, an operator sees the item, why it failed, what was tried and when, and then remediates through the audited refund door and the linked support case. The facts come from Postgres: domain columns now (`refundOwedReason`, `refundOwedAttempts`, `failureReason`, statuses and ages), and `SystemJobRunItem` later.
+- The run id links all three: it is the `job_run_id` Sentry tag, `SystemEvent.context.jobRunId` and the `SystemJobExecution` row id.
+
+This console is **planned** (issue #2424, ADR-13 and its 2026-10-28 amendment). Its Needs attention inbox is a registry of owed-work sources, each declaring a stuck-item query, a reason field, an age limit and a remediation door; the specification is section 5 of the [job machinery catalog](../maintenance/11-job-machinery-catalog.md). Until it exists, the Entity trace and the worked example above are the way to answer a customer's question.
+
 ## Where in code
 
 | Concern                          | File                                                                                                      |
