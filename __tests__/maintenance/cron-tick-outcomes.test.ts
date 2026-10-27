@@ -43,7 +43,7 @@ describe("ticker execution outcomes", () => {
       NODE_ENV: "test",
       CRON_SECRET: "test",
       CRON_TICK_BASE_URL: "https://app.test",
-      SENTRY_DSN: "https://key@sentry.test/1",
+      NEXT_PUBLIC_SENTRY_DSN: "https://key@sentry.test/1",
     };
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-10-22T06:00:00Z"));
@@ -141,7 +141,7 @@ describe("ticker execution outcomes", () => {
       jest.spyOn(console, "error").mockImplementation(() => {});
       jest.useRealTimers();
       delete process.env.CRON_SECRET;
-      delete process.env.SENTRY_DSN;
+      delete process.env.NEXT_PUBLIC_SENTRY_DSN;
       const fetchImpl = jest.fn(
         async (_input: string | URL | Request, _init?: RequestInit) =>
           new Response("{}", { status: 202 }),

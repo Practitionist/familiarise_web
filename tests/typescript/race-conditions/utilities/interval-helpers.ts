@@ -6,7 +6,7 @@
  * models ONE 30-minute atom per booking, while everything here is about
  * multi-atom intervals — overlap, ordering, rollback and TTL re-arm (#1170).
  *
- * Everything runs against the in-memory Redis mock (USE_MOCK_REDIS=true), so
+ * Everything runs against the in-memory Redis mock (NODE_ENV=test), so
  * no server, database or network is involved.
  */
 
@@ -370,7 +370,10 @@ export async function saveScenarioReports(
 ): Promise<void> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 
-  await saveJsonReport(report, `${report.category}/${fileStem}-${timestamp}.json`);
+  await saveJsonReport(
+    report,
+    `${report.category}/${fileStem}-${timestamp}.json`,
+  );
 
   const summaryReport: SummaryReport = {
     totalTests: 1,

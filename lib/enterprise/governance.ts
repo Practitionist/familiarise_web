@@ -31,12 +31,11 @@ export const DEFAULT_WALLET_MIN_BALANCE_PAISE = 200_000; // ₹2,000
  * not yet been verified or paid their first invoice. Defends against
  * the "book everything then ghost" abuse pattern (#687 invoice fraud).
  *
- * Override via env `MAX_INVOICE_BOOKING_PAISE` for staged ramps.
  */
+export const MAX_INVOICE_BOOKING_PAISE = 5_000_000; // ₹50,000 starter limit
+
 export function getInvoiceCreditLimitPaise(): number {
-  const fromEnv = Number(process.env.MAX_INVOICE_BOOKING_PAISE);
-  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv;
-  return 50_000_00; // ₹50,000 default starter limit
+  return MAX_INVOICE_BOOKING_PAISE;
 }
 
 /**

@@ -2,7 +2,9 @@ import type { NextRequest, NextResponse } from "next/server";
 import {
   cleanupRoute,
   parseLimitParam,
+  parseGstPeriodParam,
   parseLimitParamOrDefault,
+  parseTdsReturnParams,
   parseWindowStartParam,
   statusFor,
 } from "@/lib/cron/cleanup-route";
@@ -82,6 +84,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           return runConsentRetentionSweeper({
             limit: parseLimitParamOrDefault(req, 100),
             startedAt,
+            dryRun: req.nextUrl.searchParams.get("dryRun") === "1",
           });
         },
         failureMessage: "Consent retention slice failed",
@@ -603,6 +606,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             await import("@/jobs/compliance/gst-outward-register-export");
           return runGstOutwardRegisterExport({
             limit: parseLimitParamOrDefault(req, MAX_GST_HEALER_MINTS),
+            period: parseGstPeriodParam(req),
           });
         },
         summarize: (r) => ({
@@ -1580,10 +1584,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "tds-return-draft": () =>
       cleanupRoute({
         job: "tds-26q-draft-export",
-        run: async () => {
+        run: async (req) => {
           const { runTdsReturnDraftExport } =
             await import("@/jobs/compliance/tds-26q-draft-export");
-          return runTdsReturnDraftExport();
+          return runTdsReturnDraftExport(parseTdsReturnParams(req));
         },
         summarize: (r) => ({
           financialYear: r.financialYear,

@@ -10,10 +10,8 @@ import { clientIpFrom } from "@/lib/request-ip";
 
 type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];
 
-const LIMITER_TIMEOUT_MS = (() => {
-  const v = Number(process.env.LIMITER_TIMEOUT_MS);
-  return Number.isFinite(v) && v > 0 ? v : 500;
-})();
+// Fail-open budget for one limiter round trip.
+const LIMITER_TIMEOUT_MS = 500;
 
 export function makeLimiter(
   requests: number,

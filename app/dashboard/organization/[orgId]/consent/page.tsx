@@ -369,8 +369,7 @@ export default function ConsentPage({ params }: Readonly<PageProps>) {
             <CardDescription>
               Read-only record of withdrawn consents. Retained for the DPDP
               7-year audit window, counted from the withdrawal. A weekly job
-              flags rows past that date; rows are only deleted when
-              DPDP_SWEEPER_DELETE is enabled.
+              deletes rows past that date.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0 sm:p-4">

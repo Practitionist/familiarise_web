@@ -22,7 +22,25 @@ export const COMPANY_INFO = {
   // A literal, not an env read: the client bundle never sees non-public env, so
   // an env-driven value rendered a different mailbox on the server and client.
   email: "support@practitionist.com",
-  phone: process.env.NEXT_PUBLIC_SUPPORT_PHONE?.trim() || "",
-  jurisdiction:
-    process.env.NEXT_PUBLIC_COMPANY_JURISDICTION?.trim() || "Haryana, India",
+  // Empty until a support line exists; every row that prints it is omitted.
+  phone: "",
+  jurisdiction: "Haryana, India",
+  // Empty until a named officer is appointed; /grievance omits the row.
+  grievanceOfficerName: "",
 } as const;
+
+/** Customer support mailbox: the default Reply-To and the base of the two inboxes below. */
+export const SUPPORT_EMAIL = "support@familiarisenow.com";
+/** Where /contactus inquiries are delivered. */
+export const CONTACT_INBOX_ADDRESS = SUPPORT_EMAIL;
+/** Supplier contact printed on tax invoices and credit notes. */
+export const BILLING_EMAIL = SUPPORT_EMAIL;
+/** Postal line for email footers and newsletter compliance. */
+export const COMPANY_POSTAL_ADDRESS = COMPANY_INFO.registeredAddress;
+
+/** Resend sending domains: transactional and newsletter reputations stay apart. */
+export const EMAIL_TRANSACTIONAL_DOMAIN = "mail.familiarisenow.com";
+export const EMAIL_NEWSLETTER_DOMAIN = "news.familiarisenow.com";
+
+/** Series prefix of consumer invoice and credit-note numbers; Rule 46 caps the whole number at 16 characters. */
+export const PLATFORM_INVOICE_PREFIX = "FAM";

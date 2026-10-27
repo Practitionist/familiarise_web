@@ -37,9 +37,9 @@
  *    can never make its own record deletable.
  *
  *    A WEEKLY cron (`consent-retention-sweeper.ts`, Sunday 21:00 UTC) runs
- *    against that field. It is COUNT-ONLY unless `DPDP_SWEEPER_DELETE=true`
- *    is set, in which case it deletes in capped batches. In the default
- *    posture nothing is deleted, and an overdue row is reported instead.
+ *    against that field. It deletes overdue rows in capped batches;
+ *    `?dryRun=1` on its cleanup twin (or `--dry-run` on the CLI) only counts
+ *    them.
  *
  * 4. Withdrawal: user can withdraw at any time. `withdrawnAt` populated;
  *    downstream processing must stop within a commercially reasonable

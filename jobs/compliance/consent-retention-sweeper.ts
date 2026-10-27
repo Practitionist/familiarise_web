@@ -5,6 +5,7 @@ import { runConsentRetentionSweeper } from "@/lib/compliance/consent-retention";
 
 runJob("consent-retention-sweeper", async () => {
   const startedAt = Date.now();
+  const dryRun = process.argv.includes("--dry-run");
   await abortIfMaintenance("consent-retention-sweeper");
   try {
     const deadline = startedAt + 16_000;
@@ -12,6 +13,7 @@ runJob("consent-retention-sweeper", async () => {
       const result = await runConsentRetentionSweeper({
         limit: 500,
         startedAt,
+        dryRun,
       });
       console.log(result);
       if (!result.deleteMode || !result.hasMore || result.deleted === 0) break;

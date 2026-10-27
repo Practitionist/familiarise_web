@@ -94,7 +94,6 @@ describe("Lighthouse CWV & Anti-Runaway Billing Guardrails", () => {
   describe("resolveDefaultTracesSampleRate", () => {
     const origNodeEnv = process.env.NODE_ENV;
     const origSentryEnv = process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
-    const origOverride = process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
 
     afterEach(() => {
       Object.defineProperty(process.env, "NODE_ENV", {
@@ -107,16 +106,9 @@ describe("Lighthouse CWV & Anti-Runaway Billing Guardrails", () => {
       } else {
         process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = origSentryEnv;
       }
-      if (origOverride === undefined) {
-        delete process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
-      } else {
-        process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE = origOverride;
-      }
     });
 
     it("caps production and preview default trace sampling at 0.1 and non-prod at 0.2", () => {
-      delete process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
-
       Object.defineProperty(process.env, "NODE_ENV", {
         value: "production",
         configurable: true,
@@ -134,11 +126,6 @@ describe("Lighthouse CWV & Anti-Runaway Billing Guardrails", () => {
 
       delete process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
       expect(resolveDefaultTracesSampleRate()).toBe(0.2);
-    });
-
-    it("honors NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE override when valid", () => {
-      process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE = "0.05";
-      expect(resolveDefaultTracesSampleRate()).toBe(0.05);
     });
   });
 });

@@ -43,36 +43,21 @@ import {
 import {
   previousIstCalendarMonthStart,
   nextMonthStart,
-  parseIsoDateOverride,
+  istMonthStart,
 } from "@/lib/compliance/ist-period";
 
 /** Statuses that mean the org invoice was never actually issued to a buyer, so
  *  it is not an outward supply for the period. */
 const UNISSUED_ORG_INVOICE_STATUSES = ["DRAFT", "VOID", "CANCELLED"] as const;
 
-function resolvePeriod(): { periodStart: Date; periodEnd: Date } {
-  const startRaw = process.env.GST_REGISTER_PERIOD_START;
-  const endRaw = process.env.GST_REGISTER_PERIOD_END;
-  if (startRaw && endRaw) {
-    const periodStart = parseIsoDateOverride(
-      startRaw,
-      "GST_REGISTER_PERIOD_START",
-    );
-    const periodEnd = parseIsoDateOverride(endRaw, "GST_REGISTER_PERIOD_END");
-    if (periodEnd <= periodStart) {
-      throw new RangeError(
-        "GST_REGISTER_PERIOD_END must be after GST_REGISTER_PERIOD_START",
-      );
-    }
-    return { periodStart, periodEnd };
-  }
-  if (startRaw || endRaw) {
-    throw new TypeError(
-      "GST_REGISTER_PERIOD_START and GST_REGISTER_PERIOD_END must be set together",
-    );
-  }
-  // Default: the previous calendar month, reckoned in IST.
-  const periodStart = previousIstCalendarMonthStart();
+/** The requested `YYYY-MM` month, else the previous calendar month in IST. */
+function resolvePeriod(period?: string): {
+  periodStart: Date;
+  periodEnd: Date;
+} {
+  const periodStart = period
+    ? istMonthStart(period)
+    : previousIstCalendarMonthStart();
   return { periodStart, periodEnd: nextMonthStart(periodStart) };
 }
 
@@ -322,9 +307,11 @@ export interface GstOutwardRegisterExportResult {
  * twin; `cleanupRoute` applies the maintenance guard.
  *
  * @param opts.limit Payments the invoice healer may mint in this run.
+ * @param opts.period Optional `YYYY-MM` IST month; defaults to the previous one.
  */
 export async function runGstOutwardRegisterExport(opts: {
   limit: number;
+  period?: string;
 }): Promise<GstOutwardRegisterExportResult> {
   // A register needs the platform's own supplier identity. Without it the
   // healer below no-ops (no consumer invoice can be minted) and the file
@@ -342,7 +329,7 @@ export async function runGstOutwardRegisterExport(opts: {
     "gst-outward-register-export",
     { failMode: "closed" },
     async () => {
-      const { periodStart, periodEnd } = resolvePeriod();
+      const { periodStart, periodEnd } = resolvePeriod(opts.period);
 
       const healed = await ensureConsumerInvoicesForPeriod(
         periodStart,

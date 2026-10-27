@@ -48,10 +48,7 @@ const STALE_IF_ERROR_MS = 15 * 60_000;
 let lastGoodState: MaintenanceState | null = null;
 let lastGoodAt = 0;
 
-const REDIS_FETCH_TIMEOUT_MS = (() => {
-  const v = Number(process.env.REDIS_FETCH_TIMEOUT_MS);
-  return Number.isFinite(v) && v > 0 ? v : 500;
-})();
+const REDIS_FETCH_TIMEOUT_MS = 500;
 
 async function redisGet(key: string): Promise<string | null> {
   const url = process.env.UPSTASH_REDIS_REST_URL;

@@ -1,55 +1,43 @@
-// #1298 — the old .com domain is not ours; identities live on familiarisenow.com,
-// split mail. (transactional) / news. (newsletter) so reputations stay apart.
+import {
+  BILLING_EMAIL,
+  COMPANY_POSTAL_ADDRESS,
+  CONTACT_INBOX_ADDRESS,
+  EMAIL_NEWSLETTER_DOMAIN,
+  EMAIL_TRANSACTIONAL_DOMAIN,
+  SUPPORT_EMAIL,
+} from "@/lib/company";
 
-const DEFAULT_TRANSACTIONAL_DOMAIN = "mail.familiarisenow.com";
-const DEFAULT_NEWSLETTER_DOMAIN = "news.familiarisenow.com";
-const DEFAULT_SUPPORT_EMAIL = "support@familiarisenow.com";
 /** Reply-To on ops alerts, so a reply never loops back to the alert recipient. */
 export const OPS_EMAIL = "ops@familiarisenow.com";
 
-// Static `process.env.X` reads (not a dynamic key) so Next.js can inline the
-// NEXT_PUBLIC_ ones; a blank value counts as unset.
-function nonEmpty(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
 export function transactionalDomain(): string {
-  return (
-    nonEmpty(process.env.EMAIL_TRANSACTIONAL_DOMAIN) ??
-    DEFAULT_TRANSACTIONAL_DOMAIN
-  );
+  return EMAIL_TRANSACTIONAL_DOMAIN;
 }
 
 export function newsletterDomain(): string {
-  return (
-    nonEmpty(process.env.EMAIL_NEWSLETTER_DOMAIN) ?? DEFAULT_NEWSLETTER_DOMAIN
-  );
+  return EMAIL_NEWSLETTER_DOMAIN;
 }
 
 /** The address customers write to; also the default Reply-To on every send. */
 export function supportEmail(): string {
-  return (
-    nonEmpty(process.env.NEXT_PUBLIC_SUPPORT_EMAIL) ?? DEFAULT_SUPPORT_EMAIL
-  );
+  return SUPPORT_EMAIL;
 }
 
-/** Where /contactus inquiries land. Defaults to the support mailbox. */
+/** Where /contactus inquiries land. */
 export function contactInboxAddress(): string {
-  return nonEmpty(process.env.CONTACT_INBOX_ADDRESS) ?? supportEmail();
+  return CONTACT_INBOX_ADDRESS;
 }
 
-/** The supplier contact printed on tax invoices. Defaults to the support mailbox. */
+/** The supplier contact printed on tax invoices. */
 export function billingEmail(): string {
-  return nonEmpty(process.env.BILLING_EMAIL) ?? supportEmail();
+  return BILLING_EMAIL;
 }
 
-/** Optional postal line for email footers; the line is omitted when unset. */
-export function companyPostalAddress(): string | undefined {
-  return nonEmpty(process.env.NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS);
+/** Postal line for email footers. */
+export function companyPostalAddress(): string {
+  return COMPANY_POSTAL_ADDRESS;
 }
 
-// Getters so each read reflects the env at call time (tests override it).
 // `system` is a bare address: an internal requester id, not a From header.
 export const SENDERS = {
   get onboarding(): string {
