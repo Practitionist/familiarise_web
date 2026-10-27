@@ -414,17 +414,9 @@ export async function handleOrgPaymentFailure(
       console.error("[Webhook] invoice_payment.failed missing invoiceId");
       return;
     }
-    // Clear the stored order id so the UI retry creates a fresh one.
-    // Leave the invoice status untouched (still ISSUED/OVERDUE).
-    await prisma.organizationInvoice.updateMany({
-      where: {
-        id: invoiceId,
-        status: { in: ["ISSUED", "OVERDUE"] },
-      },
-      data: { providerPaymentOrderId: null },
-    });
+    // A failed attempt leaves its order retryable and must not hide a later capture.
     console.log(
-      `[Webhook] invoice_payment.failed cleared provider order id for invoice ${invoiceId}`,
+      `[Webhook] invoice_payment.failed retained provider order id for invoice ${invoiceId}`,
     );
     if (organizationId) {
       await prisma.orgAuditLog

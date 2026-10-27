@@ -21,6 +21,15 @@ export async function GET(request: NextRequest) {
       { status: 401, headers: HEADERS },
     );
   }
+  const environment =
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ??
+    process.env.SENTRY_ENVIRONMENT;
+  if (!environment) {
+    return NextResponse.json(
+      { error: "JOB_ENVIRONMENT_UNCONFIGURED" },
+      { status: 503, headers: HEADERS },
+    );
+  }
   // Targets whose core writes no execution row are left out: unknown history is a one-off.
   const jobByTarget = new Map<string, string>();
   for (const name of (request.nextUrl.searchParams.get("targets") ?? "")
@@ -39,6 +48,7 @@ export async function GET(request: NextRequest) {
       where: {
         jobName: { in: [...new Set(jobByTarget.values())] },
         status: { in: ["COMPLETED", "FAILED"] },
+        result: { path: ["environment"], equals: environment },
         startedAt: { gte: new Date(Date.now() - HISTORY_MS) },
       },
       _max: { startedAt: true },

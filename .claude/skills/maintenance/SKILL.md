@@ -81,8 +81,8 @@ Revalidate a confirmed booking’s live overlap inside the cancellation transact
 
 The 48-hour paid-unallocated arm of `expire-stale-requests` commits EXPIRED,
 history, `sub-unalloc:<paymentId>` full-refund markers and its bell together.
-Its legacy recovery filters eligible payments before LIMIT with no liability
-lookback. Keep existing markers/attempts, hold an oversized payment envelope
+It stages new obligations only in a winning current expiry transaction; it
+never stamps already-expired unmarked rows. Keep existing markers/attempts, hold an oversized payment envelope
 without partially expiring its liabilities, and preserve visible backlog on
 errors or deadline truncation. Exhausting only the remaining invocation allowance
 is a deferral, not an envelope error; stop the ordered page for the next run. Its shared 16-second admission budget covers
@@ -120,11 +120,37 @@ execution requires Netlify as active cron host; a host switch needs an equivalen
 execution target. Keep lifecycle worker imports free of request authentication
 and check actual native packaging, including CLI guards, before scheduling.
 
+## Worker recovery contracts
+
+Read [worker recovery](../../../docs/maintenance/12-worker-recovery.md) before changing export claims, artifact expiry or booking-expiry refunds. Export attempts use the exact `startedAt` token for claim and finalization CAS, an independently retained exact storage owner before upload, and immutable paths. Preserve READY with its audit and existing notification outboxes; never let postcommit delivery write FAILED or expose raw errors. Its logs carry only operation/export identifiers, never provider exceptions or transport payloads. Expiry requires successful exact remote absence evidence before retiring the owner. The operator applies only the reviewed additive schema before deploying the new reader. The cutover resets mock data; never adopt old artifact pointers or retrospectively stage old expiry rows.
+
+Pending-consultation and approved-unallocated expiry commit full-remaining owed-refund markers in the same transaction as the winning EXPIRED transition. Reuse existing arm keys and refund retry ownership. Unpaid pending-subscriptions still exclude successful payments; do not broaden money eligibility. Completion freshness for these workers is not proof of backlog drain or actual alert receipt.
+
+Keep a short marker-count race local to its request: roll back its transition and
+history, preserve the competing writer's marker/retry state, and continue later
+requests. Existing partial markers also hold only their own request; retain
+their fields and exhausted retries, and report the aggregate hold as unsuccessful
+completion while later requests proceed. Exclude these holds before the oldest
+page limit, checking their presence after selection and rechecking each request
+transactionally for races.
+Do not turn unrelated staging failures
+into successful skips. Preserve retry of already-persisted obligations without
+creating retrospective markers from old expiry history. Export
+expiry requires exact metadata `NoSuchKey` after removal; a generic 404 or an
+`exists()` false value with an error is insufficient. Download lifetimes use a
+fresh post-lookup clock and must be rechecked after signing and audit latency.
+
+Invoice capture recovery runs through the registered `reconcile-org-invoice-payments` core, its fail-closed Postgres lease and execution-result checkpoint. It rotates at most five retained order references per four-hour slot, with ten-second row admission and five-second provider waits. Existing settlement stages durable notices; relays deliver them. Preserve the six spare calendar slots and test every tick across 400 days when changing this schedule. Twelve-hour completion health is execution evidence, not a per-invoice recovery SLO; lost order references and cohort capacity remain separate gates. See `docs/maintenance/12-worker-recovery.md` and `13-readiness-and-operating-gates.md`.
+
 Destructive retention must be bounded for every caller, repeat eligibility in the final write, and preserve active obligations and retention timestamps. See [job history and messaging retention](../../../docs/maintenance/messaging-retention.md): eight pages per call, at most 500 rows per phase, a shared 16-second caller start budget across driver slices and lease admission, and explicit `hasMore`. A missing heartbeat is not proof that an old process has stopped. Verify concurrency with the guarded disposable database tier; never run it against the shared database.
 
 Auth tokens/invitations, webhook archive, onboarding drafts and audit retention have bounded canonical defaults and a shared 16-second admission budget per invocation. Every destructive write repeats current age/status eligibility. Read `docs/maintenance/housekeeping-bounds.md` for per-phase versus global limits, continuation and the existing bounded audit CLI. Keep deadline checks before continuation probes and process organisation transactions sequentially so the next admission check includes prior commit time. Preserve category retention and expiry policy; a work bound is not permission to shorten retention. Failures or time-budget holds retain `hasMore`; a failed oldest page needs repair rather than silent skipping.
 
 Auth-token and webhook page executions share `deleteBoundedPage`: preserve the shared start budget, caller-owned eligibility predicates and committed counts when the continuation probe fails.
+
+## Support auto-close progress
+
+Preserve support refusal, payout-release and chat-ending transactions. Rotate admitted auto-close attempts with the nullable `SupportCase.autoCloseLastAttemptAt` eligibility/prior-attempt CAS stamp; never change business clocks to poll. Expected recommendation/maintenance holds have bounded samples, while unreadable maintenance remains failure. The 16-second start budget covers only auto-close. The owner applies the exact additive SQL before readers; use read-only catalog verification and the current [sweep runbook](../../../docs/support/07-sla-sweep.md#auto-close-schema-rollout).
 
 ## Direct upload commit retries
 

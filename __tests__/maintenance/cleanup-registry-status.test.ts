@@ -24,6 +24,11 @@ jest.mock("../../lib/cron/dispatch-background", () => ({
   dispatchBackgroundJob: jest.fn(),
 }));
 
+jest.mock("../../lib/payments/billing/reconcile-invoice-payments", () => ({
+  reconcileOrgInvoicePayments: jest.fn(),
+}));
+
+import { reconcileOrgInvoicePayments } from "../../lib/payments/billing/reconcile-invoice-payments";
 import { getCleanupJobHandlers } from "../../lib/cron/cleanup-registry";
 import { drainNotificationOutbox } from "../../jobs/notifications/drain-notification-outbox";
 import { dispatchBackgroundJob } from "../../lib/cron/dispatch-background";
@@ -95,4 +100,31 @@ describe("cleanup registry status callbacks are authoritative", () => {
       outcome: "failure",
     });
   });
+
+  it.each([
+    { success: true, unapplied: 1, expectedStatus: 207, outcome: "success" },
+    { success: false, unapplied: 1, expectedStatus: 500, outcome: "failure" },
+    { success: true, unapplied: 0, expectedStatus: 200, outcome: "success" },
+  ])(
+    "separates parked invoice liability from worker failures ($expectedStatus)",
+    async ({ success, unapplied, expectedStatus, outcome }) => {
+      jest.mocked(reconcileOrgInvoicePayments).mockResolvedValue({
+        success,
+        scanned: 1,
+        captured: unapplied,
+        paid: 0,
+        unapplied,
+        live: 0,
+        empty: 0,
+        failed: success ? 0 : 1,
+        checkpoint: "invoice-a",
+        errors: [],
+        timestamp: new Date().toISOString(),
+      });
+      await expect(hit("reconcile-org-invoice-payments")).resolves.toEqual({
+        status: expectedStatus,
+        outcome,
+      });
+    },
+  );
 });

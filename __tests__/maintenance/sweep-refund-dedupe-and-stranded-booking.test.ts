@@ -41,10 +41,41 @@
 import { AppointmentStatus, PaymentStatus } from "@prisma/client";
 
 const refundBookingPayment = jest.fn();
+const mockDriveRefundOwed = jest.fn();
+const isPartialMarkerPresenceQuery = (
+  select: Record<string, unknown> | undefined,
+) => select?.id === true && Object.keys(select).length === 1;
+const forwardOwedMarker = async (marker: {
+  paymentId: string;
+  key: string;
+  reason: string;
+}) => {
+  const result = await refundBookingPayment({
+    paymentId: marker.paymentId,
+    reason: marker.reason,
+    initiatedByUserId: null,
+    dedupeKey: marker.key,
+  });
+  return {
+    kind: "refunded",
+    refund: {
+      refundId: "refund-1",
+      amountRefundedPaise: result?.amountRefundedPaise ?? 150000,
+      rail: result?.rail,
+      status: "SUCCEEDED",
+    },
+  };
+};
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   __esModule: true,
   refundBookingPayment: (...a: unknown[]) =>
     refundBookingPayment(...(a as [never])),
+}));
+
+jest.mock("../../lib/payments/operations/refund-owed", () => ({
+  ...jest.requireActual("../helpers/booking-expiry-test-doubles")
+    .refundOwedTestModule,
+  driveRefundOwed: (...args: unknown[]) => mockDriveRefundOwed(...args),
 }));
 
 // The no-show detector corroborates against Stream before moving money; one
@@ -107,23 +138,14 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 
 jest.mock("../../lib/prisma", () => {
+  const {
+    bookingExpiryPrismaModels,
+    withNoRefundOwedMarker,
+    countRefundOwedBatch,
+  } = jest.requireActual("../helpers/booking-expiry-test-doubles");
   const paymentRows = jest.fn(async (): Promise<{ id: string }[]> => []);
   const db: Record<string, unknown> = {
-    consultation: {
-      findMany: jest.fn().mockResolvedValue([]),
-      findUnique: jest.fn().mockResolvedValue(null),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    subscription: {
-      findMany: jest.fn().mockResolvedValue([]),
-      findUnique: jest.fn().mockResolvedValue(null),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    appointment: { findMany: jest.fn().mockResolvedValue([]) },
-    appointmentOccurrence: {
-      findMany: jest.fn().mockResolvedValue([]),
-      updateManyAndReturn: jest.fn().mockResolvedValue([]),
-    },
+    ...bookingExpiryPrismaModels(),
     payment: {
       findMany: paymentRows,
       updateMany: async () => ({ count: 1 }),
@@ -141,22 +163,17 @@ jest.mock("../../lib/prisma", () => {
     windowBackupInterest: {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
-    bookingStatusHistory: {
-      create: jest.fn().mockResolvedValue({}),
-      findMany: jest.fn().mockResolvedValue([]),
-    },
     notificationOutbox: {
       upsert: jest.fn(async () => ({})),
       findMany: jest.fn().mockResolvedValue([]),
     },
-    $queryRaw: jest.fn(async (query: { text: string }) =>
-      query.text.includes('JOIN "Subscription"') ? [] : paymentRows(),
-    ),
-    $executeRaw: jest.fn(async (query: { values: unknown[] }) => {
-      const ids = query.values[0];
-      if (!Array.isArray(ids)) throw new Error("missing marker ids");
-      return ids.length;
+    $queryRaw: jest.fn(async (query: { text: string }) => {
+      if (query.text.includes('JOIN "Subscription"')) return [];
+      return withNoRefundOwedMarker(await paymentRows());
     }),
+    $executeRaw: jest.fn((query: { values: unknown[] }) =>
+      countRefundOwedBatch(query),
+    ),
     $disconnect: jest.fn(),
   };
   // Every arm runs its CAS callback against this same client.
@@ -276,6 +293,15 @@ function isThirtyDayPendingCohort(where: Record<string, unknown>): boolean {
   return where.status === AppointmentStatus.PENDING && "requestedAt" in where;
 }
 
+function isApprovedUnallocatedCohort(where: Record<string, unknown>): boolean {
+  const serialized = JSON.stringify(where);
+  return (
+    serialized.includes('"status":"APPROVED"') &&
+    serialized.includes('"updatedAt"') &&
+    serialized.includes('"NOT":{"appointment":{"payment":{"some"')
+  );
+}
+
 /** The one released-still-awaiting-replacement occurrence, as the slot states it. */
 const RELEASED_SLOT = {
   NOT: {
@@ -298,6 +324,7 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
       amountRefundedPaise: 150000,
       rail: "GATEWAY",
     });
+    mockDriveRefundOwed.mockImplementation(forwardOwedMarker);
     db.consultation.findMany.mockResolvedValue([]);
     db.subscription.findMany.mockResolvedValue([]);
     db.appointment.findMany.mockResolvedValue([]);
@@ -312,11 +339,20 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
   });
 
   it("keys the PENDING-consultation expiry arm on its own arm name", async () => {
+    db.payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
     db.consultation.findMany.mockImplementation(
-      async ({ where }: { where: Record<string, unknown> }) =>
-        where.status === AppointmentStatus.PENDING
+      async ({
+        where,
+        select,
+      }: {
+        where: Record<string, unknown>;
+        select: Record<string, unknown>;
+      }) => {
+        if (isPartialMarkerPresenceQuery(select)) return [];
+        return where.status === AppointmentStatus.PENDING
           ? [pendingConsultationRow("cons-p")]
-          : [],
+          : [];
+      },
     );
     db.appointment.findMany.mockResolvedValue([
       { id: "apt-c", payment: [{ id: "pay-1", paymentStatus: "SUCCEEDED" }] },
@@ -335,9 +371,18 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
   // confirmed sessions, stale. It is a different arm from the PENDING expiry
   // above, so the same payment must not collide.
   it("keys the APPROVED-unallocated arm separately from the PENDING arm", async () => {
+    db.payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
     db.subscription.findMany.mockImplementation(
-      async ({ where }: { where: Record<string, unknown> }) =>
-        where.status === AppointmentStatus.APPROVED ? [{ id: "sub-a" }] : [],
+      async ({
+        where,
+        select,
+      }: {
+        where: Record<string, unknown>;
+        select: Record<string, unknown>;
+      }) => {
+        if (isPartialMarkerPresenceQuery(select)) return [];
+        return isApprovedUnallocatedCohort(where) ? [{ id: "sub-a" }] : [];
+      },
     );
     db.appointment.findMany.mockResolvedValue([
       { id: "apt-a", payment: [{ id: "pay-1", paymentStatus: "SUCCEEDED" }] },
@@ -387,8 +432,16 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
   // A shared key would let the second arm read the first arm's refund as its
   // own completed work and report "issued" while moving no money.
   it("gives four arms refunding the same payment four distinct keys", async () => {
+    db.payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
     db.consultation.findMany.mockImplementation(
-      async ({ where }: { where: Record<string, unknown> }) => {
+      async ({
+        where,
+        select,
+      }: {
+        where: Record<string, unknown>;
+        select: Record<string, unknown>;
+      }) => {
+        if (isPartialMarkerPresenceQuery(select)) return [];
         if (where.status === AppointmentStatus.PENDING) {
           return [pendingConsultationRow("cons-p")];
         }
@@ -400,9 +453,16 @@ describe("P0-4 — every automatic sweep refund is keyed", () => {
       },
     );
     db.subscription.findMany.mockImplementation(
-      async ({ where }: { where: Record<string, unknown> }) => {
+      async ({
+        where,
+        select,
+      }: {
+        where: Record<string, unknown>;
+        select: Record<string, unknown>;
+      }) => {
+        if (isPartialMarkerPresenceQuery(select)) return [];
         if (isThirtyDayPendingCohort(where)) return [paidPlanRow("sub-p")];
-        if (where.status === AppointmentStatus.APPROVED) {
+        if (isApprovedUnallocatedCohort(where)) {
           return [{ id: "sub-a" }];
         }
         return [];

@@ -2,23 +2,41 @@
  * POST /api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay
  *
  * Mints (or reuses) a Razorpay order for what an issued invoice still owes and
- * returns it for hosted checkout. Only the webhook settles the invoice; the
- * order's `notes.type = "invoice_payment"` routes the capture there. An org
- * awaiting verification may pay; a suspended one may not.
+ * returns it for hosted checkout. The webhook and bounded gateway healer both
+ * settle captures through the same invoice handler. An org awaiting
+ * verification may pay; a suspended one may not.
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { Prisma } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { invoiceOutstandingPaise } from "@/lib/payments/billing/org-invoice-settlement";
+import {
+  applyOrgInvoiceCapture,
+  attemptSettledInvoiceNotices,
+  invoiceOutstandingPaise,
+  type InvoiceCaptureOutcome,
+} from "@/lib/payments/billing/org-invoice-settlement";
 import {
   createRazorpayOrder,
   fetchRazorpayOrder,
+  readRazorpayOrderHolding,
 } from "@/lib/payments/core/razorpay";
 import { PaymentError } from "@/lib/payments/core/types";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+
+const GATEWAY_BUDGET_MS = 20_000;
+const GATEWAY_CALL_TIMEOUT_MS = 5_000;
+
+function remainingGatewayTimeout(startedAt: number): number {
+  return Math.min(
+    GATEWAY_CALL_TIMEOUT_MS,
+    GATEWAY_BUDGET_MS - (Date.now() - startedAt),
+  );
+}
 
 export async function POST(
   _req: NextRequest,
@@ -28,6 +46,7 @@ export async function POST(
     params: Promise<{ orgId: string; invoiceId: string }>;
   },
 ) {
+  const startedAt = Date.now();
   const { orgId, invoiceId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "billing.manage",
@@ -93,32 +112,164 @@ export async function POST(
     );
   }
 
-  let razorpayOrderId: string;
-  const reusable = invoice.providerPaymentOrderId
-    ? await isReusableOrder(invoice.providerPaymentOrderId, amountPaise)
-    : false;
-  if (reusable && invoice.providerPaymentOrderId) {
-    razorpayOrderId = invoice.providerPaymentOrderId;
-  } else {
+  let razorpayOrderId: string | null = null;
+  if (invoice.providerPaymentOrderId) {
+    const existingOrder = await inspectStoredOrder({
+      orderId: invoice.providerPaymentOrderId,
+      invoiceId,
+      orgId,
+      amountPaise,
+      displayCurrency: invoice.displayCurrency,
+      startedAt,
+    });
+    if ("response" in existingOrder) return existingOrder.response;
+    razorpayOrderId = existingOrder.orderId;
+  }
+
+  if (!razorpayOrderId) {
     try {
-      const order = await createRazorpayOrder({
-        amount: amountPaise,
-        currency: invoice.displayCurrency,
-        paymentGateway: "RAZORPAY",
-        // PaymentIntentParams.metadata insists on appointmentId/Type for
-        // booking flows; invoice payments don't have an appointment so
-        // we pass empty strings. The webhook routes purely off
-        // `notes.type === "invoice_payment"` + `notes.invoiceId`.
-        metadata: {
-          appointmentId: "",
-          appointmentType: "",
-          type: "invoice_payment",
-          invoiceId,
-          organizationId: orgId,
-          invoiceNumber: invoice.invoiceNumber,
+      const remainingMs = GATEWAY_BUDGET_MS - (Date.now() - startedAt);
+      const orderTimeoutMs = Math.min(GATEWAY_CALL_TIMEOUT_MS, remainingMs);
+      if (orderTimeoutMs <= 0) {
+        return NextResponse.json(
+          {
+            error: "Could not confirm a payment order in time",
+            code: "ORDER_UNCONFIRMED",
+          },
+          { status: 503 },
+        );
+      }
+      const order = await createRazorpayOrder(
+        {
+          amount: amountPaise,
+          currency: invoice.displayCurrency,
+          paymentGateway: "RAZORPAY",
+          // PaymentIntentParams.metadata insists on appointmentId/Type for
+          // booking flows; invoice payments don't have an appointment so
+          // we pass empty strings. The webhook routes purely off
+          // `notes.type === "invoice_payment"` + `notes.invoiceId`.
+          metadata: {
+            appointmentId: "",
+            appointmentType: "",
+            type: "invoice_payment",
+            invoiceId,
+            organizationId: orgId,
+            invoiceNumber: invoice.invoiceNumber,
+          },
         },
-      });
-      razorpayOrderId = order.id;
+        orderTimeoutMs,
+      );
+      const createdOrderId = order.id;
+
+      // A concurrent payer may have attached an order or paid the invoice
+      // while this gateway order was being created. Attach by CAS, then use
+      // only the current payable row's order.
+      const persistedOrderId = await withSerializableRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            // A credit may have committed while the external order was being created.
+            if (
+              (await invoiceOutstandingPaise(tx, invoiceId)) !== amountPaise
+            ) {
+              return null;
+            }
+            const claimed = await tx.organizationInvoice.updateMany({
+              where: {
+                id: invoiceId,
+                organizationId: orgId,
+                status: { in: ["ISSUED", "OVERDUE"] },
+                providerPaymentOrderId: invoice.providerPaymentOrderId,
+              },
+              data: { providerPaymentOrderId: createdOrderId },
+            });
+            if (claimed.count === 1) {
+              await tx.orgAuditLog.create({
+                data: {
+                  organizationId: orgId,
+                  actorMembershipId: access.member.id,
+                  category: "INVOICE",
+                  action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
+                  description: `Payment initiated for invoice ${invoice.invoiceNumber}`,
+                  details: {
+                    invoiceId,
+                    razorpayOrderId: createdOrderId,
+                    amountPaise,
+                  },
+                },
+              });
+              return createdOrderId;
+            }
+
+            const current = await tx.organizationInvoice.findUnique({
+              where: { id: invoiceId },
+              select: { status: true, providerPaymentOrderId: true },
+            });
+            if (
+              current &&
+              ["ISSUED", "OVERDUE"].includes(current.status) &&
+              current.providerPaymentOrderId
+            ) {
+              return current.providerPaymentOrderId;
+            }
+            if (
+              current &&
+              ["ISSUED", "OVERDUE"].includes(current.status) &&
+              current.providerPaymentOrderId === null
+            ) {
+              const emptyClaim = await tx.organizationInvoice.updateMany({
+                where: {
+                  id: invoiceId,
+                  organizationId: orgId,
+                  status: { in: ["ISSUED", "OVERDUE"] },
+                  providerPaymentOrderId: null,
+                },
+                data: { providerPaymentOrderId: createdOrderId },
+              });
+              if (emptyClaim.count === 1) {
+                await tx.orgAuditLog.create({
+                  data: {
+                    organizationId: orgId,
+                    actorMembershipId: access.member.id,
+                    category: "INVOICE",
+                    action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
+                    description: `Payment initiated for invoice ${invoice.invoiceNumber}`,
+                    details: {
+                      invoiceId,
+                      razorpayOrderId: createdOrderId,
+                      amountPaise,
+                    },
+                  },
+                });
+                return createdOrderId;
+              }
+            }
+            return null;
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        ),
+      );
+
+      if (!persistedOrderId) {
+        return NextResponse.json(
+          {
+            error: "Invoice payment state changed; reload the invoice",
+            code: "INVOICE_STATE_CHANGED",
+          },
+          { status: 409 },
+        );
+      }
+      razorpayOrderId = persistedOrderId;
+      if (persistedOrderId !== createdOrderId) {
+        const winner = await inspectStoredOrder({
+          orderId: persistedOrderId,
+          invoiceId,
+          orgId,
+          amountPaise,
+          displayCurrency: invoice.displayCurrency,
+          startedAt,
+        });
+        if ("response" in winner) return winner.response;
+      }
     } catch (err) {
       if (
         err instanceof PaymentError &&
@@ -141,76 +292,67 @@ export async function POST(
         err instanceof Error ? err : new Error(String(err)),
         { tags: { subsystem: "enterprise" }, extra: { orgId, invoiceId } },
       );
-      console.error("[invoice/pay] createRazorpayOrder failed:", err);
+      console.error("[invoice/pay] order creation or attachment failed:", err);
       return NextResponse.json(
         {
-          error:
-            err instanceof Error
-              ? err.message
-              : "Failed to initiate Razorpay order",
+          error: "Failed to confirm invoice payment order",
           errorType:
-            err instanceof PaymentError ? err.code : "RAZORPAY_ORDER_FAILED",
+            err instanceof PaymentError
+              ? err.code
+              : "INVOICE_ORDER_SETUP_FAILED",
         },
         { status: 502 },
       );
     }
+  }
 
-    // Persist the order id + audit log atomically so the next retry
-    // sees the order id (and audit writes tie to the gateway side-effect).
-    try {
-      await prisma.$transaction(async (tx) => {
-        const claimed = await tx.organizationInvoice.updateMany({
-          where: {
-            id: invoiceId,
-            providerPaymentOrderId: invoice.providerPaymentOrderId,
-          },
-          data: { providerPaymentOrderId: razorpayOrderId },
+  if (!razorpayOrderId) {
+    return NextResponse.json(
+      {
+        error: "Could not confirm an invoice payment order",
+        code: "ORDER_UNCONFIRMED",
+      },
+      { status: 503 },
+    );
+  }
+
+  if (GATEWAY_BUDGET_MS - (Date.now() - startedAt) <= 0) {
+    return NextResponse.json(
+      {
+        error: "Could not confirm a payment order in time",
+        code: "ORDER_UNCONFIRMED",
+      },
+      { status: 503 },
+    );
+  }
+
+  const rowStillPayable = await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const current = await tx.organizationInvoice.findUnique({
+          where: { id: invoiceId },
+          select: { status: true, providerPaymentOrderId: true },
         });
-        if (claimed.count === 0) {
-          const current = await tx.organizationInvoice.findUnique({
-            where: { id: invoiceId },
-            select: { providerPaymentOrderId: true },
-          });
-          if (current?.providerPaymentOrderId) {
-            razorpayOrderId = current.providerPaymentOrderId;
-            return;
-          }
-          // A receipt or parked capture cleared the stale order meanwhile; claim the empty slot.
-          await tx.organizationInvoice.updateMany({
-            where: { id: invoiceId, providerPaymentOrderId: null },
-            data: { providerPaymentOrderId: razorpayOrderId },
-          });
+        if (
+          current !== null &&
+          ["ISSUED", "OVERDUE"].includes(current.status) &&
+          current.providerPaymentOrderId === razorpayOrderId
+        ) {
+          return (await invoiceOutstandingPaise(tx, invoiceId)) === amountPaise;
         }
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: orgId,
-            actorMembershipId: access.member.id,
-            category: "INVOICE",
-            action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
-            description: `Payment initiated for invoice ${invoice.invoiceNumber}`,
-            details: {
-              invoiceId,
-              razorpayOrderId,
-              amountPaise,
-            },
-          },
-        });
-      });
-    } catch (err) {
-      // Gateway order already live — log but return it so the client
-      // can proceed. The webhook still honours the order on capture.
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        {
-          tags: { subsystem: "enterprise" },
-          extra: { orgId, invoiceId, razorpayOrderId },
-        },
-      );
-      console.error(
-        "[invoice/pay] failed to persist providerPaymentOrderId/audit log:",
-        err,
-      );
-    }
+        return false;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
+  if (!rowStillPayable) {
+    return NextResponse.json(
+      {
+        error: "Invoice payment state changed; reload the invoice",
+        code: "INVOICE_STATE_CHANGED",
+      },
+      { status: 409 },
+    );
   }
 
   return NextResponse.json({
@@ -230,15 +372,236 @@ export async function POST(
   });
 }
 
-/** A cached order is reused only while it is unpaid and still for the outstanding amount. */
-async function isReusableOrder(
-  orderId: string,
-  amountPaise: number,
-): Promise<boolean> {
-  try {
-    const order = await fetchRazorpayOrder(orderId);
-    return order?.amount === amountPaise && order.status !== "paid";
-  } catch {
-    return false;
+/** Resolve a stored order before deciding whether another checkout can be created. */
+async function inspectStoredOrder(args: {
+  orderId: string;
+  invoiceId: string;
+  orgId: string;
+  amountPaise: number;
+  displayCurrency: string;
+  startedAt: number;
+}): Promise<{ orderId: string } | { response: NextResponse }> {
+  const { orderId, invoiceId, orgId, amountPaise, displayCurrency, startedAt } =
+    args;
+  const orderTimeoutMs = remainingGatewayTimeout(startedAt);
+  if (orderTimeoutMs <= 0) {
+    return {
+      response: NextResponse.json(
+        {
+          error: "Could not verify the existing payment order in time",
+          code: "ORDER_UNCONFIRMED",
+        },
+        { status: 503 },
+      ),
+    };
   }
+  let order;
+  try {
+    order = await fetchRazorpayOrder(orderId, orderTimeoutMs);
+  } catch (error) {
+    Sentry.captureException(error, {
+      tags: { subsystem: "enterprise", operation: "invoice_order_readback" },
+      extra: { orgId, invoiceId },
+    });
+    return {
+      response: NextResponse.json(
+        {
+          error: "Could not verify the existing payment order",
+          code: "ORDER_UNCONFIRMED",
+        },
+        { status: 502 },
+      ),
+    };
+  }
+  if (!order) {
+    return {
+      response: NextResponse.json(
+        {
+          error: "Payment gateway could not verify the existing order",
+          code: "ORDER_UNCONFIRMED",
+        },
+        { status: 503 },
+      ),
+    };
+  }
+  if (
+    order.id !== orderId ||
+    order.notes.type !== "invoice_payment" ||
+    order.notes.invoiceId !== invoiceId ||
+    order.notes.organizationId !== orgId ||
+    order.currency !== displayCurrency
+  ) {
+    return {
+      response: NextResponse.json(
+        {
+          error: "Existing order does not match this invoice",
+          code: "ORDER_IDENTITY_MISMATCH",
+        },
+        { status: 409 },
+      ),
+    };
+  }
+
+  if (
+    order.status !== "created" &&
+    order.status !== "attempted" &&
+    order.status !== "paid"
+  ) {
+    return {
+      response: NextResponse.json(
+        {
+          error: "Existing payment order has an unsupported status",
+          code: "ORDER_STATUS_UNCONFIRMED",
+        },
+        { status: 409 },
+      ),
+    };
+  }
+
+  if (
+    order.amount === amountPaise &&
+    (order.status === "created" || order.status === "attempted")
+  ) {
+    return { orderId };
+  }
+
+  const holdingTimeoutMs = remainingGatewayTimeout(startedAt);
+  if (holdingTimeoutMs <= 0) {
+    return {
+      response: NextResponse.json(
+        {
+          error: "Could not verify the existing payment attempt in time",
+          code: "ORDER_UNCONFIRMED",
+        },
+        { status: 503 },
+      ),
+    };
+  }
+  let holding;
+  try {
+    holding = await readRazorpayOrderHolding(orderId, holdingTimeoutMs);
+  } catch (error) {
+    Sentry.captureException(error, {
+      tags: {
+        subsystem: "enterprise",
+        operation: "invoice_order_capture_readback",
+      },
+      extra: { orgId, invoiceId },
+    });
+    return {
+      response: NextResponse.json(
+        {
+          error: "Could not verify the existing payment attempt",
+          code: "ORDER_UNCONFIRMED",
+        },
+        { status: 502 },
+      ),
+    };
+  }
+
+  if (holding.kind === "captured") {
+    let outcome: InvoiceCaptureOutcome;
+    try {
+      outcome = await withSerializableRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            const result = await applyOrgInvoiceCapture(tx, {
+              invoiceId,
+              gatewayPaymentId: holding.paymentId,
+              capturedPaise: holding.amountPaise,
+              notesOrganizationId: orgId,
+            });
+            if (result.kind === "PAID") {
+              await tx.orgAuditLog.create({
+                data: {
+                  organizationId: orgId,
+                  actorMembershipId: null,
+                  category: "INVOICE",
+                  action: AUDIT_ACTIONS.INVOICE.INVOICE_PAID,
+                  description: `Invoice paid while checking existing order ${orderId}`,
+                  details: {
+                    invoiceId,
+                    providerPaymentId: holding.paymentId,
+                  },
+                },
+              });
+            }
+            return result;
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        ),
+      );
+    } catch (error) {
+      Sentry.captureException(error, {
+        tags: {
+          subsystem: "enterprise",
+          operation: "invoice_capture_recovery",
+        },
+        extra: { orgId, invoiceId },
+      });
+      return {
+        response: NextResponse.json(
+          {
+            error: "Captured payment recovery could not be confirmed",
+            code: "PAYMENT_RECOVERY_UNCONFIRMED",
+          },
+          { status: 502 },
+        ),
+      };
+    }
+    if (outcome.kind === "PAID") {
+      await attemptSettledInvoiceNotices(outcome.settled);
+    }
+    return {
+      response:
+        outcome.kind === "UNAPPLIED"
+          ? NextResponse.json(
+              {
+                error: "Captured payment requires operator review",
+                code: "PAYMENT_CAPTURE_REQUIRES_REVIEW",
+              },
+              { status: 409 },
+            )
+          : NextResponse.json(
+              {
+                error: "Invoice payment is already captured",
+                code: "INVOICE_ALREADY_PAID",
+              },
+              { status: 409 },
+            ),
+    };
+  }
+  if (holding.kind === "live") {
+    return {
+      response: NextResponse.json(
+        {
+          error: "The existing payment attempt is still processing",
+          code: "PAYMENT_IN_PROGRESS",
+        },
+        { status: 409 },
+      ),
+    };
+  }
+  if (order.status === "paid") {
+    return {
+      response: NextResponse.json(
+        {
+          error:
+            "Gateway marked this order paid, but its payment is unconfirmed",
+          code: "PAYMENT_CAPTURE_UNCONFIRMED",
+        },
+        { status: 409 },
+      ),
+    };
+  }
+  return {
+    response: NextResponse.json(
+      {
+        error:
+          "The existing checkout amount changed; contact billing support before retrying",
+        code: "ORDER_AMOUNT_CHANGED",
+      },
+      { status: 409 },
+    ),
+  };
 }
