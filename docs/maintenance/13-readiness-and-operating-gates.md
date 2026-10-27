@@ -67,7 +67,7 @@ do not establish the age of an individual queued obligation. Invoice recovery
 reads at most five candidates per slot, so cohort size and lost order pointers
 remain explicit capacity and coverage concerns.
 
-At the current limit this is at most thirty scheduled order reads per day;
+At the current limit this is at most thirty scheduled candidate inspections per day;
 abandoned orders consume those reads too. Before config-enabled suspension,
 dunning separately reads the retained order with a bounded provider wait and
 uses canonical settlement for a discovered capture. Unavailable, live or parked

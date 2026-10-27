@@ -672,9 +672,13 @@ export async function readRazorpayOrderHolding(
   const captured = payments.items.find((p) => p.status === "captured");
   if (captured) {
     const amountPaise = Number(captured.amount);
-    if (!Number.isSafeInteger(amountPaise) || captured.currency !== "INR") {
+    if (
+      !Number.isSafeInteger(amountPaise) ||
+      amountPaise <= 0 ||
+      captured.currency !== "INR"
+    ) {
       throw new Error(
-        `Order ${orderId} captured ${String(captured.amount)} ${captured.currency}, not whole INR paise`,
+        `Order ${orderId} captured ${String(captured.amount)} ${captured.currency}, not positive whole INR paise`,
       );
     }
     return { kind: "captured", paymentId: captured.id, amountPaise };

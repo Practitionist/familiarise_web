@@ -193,6 +193,7 @@ export async function POST(
                   details: {
                     invoiceId,
                     razorpayOrderId: createdOrderId,
+                    replacedRazorpayOrderId: invoice.providerPaymentOrderId,
                     amountPaise,
                   },
                 },
@@ -210,38 +211,6 @@ export async function POST(
               current.providerPaymentOrderId
             ) {
               return current.providerPaymentOrderId;
-            }
-            if (
-              current &&
-              ["ISSUED", "OVERDUE"].includes(current.status) &&
-              current.providerPaymentOrderId === null
-            ) {
-              const emptyClaim = await tx.organizationInvoice.updateMany({
-                where: {
-                  id: invoiceId,
-                  organizationId: orgId,
-                  status: { in: ["ISSUED", "OVERDUE"] },
-                  providerPaymentOrderId: null,
-                },
-                data: { providerPaymentOrderId: createdOrderId },
-              });
-              if (emptyClaim.count === 1) {
-                await tx.orgAuditLog.create({
-                  data: {
-                    organizationId: orgId,
-                    actorMembershipId: access.member.id,
-                    category: "INVOICE",
-                    action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_INITIATED,
-                    description: `Payment initiated for invoice ${invoice.invoiceNumber}`,
-                    details: {
-                      invoiceId,
-                      razorpayOrderId: createdOrderId,
-                      amountPaise,
-                    },
-                  },
-                });
-                return createdOrderId;
-              }
             }
             return null;
           },
@@ -269,6 +238,15 @@ export async function POST(
           startedAt,
         });
         if ("response" in winner) return winner.response;
+        if (winner.orderId === null) {
+          return NextResponse.json(
+            {
+              error: "Invoice payment state changed; reload the invoice",
+              code: "INVOICE_STATE_CHANGED",
+            },
+            { status: 409 },
+          );
+        }
       }
     } catch (err) {
       if (
@@ -380,7 +358,7 @@ async function inspectStoredOrder(args: {
   amountPaise: number;
   displayCurrency: string;
   startedAt: number;
-}): Promise<{ orderId: string } | { response: NextResponse }> {
+}): Promise<{ orderId: string | null } | { response: NextResponse }> {
   const { orderId, invoiceId, orgId, amountPaise, displayCurrency, startedAt } =
     args;
   const orderTimeoutMs = remainingGatewayTimeout(startedAt);
@@ -594,14 +572,6 @@ async function inspectStoredOrder(args: {
       ),
     };
   }
-  return {
-    response: NextResponse.json(
-      {
-        error:
-          "The existing checkout amount changed; contact billing support before retrying",
-        code: "ORDER_AMOUNT_CHANGED",
-      },
-      { status: 409 },
-    ),
-  };
+  // Replacement still CASes the inspected order and rechecks the current debt.
+  return { orderId: null };
 }

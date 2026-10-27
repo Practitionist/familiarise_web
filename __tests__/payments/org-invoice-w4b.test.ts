@@ -20,6 +20,7 @@ const mockRelease = jest.fn(async (..._a: unknown[]) => undefined);
 const mockPay = {
   findUnique: jest.fn(),
   findFirst: jest.fn(),
+  findMany: jest.fn(),
   findUniqueOrThrow: jest.fn(),
   updateMany: jest.fn(),
 };
@@ -42,6 +43,18 @@ jest.mock("../../lib/prisma", () => ({
   get default() {
     return mockPrisma;
   },
+}));
+jest.mock("@/lib/cron/with-cron-lock", () => ({
+  LONG_JOB_TTL_MS: 35 * 60 * 1000,
+  readJobCheckpoint: jest.fn(async () => null),
+  withCronLock: (
+    _name: string,
+    _options: unknown,
+    run: () => Promise<unknown>,
+  ) => run(),
+}));
+jest.mock("@/lib/observability/standing-finding", () => ({
+  reportStandingFinding: jest.fn(async () => false),
 }));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: (tx: unknown, input: unknown) => mockPost(tx, input),
@@ -114,6 +127,7 @@ import {
 } from "@/lib/payments/billing/org-invoice-settlement";
 import { restorePurchaseOrderForCredit } from "@/lib/payments/billing/purchase-order-draw";
 import { settleFailedMemberOverageAsOrg } from "@/lib/payments/billing/overage-settlement";
+import { reconcileOrgInvoicePayments } from "@/lib/payments/billing/reconcile-invoice-payments";
 import { POST as payInvoice } from "@/app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pay/route";
 
 type Posted = {
@@ -162,12 +176,25 @@ function invoiceWorld(init: {
       where,
       data,
     }: {
-      where: { status?: { in: string[] } };
+      where: {
+        status?: { in: string[] } | string;
+        providerPaymentOrderId?: string | null;
+      };
       data: { status?: string; providerPaymentOrderId?: string | null };
     }) => {
-      if (where.status && !where.status.in.includes(state.status)) {
+      if (
+        where.status &&
+        !(typeof where.status === "string"
+          ? where.status === state.status
+          : where.status.in.includes(state.status))
+      ) {
         return { count: 0 };
       }
+      if (
+        where.providerPaymentOrderId !== undefined &&
+        where.providerPaymentOrderId !== state.providerPaymentOrderId
+      )
+        return { count: 0 };
       if (data.status) state.status = data.status;
       if (data.providerPaymentOrderId !== undefined) {
         state.providerPaymentOrderId = data.providerPaymentOrderId;
@@ -404,10 +431,72 @@ describe("platform void", () => {
 });
 
 describe("bank transfer receipts", () => {
+  it("recovers a missing capture webhook after full bank settlement as a separate unapplied liability", async () => {
+    const { tx, raw, state } = invoiceWorld({
+      status: "ISSUED",
+      totalPaise: 118_000,
+      providerPaymentOrderId: "order_bank_race",
+    });
+    raw.ledgerTransaction.findUnique.mockResolvedValue(null);
+    await recordBankTransferReceipt(tx, {
+      organizationId: "org-1",
+      invoiceId: "inv-1",
+      utr: "UTR_FULL",
+      amountPaise: 118_000,
+      receivedOn: new Date("2026-10-27"),
+      recordedById: "admin-1",
+      actorMembershipId: "a",
+    });
+    expect(state.status).toBe("PAID");
+    expect(state.providerPaymentOrderId).toBe("order_bank_race");
+    expect(mockReadHolding).not.toHaveBeenCalled();
+    mockPay.findMany.mockResolvedValue([
+      await raw.organizationInvoice.findFirst(),
+    ]);
+    mockPrisma.$transaction.mockImplementation(
+      async (run: (tx: Tx) => unknown) => run(tx),
+    );
+    mockReadHolding.mockResolvedValue({
+      kind: "captured",
+      paymentId: "pay_lost",
+      amountPaise: 118_000,
+    });
+
+    const recovered = await reconcileOrgInvoicePayments({ limit: 1 });
+
+    expect(recovered).toMatchObject({
+      success: true,
+      captured: 1,
+      unapplied: 1,
+      paid: 0,
+    });
+    expect(state.status).toBe("PAID");
+    expect(state.providerPaymentOrderId).toBeNull();
+    expect(state.receipts).toHaveLength(1);
+    expect(posted().map((p) => p.idempotencyKey)).toEqual([
+      "invoicereceipt:rcpt-1",
+      "unapplied:pay_lost",
+    ]);
+    expect(mockSystemEvent).toHaveBeenCalledTimes(1);
+    expect(raw.orgAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: "INVOICE_PAYMENT_ORDER_RETIRED",
+          details: {
+            invoiceId: "inv-1",
+            razorpayOrderId: "order_bank_race",
+            reason: "CAPTURE_ACCOUNTED",
+          },
+        }),
+      }),
+    );
+  });
+
   it("a part-payment leaves the invoice ISSUED; the receipt that clears it settles PAID", async () => {
     const { tx, raw, state } = invoiceWorld({
       status: "ISSUED",
       totalPaise: 118_000,
+      providerPaymentOrderId: "order_before_bank",
     });
     const base = {
       organizationId: "org-1",
@@ -425,6 +514,7 @@ describe("bank transfer receipts", () => {
     expect(first.settled).toBeNull();
     expect(first.outstandingAfterPaise).toBe(100_000);
     expect(state.status).toBe("ISSUED");
+    expect(state.providerPaymentOrderId).toBe("order_before_bank");
 
     await expect(
       recordBankTransferReceipt(tx, {
@@ -441,6 +531,7 @@ describe("bank transfer receipts", () => {
     });
     expect(last.settled).not.toBeNull();
     expect(state.status).toBe("PAID");
+    expect(state.providerPaymentOrderId).toBe("order_before_bank");
     expect(posted().map((p) => p.idempotencyKey)).toEqual([
       "invoicereceipt:rcpt-1",
       "invoicereceipt:rcpt-2",
@@ -677,20 +768,99 @@ describe("/pay", () => {
     expect((await res.json()).amountPaise).toBe(100_000);
   });
 
-  it("does not replace an open order with no payment when its amount is stale", async () => {
-    const row = {
+  it("replaces a stale-amount order only after an empty gateway read and old-order CAS", async () => {
+    const { tx, raw, state } = invoiceWorld({
+      status: "ISSUED",
+      totalPaise: 100_000,
+      providerPaymentOrderId: "order_old",
+    });
+    mockPay.findFirst.mockImplementation(() =>
+      raw.organizationInvoice.findFirst(),
+    );
+    mockPay.findUniqueOrThrow.mockImplementation(() =>
+      raw.organizationInvoice.findUniqueOrThrow(),
+    );
+    mockPay.findUnique.mockImplementation(() =>
+      raw.organizationInvoice.findUnique(),
+    );
+    mockPrisma.$transaction.mockImplementation(
+      async (run: (tx: Tx) => unknown) => run(tx),
+    );
+    mockFetchOrder.mockResolvedValue({
+      id: "order_old",
+      amount: 118_000,
+      currency: "INR",
+      status: "created",
+      notes: {
+        type: "invoice_payment",
+        invoiceId: "inv-1",
+        organizationId: "org-1",
+      },
+    });
+    mockReadHolding.mockResolvedValue({ kind: "empty" });
+
+    const res = await payInvoice(
+      new NextRequest("https://x.test/api", { method: "POST" }),
+      { params: Promise.resolve({ orgId: "org-1", invoiceId: "inv-1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(state.providerPaymentOrderId).toBe("order_new");
+    expect(mockReadHolding).toHaveBeenCalledWith(
+      "order_old",
+      expect.any(Number),
+    );
+    expect(mockReadHolding.mock.invocationCallOrder[0]).toBeLessThan(
+      mockCreateOrder.mock.invocationCallOrder[0],
+    );
+    expect(raw.organizationInvoice.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "inv-1",
+        organizationId: "org-1",
+        status: { in: ["ISSUED", "OVERDUE"] },
+        providerPaymentOrderId: "order_old",
+      },
+      data: { providerPaymentOrderId: "order_new" },
+    });
+    expect(raw.orgAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          details: expect.objectContaining({
+            replacedRazorpayOrderId: "order_old",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("refuses a concurrent stale-amount winner that still requires replacement", async () => {
+    const initial = {
       id: "inv-1",
       status: "ISSUED",
       invoiceNumber: "N",
       displayCurrency: "INR",
       paidAt: null,
-      providerPaymentOrderId: "order_old",
+      providerPaymentOrderId: null,
       totalPaise: 100_000,
     };
-    mockPay.findFirst.mockResolvedValue(row);
-    mockPay.findUniqueOrThrow.mockResolvedValue(row);
+    const winner = { ...initial, providerPaymentOrderId: "order_winner_old" };
+    mockPay.findFirst.mockResolvedValue(initial);
+    mockPay.findUniqueOrThrow.mockResolvedValue(winner);
+    mockPay.findUnique.mockResolvedValue(winner);
+    const transactionTx = {
+      organizationInvoice: {
+        updateMany: jest.fn(async () => ({ count: 0 })),
+        findUnique: jest.fn(async () => winner),
+        findUniqueOrThrow: mockPay.findUniqueOrThrow,
+      },
+      creditNote: mockPrisma.creditNote,
+      organizationInvoiceReceipt: mockPrisma.organizationInvoiceReceipt,
+    };
+    mockPrisma.$transaction.mockImplementation(
+      async (run: (tx: typeof transactionTx) => unknown) => run(transactionTx),
+    );
     mockFetchOrder.mockResolvedValue({
-      id: "order_old",
+      id: "order_winner_old",
       amount: 50_000,
       currency: "INR",
       status: "created",
@@ -708,15 +878,13 @@ describe("/pay", () => {
     );
 
     expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ code: "ORDER_AMOUNT_CHANGED" });
-    const [, timeoutMs] = mockFetchOrder.mock.calls[0];
-    expect(timeoutMs).toBeGreaterThan(0);
-    expect(timeoutMs).toBeLessThanOrEqual(5_000);
+    const payload = await res.json();
+    expect(payload.code).toBe("INVOICE_STATE_CHANGED");
+    expect(payload).not.toHaveProperty("razorpayOrderId");
     expect(mockReadHolding).toHaveBeenCalledWith(
-      "order_old",
+      "order_winner_old",
       expect.any(Number),
     );
-    expect(mockCreateOrder).not.toHaveBeenCalled();
   });
 
   it("stops gateway reads when the route's provider budget is exhausted", async () => {
