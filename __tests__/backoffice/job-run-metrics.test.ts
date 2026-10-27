@@ -90,19 +90,36 @@ it("folds counts, rounds percentiles, fills IST days and sorts missed jobs first
       {
         jobName: "prune-audit-logs",
         status: "COMPLETED",
+        outcome: "completed",
         count: 3,
         itemsProcessed: 9,
       },
       {
         jobName: "prune-audit-logs",
         status: "FAILED",
+        outcome: "failed",
         count: 1,
         itemsProcessed: 0,
       },
       {
         jobName: "prune-audit-logs",
-        status: "CANCELLED",
+        status: "FAILED",
+        outcome: "partial",
         count: 2,
+        itemsProcessed: 4,
+      },
+      {
+        jobName: "prune-audit-logs",
+        status: "CANCELLED",
+        outcome: "held",
+        count: 2,
+        itemsProcessed: 0,
+      },
+      {
+        jobName: "prune-audit-logs",
+        status: "CANCELLED",
+        outcome: "refused",
+        count: 1,
         itemsProcessed: 0,
       },
     ],
@@ -114,13 +131,15 @@ it("folds counts, rounds percentiles, fills IST days and sorts missed jobs first
   });
   const prune = metrics.jobs.find((j) => j.jobName === "prune-audit-logs");
   expect(prune).toMatchObject({
-    runs: 6,
+    runs: 9,
     succeeded: 3,
+    partial: 2,
     failed: 1,
     held: 2,
+    skipped: 1,
     p50Ms: 1234,
     p95Ms: 9877,
-    itemsProcessed: 9,
+    itemsProcessed: 13,
   });
   expect(metrics.days).toEqual(istDayKeys(now));
   expect(metrics.days).toHaveLength(7);
@@ -142,6 +161,7 @@ it("reports no-runs instead of missed when a non-production deployment has no su
       {
         jobName: "prune-audit-logs",
         status: "COMPLETED" as const,
+        outcome: "completed",
         count: 1,
         itemsProcessed: 0,
       },

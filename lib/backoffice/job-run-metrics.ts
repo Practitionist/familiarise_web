@@ -37,9 +37,14 @@ export interface JobRunMetric {
   jobName: string;
   runs: number;
   succeeded: number;
+  /** FAILED rows whose outcome is `partial`: the run finished with some items failing. */
+  partial: number;
+  /** FAILED rows of every other outcome. */
   failed: number;
-  /** CANCELLED rows: the run found the lease held and stood down. */
+  /** CANCELLED rows with outcome `held`: another run held the lease. */
   held: number;
+  /** CANCELLED rows that stood down for another reason: a config skip, a maintenance refusal or a pause. */
+  skipped: number;
   running: number;
   p50Ms: number | null;
   p95Ms: number | null;
@@ -108,10 +113,24 @@ export function latestDueWindowStart(
   return null;
 }
 
+/** The latest due calendar window has no finished run since it opened. */
+function missedWindow(
+  schedule: JobSchedule,
+  lastSuccessAt: Date | null,
+  now: Date,
+): boolean {
+  const due = latestDueWindowStart(schedule, now);
+  // A window opened before the lookback may have a success the trail no longer holds.
+  const judgeable =
+    due !== null &&
+    due.getTime() >= now.getTime() - LAST_SUCCESS_LOOKBACK_DAYS * DAY_MS;
+  return judgeable && (!lastSuccessAt || lastSuccessAt < due);
+}
+
 /**
- * Missed when the job's completion SLO has lapsed; else, for a ticker job, when
- * two interval slots (plus a tick) passed with no success, or the latest due
- * calendar window has no success since it opened.
+ * Missed when the job's completion SLO has lapsed or, for a calendar-windowed
+ * job, its latest due window passed with no finished run; else, for a ticker
+ * job, when two interval slots (plus a tick) passed with no finished run.
  */
 export function assessMissedWindow(args: {
   jobName: string;
@@ -119,7 +138,13 @@ export function assessMissedWindow(args: {
   now: Date;
 }): MissedWindow {
   const { jobName, lastSuccessAt, now } = args;
+  const schedule = scheduleForJob(jobName);
+  const windowMissed =
+    schedule !== undefined &&
+    schedule.window !== null &&
+    missedWindow(schedule, lastSuccessAt, now);
   if (OPERATIONAL_COMPLETION_REQUIREMENTS.some((r) => r.jobName === jobName)) {
+    if (windowMissed) return { state: "missed", basis: "window" };
     const { jobs } = assessOperationalCompletions(
       [{ jobName, endedAt: lastSuccessAt }],
       now,
@@ -127,16 +152,9 @@ export function assessMissedWindow(args: {
     const overdue = jobs.find((j) => j.jobName === jobName)?.overdue ?? true;
     return { state: overdue ? "missed" : "ok", basis: "slo" };
   }
-  const schedule = scheduleForJob(jobName);
   if (!schedule) return { state: "unscheduled", basis: null };
   if (schedule.window) {
-    const due = latestDueWindowStart(schedule, now);
-    // A window opened before the lookback may have a success the trail no longer holds.
-    const judgeable =
-      due !== null &&
-      due.getTime() >= now.getTime() - LAST_SUCCESS_LOOKBACK_DAYS * DAY_MS;
-    const missed = judgeable && (!lastSuccessAt || lastSuccessAt < due);
-    return { state: missed ? "missed" : "ok", basis: "window" };
+    return { state: windowMissed ? "missed" : "ok", basis: "window" };
   }
   const limitMs = (2 * schedule.everyMinutes + 5) * MINUTE_MS;
   const missed =
@@ -150,6 +168,8 @@ export interface MetricInputs {
   counts: {
     jobName: string;
     status: string;
+    /** `result.outcome`, null on rows written before outcomes were recorded. */
+    outcome: string | null;
     count: number;
     itemsProcessed: number;
   }[];
@@ -175,8 +195,14 @@ export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
   ]);
   const jobs = [...names].map((jobName): JobRunMetric => {
     const mine = input.counts.filter((c) => c.jobName === jobName);
-    const byStatus = (status: string) =>
-      mine.find((c) => c.status === status)?.count ?? 0;
+    const sum = (match: (c: MetricInputs["counts"][number]) => boolean) =>
+      mine.filter(match).reduce((s, c) => s + c.count, 0);
+    const failedRows = sum((c) => c.status === "FAILED");
+    const partial = sum(
+      (c) => c.status === "FAILED" && c.outcome === "partial",
+    );
+    const cancelled = sum((c) => c.status === "CANCELLED");
+    const held = sum((c) => c.status === "CANCELLED" && c.outcome === "held");
     const pct = input.percentiles.find((p) => p.jobName === jobName);
     const last =
       input.lastSuccess.find((l) => l.jobName === jobName)?.endedAt ?? null;
@@ -186,10 +212,12 @@ export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
     return {
       jobName,
       runs: mine.reduce((s, c) => s + c.count, 0),
-      succeeded: byStatus("COMPLETED"),
-      failed: byStatus("FAILED"),
-      held: byStatus("CANCELLED"),
-      running: byStatus("RUNNING"),
+      succeeded: sum((c) => c.status === "COMPLETED"),
+      partial,
+      failed: failedRows - partial,
+      held,
+      skipped: cancelled - held,
+      running: sum((c) => c.status === "RUNNING"),
       p50Ms: roundMs(pct?.p50),
       p95Ms: roundMs(pct?.p95),
       itemsProcessed: mine.reduce((s, c) => s + c.itemsProcessed, 0),
@@ -220,6 +248,13 @@ export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
   return { days, environment: input.environment, jobs };
 }
 
+const CountRow = z.object({
+  jobName: z.string(),
+  status: z.string(),
+  outcome: z.string().nullable(),
+  count: z.number(),
+  itemsProcessed: z.number(),
+});
 const PercentileRow = z.object({
   jobName: z.string(),
   p50: z.number().nullable(),
@@ -234,8 +269,8 @@ const DailyRow = z.object({
 
 /**
  * Seven days of SystemJobExecution per job, in four statements run in turn.
- * Percentiles and IST-day buckets have no Prisma groupBy form, so those two
- * are parameterised read-only `$queryRaw`; the counts and last success use groupBy.
+ * Outcome counts, percentiles and IST-day buckets have no Prisma groupBy form,
+ * so those are parameterised read-only `$queryRaw`; the last finish uses groupBy.
  */
 export async function readJobRunMetrics(
   now = new Date(),
@@ -246,12 +281,15 @@ export async function readJobRunMetrics(
     process.env.SENTRY_ENVIRONMENT ??
     null;
 
-  const counts = await prisma.systemJobExecution.groupBy({
-    by: ["jobName", "status"],
-    where: { startedAt: { gte: since } },
-    _count: { _all: true },
-    _sum: { itemsProcessed: true },
-  });
+  const counts = z.array(CountRow).parse(
+    await prisma.$queryRaw(Prisma.sql`
+      SELECT "jobName", "status"::text AS status, "result"->>'outcome' AS outcome,
+        count(*)::int AS "count",
+        coalesce(sum("itemsProcessed"), 0)::int AS "itemsProcessed"
+      FROM "SystemJobExecution"
+      WHERE "startedAt" >= ${since}
+      GROUP BY 1, 2, 3`),
+  );
   const percentiles = z.array(PercentileRow).parse(
     await prisma.$queryRaw(Prisma.sql`
       SELECT "jobName",
@@ -273,10 +311,14 @@ export async function readJobRunMetrics(
       WHERE "startedAt" >= ${since}
       GROUP BY 1, 2`),
   );
+  // A partial run ran to the end, the same freshness rule the SLOs use.
   const lastSuccess = await prisma.systemJobExecution.groupBy({
     by: ["jobName"],
     where: {
-      status: "COMPLETED",
+      OR: [
+        { status: "COMPLETED" },
+        { status: "FAILED", result: { path: ["outcome"], equals: "partial" } },
+      ],
       startedAt: {
         gte: new Date(now.getTime() - LAST_SUCCESS_LOOKBACK_DAYS * DAY_MS),
       },
@@ -290,12 +332,7 @@ export async function readJobRunMetrics(
   return buildJobRunMetrics({
     now,
     environment,
-    counts: counts.map((c) => ({
-      jobName: c.jobName,
-      status: c.status,
-      count: c._count._all,
-      itemsProcessed: c._sum.itemsProcessed ?? 0,
-    })),
+    counts,
     percentiles,
     daily,
     lastSuccess: lastSuccess.map((l) => ({
