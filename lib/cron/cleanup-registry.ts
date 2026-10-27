@@ -1641,12 +1641,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           scanned: r.scanned,
           refunded: r.refunded,
           settled: r.settled,
-          failed: r.failed,
+          // Owed attempts that failed this run count too, so a gateway outage reads as partial.
+          failed: r.failed + r.owed.failed,
           stuck: r.stuck,
           errors: r.errors,
           owed: r.owed,
         }),
-        needsAttention: (r) => r.stuck.length > 0 || r.owed.stuck.length > 0,
+        // A failed owed attempt answers 207 too; the summary's `failed` keeps it partial, not attention.
+        needsAttention: (r) =>
+          r.stuck.length > 0 || r.owed.stuck.length > 0 || r.owed.failed > 0,
         failureMessage: "Failed to retry auto-refunds",
       }),
   },

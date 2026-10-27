@@ -400,7 +400,10 @@ export function cleanupRoute<T extends object>(
         ? status(result)
         : statusFor(result, flagged);
       const findingsOnly =
-        flagged && jobOutcome(result) === "success" && !hasItemFailures(result);
+        flagged &&
+        jobOutcome(result) === "success" &&
+        !hasItemFailures(result) &&
+        !hasItemFailures(summary);
       const verdict = routeOutcome(result, responseStatus, findingsOnly);
       await record({ ...verdict, httpStatus: responseStatus, summary });
       return {

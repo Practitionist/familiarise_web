@@ -438,6 +438,26 @@ describe("cleanupRoute run record", () => {
     });
   });
 
+  it("records a 207 whose failures appear only in the summary as partial, not attention", async () => {
+    const { POST } = cleanupRoute({
+      job: "retry-auto-refunds",
+      run: async () => {
+        noteRunId("exec-3");
+        noteRunFinished("exec-3", null);
+        return { success: true, failed: 0, owed: { failed: 2, stuck: [] } };
+      },
+      summarize: (r) => ({ failed: r.failed + r.owed.failed }),
+      needsAttention: (r) => r.owed.failed > 0,
+    });
+
+    expect((await POST(request())).status).toBe(207);
+    expect(executions.updateMany.mock.calls[0][0].data).toMatchObject({
+      status: "FAILED",
+      result: expect.objectContaining({ outcome: "partial" }),
+      errorCount: 2,
+    });
+  });
+
   it("takes the run trigger header only behind a valid bearer, and only in the allowed shape", async () => {
     const seen: (string | undefined)[] = [];
     const { POST } = cleanupRoute({
