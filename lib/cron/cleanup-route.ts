@@ -3,7 +3,11 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server.js";
 import * as Sentry from "@sentry/core";
 import { z } from "zod";
-import { jobOutcome, type JobOutcome } from "@/lib/cron/job-outcome";
+import {
+  hasItemFailures,
+  jobOutcome,
+  type JobOutcome,
+} from "@/lib/cron/job-outcome";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
@@ -306,21 +310,39 @@ function cleanupFailure(
  * thing that is actually route-specific: what it runs and how it maps the
  * result to a status code.
  */
-export function cleanupRoute<T extends object>(opts: {
-  /** Job name — feeds `assertNotInMaintenance`, the Sentry logger key, and the tag. */
-  job: string;
-  /** `startedAt` is when the request reached the route, for a sweep's drain deadline. */
-  run: (req: NextRequest, ctx: { startedAt: number }) => Promise<T>;
-  /** What to log on finish; defaults to the whole result. */
-  summarize?: (result: T) => Record<string, unknown>;
-  /** Authoritative when present; otherwise {@link statusFor} with no needs-attention flag. */
-  status?: (result: T) => number;
-  failureMessage?: string;
-  /** Extra `message` field on the 401 body, for routes that carry one. */
-  unauthorizedMessage?: string;
-}): CleanupRouteHandlers {
-  const { job, run, summarize, status, failureMessage, unauthorizedMessage } =
-    opts;
+export function cleanupRoute<T extends object>(
+  opts: {
+    /** Job name — feeds `assertNotInMaintenance`, the Sentry logger key, and the tag. */
+    job: string;
+    /** `startedAt` is when the request reached the route, for a sweep's drain deadline. */
+    run: (req: NextRequest, ctx: { startedAt: number }) => Promise<T>;
+    /** What to log on finish; defaults to the whole result. */
+    summarize?: (result: T) => Record<string, unknown>;
+    failureMessage?: string;
+    /** Extra `message` field on the 401 body, for routes that carry one. */
+    unauthorizedMessage?: string;
+  } & (
+    | {
+        /** Authoritative when present; a 207 from it is recorded as partial. */
+        status?: (result: T) => number;
+        needsAttention?: never;
+      }
+    | {
+        /** Findings that answer 207 through {@link statusFor}; with no item failing the run is recorded as attention. */
+        needsAttention: (result: T) => boolean;
+        status?: never;
+      }
+  ),
+): CleanupRouteHandlers {
+  const {
+    job,
+    run,
+    summarize,
+    status,
+    needsAttention,
+    failureMessage,
+    unauthorizedMessage,
+  } = opts;
 
   async function executeCleanupJob(
     req: NextRequest,
@@ -362,9 +384,14 @@ export function cleanupRoute<T extends object>(opts: {
       );
 
       // An explicit per-job mapping is authoritative, so the outcome header follows its status.
-      const responseStatus = status ? status(result) : statusFor(result);
+      const flagged = needsAttention?.(result) ?? false;
+      const responseStatus = status
+        ? status(result)
+        : statusFor(result, flagged);
+      const findingsOnly =
+        flagged && jobOutcome(result) === "success" && !hasItemFailures(result);
       await record({
-        ...routeOutcome(result, responseStatus),
+        ...routeOutcome(result, responseStatus, findingsOnly),
         httpStatus: responseStatus,
         summary,
       });

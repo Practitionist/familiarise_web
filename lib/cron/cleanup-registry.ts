@@ -1202,7 +1202,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           orphanedFilesDeleted: r.orphanedFilesDeleted,
           missingFilesFound: r.missingFilesFound,
         }),
-        status: (r) => statusFor(r, r.missingFilesFound > 0),
+        needsAttention: (r) => r.missingFilesFound > 0,
         failureMessage: "Failed to reconcile document storage",
       }),
   },
@@ -1224,14 +1224,11 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             await import("@/jobs/reconcile/reconcile-gateway-settlements");
           return runReconcileGatewaySettlements(startedAt);
         },
-        status: (r) =>
-          statusFor(
-            r,
-            r.byStatus.AMOUNT_MISMATCH +
-              r.byStatus.FEE_MISMATCH +
-              r.byStatus.UNMATCHED >
-              0,
-          ),
+        needsAttention: (r) =>
+          r.byStatus.AMOUNT_MISMATCH +
+            r.byStatus.FEE_MISMATCH +
+            r.byStatus.UNMATCHED >
+          0,
         failureMessage: "Failed to reconcile gateway settlements",
       }),
   },
@@ -1310,7 +1307,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           unbaselinedCount: r.report.summary?.unbaselinedCount ?? 0,
           frozenWallets: r.frozenWallets.length,
         }),
-        status: (r) => statusFor(r, r.status !== "RUNNING" && !r.report.ok),
+        needsAttention: (r) => r.status !== "RUNNING" && !r.report.ok,
         failureMessage: "Failed to run ledger reconciliation",
       }),
   },
@@ -1337,7 +1334,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           topUpsPlaced: r.topUps.placed,
           topUpSessionsPlaced: r.topUps.sessionsPlaced,
         }),
-        status: (r) => statusFor(r, r.doubleBookingsDetected > 0),
+        needsAttention: (r) => r.doubleBookingsDetected > 0,
         failureMessage: "Failed to reconcile slot availability",
       }),
   },
@@ -1449,7 +1446,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             startedAt,
           });
         },
-        status: (r) => statusFor(r, r.unapplied > 0),
+        needsAttention: (r) => r.unapplied > 0,
         failureMessage: "Failed to reconcile invoice payments",
       }),
   },
@@ -1481,13 +1478,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           deadLettered: r.deadLettered,
           errors: r.errors.slice(0, 5),
         }),
-        status: (r) =>
-          statusFor(
-            r,
-            r.succeededCount > 0 ||
-              r.unresolvableCount > 0 ||
-              r.retiredCount > 0,
-          ),
+        needsAttention: (r) =>
+          r.succeededCount > 0 || r.unresolvableCount > 0 || r.retiredCount > 0,
         failureMessage: "Failed to reconcile payment status",
       }),
   },
@@ -1518,7 +1510,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           failedCount: r.failedCount,
           discrepanciesCount: r.discrepancies.length,
         }),
-        status: (r) => statusFor(r, r.discrepancies.length > 0),
+        needsAttention: (r) => r.discrepancies.length > 0,
         failureMessage: "Failed to reconcile payout status",
       }),
   },
@@ -1654,8 +1646,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           errors: r.errors,
           owed: r.owed,
         }),
-        status: (r) =>
-          statusFor(r, r.stuck.length > 0 || r.owed.stuck.length > 0),
+        needsAttention: (r) => r.stuck.length > 0 || r.owed.stuck.length > 0,
         failureMessage: "Failed to retry auto-refunds",
       }),
   },
@@ -1959,7 +1950,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           unverified: r.unverified.length,
         }),
         // Drift is already reported once to Sentry by the detector; 207 only marks the run.
-        status: (r) => statusFor(r, r.drifted),
+        needsAttention: (r) => r.drifted,
         failureMessage: "Failed to check the Stream control plane for drift",
       }),
   },

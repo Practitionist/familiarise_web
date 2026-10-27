@@ -74,6 +74,12 @@ const EXECUTION_STATUS: Record<
   CANCELLED: { label: "Stood down", tone: "neutral" },
 };
 
+/** A completed run that flagged findings with no item failing. */
+const NEEDS_ATTENTION: { label: string; tone: Tone } = {
+  label: "Needs attention",
+  tone: "caution",
+};
+
 interface JobCardProps {
   job: SystemJobCard;
   isRunning: boolean;
@@ -363,7 +369,12 @@ export function SystemJobsPanel({ className, jobs }: SystemJobsPanelProps) {
                           .join(", ")}
                       </span>
                     )}
-                    <StatusBadge {...EXECUTION_STATUS[execution.status]} />
+                    <StatusBadge
+                      {...(execution.status === "COMPLETED" &&
+                      execution.result?.outcome === "attention"
+                        ? NEEDS_ATTENTION
+                        : EXECUTION_STATUS[execution.status])}
+                    />
                   </div>
                 </div>
               ))}

@@ -91,8 +91,15 @@ it("folds counts, rounds percentiles, fills IST days and sorts missed jobs first
         jobName: "prune-audit-logs",
         status: "COMPLETED",
         outcome: "completed",
-        count: 3,
+        count: 2,
         itemsProcessed: 9,
+      },
+      {
+        jobName: "prune-audit-logs",
+        status: "COMPLETED",
+        outcome: "attention",
+        count: 1,
+        itemsProcessed: 0,
       },
       {
         jobName: "prune-audit-logs",
@@ -133,6 +140,7 @@ it("folds counts, rounds percentiles, fills IST days and sorts missed jobs first
   expect(prune).toMatchObject({
     runs: 9,
     succeeded: 3,
+    attention: 1,
     partial: 2,
     failed: 1,
     held: 2,

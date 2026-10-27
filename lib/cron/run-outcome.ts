@@ -3,11 +3,13 @@ import type { ConfigSkip } from "@/lib/cron/config-skip";
 import { jobOutcome, type JobOutcome } from "@/lib/cron/job-outcome";
 
 /**
- * `SystemJobExecution.result.outcome`. `paused` is reserved for the job pause
+ * `SystemJobExecution.result.outcome`. `attention` is a completed run that
+ * flagged findings with no item failing. `paused` is reserved for the job pause
  * control and has no writer yet.
  */
 export const runOutcomeSchema = z.enum([
   "completed",
+  "attention",
   "partial",
   "failed",
   "held",
@@ -21,7 +23,7 @@ export type FinishedStatus = "COMPLETED" | "FAILED" | "CANCELLED";
 
 /** A partial run is FAILED so streaks escalate it; SLO freshness still counts it as having run to the end. */
 export function statusOfOutcome(outcome: RunOutcome): FinishedStatus {
-  if (outcome === "completed") return "COMPLETED";
+  if (outcome === "completed" || outcome === "attention") return "COMPLETED";
   if (outcome === "partial" || outcome === "failed") return "FAILED";
   return "CANCELLED";
 }
@@ -68,11 +70,13 @@ export function configSkipReason(result: unknown): ConfigSkip | null {
 
 /**
  * The outcome of a run that returned, judged by the HTTP status the route
- * answered so the row and the response always agree.
+ * answered so the row and the response always agree. `findingsOnly` marks a
+ * 207 raised by the route's needs-attention flag with no item failing.
  */
 export function routeOutcome(
   result: unknown,
   httpStatus: number,
+  findingsOnly = false,
 ): { outcome: RunOutcome; reason?: string } {
   const skip = configSkipReason(result);
   if (skip) return { outcome: "skipped", reason: skip };
@@ -80,7 +84,9 @@ export function routeOutcome(
     return { outcome: "skipped", reason: "job-declined" };
   }
   if (httpStatus >= 400) return { outcome: "failed" };
-  if (httpStatus === 207) return { outcome: "partial" };
+  if (httpStatus === 207) {
+    return { outcome: findingsOnly ? "attention" : "partial" };
+  }
   return { outcome: "completed" };
 }
 

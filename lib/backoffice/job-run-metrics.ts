@@ -35,6 +35,8 @@ export interface JobRunMetric {
   jobName: string;
   runs: number;
   succeeded: number;
+  /** COMPLETED rows whose outcome is `attention`: findings with no item failing, counted in `succeeded`. */
+  attention: number;
   /** FAILED rows whose outcome is `partial`: the run finished with some items failing. */
   partial: number;
   /** FAILED rows of every other outcome. */
@@ -199,6 +201,9 @@ export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
       jobName,
       runs: mine.reduce((s, c) => s + c.count, 0),
       succeeded: sum((c) => c.status === "COMPLETED"),
+      attention: sum(
+        (c) => c.status === "COMPLETED" && c.outcome === "attention",
+      ),
       partial,
       failed: failedRows - partial,
       held,

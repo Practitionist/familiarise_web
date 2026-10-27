@@ -16,7 +16,7 @@ import type {
   JobRunMetric,
   JobRunMetrics as Metrics,
 } from "@/lib/backoffice/job-run-metrics";
-import type { Tone } from "@/lib/ui/tone";
+import { toneTextClass, type Tone } from "@/lib/ui/tone";
 
 const OK_FILL = "hsl(var(--muted-foreground))";
 const FAIL_FILL = "hsl(var(--destructive))";
@@ -136,6 +136,7 @@ export function JobRunMetrics({
             <TableHead>Job</TableHead>
             <TableHead className="text-right">Runs</TableHead>
             <TableHead className="text-right">Succeeded</TableHead>
+            <TableHead className="text-right">Attention</TableHead>
             <TableHead className="text-right">Partial</TableHead>
             <TableHead className="text-right">Failed</TableHead>
             <TableHead className="text-right">Held / skipped</TableHead>
@@ -158,6 +159,11 @@ export function JobRunMetrics({
               </TableCell>
               <TableCell className="text-right tabular-nums">
                 {job.succeeded}
+              </TableCell>
+              <TableCell
+                className={`text-right tabular-nums ${toneTextClass(job.attention > 0 ? "caution" : "neutral")}`}
+              >
+                {job.attention}
               </TableCell>
               <TableCell className="text-right tabular-nums">
                 {job.partial}

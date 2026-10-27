@@ -404,6 +404,31 @@ describe("cleanupRoute run record", () => {
     expect(executions.create).not.toHaveBeenCalled();
   });
 
+  it("records findings with no failing item as COMPLETED/attention, and findings with failures as partial", async () => {
+    const route = (errors: string[]) =>
+      cleanupRoute({
+        job: "reconcile-org-invoice-payments",
+        run: async () => {
+          noteRunId("exec-2");
+          noteRunFinished("exec-2", null);
+          return { success: true, scanned: 3, unapplied: 1, errors };
+        },
+        needsAttention: (r) => r.unapplied > 0,
+      }).POST;
+
+    expect((await route([])(request())).status).toBe(207);
+    expect(executions.updateMany.mock.calls[0][0].data).toMatchObject({
+      status: "COMPLETED",
+      result: expect.objectContaining({ outcome: "attention" }),
+    });
+
+    expect((await route(["inv-9: gateway 502"])(request())).status).toBe(207);
+    expect(executions.updateMany.mock.calls[1][0].data).toMatchObject({
+      status: "FAILED",
+      result: expect.objectContaining({ outcome: "partial" }),
+    });
+  });
+
   it("writes a zero-duration CANCELLED held row naming the holder on a 409", async () => {
     const { POST } = cleanupRoute({
       job: "appointment-reminders",
