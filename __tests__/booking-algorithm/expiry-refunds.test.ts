@@ -1,4 +1,7 @@
 /**
+ * @jest-environment node
+ */
+/**
  * PR 2c money fix — the expiry sweep must refund SUCCEEDED payments of
  * expired engagements through the booking front door, and drain the immortal
  * APPROVED-unallocated subscription cohort (audit gaps #1 + #3).

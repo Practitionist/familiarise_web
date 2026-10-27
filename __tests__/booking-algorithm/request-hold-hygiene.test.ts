@@ -1,4 +1,7 @@
 /**
+ * @jest-environment node
+ */
+/**
  * Anti-scalper cap for request-for-approval holds (booking-journey audit B1)
  * and the 48h PENDING-consultation expiry that keeps it honest.
  *
