@@ -75,6 +75,12 @@ function isConfigured(): boolean {
   return Boolean(process.env.SENTRY_API_TOKEN);
 }
 
+/** A Sentry issue-search link for one id: a URL only, never an API call. */
+export function sentrySearchHref(term: string): string {
+  const query = encodeURIComponent(`"${term}"`);
+  return `${SENTRY_WEB_BASE.replace(/\/+$/, "")}/issues/?query=${query}&statsPeriod=90d`;
+}
+
 /**
  * Build the issue-search query.
  *

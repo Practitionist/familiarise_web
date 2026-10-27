@@ -1,6 +1,8 @@
 "use client";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import Link from "next/link";
+import { traceHref } from "@/lib/backoffice/entity-trace-types";
 import { gatewayLabel } from "@/lib/labels/money-labels";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -169,15 +171,23 @@ export function RefundsPage({
 
   const renderRowActions = (refund: Refund) =>
     refund.payment ? (
-      <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-        <a
-          href={`${basePath}/payments/${refund.payment.id}`}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <ExternalLink className="h-4 w-4" />
-        </a>
-      </Button>
+      <span className="flex items-center gap-1">
+        <Button variant="ghost" size="sm" asChild>
+          <Link href={traceHref(basePath, "payment", refund.payment.id)}>
+            Trace
+          </Link>
+        </Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
+          <a
+            href={`${basePath}/payments/${refund.payment.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open the payment in a new tab"
+          >
+            <ExternalLink className="h-4 w-4" />
+          </a>
+        </Button>
+      </span>
     ) : null;
 
   const columns: ResponsiveColumn<Refund>[] = [

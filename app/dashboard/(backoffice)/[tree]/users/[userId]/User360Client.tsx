@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
@@ -20,6 +21,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { traceHref } from "@/lib/backoffice/entity-trace-types";
 import type { User360 } from "@/lib/backoffice/user-360";
 import { ticketStatus } from "@/lib/labels/backoffice-labels";
 import { gatewayLabel } from "@/lib/labels/money-labels";
@@ -155,6 +157,12 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
   const { profile } = data;
   const canModerate = can("users.moderate");
   const canManagePayouts = can("payouts.manage");
+  const canTrace = can("payments.read");
+  const traceLink = (kind: "payment" | "appointment", id: string) => (
+    <Button size="sm" variant="outline" asChild>
+      <Link href={traceHref(basePath, kind, id)}>Trace</Link>
+    </Button>
+  );
 
   const viewDashboard = (facet: "consultant" | "consultee") => (
     <ConfirmDialog
@@ -457,6 +465,11 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
             columns={bookingColumns}
             rows={data.bookings}
             getRowId={(b) => b.id}
+            rowActions={
+              canTrace
+                ? (b) => traceLink("appointment", b.appointment.id)
+                : undefined
+            }
             empty={<Empty>No bookings.</Empty>}
           />
         </Section>
@@ -467,6 +480,9 @@ export function User360Client({ data }: Readonly<{ data: User360 }>) {
             rows={data.payments}
             getRowId={(p) => p.id}
             getRowHref={(p) => `${basePath}/payments/${p.id}`}
+            rowActions={
+              canTrace ? (p) => traceLink("payment", p.id) : undefined
+            }
             empty={<Empty>No payments.</Empty>}
           />
         </Section>
