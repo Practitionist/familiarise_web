@@ -102,6 +102,8 @@ Jobs using calendar windows need a missed-window recovery procedure. A daily win
 
 The money system records amounts in BigInt paise and enforces its journal/leg invariants in Postgres. The ledger audit compares separately maintained projections and external/business facts, stores per-payment findings and persists report checkpoints. Same-day completed reuse is distinct from a fresh operator recheck; reuse must not repeat drift effects. A recent-history-only scan cannot prove old liabilities disappeared. See the [money architecture](./02-money-system-hld.md) and [reconciliation reference](../maintenance/10-cron-and-reconciliation-reference.md).
 
+A wallet drift report freezes spend on the affected account and pages once per account with a weekly reminder. A later audit releases only its own drift-tagged freeze when the cache again equals the journal; an operator-created freeze remains operator-owned. The [job machinery catalog](../maintenance/11-job-machinery-catalog.md) covers current job signals and the dashboard design.
+
 Do not write JavaScript sweeps to re-prove balanced journals, immutable posted ledger entries or payment-leg sums already prevented by constraint triggers. Reconcile Razorpay, Stream, Resend and storage boundaries where the database cannot enforce external truth. The host occurrence exclusion protects only its SQL predicate; tentative holds, co-host/client conflicts, attendee seats and the documented RESCHEDULED occupancy case remain application concerns.
 
 A failed refund attempt is not a separate refund liability. Durable owed markers drive the canonical retry flow; exhausted attempts require classification and an explicit recovery decision. Compare current refundable balance and provider truth before reissue. Likewise, an unsent outbox record is not accepted email or an acknowledged notification. Every email recipient still passes the delivery guard.
@@ -165,7 +167,7 @@ The ticker now dispatches the Stream recording and lifecycle jobs. Their moved A
 | `expire-recordings`, `reconcile-orphaned-recordings`, `wind-down-deactivated-orgs`, `stream-sync`, `expire-event-channels` | Staggered daily windows; `stream-maintenance-background` |
 | `stream-control-plane-drift`, `reconcile-stream-memberships`                                                               | Hourly slices in their configured daily windows          |
 
-The [catalog](../../lib/cron/schedule.ts) owns exact offsets, windows, limits and destinations. The planned dispatch wave is capped by `MAX_TARGETS_PER_TICK=10`; cadence tests examine every tick of a week, and calendar-boundary scenarios remain relevant when changing windows. A wave is not a worker concurrency queue or proof of capacity.
+The [catalog](../../lib/cron/schedule.ts) owns exact offsets, windows, limits and destinations. The schedule has a tested ten-target ceiling (`MAX_TARGETS_PER_TICK=10`). When a wave would exceed it, `dueTargets` yields the checkpointed `reconcile-ledgers` target; it does not generally truncate arbitrary jobs. Cadence tests examine every tick of a week, and calendar-boundary scenarios remain relevant when changing windows. A wave is not a worker concurrency queue or proof of capacity.
 
 Stream-managed recording files have a [two-week source lifetime](https://getstream.io/video/docs/api/recording/storage/). An application's later retention date cannot extend that source lifetime. Copy completion must therefore be measured against each recording's source expiry, even when recent job executions succeeded.
 

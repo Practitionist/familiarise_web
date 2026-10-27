@@ -20,12 +20,14 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 let supplierConfigured = true;
 jest.mock("../../lib/pdf/supplier", () => ({
+  ...jest.requireActual("../../lib/pdf/supplier"),
   getPlatformSupplier: () =>
     supplierConfigured
       ? {
-          name: "Familiarise Technologies Private Limited",
-          gstin: "29AAFCF1234Q1ZN",
-          address: "Koramangala 1st Block, Bangalore, Karnataka 560034, India",
+          name: "Practitionist (OPC) Private Limited",
+          gstin: "06AAFCF1234Q1ZN",
+          address:
+            "T 3 Fl 701, M3M Merlin, Main Gujjar Rd Sec 67, Gurgaon, Gurgaon - 122018, Haryana, India",
           email: "billing@familiarise.test",
         }
       : null,

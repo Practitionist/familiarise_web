@@ -333,3 +333,15 @@ window at all (`overlapsDeclaredIncident` in `lib/booking/session-outcome.ts`);
 the no-show detector claims only `HOST_ABSENT`, and `countExpertStrikes` and
 `readExpertStrikeReview` drop any strike on an appointment that has a session
 overlapping a declared incident, even one recorded before the declaration.
+
+## 12. A doubtful session holds its money for a human
+
+`AWAITING_HUMAN` in `lib/booking/misses.ts` is the one definition of a past
+session that waits for ops: an `INCONCLUSIVE` verdict, a declined consultation
+host no-show, a maintenance-cut call, and a `NOBODY_JOINED` or `OFFLINE` verdict
+on a booking with a `SUCCEEDED` payment on any rail. `auto-complete-appointments`
+will not complete its booking, `release-earnings` keeps its earnings `PENDING`
+(`RELEASABLE_PAYMENT`), and the ops card lists it through `NEEDS_HUMAN`. The only
+exit is `session.set-outcome`; nothing is refunded or released automatically. A
+free session where nobody joined has no money to hold and completes. Widen this
+predicate, never a caller's copy of it.

@@ -6,7 +6,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
 import { reportStandingFinding } from "../../lib/observability/standing-finding";
-import { createSupportTicket } from "../../lib/support/create-ticket";
 import {
   getCallPresenceEvidence,
   type CallPresenceEvidence,
@@ -16,7 +15,6 @@ import {
   CancellationReason,
   PaymentStatus,
   OccurrenceCompletionStatus,
-  SupportIssueType,
   type OccurrenceOutcome,
   type Prisma,
 } from "@prisma/client";
@@ -49,11 +47,7 @@ import {
   transitionOccurrenceCompletion,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import {
-  NO_SHOW_GRACE_MINUTES,
-  attendedAnySession,
-  meetingsOf,
-} from "@/lib/booking/attendance";
+import { NO_SHOW_GRACE_MINUTES } from "@/lib/booking/attendance";
 import {
   classifySessionOutcome,
   type OutageWindow,
@@ -75,11 +69,6 @@ export interface NoShowResult {
    * is a refund that would have been issued wrongly before this check existed.
    */
   contradicted: number;
-  /**
-   * Sessions nobody attended, raised as support tickets rather than decided.
-   * Deliberately not a refund — see `detectBothAbsent`.
-   */
-  bothAbsentTickets: number;
   errors: string[];
   timestamp: string;
 }
@@ -298,14 +287,6 @@ export async function refusalFromStreamEvidence(
   return null;
 }
 
-/**
- * Marks a ticket as this job's, so its idempotency check cannot be satisfied by
- * an unrelated ticket. Matching on `issueType` alone meant a user filing their
- * own technical-issues ticket during the failed call permanently suppressed the
- * escalation — losing it in exactly the case where they had complained.
- */
-const BOTH_ABSENT_TITLE_PREFIX = "Nobody joined the session for";
-
 const REPORTED_SAMPLE_SIZE = 10;
 
 /**
@@ -335,14 +316,7 @@ async function reportOncePerRun(
   );
 }
 
-/**
- * A per-run cache over `getCallPresenceEvidence`.
- *
- * The consultant-fault pass and the both-absent pass examine overlapping
- * candidates — a booking refused on Stream evidence keeps its APPROVED status
- * and is therefore still a candidate for the second pass. Without this its
- * report is fetched twice, and the calls are sequential inside a held cron lock.
- */
+/** A per-run cache over `getCallPresenceEvidence`, so one call id is fetched once inside the held lock. */
 function makePresenceLookup() {
   const cache = new Map<string, Promise<CallPresenceEvidence | null>>();
   return (callId: string) => {
@@ -355,157 +329,6 @@ function makePresenceLookup() {
 }
 
 type PresenceLookup = ReturnType<typeof makePresenceLookup>;
-
-/**
- * What Stream says about a booking's sessions, for the both-absent decision.
- *
- * `sawSomeone` true means our attendance rows are wrong rather than the room
- * being empty — a lost delivery. `evidenceMissing` true means Stream cannot
- * speak for at least one session, so nothing here is safe to conclude.
- */
-async function streamPresenceAcross(
-  sessions: { streamCallId: string }[],
-  lookup: PresenceLookup,
-): Promise<{ sawSomeone: boolean; evidenceMissing: boolean }> {
-  let sawSomeone = false;
-  let evidenceMissing = false;
-  for (const session of sessions) {
-    const evidence = await lookup(session.streamCallId);
-    if (!evidence) {
-      evidenceMissing = true;
-      continue;
-    }
-    if (evidence.unique > 0) sawSomeone = true;
-  }
-  return { sawSomeone, evidenceMissing };
-}
-
-/** A prior case, including a closed one, prevents duplicate automatic intake. */
-async function bothAbsentTicketExists(appointmentId: string): Promise<boolean> {
-  const existing = await prisma.supportCase.findFirst({
-    where: {
-      appointmentId,
-      deletedAt: null,
-      issueType: SupportIssueType.TECHNICAL_ISSUES,
-      title: { startsWith: BOTH_ABSENT_TITLE_PREFIX },
-    },
-    select: { id: true },
-  });
-  return existing !== null;
-}
-
-/**
- * Nobody joined at all — detected, never auto-decided.
- *
- * #1280: there is no both-absent detector, so a consultation where neither
- * party turned up is charged in full, silently, forever — `auto-complete-appointments`
- * then closes it as COMPLETED. It is the failure mode a first angry customer
- * finds.
- *
- * It deliberately does NOT refund. The product copy commits to exactly this:
- * "We deliberately do not automate that decision, because a genuine
- * connectivity failure and a no-show look identical to a script." Two absent
- * parties is precisely the case a script cannot attribute — so this raises a
- * ticket with the evidence and lets a human decide.
- *
- * Stream is consulted for the same reason as the consultant path: our
- * attendance rows are webhook-derived, and "no rows" may mean "no deliveries"
- * rather than "no people". A session Stream saw participants in is not
- * both-absent, whatever our rows say.
- */
-export async function detectBothAbsent(
-  candidates: NoShowCandidate[],
-  errors: string[],
-  lookup: PresenceLookup,
-  run?: { lostDeliveries: string[]; pastDeadline: () => boolean },
-): Promise<number> {
-  let raised = 0;
-  const lostDeliveries = run?.lostDeliveries ?? [];
-
-  for (const consultation of candidates) {
-    if (run?.pastDeadline()) break;
-    try {
-      const consultantUserId =
-        consultation.consultationPlan?.consultantProfile?.userId;
-      const consulteeUserId = consultation.requestedBy?.userId;
-      if (!consultantUserId || !consulteeUserId) continue;
-
-      const sessions = meetingsOf(consultation.appointment?.occurrences ?? []);
-      if (sessions.length === 0) continue;
-
-      const anyoneJoined =
-        attendedAnySession(sessions, consultantUserId) ||
-        attendedAnySession(sessions, consulteeUserId);
-      if (anyoneJoined) continue;
-
-      // Corroborate: no attendance rows is not evidence of an empty room when
-      // the rows come from deliveries that can be lost.
-      const { sawSomeone, evidenceMissing } = await streamPresenceAcross(
-        sessions,
-        lookup,
-      );
-
-      if (sawSomeone) {
-        // Someone WAS there and we have no row for them — a lost delivery, and
-        // this is the only place it becomes visible.
-        lostDeliveries.push(consultation.id);
-        continue;
-      }
-      // Neither our rows nor Stream can speak for this session. Raising a
-      // ticket on no evidence at all would file noise against every session
-      // whose call was never created.
-      if (evidenceMissing) continue;
-
-      // Idempotent: this runs on a cron, and `createSupportTicket` documents
-      // that callers own their own dedup.
-      const appointmentId = consultation.appointment?.id;
-      if (!appointmentId || (await bothAbsentTicketExists(appointmentId)))
-        continue;
-
-      const planTitle = consultation.consultationPlan?.title ?? "consultation";
-      await createSupportTicket({
-        // The consultee carries the financial risk here — they paid and got
-        // nothing — so the ticket belongs to them.
-        userId: consulteeUserId,
-        title: `${BOTH_ABSENT_TITLE_PREFIX} ${planTitle}`,
-        description:
-          `Neither party has a recorded join for this consultation, and Stream ` +
-          `reports no participants on ${sessions.length} session(s).\n\n` +
-          `Consultant: ${consultation.consultationPlan?.consultantProfile?.user?.name ?? consultantUserId}\n` +
-          `Consultee: ${consultation.requestedBy?.user?.name ?? consulteeUserId}\n` +
-          `Stream call ids: ${sessions.map((x) => x.streamCallId).join(", ")}\n\n` +
-          `Raised automatically and deliberately NOT auto-refunded: a genuine ` +
-          `connectivity failure and a no-show are indistinguishable from here. ` +
-          `Needs a human decision on whether to refund.`,
-        priority: "HIGH",
-        issueType: SupportIssueType.TECHNICAL_ISSUES,
-        appointmentId,
-        organizationId: consultation.appointment?.organizationId ?? null,
-        filedBy: "system",
-      });
-      raised++;
-      console.log(
-        `\n🎫 Both-absent ticket raised for consultation ${consultation.id}`,
-      );
-    } catch (error) {
-      const msg = `Both-absent check failed for ${consultation.id}: ${error}`;
-      console.error(`   ❌ ${msg}`);
-      errors.push(msg);
-    }
-  }
-
-  // A drain run collects across its bites and reports once at the end.
-  if (!run) await reportLostDeliveries(lostDeliveries);
-
-  return raised;
-}
-
-function reportLostDeliveries(consultationIds: string[]): Promise<void> {
-  return reportOncePerRun(
-    "Attendance rows missing for a session Stream saw participants in",
-    consultationIds.map((consultationId) => ({ consultationId })),
-  );
-}
 
 // Claim it: CAS active → CANCELLED. This is the idempotency gate — the detection
 // query only reads APPROVED/SCHEDULED, so once flipped a later run (or the
@@ -821,8 +644,6 @@ async function detectConsultantNoShowsUnlocked(
     failures: createRunFailureReporter("bookings"),
   };
   const { errors } = tally;
-  let bothAbsentTickets = 0;
-  // One cache for the whole run: both passes examine overlapping candidates.
   const presence = makePresenceLookup();
 
   const graceCutoff = new Date(Date.now() - NO_SHOW_GRACE_MINUTES * 60 * 1000);
@@ -839,7 +660,6 @@ async function detectConsultantNoShowsUnlocked(
     new Date(graceCutoff.getTime() - 7 * 86_400_000),
   );
   const seen: string[] = [];
-  const lostDeliveries: string[] = [];
 
   // Bite after bite until a short cohort or the drain deadline; the cron lock
   // is held by the caller for the whole loop.
@@ -864,17 +684,6 @@ async function detectConsultantNoShowsUnlocked(
         await handleNoShowCandidate(consultation, outages, presence, tally);
       }
 
-      // Runs after the consultant-fault pass so a session it already cancelled is
-      // no longer a candidate here — the query only reads APPROVED/SCHEDULED.
-      bothAbsentTickets += await detectBothAbsent(
-        candidates,
-        errors,
-        presence,
-        {
-          lostDeliveries,
-          pastDeadline,
-        },
-      );
       if (candidates.length < maxCandidates) break;
     }
   } finally {
@@ -883,14 +692,12 @@ async function detectConsultantNoShowsUnlocked(
       "Consultant no-show refused on Stream evidence",
       tally.refusals,
     );
-    await reportLostDeliveries(lostDeliveries);
   }
 
   console.log("\n📊 No-Show Summary:");
   console.log(`   Detected: ${tally.detected}`);
   console.log(`   Refunded: ${tally.refunded}`);
   console.log(`   Refused on Stream evidence: ${tally.contradicted}`);
-  console.log(`   Both-absent tickets raised: ${bothAbsentTickets}`);
   if (errors.length > 0) {
     console.log("\n⚠️ Errors:");
     errors.forEach((e) => console.log(`   - ${e}`));
@@ -901,7 +708,6 @@ async function detectConsultantNoShowsUnlocked(
     detected: tally.detected,
     refunded: tally.refunded,
     contradicted: tally.contradicted,
-    bothAbsentTickets,
     errors,
     timestamp: new Date().toISOString(),
   };

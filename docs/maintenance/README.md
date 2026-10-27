@@ -32,6 +32,7 @@ Activation never implicitly cancels bookings. Cancellation requires a separate e
 | [08 — SDK updates](./08-sdk-update-guide.md)                              | Package-specific verification guidance                                          |
 | [09 — Further work](./09-future-improvements.md)                          | Proposals; check current source before treating an item as outstanding          |
 | [10 — Cron and reconciliation](./10-cron-and-reconciliation-reference.md) | Dispatch/status contracts, sidecars, ledger checkpoints and host concerns       |
+| [11 — Job machinery and dashboard](./11-job-machinery-catalog.md)         | Current job signals, lease/retry contracts and the operations dashboard design  |
 | [Schedule catalog](./schedule-catalog.md)                                 | Catalog ownership and generated documentation                                   |
 | [Bounded housekeeping](./housekeeping-bounds.md)                          | Retention eligibility, per-phase limits and continuation semantics              |
 | [Compliance/retention workers](./compliance-retention-workers.md)         | Consent retention, durable breach staging and event history                     |

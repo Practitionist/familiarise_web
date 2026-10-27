@@ -80,7 +80,7 @@ function makeWorld(legPaise: number) {
       }),
     },
     ledgerAccount: {
-      upsert: jest.fn(async ({ where }: { where: { id: string } }) => where),
+      createMany: jest.fn(async () => ({ count: 0 })),
     },
     paymentLeg: {
       findMany: jest.fn(async () => [{ ...leg }]),

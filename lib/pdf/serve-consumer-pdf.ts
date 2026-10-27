@@ -20,7 +20,11 @@ import {
   uploadInvoicePdf,
   createInvoicePdfSignedUrl,
 } from "@/lib/pdf/storage";
-import { getPlatformSupplier, type PlatformSupplier } from "@/lib/pdf/supplier";
+import {
+  SUPPLIER_UNAVAILABLE_MESSAGE,
+  getPlatformSupplier,
+  type PlatformSupplier,
+} from "@/lib/pdf/supplier";
 
 /** 24h — matches the signed-URL TTL, so a cached path always re-signs cleanly. */
 const PDF_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -76,8 +80,7 @@ export async function serveConsumerPdf<TDoc extends ConsumerPdfDocument>(
   if (!supplier) {
     return NextResponse.json(
       {
-        error:
-          "PLATFORM_GSTIN is not configured; the platform cannot issue statutory documents.",
+        error: SUPPLIER_UNAVAILABLE_MESSAGE,
         code: "SUPPLIER_GSTIN_UNCONFIGURED",
       },
       { status: 503 },

@@ -173,7 +173,8 @@ export const sendPasswordResetEmail = defineDirectEmailSender<{
   userId?: string;
   invite?: boolean;
 }>(({ email, name, token, userId, invite = false }) => ({
-  emailType: "PASSWORD_RESET",
+  // Its own cap bucket, so password-reset floods cannot spend the invitation's.
+  emailType: invite ? "STAFF_INVITE" : "PASSWORD_RESET",
   element: PasswordResetEmail({
     name,
     resetLink: `${getAppUrl()}/auth/reset-password?token=${encodeURIComponent(token)}`,

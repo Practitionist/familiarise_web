@@ -27,7 +27,7 @@ export interface RateLimitRedis {
 // INCR and the first-hit PEXPIRE run as one script, so a counter can never be
 // left without a TTL (which would block its key for good) and concurrent
 // requests cannot both pass on a stale read.
-const CONSUME_SCRIPT = `
+export const CONSUME_SCRIPT = `
 local count = redis.call("INCR", KEYS[1])
 if count == 1 then
 redis.call("PEXPIRE", KEYS[1], ARGV[1])
@@ -36,11 +36,11 @@ return count
 `;
 
 // A slow Upstash must not stall sign-in; past this the request is let through.
-const STORE_TIMEOUT_MS = 500;
+export const STORE_TIMEOUT_MS = 500;
 
 const LOOPBACK = new Set(["127.0.0.1", "::1"]);
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(

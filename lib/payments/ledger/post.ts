@@ -14,8 +14,8 @@ import type { PrismaLike } from "@/lib/prisma";
  *
  * Accounts resolve on demand to a DETERMINISTIC id
  * (`<kind>|<orgId|_>|<membershipId|_>|<currency>`) so concurrent posts to the
- * same scope dedupe via upsert — sidestepping the Postgres nullable-unique
- * gotcha (a unique index does not dedupe NULLs).
+ * same scope dedupe on the primary key — sidestepping the Postgres
+ * nullable-unique gotcha (a unique index does not dedupe NULLs).
  *
  * Idempotency: `LedgerTransaction.idempotencyKey` is `@unique`; a retry with the
  * same key is a no-op. Safe to call inside an existing `$transaction` (pass the
@@ -75,29 +75,35 @@ export class LedgerImbalanceError extends Error {
   }
 }
 
-/** Deterministic account id for a scope. Stable across calls → upsert dedupes. */
+/** Deterministic account id for a scope; stable across calls, so inserts dedupe on the key. */
 export function ledgerAccountId(ref: AccountRef): string {
   const currency = ref.currency ?? "INR";
   return `${ref.kind}|${ref.organizationId ?? "_"}|${ref.consultantProfileId ?? "_"}|${currency}`;
 }
 
-async function resolveAccountId(
+/**
+ * Ensures every distinct account of one transaction exists in a single insert,
+ * in id order so concurrent posters lock new rows in the same order. The
+ * entries' foreign key is what proves each account exists.
+ */
+async function ensureAccounts(
   db: PrismaLike,
-  ref: AccountRef,
-): Promise<string> {
-  const id = ledgerAccountId(ref);
-  await db.ledgerAccount.upsert({
-    where: { id },
-    create: {
-      id,
-      kind: ref.kind,
-      organizationId: ref.organizationId ?? null,
-      consultantProfileId: ref.consultantProfileId ?? null,
-      currency: ref.currency ?? "INR",
-    },
-    update: {},
+  refs: readonly AccountRef[],
+): Promise<string[]> {
+  const byId = new Map(refs.map((ref) => [ledgerAccountId(ref), ref]));
+  await db.ledgerAccount.createMany({
+    data: [...byId]
+      .sort(([a], [b]) => Number(a > b) - Number(a < b))
+      .map(([id, ref]) => ({
+        id,
+        kind: ref.kind,
+        organizationId: ref.organizationId ?? null,
+        consultantProfileId: ref.consultantProfileId ?? null,
+        currency: ref.currency ?? "INR",
+      })),
+    skipDuplicates: true,
   });
-  return id;
+  return refs.map(ledgerAccountId);
 }
 
 /**
@@ -152,12 +158,10 @@ export async function postLedgerTxn(
     return { transactionId: existing.id, created: false };
   }
 
-  // Sequential: resolveAccountId upserts on `tx`; Promise.all here issues
-  // concurrent writes on the single PG_POOL_MAX=1 connection (#1435).
-  const accountIds: string[] = [];
-  for (const p of input.postings) {
-    accountIds.push(await resolveAccountId(db, p.account));
-  }
+  const accountIds = await ensureAccounts(
+    db,
+    input.postings.map((p) => p.account),
+  );
 
   let txn: { id: string };
   try {

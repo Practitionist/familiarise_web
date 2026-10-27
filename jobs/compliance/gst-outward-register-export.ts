@@ -35,7 +35,11 @@ import {
   mintConsumerInvoice,
 } from "@/lib/payments/billing/consumer-invoice";
 import { uploadPrivateFinanceObject } from "@/lib/storage/private-finance-object";
-import { getPlatformSupplier } from "@/lib/pdf/supplier";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
+import {
+  SUPPLIER_UNAVAILABLE_MESSAGE,
+  getPlatformSupplier,
+} from "@/lib/pdf/supplier";
 import {
   previousIstCalendarMonthStart,
   nextMonthStart,
@@ -99,11 +103,16 @@ async function ensureConsumerInvoicesForPeriod(
   let minted = 0;
   let skipped = 0;
   for (const candidate of candidates) {
-    const result = await prisma.$transaction((tx) =>
-      mintConsumerInvoice(tx, { paymentId: candidate.id }),
-    );
-    if (result.consumerInvoiceId) minted += 1;
-    else skipped += 1;
+    try {
+      const result = await prisma.$transaction((tx) =>
+        mintConsumerInvoice(tx, { paymentId: candidate.id }),
+      );
+      if (result.consumerInvoiceId) minted += 1;
+      else skipped += 1;
+    } catch (error) {
+      // Another minter won this payment; its number rolled back with the loser.
+      if (!isUniqueViolationOn(error, "paymentId")) throw error;
+    }
   }
   return { minted, skipped };
 }
@@ -322,9 +331,7 @@ export async function runGstOutwardRegisterExport(opts: {
   // would read as a month with no B2C supplies — a silent understatement
   // rather than a visible failure.
   if (!getPlatformSupplier()) {
-    throw new Error(
-      "PLATFORM_GSTIN is not configured; the platform cannot issue statutory documents.",
-    );
+    throw new Error(SUPPLIER_UNAVAILABLE_MESSAGE);
   }
   // Fail-CLOSED, unlike the read-only compliance drafts. The healer inside
   // allocates numbers from a gapless statutory series, and two concurrent

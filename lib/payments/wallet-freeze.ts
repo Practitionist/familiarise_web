@@ -11,8 +11,9 @@
  *   - the freeze KEY is the indexed `correlationId` = `wallet-freeze:<billingAccountId>`,
  *   - the current state is the category of the LATEST event under that key
  *     (WALLET_FREEZE → frozen, WALLET_UNFREEZE → cleared).
- * FREEZE is set by the reconcile job; UNFREEZE is a manual ops action once the
- * drift is fixed. The check is a single indexed DB read inside the caller's tx,
+ * FREEZE is set by the reconcile job or an ops door; UNFREEZE is an ops action,
+ * or the reconcile job lifting its own drift-tagged FREEZE once the cache equals
+ * the journal again. The check is a single indexed DB read inside the caller's tx,
  * so it fails CLOSED — an unreadable log blocks the spend rather than leaking it.
  *
  * #1205-triage — these writes are ERROR-PROPAGATING, unlike recordSystemEvent
@@ -26,13 +27,18 @@
  */
 
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 
 import prisma from "@/lib/prisma";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 
 const FREEZE_CATEGORY = "WALLET_FREEZE";
 const UNFREEZE_CATEGORY = "WALLET_UNFREEZE";
 const freezeKey = (billingAccountId: string) =>
   `wallet-freeze:${billingAccountId}`;
+/** Marks a FREEZE written by the reconcile drift response; only these auto-release. */
+const DRIFT_FREEZE_SOURCE = "reconcile-drift";
+const freezeContextSchema = z.object({ source: z.string().optional() });
 
 export class WalletFrozenError extends Error {
   public readonly httpStatus = 409;
@@ -66,7 +72,12 @@ interface FreezeWriteParams {
   organizationId?: string | null;
 }
 
-function freezeEventData(params: FreezeWriteParams & { reason: string }) {
+type FreezeParams = FreezeWriteParams & {
+  reason: string;
+  source?: typeof DRIFT_FREEZE_SOURCE;
+};
+
+function freezeEventData(params: FreezeParams) {
   return {
     organizationId: params.organizationId ?? null,
     category: FREEZE_CATEGORY,
@@ -75,6 +86,7 @@ function freezeEventData(params: FreezeWriteParams & { reason: string }) {
     context: {
       billingAccountId: params.billingAccountId,
       reason: params.reason,
+      ...(params.source ? { source: params.source } : {}),
     } as Prisma.InputJsonObject,
     correlationId: freezeKey(params.billingAccountId),
   };
@@ -84,20 +96,15 @@ function freezeEventData(params: FreezeWriteParams & { reason: string }) {
  *  Write failures PROPAGATE (see #1205-triage note above); the reconcile job's
  *  own error handling pages on them. Returns true when it wrote a new event. */
 export async function freezeWalletSpend(
-  params: FreezeWriteParams & {
-    reason: string;
-  },
+  params: FreezeParams,
 ): Promise<boolean> {
   if (await isWalletFrozen(prisma, params.billingAccountId)) return false;
   await prisma.systemEvent.create({ data: freezeEventData(params) });
   return true;
 }
 
-/** Unfreeze wallet spend for one account — the manual ops action the header
- *  above documents. Until this writer existed, a freeze was unrecoverable
- *  except by hand-inserting a SystemEvent row via raw SQL: the fail-closed
- *  read blocked every checkout for the org forever. Admin-gated route at
- *  app/api/admin/billing-accounts/[billingAccountId]/unfreeze.
+/** Unfreeze wallet spend for one account; called by the admin unfreeze door
+ *  and by `releaseReconciledWalletFreezes`.
  *
  *  #1205-triage — atomic under Serializable: the frozen-check and the
  *  UNFREEZE write share one tx, so a reconciler re-freezing concurrently
@@ -109,12 +116,19 @@ export async function unfreezeWalletSpend(
   params: FreezeWriteParams & {
     actorUserId: string;
     reason: string;
+    /** Release only while this drift FREEZE is still the account's latest event. */
+    expectedDriftFreezeId?: string;
   },
 ): Promise<boolean> {
   try {
     return await prisma.$transaction(
       async (tx) => {
-        if (!(await isWalletFrozen(tx, params.billingAccountId))) return false;
+        const releasable = params.expectedDriftFreezeId
+          ? (await latestDriftFreezeIds(tx, [params.billingAccountId])).get(
+              params.billingAccountId,
+            ) === params.expectedDriftFreezeId
+          : await isWalletFrozen(tx, params.billingAccountId);
+        if (!releasable) return false;
         await tx.systemEvent.create({
           data: {
             organizationId: params.organizationId ?? null,
@@ -180,6 +194,7 @@ export async function freezeDriftedWallets(
         billingAccountId: f.billingAccountId,
         organizationId: f.organizationId ?? null,
         reason: `ledger reconcile ${report.id}: wallet cache ${f.actualPaise}p ≠ journal ${f.expectedPaise}p (Δ${f.deltaPaise}p)`,
+        source: DRIFT_FREEZE_SOURCE,
       });
       frozen.push({
         billingAccountId: f.billingAccountId,
@@ -200,4 +215,73 @@ export async function freezeDriftedWallets(
     );
   }
   return frozen;
+}
+
+export interface WalletAccountRef {
+  billingAccountId: string;
+  organizationId: string | null;
+  /** The drift FREEZE that is the account's latest event in the reading snapshot, if any. */
+  driftFreezeId: string | null;
+}
+
+/**
+ * Per account, the id of its latest freeze event when that event is a FREEZE
+ * the reconcile drift response wrote. Ops freezes and untagged freezes are absent.
+ */
+export async function latestDriftFreezeIds(
+  db: Pick<typeof prisma, "systemEvent">,
+  billingAccountIds: readonly string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (billingAccountIds.length === 0) return out;
+  const events = await db.systemEvent.findMany({
+    where: {
+      correlationId: { in: billingAccountIds.map(freezeKey) },
+      category: { in: [FREEZE_CATEGORY, UNFREEZE_CATEGORY] },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, correlationId: true, category: true, context: true },
+  });
+  const seen = new Set<string>();
+  for (const e of events) {
+    if (!e.correlationId || seen.has(e.correlationId)) continue;
+    seen.add(e.correlationId);
+    const source = freezeContextSchema.safeParse(e.context).data?.source;
+    if (e.category === FREEZE_CATEGORY && source === DRIFT_FREEZE_SOURCE) {
+      out.set(e.correlationId.slice("wallet-freeze:".length), e.id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Lifts a drift freeze the reconcile snapshot saw as latest on an account whose
+ * cache equals its journal; the CAS re-checks that event inside the unfreeze.
+ * A failed release leaves spend frozen and reports once per call.
+ */
+export async function releaseReconciledWalletFreezes(
+  reportId: string,
+  inSync: readonly WalletAccountRef[],
+): Promise<string[]> {
+  const released: string[] = [];
+  const failures = createRunFailureReporter("payments");
+  for (const account of inSync) {
+    if (!account.driftFreezeId) continue;
+    try {
+      const applied = await unfreezeWalletSpend({
+        billingAccountId: account.billingAccountId,
+        organizationId: account.organizationId,
+        actorUserId: "SYSTEM",
+        reason: `ledger reconcile ${reportId}: wallet cache equals journal`,
+        expectedDriftFreezeId: account.driftFreezeId,
+      });
+      if (applied) released.push(account.billingAccountId);
+    } catch (err) {
+      failures.add("wallet-freeze.auto-release", err, {
+        billingAccountId: account.billingAccountId,
+      });
+    }
+  }
+  failures.flush();
+  return released;
 }
