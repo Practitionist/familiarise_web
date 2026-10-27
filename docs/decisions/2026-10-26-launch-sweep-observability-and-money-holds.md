@@ -179,7 +179,7 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
 
 ### ADR-13. The operations console has four levels, audited controls, an integrity panel and a per-item run log
 
-- **Status:** Accepted on 2026-10-27. The design is recorded in #2424 and will be built in a later session.
+- **Status:** Accepted on 2026-10-27. The design is recorded in #2424. **Status note, 2026-10-27:** Phase 1 ("record the truth") is implemented. It covers the real outcome vocabulary (`completed`, `partial`, `failed`, `held`, `skipped`, `refused`, `paused`), the stored summary, `itemsProcessed` and `errorCount`, zero-duration rows for held, refused and skipped runs, the per-run counters, the run id and tick id (`job_run_id` Sentry tag, `context.jobRunId` on system events, `x-tick-id`), a watched tier of 16 money SLOs, the registry-driven in-process admin Run door, and the retention jobs moved to the ticker. Phases 2 and 3 (the controls, the Overview, the per-item table and the detail pages) remain to be built.
 - **Context:** Today's System Jobs page is a grid of Run Now buttons plus the last ten runs, and every run there reads "Completed". The job machinery catalog (document 11 in `docs/maintenance`) shows why: a run row records only a narrow result. Partial runs, failed runs and config skips can still be stored as COMPLETED. Held runs and skipped runs leave no row at all. Nothing links a run to the payments, refunds or payouts it touched. Operators therefore cannot answer the root-cause questions that support needs answered, such as which run tried a given refund, what the gateway said, and whether the refund is stuck.
 - **Decision:**
   - **Four levels in the back-office:**

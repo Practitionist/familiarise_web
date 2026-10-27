@@ -1,6 +1,6 @@
 # Job history and messaging retention
 
-`pruneSystemJobExecutions` in `scripts/cleanup/prune-system-job-executions.ts` owns job-history retention and messaging payload/history cleanup. The registered `prune-system-job-executions` cleanup route and the existing daily Actions entrypoint call this same implementation. This worker does not deliver messages, replay dead letters, or change a retention window.
+`pruneSystemJobExecutions` in `scripts/cleanup/prune-system-job-executions.ts` owns job-history retention and messaging payload/history cleanup. The registered `prune-system-job-executions` cleanup route, driven by the ticker, and the admin System Jobs door call this same implementation. This worker does not deliver messages, replay dead letters, or change a retention window.
 
 | Cohort                                             | Existing policy                                 | Write condition                                                                |
 | -------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------ |
@@ -24,7 +24,7 @@ A fixed 16-second start budget is passed from the HTTP request or batch driver
 through the core, including setup and lease admission. Every batch slice reuses
 the original start time rather than starting a new budget. Before starting a read or write, the worker checks the deadline. Unattempted phases report continuation. An already-running SQL statement can outlive that deadline; database query/connection timeouts and runtime limits still apply. Row bounds and a start budget are not a measured latency guarantee.
 
-The existing Actions entrypoint requests up to 40 slices of 500 within its own 16-second start budget, stopping when drained or when a slice makes no progress. It logs each slice. It does not sleep, spawn another worker, or silently drain forever. A SQL failure propagates to the route/runner; an incomplete cohort remains discoverable on a later invocation. Repeated daily throughput and oldest-eligible age still need deployment observation before a scheduler handoff.
+Each ticker request runs one bounded slice (`?limit=500`, at most 500 rows per phase) within a 16-second start budget, and `hasMore` reports a remaining backlog for the next slice. It does not sleep, spawn another worker, or silently drain forever. A SQL failure propagates to the route/runner; an incomplete cohort remains discoverable on a later invocation. Repeated daily throughput and oldest-eligible age still need deployment observation before a scheduler handoff.
 
 ## Replay, concurrency and crashes
 
@@ -38,7 +38,7 @@ The six-hour check detects a missing lease heartbeat. Marking an execution `FAIL
 
 ## Ownership and validation
 
-The configured automatic owner remains `.github/workflows/cron-daily.yml`; no ticker target is enabled by this change. Non-money Actions jobs are currently budget-blocked and not running; the cron expression is not evidence of execution. Use the existing authenticated operator door until workflow capacity is restored or a scheduler cutover is reviewed. A later transfer to the ticker must remove the old automatic owner in the same reviewed cutover and verify completion and backlog age after deployment. CI/CD remains a separate responsibility from runtime maintenance scheduling.
+The automatic owner is the ticker target `prune-system-job-executions` (every 30 minutes at offset 25, in the 20:00 to 23:30 UTC window, limit 500). The daily Actions step and the `jobs/cleanup` wrapper were removed in the same change, so there is one clock. Verify completion and backlog age after deployment. CI/CD remains a separate responsibility from runtime maintenance scheduling.
 
 Mock tests cover row bounds, invalid limits, unchanged retention windows, eligibility in final writes, heartbeat renewal, and retry after a later-phase failure. `__tests__/db/messaging-retention.db.test.ts` exercises a real blocked-delete/replay interleaving, legacy timestamp preservation, and multi-slice progress. Its guard permits only a disposable localhost `/ci` database with `CI=true`; never point it at the shared database.
 

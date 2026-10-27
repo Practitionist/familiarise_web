@@ -1,6 +1,6 @@
 # Compliance and event-retention workers
 
-The cleanup registry exposes consent-retention-sweeper, databreach-deadline-alerts and prune-system-events. The authenticated cleanup route and ADMIN System Jobs door call the same leased domain implementations. The existing Actions fleet steps remain their automatic scheduling owner; this change does not enable ticker targets. Non-money Actions jobs are currently budget-blocked and not running. Use the authenticated operator door until capacity is restored or a scheduler cutover is reviewed, and verify actual completion independently.
+The cleanup registry exposes consent-retention-sweeper, databreach-deadline-alerts and prune-system-events. The authenticated cleanup route and ADMIN System Jobs door call the same leased domain implementations. The existing Actions fleet steps remain the automatic scheduling owner of the consent and breach workers; `prune-system-events` is a ticker target (hourly at offset 10, in the 20:00 to 23:30 UTC window, limit 500) and its Actions step was removed. Non-money Actions jobs are currently budget-blocked and not running. Use the authenticated operator door until capacity is restored or a scheduler cutover is reviewed, and verify actual completion independently.
 
 ## Consent and event retention
 
