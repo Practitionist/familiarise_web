@@ -87,8 +87,8 @@ export async function lockPayableInvoice(
 ): Promise<boolean> {
   const locked = await tx.organizationInvoice.updateMany({
     where: { id: invoiceId, status: { in: [...PAYABLE_STATUSES] } },
-    // A stale order was minted for the old outstanding; the next /pay mints afresh.
-    data: { providerPaymentOrderId: null },
+    // A row lock must not erase the only reference to an unobserved capture.
+    data: { updatedAt: new Date() },
   });
   return locked.count === 1;
 }
@@ -123,9 +123,11 @@ export async function settleOrgInvoicePaid(
     data: {
       status: "PAID",
       paidAt,
-      providerPaymentOrderId: null,
       ...(args.providerPaymentId
-        ? { providerPaymentId: args.providerPaymentId }
+        ? {
+            providerPaymentId: args.providerPaymentId,
+            providerPaymentOrderId: null,
+          }
         : {}),
     },
   });
