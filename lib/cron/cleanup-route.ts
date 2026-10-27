@@ -25,7 +25,7 @@ import {
   schedulerTrigger,
   withRunContext,
 } from "@/lib/cron/run-context";
-import { routeOutcome } from "@/lib/cron/run-outcome";
+import { routeOutcome, type RunOutcome } from "@/lib/cron/run-outcome";
 import { recordRouteRun, type RouteRunRecord } from "@/lib/cron/run-record";
 
 /**
@@ -176,6 +176,8 @@ interface CleanupExecutionResult {
   status: number;
   ok: boolean;
   outcome: JobOutcome;
+  /** The outcome recorded on the run row; absent when the caller was refused before running. */
+  runOutcome?: RunOutcome;
 }
 
 type RunVerdict = Omit<RouteRunRecord, "jobName" | "httpStatus">;
@@ -390,16 +392,14 @@ export function cleanupRoute<T extends object>(
         : statusFor(result, flagged);
       const findingsOnly =
         flagged && jobOutcome(result) === "success" && !hasItemFailures(result);
-      await record({
-        ...routeOutcome(result, responseStatus, findingsOnly),
-        httpStatus: responseStatus,
-        summary,
-      });
+      const verdict = routeOutcome(result, responseStatus, findingsOnly);
+      await record({ ...verdict, httpStatus: responseStatus, summary });
       return {
         body: result,
         status: responseStatus,
         ok: responseStatus < 500,
         outcome: status ? outcomeOfStatus(responseStatus) : jobOutcome(result),
+        runOutcome: verdict.outcome,
       };
     } catch (error) {
       if (isPoolExhaustion(error)) noteCounter("poolTimeout");
@@ -409,7 +409,7 @@ export function cleanupRoute<T extends object>(
       const lockJob = error instanceof CronLockHeldError ? error.jobName : job;
       if (verdict)
         await record({ ...verdict, httpStatus: failure.status }, lockJob);
-      return failure;
+      return { ...failure, runOutcome: verdict?.outcome ?? "failed" };
     }
   }
 
@@ -440,7 +440,12 @@ export function cleanupRoute<T extends object>(
         }
         return NextResponse.json(outcome.body, {
           status: outcome.status,
-          headers: { "X-Job-Outcome": outcome.outcome },
+          headers: {
+            "X-Job-Outcome": outcome.outcome,
+            ...(outcome.runOutcome
+              ? { "X-Run-Outcome": outcome.runOutcome }
+              : {}),
+          },
         });
       },
     );

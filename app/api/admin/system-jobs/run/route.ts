@@ -24,7 +24,7 @@ import {
   CLEANUP_JOB_BUILDERS,
   getCleanupJobHandlers,
 } from "@/lib/cron/cleanup-registry";
-import { jobOutcomeSchema } from "@/lib/cron/job-outcome";
+import { runOutcomeSchema } from "@/lib/cron/run-outcome";
 import { withRunContext } from "@/lib/cron/run-context";
 import {
   isWindowedTarget,
@@ -40,7 +40,15 @@ const runJobSchema = z.object({
 
 const bodySchema = z.record(z.string(), z.unknown()).catch({});
 
-type RunStatus = "ACCEPTED" | "SUCCEEDED" | "FAILED";
+type RunStatus =
+  | "ACCEPTED"
+  | "SUCCEEDED"
+  | "PARTIAL"
+  | "FAILED"
+  | "HELD"
+  | "SKIPPED"
+  | "REFUSED"
+  | "PAUSED";
 
 /**
  * One bounded slice: the ticker's own limit and, for a calendar-windowed job,
@@ -59,12 +67,28 @@ function manualRunRequest(slug: string, now: Date): NextRequest | null {
   return new NextRequest(url, { method: "POST" });
 }
 
+/** The audit status follows the outcome the run row recorded, so a 207 with failed items is PARTIAL. */
 function runStatusOf(res: NextResponse): RunStatus {
   if (res.status === 202) return "ACCEPTED";
-  const outcome = jobOutcomeSchema.safeParse(res.headers.get("x-job-outcome"));
-  return res.status < 300 && outcome.success && outcome.data === "success"
-    ? "SUCCEEDED"
-    : "FAILED";
+  const parsed = runOutcomeSchema.safeParse(res.headers.get("x-run-outcome"));
+  if (!parsed.success) return "FAILED";
+  switch (parsed.data) {
+    case "completed":
+    case "attention":
+      return "SUCCEEDED";
+    case "partial":
+      return "PARTIAL";
+    case "failed":
+      return "FAILED";
+    case "held":
+      return "HELD";
+    case "skipped":
+      return "SKIPPED";
+    case "refused":
+      return "REFUSED";
+    case "paused":
+      return "PAUSED";
+  }
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {

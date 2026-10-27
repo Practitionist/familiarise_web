@@ -166,3 +166,31 @@ it("repeats a windowed job's latest due window and refuses when none has come du
   expect(await refused.json()).toMatchObject({ code: "NO_DUE_WINDOW" });
   expect(invoke).toHaveBeenCalledTimes(1);
 });
+
+it.each([
+  ["partial", 207, "PARTIAL"],
+  ["attention", 207, "SUCCEEDED"],
+  ["held", 409, "HELD"],
+])("audits a %s run as %s", async (runOutcome, httpStatus, auditStatus) => {
+  const handlers = registry.getCleanupJobHandlers("reconcile-refunds");
+  if (!handlers) throw new Error("reconcile-refunds is not registered");
+  jest.spyOn(handlers, "invoke").mockResolvedValueOnce(
+    NextResponse.json(
+      {},
+      {
+        status: Number(httpStatus),
+        headers: {
+          "X-Job-Outcome": "success",
+          "X-Run-Outcome": String(runOutcome),
+        },
+      },
+    ),
+  );
+  await post(request("reconcile-refunds"));
+  expect(audit).toHaveBeenCalledWith(
+    {},
+    expect.objectContaining({
+      after: { status: auditStatus, httpStatus },
+    }),
+  );
+});

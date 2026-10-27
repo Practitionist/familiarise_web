@@ -381,7 +381,9 @@ describe("cleanupRoute run record", () => {
       status: () => 207,
     });
 
-    expect((await POST(request())).status).toBe(207);
+    const res = await POST(request());
+    expect(res.status).toBe(207);
+    expect(res.headers.get("x-run-outcome")).toBe("partial");
     expect(executions.updateMany).toHaveBeenCalledWith({
       where: {
         id: "exec-1",
