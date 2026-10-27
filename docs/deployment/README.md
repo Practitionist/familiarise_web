@@ -20,8 +20,8 @@
 
 Netlify is the current verified compute host. Every commit merged to `dev` and `prod` must preserve compatibility with Netlify and a future active Mumbai host. A prebuilt hot standby and the `< 90s` traffic restoration objective require deployment and drill evidence; configuration in this repository alone does not prove either:
 
-1. **Authoritative DNS Decoupled on Cloudflare (`T - 72h` Rule)**:
-   - Authoritative nameservers must reside on neutral **Cloudflare DNS**, never coupled to the compute host's proprietary DNS (`ns1.p0*.nsone.net` `NETLIFY` pseudo-records).
+1. **Authoritative DNS Decoupled on Cloudflare (`T - 72h` Rule, planned)**:
+   - Today `familiarisenow.com` uses Netlify DNS (see [Domains and DNS records](#domains-and-dns-records)), whose `NETLIFY` pseudo-records only work while Netlify hosts the site. Before any traffic cutover to another host, authoritative nameservers must move to neutral **Cloudflare DNS**.
    - Never delete custom domains (`familiarisenow.com`, `www.familiarisenow.com`, `familiarise.in`, `dev.familiarisenow.com`) from standby Netlify (`Domain management`).
 2. **Platform-Scoped Client IP Header Trust (`lib/request-ip.ts`)**:
    - Trust `x-nf-client-connection-ip` **only** when `process.env.NETLIFY === "true"`. Outside Netlify, external clients can spoof `x-nf-client-connection-ip` to bypass Upstash and BetterAuth rate limits.
@@ -38,8 +38,52 @@ Netlify is the current verified compute host. Every commit merged to `dev` and `
 
 ---
 
+## Domains and DNS records
+
+This is the one inventory of domains, registrars, nameservers and mail records. Other docs link here instead of copying it. It was changed and verified on 2026-10-28 through the Netlify DNS API, and checked with `dig` against `dns1.p06.nsone.net`.
+
+| Domain               | Registrar (expires)  | Nameservers                                                   | Mail                                                  |
+| :------------------- | :------------------- | :------------------------------------------------------------ | :---------------------------------------------------- |
+| `familiarisenow.com` | GoDaddy (2027-01-13) | Netlify DNS (NS1: `dns1.p06.nsone.net`, `dns2.p06.nsone.net`) | Send-only through Resend. Receives no mail (null MX). |
+| `practitionist.com`  | GoDaddy (2027-02-02) | GoDaddy DNS (`domaincontrol.com`)                             | GoDaddy-hosted mailboxes `dipankar@` and `connect@`.  |
+
+The registrar only holds the registration and the nameserver delegation. For `familiarisenow.com`, every record is edited in the Netlify zone, never in GoDaddy.
+
+### `familiarisenow.com` zone (Netlify DNS)
+
+| Host                              | Type    | Value                                                          | Purpose                                                                                   |
+| :-------------------------------- | :------ | :------------------------------------------------------------- | :---------------------------------------------------------------------------------------- |
+| `@`, `www`, `dev`, `*` (wildcard) | NETLIFY | `familiarise.netlify.app`                                      | Production site, `www`, the dev branch deploy and any other subdomain.                    |
+| `@`                               | TXT     | `v=spf1 -all`                                                  | No server may send mail as the bare domain, so a spoofed `@familiarisenow.com` fails SPF. |
+| `@`                               | MX      | `0 .` (null MX, RFC 7505)                                      | States that the domain accepts no mail, so senders stop retrying.                         |
+| `_dmarc`                          | TXT     | `v=DMARC1; p=none; rua=mailto:connect@practitionist.com; fo=1` | Monitor-only policy. Aggregate reports go to the one live mailbox.                        |
+| `resend._domainkey.<sub>`         | TXT     | Resend DKIM public key                                         | Signs mail from `<sub>`.                                                                  |
+| `send.<sub>`                      | MX      | `10 feedback-smtp.ap-northeast-1.amazonses.com`                | Return-Path bounce handling.                                                              |
+| `send.<sub>`                      | TXT     | `v=spf1 include:amazonses.com ~all`                            | SPF for the envelope sender.                                                              |
+| `rsend.<sub>`                     | CNAME   | `send.forge.rmta.net`                                          | Resend tracking host.                                                                     |
+
+`<sub>` is `mail` (transactional) or `news` (newsletter and waitlist). Both are verified in Resend region `ap-northeast-1` with sending on and receiving off, and all four records per subdomain are live.
+
+Because `familiarisenow.com` has no mailbox, every human-facing address resolves to `connect@practitionist.com` through `SUPPORT_EMAIL` in `lib/company.ts`. The `practitionist.com` apex `A` record points at Netlify's load balancer `75.2.60.5`. Its mail records are `secureserver.net` MX, SPF `include:secureserver.net -all`, and a DMARC record at `p=none` with no `rua`.
+
+### DMARC rollout
+
+The policy stays at `p=none` for about two weeks while the aggregate reports are read, then moves to `quarantine`, then to `reject`. Moving it is a single TXT edit in the Netlify zone.
+
+### Owner to-do (manual, no GoDaddy API key exists)
+
+- Add TXT `familiarisenow.com._report._dmarc` with value `v=DMARC1` in the `practitionist.com` zone at GoDaddy. Without it, receivers may refuse to send `familiarisenow.com`'s DMARC reports to a mailbox on another domain.
+- Confirm auto-renew is on for both domains.
+
+### Pre-launch mail hold
+
+`EMAIL_ALLOWLIST` in the Netlify context `all` includes `connect@practitionist.com`, so support and compliance mail to the one mailbox is delivered while `EMAIL_DELIVERY_MODE` is not `live` (see `docs/email/README.md` section 5). Changing a value held in context `all` needs a full PUT with `netlify api updateEnvVar`, because `setEnvVarValue` answers 422.
+
+---
+
 ## Deprecated & Superseded Approaches
 
+- **Personal-inbox DMARC reports and an unpublished root SPF**: before 2026-10-28 the DMARC `rua` pointed at a personal Gmail that never authorised external reports, and the apex had no SPF or MX. Superseded by the records in the table above; do not reintroduce a personal address as a report target.
 - **Single-Vendor Host Lock-In via Destructive Migration PRs**: Deleting `netlify.toml`, `netlify/functions/cron-tick.mts`, or Netlify environment variable support when adopting a secondary platform forces multi-PR git reverts and 12-minute rebuilds during an outage. Superseded by the Dual-Boot Codebase Pattern above.
 - **Proxying Multi-Megabyte Binary Uploads Through Serverless Route Handlers**: Buffering `5–50 MB` multipart uploads in `app/api/**` fails with `413 Payload Too Large` on Vercel (`4.5 MB` hard cap) and Netlify/Lambda (`6 MB` cap). Superseded by direct client-to-Supabase Storage presigned uploads (`createSignedUploadUrl`).
 - **Deploying the Monolith to V8 Isolate Runtimes (`@opennextjs/cloudflare` Workers)**: Disqualified due to Cloudflare Workers' non-configurable `128 MB` isolate memory ceiling across concurrent SSR + Prisma WASM executions (`Error 1102`) and inability to load native C++ addons (`sharp`, `bcrypt`) or Linux ELF headless Chromium binaries (`@sparticuz/chromium`).

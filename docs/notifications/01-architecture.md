@@ -232,8 +232,8 @@ lib/email/
 ### Sending Domains & DMARC Alignment
 
 - **Sending Subdomains**: `mail.familiarisenow.com` (transactional/ops) and `news.familiarisenow.com` (newsletter) use verified Resend DKIM keys (`resend._domainkey.mail` / `.news`) and Return-Path SPF/MX alignment (`send.mail` / `send.news` -> `ap-northeast-1` SES).
-- **DMARC**: The live `_dmarc` record is `v=DMARC1; p=none` with aggregate reports (`rua`) going to a personal inbox; moving `rua` to a role address is a pre-launch item in #2434.
-- **Send-only product domain**: `familiarisenow.com` is send-only (Resend): it has no MX record, so nothing sent to an address on it arrives. Every inbound address is `connect@practitionist.com` through `SUPPORT_EMAIL` in `lib/company.ts`, and inbound mail for the product domain is an open item in the Practitionist vendor-architecture planning issue.
+- **DMARC**: The live `_dmarc` record is `v=DMARC1; p=none; rua=mailto:connect@practitionist.com; fo=1`. The policy tightens to `quarantine` and then `reject` after about two weeks of reports. The apex also publishes SPF `v=spf1 -all`. The full record list is in [Domains and DNS records](../deployment/README.md#domains-and-dns-records).
+- **Send-only product domain**: `familiarisenow.com` is send-only (Resend): it publishes a null MX (`0 .`, RFC 7505), so nothing sent to an address on it arrives. Every inbound address is `connect@practitionist.com` through `SUPPORT_EMAIL` in `lib/company.ts`.
 
 ---
 
@@ -354,4 +354,4 @@ flowchart LR
 - **Intentionally Retained Vendor-Plane Split (Novu In-App vs. Direct Resend Email)**:
   - Outbound emails are **not** routed through Novu's email step so transactional notices never depend on a second vendor's multi-tenant queue availability, bypass Novu's 20-workflow plan cap across 45+ React Email templates, and preserve native `resend.batch.send` throughput and `EmailEvent` Svix telemetry.
 
-- **Inbound forwarding via ImprovMX (planned, never configured)**: root `@` MX records `mx1.improvmx.com` and `mx2.improvmx.com` were meant to deliver `support@`, `ops@`, `dpdp@`, `billing@` and `dmarc@familiarisenow.com` to operator mailboxes. The MX records were never created; remove any leftover reference.
+- **Inbound forwarding via ImprovMX (planned, never configured)**: root `@` MX records `mx1.improvmx.com` and `mx2.improvmx.com` were meant to deliver role addresses on `familiarisenow.com`. They were never created, and the apex now publishes a null MX. Delete any residual references.
