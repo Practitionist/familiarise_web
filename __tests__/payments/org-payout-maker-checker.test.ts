@@ -21,6 +21,7 @@ const earning = {
   currency: "INR",
 };
 let pending: Record<string, unknown>[] = [];
+let stale: Record<string, unknown>[] = [];
 let approvalRow: Record<string, unknown> | null = null;
 const recordEvent = jest.fn(async (..._args: unknown[]) => undefined);
 
@@ -48,7 +49,7 @@ jest.mock("../../lib/prisma", () => {
         .fn()
         .mockImplementation(
           async ({ where }: { where: { status: unknown } }) =>
-            where.status === "PROCESSING" ? [] : pending,
+            where.status === "PROCESSING" ? stale : pending,
         ),
       create: jest.fn(async ({ data }: { data: object }) => ({
         id: "op-1",
@@ -68,6 +69,13 @@ jest.mock("../../lib/prisma", () => {
 jest.mock("../../lib/enterprise/system-events", () => ({
   ...jest.requireActual("../../lib/enterprise/system-events"),
   recordSystemEventSafe: (...args: unknown[]) => recordEvent(...args),
+}));
+jest.mock("../../lib/payments/payouts/payout-gateway-lookup", () => ({
+  findRazorpayPayoutByReference: jest.fn(async () => ({ kind: "none" })),
+}));
+jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({
+  ...jest.requireActual("../../lib/payments/payouts/razorpay-payouts"),
+  getRazorpayPayoutsService: jest.fn(() => ({})),
 }));
 jest.mock("../../lib/redis", () => ({
   acquireLock: jest.fn(async () => "tok"),
@@ -98,6 +106,7 @@ const payouts = jest.mocked(prisma.organizationPayout);
 beforeEach(() => {
   jest.clearAllMocks();
   pending = [];
+  stale = [];
   approvalRow = null;
 });
 
@@ -148,4 +157,34 @@ it("skips disbursing a payout its triggering admin approved, on either approval"
     "op-other",
   ]);
   expect(recordEvent).not.toHaveBeenCalled();
+});
+
+it("does not let the approver who triggered a run resubmit a stale payout the gateway never saw", async () => {
+  const OLD_UPDATE = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  stale = [
+    {
+      id: "op-mine",
+      gatewayPayoutId: null,
+      approvedBy: "admin_1",
+      orgApprovedBy: "member_1",
+      updatedAt: OLD_UPDATE,
+    },
+    {
+      id: "op-theirs",
+      gatewayPayoutId: null,
+      approvedBy: "admin_2",
+      orgApprovedBy: "member_1",
+      updatedAt: OLD_UPDATE,
+    },
+  ];
+  await processPendingOrgPayouts({ limit: 10, triggeredByUserId: "admin_1" });
+
+  const skipped = recordEvent.mock.calls.map(
+    ([event]) => (event as { context: { payoutId: string } }).context.payoutId,
+  );
+  expect(skipped).toEqual(["op-mine"]);
+  const submitted = payouts.findUnique.mock.calls.map(
+    ([args]) => args.where.id,
+  );
+  expect(submitted).not.toContain("op-mine");
 });

@@ -19,11 +19,9 @@ export async function isMakerCheckerDisbursementBlocked(
   }
   const makerCheckerRequired =
     process.env.PAYOUT_MAKER_CHECKER_REQUIRED !== "false";
-  const activeAdminCount =
-    typeof (prisma as { user?: { count?: (args: unknown) => Promise<number> } })
-      .user?.count === "function"
-      ? await prisma.user.count({ where: { role: "ADMIN" } })
-      : 2;
+  const activeAdminCount = await prisma.user.count({
+    where: { role: "ADMIN" },
+  });
   if (!makerCheckerRequired || activeAdminCount <= 1) {
     return false;
   }

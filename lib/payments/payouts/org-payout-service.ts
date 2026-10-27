@@ -1056,6 +1056,16 @@ async function markPayoutFailedFromSubmission(
   });
 }
 
+/** Either approver who also triggered this run may not disburse, as on the consultant rail. */
+function isOrgDisbursementBlocked(
+  p: { id: string; approvedBy: string | null; orgApprovedBy: string | null },
+  triggeredByUserId: string | undefined,
+): Promise<boolean> {
+  const approver =
+    p.approvedBy === triggeredByUserId ? p.approvedBy : p.orgApprovedBy;
+  return isMakerCheckerDisbursementBlocked(p.id, approver, triggeredByUserId);
+}
+
 export interface OrgProcessingResult {
   scanned: number;
   advanced: number;
@@ -1085,18 +1095,7 @@ export async function processPendingOrgPayouts(
     ) {
       break;
     }
-    // Either approver who also triggered this run is skipped before any claim, as on the consultant rail.
-    const approver =
-      p.approvedBy === opts.triggeredByUserId ? p.approvedBy : p.orgApprovedBy;
-    if (
-      await isMakerCheckerDisbursementBlocked(
-        p.id,
-        approver,
-        opts.triggeredByUserId,
-      )
-    ) {
-      continue;
-    }
+    if (await isOrgDisbursementBlocked(p, opts.triggeredByUserId)) continue;
     try {
       const out = await processOrgPayout(p.id);
       if (out.claimed) {
@@ -1109,7 +1108,10 @@ export async function processPendingOrgPayouts(
     }
   }
 
-  const redrive = await redriveStaleProcessingOrgPayouts(opts.limit);
+  const redrive = await redriveStaleProcessingOrgPayouts(
+    opts.limit,
+    opts.triggeredByUserId,
+  );
   result.scanned += redrive.scanned;
   result.advanced += redrive.advanced;
   result.errors.push(...redrive.errors);
@@ -1120,8 +1122,14 @@ export async function processPendingOrgPayouts(
 const ORG_PROCESSING_REDRIVE_AFTER_MS = 60 * 60 * 1000;
 
 async function redriveSingleOrgPayoutRow(
-  p: { id: string; gatewayPayoutId: string | null },
+  p: {
+    id: string;
+    gatewayPayoutId: string | null;
+    approvedBy: string | null;
+    orgApprovedBy: string | null;
+  },
   result: OrgProcessingResult,
+  triggeredByUserId: string | undefined,
 ): Promise<void> {
   const { findRazorpayPayoutByReference } =
     await import("./payout-gateway-lookup");
@@ -1138,6 +1146,8 @@ async function redriveSingleOrgPayoutRow(
         data: { gatewayPayoutId },
       });
     } else if (lookup.kind === "none") {
+      // Submitting here is a fresh disbursement, so the approver who triggered this run may not do it.
+      if (await isOrgDisbursementBlocked(p, triggeredByUserId)) return;
       await submitOrgPayoutToGateway(p.id);
       result.advanced++;
       return;
@@ -1208,12 +1218,19 @@ export async function applyOrgGatewayStatus(
 
 async function redriveStaleProcessingOrgPayouts(
   limit = 100,
+  triggeredByUserId?: string,
 ): Promise<OrgProcessingResult> {
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
   const staleBefore = new Date(Date.now() - ORG_PROCESSING_REDRIVE_AFTER_MS);
   const stale = await prisma.organizationPayout.findMany({
     where: { status: "PROCESSING", updatedAt: { lt: staleBefore } },
-    select: { id: true, gatewayPayoutId: true, paymentGateway: true },
+    select: {
+      id: true,
+      gatewayPayoutId: true,
+      paymentGateway: true,
+      approvedBy: true,
+      orgApprovedBy: true,
+    },
     orderBy: { updatedAt: "asc" },
     take: limit,
   });
@@ -1222,7 +1239,7 @@ async function redriveStaleProcessingOrgPayouts(
   await Promise.all(
     stale.map(async (p) => {
       try {
-        await redriveSingleOrgPayoutRow(p, result);
+        await redriveSingleOrgPayoutRow(p, result, triggeredByUserId);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (
