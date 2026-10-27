@@ -4,7 +4,12 @@ import {
 } from "@/lib/cron/cleanup-registry";
 import { FINANCIAL_JOB_NAMES } from "@/lib/cron/financial-jobs";
 import type { JobCategory, SystemJobCard } from "@/lib/cron/job-categories";
-import { scheduleFor, type JobSchedule } from "@/lib/cron/schedule";
+import {
+  isWindowedTarget,
+  latestWindowStart,
+  scheduleFor,
+  type JobSchedule,
+} from "@/lib/cron/schedule";
 
 /** Money-list jobs that only expire unpaid orders and links; a reason is enough to run them. */
 const NO_TYPED_CONFIRM = new Set(["cleanup-abandoned-payments"]);
@@ -63,8 +68,15 @@ export function scheduleLabel(schedule: JobSchedule | undefined): string {
   return `${every}, ${span} ${days}`;
 }
 
+/** A windowed job repeats its latest due window by hand, so it cannot run before its first window. */
+function runBlocked(id: string, now: Date): string | null {
+  return isWindowedTarget(id) && !latestWindowStart(id, now)
+    ? "No calendar window has come due yet, so there is no slice to repeat."
+    : null;
+}
+
 /** The serialisable job list the System Jobs page hands its client panel. */
-export function systemJobCards(): SystemJobCard[] {
+export function systemJobCards(now = new Date()): SystemJobCard[] {
   return Object.entries(CLEANUP_JOB_BUILDERS).map(([id, { meta }]) => ({
     id,
     title: meta.title,
@@ -76,5 +88,6 @@ export function systemJobCards(): SystemJobCard[] {
       jobName: getCleanupJobHandlers(id)?.job ?? id,
       category: meta.category,
     }),
+    runBlocked: runBlocked(id, now),
   }));
 }

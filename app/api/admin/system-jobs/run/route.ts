@@ -26,7 +26,11 @@ import {
 } from "@/lib/cron/cleanup-registry";
 import { jobOutcomeSchema } from "@/lib/cron/job-outcome";
 import { withRunContext } from "@/lib/cron/run-context";
-import { scheduleFor } from "@/lib/cron/schedule";
+import {
+  isWindowedTarget,
+  latestWindowStart,
+  scheduleFor,
+} from "@/lib/cron/schedule";
 
 const runJobSchema = z.object({
   jobId: z.string().min(1, "Missing or invalid jobId"),
@@ -38,11 +42,20 @@ const bodySchema = z.record(z.string(), z.unknown()).catch({});
 
 type RunStatus = "ACCEPTED" | "SUCCEEDED" | "FAILED";
 
-/** One bounded slice: the ticker's own limit when the job has one. */
-function manualRunRequest(slug: string): NextRequest {
+/**
+ * One bounded slice: the ticker's own limit and, for a calendar-windowed job,
+ * the latest due window, so a manual run repeats that window's slice instead of
+ * opening an off-cycle one. Null when a windowed job has had no window yet.
+ */
+function manualRunRequest(slug: string, now: Date): NextRequest | null {
   const url = new URL(`/api/cleanup/${slug}`, "https://system-jobs.internal");
   const limit = scheduleFor(slug)?.limit;
   if (typeof limit === "number") url.searchParams.set("limit", String(limit));
+  if (isWindowedTarget(slug)) {
+    const windowStart = latestWindowStart(slug, now);
+    if (!windowStart) return null;
+    url.searchParams.set("windowStart", windowStart.toISOString());
+  }
   return new NextRequest(url, { method: "POST" });
 }
 
@@ -104,6 +117,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
+    const runRequest = manualRunRequest(jobId, new Date());
+    if (!runRequest) {
+      return NextResponse.json(
+        {
+          error: `Job "${jobId}" has had no calendar window yet, so there is no slice to repeat.`,
+          code: "NO_DUE_WINDOW",
+        },
+        { status: 409 },
+      );
+    }
+
     console.log(
       `[System Jobs] ${user.name || user.email} (${user.role}) running job: ${jobId}`,
     );
@@ -126,7 +150,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     const run = () =>
       withRunContext({ triggeredBy: `admin:${user.id}`, opsActionLogId }, () =>
-        handlers.invoke(manualRunRequest(jobId)),
+        handlers.invoke(runRequest),
       );
 
     // A payout run makes a gateway call per row and would meet the edge timeout inside the request.

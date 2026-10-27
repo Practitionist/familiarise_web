@@ -13,6 +13,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import {
   JOB_CATEGORIES,
@@ -109,25 +115,49 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
       </div>
 
       <div className="mt-4 pt-4 border-t border-border">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onRun}
-          disabled={isRunning}
-          className="w-full"
-        >
-          {isRunning ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Running...
-            </>
-          ) : (
-            <>
-              <Play className="mr-2 h-4 w-4" />
-              Run Now
-            </>
-          )}
-        </Button>
+        {job.runBlocked ? (
+          <TooltipProvider delayDuration={150}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* A disabled button fires no pointer events, so the span carries the tooltip. */}
+                <span className="block w-full" tabIndex={0}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled
+                    className="w-full"
+                  >
+                    <Play className="mr-2 h-4 w-4" />
+                    Run Now
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-xs">
+                {job.runBlocked}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onRun}
+            disabled={isRunning}
+            className="w-full"
+          >
+            {isRunning ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Running...
+              </>
+            ) : (
+              <>
+                <Play className="mr-2 h-4 w-4" />
+                Run Now
+              </>
+            )}
+          </Button>
+        )}
       </div>
     </motion.div>
   );

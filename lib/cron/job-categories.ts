@@ -27,4 +27,6 @@ export interface SystemJobCard {
   schedule: string;
   /** The typed phrase a manual run asks for, or null when a reason is enough. */
   confirmPhrase: string | null;
+  /** Why Run is disabled right now, or null when it is available. */
+  runBlocked: string | null;
 }

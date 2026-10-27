@@ -9,7 +9,7 @@ import {
 import {
   JOB_SCHEDULES,
   jobNameFor,
-  windowStartFor,
+  latestWindowStart,
   type JobSchedule,
 } from "@/lib/cron/schedule";
 
@@ -20,8 +20,6 @@ const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 /** IST has no daylight saving, so a fixed offset gives its calendar day. */
 const IST_OFFSET_MS = 330 * MINUTE_MS;
-/** How far back a calendar window (weekly, monthly, quarterly) is searched. */
-const WINDOW_SEARCH_DAYS = 400;
 
 export interface MissedWindow {
   /**
@@ -98,19 +96,7 @@ export function latestDueWindowStart(
   if (!w) return null;
   const graceMs =
     Math.min(w.windowMinutes, 2 * schedule.everyMinutes + 5) * MINUTE_MS;
-  const today = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-  );
-  for (let d = 0; d <= WINDOW_SEARCH_DAYS; d++) {
-    const start = new Date(today - d * DAY_MS + w.startMinuteUtc * MINUTE_MS);
-    if (start.getTime() + graceMs > now.getTime()) continue;
-    if (windowStartFor(schedule.name, start)?.getTime() === start.getTime()) {
-      return start;
-    }
-  }
-  return null;
+  return latestWindowStart(schedule.name, new Date(now.getTime() - graceMs));
 }
 
 /** The latest due calendar window has no finished run since it opened. */

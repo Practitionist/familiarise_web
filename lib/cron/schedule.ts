@@ -428,6 +428,32 @@ export function windowStartFor(name: Target, now: Date): Date | null {
   return start;
 }
 
+/** How far back a calendar window (weekly, monthly, quarterly) is searched. */
+const WINDOW_SEARCH_DAYS = 400;
+const DAY_MS = 24 * 60 * 60_000;
+const WINDOWED_TARGETS: ReadonlySet<string> = new Set(
+  Object.keys(TARGET_WINDOWS),
+);
+
+export function isWindowedTarget(name: string): name is Target {
+  return WINDOWED_TARGETS.has(name);
+}
+
+/** The start of the newest window that opened at or before `at`, or null when none has in the search range. */
+export function latestWindowStart(name: Target, at: Date): Date | null {
+  const w = TARGET_WINDOWS[name];
+  if (!w) return null;
+  const day = Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate());
+  for (let d = 0; d <= WINDOW_SEARCH_DAYS; d++) {
+    const start = new Date(day - d * DAY_MS + w.startMinuteUtc * 60_000);
+    if (start.getTime() > at.getTime()) continue;
+    if (windowStartFor(name, start)?.getTime() === start.getTime()) {
+      return start;
+    }
+  }
+  return null;
+}
+
 /** The targets due on this tick; exported so a test can pin the cadence. */
 export function dueTargets(now: Date): Target[] {
   const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();

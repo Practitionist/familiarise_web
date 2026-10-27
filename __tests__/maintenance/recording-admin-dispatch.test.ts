@@ -18,6 +18,8 @@ const maintenance = jest.fn();
 const guard = jest.fn();
 const after = jest.fn();
 let post: typeof import("../../app/api/admin/system-jobs/run/route").POST;
+let registry: typeof import("../../lib/cron/cleanup-registry");
+let schedule: typeof import("../../lib/cron/schedule");
 
 beforeAll(async () => {
   const dependencies = new Map<string, unknown>([
@@ -45,9 +47,20 @@ beforeAll(async () => {
     ],
     ["@/lib/observability/report", { reportSentryError: jest.fn() }],
     ["@/lib/api/after-safe", { scheduleAfter: after }],
+    [
+      "@/lib/cron/schedule",
+      {
+        ...jest.requireActual("@/lib/cron/schedule"),
+        latestWindowStart: jest.fn(
+          jest.requireActual("@/lib/cron/schedule").latestWindowStart,
+        ),
+      },
+    ],
   ]);
   for (const [name, mock] of dependencies) jest.doMock(name, () => mock);
   post = (await import("../../app/api/admin/system-jobs/run/route")).POST;
+  registry = await import("../../lib/cron/cleanup-registry");
+  schedule = await import("../../lib/cron/schedule");
 });
 
 beforeEach(() => {
@@ -128,4 +141,28 @@ it("does not dispatch when authentication or maintenance refuses the request", a
   expect((await post(request())).status).toBe(503);
   expect(dispatch).not.toHaveBeenCalled();
   expect(audit).not.toHaveBeenCalled();
+});
+
+it("repeats a windowed job's latest due window and refuses when none has come due", async () => {
+  const handlers = registry.getCleanupJobHandlers("settle-invoice-accruals");
+  if (!handlers) throw new Error("settle-invoice-accruals is not registered");
+  const invoke = jest
+    .spyOn(handlers, "invoke")
+    .mockResolvedValue(
+      NextResponse.json({}, { headers: { "X-Job-Outcome": "success" } }),
+    );
+  const at = new Date();
+  const response = await post(request("settle-invoice-accruals"));
+  expect(response.status).toBe(200);
+  const sent = invoke.mock.calls[0][0].nextUrl.searchParams;
+  expect(sent.get("windowStart")).toBe(
+    schedule.latestWindowStart("settle-invoice-accruals", at)?.toISOString(),
+  );
+  expect(sent.get("limit")).toBe("10");
+
+  jest.mocked(schedule.latestWindowStart).mockReturnValueOnce(null);
+  const refused = await post(request("settle-invoice-accruals"));
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({ code: "NO_DUE_WINDOW" });
+  expect(invoke).toHaveBeenCalledTimes(1);
 });
