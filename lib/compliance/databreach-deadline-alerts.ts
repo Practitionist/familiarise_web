@@ -9,6 +9,7 @@ import { notifyComplianceAlert } from "@/lib/novu/service";
 import { postOpsChat } from "@/lib/observability/ops-chat";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { getAppUrl } from "@/lib/url";
+import { COMPLIANCE_ALERT_EMAIL } from "@/lib/company";
 
 const ACTIVE_PREFIX = "compliance:databreach-deadline:active:";
 const COMPLETE_PREFIX = "compliance:databreach-deadline:complete:";
@@ -25,7 +26,7 @@ type BreachDigest = {
   reason: string;
   dueDate: Date;
   dashboardUrl: string;
-  officer: string | undefined;
+  officer: string;
 };
 
 function hourWindow(now: Date): string {
@@ -34,14 +35,10 @@ function hourWindow(now: Date): string {
   ).toISOString();
 }
 
-async function pendingRecipients(
-  ref: string,
-  officer: string | undefined,
-  limit: number,
-) {
+async function pendingRecipients(ref: string, officer: string, limit: number) {
   const rows: unknown = await prisma.$queryRaw(Prisma.sql`
     SELECT u.id, u.email FROM "users" u
-    WHERE (u.role = ${UserRole.ADMIN}::"UserRole" OR lower(u.email) = lower(${officer ?? null}))
+    WHERE (u.role = ${UserRole.ADMIN}::"UserRole" OR lower(u.email) = lower(${officer}))
       AND btrim(u.email) <> ''
       AND NOT EXISTS (
         SELECT 1 FROM "FailedEmail" f
@@ -64,9 +61,7 @@ async function stageRecipient(
       email: recipient.email,
       OR: [
         { role: UserRole.ADMIN },
-        ...(officer
-          ? [{ email: { equals: officer, mode: Prisma.QueryMode.insensitive } }]
-          : []),
+        { email: { equals: officer, mode: Prisma.QueryMode.insensitive } },
       ],
     },
     select: { id: true },
@@ -96,15 +91,6 @@ async function stageRecipient(
   if (!staged)
     throw new Error("Compliance email staging did not persist an obligation");
   return true;
-}
-
-function configuredOfficer(errors: string[]): string | undefined {
-  const rawOfficer = process.env.DATABREACH_ALERT_EMAIL?.trim();
-  if (!rawOfficer) return undefined;
-  const parsed = z.string().email().safeParse(rawOfficer);
-  if (parsed.success) return parsed.data;
-  errors.push("DATABREACH_ALERT_EMAIL is not a valid email address");
-  return undefined;
 }
 
 async function stageRecipients(
@@ -137,7 +123,6 @@ async function stageOfficer(
   timedOut: () => boolean,
 ): Promise<boolean> {
   const { officer, ref, title, reason, dashboardUrl } = digest;
-  if (!officer) return false;
   try {
     const user = await prisma.user.findFirst({
       where: { email: { equals: officer, mode: "insensitive" } },
@@ -293,7 +278,7 @@ export async function runDataBreachDeadlineAlerts(
           });
         return result;
       }
-      const officer = configuredOfficer(result.errors);
+      const officer = COMPLIANCE_ALERT_EMAIL;
       const recipients = await pendingRecipients(ref, officer, limit + 1);
       result.hasMore = recipients.length > limit;
       const dueDate = new Date(
@@ -326,10 +311,6 @@ export async function runDataBreachDeadlineAlerts(
         result.errors,
         timedOut,
       );
-      if (!active && recipients.length === 0 && !officer)
-        result.errors.push(
-          "No eligible admin email or configured officer mailbox",
-        );
       await completeDigest(result, digest, startedAt, timedOut);
       return result;
     },

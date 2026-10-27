@@ -43,10 +43,10 @@ Outbound Bulk / Waitlist (@news.familiarisenow.com):
   newsletter@news.familiarisenow.com     -- Waitlist confirmation, welcome & broadcasts
 
 Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
-  support@familiarisenow.com             -- Default Reply-To & customer support inbox
+  connect@practitionist.com              -- The one live mailbox (SUPPORT_EMAIL): Reply-To, support, contact, billing, grievance and compliance alerts
   ops@familiarisenow.com                 -- Reply-To for ops/canary/quota/compliance alerts (OPS_EMAIL)
   dpdp@familiarisenow.com                -- Privacy & DPDP statutory contact
-  billing@familiarisenow.com             -- Finance alias; tax invoices print BILLING_EMAIL, which is support@ today
+  billing@familiarisenow.com             -- Optional alias; tax invoices print BILLING_EMAIL, which equals SUPPORT_EMAIL
   dmarc@familiarisenow.com               -- Aggregate DMARC reports (rua=mailto:dmarc@familiarisenow.com)
 ```
 
@@ -189,8 +189,6 @@ Set these in **Netlify Dashboard → Site → Environment Variables** (and match
 | `RESEND_API_KEY`            | Resend API key (`re_...`)                                    | Yes (Netlify + GitHub Actions secrets)                   |
 | `RESEND_WEBHOOK_SECRET`     | Svix signing secret (`whsec_...`)                            | Yes (Netlify production context)                         |
 | `OBSERVABILITY_ALERT_EMAIL` | Ops recipient for Sentry canary/quota alerts                 | Optional (fallback: `supportEmail()`)                    |
-| `DATABREACH_ALERT_EMAIL`    | Compliance recipient for DPDP 72h alerts                     | Yes                                                      |
-| `MSME_ALERT_EMAIL`          | Finance recipient for MSME Section 43B(h) alerts             | Yes                                                      |
 | `SLACK_OPS_WEBHOOK_URL`     | Slack incoming webhook for dead-letter & ops fallback alerts | Optional (recommended)                                   |
 | `NOVU_DEVELOPMENT_KEY`      | Novu Development secret key                                  | Yes                                                      |
 | `NOVU_PRODUCTION_KEY`       | Novu Production secret key                                   | Yes (Netlify production + GitHub Actions secrets)        |

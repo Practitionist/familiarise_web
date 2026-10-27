@@ -238,7 +238,7 @@ curl -s "$PROD/api/admin/reconcile-ledgers?id=$REPORT_ID" \
   -H "Authorization: Bearer $TOKEN" | jq '.data | {status: .summary.status, ok}'
 
 # MSME alert dry-run
-MSME_ALERT_EMAIL=dev-null@familiarisenow.com npx tsx jobs/compliance/msme-payment-alerts.ts
+npx tsx jobs/compliance/msme-payment-alerts.ts
 ```
 
 All three should emit deterministic output — wrap them in Bash `set -e`

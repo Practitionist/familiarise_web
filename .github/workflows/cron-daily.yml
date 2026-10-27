@@ -48,7 +48,6 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       CLEARTAX_API_KEY: ${{ secrets.CLEARTAX_API_KEY }}
       CLEARTAX_GSP_TOKEN: ${{ secrets.CLEARTAX_GSP_TOKEN }}
-      MSME_ALERT_EMAIL: ${{ secrets.MSME_ALERT_EMAIL }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
       # Pre-launch delivery guard: unset means allowlist; set the repo variable to "live" at launch.
       EMAIL_DELIVERY_MODE: ${{ vars.EMAIL_DELIVERY_MODE }}

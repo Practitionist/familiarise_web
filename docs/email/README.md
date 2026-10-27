@@ -176,8 +176,8 @@ All ops alerts set `Reply-To: ops@familiarisenow.com` (`OPS_EMAIL` in `lib/email
 | --------------------------- | -------------------------------------------- | -------------------------------------------------------- | -------------------------------------- | ----------------------------------------------- |
 | Sentry ingest canary alert  | Ingest canary detects discarded errors       | `OBSERVABILITY_ALERT_EMAIL` (fallback: `supportEmail()`) | Yes (5s timeout, after send)           | `lib/observability/ingest-alert.ts`             |
 | Sentry quota alert          | Accepted errors reach 70% monthly quota      | `OBSERVABILITY_ALERT_EMAIL` (fallback: `supportEmail()`) | No                                     | `lib/observability/quota-alert.ts`              |
-| DPDP breach deadline alert  | Unreported breach nears 72h statutory window | `DATABREACH_ALERT_EMAIL`                                 | Yes (5s timeout, after send)           | `jobs/compliance/databreach-deadline-alerts.ts` |
-| MSME payment deadline alert | Payouts near Section 43B(h) deadline         | `MSME_ALERT_EMAIL`                                       | No                                     | `jobs/compliance/msme-payment-alerts.ts`        |
+| DPDP breach deadline alert  | Unreported breach nears 72h statutory window | `COMPLIANCE_ALERT_EMAIL` (`lib/company.ts`)              | Yes (5s timeout, after send)           | `jobs/compliance/databreach-deadline-alerts.ts` |
+| MSME payment deadline alert | Payouts near Section 43B(h) deadline         | `COMPLIANCE_ALERT_EMAIL` (`lib/company.ts`)              | No                                     | `jobs/compliance/msme-payment-alerts.ts`        |
 
 ### Newsletter & Waitlist (`newsletter@news.familiarisenow.com`)
 

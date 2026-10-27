@@ -11,6 +11,10 @@ export const REGISTERED_OFFICE = {
   stateCode: "06",
 } as const;
 
+// familiarisenow.com has no inbound mail; switching later means changing this one constant.
+/** The one live mailbox: support, contact, billing, grievance and compliance alerts. */
+export const SUPPORT_EMAIL = "connect@practitionist.com";
+
 /**
  * The legal entity behind Familiarise: the public pages, the footer, and the
  * supplier on tax invoices, credit notes and IRP payloads all read it here.
@@ -19,9 +23,7 @@ export const COMPANY_INFO = {
   name: "Practitionist (OPC) Private Limited",
   cin: "U62012HR2026OPC146217",
   registeredAddress: `${REGISTERED_OFFICE.line1}, ${REGISTERED_OFFICE.city}, ${REGISTERED_OFFICE.district} - ${REGISTERED_OFFICE.pincode}, ${REGISTERED_OFFICE.state}, India`,
-  // A literal, not an env read: the client bundle never sees non-public env, so
-  // an env-driven value rendered a different mailbox on the server and client.
-  email: "support@practitionist.com",
+  email: SUPPORT_EMAIL,
   // Empty until a support line exists; every row that prints it is omitted.
   phone: "",
   jurisdiction: "Haryana, India",
@@ -29,12 +31,12 @@ export const COMPANY_INFO = {
   grievanceOfficerName: "",
 } as const;
 
-/** Customer support mailbox: the default Reply-To and the base of the two inboxes below. */
-export const SUPPORT_EMAIL = "support@familiarisenow.com";
 /** Where /contactus inquiries are delivered. */
 export const CONTACT_INBOX_ADDRESS = SUPPORT_EMAIL;
 /** Supplier contact printed on tax invoices and credit notes. */
 export const BILLING_EMAIL = SUPPORT_EMAIL;
+/** Recipient of the data-breach and MSME deadline alerts, besides the admins. */
+export const COMPLIANCE_ALERT_EMAIL = SUPPORT_EMAIL;
 /** Postal line for email footers and newsletter compliance. */
 export const COMPANY_POSTAL_ADDRESS = COMPANY_INFO.registeredAddress;
 
