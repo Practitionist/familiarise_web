@@ -1446,16 +1446,19 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "support-sla-sweep": () =>
       cleanupRoute({
         job: "support-sla-sweep",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { runSupportSlaSweep } =
             await import("@/lib/support/sla-sweep");
-          return runSupportSlaSweep({ limit: parseLimitParam(req) });
+          return runSupportSlaSweep({ limit: parseLimitParam(req), startedAt });
         },
         summarize: (r) => ({
           scanned: r.scanned,
           slaNoticesStaged: r.slaNoticesStaged,
           orgEscalationEmailsSent: r.orgEscalationEmailsSent,
           autoClosedCount: r.autoClosedCount,
+          autoCloseHeldOpen: r.autoCloseHeldOpen,
+          autoCloseHolds: r.autoCloseHolds,
+          autoCloseHasMore: r.autoCloseHasMore,
           incidentsCascaded: r.incidentsCascaded,
           incidentsHeldOpen: r.incidentsHeldOpen,
           evidenceCasesPurged: r.evidenceCasesPurged,

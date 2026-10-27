@@ -1,118 +1,55 @@
-# Infrastructure and maintenance
+# Infrastructure jobs and maintenance
 
-The application keeps business obligations in Postgres and uses scheduled workers
-to advance them. The ticker admits bounded work; leases, conditional updates,
-transactional outboxes and vendor idempotency protect retries. Recent scheduler
-activity alone does not establish successful recovery or human alert delivery.
+Start with the [infrastructure architecture and operating model](../start-here/10-infra-and-maintenance-sre-orientation.md). It explains scheduler ownership, durable obligations, leases, cross-job races, bounded progress, reconciliation, operational health, maintenance recovery and portability. This directory supplies the inventory and detailed runbooks. GitHub review comments record decisions and evidence; they are not the architecture manual.
 
-Start with the [scheduler and reconciliation reference](10-cron-and-reconciliation-reference.md),
-[worker recovery contracts](12-worker-recovery.md) and
-[readiness and operating gates](13-readiness-and-operating-gates.md).
-The [generated inventory](04-cron-jobs-reference.md) derives job ownership,
-entrypoints, bounds and maintenance gates from source; regenerate it with
-`npm run cron:reference` after catalog or registry changes.
+## Runtime model
 
-## Runtime responsibilities
+The active platform ticker dispatches registered bounded jobs. Postgres owns job leases, execution history, transactional obligations and database invariants. Redis owns short-lived interactive mutexes, request limits, maintenance edge state and active-host preference. A timeout, lease expiry or host switch does not cancel work already in flight; business CAS and vendor idempotency protect overlapping effects.
 
-```mermaid
-flowchart TD
-  A[API and webhook producers] --> B[Postgres domain state and durable outboxes]
-  C[Active platform ticker] --> D[Authenticated cleanup registry]
-  E[Authenticated operator run door] --> F[Canonical job core]
-  D --> F
-  F --> G[Postgres lease and domain CAS]
-  G --> B
-  B --> H[Bounded vendor delivery and reconciliation]
-  H --> B
-  B --> I[Environment-scoped completion health]
-  C --> J[Scheduler check-ins]
-  I --> K[Independent monitor and operator alert]
-  J --> K
-```
+Remaining operational Actions jobs keep their existing owner until an explicit scheduler handoff. They are currently budget-blocked. Source configuration and a registered handler do not establish live execution. The architecture guide describes the configured Stream ticker cadences and their Netlify background targets.
 
-There is one active operational scheduler, selected by
-`ops:active_cron_platform`. The fleet selection fails open when missing or
-unreadable, so domain correctness cannot depend on that switch alone. Keep
-Netlify's standby configuration and adapters buildable. Recording background
-adapters require Netlify as the active cron host until an equivalent execution
-target is supplied; Stream's domain documentation owns those details.
+| Maintenance state        | Policy                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------ |
+| OFF                      | Normal traffic and job admission                                                                       |
+| DEGRADED                 | Reads remain available; classified financial mutations/jobs are held                                   |
+| OFFLINE                  | Non-exempt traffic and cleanup work are held; explicit webhook, health and admin recovery doors remain |
+| Missing/unreadable state | Mutations fail closed; operator bootstrap/recovery is required                                         |
 
-GitHub Actions owns repository CI, security and release checks, plus the
-remaining configured non-money batch jobs. Those batch jobs need actual execution
-and budget evidence. A configured workflow or a passing HTTP admission does not
-prove that its business effect occurred. Migrate ownership in one reviewed
-cutover; do not schedule the same core on both platforms by default.
+Activation never implicitly cancels bookings. Cancellation requires a separate explicit preview and confirmation. ETA never automatically reopens traffic. The additive schema and persistent edge phase must exist before deploying readers; follow the pre-maintenance rollout prerequisites.
 
-## Maintenance admission
+## Reading order
 
-| State                        | User routes                                                         | Cron and background work                                        |
-| ---------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------- |
-| OFF                          | Normal authenticated and authorized behavior                        | Normal job admission                                            |
-| DEGRADED                     | Reads continue; the middleware blocks its configured mutation paths | Financial jobs are held; permitted non-money jobs continue      |
-| OFFLINE                      | Non-exempt requests receive a maintenance response                  | Guarded jobs are held; exemptions remain explicit               |
-| Unreadable maintenance state | Sensitive paths fail closed according to the edge policy            | Maintenance guards refuse admission with an unavailable outcome |
+| Reference                                                                 | Purpose                                                                         |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| [00 — BetterStack setup](./00-betterstack-setup.md)                       | Existing incident/status-page integration and operator setup                    |
+| [01 — Architecture](./01-architecture.md)                                 | Maintenance state, durable remediation and dependency boundaries                |
+| [02 — DEGRADED and OFFLINE](./02-degraded-vs-offline.md)                  | Request and job admission policy                                                |
+| [03 — Business risks](./03-business-risks.md)                             | Domain risks to consider before planned work                                    |
+| [04 — Generated job inventory](./04-cron-jobs-reference.md)               | Source-derived roster, schedules, bounds and declared lease policy              |
+| [05 — Webhooks](./05-webhook-behavior.md)                                 | Recording external truth during maintenance                                     |
+| [06 — Before maintenance](./06-pre-maintenance-checklist.md)              | Schema/edge bootstrap, activation, active-work checks and confirmed remediation |
+| [07 — Recovery](./07-post-maintenance-recovery.md)                        | Explicit reopening, dependency checks and durable recovery                      |
+| [08 — SDK updates](./08-sdk-update-guide.md)                              | Package-specific verification guidance                                          |
+| [09 — Further work](./09-future-improvements.md)                          | Proposals; check current source before treating an item as outstanding          |
+| [10 — Cron and reconciliation](./10-cron-and-reconciliation-reference.md) | Dispatch/status contracts, sidecars, ledger checkpoints and host concerns       |
+| [11 — Job machinery and dashboard](./11-job-machinery-catalog.md)         | Current job signals, lease/retry contracts and the operations dashboard design  |
+| [12 — Worker recovery](./12-worker-recovery.md)                           | Export attempt ownership, expiry refunds and retained-order recovery            |
+| [13 — Readiness gates](./13-readiness-and-operating-gates.md)             | Source, schema, execution, alert-delivery and recovery evidence                 |
+| [Schedule catalog](./schedule-catalog.md)                                 | Catalog ownership and generated documentation                                   |
+| [Bounded housekeeping](./housekeeping-bounds.md)                          | Retention eligibility, per-phase limits and continuation semantics              |
+| [Compliance/retention workers](./compliance-retention-workers.md)         | Consent retention, durable breach staging and event history                     |
+| [Messaging retention](./messaging-retention.md)                           | Job-history retention, bounded payload scrubbing and replay races               |
+| [Recording worker](../stream/recording-background-worker.md)              | Narrow background adapter, source expiry and activation evidence                |
+| [Deployment/failback](../deployment/README.md)                            | Runtime differences, one active scheduler and standby recovery                  |
 
-Webhooks, health and control surfaces have deliberate exemptions; consult the
-[phase rules](02-degraded-vs-offline.md) and [webhook behavior](05-webhook-behavior.md).
-The edge policy and cron guard are separate gates. Starting maintenance does not
-cancel an invocation or vendor request already in flight. Admin bypass cookies
-are signed, short-lived grants, not a raw-secret cookie. Use the authenticated
-maintenance controls and the checklist before any schema operation.
+Link a worker guide when its implementation is present; keep proposed activation work separate from the current inventory.
 
-Cron mutual exclusion uses `SystemJobExecution` in Postgres, not Redis. A
-fail-closed core never runs when lease acquisition is unavailable. Different
-jobs can still touch the same domain row, so each winning transition must retain
-its CAS predicate and commit the obligations it creates on the transaction
-client. With `PG_POOL_MAX=1`, a global Prisma query inside that transaction can
-deadlock. A timeout is not vendor cancellation; use durable obligations and
-stable retry identities to recover uncertain effects.
+## Verification and maintenance of these docs
 
-## Signals and recovery
+Regenerate the job inventory from executable sources after registry or schedule changes. Keep this index and the architecture guide focused on behavior and invariants; per-job bounds and provider policy belong in their linked domain guide. A future developer should be able to understand the design without reading historical issues.
 
-`GET /api/health` describes dependency and maintenance observations. Its shared
-heartbeat is activity evidence and can be refreshed by other jobs; it is not a
-per-capability completion guarantee. Authenticated `GET /api/health/jobs` checks
-successful completions in the configured deployment environment, with a separate
-budget for each required capability. Neither response proves backlog drain.
-
-Sentry scheduler check-ins and independent absence checks must reach a human
-when work stops. Follow the [monitor setup guide](00-betterstack-setup.md) and
-[Sentry evidence guide](../observability/sentry/07-verifying-end-to-end.md)
-for monitor configuration and the evidence needed from a controlled exercise. Retain evidence of actual alert receipt,
-restoration, bounded backlog recovery and backup/failback exercises. Never stop
-production recovery merely to manufacture an alert.
-
-## Domain guides
-
-0. [BetterStack setup](00-betterstack-setup.md)
-1. [Maintenance architecture](01-architecture.md)
-2. [DEGRADED and OFFLINE](02-degraded-vs-offline.md)
-3. [Business risks](03-business-risks.md)
-4. [Generated job inventory](04-cron-jobs-reference.md)
-5. [Webhook behavior](05-webhook-behavior.md)
-6. [Pre-maintenance checklist](06-pre-maintenance-checklist.md)
-7. [Post-maintenance recovery](07-post-maintenance-recovery.md)
-8. [SDK updates](08-sdk-update-guide.md)
-9. [Future improvements](09-future-improvements.md)
-10. [Scheduler, sidecars and reconciliation](10-cron-and-reconciliation-reference.md)
-11. [Job machinery and dashboard design](11-job-machinery-catalog.md)
-12. [Worker recovery and durable obligations](12-worker-recovery.md)
-13. [Readiness and operating gates](13-readiness-and-operating-gates.md)
-
-Additional bounded-worker guides:
-
-- [Housekeeping admission and retention](housekeeping-bounds.md)
-- [Job history and messaging retention](messaging-retention.md)
-- [Compliance and event-retention workers](compliance-retention-workers.md)
+Use the repository Jest configuration, a matching isolated Prisma client when a worktree schema differs, TypeScript, lint and changed-file formatting. Validate same-job overlap, cross-job races, sequential replay, stale ownership, unavailable dependencies and more-than-one-slice progress. Use mocks or a disposable database. Accepted deployed execution, source deadlines, measured backlog progress and real alert delivery remain separate rollout checks.
 
 ## Deprecated & Superseded Approaches
 
-Older guidance treated DEGRADED as a banner only and claimed cron work bypassed
-all maintenance protection. Current middleware and job guards enforce distinct
-admission policies; neither cancels work already admitted.
-
-Historical diagrams also described a shared heartbeat as eliminating false
-staleness, fixed-size scheduler groups as universal, and proposed delivery changes
-as fully deployed. Use the source-derived roster, environment-scoped capability
-checks and operating evidence instead. Redis cron locks, raw-secret bypass
-cookies and a second scheduler as a correctness guarantee are superseded.
+The former index led with historical flaw diagrams, stale workflow counts, fail-open maintenance and an unimplemented target architecture. Those descriptions were easy to mistake for the active system. Current contracts and runbooks take precedence; history belongs in this small footer and source control.

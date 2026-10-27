@@ -26,7 +26,7 @@ The catalog has no worker, database or environment imports. Its ten-target figur
 is a tested design bound, not a runtime dispatch cap. Configured Actions ownership
 remains migration work until bounded replacements have actually run.
 
-Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion and retain its fail-closed 15-minute lease. Session recovery runs via HTTP at :10/:40. The five daily lifecycle targets queue the narrow `stream-maintenance-background` worker in staggered daily windows; their Actions steps are removed. All six migrated cores fail closed, and daily completion health has a 27-hour budget. See `docs/stream/09-background-sync.md` for slice bounds and continuation.
+Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion. Its requested fail-closed 15-minute lease is capped on Netlify at 90 seconds, renewed every 30 seconds; renewal loss does not cancel the core, so preserve domain claim and publication fencing. The recording's stale-claim threshold remains 15 minutes. Session recovery runs via HTTP at :10/:40. The five daily lifecycle targets queue the narrow `stream-maintenance-background` worker in staggered daily windows; their Actions steps are removed. All six migrated cores fail closed, and daily completion health has a 27-hour budget. See `docs/stream/09-background-sync.md` for slice bounds and continuation.
 
 Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
 including Prisma import failures. Completion is conditional on the same execution
@@ -66,6 +66,8 @@ Maintenance bypass cookies remain short-lived HMAC-SHA256 tokens verified via We
 Crypto. Follow the active maintenance implementation and recovery instructions;
 never infer that a cached phase quiesces work already in flight. See the linked
 references for transaction-client, deployed-runtime and environment constraints.
+
+The infrastructure orientation at `docs/start-here/10-infra-and-maintenance-sre-orientation.md` is the onboarding and portability guide. Keep its guarantees, failure limits and pending-versus-active scheduler ownership synchronized with source; the generated inventory owns counts, and GitHub comments alone are not architecture documentation. Keep the Stream-owned worker runbooks linked for active-host, execution-envelope and deployment verification constraints.
 
 PATCH updates require a validated non-empty reason, including ETA-only changes; use that value for incident and audit text. Maintenance retries preserve the active window's configuration and repeat OFFLINE setup until its completion stamp exists. Recovery checks database, Redis and chat before incident resolution and phase change. Preserve sequential session and channel-batch admission checks, paced vendor batches, transaction-client writes and ordered sidecar statements; a loop await is required when the next step depends on its predecessor or remaining budget.
 
@@ -145,6 +147,10 @@ Destructive retention must be bounded for every caller, repeat eligibility in th
 Auth tokens/invitations, webhook archive, onboarding drafts and audit retention have bounded canonical defaults and a shared 16-second admission budget per invocation. Every destructive write repeats current age/status eligibility. Read `docs/maintenance/housekeeping-bounds.md` for per-phase versus global limits, continuation and the existing bounded audit CLI. Keep deadline checks before continuation probes and process organisation transactions sequentially so the next admission check includes prior commit time. Preserve category retention and expiry policy; a work bound is not permission to shorten retention. Failures or time-budget holds retain `hasMore`; a failed oldest page needs repair rather than silent skipping.
 
 Auth-token and webhook page executions share `deleteBoundedPage`: preserve the shared start budget, caller-owned eligibility predicates and committed counts when the continuation probe fails.
+
+## Support auto-close progress
+
+Preserve support refusal, payout-release and chat-ending transactions. Rotate admitted auto-close attempts with the nullable `SupportCase.autoCloseLastAttemptAt` eligibility/prior-attempt CAS stamp; never change business clocks to poll. Expected recommendation/maintenance holds have bounded samples, while unreadable maintenance remains failure. The 16-second start budget covers only auto-close. The owner applies the exact additive SQL before readers; use read-only catalog verification and the current [sweep runbook](../../../docs/support/07-sla-sweep.md#auto-close-schema-rollout).
 
 ## Direct upload commit retries
 

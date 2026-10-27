@@ -425,6 +425,7 @@ async function dunning(opts: {
         stats.failed += 1;
         console.error(
           "[dunning] suspension payment check held:",
+          inv.id,
           scrubStringValue(
             error instanceof Error ? error.message : String(error),
           ),

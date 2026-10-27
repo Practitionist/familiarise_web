@@ -1,26 +1,6 @@
 /**
- * Consultant No-Show Detection + Handling — Core Logic (#471)
- *
- * The platform promises a full refund when the CONSULTANT no-shows a paid
- * session, but only the foundation data existed (MeetingAttendance stamped by
- * lib/stream/session-handlers.ts). This job closes the loop: detect confirmed
- * consultant no-shows, auto-refund (reusing B1's refundPayment path, #990),
- * mark the booking cancelled, and notify both parties.
- *
- * Imported by:
- * - jobs/appointments/detect-consultant-no-shows.ts (GitHub Actions)
- *
- * Schedule: hourly.
- *
- * Its candidates no longer race `auto-complete-appointments` (#1504). Both jobs
- * read the same presence verdict from `lib/booking/session-outcome.ts` (#1569),
- * and that job leaves a HOST_ABSENT consultation SCHEDULED until the handoff
- * instead of completing it out from under this one.
- *
- * Scope: CONSULTATION only — a single-session, single-consultant exclusive
- * booking where a full refund of the one payment is the correct remedy.
- * Subscriptions are multi-session (a per-session no-show is a partial refund of
- * one session out of N, which needs its own design); see the TODO below.
+ * Confirmed consultant no-shows cancel and refund consultations using the shared
+ * session-outcome verdict; multi-session partial refunds are excluded.
  */
 
 import * as Sentry from "@sentry/nextjs";

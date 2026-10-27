@@ -39,6 +39,48 @@ It exports retained rows; it cannot reconstruct rows already pruned by their
 retention policy. A whole organization is still built in memory, so a one-job
 selection limit does not prove a byte-size, snapshot-isolation or runtime bound.
 
+## JSON bundle examples
+
+Flat JSON, schemaVersion `1`. New requests select one kind; keys from the
+other kind are absent. These examples show the top-level shape with empty
+collections.
+
+`PEOPLE`:
+
+```json
+{
+  "organizationId": "org_xxx",
+  "generatedAt": "2026-05-15T10:00:00.000Z",
+  "schemaVersion": 1,
+  "kinds": ["PEOPLE"],
+  "organization": { "id": "org_xxx" },
+  "members": [],
+  "memberships": [],
+  "auditLog": [],
+  "excludedForConsent": 0
+}
+```
+
+`FINANCE`:
+
+```json
+{
+  "organizationId": "org_xxx",
+  "generatedAt": "2026-05-15T10:00:00.000Z",
+  "schemaVersion": 1,
+  "kinds": ["FINANCE"],
+  "organization": { "id": "org_xxx" },
+  "contracts": [],
+  "programs": [],
+  "invoices": [],
+  "earnings": [],
+  "payouts": []
+}
+```
+
+An existing `FULL` job combines both sets and declares both entries in `kinds`.
+New requests do not accept `FULL`.
+
 ## Routes and user workflow
 
 | Verb | Path under `/api/organizations/[orgId]` | Behavior                                                                                                                                                       |
