@@ -3,12 +3,15 @@ const MINUTE_MS = 60_000;
 // Completion SLOs, not scheduling instructions. Optional and calendar-only jobs need separate checks.
 export const OPERATIONAL_COMPLETION_REQUIREMENTS = [
   { jobName: "reconcile-payment-status", maxAgeMinutes: 45 },
+  { jobName: "reconcile-org-invoice-payments", maxAgeMinutes: 12 * 60 },
   { jobName: "reconcile-pending-refunds", maxAgeMinutes: 45 },
   { jobName: "retry-auto-refunds", maxAgeMinutes: 45 },
   { jobName: "sweep-stuck-webhook-events", maxAgeMinutes: 45 },
   { jobName: "retry-failed-emails", maxAgeMinutes: 45 },
   { jobName: "drain-notification-outbox", maxAgeMinutes: 45 },
   { jobName: "send-appointment-reminders", maxAgeMinutes: 45 },
+  { jobName: "process-data-exports", maxAgeMinutes: 45 },
+  { jobName: "expire-stale-requests", maxAgeMinutes: 45 },
   { jobName: "auto-complete-appointments", maxAgeMinutes: 90 },
   { jobName: "detect-consultant-no-shows", maxAgeMinutes: 90 },
   { jobName: "support-sla-sweep", maxAgeMinutes: 60 },

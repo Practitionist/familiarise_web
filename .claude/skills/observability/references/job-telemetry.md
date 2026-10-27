@@ -64,6 +64,19 @@ and probe must use the same environment label; untagged or preview rows do not
 establish production freshness. Verify tagged, truthful completion recording and
 active required workers before enabling the monitor.
 
+Both job-history routes select `NEXT_PUBLIC_SENTRY_ENVIRONMENT ?? SENTRY_ENVIRONMENT`
+and return 503 if that label is empty or absent. The streak query filters
+COMPLETED/FAILED rows by `result.environment`, so dev success cannot reset
+production failure escalation. Unknown streak history retains one-off reporting.
+This scopes monitoring evidence, not business rows or the shared Postgres lease.
+
+Export and stale-request workers have forty-five-minute completion budgets.
+Retained-order invoice recovery runs every four hours, at most five candidates
+per slot, with a twelve-hour completion budget. These are execution-freshness
+policies, not per-obligation recovery or queue-drain guarantees. See
+[readiness and operating gates](../../../../docs/maintenance/13-readiness-and-operating-gates.md)
+before making an infrastructure readiness claim.
+
 Configure the external monitor with CRON_SECRET in a protected Authorization
 header, never a URL parameter. Calendar-only/config-gated jobs and business
 backlog/vendor correctness need separate checks. Verify accepted telemetry and
@@ -74,6 +87,12 @@ reading during maintenance; suppress notifications externally without advancing
 successful-work freshness.
 
 `GET /api/health/jobs/streaks` is the third route. It is bearer-protected, read-only, uncached, and returns each requested target's last `COMPLETED` start in the past seven days plus whether any `COMPLETED` or `FAILED` row exists. It leaves out targets whose job writes no execution row.
+
+For cron activation, use the current Sentry Monitors UI and read back active
+state through the API; legacy Crons links can return 404. Check the account's
+active-monitor allowance before a drill, and never retire another project's
+monitor without its owner's authorization. Configuration, a disabled source or
+a failed activation does not establish accepted check-ins or alert delivery.
 
 ## Retention
 

@@ -1036,6 +1036,22 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Stream lifecycle dispatch failed",
       }),
 
+    // @cleanup-twin reconcile-org-invoice-payments
+    "reconcile-org-invoice-payments": () =>
+      cleanupRoute({
+        job: "reconcile-org-invoice-payments",
+        run: async (req, { startedAt }) => {
+          const { reconcileOrgInvoicePayments } =
+            await import("@/lib/payments/billing/reconcile-invoice-payments");
+          return reconcileOrgInvoicePayments({
+            limit: parseLimitParamOrDefault(req, 5),
+            startedAt,
+          });
+        },
+        status: (r) => statusFor(r, r.unapplied > 0),
+        failureMessage: "Failed to reconcile invoice payments",
+      }),
+
     // @cleanup-twin reconcile-payment-status
     "reconcile-payment-status": () =>
       cleanupRoute({

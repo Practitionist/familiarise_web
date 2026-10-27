@@ -36,3 +36,26 @@ Detailed invariants and regime facts live in `references/doctrine.md`; verificat
 - **Wallet freeze.** `WALLET_BALANCE_DRIFT` freezes discretionary spend via `lib/payments/wallet-freeze.ts` (`isWalletFrozen`, `freezeDriftedWallets`), even when the finding is baselined. The next audit that finds the cache equal to the journal lifts a drift-tagged freeze (`context.source: "reconcile-drift"`) it saw in its snapshot as actor `SYSTEM`, never an ops freeze (`releaseReconciledWalletFreezes`, the same compare-and-set `unfreezeWalletSpend` as the admin door). A wallet debit also needs its `Dr WALLET` line (`assertWalletDebitJournaled`).
 - **Support holds and remedies.** `EarningsHoldReason.SUPPORT_CASE` holds are placed by `lib/support/case-holds.ts`. A service complaint (`SupportCase`) refund is proposed as a `SupportFinancialRecommendation`, decided by a second operator, and only then executed through `refundBookingPayment` (`lib/support/case-actions.ts`); a recommendation moves no money. The staff caps in `lib/support/money-policy.ts` (`assertBoundedRefund`) are checked on that approve-and-execute path. A dispute is the gateway chargeback (`Dispute`), a different thing.
 - **Ops proposals.** Back-office money doors above ₹25,000 answer `202` and wait for a second admin (`lib/backoffice/ops-proposals.ts`, `withOpsAction` in `lib/backoffice/ops-action-log.ts`).
+
+## Invoice capture recovery
+
+Lock a payable invoice without invalidating its current order while validating a
+gateway capture. Park an amount mismatch without clearing a newer checkout;
+successful PAID settlement clears the reference. Keep bank/credit invalidation
+semantics separate from the capture lock.
+
+A positive booking-refund credit clears a payable invoice's checkout reference
+under its existing credit-cap row lock. Failed payment attempts retain references
+because their orders remain retryable. Clearing a local pointer does not revoke
+a provider order: late mismatched captures stay operator-reviewed liabilities,
+and the retained-pointer healer cannot discover every superseded order.
+Recompute outstanding through the attachment transaction before its CAS; a
+gateway request may have started before the credit changed the balance.
+An unreleased unapplied receipt keeps that capture in operator recovery; never
+automatically settle it again just because a later amount comparison matches.
+Before dunning suspension, read the retained gateway order within the bounded
+admission budget; recover captures canonically and hold uncertain/live/parked
+evidence. Recheck positive net debt and the inspected order inside the claim
+transaction. Reminder cohorts and lost historical order IDs need separate review.
+
+Use `applyOrgInvoiceCapture` with the transaction client for webhook, checkout read-back and scheduled recovery. Keep receipt, ledger, PAID audit and notification staging atomic. The registered invoice healer rotates retained order IDs through its existing execution checkpoint; it never creates another charge or auto-refunds an unapplied capture. An empty payment list does not close a created/attempted order: checkout must not replace an open stale-amount order. Keep provider waits inside the caller's remaining budget; an SDK timeout does not cancel a gateway effect. Bank receipts and credits can clear an old order reference, so do not claim the healer discovers every historical capture. Read `docs/maintenance/12-worker-recovery.md` for cadence, bounded rotation and remaining operating gates.

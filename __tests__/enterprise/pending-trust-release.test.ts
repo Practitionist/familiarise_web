@@ -35,6 +35,7 @@ const tx = {
     aggregate: jest.fn(async () => ({ _sum: { amountPaise: BigInt(50_000) } })),
   },
   creditNote: { groupBy: jest.fn(async () => []) },
+  ledgerTransaction: { findUnique: jest.fn(async () => null) },
   membership: { findMany: jest.fn(async () => []) },
   overageEvent: {
     updateMany: (...a: unknown[]) => overageEventUpdateMany(...a),
