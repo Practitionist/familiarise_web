@@ -34,8 +34,9 @@ export const missedAt = (o: {
 
 /**
  * A past session parked for a human (the ops needs-human list): the sweep could
- * not judge it, the detector declined a host no-show, or maintenance cut it.
- * Its booking neither completes nor releases earnings until ops decides.
+ * not judge it, the detector declined a host no-show, maintenance cut it, or a
+ * paid session had nobody join or no room. Its booking neither completes nor
+ * releases earnings until ops decides.
  */
 export const AWAITING_HUMAN = {
   completionStatus: "UNVERIFIED",
@@ -43,6 +44,13 @@ export const AWAITING_HUMAN = {
   OR: [
     { outcome: { in: ["INCONCLUSIVE", "HOST_ABSENT"] } },
     { outcome: null, meeting: { endedReason: "maintenance" } },
+    // Nobody joined or no room, on a paid booking; a free one has no money to hold and completes.
+    {
+      outcome: { in: ["NOBODY_JOINED", "OFFLINE"] },
+      appointment: {
+        payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
+      },
+    },
   ],
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 

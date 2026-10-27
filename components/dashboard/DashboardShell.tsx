@@ -31,7 +31,6 @@ import {
 import { MobileNav } from "@/components/dashboard/MobileNav";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import NovuProvider from "@/providers/NovuProvider";
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import type { DashboardNav, NavItem } from "@/lib/dashboard/nav/types";
 import {
@@ -84,8 +83,7 @@ function withBadge(
  * menu, which also holds the personal / back-office Settings; Help once, in
  * the header; the collapse toggle leads the bar (Ctrl/⌘ \).
  *
- * It owns the Novu provider (the org tree mounted the inbox without one) and
- * the single error boundary. Layouts resolve data and pass pure props.
+ * It owns the single error boundary. Layouts resolve data and pass pure props.
  */
 export function DashboardShell({
   kind,
@@ -135,7 +133,7 @@ export function DashboardShell({
   );
 
   return (
-    <NovuProvider>
+    <>
       {/* Clips the document so a tall page cannot window-scroll the context
           bar away; <main> is the only scrollport. The right panel must NOT be
           overflow-hidden — a second scrollport breaks sticky page chrome. */}
@@ -207,7 +205,7 @@ export function DashboardShell({
         onOpenChange={setFindOpen}
         entries={findEntries}
       />
-    </NovuProvider>
+    </>
   );
 }
 

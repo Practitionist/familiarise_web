@@ -35,7 +35,7 @@ function fakeLedger(seed: Txn[]) {
     entries: t.entries.filter((e) => !direction || e.direction === direction),
   });
   return txDouble({
-    ledgerAccount: { upsert: jest.fn().mockResolvedValue({}) },
+    ledgerAccount: { createMany: jest.fn().mockResolvedValue({ count: 0 }) },
     ledgerTransaction: {
       findUnique: jest.fn(
         async ({ where }: { where: { idempotencyKey: string } }) =>
