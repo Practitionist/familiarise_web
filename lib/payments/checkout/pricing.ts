@@ -39,7 +39,10 @@ import {
   assertSeatRemintable,
   assertClassEnrolmentOpen,
 } from "@/lib/payments/checkout/seats";
-import { resolvePriorRenewalEndsAt } from "@/lib/payments/checkout/renewal";
+import {
+  resolvePlanStart,
+  resolvePriorPlanEnd,
+} from "@/lib/payments/checkout/renewal";
 import { validateSlotAvailability } from "@/lib/payments/checkout/occupancy-validate";
 
 /**
@@ -230,7 +233,7 @@ export async function calculateAmountAndValidate(
           validatedData.schedulingPeriodStartsAt ||
           validatedData.renewsSubscriptionId
         ) {
-          const priorEndsAt = await resolvePriorRenewalEndsAt(
+          const priorPlanEnd = await resolvePriorPlanEnd(
             tx,
             validatedData.renewsSubscriptionId,
             user.consulteeProfile.id,
@@ -239,19 +242,11 @@ export async function calculateAmountAndValidate(
           const schedulingTimezone = resolveSchedulingTimezone(
             plan.consultantProfile?.user?.timezone,
           );
-          const now = new Date();
-          const requestedStart = validatedData.schedulingPeriodStartsAt
-            ? new Date(validatedData.schedulingPeriodStartsAt)
-            : now;
-          const effectiveStart = priorEndsAt
-            ? new Date(
-                Math.max(
-                  priorEndsAt.getTime(),
-                  requestedStart.getTime(),
-                  now.getTime(),
-                ),
-              )
-            : requestedStart;
+          const effectiveStart = resolvePlanStart(
+            validatedData.schedulingPeriodStartsAt,
+            priorPlanEnd,
+            new Date(),
+          );
           const { start, end } = firstCycleWindow(
             plan,
             effectiveStart,

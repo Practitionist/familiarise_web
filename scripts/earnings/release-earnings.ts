@@ -21,7 +21,7 @@
  * Schedule: Runs hourly via GitHub Actions
  */
 
-import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
+import { AWAITING_HUMAN, EARNINGS_HOLDING_MISS } from "@/lib/booking/misses";
 import {
   EarningStatus,
   OccurrenceCompletionStatus,
@@ -91,6 +91,7 @@ export const UNDELIVERED_OCCURRENCE = {
  * #1569 D10 — NO_UNSETTLED_MISS rides the same payment filter: a booking owing
  * a make-up or a refund for a host-cancelled or voided session, or holding a
  * session parked for ops, keeps its earning PENDING (a hold, not a clawback).
+ * A subscription's misses do not hold it (`EARNINGS_HOLDING_MISS`).
  */
 export const RELEASABLE_PAYMENT = {
   refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
@@ -104,7 +105,7 @@ export const RELEASABLE_PAYMENT = {
     {
       appointment: {
         AND: [
-          { occurrences: { none: UNSETTLED_MISS } },
+          { occurrences: { none: EARNINGS_HOLDING_MISS } },
           { occurrences: { none: AWAITING_HUMAN } },
         ],
       },

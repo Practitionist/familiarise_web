@@ -34,10 +34,13 @@ const tx = {
           status: "APPROVED",
           requestedById: "cee-1",
           sessionsReturned: state.sessionsReturned,
-          schedulingPeriodEndsAt: END,
+          planEndsAt: END,
+          schedulingPeriodStartsAt: new Date("2026-10-30T00:00:00.000Z"),
+          schedulingTimezone: "UTC",
           requestedBy: { user: { name: "Asha" } },
           subscriptionPlan: {
             title: "Weekly",
+            durationInMonths: 1,
             consultantProfile: { user: { id: "u-expert", name: "Ravi" } },
           },
         },
@@ -168,12 +171,11 @@ describe("returning a subscription session to the plan", () => {
       where: {
         id: "sub-1",
         status: "APPROVED",
-        sessionsReturned: { lt: 2 },
-        schedulingPeriodEndsAt: END,
+        sessionsReturned: 0,
       },
       data: {
         sessionsReturned: { increment: 1 },
-        schedulingPeriodEndsAt: new Date(END.getTime() + 7 * 24 * HOUR),
+        planEndsAt: new Date(END.getTime() + 7 * 24 * HOUR),
       },
     });
     expect(out.sessionsReturned).toBe(1);

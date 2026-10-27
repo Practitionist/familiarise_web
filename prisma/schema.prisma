@@ -4124,14 +4124,19 @@ enum OfferingPlanStatus {
 }
 
 model Subscription {
-  id                       String   @id @default(cuid())
-  schedulingPeriodStartsAt DateTime @db.Timestamptz
-  schedulingPeriodEndsAt   DateTime @db.Timestamptz
+  id                       String    @id @default(cuid())
+  schedulingPeriodStartsAt DateTime  @db.Timestamptz
+  /// End of the first cycle at purchase (exclusive); informational only.
+  /// The plan end is `planEndsAt`, read through `subscriptionPlanEnd`.
+  schedulingPeriodEndsAt   DateTime  @db.Timestamptz
+  /// Fixed plan end (exclusive): start + durationInMonths on the consultant's
+  /// calendar, month-end clamped. Null rows derive it from the start.
+  planEndsAt               DateTime? @db.Timestamptz
   // #1076 — stamped from the owning consultant's user.timezone at creation, so
   // the per-day/week caps bucket on the consultant's days. Pinned at creation
   // rather than followed live: moving it would shift an existing booking's day
   // boundaries. The default only applies where the consultant has no zone.
-  schedulingTimezone       String   @default("Asia/Kolkata")
+  schedulingTimezone       String    @default("Asia/Kolkata")
 
   status             AppointmentStatus   @default(PENDING) @map("requestStatus")
   requestedBy        ConsulteeProfile    @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -4161,8 +4166,8 @@ model Subscription {
   /// check-constraints banner.
   sessionsTotal Int?
 
-  /// Sessions the consultee returned to the plan; each extended
-  /// `schedulingPeriodEndsAt` by 7 days. CHECK 0..2 lives in prisma/sql.
+  /// Sessions the consultee returned to the plan; each moved the plan end
+  /// 7 days later. CHECK 0..2 lives in prisma/sql.
   sessionsReturned Int @default(0)
 
   appointment               Appointment?

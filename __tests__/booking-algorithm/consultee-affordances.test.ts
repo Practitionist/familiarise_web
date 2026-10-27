@@ -34,8 +34,16 @@ describe("#1163 open proposal detection", () => {
     initiatorRole: "CONSULTANT",
     initiatedById: "user-1",
     proposedTimes: [
-      { startsAt: "2026-08-21T10:00:00.000Z", endsAt: "2026-08-21T10:30:00.000Z", round: 1 },
-      { startsAt: "2026-08-22T10:00:00.000Z", endsAt: "2026-08-22T10:30:00.000Z", round: 2 },
+      {
+        startsAt: "2026-08-21T10:00:00.000Z",
+        endsAt: "2026-08-21T10:30:00.000Z",
+        round: 1,
+      },
+      {
+        startsAt: "2026-08-22T10:00:00.000Z",
+        endsAt: "2026-08-22T10:30:00.000Z",
+        round: 2,
+      },
     ],
   });
 

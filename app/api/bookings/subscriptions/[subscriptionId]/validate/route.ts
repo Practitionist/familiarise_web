@@ -7,7 +7,7 @@
  * VALIDATION LAYERS:
  * 1. Zod schema validation - Type-safe validation with automatic type inference
  * 2. ScheduleValidationService - Validates business rules (conflicts, availability, etc.)
- * 3. SubscriptionValidationService - Validates subscription-specific rules (weekly limits, etc.)
+ * 3. SubscriptionValidationService - Validates subscription-specific rules (cycle window and cap, plan total)
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -31,25 +31,9 @@ import {
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 interface ValidationResult extends SlotConflictResult {
-  subscriptionValidation?: {
-    isValid: boolean;
-    errors: string[];
-    warnings: string[];
-    weeklyInfo: Array<{
-      weekStart: Date;
-      weekEnd: Date;
-      existingCalls: number;
-      maxCalls: number;
-      canScheduleMore: boolean;
-      availableSlots: number;
-    }>;
-    totalCallsScheduled: number;
-    maxTotalCalls: number;
-    subscriptionPeriod: {
-      start: Date;
-      end: Date;
-    };
-  };
+  subscriptionValidation?: Awaited<
+    ReturnType<SubscriptionValidationService["validateSubscriptionSlots"]>
+  >;
 }
 
 const subscriptionInclude = {
@@ -144,6 +128,19 @@ export async function POST(
       );
       const consulteeUserId = subscription.requestedBy?.user?.id;
 
+      // Subscription rules (the current cycle's window and cap, the plan total);
+      // the cycle window is also the period the business validation clamps to.
+      const subscriptionValidationService = new SubscriptionValidationService(
+        prisma,
+      );
+      const subscriptionValidation =
+        await subscriptionValidationService.validateSubscriptionSlots(
+          subscriptionId,
+          body.slots,
+          [],
+          excludeOccurrenceIds,
+        );
+
       // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
       const validationService = new ScheduleValidationService(prisma);
       const validationResult = await validationService.validate(
@@ -163,8 +160,9 @@ export async function POST(
           durationInMonths: subscriptionPlan.durationInMonths,
           sessionsPerWeek: subscriptionPlan.sessionsPerWeek,
           sessionDurationInHours: subscriptionPlan.sessionDurationInHours,
-          schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
-          schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt,
+          schedulingPeriodStartsAt:
+            subscriptionValidation.subscriptionPeriod.start,
+          schedulingPeriodEndsAt: subscriptionValidation.subscriptionPeriod.end,
           schedulingTimezone: subscription.schedulingTimezone,
         },
         [],
@@ -180,18 +178,6 @@ export async function POST(
           authResult.session.user.id === consultantProfile.user.id,
       };
       const conflictDetails = conflictDetailsBySlot(validationResult.conflicts);
-
-      // LAYER 3: Subscription-Specific Validation (weekly limits, total calls, etc.)
-      const subscriptionValidationService = new SubscriptionValidationService(
-        prisma,
-      );
-      const subscriptionValidation =
-        await subscriptionValidationService.validateSubscriptionSlots(
-          subscriptionId,
-          body.slots,
-          [],
-          excludeOccurrenceIds,
-        );
 
       const categorized = validationResult.isValid
         ? {

@@ -190,6 +190,8 @@ describe("reconcile-occurrence-availability × top-up cohort (#1766)", () => {
       sessionsTotal: 24,
       schedulingPeriodStartsAt: new Date("2026-01-05T00:00:00Z"),
       schedulingTimezone: "UTC",
+      // A plan end well ahead of the real clock: these rows are mid-plan.
+      planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
       subscriptionPlan: {
         consultantProfileId: "cp-1",
         durationInMonths: 3,

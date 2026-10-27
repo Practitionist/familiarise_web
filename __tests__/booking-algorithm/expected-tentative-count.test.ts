@@ -77,6 +77,8 @@ const richSubscription = {
   schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
   schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
   schedulingTimezone: "Asia/Kolkata",
+  // A plan end well ahead of the real clock: these rows are mid-plan.
+  planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
 };
 
 beforeEach(() => {

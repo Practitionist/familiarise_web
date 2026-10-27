@@ -1,26 +1,12 @@
 /**
- * Comprehensive tests for SubscriptionValidationService
- *
- * Covers:
- * - Week key format consistency (Bug A fix verification)
- * - Occurrence-per-call counting (Bug B fix verification, #1554)
- * - Weekly limit enforcement (Bug C fix verification)
- * - Subscription period boundary validation
- * - generateWeeklyInfo with proposed and existing calls
- * - getAvailableWeeksForSubscription
- * - canScheduleInWeek
- * - Helper functions: getSubscriptionWeek, getSubscriptionType
- * - Edge cases: empty slots, max weeks safety, past weeks
+ * SubscriptionValidationService: the current cycle's half-open window, the
+ * rolling cycle cap (`nextBatch`, the only weekly counter), the frozen plan
+ * total, and whole-call counting across midnight.
  */
 
 import "./setup";
 
-import {
-  SubscriptionValidationService,
-  getSubscriptionWeek,
-  getSubscriptionType,
-} from "@/utils/subscriptionValidation";
-import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { SubscriptionValidationService } from "@/utils/subscriptionValidation";
 import {
   makeSubscription,
   makeSubscriptionPlan,
@@ -29,21 +15,20 @@ import {
   makeConsecutiveSlotISOs,
 } from "../fixtures/booking.mockData";
 
-// ─── Test Setup ─────────────────────────────────────────────────────────────
-
 function createService(
-  subscriptionOverrides: Record<string, any> = {},
-  existingAppointments: any[] = [],
+  subscriptionOverrides: Record<string, unknown> = {},
+  existingAppointments: unknown[] = [],
 ) {
-  const subscription = makeSubscription(subscriptionOverrides);
+  const subscription = makeSubscription({
+    schedulingTimezone: "UTC",
+    ...subscriptionOverrides,
+  });
   const mockPrisma = makeMockPrisma(subscription, existingAppointments);
-  const service = new SubscriptionValidationService(mockPrisma);
-  return { service, mockPrisma, subscription };
+  return new SubscriptionValidationService(mockPrisma);
 }
 
-// #1766 — the validated window is the CURRENT CYCLE, derived from
-// max(stored start, last held session, now), so the clock must sit before
-// the 2025 fixtures or every slot below would fall outside it.
+// The window is max(stored start, last held session, now) to the end of the
+// seventh day, so the clock sits before the Mon 6 Jan 2025 fixture start.
 beforeEach(() => {
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2025-01-01T00:00:00.000Z"));
@@ -53,772 +38,165 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-// ─── Bug A: Week Key Format Consistency ─────────────────────────────────────
-
-describe("Bug A Fix: Week key format consistency", () => {
-  it("should use matching key formats for proposed slots and weekly info lookup", async () => {
-    const { service } = createService({
-      subscriptionPlan: makeSubscriptionPlan({ sessionsPerWeek: 1 }),
-    });
-
-    // Propose 2 consecutive slots (1 call) in week of Jan 5
-    const proposedSlots = makeConsecutiveSlotISOs(
-      "2025-01-06T10:00:00.000Z",
-      2,
+describe("the cycle window", () => {
+  it("reports the half-open window: Mon 6 Jan to the midnight after Sun 12 Jan", async () => {
+    const result = await createService().validateSubscriptionSlots("sub-1", []);
+    expect(result.subscriptionPeriod.start.toISOString()).toBe(
+      "2025-01-06T00:00:00.000Z",
     );
+    expect(result.subscriptionPeriod.end.toISOString()).toBe(
+      "2025-01-13T00:00:00.000Z",
+    );
+  });
 
-    const result = await service.validateSubscriptionSlots(
+  it("accepts a call ending exactly at the window end", async () => {
+    const result = await createService().validateSubscriptionSlots(
       "sub-1",
-      proposedSlots,
+      makeConsecutiveSlotISOs("2025-01-12T23:00:00.000Z", 2),
     );
-
-    // The proposed call should appear in weeklyInfo
-    const weekWithProposed = result.weeklyInfo.find((w) => w.proposedCalls > 0);
-    expect(weekWithProposed).toBeDefined();
-    expect(weekWithProposed!.proposedCalls).toBe(1);
-  });
-
-  it("should enforce proposed slot weekly limits (was broken before fix)", async () => {
-    const { service } = createService({
-      subscriptionPlan: makeSubscriptionPlan({
-        sessionsPerWeek: 1,
-        sessionDurationInHours: 1,
-      }),
-    });
-
-    // Propose 2 calls in the same week (exceeds limit of 1)
-    const call1 = makeConsecutiveSlotISOs("2025-01-06T10:00:00.000Z", 2);
-    const call2 = makeConsecutiveSlotISOs("2025-01-07T10:00:00.000Z", 2);
-    const proposedSlots = [...call1, ...call2];
-
-    const result = await service.validateSubscriptionSlots(
-      "sub-1",
-      proposedSlots,
-    );
-
-    expect(result.isValid).toBe(false);
-    expect(result.errors.some((e) => e.includes("exceeds call limit"))).toBe(
-      true,
-    );
-  });
-});
-
-// ─── Bug B: Appointment Per-Call Counting ───────────────────────────────────
-
-describe("Bug B Fix: Occurrence counting (1 occurrence = 1 call, #1554)", () => {
-  it("should count a two-interval occurrence as 1 call, not 2", async () => {
-    const existingAppointments = [
-      makeAppointmentWithSlots("apt-1", [
-        "2025-01-06T10:00:00.000Z",
-        "2025-01-06T10:30:00.000Z",
-      ]),
-    ];
-
-    const { service } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 2,
-          sessionDurationInHours: 1,
-        }),
-      },
-      existingAppointments,
-    );
-
-    const result = await service.validateSubscriptionSlots("sub-1", []);
-
-    // The week containing Jan 6 should show 1 existing call, not 2 — the
-    // 10:00–11:00 call is one occurrence row, not two half-hour atoms.
-    // Weeks are scheduling-timezone Sundays (ADR B9) — match the instant.
-    const expectedWeekStart = ScheduleCalculationService.startOfWeekSundayInTz(
-      new Date("2025-01-06T10:00:00.000Z"),
-    );
-    const weekOfJan5 = result.weeklyInfo.find(
-      (w) => w.weekStart.getTime() === expectedWeekStart.getTime(),
-    );
-    expect(weekOfJan5).toBeDefined();
-    expect(weekOfJan5!.existingCalls).toBe(1);
-  });
-
-  it("should count 2 separate appointments as 2 calls", async () => {
-    const existingAppointments = [
-      makeAppointmentWithSlots("apt-1", [
-        "2025-01-06T10:00:00.000Z",
-        "2025-01-06T10:30:00.000Z",
-      ]),
-      makeAppointmentWithSlots("apt-2", [
-        "2025-01-07T10:00:00.000Z",
-        "2025-01-07T10:30:00.000Z",
-      ]),
-    ];
-
-    const { service } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 2,
-          sessionDurationInHours: 1,
-        }),
-      },
-      existingAppointments,
-    );
-
-    const result = await service.validateSubscriptionSlots("sub-1", []);
-    expect(result.totalCallsScheduled).toBe(2);
-  });
-
-  it("should skip appointments with no slots", async () => {
-    const existingAppointments = [
-      makeAppointmentWithSlots("apt-1", []), // empty
-      makeAppointmentWithSlots("apt-2", ["2025-01-06T10:00:00.000Z"]),
-    ];
-
-    const { service } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 2,
-          sessionDurationInHours: 0.5,
-        }),
-      },
-      existingAppointments,
-    );
-
-    const result = await service.validateSubscriptionSlots("sub-1", []);
-    expect(result.totalCallsScheduled).toBe(1);
-  });
-
-  it("should use earliest slot to determine week for multi-slot appointment", async () => {
-    // Appointment spanning Saturday night to Sunday would be tricky
-    // but both slots on same day — uses earliest slot
-    const existingAppointments = [
-      makeAppointmentWithSlots("apt-1", [
-        "2025-01-06T14:00:00.000Z",
-        "2025-01-06T13:30:00.000Z", // earlier slot listed second
-      ]),
-    ];
-
-    const { service } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 2,
-          sessionDurationInHours: 1,
-        }),
-      },
-      existingAppointments,
-    );
-
-    const result = await service.validateSubscriptionSlots("sub-1", []);
-    // Should use 13:30 (earliest) to determine week.
-    // Weeks are scheduling-timezone Sundays (ADR B9) — match the instant.
-    const expectedWeekStart = ScheduleCalculationService.startOfWeekSundayInTz(
-      new Date("2025-01-06T13:30:00.000Z"),
-    );
-    const weekOfJan5 = result.weeklyInfo.find(
-      (w) => w.weekStart.getTime() === expectedWeekStart.getTime(),
-    );
-    expect(weekOfJan5).toBeDefined();
-    expect(weekOfJan5!.existingCalls).toBe(1);
-  });
-});
-
-// ─── Bug C: Weekly Limit Enforcement ────────────────────────────────────────
-
-describe("Bug C Fix: Weekly limit validation actually catches violations", () => {
-  it("should reject when existing + proposed exceed weekly limit", async () => {
-    // 1 existing appointment + 1 proposed call = 2 calls, limit = 1
-    const existingAppointments = [
-      makeAppointmentWithSlots("apt-1", [
-        "2025-01-06T10:00:00.000Z",
-        "2025-01-06T10:30:00.000Z",
-      ]),
-    ];
-
-    const { service } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 1,
-          sessionDurationInHours: 1,
-        }),
-      },
-      existingAppointments,
-    );
-
-    const proposedSlots = makeConsecutiveSlotISOs(
-      "2025-01-07T10:00:00.000Z",
-      2,
-    );
-
-    const result = await service.validateSubscriptionSlots(
-      "sub-1",
-      proposedSlots,
-    );
-
-    expect(result.isValid).toBe(false);
-    expect(result.errors.some((e) => e.includes("exceeds call limit"))).toBe(
-      true,
-    );
-  });
-
-  it("should generate warnings for fully booked weeks", async () => {
-    const existingAppointments = [
-      makeAppointmentWithSlots("apt-1", [
-        "2025-01-06T10:00:00.000Z",
-        "2025-01-06T10:30:00.000Z",
-      ]),
-    ];
-
-    const { service } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 1,
-          sessionDurationInHours: 1,
-        }),
-      },
-      existingAppointments,
-    );
-
-    const result = await service.validateSubscriptionSlots("sub-1", []);
-    expect(result.warnings.some((w) => w.includes("fully booked"))).toBe(true);
-  });
-
-  it("should pass when calls are within limit", async () => {
-    const existingAppointments = [
-      makeAppointmentWithSlots("apt-1", [
-        "2025-01-06T10:00:00.000Z",
-        "2025-01-06T10:30:00.000Z",
-      ]),
-    ];
-
-    const { service } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 2,
-          sessionDurationInHours: 1,
-        }),
-      },
-      existingAppointments,
-    );
-
-    const proposedSlots = makeConsecutiveSlotISOs(
-      "2025-01-07T10:00:00.000Z",
-      2,
-    );
-
-    const result = await service.validateSubscriptionSlots(
-      "sub-1",
-      proposedSlots,
-    );
+    expect(result.errors).toEqual([]);
     expect(result.isValid).toBe(true);
   });
-});
 
-// ─── Subscription Period Validation ─────────────────────────────────────────
+  it("refuses a slot before the window or past its end", async () => {
+    const service = createService();
+    const before = await service.validateSubscriptionSlots(
+      "sub-1",
+      makeConsecutiveSlotISOs("2025-01-05T10:00:00.000Z", 2),
+    );
+    const after = await service.validateSubscriptionSlots(
+      "sub-1",
+      makeConsecutiveSlotISOs("2025-01-13T00:00:00.000Z", 2),
+    );
+    expect(before.isValid).toBe(false);
+    expect(after.isValid).toBe(false);
+    expect(after.errors[0]).toContain("outside this cycle");
+  });
 
-describe("Subscription period validation", () => {
-  it("should reject slots outside subscription period", async () => {
-    const { service } = createService({
-      schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"),
-      schedulingPeriodEndsAt: new Date("2025-02-02T23:59:59.000Z"),
-    });
-
-    // Slot before subscription starts
-    const result = await service.validateSubscriptionSlots("sub-1", [
-      "2025-01-04T10:00:00.000Z",
-    ]);
-
+  it("stops at the plan end", async () => {
+    const result = await createService({
+      planEndsAt: new Date("2025-01-09T00:00:00.000Z"),
+    }).validateSubscriptionSlots(
+      "sub-1",
+      makeConsecutiveSlotISOs("2025-01-10T10:00:00.000Z", 2),
+    );
+    expect(result.subscriptionPeriod.end.toISOString()).toBe(
+      "2025-01-09T00:00:00.000Z",
+    );
     expect(result.isValid).toBe(false);
-    expect(
-      result.errors.some((e) => e.includes("outside subscription period")),
-    ).toBe(true);
   });
+});
 
-  it("should accept slots within the current cycle window", async () => {
-    const { service } = createService({
-      subscriptionPlan: makeSubscriptionPlan({
-        sessionsPerWeek: 2,
-        sessionDurationInHours: 1,
-      }),
-    });
-
-    const proposedSlots = makeConsecutiveSlotISOs(
-      "2025-01-08T10:00:00.000Z",
-      2,
-    );
-
-    const result = await service.validateSubscriptionSlots(
-      "sub-1",
-      proposedSlots,
-    );
-    expect(
-      result.errors.some((e) => e.includes("outside subscription period")),
-    ).toBe(false);
-  });
-
-  it("slots inside the current cycle window pass when the stored period has lapsed (#1766)", async () => {
-    jest.setSystemTime(new Date("2025-03-01T00:00:00.000Z"));
-    const { service } = createService({
-      schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"),
-      schedulingPeriodEndsAt: new Date("2025-02-02T23:59:59.000Z"),
-      subscriptionPlan: makeSubscriptionPlan({ sessionsPerWeek: 1 }),
-    });
-
-    const result = await service.validateSubscriptionSlots(
-      "sub-1",
-      makeConsecutiveSlotISOs("2025-03-03T10:00:00.000Z", 2),
-    );
-
+describe("the rolling cycle cap", () => {
+  it("allows up to sessionsPerWeek calls in a cycle, even across a Sunday", async () => {
+    // Sat 11 + Sun 12 Jan sit in two calendar weeks but one cycle.
+    const result = await createService().validateSubscriptionSlots("sub-1", [
+      ...makeConsecutiveSlotISOs("2025-01-11T10:00:00.000Z", 2),
+      ...makeConsecutiveSlotISOs("2025-01-12T10:00:00.000Z", 2),
+    ]);
+    expect(result.cycleCalls).toBe(2);
+    expect(result.cycleCap).toBe(2);
     expect(result.isValid).toBe(true);
-    // The window rolled to now; the stored row is not what is validated.
-    expect(result.subscriptionPeriod.start.getTime()).toBe(
-      new Date("2025-03-01T00:00:00.000Z").getTime(),
-    );
-  });
-});
-
-// ─── Total Call Limit ───────────────────────────────────────────────────────
-
-describe("Total call limit validation", () => {
-  it("sets maxTotalCalls to the entitlement total, never to weeks × sessionsPerWeek (#1766)", async () => {
-    const { service } = createService({
-      // Nine weeks stored: the old arithmetic would have said 18.
-      schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"),
-      schedulingPeriodEndsAt: new Date("2025-03-09T23:59:59.000Z"),
-      sessionsTotal: 8,
-      subscriptionPlan: makeSubscriptionPlan({
-        sessionsPerWeek: 2,
-        totalSessions: 12,
-      }),
-    });
-
-    const result = await service.validateSubscriptionSlots("sub-1", []);
-    expect(result.maxTotalCalls).toBe(8);
-  });
-});
-
-// ─── Subscription Not Found ─────────────────────────────────────────────────
-
-describe("Error handling", () => {
-  it("should throw when subscription is not found", async () => {
-    const mockPrisma = makeMockPrisma(null);
-    const service = new SubscriptionValidationService(mockPrisma);
-
-    await expect(
-      service.validateSubscriptionSlots("nonexistent", []),
-    ).rejects.toThrow("Subscription not found");
-  });
-});
-
-// ─── Exclude Appointment IDs ────────────────────────────────────────────────
-
-describe("excludeAppointmentIds", () => {
-  it("should exclude specified appointment IDs from existing count", async () => {
-    const existingAppointments = [
-      makeAppointmentWithSlots("apt-1", ["2025-01-06T10:00:00.000Z"]),
-    ];
-
-    const { service, mockPrisma } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 1,
-          sessionDurationInHours: 0.5,
-        }),
-      },
-      existingAppointments,
-    );
-
-    // #1554 — the read is over occurrence rows; the wrapper exclusion rides
-    // the relation filter and the occurrence exclusion rides the row id.
-    await service.validateSubscriptionSlots("sub-1", [], ["apt-1"], ["occ-9"]);
-    expect(mockPrisma.appointmentOccurrence.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          id: { notIn: ["occ-9"] },
-          appointment: expect.objectContaining({ id: { notIn: ["apt-1"] } }),
-        }),
-      }),
-    );
-  });
-});
-
-// ─── Weekly Info Generation ─────────────────────────────────────────────────
-
-describe("Weekly info generation", () => {
-  it("generates one entry per week from the stored start through the current cycle (#1766)", async () => {
-    const { service } = createService({
-      schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"),
-      schedulingPeriodEndsAt: new Date("2025-01-31T23:59:59.000Z"),
-      subscriptionPlan: makeSubscriptionPlan({ sessionsPerWeek: 2 }),
-    });
-
-    const result = await service.validateSubscriptionSlots("sub-1", []);
-    // The first cycle runs 06–12 Jan IST, whose last day sits in the Sunday
-    // week of 12 Jan: two Sunday weeks, not the stored period's four.
-    expect(result.weeklyInfo).toHaveLength(2);
   });
 
-  it("should correctly populate weekStart and weekEnd", async () => {
-    // Use Tue-Fri to stay within a single Sun-Sat week in all timezones
-    // (Jan 12 23:59 UTC = Jan 13 in positive-offset TZs, crossing into next week)
-    const { service } = createService({
-      schedulingPeriodStartsAt: new Date("2025-01-07T00:00:00.000Z"), // Tue
-      schedulingPeriodEndsAt: new Date("2025-01-10T23:59:59.000Z"), // Fri
-      subscriptionPlan: makeSubscriptionPlan({ sessionsPerWeek: 1 }),
-    });
-
-    const result = await service.validateSubscriptionSlots("sub-1", []);
-    expect(result.weeklyInfo.length).toBeGreaterThanOrEqual(1);
-    // weekStart is Sunday 00:00 in the SCHEDULING timezone (ADR B9) — assert
-    // via Intl, not local getDay(), so the test passes on any CI timezone.
-    const weekdayInSchedulingTz = new Intl.DateTimeFormat("en-US", {
-      timeZone: ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE,
-      weekday: "short",
-    }).format(result.weeklyInfo[0].weekStart);
-    expect(weekdayInSchedulingTz).toBe("Sun");
-    expect(result.weeklyInfo[0].maxCalls).toBe(1);
-  });
-
-  it("should set canScheduleMore = false for past weeks", async () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2025-02-15T12:00:00.000Z"));
-
-    const { service } = createService({
-      schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"),
-      schedulingPeriodEndsAt: new Date("2025-02-02T23:59:59.000Z"),
-      subscriptionPlan: makeSubscriptionPlan({ sessionsPerWeek: 1 }),
-    });
-
-    const result = await service.validateSubscriptionSlots("sub-1", []);
-    // Every week that has ended is closed; the current cycle's week stays
-    // open (#1766 rolls the window to now).
-    const now = new Date();
-    const past = result.weeklyInfo.filter((week) => week.weekEnd < now);
-    expect(past.length).toBeGreaterThan(0);
-    past.forEach((week) => {
-      expect(week.canScheduleMore).toBe(false);
-      expect(week.availableSlots).toBe(0);
-    });
-    expect(result.weeklyInfo.some((week) => week.canScheduleMore)).toBe(true);
-
-    jest.useRealTimers();
-  });
-});
-
-// ─── Incomplete Proposed Calls ──────────────────────────────────────────────
-
-describe("Incomplete proposed calls", () => {
-  it("should not count incomplete slot group as a proposed call", async () => {
-    const { service } = createService({
-      subscriptionPlan: makeSubscriptionPlan({
-        sessionsPerWeek: 2,
-        sessionDurationInHours: 1, // requires 2 consecutive slots
-      }),
-    });
-
-    // Only 1 slot — incomplete call
-    const result = await service.validateSubscriptionSlots("sub-1", [
-      "2025-01-06T10:00:00.000Z",
-    ]);
-
-    const weekWithProposed = result.weeklyInfo.find((w) => w.proposedCalls > 0);
-    expect(weekWithProposed).toBeUndefined();
-  });
-
-  it("should not count non-consecutive slots as a proposed call", async () => {
-    const { service } = createService({
-      subscriptionPlan: makeSubscriptionPlan({
-        sessionsPerWeek: 2,
-        sessionDurationInHours: 1,
-      }),
-    });
-
-    // 2 slots but not consecutive (1 hour gap)
-    const result = await service.validateSubscriptionSlots("sub-1", [
-      "2025-01-06T10:00:00.000Z",
-      "2025-01-06T11:00:00.000Z",
-    ]);
-
-    const weekWithProposed = result.weeklyInfo.find((w) => w.proposedCalls > 0);
-    expect(weekWithProposed).toBeUndefined();
-  });
-});
-
-// ─── getAvailableWeeksForSubscription ───────────────────────────────────────
-
-describe("getAvailableWeeksForSubscription", () => {
-  it("should return only weeks that can accept more calls", async () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2025-01-05T12:00:00.000Z"));
-
-    const existingAppointments = [
-      makeAppointmentWithSlots("apt-1", [
-        "2025-01-06T10:00:00.000Z",
-        "2025-01-06T10:30:00.000Z",
-      ]),
-    ];
-
-    const { service } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 1,
-          sessionDurationInHours: 1,
-        }),
-      },
-      existingAppointments,
-    );
-
-    const availableWeeks =
-      await service.getAvailableWeeksForSubscription("sub-1");
-    // Week 1 (Jan 5-11) is full (1/1), other future weeks should be available
-    const fullWeek = availableWeeks.find(
-      (w) =>
-        w.weekStart.getTime() ===
-        new Date("2025-01-05T00:00:00.000Z").getTime(),
-    );
-    expect(fullWeek).toBeUndefined();
-
-    jest.useRealTimers();
-  });
-});
-
-// ─── canScheduleInWeek ──────────────────────────────────────────────────────
-
-describe("canScheduleInWeek", () => {
-  it("should return true when week has available slots", async () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2025-01-05T12:00:00.000Z"));
-
-    const { service } = createService({
-      subscriptionPlan: makeSubscriptionPlan({
-        sessionsPerWeek: 2,
-        sessionDurationInHours: 1,
-      }),
-    });
-
-    const canSchedule = await service.canScheduleInWeek(
-      "sub-1",
-      new Date("2025-01-06"), // week of Jan 5
-    );
-    expect(canSchedule).toBe(true);
-
-    jest.useRealTimers();
-  });
-
-  it("should return false when week is full", async () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2025-01-05T12:00:00.000Z"));
-
-    const existingAppointments = [
-      makeAppointmentWithSlots("apt-1", [
-        "2025-01-06T10:00:00.000Z",
-        "2025-01-06T10:30:00.000Z",
-      ]),
-    ];
-
-    const { service } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 1,
-          sessionDurationInHours: 1,
-        }),
-      },
-      existingAppointments,
-    );
-
-    const canSchedule = await service.canScheduleInWeek(
-      "sub-1",
-      new Date("2025-01-06"),
-    );
-    expect(canSchedule).toBe(false);
-
-    jest.useRealTimers();
-  });
-
-  it("should return false for a date outside subscription period", async () => {
-    const { service } = createService();
-
-    const canSchedule = await service.canScheduleInWeek(
-      "sub-1",
-      new Date("2025-06-01"), // way outside period
-    );
-    expect(canSchedule).toBe(false);
-  });
-});
-
-// ─── Helper: getSubscriptionWeek ────────────────────────────────────────────
-
-describe("getSubscriptionWeek", () => {
-  it("should return 1 for the first week", () => {
-    const result = getSubscriptionWeek(
-      new Date("2025-01-06"), // Monday
-      new Date("2025-01-06"), // Subscription starts Monday
-    );
-    expect(result).toBe(1);
-  });
-
-  it("should return 2 for the second week", () => {
-    const result = getSubscriptionWeek(
-      new Date("2025-01-13"), // Next Monday
-      new Date("2025-01-06"),
-    );
-    expect(result).toBe(2);
-  });
-
-  it("should handle dates in the same week as start", () => {
-    const result = getSubscriptionWeek(
-      new Date("2025-01-10"), // Friday of first week
-      new Date("2025-01-06"), // Monday start
-    );
-    expect(result).toBe(1);
-  });
-});
-
-// ─── Helper: getSubscriptionType ────────────────────────────────────────────
-
-describe("getSubscriptionType", () => {
-  it('should return "Basic" for 1 call/week, 1 month', () => {
-    expect(getSubscriptionType(1, 1)).toBe("Basic");
-  });
-
-  it('should return "Extended" for 2 calls/week, 2 months', () => {
-    expect(getSubscriptionType(2, 2)).toBe("Extended");
-  });
-
-  it('should return "Comprehensive" for 3 calls/week, 6 months', () => {
-    expect(getSubscriptionType(3, 6)).toBe("Comprehensive");
-  });
-
-  it('should return "Custom" for non-standard combinations', () => {
-    expect(getSubscriptionType(4, 3)).toBe("Custom");
-    expect(getSubscriptionType(1, 2)).toBe("Custom");
-    expect(getSubscriptionType(2, 1)).toBe("Custom");
-  });
-});
-
-// ─── Tolerance in Proposed Slot Checking ────────────────────────────────────
-
-describe("Slot consecutiveness tolerance", () => {
-  it("should accept slots with sub-second precision difference", async () => {
-    const { service } = createService({
-      subscriptionPlan: makeSubscriptionPlan({
-        sessionsPerWeek: 2,
-        sessionDurationInHours: 1,
-      }),
-    });
-
-    // Slots with 500ms offset (within 1-second tolerance)
-    const result = await service.validateSubscriptionSlots("sub-1", [
-      "2025-01-06T10:00:00.000Z",
-      "2025-01-06T10:30:00.500Z",
-    ]);
-
-    const weekWithProposed = result.weeklyInfo.find((w) => w.proposedCalls > 0);
-    expect(weekWithProposed).toBeDefined();
-    expect(weekWithProposed!.proposedCalls).toBe(1);
-  });
-});
-
-// ─── Valid Complete Submission ───────────────────────────────────────────────
-
-describe("Valid complete submission", () => {
-  it("should validate a well-formed proposed schedule", async () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date("2025-01-05T00:00:00.000Z"));
-
-    const { service } = createService({
-      schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"),
-      schedulingPeriodEndsAt: new Date("2025-02-02T23:59:59.000Z"),
-      subscriptionPlan: makeSubscriptionPlan({
-        sessionsPerWeek: 2,
-        sessionDurationInHours: 1,
-      }),
-    });
-
-    // #1766 — one cycle: 2 calls inside the first week, each 2 consecutive slots
-    const proposedSlots = [
-      ...makeConsecutiveSlotISOs("2025-01-06T10:00:00.000Z", 2),
+  it("refuses more calls than the cycle has room for", async () => {
+    const result = await createService().validateSubscriptionSlots("sub-1", [
+      ...makeConsecutiveSlotISOs("2025-01-07T10:00:00.000Z", 2),
       ...makeConsecutiveSlotISOs("2025-01-08T10:00:00.000Z", 2),
-    ];
+      ...makeConsecutiveSlotISOs("2025-01-09T10:00:00.000Z", 2),
+    ]);
+    expect(result.isValid).toBe(false);
+    expect(result.errors).toContain(
+      "This cycle has room for 2 more sessions, but 3 were picked.",
+    );
+  });
 
+  it("counts a session already held in the cycle against it", async () => {
+    const held = {
+      id: "apt-1",
+      occurrences: [
+        {
+          id: "occ-held",
+          startsAt: new Date("2025-01-07T10:00:00.000Z"),
+          endsAt: new Date("2025-01-07T11:00:00.000Z"),
+          completionStatus: "SCHEDULED",
+          isTentative: false,
+          deletedAt: null,
+        },
+      ],
+    };
+    const service = createService({ appointment: held }, [held]);
+    const result = await service.validateSubscriptionSlots("sub-1", [
+      ...makeConsecutiveSlotISOs("2025-01-08T10:00:00.000Z", 2),
+      ...makeConsecutiveSlotISOs("2025-01-09T10:00:00.000Z", 2),
+    ]);
+    expect(result.cycleCap).toBe(1);
+    expect(result.isValid).toBe(false);
+  });
+
+  it("frees the cycle place of a row being replaced", async () => {
+    const held = {
+      id: "apt-1",
+      occurrences: [
+        {
+          id: "occ-held",
+          startsAt: new Date("2025-01-07T10:00:00.000Z"),
+          endsAt: new Date("2025-01-07T11:00:00.000Z"),
+          completionStatus: "SCHEDULED",
+          isTentative: false,
+          deletedAt: null,
+        },
+      ],
+    };
+    const service = createService({ appointment: held }, [held]);
     const result = await service.validateSubscriptionSlots(
       "sub-1",
-      proposedSlots,
+      [
+        ...makeConsecutiveSlotISOs("2025-01-08T10:00:00.000Z", 2),
+        ...makeConsecutiveSlotISOs("2025-01-09T10:00:00.000Z", 2),
+      ],
+      [],
+      ["occ-held"],
     );
-    expect(result.isValid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-
-    jest.useRealTimers();
+    expect(result.cycleCap).toBe(2);
   });
 });
 
-// ─── Plan-total cap counts proposed slots ────────────────────────────────────
-
-describe("Plan-total cap includes proposed calls", () => {
-  it("counts existing + proposed in totalCallsScheduled", async () => {
-    const existingAppointments = [
-      makeAppointmentWithSlots("apt-1", [
-        "2025-01-06T10:00:00.000Z",
-        "2025-01-06T10:30:00.000Z",
-      ]),
+describe("the plan total and call counting", () => {
+  it("refuses a proposal that would pass the frozen total", async () => {
+    const existing = [
+      makeAppointmentWithSlots(
+        "apt-old",
+        makeConsecutiveSlotISOs("2024-12-01T10:00:00.000Z", 2),
+      ),
     ];
-
-    const { service } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 2,
-          sessionDurationInHours: 1,
-        }),
-      },
-      existingAppointments,
+    const result = await createService(
+      { sessionsTotal: 1 },
+      existing,
+    ).validateSubscriptionSlots(
+      "sub-1",
+      makeConsecutiveSlotISOs("2025-01-07T10:00:00.000Z", 2),
     );
-
-    const proposed = makeConsecutiveSlotISOs("2025-01-07T10:00:00.000Z", 2);
-
-    const result = await service.validateSubscriptionSlots("sub-1", proposed);
-    // 1 existing call + 1 proposed call. Before the fix the total read 1:
-    // only existingCalls were summed, so an over-total spread across weeks
-    // (no single week overflowing) passed validation.
     expect(result.totalCallsScheduled).toBe(2);
+    expect(result.maxTotalCalls).toBe(1);
+    expect(result.isValid).toBe(false);
   });
 
-  it("rejects a plan-total overflow even when weekly caps also bind", async () => {
-    // The entitlement is 8 (#1766). 8 existing calls (2/week, weeks 1–4)
-    // plus 3 proposed calls in week 5: total 11 > 8 must trip the plan-total
-    // gate, not just the weekly one — and it must do so even though the
-    // earlier calls sit outside the current cycle's window.
-    const existingAppointments = [
-      "2025-01-06T10:00:00.000Z",
+  it("counts an overnight call as one", async () => {
+    const result = await createService({
+      subscriptionPlan: makeSubscriptionPlan({ sessionDurationInHours: 1 }),
+    }).validateSubscriptionSlots("sub-1", [
+      "2025-01-07T23:30:00.000Z",
+      "2025-01-08T00:00:00.000Z",
+    ]);
+    expect(result.cycleCalls).toBe(1);
+    expect(result.isValid).toBe(true);
+  });
+
+  it("does not count an incomplete call", async () => {
+    const result = await createService().validateSubscriptionSlots("sub-1", [
       "2025-01-07T10:00:00.000Z",
-      "2025-01-13T10:00:00.000Z",
-      "2025-01-14T10:00:00.000Z",
-      "2025-01-20T10:00:00.000Z",
-      "2025-01-21T10:00:00.000Z",
-      "2025-01-27T10:00:00.000Z",
-      "2025-01-28T10:00:00.000Z",
-    ].map((start, i) =>
-      makeAppointmentWithSlots(`apt-${i + 1}`, [
-        start,
-        start.replace("10:00", "10:30"),
-      ]),
-    );
-
-    const { service } = createService(
-      {
-        subscriptionPlan: makeSubscriptionPlan({
-          sessionsPerWeek: 2,
-          sessionDurationInHours: 1,
-        }),
-      },
-      existingAppointments,
-    );
-
-    const proposed = [
-      ...makeConsecutiveSlotISOs("2025-02-02T10:00:00.000Z", 2),
-      ...makeConsecutiveSlotISOs("2025-02-02T11:00:00.000Z", 2),
-      ...makeConsecutiveSlotISOs("2025-02-02T12:00:00.000Z", 2),
-    ];
-
-    const result = await service.validateSubscriptionSlots("sub-1", proposed);
-    expect(result.isValid).toBe(false);
-    expect(
-      result.errors.some((e) => e.includes("exceed subscription limit")),
-    ).toBe(true);
+    ]);
+    expect(result.cycleCalls).toBe(0);
   });
 });

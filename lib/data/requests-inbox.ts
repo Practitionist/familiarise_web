@@ -25,6 +25,7 @@ import { isSponsoredPayment } from "@/lib/appointments/payment-display";
 import {
   sessionsTotalOf,
   subscriptionEntitlement,
+  subscriptionPlanEnd,
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import {
@@ -143,6 +144,7 @@ const SUBSCRIPTION_SELECT = {
   schedulingPeriodStartsAt: true,
   schedulingPeriodEndsAt: true,
   schedulingTimezone: true,
+  planEndsAt: true,
   sessionsTotal: true,
   subscriptionPlan: {
     select: {
@@ -409,6 +411,7 @@ const ENTITLEMENT_SELECT = {
   sessionsTotal: true,
   schedulingPeriodStartsAt: true,
   schedulingTimezone: true,
+  planEndsAt: true,
   subscriptionPlan: {
     select: {
       sessionsPerWeek: true,
@@ -455,6 +458,7 @@ function entitlementOf(
     })),
     schedulingPeriodStartsAt: s.schedulingPeriodStartsAt,
     schedulingTimezone: s.schedulingTimezone,
+    planEndsAt: s.planEndsAt,
     now,
   });
 }
@@ -526,7 +530,7 @@ function subscriptionRow(
       proposal: facts.proposal,
       schedulingPeriod: {
         start: s.schedulingPeriodStartsAt,
-        end: s.schedulingPeriodEndsAt,
+        end: subscriptionPlanEnd(s),
       },
       schedulingTimezone: s.schedulingTimezone,
       entitlement,

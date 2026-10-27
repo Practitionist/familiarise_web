@@ -8,11 +8,14 @@ import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
+import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
 import {
   CANCELLABLE_FROM,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 
+// Plan-end filters read the stored `planEndsAt`; rows without one show only in
+// the unfiltered list, where their end is derived per row.
 function buildSubscriptionFilter(
   status: string | null,
   now: Date,
@@ -21,19 +24,19 @@ function buildSubscriptionFilter(
   if (status === "active") {
     return {
       status: { not: "CANCELLED" },
-      schedulingPeriodEndsAt: { gt: soonThreshold },
+      planEndsAt: { gt: soonThreshold },
     };
   }
   if (status === "expiring_soon") {
     return {
       status: { not: "CANCELLED" },
-      schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
+      planEndsAt: { gt: now, lte: soonThreshold },
     };
   }
   if (status === "expired") {
     return {
       status: { not: "CANCELLED" },
-      schedulingPeriodEndsAt: { lte: now },
+      planEndsAt: { lte: now },
     };
   }
   if (status === "cancelled") {
@@ -153,7 +156,7 @@ export async function GET(req: NextRequest) {
               appointmentType: "SUBSCRIPTION",
               subscription: {
                 status: { not: "CANCELLED" },
-                schedulingPeriodEndsAt: { gt: soonThreshold },
+                planEndsAt: { gt: soonThreshold },
               },
             },
           },
@@ -165,7 +168,7 @@ export async function GET(req: NextRequest) {
               appointmentType: "SUBSCRIPTION",
               subscription: {
                 status: { not: "CANCELLED" },
-                schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
+                planEndsAt: { gt: now, lte: soonThreshold },
               },
             },
           },
@@ -177,7 +180,7 @@ export async function GET(req: NextRequest) {
               appointmentType: "SUBSCRIPTION",
               subscription: {
                 status: { not: "CANCELLED" },
-                schedulingPeriodEndsAt: { lte: now },
+                planEndsAt: { lte: now },
               },
             },
           },
@@ -201,7 +204,7 @@ export async function GET(req: NextRequest) {
       const sessionsTotal =
         subscription?.sessionsTotal ?? plan?.totalSessions ?? 0;
 
-      const endDate = subscription?.schedulingPeriodEndsAt;
+      const endDate = subscription ? subscriptionPlanEnd(subscription) : null;
       const isCancelled = subscription?.status === "CANCELLED";
       const isActive = Boolean(
         !isCancelled && endDate && new Date(endDate) > now,
@@ -232,7 +235,7 @@ export async function GET(req: NextRequest) {
         sessionsUpcoming,
         sessionsScheduled,
         startDate: subscription?.schedulingPeriodStartsAt,
-        endDate: subscription?.schedulingPeriodEndsAt,
+        endDate,
         subscriptionStatus: subscription?.status,
         status: deriveSubscriptionDisplayStatus(
           isCancelled,

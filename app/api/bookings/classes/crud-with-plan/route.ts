@@ -46,6 +46,7 @@ import {
   ScheduleLockedError,
   CLASS_SCHEDULE_LOCKED_MESSAGE,
 } from "@/lib/events/schedule-lock";
+import { planTotalSessions } from "@/lib/booking/entitlement";
 // Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
 const ClassContentInputSchema = ClassContentSchema.omit({
   createdAt: true,
@@ -225,7 +226,10 @@ export async function POST(request: NextRequest) {
 
     // Compute derived metrics using validated session duration from the plan
     const sessionDurationInHours = validatedData.sessionDurationInHours ?? 1.0;
-    const totalSessions = sessionsPerWeek * durationInMonths * 4;
+    const totalSessions = planTotalSessions({
+      sessionsPerWeek,
+      durationInMonths,
+    });
     const totalHours = totalSessions * sessionDurationInHours;
     const lateJoinRefusal = lateJoinCutoffRefusal(
       lateJoinUntilSession,
@@ -735,8 +739,10 @@ export async function PATCH(request: NextRequest) {
               existingPlan.sessionDurationInHours ??
               1.0;
 
-            updateData.totalSessions =
-              finalMeetingsPerWeek * finalDurationInMonths * 4;
+            updateData.totalSessions = planTotalSessions({
+              sessionsPerWeek: finalMeetingsPerWeek,
+              durationInMonths: finalDurationInMonths,
+            });
             updateData.totalHours =
               updateData.totalSessions * finalSessionDurationInHours;
           }

@@ -1664,13 +1664,14 @@ describe("Auto allocation", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rolls a lapsed stored period forward to now instead of refusing (#1766)", async () => {
+  it("rolls a lapsed first-cycle end forward to now while the plan runs (#1766)", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
-        // The buyer's original ask is in the past; the cycle window is derived
-        // from max(stored start, last held session, now), so this still places.
+        // The first cycle ended long ago, but the plan end (moved by returns
+        // or an incident) is still ahead, so the cycle rolls to now.
         schedulingPeriodStartsAt: new Date("2024-01-06T00:00:00Z"),
-        schedulingPeriodEndsAt: new Date("2024-02-02T23:59:59Z"),
+        schedulingPeriodEndsAt: new Date("2024-01-13T00:00:00Z"),
+        planEndsAt: new Date("2025-03-01T00:00:00Z"),
       }),
     );
 
@@ -1944,8 +1945,9 @@ describe("updateEventStatus", () => {
   it("never rewrites the stored period from a slot (#1766: the window is derived)", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
-        schedulingPeriodStartsAt: null,
-        schedulingPeriodEndsAt: null,
+        schedulingPeriodStartsAt: new Date("2024-12-30T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2025-01-06T00:00:00Z"),
+        planEndsAt: new Date("2025-03-01T00:00:00Z"),
       }),
     );
 
@@ -3404,7 +3406,7 @@ describe("Auto allocation - timezone day shift", () => {
 // ── Allocation-resilience: cause-specific error codes ────────────────────────
 
 describe("allocation resilience — error codes", () => {
-  it("a lapsed stored period is not PERIOD_ENDED for a subscription: the cycle window rolls to now (#1766)", async () => {
+  it("a lapsed first-cycle end is not PERIOD_ENDED while the plan runs (#1766)", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
         subscriptionPlan: subscriptionPlanOf(1, {
@@ -3414,9 +3416,10 @@ describe("allocation resilience — error codes", () => {
             ],
           }),
         }),
-        // Period ended before "now" (2025-01-01)
+        // The first cycle ended before "now" (2025-01-01); the plan has not.
         schedulingPeriodStartsAt: new Date("2024-01-01T00:00:00Z"),
-        schedulingPeriodEndsAt: new Date("2024-02-01T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2024-01-08T00:00:00Z"),
+        planEndsAt: new Date("2025-03-01T00:00:00Z"),
         appointment: null,
       }),
     );
@@ -3430,6 +3433,26 @@ describe("allocation resilience — error codes", () => {
 
     expect(result.success).toBe(true);
     expect(result.errorCode).toBeUndefined();
+  });
+
+  it("an ended plan is PERIOD_ENDED: nothing is placed past the plan end", async () => {
+    mockTx.subscription.findUnique.mockResolvedValue(
+      makeSubscriptionEvent({
+        schedulingPeriodStartsAt: new Date("2024-01-01T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2024-01-08T00:00:00Z"),
+        appointment: null,
+      }),
+    );
+    mockTx.appointment.findMany.mockResolvedValue([]);
+
+    const result = await allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "auto",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("PERIOD_ENDED");
   });
 
   it("SLOT_SHORTAGE when period is future but availability falls short", async () => {

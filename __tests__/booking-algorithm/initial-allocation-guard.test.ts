@@ -104,6 +104,8 @@ const SUBSCRIPTION_ROW = {
   schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
   schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
   schedulingTimezone: "Asia/Kolkata",
+  // A plan end well ahead of the real clock: these rows are mid-plan.
+  planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
 };
 
 beforeEach(() => {
@@ -264,6 +266,8 @@ function wireRequestedSubscription() {
     schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
     schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
     schedulingTimezone: "Asia/Kolkata",
+    // A plan end well ahead of the real clock: these rows are mid-plan.
+    planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
   });
   mockPrisma.appointment.findMany.mockResolvedValue([REQUESTED_ROW]);
   mockValidateFn.mockResolvedValue({ isValid: true, errors: [], warnings: [] });
@@ -375,6 +379,8 @@ describe("#1692 — a non-fresh (reschedule) manual allocation is advisory-locke
       schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
       schedulingPeriodEndsAt: new Date("2026-12-29T23:59:59.000Z"),
       schedulingTimezone: "Asia/Kolkata",
+      // A plan end well ahead of the real clock: these rows are mid-plan.
+      planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
     });
     // Confirmed rows exist → not a fresh allocation; the key is not stamped
     // yet when the base client looks, so the pre-lock replay misses.
@@ -489,6 +495,8 @@ describe("expected refusals report as expected", () => {
       schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
       schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
       schedulingTimezone: "Asia/Kolkata",
+      // A plan end well ahead of the real clock: these rows are mid-plan.
+      planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
     });
 
     const odd = await allocate({

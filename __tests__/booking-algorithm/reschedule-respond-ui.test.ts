@@ -163,6 +163,8 @@ describe("#1766 — the Requests list row reads entitlement words", () => {
       occurrences: [],
       schedulingPeriodStartsAt: new Date("2026-03-02T00:00:00Z"),
       schedulingTimezone: "UTC",
+      // A plan end well ahead of the real clock: these rows are mid-plan.
+      planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
     });
     expect(requestCountLine({ entitlement })).toBe("0 of 12 booked · pick 4");
     // The row renders through the helper, not an inline slot count.

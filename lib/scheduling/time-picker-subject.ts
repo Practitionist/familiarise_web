@@ -4,6 +4,7 @@ import {
   toOccurrenceLike,
   type OccurrenceLike,
 } from "@/lib/appointments/view-model";
+import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
 
 /**
  * Turns one appointment into everything a reschedule page needs.
@@ -124,8 +125,8 @@ export function buildRescheduleSubject(
           allowedStart: subscription?.schedulingPeriodStartsAt
             ? new Date(subscription.schedulingPeriodStartsAt)
             : undefined,
-          allowedEnd: subscription?.schedulingPeriodEndsAt
-            ? new Date(subscription.schedulingPeriodEndsAt)
+          allowedEnd: subscription
+            ? subscriptionPlanEnd(subscription)
             : undefined,
           schedulingTimezone: subscription?.schedulingTimezone,
           sessionsPerWeek: plan?.sessionsPerWeek,

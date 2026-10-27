@@ -306,6 +306,8 @@ describe("consultant Home read shape (#1101)", () => {
       sessionsTotal,
       schedulingPeriodStartsAt: new Date("2026-01-05T00:00:00Z"),
       schedulingTimezone: "UTC",
+      // A plan end well ahead of the real clock: these rows are mid-plan.
+      planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
       subscriptionPlan: {
         title: "Plan",
         totalSessions: sessionsTotal,

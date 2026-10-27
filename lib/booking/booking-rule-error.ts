@@ -34,7 +34,8 @@ export type BookingRuleCode =
   | "INCIDENT_REMEDY_NOT_FOUND"
   | "INCIDENT_REMEDY_CLOSED"
   | "INCIDENT_REMEDY_WRONG_KIND"
-  | "INCIDENT_REBOOK_SLOT_UNAVAILABLE";
+  | "INCIDENT_REBOOK_SLOT_UNAVAILABLE"
+  | "INVALID_PLAN_START";
 
 export class BookingRuleError extends Error {
   constructor(

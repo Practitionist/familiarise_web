@@ -27,10 +27,7 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import {
-  SLOT_TRANSITION_TX_OPTIONS,
-  transitionSlotsInChunks,
-} from "@/lib/booking/slot-release";
+import { SLOT_TRANSITION_TX_OPTIONS } from "@/lib/booking/slot-release";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
@@ -56,6 +53,12 @@ import {
   unscheduledNudgeEntityRef,
 } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
+import {
+  DEFAULT_NOTIFICATION_TIMEZONE,
+  formatNotificationDateTime,
+  resolveRecipientTimezones,
+} from "@/lib/novu/humanize";
 
 // The per-cohort WHERE guards below (PENDING by requestedAt,
 // APPROVED_PENDING_PAYMENT by updatedAt) are deliberate subsets of
@@ -717,26 +720,32 @@ async function expirePendingSubscriptions(
 }
 
 /**
- * PR 2c money fix — the IMMORTAL cohort (audit gap #3): PAID subscriptions
- * whose consultant never allocated a single session. APPROVED was not in
- * EXPIRED's allowed-from and no sweep covered it, so a buyer could stay paid-
- * with-nothing forever. Cohort narrowed to APPROVED with ZERO live confirmed
- * slots (a booking mid-allocation is untouched); expiry refunds via the
- * front door. REQUEST_ALLOWED_FROM.EXPIRED was widened to APPROVED to make
- * this transition legal (lib/booking/transitions.ts).
- */
-/**
- * PR 2e (#1192) — release tentative-RESCHEDULED slots on APPROVED
- * subscriptions past the same 30-day window as PENDING expiry. A partial
- * reschedule flips released slots to tentative+RESCHEDULED but leaves the
- * parent APPROVED with no transition edge back — so without this cleanup,
- * those ghost holds block availability forever.
- *
- * Scoped to isTentative AND completionStatus RESCHEDULED so confirmed and
- * SCHEDULED rows are never touched. The parent subscription is NOT expired
- * (it has live confirmed sessions).
+ * A subscription session released for a reschedule and never re-placed within
+ * the window goes back to the plan: the ghost hold is released, the
+ * entitlement offers it again, plan-end settlement refunds it if it is never
+ * placed, and both parties are told in the same commit as the release.
  */
 const STALE_RESCHEDULED_HOURS = PENDING_EXPIRATION_DAYS * 24;
+const STALE_RESCHEDULE_RETURN_REASON = "STALE_RESCHEDULE_RETURNED";
+
+const STALE_RELEASE_PARTIES_SELECT = {
+  id: true,
+  organizationId: true,
+  subscription: {
+    select: {
+      id: true,
+      requestedBy: { select: { user: { select: { id: true, name: true } } } },
+      subscriptionPlan: {
+        select: {
+          title: true,
+          consultantProfile: {
+            select: { user: { select: { id: true, name: true } } },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.AppointmentSelect;
 
 async function releaseStaleRescheduledSlots(
   limits: StaleRequestRunLimits,
@@ -744,6 +753,8 @@ async function releaseStaleRescheduledSlots(
   released: number;
   errors: string[];
 }> {
+  const errors: string[] = [];
+  let released = 0;
   try {
     const cutoff = new Date(
       Date.now() - STALE_RESCHEDULED_HOURS * 60 * 60 * 1000,
@@ -757,35 +768,121 @@ async function releaseStaleRescheduledSlots(
         subscription: { status: AppointmentStatus.APPROVED },
       },
     };
-    // Bounded, oldest first, released in chunked transactions; the CAS
-    // re-states the cohort's guards on every chunk.
+    // Bounded, oldest first, one transaction per plan; the CAS re-states the
+    // cohort's guards.
     const stale = await prisma.appointmentOccurrence.findMany({
       where: {
         ...staleRescheduled,
         completionStatus: OccurrenceCompletionStatus.RESCHEDULED,
       },
-      select: { id: true },
+      select: { id: true, appointmentId: true, startsAt: true },
       orderBy: { updatedAt: "asc" },
       take: limits.maxSlotReleases,
     });
-    const released = await transitionSlotsInChunks(
-      stale.map((s) => s.id),
-      (idChunk) => ({
-        where: { id: { in: idChunk }, ...staleRescheduled },
-        to: OccurrenceCompletionStatus.CANCELLED,
-        data: { deletedAt: new Date() },
-        fromIn: [OccurrenceCompletionStatus.RESCHEDULED],
-        allowZero: true,
-      }),
-    );
+    const byAppointment = new Map<string, typeof stale>();
+    for (const row of stale) {
+      byAppointment.set(row.appointmentId, [
+        ...(byAppointment.get(row.appointmentId) ?? []),
+        row,
+      ]);
+    }
+    for (const [appointmentId, rows] of byAppointment) {
+      try {
+        const committed = await prisma.$transaction(async (tx) => {
+          const moved = await transitionOccurrenceCompletion(tx, {
+            where: { id: { in: rows.map((r) => r.id) }, ...staleRescheduled },
+            to: OccurrenceCompletionStatus.CANCELLED,
+            data: { deletedAt: new Date() },
+            fromIn: [OccurrenceCompletionStatus.RESCHEDULED],
+            reason: STALE_RESCHEDULE_RETURN_REASON,
+            allowZero: true,
+          });
+          if (moved === 0) return { moved, bells: [], emails: [] };
+          const wrapper = await tx.appointment.findUnique({
+            where: { id: appointmentId },
+            select: STALE_RELEASE_PARTIES_SELECT,
+          });
+          const sub = wrapper?.subscription;
+          if (!sub) return { moved, bells: [], emails: [] };
+          const expert = sub.subscriptionPlan.consultantProfile.user;
+          const consultee = sub.requestedBy.user;
+          const reason =
+            "it was not rebooked within 30 days, so it went back to the plan to be booked again";
+          const dashboardUrl = notificationHref(
+            wrapper.organizationId,
+            "appointments",
+          );
+          const firstStart = rows[0].startsAt;
+          const zones = await resolveRecipientTimezones(
+            [expert.id, consultee.id],
+            tx,
+          );
+          const bells = [];
+          for (const userId of [expert.id, consultee.id]) {
+            bells.push(
+              await stageBell(tx, {
+                workflowId: NOVU_WORKFLOWS.APPOINTMENT_CANCELLED,
+                recipients: [userId],
+                payload: {
+                  appointmentType: "subscription session",
+                  planTitle: sub.subscriptionPlan.title,
+                  consultantName: expert.name ?? "Consultant",
+                  consulteeName: consultee.name ?? "Client",
+                  cancelledBy: "Familiarise",
+                  reason,
+                  dateTime: formatNotificationDateTime(
+                    firstStart,
+                    zones.get(userId) ?? DEFAULT_NOTIFICATION_TIMEZONE,
+                  ),
+                  dashboardUrl,
+                },
+                dedupeKey: `stale-resched:${appointmentId}:${rows[0].id}:${userId}`,
+              }),
+            );
+          }
+          const emails = await stageAppointmentCancelledEmail(tx, {
+            appointmentId,
+            userIds: [expert.id, consultee.id],
+            startsAt: firstStart,
+            cancelledBy: "Familiarise",
+            reason,
+            dashboardUrl,
+          });
+          await recordSystemEvent({
+            db: tx,
+            category: "BOOKING",
+            severity: "INFO",
+            organizationId: wrapper.organizationId,
+            message: `Released ${moved} stale rescheduled session(s) back to subscription ${sub.id}`,
+            context: { subscriptionId: sub.id, appointmentId, released: moved },
+            correlationId: `stale-resched:${appointmentId}:${rows[0].id}`,
+          });
+          return { moved, bells, emails };
+        }, SLOT_TRANSITION_TX_OPTIONS);
+        released += committed.moved;
+        await flushNotificationsAfter(
+          {
+            bells: committed.bells,
+            emails: [
+              { rows: committed.emails, emailType: "APPOINTMENT_CANCELLED" },
+            ],
+          },
+          "expire-stale-requests.stale-reschedule",
+        );
+      } catch (error) {
+        errors.push(
+          `Failed to release stale rescheduled slots on ${appointmentId}: ${error}`,
+        );
+      }
+    }
     console.log(
       `✅ Released ${released} stale RESCHEDULED tentative slots from APPROVED subscriptions`,
     );
-    return { released, errors: [] };
+    return { released, errors };
   } catch (error) {
     const msg = `Failed to release stale rescheduled slots: ${error}`;
     console.error(`❌ ${msg}`);
-    return { released: 0, errors: [msg] };
+    return { released, errors: [...errors, msg] };
   }
 }
 
@@ -1936,13 +2033,8 @@ async function expireStaleRequestsUnlocked(
   const nudges = await nudgeUnscheduledSubscriptions(limits);
   allErrors.push(...nudges.errors);
 
-  // Release stale tentative-RESCHEDULED slots on APPROVED subscriptions
-  // (PR 2e, #1192 — audit B-P2-02). A partial reschedule flips released
-  // slots to tentative+RESCHEDULED but leaves the parent APPROVED; if the
-  // consultant never allocates replacements those ghosts block the calendar
-  // forever (no sweep cohort covered them). This pass deletes tentative-
-  // RESCHEDULED slots past the threshold so the calendar frees up. The
-  // parent stays APPROVED (it has confirmed sessions); only the ghosts go.
+  // Stale tentative-RESCHEDULED holds on APPROVED subscriptions go back to
+  // the plan; the parent stays APPROVED and both parties are told.
   const staleRescheduledReleased = await releaseStaleRescheduledSlots(limits);
   allErrors.push(...staleRescheduledReleased.errors);
 

@@ -1285,11 +1285,11 @@ export class ScheduleValidationService {
       this.prismaClient as PrismaLike,
     );
 
-    // #1554 — one wrapper, N occurrences: the weekly and daily counts are
+    // #1554 — one wrapper, N occurrences: the cycle and daily counts are
     // over the wrapper's live rows. The tentative rows still exist in the DB
     // during a re-allocation after a reschedule and would otherwise count as
-    // "existing calls", causing a false weekly-limit violation when the
-    // consultant proposes the same number of new slots (1 per week).
+    // "existing calls", causing a false cycle-cap violation when the
+    // consultant proposes the same number of new slots.
     const subscriptionOccurrences =
       await this.prismaClient.appointmentOccurrence.findMany({
         where: { appointment: { subscriptionId }, deletedAt: null },
@@ -1315,8 +1315,8 @@ export class ScheduleValidationService {
     );
 
     // #898 follow-up — server-side per-DAY cap (subscription ≤1/day). The
-    // SubscriptionValidationService enforces the weekly limit; the per-day cap
-    // previously lived only in allocation selection + the client guard.
+    // SubscriptionValidationService enforces the rolling cycle cap; the per-day
+    // cap previously lived only in allocation selection + the client guard.
     // Constant shared with the allocator (utils/scheduling-engine/sessionCaps.ts)
     // so selection and validation can never disagree.
     const perDayErrors = this.validatePerDaySessionCap(

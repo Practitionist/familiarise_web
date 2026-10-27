@@ -12,9 +12,11 @@ import {
 import { intervalStartsOf } from "@/lib/appointments/occurrences";
 import { WEEKLY_COVERAGE_SELECT } from "@/utils/scheduling-engine/availabilityCoverage";
 import {
+  lastInstantBefore,
   sessionsTotalOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
+import { formatDateLabel } from "@/lib/time/display";
 import {
   ALLOCATION_APPROVABLE_FROM,
   transitionClassEvent,
@@ -165,20 +167,7 @@ export async function updateEventStatus(
             );
           }
         },
-        {
-          // FIX: Only set schedulingPeriod if not already configured
-          // This prevents overwriting the user's scheduling period with the first allocated slot
-          // which could cause slots to appear outside the intended scheduling window
-          ...(!config.schedulingPeriodStartsAt || !config.schedulingPeriodEndsAt
-            ? {
-                schedulingPeriodStartsAt: firstSlot,
-                schedulingPeriodEndsAt: addMonths(
-                  firstSlot,
-                  config.durationInMonths || 1,
-                ),
-              }
-            : {}),
-        },
+        undefined,
         approvableFrom,
       );
 
@@ -348,6 +337,7 @@ export async function fetchEventData(
           sessionsTotal: true,
           schedulingPeriodStartsAt: true,
           schedulingTimezone: true,
+          planEndsAt: true,
           subscriptionPlan: {
             select: {
               totalSessions: true,
@@ -386,7 +376,17 @@ export async function fetchEventData(
         occurrences: event.appointment?.occurrences ?? [],
         schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
         schedulingTimezone: event.schedulingTimezone,
+        planEndsAt: event.planEndsAt,
       });
+      if (entitlement.cycle.windowEnd <= entitlement.cycle.windowStart) {
+        throw new AllocationValidationError(
+          `This plan ended on ${formatDateLabel(
+            lastInstantBefore(entitlement.planEndsAt),
+            { zone: event.schedulingTimezone },
+          )}, so no more sessions can be booked. Any unused paid sessions are refunded automatically.`,
+          "PERIOD_ENDED",
+        );
+      }
       config = {
         durationInMonths: event.subscriptionPlan?.durationInMonths,
         sessionsPerWeek: event.subscriptionPlan?.sessionsPerWeek,

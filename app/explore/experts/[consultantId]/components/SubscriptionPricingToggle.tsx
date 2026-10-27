@@ -19,7 +19,7 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
-import { firstCycleWindow } from "@/lib/booking/entitlement";
+import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { TrialBookingModal } from "./TrialBookingModal";
 
@@ -512,7 +512,7 @@ export default function SubscriptionPricingToggle({
                 <p className="text-sm text-zinc-500 mb-1">First cycle:</p>
                 <p className="text-white font-semibold text-lg">
                   {format(firstCycle.start, "MMM dd, yyyy")} →{" "}
-                  {format(firstCycle.end, "MMM dd, yyyy")}
+                  {format(lastInstantBefore(firstCycle.end), "MMM dd, yyyy")}
                 </p>
                 <p className="text-sm text-zinc-500 mt-1">
                   {selectedOption.sessionsPerWeek ?? 1} session

@@ -89,6 +89,16 @@ import { checkoutSchema, type CheckoutInput } from "../../schemas/checkout";
 const DAY = 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
 const START = new Date("2026-03-02T09:00:00.000Z");
+// The buyer is on the page the day before their chosen start.
+beforeEach(() => {
+  jest.useFakeTimers({
+    advanceTimers: true,
+    now: new Date("2026-03-01T12:00:00.000Z"),
+  });
+});
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 /** A live subscription of this plan the buyer already holds (#1766). */
 function heldRow(completed: number) {
@@ -164,10 +174,12 @@ it("persists end = start + 7 zone-days and sessionsTotal = 24 despite a 90-day c
 
   const { data } = (tx.subscription.create as jest.Mock).mock.calls[0][0];
   expect(data.schedulingPeriodStartsAt).toEqual(START);
-  // 02 Mar IST is day one; the seventh day ends 08 Mar 23:59:59.999 IST.
+  // 02 Mar IST is day one; the window ends (exclusive) at 09 Mar 00:00 IST.
   expect(data.schedulingPeriodEndsAt.toISOString()).toBe(
-    "2026-03-08T18:29:59.999Z",
+    "2026-03-08T18:30:00.000Z",
   );
+  // The plan end is written once, here: start + 3 months on the IST clock.
+  expect(data.planEndsAt.toISOString()).toBe("2026-06-02T09:00:00.000Z");
   expect(data.sessionsTotal).toBe(24);
   expect(data.schedulingTimezone).toBe("Asia/Kolkata");
   // The buyer holds a seat on the placeholder from the moment of purchase.

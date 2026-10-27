@@ -5,7 +5,6 @@ import {
   PaymentStatus,
   type Prisma,
 } from "@prisma/client";
-import { addMonths } from "date-fns";
 import prisma from "@/lib/prisma";
 import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 
@@ -250,7 +249,6 @@ export async function mintApprovalPaymentAfterCommit(args: {
     await import("@/lib/booking/pay-link-persist");
 
   const slot = row.appointment?.occurrences[0];
-  const now = new Date();
   // The kind-specific half of the mint params: the consultation's held slot
   // times, or the subscription's scheduling period (already committed by the
   // approval; recomputing it would drift the gateway metadata off the row).
@@ -268,13 +266,9 @@ export async function mintApprovalPaymentAfterCommit(args: {
           plan: row.subscriptionPlan,
           timing: {
             subscriptionId: row.id,
-            schedulingPeriodStartsAt: (
-              row.schedulingPeriodStartsAt ?? now
-            ).toISOString(),
-            schedulingPeriodEndsAt: (
-              row.schedulingPeriodEndsAt ??
-              addMonths(now, row.subscriptionPlan.durationInMonths || 1)
-            ).toISOString(),
+            schedulingPeriodStartsAt:
+              row.schedulingPeriodStartsAt.toISOString(),
+            schedulingPeriodEndsAt: row.schedulingPeriodEndsAt.toISOString(),
           },
         };
   let paymentResult;

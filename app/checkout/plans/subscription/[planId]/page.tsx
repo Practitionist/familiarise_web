@@ -12,7 +12,7 @@ import {
 } from "@/app/checkout/components/referral-credits";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
-import { firstCycleWindow } from "@/lib/booking/entitlement";
+import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
 import {
   CheckoutInput,
   SubscriptionSearchParams,
@@ -625,7 +625,7 @@ export default function SubscriptionCheckoutPage({
                     <div className="text-muted-foreground">First cycle</div>
                     <div className="text-right text-sm">
                       {firstCycle.start.toLocaleDateString()} →{" "}
-                      {firstCycle.end.toLocaleDateString()} ·{" "}
+                      {lastInstantBefore(firstCycle.end).toLocaleDateString()} ·{" "}
                       {planData?.data?.sessionsPerWeek || 1} session
                       {(planData?.data?.sessionsPerWeek || 1) === 1
                         ? ""

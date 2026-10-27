@@ -21,7 +21,6 @@ import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
   refuseMalformedEventId,
-  refusePlanNotOwned,
   releaseDeclinedRequestHold,
   validateDetailRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
@@ -36,7 +35,6 @@ import {
   stampRejectionRefundOwed,
 } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { MAX_TEXT_LENGTH } from "@/lib/validation/limits";
 import {
   requireApiAuth,
   isPrivileged,
@@ -124,153 +122,6 @@ export async function GET(
     );
     return NextResponse.json(
       { error: "An error occurred while fetching the consultation" },
-      { status: 500 },
-    );
-  }
-}
-
-export async function PUT(
-  request: Request,
-  { params }: { params: Promise<{ consultationId: string }> },
-) {
-  try {
-    // Require authentication
-    const authResult = await requireApiAuth();
-    if (authResult.error) return authResult.error;
-    const { session } = authResult;
-
-    const { consultationId } = await params;
-    const malformedId = refuseMalformedEventId(consultationId);
-    if (malformedId) return malformedId;
-
-    // Fetch the consultation to check ownership
-    const existingConsultation = await prisma.consultation.findUnique({
-      where: { id: consultationId },
-      include: {
-        consultationPlan: {
-          include: {
-            consultantProfile: { select: { id: true } },
-          },
-        },
-        // bookingOrgId's fallback when the plan carries no org.
-        appointment: { select: { organizationId: true } },
-      },
-    });
-
-    if (!existingConsultation) {
-      return NextResponse.json(
-        { error: "Consultation not found" },
-        { status: 404 },
-      );
-    }
-
-    // Check authorization: must be a participant or privileged
-    const isConsultant =
-      !!existingConsultation.consultationPlan?.consultantProfile?.id &&
-      existingConsultation.consultationPlan.consultantProfile.id ===
-        session.user.consultantProfileId;
-    const isConsultee =
-      !!existingConsultation.requestedById &&
-      existingConsultation.requestedById === session.user.consulteeProfileId;
-    const isParticipant = isConsultant || isConsultee;
-
-    if (!isPrivileged(session.user.role) && !isParticipant) {
-      return forbiddenResponse(
-        "You can only update consultations you are a participant in",
-      );
-    }
-
-    const body = await request.json();
-
-    // Validate body to prevent arbitrary field injection
-    // #836 — status is NOT writable here: status changes flow only
-    // through PATCH, where the allowed-from guard rides the WHERE clause.
-    // #831 — user-typed strings carry a .max()
-    const consultationPutSchema = z
-      .object({
-        requestNotes: z.string().max(MAX_TEXT_LENGTH).nullish(),
-        bookingSource: z
-          .enum(["DIRECT_CHECKOUT", "REQUEST_SUBMITTED"])
-          .optional(),
-        planId: z.string().optional(),
-      })
-      .strict();
-
-    const parseResult = consultationPutSchema.safeParse(body);
-    if (!parseResult.success) {
-      return NextResponse.json(
-        {
-          error: "Invalid request body",
-          details: parseResult.error.flatten().fieldErrors,
-        },
-        { status: 400 },
-      );
-    }
-    const validatedBody = parseResult.data;
-
-    // #1704 — a planId is only accepted from the same consultant as the
-    // request; connecting any plan let a request migrate to another seller.
-    const planRefusal = await refusePlanNotOwned(
-      validatedBody.planId,
-      {
-        consultantProfileId:
-          existingConsultation.consultationPlan?.consultantProfileId,
-        organizationId: bookingOrgId(existingConsultation),
-      },
-      () =>
-        prisma.consultationPlan.findUnique({
-          where: { id: validatedBody.planId },
-          select: { consultantProfileId: true, organizationId: true },
-        }),
-    );
-    if (planRefusal) return planRefusal;
-
-    const consultationData = await prisma.consultation.update({
-      where: { id: consultationId },
-      data: {
-        requestNotes: validatedBody.requestNotes,
-        bookingSource: validatedBody.bookingSource,
-        consultationPlan: validatedBody.planId
-          ? {
-              connect: { id: validatedBody.planId },
-            }
-          : undefined,
-      },
-      include: {
-        consultationPlan: {
-          include: {
-            consultantProfile: PARTY_PROFILE_SELECT,
-          },
-        },
-        requestedBy: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-          },
-        },
-        appointment: {
-          include: {
-            occurrences: true,
-          },
-        },
-      },
-    });
-
-    return NextResponse.json({ data: consultationData }, { status: 200 });
-  } catch (error) {
-    console.error("Error updating consultation:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    return NextResponse.json(
-      { error: "An error occurred while updating the consultation" },
       { status: 500 },
     );
   }

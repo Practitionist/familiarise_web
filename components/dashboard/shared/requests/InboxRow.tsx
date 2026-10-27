@@ -242,6 +242,7 @@ function whenLine(row: InboxRowInput, viewer: ViewerZone): string {
 function reviveEntitlement(e: NonNullable<InboxRowInput["entitlement"]>) {
   return {
     ...e,
+    planEndsAt: toStampDate(e.planEndsAt),
     cycle: {
       ...e.cycle,
       windowStart: toStampDate(e.cycle.windowStart),

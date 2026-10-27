@@ -15,6 +15,7 @@ import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { voidRefundExists } from "@/lib/backoffice/session-outcomes";
+import { subscriptionIsOver, subscriptionPlanEnd } from "./entitlement";
 import { onClassSessionVoided } from "./class-sessions";
 import { LIVE_PARTICIPANT_STATUSES } from "./participants";
 import { flushClassVoidNotices } from "./session-outcome-sweep";
@@ -28,6 +29,8 @@ const INCIDENT_LOOKBACK_DAYS = 7;
 const INCIDENT_REFUND_DELAY_MS = 48 * HOUR_MS;
 /** A subscription voided by an incident gets this much more plan time per session. */
 const INCIDENT_PLAN_EXTENSION_MS = 7 * DAY_MS;
+/** Re-reads an extension makes when a concurrent end move wins its CAS. */
+const EXTENSION_CAS_ATTEMPTS = 3;
 /** A session must be this far past its end before the incident pass voids it. */
 const RETRO_BUFFER_MS = HOUR_MS;
 
@@ -372,37 +375,50 @@ export async function freeTrialPair(
   }
 }
 
-/** Moves a live plan's end 7 days later, by CAS on the end it read; false when the plan is not live. */
+/**
+ * Moves a live plan's end 7 days later, relative to the end it reads: a CAS on
+ * that end, re-read when another extension or a session return wins the race.
+ * False when the plan is not live.
+ */
 export async function extendPlanForIncident(
   tx: Pick<Tx, "subscription">,
   subscriptionId: string,
   now: Date,
 ): Promise<boolean> {
-  const sub = await tx.subscription.findUnique({
-    where: { id: subscriptionId },
-    select: { status: true, schedulingPeriodEndsAt: true, deletedAt: true },
-  });
-  if (
-    !sub ||
-    sub.deletedAt ||
-    !["APPROVED", "SCHEDULED"].includes(sub.status) ||
-    sub.schedulingPeriodEndsAt <= now
-  ) {
-    return false;
+  for (let attempt = 0; attempt < EXTENSION_CAS_ATTEMPTS; attempt++) {
+    const sub = await tx.subscription.findUnique({
+      where: { id: subscriptionId },
+      select: {
+        status: true,
+        deletedAt: true,
+        planEndsAt: true,
+        schedulingPeriodStartsAt: true,
+        schedulingTimezone: true,
+        subscriptionPlan: { select: { durationInMonths: true } },
+      },
+    });
+    if (
+      !sub ||
+      sub.deletedAt ||
+      !["APPROVED", "SCHEDULED"].includes(sub.status) ||
+      subscriptionIsOver(sub, now)
+    ) {
+      return false;
+    }
+    const { count } = await tx.subscription.updateMany({
+      where: {
+        id: subscriptionId,
+        status: sub.status,
+        planEndsAt: sub.planEndsAt,
+      },
+      data: {
+        planEndsAt: new Date(
+          subscriptionPlanEnd(sub).getTime() + INCIDENT_PLAN_EXTENSION_MS,
+        ),
+      },
+    });
+    if (count === 1) return true;
   }
-  const { count } = await tx.subscription.updateMany({
-    where: {
-      id: subscriptionId,
-      status: sub.status,
-      schedulingPeriodEndsAt: sub.schedulingPeriodEndsAt,
-    },
-    data: {
-      schedulingPeriodEndsAt: new Date(
-        sub.schedulingPeriodEndsAt.getTime() + INCIDENT_PLAN_EXTENSION_MS,
-      ),
-    },
-  });
-  if (count === 0)
-    throw new Error(`Subscription ${subscriptionId} moved under the extension`);
-  return true;
+  // Rolls the remedy's done stamp back with it; the next run re-applies.
+  throw new Error(`Subscription ${subscriptionId} moved under the extension`);
 }

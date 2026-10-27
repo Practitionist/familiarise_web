@@ -449,7 +449,11 @@ export async function findAvailableSlots(
           })
           .filter((r): r is { start: Date; endMs: number } => r !== null);
 
-  /** Whether the per-day and per-week caps still have room for a call starting here. */
+  /**
+   * Whether the per-day cap, and for a class the calendar-week cap, still
+   * have room for a call starting here. A subscription's weekly limit is its
+   * rolling cycle, already applied as the window and `totalSlotsNeeded`.
+   */
   const hasRoomOn = (candidateStart: Date): boolean =>
     (placedPerDay.get(
       ScheduleCalculationService.dayKey(
@@ -457,12 +461,13 @@ export async function findAvailableSlots(
         config.schedulingTimezone,
       ),
     ) ?? 0) < maxPerDay &&
-    (sessionsPlacedPerWeek.get(
-      ScheduleCalculationService.weekKey(
-        candidateStart,
-        config.schedulingTimezone,
-      ),
-    ) ?? 0) < sessionsPerWeek;
+    (eventType !== "class" ||
+      (sessionsPlacedPerWeek.get(
+        ScheduleCalculationService.weekKey(
+          candidateStart,
+          config.schedulingTimezone,
+        ),
+      ) ?? 0) < sessionsPerWeek);
 
   /**
    * Place at most `maxPerDay` calls on this day, honouring the

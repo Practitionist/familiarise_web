@@ -73,6 +73,7 @@ export function detailEntitlement(
     })),
     schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt ?? now,
     schedulingTimezone: sub.schedulingTimezone ?? "Asia/Kolkata",
+    planEndsAt: sub.planEndsAt ?? null,
     now,
   });
 }

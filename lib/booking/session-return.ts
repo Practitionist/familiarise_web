@@ -3,7 +3,7 @@
  *
  * The session is released through the CAS helper to CANCELLED without a
  * tombstone (it stays countable, frees the expert's time and its ordinal), the
- * entitlement counts it as remaining again, and the plan end moves 7 days in
+ * entitlement counts it as remaining again, and `planEndsAt` moves 7 days in
  * the same conditional write that spends one of the two returns. No money moves.
  */
 import {
@@ -28,6 +28,7 @@ import {
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { goHref } from "@/lib/dashboard/go";
 import { BookingRuleError } from "./booking-rule-error";
+import { subscriptionPlanEnd } from "./entitlement";
 import {
   RETURN_BLOCK_COPY,
   RETURN_CAP,
@@ -55,7 +56,7 @@ export class SessionReturnNotFoundError extends Error {
 interface SessionReturnResult {
   occurrenceId: string;
   sessionsReturned: number;
-  schedulingPeriodEndsAt: string;
+  planEndsAt: string;
 }
 
 const RETURN_SELECT = {
@@ -74,11 +75,14 @@ const RETURN_SELECT = {
           status: true,
           requestedById: true,
           sessionsReturned: true,
-          schedulingPeriodEndsAt: true,
+          planEndsAt: true,
+          schedulingPeriodStartsAt: true,
+          schedulingTimezone: true,
           requestedBy: { select: { user: { select: { name: true } } } },
           subscriptionPlan: {
             select: {
               title: true,
+              durationInMonths: true,
               consultantProfile: {
                 select: { user: { select: { id: true, name: true } } },
               },
@@ -205,18 +209,17 @@ export async function returnSessionToPlan(args: {
           // The counter and the extension move together, so a plan is extended
           // exactly once per return and never past RETURN_CAP returns.
           const endsAt = new Date(
-            sub.schedulingPeriodEndsAt.getTime() + RETURN_EXTENSION_MS,
+            subscriptionPlanEnd(sub).getTime() + RETURN_EXTENSION_MS,
           );
           const spent = await tx.subscription.updateMany({
             where: {
               id: sub.id,
               status: AppointmentStatus.APPROVED,
-              sessionsReturned: { lt: RETURN_CAP },
-              schedulingPeriodEndsAt: sub.schedulingPeriodEndsAt,
+              sessionsReturned: sub.sessionsReturned,
             },
             data: {
               sessionsReturned: { increment: 1 },
-              schedulingPeriodEndsAt: endsAt,
+              planEndsAt: endsAt,
             },
           });
           if (spent.count === 0) {
@@ -263,7 +266,7 @@ export async function returnSessionToPlan(args: {
             result: {
               occurrenceId: occ.id,
               sessionsReturned: sub.sessionsReturned + 1,
-              schedulingPeriodEndsAt: endsAt.toISOString(),
+              planEndsAt: endsAt.toISOString(),
             },
             bell,
             emails,

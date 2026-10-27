@@ -6,7 +6,6 @@ import { resolveOrgScope } from "@/lib/api/scope/parse";
 import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
 import { z } from "zod";
 import { CONSULTANT_APPOINTMENTS_WINDOWS } from "@/lib/appointments/window";
-import { computeWeeklyConfirmedCallCounts } from "@/lib/booking/weekly-call-counts";
 import { canReadEventSlots } from "@/lib/booking/event-slots-access";
 
 export async function GET(request: NextRequest) {
@@ -196,23 +195,7 @@ export async function GET(request: NextRequest) {
       window,
     });
 
-    // #997 Phase 3 — opt-in aggregate, only computed when the caller scopes
-    // to a single subscription and asks for it (`slotsPerCall` is the opt-in
-    // the client already sends; #1554 made one row one call, so its value is
-    // no longer needed to recognise a call).
-    const slotsPerCallParam = searchParams.get("slotsPerCall");
-    const slotsPerCall = slotsPerCallParam
-      ? parseInt(slotsPerCallParam, 10)
-      : NaN;
-    const weeklyConfirmedCallCounts =
-      subscriptionId && Number.isFinite(slotsPerCall) && slotsPerCall > 0
-        ? computeWeeklyConfirmedCallCounts(appointments, subscriptionId)
-        : undefined;
-
-    return NextResponse.json({
-      data: appointments,
-      ...(weeklyConfirmedCallCounts ? { weeklyConfirmedCallCounts } : {}),
-    });
+    return NextResponse.json({ data: appointments });
   } catch (error) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(

@@ -36,6 +36,7 @@ import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import {
   sessionsTotalOf,
   subscriptionEntitlement,
+  subscriptionPlanEnd,
 } from "@/lib/booking/entitlement";
 import { Prisma, type EarningStatus } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
@@ -152,6 +153,7 @@ async function readNextCycles(
       sessionsTotal: true,
       schedulingPeriodStartsAt: true,
       schedulingTimezone: true,
+      planEndsAt: true,
       subscriptionPlan: {
         select: {
           title: true,
@@ -188,6 +190,7 @@ async function readNextCycles(
         occurrences: row.appointment?.occurrences ?? [],
         schedulingPeriodStartsAt: row.schedulingPeriodStartsAt,
         schedulingTimezone: row.schedulingTimezone,
+        planEndsAt: row.planEndsAt,
         now,
       });
       return {
@@ -358,7 +361,7 @@ const appointmentSelect = {
       },
       requestedBy: { select: { id: true, user: { select: userSelectFields } } },
       schedulingPeriodStartsAt: true,
-      schedulingPeriodEndsAt: true,
+      planEndsAt: true,
       // #1766 — Home's session progress reads the frozen entitlement.
       sessionsTotal: true,
       schedulingTimezone: true,
@@ -931,8 +934,8 @@ export async function getConsultantDashboard(
             startDate: new Date(
               appointment.subscription.schedulingPeriodStartsAt,
             ).toISOString(),
-            endDate: new Date(
-              appointment.subscription.schedulingPeriodEndsAt,
+            endDate: subscriptionPlanEnd(
+              appointment.subscription,
             ).toISOString(),
             // #1766 — the entitlement inputs calculateSessionProgress reads.
             sessionsTotal: appointment.subscription.sessionsTotal,

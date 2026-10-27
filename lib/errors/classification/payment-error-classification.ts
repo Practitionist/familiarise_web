@@ -547,6 +547,11 @@ const BUSINESS_ERROR_ENTRIES = [
     httpStatus: 400,
   },
   {
+    code: "INVALID_PLAN_START",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 400,
+  },
+  {
     code: "INCIDENT_REMEDY_NOT_FOUND",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 404,

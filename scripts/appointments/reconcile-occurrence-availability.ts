@@ -648,6 +648,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         sessionsTotal: true,
         schedulingPeriodStartsAt: true,
         schedulingTimezone: true,
+        planEndsAt: true,
         subscriptionPlan: {
           select: {
             consultantProfileId: true,
@@ -686,6 +687,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         occurrences: subscription.appointment?.occurrences ?? [],
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
         schedulingTimezone: subscription.schedulingTimezone,
+        planEndsAt: subscription.planEndsAt,
         now,
       });
       if (entitlement.cycle.nextBatch === 0) continue;
