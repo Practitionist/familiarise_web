@@ -13,10 +13,10 @@ This folder explains how the platform learns that something went wrong and how a
 
 ## Start here
 
-| Document                                                  | Type        | Read it when                                                                                                            |
-| --------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------- |
-| [00-system-design.md](./00-system-design.md)              | explanation | You need the whole picture: signal sources and sinks, the three layers, quota rules and ticker failure escalation.      |
-| [three-layers.md](./three-layers.md) (arrives with #2422) | explanation | You need to trace one payment or booking, or read the per-job run metrics. The page is not on `dev` until #2422 merges. |
+| Document                                     | Type        | Read it when                                                                                                            |
+| -------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------- |
+| [00-system-design.md](./00-system-design.md) | explanation | You need the whole picture: signal sources and sinks, the three layers, quota rules and ticker failure escalation.      |
+| [three-layers.md](./three-layers.md)         | explanation | You need to trace one payment or booking, or read the per-job run metrics. The page is not on `dev` until #2422 merges. |
 
 ## The Sentry set
 

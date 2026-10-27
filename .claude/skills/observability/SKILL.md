@@ -51,4 +51,4 @@ The full reasoning for each rule is in `references/sentry.md` and `references/jo
 
 ## Entity trace and job run metrics
 
-Sentry answers "what failed", Better Stack and the ticker check-in answer "what did not run", and the read-only entity trace (`lib/backoffice/entity-trace.ts`) with the Run metrics card (`lib/backoffice/job-run-metrics.ts`) answers "what happened to this payment or booking". They arrive with #2422. Read `references/entity-trace-and-console.md` before extending either one, and `docs/observability/three-layers.md` once it lands.
+Sentry answers "what failed", Better Stack and the ticker check-in answer "what did not run", and the read-only entity trace (`lib/backoffice/entity-trace.ts`) with the Run metrics card (`lib/backoffice/job-run-metrics.ts`) answers "what happened to this payment or booking". Read `references/entity-trace-and-console.md` before extending either one, and `docs/observability/three-layers.md`.
