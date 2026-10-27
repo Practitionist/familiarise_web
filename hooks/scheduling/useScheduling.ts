@@ -42,6 +42,7 @@ import {
   timingsSaved,
   autoScheduled,
   partiallyScheduled,
+  requestRefreshedInPlace,
   allocationFailed,
   allocationFailedWithCode,
   allocatedElsewhere,
@@ -79,6 +80,7 @@ type AllocationFailureAction =
   | "rate-limited"
   | "allocated-elsewhere"
   | "request-changed"
+  | "request-refresh"
   | "stay-open-refresh"
   | "key-reset"
   | "generic";
@@ -104,9 +106,12 @@ function classifyAllocationFailure(
   switch (result.errorCode) {
     case "ALREADY_ALLOCATED":
       return "allocated-elsewhere";
+    // The request can no longer be allocated: close.
     case "ILLEGAL_TRANSITION":
-    case "RESCHEDULE_STATE_CHANGED":
       return "request-changed";
+    // Only its tentative count moved under this tab: reload it in place.
+    case "RESCHEDULE_STATE_CHANGED":
+      return "request-refresh";
     // #1132 / #1863 — slot lost, co-host busy or lock contention: nothing was
     // allocated and the request stands, so stay open and refetch both grids.
     case "SLOT_TAKEN":
@@ -259,6 +264,12 @@ export interface UseEventSlotAllocationOptions {
    */
   onStaleData?: () => void;
 
+  /**
+   * The request's tentative state moved under this tab: the host reloads the
+   * subject in place and the dialog stays open.
+   */
+  onRequestChanged?: () => void;
+
   /** Validation change callback */
   onValidationChange?: (isValid: boolean, result: ValidationResult) => void;
 
@@ -345,9 +356,6 @@ export interface UseEventSlotAllocationReturn {
 
   /** Decline the partial placement and go back to an unallocated request. */
   dismissPartialOffer: () => void;
-
-  /** Allocate using the consultee's requested slots (server "requested" mode) */
-  allocateRequestedSlots: (requestedSlots: CalendarInterval[]) => Promise<void>;
 
   /** Validate current slot selection */
   validateSlots: () => ValidationResult;
@@ -508,6 +516,7 @@ export function useEventSlotAllocation(
     onError,
     onConflict,
     onStaleData,
+    onRequestChanged,
     onValidationChange,
     onSlotsChange,
   } = options;
@@ -683,6 +692,11 @@ export function useEventSlotAllocation(
           toast(requestChangedElsewhere());
           onConflict?.();
           break;
+        case "request-refresh":
+          toast(requestRefreshedInPlace());
+          if (onRequestChanged) onRequestChanged();
+          else onStaleData?.();
+          break;
         case "stay-open-refresh":
           // #1132 — nothing was allocated away, so the dialog stays open and
           // the grid refetches so the retry is picked fresh. The server's
@@ -708,7 +722,7 @@ export function useEventSlotAllocation(
       }
       onError?.(errorMessage);
     },
-    [toast, onConflict, onStaleData, onError],
+    [toast, onConflict, onStaleData, onRequestChanged, onError],
   );
 
   // ==========================================
@@ -1239,6 +1253,9 @@ export function useEventSlotAllocation(
       );
 
       if (result.success) {
+        // Saved times are this booking's now; keeping them selected would let
+        // the refetch judge them as someone else's.
+        setSelectedSlots([]);
         toast(timingsSaved());
         onSuccess?.(result);
       } else {
@@ -1325,14 +1342,14 @@ export function useEventSlotAllocation(
         );
 
         if (response.success) {
-          // Reflect the server's picks on the grid (best-effort — the host
-          // closes the dialog via onSuccess either way).
+          // The server's picks paint as "This booking" once the event slots
+          // refetch; they are not left selected, where a refetch would judge
+          // them as someone else's.
           const pickedSlots: CalendarInterval[] = (response.data ?? [])
             .flatMap(
               (appointment) =>
                 (appointment.occurrences as
-                  | { startsAt: string; endsAt: string }[]
-                  | undefined) ?? [],
+                  { startsAt: string; endsAt: string }[] | undefined) ?? [],
             )
             .map((slot) => ({
               startTime: new Date(slot.startsAt),
@@ -1340,9 +1357,7 @@ export function useEventSlotAllocation(
               isAvailable: true,
               isBooked: false,
             }));
-          if (pickedSlots.length > 0) {
-            setSelectedSlots(pickedSlots);
-          }
+          setSelectedSlots([]);
           // #1206 — "all sessions scheduled" would be a lie on a partial run.
           toast(
             response.partial
@@ -1398,91 +1413,6 @@ export function useEventSlotAllocation(
           {
             tags: { subsystem: "client", feature: "scheduling" },
             extra: { eventType, mode: "auto" },
-          },
-        );
-        toast(allocationFailed(errorMessage));
-        onError?.(errorMessage);
-      } finally {
-        setIsAllocating(false);
-      }
-    },
-    [
-      eventType,
-      eventId,
-      options,
-      onSuccess,
-      onError,
-      toast,
-      handleAllocationFailure,
-    ],
-  );
-
-  /**
-   * Allocate using the consultee's requested slots (server "requested" mode).
-   */
-  const allocateRequestedSlots = useCallback(
-    async (requestedSlots: CalendarInterval[]) => {
-      setIsAllocating(true);
-      setAllocationError(null);
-
-      try {
-        const sessionDuration =
-          eventType === "consultation" || eventType === "webinar"
-            ? options.durationInHours
-            : options.sessionDurationInHours;
-
-        const attempt = resolveAttemptKey(
-          attemptKeyRef.current,
-          computeAttemptFingerprint(
-            "requested",
-            eventId,
-            requestedSlots,
-            undefined,
-            fingerprintGuards(options),
-          ),
-        );
-        attemptKeyRef.current = attempt;
-
-        const allocationOptions: AllocationOptions = {
-          eventType,
-          eventId,
-          durationInMonths: options.durationInMonths,
-          sessionsPerWeek: options.sessionsPerWeek,
-          sessionDurationInHours: sessionDuration,
-          startDate: options.startDate,
-          endDate: options.endDate,
-          // Parity with manual/auto: honor plan totals and in-progress
-          // reschedules — the requested path previously skipped both.
-          totalSessions: options.maxTotalCalls,
-          pastConfirmedSlotCount: options.pastConfirmedSlotCount,
-          requestedSlots,
-          schedulingTimezone: options.schedulingTimezone,
-          idempotencyKey: attempt.key,
-          initialAllocation: options.initialAllocation || undefined,
-          expectedTentativeSlotCount: options.expectedTentativeSlotCount,
-        };
-
-        const result =
-          await AllocationAlgorithms.allocateRequestedSlots(allocationOptions);
-
-        if (result.success) {
-          setSelectedSlots(result.selectedSlots);
-          toast(timingsSaved());
-          onSuccess?.(result);
-        } else {
-          handleAllocationFailure(result, "Requested-slots allocation failed");
-        }
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : "Requested-slots allocation failed";
-        setAllocationError(errorMessage);
-        Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
-          {
-            tags: { subsystem: "client", feature: "scheduling" },
-            extra: { eventType, mode: "requested" },
           },
         );
         toast(allocationFailed(errorMessage));
@@ -1609,7 +1539,6 @@ export function useEventSlotAllocation(
     // Allocation methods
     manualAllocate,
     autoAllocate,
-    allocateRequestedSlots,
     partialOffer,
     dismissPartialOffer,
 

@@ -13,8 +13,8 @@ import { SlotList } from "@/app/explore/experts/[consultantId]/components/SlotLi
 import {
   partitionSlotsForList,
   takenTimesLine,
-  type SlotWithStatus,
 } from "@/app/explore/experts/[consultantId]/components/slot-list-policy";
+import type { SlotWithStatus } from "@/lib/scheduling/booking-windows";
 
 function slot(
   id: string,

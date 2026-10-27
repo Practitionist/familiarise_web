@@ -7,6 +7,7 @@ import {
 } from "@/lib/fetch-helpers";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 import { CalendarInterval } from "./calendarUtils";
+import { gridQuotaSchema } from "./grid-quota";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 
 /** #997 Phase 2 — tooltip display metadata for a booked slot, computed
@@ -19,12 +20,23 @@ export interface OverlappingAppointmentMeta {
 }
 
 /** Shape of a raw availability slot returned from the availability-with-allocation API */
+/** Event context for the availability grid read. */
+export interface AvailabilityContext {
+  webinarId?: string;
+  classId?: string;
+  subscriptionId?: string;
+  /** Comma-separated occurrence ids a reschedule would release. */
+  releasing?: string;
+}
+
 interface RawAvailabilityApiSlot {
   slotId: string;
   startsAt: string;
   endsAt: string;
   bookingStatus: "available" | "partially-booked" | "fully-booked";
   type: "WEEKLY" | "CUSTOM";
+  tooSoon?: boolean;
+  limitReached?: boolean;
   dayOfWeek?: string;
   localStartTime?: string;
   localEndTime?: string;
@@ -539,7 +551,7 @@ export class AllocationService {
     timezone?: string,
     includeAppointmentDetails?: boolean,
     consulteeUserId?: string,
-    options?: { webinarId?: string; classId?: string },
+    options?: AvailabilityContext,
   ): string {
     const tz =
       timezone ||
@@ -563,6 +575,10 @@ export class AllocationService {
     }
     if (options?.classId) {
       params.set("classId", options.classId);
+    }
+    if (options?.subscriptionId) {
+      params.set("subscriptionId", options.subscriptionId);
+      if (options.releasing) params.set("releasing", options.releasing);
     }
     return `/api/scheduling/availability-with-allocation/${consultantId}?${params}`;
   }
@@ -610,10 +626,10 @@ export class AllocationService {
      */
     ifNoneMatch?: string | null,
     /**
-     * #1689 — optional webinar/class context so the availability grid folds in
-     * ACCEPTED co-hosts' schedules and busy commitments.
+     * Webinar/class context folds in ACCEPTED co-hosts; a subscription id adds
+     * the plan's weekly/day limit overlay.
      */
-    options?: { webinarId?: string; classId?: string },
+    options?: AvailabilityContext,
   ) {
     if (!consultantId) {
       throw new Error("Consultant ID is required");
@@ -672,6 +688,7 @@ export class AllocationService {
       }
       const result = await response.json();
       const { data: slotsByDate } = result;
+      const quota = gridQuotaSchema.safeParse(result.quota);
 
       // Flatten the grouped-by-date slots into a single array
       const allSlots: RawAvailabilityApiSlot[] = (
@@ -681,6 +698,7 @@ export class AllocationService {
       return {
         weekly: allSlots.filter((s) => s.type === "WEEKLY"),
         custom: allSlots.filter((s) => s.type === "CUSTOM"),
+        quota: quota.success ? quota.data : null,
         etag: response.headers.get("ETag"),
         notModified: false as const,
       };

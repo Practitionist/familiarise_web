@@ -13,13 +13,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { DAYS, INTERVALS } from "@/utils/scheduling-engine/interval-meta";
 import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/scheduling-engine/slotTimeUtils";
 import { isRecurringEventType } from "@/utils/scheduling-engine/types";
 import {
@@ -32,22 +25,23 @@ import {
   subMonths,
   isSameMonth,
   getDay,
+  getDaysInMonth,
   type Day,
 } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 import {
   ChevronLeft,
   ChevronRight,
   Calendar,
-  Clock,
   Users,
   Zap,
   RotateCcw,
   CalendarCheck,
+  AlertTriangle,
 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   CalendarInterval,
-  AppointmentDetail,
   calculateRequiredSlots,
   calculateCallProgress,
   countSundayWeeksInclusive,
@@ -79,60 +73,74 @@ import {
   schedulingWeekBucket,
 } from "@/lib/scheduling/allocationMessages";
 import { useToast } from "@/hooks/use-toast";
-import {
-  SLOT_STATUS_TOKENS,
-  resolveSlotStatusKey,
-  slotCellClassName,
-  type SlotStatusKey,
-} from "@/lib/scheduling/interval-status-tokens";
+import type { SlotStatusKey } from "@/lib/scheduling/interval-status-tokens";
+import { quotaFooterText } from "@/lib/scheduling/grid-quota";
+import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import {
   FOCUS_LEAD_ROWS,
   focusGridPosition,
   focusScrollRow,
-  focusTargetRow,
+  focusTargetMinute,
   gridTimeZone,
+  rowIndexForMinute,
   type TimePickerFocus,
 } from "@/lib/scheduling/time-picker-focus";
 import { cn } from "@/utils/tailwind";
 import {
-  bandKey,
   foldDeadHourBands,
   nearestVisibleRow,
   type RowSegment,
 } from "@/lib/scheduling/dead-hour-bands";
 import {
+  buildWeekCells,
+  describeAtom,
+  selectionConflicts,
+  type AtomContext,
+  type CellView,
+} from "@/lib/scheduling/week-grid-model";
+import {
   formatClockTime,
   formatDateLabel,
   formatDateRangeLabel,
-  formatDateTimeLabel,
   formatDayLabel,
-  formatDayOfMonth,
   formatMonthLabel,
-  formatWeekdayShort,
 } from "@/lib/time/display";
 import {
+  ATOM_MS,
+  atomOf,
+  calendarDateKey,
   calendarDayOf,
+  canSwitchToDeviceZone,
+  dayStartInstant,
   footerZoneLine,
   isOnCalendarDay,
-  rowOf,
+  resolveGridZone,
+  weekRowModel,
 } from "@/lib/time/grid-zone";
-import { resolveGridZone } from "@/lib/scheduling/intervalSelectionValidation";
+import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
+import {
+  overlapTooltip,
+  WeekGrid,
+  type CellTooltip,
+  type GridFocus,
+  type NavRow,
+} from "@/components/scheduling/WeekGrid";
 
-/**
- * Small pure helpers for clarity and reuse. These do not cause side effects.
- */
 function getSlotsPerCall(sessionDurationInHours?: number): number {
-  return Math.ceil((sessionDurationInHours || 1) / 0.5); // 30-min increments
+  return Math.ceil((sessionDurationInHours || 1) / 0.5);
 }
 
-/** Minutes as a phrase a buyer would use — never a slot count (ADR B1). */
+/** Minutes as a phrase a person would use — never a count of half-hours. */
 function formatDurationLabel(minutes: number): string {
   if (minutes % 60 !== 0) return `${minutes} min`;
   const hours = minutes / 60;
   return `${hours} hour${hours === 1 ? "" : "s"}`;
 }
 
-/** The product's name for the tooltip, without a ternary chain. */
+function sessionsPhrase(count: number): string {
+  return `${count} session${count === 1 ? "" : "s"}`;
+}
+
 function eventTypeLabel(eventType: UnifiedCalendarProps["eventType"]): string {
   switch (eventType) {
     case "consultation":
@@ -146,78 +154,24 @@ function eventTypeLabel(eventType: UnifiedCalendarProps["eventType"]): string {
   }
 }
 
-/** "Unavailable · 00:00–09:00", the strip a folded band collapses to. */
-function bandLabel(segment: RowSegment): string {
-  const at = (row: number) =>
-    formatClockTime(new Date(1970, 0, 1, Math.floor(row / 2), (row % 2) * 30));
-  // Row 48 is midnight at the end of the day, which row 0's clock also reads.
-  return `Unavailable · ${at(segment.from)}–${at(segment.to % 48)}`;
-}
-
-/** "Outside the scheduling period · 00:00–09:00" — same shape as `bandLabel`,
- * for a band whose rows are outside this booking's period (#1764/#1766). */
-function outsidePeriodBandLabel(segment: RowSegment): string {
-  const at = (row: number) =>
-    formatClockTime(new Date(1970, 0, 1, Math.floor(row / 2), (row % 2) * 30));
-  return `Outside the scheduling period · ${at(segment.from)}–${at(segment.to % 48)}`;
-}
-
-// The time gutter must be a FIXED first column, not 1/8 of the row. As an
-// equal-8 grid the gutter kept its w-14 while its CELL shrank with the
-// container, so in a narrow modal the label overflowed onto Sunday and
-// rendered as "19:30Available". minmax(0,1fr) also stops long cell text
-// blowing the day columns out.
-const GRID_COLS =
-  "grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] md:grid-cols-[5rem_repeat(7,minmax(0,1fr))]";
-
-/**
- * ONE period predicate for paint, click and auto-expand: the cell must sit
- * inside [allowedStart, allowedEnd] whole, the same rule
- * ScheduleValidationService.validateSchedulingPeriod applies server-side.
- */
-function isOutsideAllowedRange(
-  intervalStart: Date,
-  intervalEnd: Date,
+/** The calendar days of the visible week that sit inside the booking's dates, read in `zone`. */
+function inPeriodDays(
+  days: readonly Date[],
+  zone: string,
   allowedStart?: Date,
   allowedEnd?: Date,
-): boolean {
-  if (allowedStart && intervalStart < allowedStart) return true;
-  if (allowedEnd && intervalEnd > allowedEnd) return true;
-  return false;
-}
-
-/** Returns true if a date (day-level) is within the allowed scheduling period. */
-function isDateInSchedulingPeriod(
-  date: Date,
-  allowedStart?: Date,
-  allowedEnd?: Date,
-): boolean {
-  if (!allowedStart && !allowedEnd) return false;
-
-  // Compare at day level (ignore time)
-  const dateOnly = new Date(
-    date.getFullYear(),
-    date.getMonth(),
-    date.getDate(),
-  );
-  const startOnly = allowedStart
-    ? new Date(
-        allowedStart.getFullYear(),
-        allowedStart.getMonth(),
-        allowedStart.getDate(),
-      )
+): boolean[] {
+  if (!allowedStart && !allowedEnd) return days.map(() => false);
+  const startKey = allowedStart
+    ? calendarDateKey(calendarDayOf(allowedStart, zone))
     : null;
-  const endOnly = allowedEnd
-    ? new Date(
-        allowedEnd.getFullYear(),
-        allowedEnd.getMonth(),
-        allowedEnd.getDate(),
-      )
+  const endKey = allowedEnd
+    ? calendarDateKey(calendarDayOf(new Date(allowedEnd.getTime() - 1), zone))
     : null;
-
-  if (startOnly && dateOnly < startOnly) return false;
-  if (endOnly && dateOnly > endOnly) return false;
-  return true;
+  return days.map((day) => {
+    const key = calendarDateKey(day);
+    return (!startKey || key >= startKey) && (!endKey || key <= endKey);
+  });
 }
 
 /** Footer text for a subscription; the legacy progress line when no window. */
@@ -232,7 +186,6 @@ function subscriptionFooterText(
     pastEventSlotCount: number;
     maxSlots: number;
     schedulingTimezone?: string;
-    /** #1766 — the one counter; null until the subscription row has loaded. */
     entitlement: SubscriptionEntitlement | null;
     zone: string;
   }>,
@@ -273,7 +226,7 @@ function classFooterText(
     schedulingTimezone?: string;
   }>,
 ): string {
-  const slotsPerSession = Math.ceil((params.sessionDurationInHours || 1) / 0.5);
+  const slotsPerSession = getSlotsPerCall(params.sessionDurationInHours);
   return computeClassFooter({
     selectedSlots: params.selectedSlots,
     sessionDurationInHours: params.sessionDurationInHours,
@@ -286,26 +239,27 @@ function classFooterText(
 }
 
 /**
- * #1775 — a subscription's week grid starts on the day its cycle starts, so
- * the seven columns ARE the cycle; everything else keeps the Sunday start
- * the quota bucketing is pinned to.
+ * A subscription's week grid starts on the day its cycle starts, so the seven
+ * columns are the cycle; everything else starts on Sunday.
  */
 export function weekStartFor(subject: {
   eventType: UnifiedCalendarProps["eventType"];
   cycleStart?: Date | null;
+  /** The zone the grid is drawn in; the cycle's start day is read there. */
+  zone: string;
 }): Day {
   return subject.eventType === "subscription" && subject.cycleStart
-    ? (getDay(subject.cycleStart) as Day)
+    ? (getDay(calendarDayOf(subject.cycleStart, subject.zone)) as Day)
     : 0;
 }
 
-/** #1775 — what the window banner calls the range, per subject. */
+/** What the window banner calls the range, per subject. */
 function windowBannerLabel(
   eventType: UnifiedCalendarProps["eventType"],
 ): string {
   if (eventType === "subscription") return "This cycle";
   if (eventType === "consultation") return "Requested window";
-  return "Scheduling Period";
+  return "Scheduling period";
 }
 
 /** Formats the allowed [start, end] range in the grid's zone. */
@@ -322,32 +276,8 @@ function formatAllowedRange(
 }
 
 /**
- * Compares two CalendarInterval arrays by content (not reference).
- * Used to prevent unnecessary state updates that cause infinite loops.
- */
-function areSlotsEqual(
-  slots1: CalendarInterval[],
-  slots2: CalendarInterval[],
-): boolean {
-  if (slots1.length !== slots2.length) return false;
-
-  // Sort both arrays by startTime for consistent comparison
-  const sorted1 = [...slots1].sort(
-    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-  );
-  const sorted2 = [...slots2].sort(
-    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
-  );
-
-  return sorted1.every(
-    (slot, index) =>
-      slot.startTime.getTime() === sorted2[index].startTime.getTime(),
-  );
-}
-
-/**
- * Counts completed calls from the user's current selection for a specific week.
- * A completed call is exactly `slotsPerCall` consecutive 30-min slots on the same day.
+ * Completed calls in the current selection for one week: exactly
+ * `slotsPerCall` consecutive half-hours on the same day.
  */
 function countCompletedSelectedCallsForWeek(
   selectedSlots: CalendarInterval[],
@@ -356,21 +286,21 @@ function countCompletedSelectedCallsForWeek(
   schedulingTimezone?: string,
 ): number {
   if (!selectedSlots?.length) return 0;
-
-  // Group selected slots by scheduling-timezone day within the target week
   const byDay = new Map<string, CalendarInterval[]>();
   for (const s of selectedSlots) {
-    const start = s.startTime;
     if (
-      ScheduleCalculationService.weekKey(start, schedulingTimezone) !==
+      ScheduleCalculationService.weekKey(s.startTime, schedulingTimezone) !==
       targetWeekKey
     )
       continue;
-    const key = ScheduleCalculationService.dayKey(start, schedulingTimezone);
-    if (!byDay.has(key)) byDay.set(key, []);
-    byDay.get(key)!.push(s);
+    const key = ScheduleCalculationService.dayKey(
+      s.startTime,
+      schedulingTimezone,
+    );
+    const list = byDay.get(key) ?? [];
+    list.push(s);
+    byDay.set(key, list);
   }
-
   let completed = 0;
   byDay.forEach((daySlots) => {
     if (daySlots.length !== slotsPerCall) return;
@@ -381,9 +311,8 @@ function countCompletedSelectedCallsForWeek(
 }
 
 /**
- * #1766 — the subscription footer reads the one entitlement counter: the
- * cycle heading while nothing is selected, then the selection against THIS
- * cycle's batch with the plan-wide count alongside.
+ * The subscription footer reads the one entitlement counter: the cycle
+ * heading while nothing is selected, then the selection against this cycle.
  */
 function cycleFooterText(
   entitlement: SubscriptionEntitlement,
@@ -396,16 +325,11 @@ function cycleFooterText(
   const { nextBatch } = entitlement.cycle;
   const plan = `${entitlement.held + selectedSessions} of ${entitlement.total} scheduled`;
   if (selectedSessions >= nextBatch) {
-    const sessionNoun = nextBatch === 1 ? "session" : "sessions";
-    return `✅ This cycle's ${nextBatch} ${sessionNoun} selected · ${plan}`;
+    return `This cycle's ${sessionsPhrase(nextBatch)} picked · ${plan}`;
   }
-  return `✅ ${selectedSessions} of ${nextBatch} for this cycle · ${plan}`;
+  return `${selectedSessions} of ${nextBatch} picked for this cycle · ${plan}`;
 }
 
-/**
- * Subscription footer: Clear, action-oriented progress text
- * Removes confusing "past completed" concept and technical jargon
- */
 function computeSubscriptionFooter(
   params: Readonly<{
     selectedSlots: CalendarInterval[];
@@ -427,7 +351,6 @@ function computeSubscriptionFooter(
     pastCompletedSessions = 0,
   } = params;
 
-  // Use totalSessions from plan (authoritative) to avoid calendar-week edge cases
   let maxTotalCalls: number;
   if (totalSessions && totalSessions > 0) {
     maxTotalCalls = totalSessions;
@@ -440,40 +363,39 @@ function computeSubscriptionFooter(
   const scheduled = Math.floor(selectedSlots.length / slotsPerCall);
   const totalScheduled = scheduled + pastCompletedSessions;
   const remaining = maxTotalCalls - totalScheduled;
+  const durationText = formatDurationLabel((sessionDurationInHours || 1) * 60);
 
-  const duration = sessionDurationInHours || 1;
-  const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
-
-  // Clear, user-friendly text based on progress
   if (pastCompletedSessions > 0 && scheduled === 0) {
-    return `${pastCompletedSessions} past session${pastCompletedSessions !== 1 ? "s" : ""} completed | Schedule ${remaining} more (${durationText} each)`;
-  } else if (pastCompletedSessions > 0 && remaining > 0) {
-    return `✅ ${totalScheduled} of ${maxTotalCalls} (${pastCompletedSessions} past + ${scheduled} new) | ⏳ ${remaining} remaining`;
-  } else if (scheduled === 0) {
-    return `📅 Choose times for ${maxTotalCalls} sessions (${durationText} each)`;
-  } else if (remaining > 0) {
-    return `✅ ${scheduled} of ${maxTotalCalls} sessions scheduled • ${remaining} more to go`;
-  } else {
-    return `✅ All ${maxTotalCalls} sessions scheduled!`;
+    return `${sessionsPhrase(pastCompletedSessions)} done · pick ${remaining} more (${durationText} each)`;
   }
+  if (pastCompletedSessions > 0 && remaining > 0) {
+    return `${totalScheduled} of ${maxTotalCalls} (${pastCompletedSessions} done + ${scheduled} new) · ${remaining} to go`;
+  }
+  if (scheduled === 0) {
+    return `Choose times for ${sessionsPhrase(maxTotalCalls)} (${durationText} each)`;
+  }
+  if (remaining > 0) {
+    return `${scheduled} of ${maxTotalCalls} sessions picked · ${remaining} to go`;
+  }
+  return `All ${sessionsPhrase(maxTotalCalls)} picked`;
 }
 
-/** Counts total completed class sessions across all selected slots. */
+/** Total completed class sessions across the selection. */
 function countCompletedSelectedClasses(
   selectedSlots: CalendarInterval[],
   slotsPerSession: number,
   schedulingTimezone?: string,
 ): number {
   if (!selectedSlots?.length) return 0;
-  // Group by scheduling-timezone day and count full consecutive runs
   const byDay = new Map<string, CalendarInterval[]>();
   for (const s of selectedSlots) {
     const key = ScheduleCalculationService.dayKey(
       s.startTime,
       schedulingTimezone,
     );
-    if (!byDay.has(key)) byDay.set(key, []);
-    byDay.get(key)!.push(s);
+    const list = byDay.get(key) ?? [];
+    list.push(s);
+    byDay.set(key, list);
   }
   let sessions = 0;
   byDay.forEach((daySlots) => {
@@ -495,10 +417,6 @@ function countCompletedSelectedClasses(
   return sessions;
 }
 
-/**
- * Class footer: Clear progress without technical jargon
- * Shows user-facing duration (hours) not implementation details (slots)
- */
 function computeClassFooter(params: {
   selectedSlots: CalendarInterval[];
   sessionDurationInHours?: number;
@@ -513,33 +431,28 @@ function computeClassFooter(params: {
     pastCompletedSessions = 0,
     schedulingTimezone,
   } = params;
-  const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
+  const slotsPerSession = getSlotsPerCall(sessionDurationInHours);
   const scheduled = countCompletedSelectedClasses(
     selectedSlots,
     slotsPerSession,
     schedulingTimezone,
   );
   const totalScheduled = scheduled + pastCompletedSessions;
-
-  const duration = sessionDurationInHours || 1;
-  const durationText = duration === 1 ? "1 hour" : `${duration} hours`;
+  const durationText = formatDurationLabel((sessionDurationInHours || 1) * 60);
 
   if (typeof totalSessions === "number" && totalSessions > 0) {
     const remaining = totalSessions - totalScheduled;
-
     if (pastCompletedSessions > 0 && scheduled === 0) {
-      return `${pastCompletedSessions} past session${pastCompletedSessions !== 1 ? "s" : ""} completed | Schedule ${remaining} more (${durationText} each)`;
-    } else if (remaining > 0) {
-      return pastCompletedSessions > 0
-        ? `✅ ${totalScheduled} of ${totalSessions} (${pastCompletedSessions} past + ${scheduled} new) | ⏳ ${remaining} remaining`
-        : `✅ ${scheduled} scheduled | ⏳ ${remaining} remaining (${durationText} each)`;
-    } else {
-      return `✅ All ${totalSessions} sessions scheduled`;
+      return `${sessionsPhrase(pastCompletedSessions)} done · pick ${remaining} more (${durationText} each)`;
     }
+    if (remaining > 0) {
+      return pastCompletedSessions > 0
+        ? `${totalScheduled} of ${totalSessions} (${pastCompletedSessions} done + ${scheduled} new) · ${remaining} to go`
+        : `${scheduled} picked · ${remaining} to go (${durationText} each)`;
+    }
+    return `All ${sessionsPhrase(totalSessions)} picked`;
   }
-
-  // Fallback when total not known
-  return `Sessions scheduled: ${totalScheduled}`;
+  return `Sessions picked: ${totalScheduled}`;
 }
 
 export interface UnifiedCalendarProps {
@@ -547,75 +460,63 @@ export interface UnifiedCalendarProps {
   eventType: "consultation" | "subscription" | "webinar" | "class";
   eventId?: string;
   durationInMonths?: number;
-  durationInHours?: number; // For consultations/webinars
+  /** Consultations and webinars: the one session's length. */
+  durationInHours?: number;
   sessionsPerWeek?: number;
-  sessionDurationInHours?: number; // For subscriptions/classes - individual session duration
-  /** The consultee this event belongs to. Passed to the availability fetch so
-   * the grid hides times where THEY are already booked with another
-   * consultant — allocation rejects those, so showing them green is a lie. */
+  /** Subscriptions and classes: each session's length. */
+  sessionDurationInHours?: number;
+  /** The consultee whose other bookings read busy; allocation rejects those. */
   consulteeUserId?: string;
   mode: "view" | "select" | "allocate";
   onSlotsSelected?: (slots: CalendarInterval[]) => void;
   onAllocationComplete?: (result: AllocationResponse) => void;
-  /** Called when the server reports the event was already allocated in
-   * another session (409) — host should close the dialog and refetch. */
+  /** The request was allocated elsewhere or can no longer be allocated: close. */
   onAllocationConflict?: () => void;
-  /** Reject allocations if the event already has confirmed slots (fresh
-   * PENDING allocations only; reschedule hosts must not set this). */
+  /** The request's tentative state moved under this tab: reload the subject in place. */
+  onRequestRefresh?: () => void;
+  /** Fresh PENDING allocations only: reject if confirmed sessions already exist. */
   initialAllocation?: boolean;
-  /** #1012 — tentative count captured when the allocate dialog opened. */
+  /** Tentative count captured when the page opened (stale-tab guard). */
   expectedTentativeSlotCount?: number;
   onClose?: () => void;
   showAllocationButtons?: boolean;
-  /**
-   * Rendered between the grid and the footer (stats + actions). Lets a host
-   * place the status legend right under the cells it explains instead of
-   * below the buttons.
-   */
+  /** Rendered between the grid and the footer (the legend, on the allocate page). */
   aboveActionsSlot?: React.ReactNode;
-  preSelectedSlots?: CalendarInterval[];
-  requestedSlots?: CalendarInterval[];
+  /** Occurrences a reschedule would release; the plan-limit overlay counts them free. */
+  releasingOccurrenceIds?: readonly string[];
+  /** The client's requested times, outlined on the allocate grid. */
+  requestedSlots?: { startsAt: Date | string; endsAt?: Date | string | null }[];
   className?: string;
-  // Optional hard boundaries to restrict interactive selection
+  /** Selectable window; cells outside paint "Outside period". */
   allowedStart?: Date;
   allowedEnd?: Date;
-  totalSessions?: number; // Authoritative session count from plan (overrides weeks × sessionsPerWeek)
-  /** Start instants of sessions being moved in select (proposal) mode so their weeks do not block same-week replacement selection. */
+  /** Authoritative session count from the plan. */
+  totalSessions?: number;
+  /** Starts of sessions being moved, so their weeks do not block replacements. */
   movingSessionStarts?: (Date | string)[];
-  /** Event's scheduling timezone — defines the limit day/week buckets
-   * (ADR B9). Defaults to Asia/Kolkata in the shared helpers. */
+  /** The event's scheduling zone: the limit day/week buckets. */
   schedulingTimezone?: string;
-  /**
-   * Where to be looking on open (#1073). Applied ONCE, on first render of the
-   * week grid: it chooses the starting week and scroll position and then
-   * never touches either again.
-   */
+  /** Where to be looking on open; applied once. */
   focus?: TimePickerFocus;
-  /**
-   * When true, SafeUnifiedCalendar shows the consultant legend (Selected /
-   * Being moved / This booking). Defaults from mode === "allocate"; reschedule
-   * propose surfaces set this explicitly while staying in select mode.
-   */
+  /** Legend choice for SafeUnifiedCalendar. */
   showConsultantLegend?: boolean;
-  /**
-   * The viewer's profile zone, from the page's `getViewerZone()` or the
-   * session hook; the grid is drawn in it, falling back to the browser zone
-   * only when the profile has none (#1703 QA-1).
-   */
+  /** The viewer's profile zone; the grid is drawn in it unless they switch. */
   viewerZone?: string | null;
-  /** The states painted in the visible week, for a legend that shows only them (#1703 QA-2). */
+  /** False when the host renders the zone switch itself for the whole page. */
+  showZoneSwitch?: boolean;
+  /** The states painted in the visible week, for a legend that shows only them. */
   onPaintedKeysChange?: (
     keys: ReadonlySet<SlotStatusKey>,
     counts?: ReadonlyMap<SlotStatusKey, number>,
   ) => void;
+  /** True while the booking's own sessions failed to load; the host blocks its submit. */
+  onBlockingIssueChange?: (blocked: boolean) => void;
 }
 
 /**
- * #1766 — a subscription's limit is THIS cycle: completed + nextBatch (or
- * completed + rescheduling during a reschedule), with the completed part
- * subtracted again below, so requiredSlots comes out as batch × slotsPerCall
- * without touching getSlotLimits. In select mode (reschedule proposal),
- * totalSessions is the exact number of sessions being moved.
+ * A subscription's limit is THIS cycle: completed + nextBatch (or the
+ * reschedule batch), so requiredSlots comes out as batch × slotsPerCall. In
+ * select mode totalSessions is the exact number of sessions being moved.
  */
 function resolveMaxTotalCalls(
   entitlement: SubscriptionEntitlement | null,
@@ -636,12 +537,8 @@ function resolveMaxTotalCalls(
         : entitlement.cycle.nextBatch;
     return entitlement.completed + batch;
   }
-  if (!isRecurringEventType(eventType)) {
-    return undefined;
-  }
-  if (totalSessions && totalSessions > 0) {
-    return totalSessions;
-  }
+  if (!isRecurringEventType(eventType)) return undefined;
+  if (totalSessions && totalSessions > 0) return totalSessions;
   if (allowedStart && allowedEnd && sessionsPerWeek) {
     return (
       countSundayWeeksInclusive(allowedStart, allowedEnd) *
@@ -658,100 +555,24 @@ function resolvePastConfirmedSlotCount(
   pastEventSlotCount: number,
   mode?: UnifiedCalendarProps["mode"],
 ): number | undefined {
-  if (mode === "select") {
-    return 0;
-  }
-  if (entitlement) {
-    return entitlement.completed * slotsPerCallForCycle;
-  }
-  if (isRecurringEventType(eventType)) {
-    return pastEventSlotCount;
-  }
+  if (mode === "select") return 0;
+  if (entitlement) return entitlement.completed * slotsPerCallForCycle;
+  if (isRecurringEventType(eventType)) return pastEventSlotCount;
   return undefined;
 }
 
-function buildInteractiveSlotCellClassName(
-  statusKey: SlotStatusKey,
-  mode: UnifiedCalendarProps["mode"],
-  eventType: UnifiedCalendarProps["eventType"],
-  isInPast: boolean,
-): string {
-  let cellClassName = slotCellClassName(statusKey);
-  switch (statusKey) {
-    case "selected":
-      return `${cellClassName} cursor-pointer`;
-    case "thisEvent":
-      return `${cellClassName} cursor-pointer${isInPast ? " opacity-60" : ""}`;
-    case "rescheduling":
-      return `${cellClassName} cursor-pointer${isInPast ? " opacity-50" : ""}`;
-    case "fullyBooked":
-    case "partiallyBooked":
-      cellClassName += mode === "view" ? " cursor-default" : " cursor-pointer";
-      return `${cellClassName}${isInPast ? " opacity-50" : ""}`;
-    case "available":
-      cellClassName += " cursor-pointer";
-      if (eventType === "consultation") cellClassName += " hover:shadow-md";
-      return cellClassName;
-    case "past":
-    case "outsidePeriod":
-      return `${cellClassName} cursor-pointer`;
-    case "unavailable":
-      return `${cellClassName} cursor-not-allowed`;
-  }
+const EMPTY_STARTS: ReadonlySet<number> = new Set();
+
+function startsOf(slots: readonly { startTime: Date }[]): Set<number> {
+  return new Set(slots.map((slot) => slot.startTime.getTime()));
 }
 
-function wrapCellWithSlotTooltip(
-  buttonElement: React.ReactElement,
-  isCurrentEventSlot: boolean,
-  eventType: UnifiedCalendarProps["eventType"],
-  isInPast: boolean,
-  overlappingAppointments: AppointmentDetail[],
-): React.ReactElement {
-  return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>{buttonElement}</TooltipTrigger>
-        <TooltipContent
-          className="max-w-xs text-xs"
-          side="top"
-          align="center"
-        >
-          <div className="flex flex-col gap-1">
-            {isCurrentEventSlot ? (
-              <div>
-                <p className="font-semibold">This Event&apos;s Slot</p>
-                <p className="text-muted-foreground">
-                  {eventTypeLabel(eventType)}
-                </p>
-                <p className="text-muted-foreground text-[10px] mt-1">
-                  {isInPast
-                    ? "Past session (completed)"
-                    : "Click to reschedule"}
-                </p>
-              </div>
-            ) : (
-              overlappingAppointments.map(
-                (appSlot: AppointmentDetail, index: number) => (
-                  <div
-                    key={`${appSlot.id}-${index}`}
-                    className="border-b border-border last:border-b-0 pb-1 mb-1 last:pb-0 last:mb-0"
-                  >
-                    <p className="font-semibold">{appSlot.title}</p>
-                    <p className="text-muted-foreground">{appSlot.type}</p>
-                    {appSlot.with && (
-                      <p className="text-muted-foreground">
-                        with {appSlot.with}
-                      </p>
-                    )}
-                  </div>
-                ),
-              )
-            )}
-          </div>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
+function useLatest<T>(value: T) {
+  const ref = useRef(value);
+  useEffect(() => {
+    ref.current = value;
+  });
+  return ref;
 }
 
 export function UnifiedCalendar({
@@ -767,13 +588,14 @@ export function UnifiedCalendar({
   onSlotsSelected,
   onAllocationComplete,
   onAllocationConflict,
+  onRequestRefresh,
   initialAllocation,
   expectedTentativeSlotCount,
   onClose,
   showAllocationButtons = false,
   aboveActionsSlot,
-  preSelectedSlots = [],
-  requestedSlots = [],
+  releasingOccurrenceIds,
+  requestedSlots,
   className = "",
   allowedStart,
   allowedEnd,
@@ -782,61 +604,66 @@ export function UnifiedCalendar({
   schedulingTimezone,
   focus,
   viewerZone,
+  showZoneSwitch = true,
   onPaintedKeysChange,
+  onBlockingIssueChange,
 }: UnifiedCalendarProps) {
   const { toast } = useToast();
-  // ONE zone for cells, labels, focus and the footer (#1703 QA-1). Read once:
-  // this component is client-only (SafeUnifiedCalendar loads it with ssr
-  // false), so there is no server render to disagree with.
-  const [browserTimezone] = useState(() => gridTimeZone());
-  const [preferViewerZone, setPreferViewerZone] = useState(false);
-  const [consultantTz, setConsultantTz] = useState<string | null>(null);
-  const effectiveSchedulingTz = schedulingTimezone ?? consultantTz ?? null;
-  const gridZone = resolveGridZone(viewerZone, browserTimezone, {
-    eventType,
-    schedulingTimezone: effectiveSchedulingTz,
-    preferViewerZone,
-  });
-  // State
+  // Client-only (SafeUnifiedCalendar loads it with ssr false), so the device
+  // zone can be read once on mount.
+  const [deviceZone] = useState(() => gridTimeZone());
+  const [usingDeviceZone, setUsingDeviceZone] = useState(false);
+  const canSwitchZone =
+    showZoneSwitch && canSwitchToDeviceZone(viewerZone, deviceZone);
+  const gridZone = resolveGridZone(
+    viewerZone,
+    deviceZone,
+    canSwitchZone && usingDeviceZone,
+  );
+
   const [currentDate, setCurrentDate] = useState(() => {
     if (!focus) return new Date();
-    // Noon on the target's calendar date AS THE GRID READS IT: weekDates are
-    // derived from this with local date-fns, so a target near a midnight
-    // boundary lands a week out if the date is read in any other zone.
     const { year, month, day } = focusGridPosition(focus.at, gridZone);
     return new Date(year, month - 1, day, 12);
   });
   const [view, setView] = useState<"week" | "month">("week");
-  const [configWarning, setConfigWarning] = useState<string | null>(null);
-  // Wall clock for the Today button, the header highlight and the now-line;
-  // re-read once a minute so the line moves without a re-mount (#1703 F2).
+  // The one wall clock for the grid: past, the now-line, Today.
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const tick = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(tick);
   }, []);
+  const nowMs = now.getTime();
+  // Cells only change at half-hour boundaries; the matrix follows the boundary,
+  // not the minute, so a tick re-renders the now-line alone.
+  const matrixNowMs = Math.floor(nowMs / ATOM_MS) * ATOM_MS + 1;
 
-  // Use calendar data hook
-  // #1775 — the grid's week starts where the cycle does. `allowedStart` is
-  // the cycle's windowStart on the allocate page (lib/data/allocation-request);
-  // the fetch window and the status map follow it through useCalendarData.
-  const weekStartsOn = weekStartFor({ eventType, cycleStart: allowedStart });
+  const weekStartsOn = weekStartFor({
+    eventType,
+    cycleStart: allowedStart,
+    zone: gridZone,
+  });
 
   const {
     consultantDetails,
+    serverCells,
+    cellsWindow,
     availableSlots,
     eventSlots,
-    eventTentativeSlots = [],
+    eventTentativeSlots,
     weeklyConfirmedCallCounts,
     eventOccurrences,
     subscriptionMeta,
+    quota,
     loading,
+    refreshing,
     error,
+    refreshFailed,
+    eventSlotsFailed,
     availabilityFreshness: freshness,
     refetch,
     refetchEventSlots,
     refetchAvailability,
-    getSlotStatusForInterval,
   } = useCalendarData({
     consultantId,
     eventType,
@@ -850,75 +677,61 @@ export function UnifiedCalendar({
     consulteeUserId,
     gridZone,
     weekStartsOn,
-    // Follows `mode` rather than being its own prop: "allocate" is the
-    // consultant's own surface, the only one that renders the overlap
-    // tooltips, and the only one the route authorizes for them. A consultee
-    // picker is always "select", so it cannot forget to opt out and 403 its
-    // entire calendar over a tooltip it never draws.
+    releasingOccurrenceIds,
+    // Only the consultant's own allocate surface may ask for overlap detail.
     includeAppointmentDetails: mode === "allocate",
   });
 
-  const loadedConsultantTz =
-    (consultantDetails as { timezone?: string | null } | null)?.timezone ??
-    null;
-  useEffect(() => {
-    if (loadedConsultantTz && loadedConsultantTz !== consultantTz) {
-      setConsultantTz(loadedConsultantTz);
-    }
-  }, [loadedConsultantTz, consultantTz]);
+  const effectiveSchedulingTz =
+    schedulingTimezone ?? consultantDetails?.timezone ?? null;
 
-  // Wrap onAllocationComplete to refetch data before calling parent callback
+  const onAllocationCompleteRef = useLatest(onAllocationComplete);
+  const onAllocationConflictRef = useLatest(onAllocationConflict);
+  const onRequestRefreshRef = useLatest(onRequestRefresh);
+
   const handleAllocationSuccess = useCallback(
     async (result: AllocationResponse) => {
       try {
-        // Refetch event slots (weeklyConfirmedCallCounts) and availability
-        // (server-computed status grid/tooltips, #997 Phase 2) so newly
-        // allocated slots appear correctly.
-        await Promise.all([refetchEventSlots(), refetchAvailability()]);
-      } catch (error) {
+        // Own sessions first: availability then reads them as this booking's.
+        await refetchEventSlots();
+        await refetchAvailability();
+      } catch (refetchError) {
         Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
+          refetchError instanceof Error
+            ? refetchError
+            : new Error(String(refetchError)),
           { tags: { subsystem: "client" } },
         );
-        console.error(
-          "Error refetching calendar data after allocation:",
-          error,
-        );
       }
-
-      // Call parent callback
-      onAllocationComplete?.(result);
+      onAllocationCompleteRef.current?.(result);
     },
-    [refetchEventSlots, refetchAvailability, onAllocationComplete],
+    [refetchEventSlots, refetchAvailability, onAllocationCompleteRef],
   );
 
-  // Count past confirmed event slots for in-progress recurring events
-  const pastEventSlotCount = useMemo(() => {
-    const now = new Date();
-    return eventSlots.filter((s) => s.endTime <= now).length;
-  }, [eventSlots]);
+  const pastEventSlotCount = useMemo(
+    () => eventSlots.filter((s) => s.endTime.getTime() <= matrixNowMs).length,
+    [eventSlots, matrixNowMs],
+  );
 
-  // #1766 — the one counter: what this cycle still takes and what the plan
-  // holds, from the row's frozen entitlement and its live occurrences.
+  // The one counter: what this cycle still takes and what the plan holds.
   const entitlement = useMemo(
     () =>
       eventType === "subscription" && subscriptionMeta
         ? subscriptionEntitlement({
             ...subscriptionMeta,
             occurrences: eventOccurrences,
-            now,
+            now: new Date(matrixNowMs),
           })
         : null,
-    [eventType, subscriptionMeta, eventOccurrences, now],
+    [eventType, subscriptionMeta, eventOccurrences, matrixNowMs],
   );
   const slotsPerCallForCycle = getSlotsPerCall(sessionDurationInHours);
   const hasReschedule =
     eventTentativeSlots.length > 0 ||
     (entitlement ? entitlement.rescheduling > 0 : false);
 
-  // In select (proposal) mode, sessions being moved are still SCHEDULED in the
-  // DB until the proposal is approved; subtract their week buckets so a
-  // same-week replacement click is not blocked by weeklyLimitReached.
+  // Sessions being moved stay SCHEDULED until the proposal is approved; free
+  // their week buckets so a same-week replacement is not blocked.
   const effectiveWeeklyConfirmedCallCounts = useMemo(() => {
     if (
       mode !== "select" ||
@@ -954,619 +767,302 @@ export function UnifiedCalendar({
     effectiveSchedulingTz,
   ]);
 
-  // Stay-open failures (slot taken, co-host busy, transient lock) leave the
-  // dialog open against stale cells: refetch both grids so the retry is
-  // picked fresh. Best-effort — a refetch failure must never mask the toast
-  // that explains the original failure. Doubles as the default onConflict
-  // refresh when the policy leaves it undefined (a 409 is proof of
-  // staleness, not a hint).
+  // A refusal proves the cells stale: refetch both, best-effort, never
+  // masking the toast that explained the refusal.
   const refreshGridData = useCallback(() => {
     void Promise.all([refetchAvailability(), refetchEventSlots()]).catch(
-      (error) => {
+      (refetchError) => {
         Sentry.captureException(
-          error instanceof Error ? error : new Error(String(error)),
+          refetchError instanceof Error
+            ? refetchError
+            : new Error(String(refetchError)),
           { tags: { subsystem: "client" } },
         );
       },
     );
   }, [refetchAvailability, refetchEventSlots]);
 
-  // Slot allocation hook
+  const handleConflict = useCallback(() => {
+    const close = onAllocationConflictRef.current;
+    if (close) close();
+    else refreshGridData();
+  }, [onAllocationConflictRef, refreshGridData]);
+
+  const handleRequestChanged = useCallback(() => {
+    refreshGridData();
+    onRequestRefreshRef.current?.();
+  }, [refreshGridData, onRequestRefreshRef]);
+
+  const maxTotalCalls = resolveMaxTotalCalls(
+    entitlement,
+    eventType,
+    totalSessions,
+    allowedStart,
+    allowedEnd,
+    sessionsPerWeek,
+    mode,
+  );
+  const pastConfirmedSlotCount = resolvePastConfirmedSlotCount(
+    entitlement,
+    eventType,
+    slotsPerCallForCycle,
+    pastEventSlotCount,
+    mode,
+  );
+  const topUp =
+    mode === "allocate" && entitlement
+      ? !hasReschedule && entitlement.held > 0
+      : undefined;
+
+  // Stable options, so the selection hook's memos and callbacks hold between renders.
+  const allocationOptions = useMemo(
+    () => ({
+      eventType,
+      eventId: eventId || "",
+      consultantId,
+      durationInMonths,
+      durationInHours,
+      sessionsPerWeek,
+      sessionDurationInHours,
+      startDate: allowedStart,
+      endDate: allowedEnd,
+      maxTotalCalls,
+      pastConfirmedSlotCount,
+      topUp,
+      weeklyConfirmedCallCounts: effectiveWeeklyConfirmedCallCounts,
+      initialAllocation,
+      expectedTentativeSlotCount,
+      schedulingTimezone: effectiveSchedulingTz ?? undefined,
+      onSuccess: handleAllocationSuccess,
+      onConflict: handleConflict,
+      onRequestChanged: handleRequestChanged,
+      onStaleData: refreshGridData,
+    }),
+    [
+      eventType,
+      eventId,
+      consultantId,
+      durationInMonths,
+      durationInHours,
+      sessionsPerWeek,
+      sessionDurationInHours,
+      allowedStart,
+      allowedEnd,
+      maxTotalCalls,
+      pastConfirmedSlotCount,
+      topUp,
+      effectiveWeeklyConfirmedCallCounts,
+      initialAllocation,
+      expectedTentativeSlotCount,
+      effectiveSchedulingTz,
+      handleAllocationSuccess,
+      handleConflict,
+      handleRequestChanged,
+      refreshGridData,
+    ],
+  );
+
   const {
     selectedSlots,
-    setSelectedSlots,
     isAllocating,
-    allocationError,
     isValid,
     validationErrors,
     requiredSlots,
     toggleSlot,
     clearSlots,
-    isSlotSelected,
+    removeSlots,
     manualAllocate,
     autoAllocate,
-    allocateRequestedSlots,
     partialOffer,
     dismissPartialOffer,
     slotLimits,
-  } = useEventSlotAllocation({
-    eventType,
-    eventId: eventId || "",
-    consultantId,
-    durationInMonths,
-    durationInHours,
-    sessionsPerWeek,
-    sessionDurationInHours,
-    startDate: allowedStart,
-    endDate: allowedEnd,
-    // Provide dynamic maxTotalCalls so validation/toasts show the real limit.
-    maxTotalCalls: resolveMaxTotalCalls(
-      entitlement,
-      eventType,
-      totalSessions,
-      allowedStart,
-      allowedEnd,
-      sessionsPerWeek,
-      mode,
-    ),
-    pastConfirmedSlotCount: resolvePastConfirmedSlotCount(
-      entitlement,
-      eventType,
-      slotsPerCallForCycle,
-      pastEventSlotCount,
-      mode,
-    ),
-    // #1766 — held sessions mean this run appends the next cycle (never during a reschedule).
-    topUp:
-      mode === "allocate" && entitlement
-        ? !hasReschedule && entitlement.held > 0
-        : undefined,
-    weeklyConfirmedCallCounts: effectiveWeeklyConfirmedCallCounts,
-    initialAllocation,
-    expectedTentativeSlotCount,
-    schedulingTimezone: effectiveSchedulingTz ?? undefined,
-    onSuccess: handleAllocationSuccess,
-    onConflict: onAllocationConflict ?? refreshGridData,
-    onStaleData: refreshGridData,
-  });
+  } = useEventSlotAllocation(allocationOptions);
 
-  // Radix keeps AlertDialogContent mounted for its exit animation, and both
-  // answers clear `partialOffer` before that finishes — so reading the counts
-  // straight off it blanked the title to "Only of sessions fit" on the way out.
-  // Hold the last offer for the render; `open` still tracks the live value.
-  const lastPartialOffer = useRef(partialOffer);
-  if (partialOffer) lastPartialOffer.current = partialOffer;
-  const offer = partialOffer ?? lastPartialOffer.current;
+  // The dialog animates out after `partialOffer` clears; keep the last one
+  // for its text without writing a ref during render.
+  const [shownOffer, setShownOffer] = useState(partialOffer);
+  useEffect(() => {
+    if (partialOffer) setShownOffer(partialOffer);
+  }, [partialOffer]);
+  const offer = partialOffer ?? shownOffer;
 
-  // PERFORMANCE: Pre-compute a Set of event slot timestamps (rounded to seconds)
-  // for O(1) lookups. Replaces O(n) .some() scan that ran 336× per render.
-  const eventSlotsSet = useMemo(
-    () =>
-      new Set(eventSlots.map((s) => Math.round(s.startTime.getTime() / 1000))),
-    [eventSlots],
-  );
-
-  // This event's OWN tentative slots (being rescheduled). Rendered as a distinct
-  // "Rescheduling" state — NOT the foreign "Booked" gray they used to fall into.
-  const eventTentativeSlotsSet = useMemo(
-    () =>
-      new Set(
-        eventTentativeSlots.map((s) =>
-          Math.round(s.startTime.getTime() / 1000),
-        ),
-      ),
+  const eventStarts = useMemo(() => startsOf(eventSlots), [eventSlots]);
+  const tentativeStarts = useMemo(
+    () => startsOf(eventTentativeSlots),
     [eventTentativeSlots],
   );
-
-  // Initialize pre-selected slots
-  // Compare by content to prevent infinite loops from parent re-renders creating new array references
-  useEffect(() => {
-    if (
-      preSelectedSlots.length > 0 &&
-      !areSlotsEqual(selectedSlots, preSelectedSlots)
-    ) {
-      setSelectedSlots(preSelectedSlots);
+  const selectedStarts = useMemo(
+    () => startsOf(selectedSlots),
+    [selectedSlots],
+  );
+  const requestedStarts = useMemo(() => {
+    if (!requestedSlots?.length) return EMPTY_STARTS;
+    const starts = new Set<number>();
+    for (const slot of requestedSlots) {
+      const startMs = new Date(slot.startsAt).getTime();
+      const endMs = slot.endsAt
+        ? new Date(slot.endsAt).getTime()
+        : startMs + ATOM_MS;
+      if (!Number.isFinite(startMs) || !(endMs > startMs)) continue;
+      for (
+        let atom = Math.floor(startMs / ATOM_MS) * ATOM_MS;
+        atom < endMs;
+        atom += ATOM_MS
+      ) {
+        starts.add(atom);
+      }
     }
-  }, [preSelectedSlots, selectedSlots, setSelectedSlots]);
+    return starts;
+  }, [requestedSlots]);
 
-  // Call onSlotsSelected when the SELECTION changes — not when the parent
-  // re-renders.
-  //
-  // The callback is held in a ref and kept out of the dependency array on
-  // purpose. TimePicker passes an inline arrow, so depending on
-  // it meant a new identity every render: effect fires, parent setState,
-  // re-render, new identity, fire again, forever — React error #185. Nothing
-  // caught it because "select" is the consultee picker's mode and the picker
-  // never mounted while consultantProfileId was resolving to null.
-  //
-  // A ref rather than asking callers to useCallback: a component that
-  // infinite-loops when handed an inline arrow is a trap, and the sibling
-  // preSelectedSlots effect above already had to defend against the same
-  // class of bug by comparing contents.
-  const onSlotsSelectedRef = useRef(onSlotsSelected);
+  const allowedStartMs = allowedStart?.getTime();
+  const allowedEndMs = allowedEnd?.getTime();
+  const baseContext = useMemo<AtomContext>(
+    () => ({
+      serverCells,
+      eventStarts,
+      tentativeStarts,
+      selectedStarts,
+      justTakenStarts: EMPTY_STARTS,
+      requestedStarts,
+      nowMs: matrixNowMs,
+      allowedStartMs,
+      allowedEndMs,
+    }),
+    [
+      serverCells,
+      eventStarts,
+      tentativeStarts,
+      selectedStarts,
+      requestedStarts,
+      matrixNowMs,
+      allowedStartMs,
+      allowedEndMs,
+    ],
+  );
+
+  // A selection the latest data no longer allows paints "Just taken" for the
+  // render that reveals it; the effect below then drops it and says so.
+  // Not judged while a save is in flight or this booking's own sessions are
+  // unknown: either would read our own times as someone else's.
+  const conflicts = useMemo(
+    () =>
+      mode === "view" || isAllocating || eventSlotsFailed
+        ? new Map<number, "taken" | "expired">()
+        : selectionConflicts(selectedStarts, baseContext, cellsWindow),
+    [
+      mode,
+      isAllocating,
+      eventSlotsFailed,
+      selectedStarts,
+      baseContext,
+      cellsWindow,
+    ],
+  );
+  const atomContext = useMemo<AtomContext>(() => {
+    if (conflicts.size === 0) return baseContext;
+    const justTaken = new Set<number>();
+    conflicts.forEach((reason, startMs) => {
+      if (reason === "taken") justTaken.add(startMs);
+    });
+    return { ...baseContext, justTakenStarts: justTaken };
+  }, [baseContext, conflicts]);
+
   useEffect(() => {
-    onSlotsSelectedRef.current = onSlotsSelected;
-  });
+    if (conflicts.size === 0) return;
+    const zone = effectiveSchedulingTz ?? gridZone;
+    const doomed = groupSelectedIntoSessions(selectedSlots, zone).flatMap(
+      (session) => {
+        const atoms = selectedSlots.filter(
+          (slot) =>
+            slot.startTime >= session.start && slot.endTime <= session.end,
+        );
+        return atoms.some((slot) => conflicts.has(slot.startTime.getTime()))
+          ? atoms
+          : [];
+      },
+    );
+    removeSlots(
+      doomed.length > 0
+        ? doomed
+        : selectedSlots.filter((slot) =>
+            conflicts.has(slot.startTime.getTime()),
+          ),
+    );
+    const anyTaken = [...conflicts.values()].includes("taken");
+    toast({
+      variant: "destructive",
+      title: anyTaken
+        ? "One of your chosen times was just taken"
+        : "One of your chosen times can't be booked any more",
+      description: anyTaken
+        ? "That time is no longer free, so it has been removed — pick another time."
+        : "It is now too close to its start or past this plan's limit. It has been removed — pick another time.",
+    });
+  }, [
+    conflicts,
+    selectedSlots,
+    removeSlots,
+    toast,
+    effectiveSchedulingTz,
+    gridZone,
+  ]);
 
+  // Report the selection when it changes, not when the parent re-renders.
+  const onSlotsSelectedRef = useLatest(onSlotsSelected);
   useEffect(() => {
     if (mode === "select") {
       onSlotsSelectedRef.current?.(selectedSlots);
     }
-  }, [selectedSlots, mode]);
+  }, [selectedSlots, mode, onSlotsSelectedRef]);
 
-  // Set warning banner if duration configuration is missing
+  const onBlockingIssueChangeRef = useLatest(onBlockingIssueChange);
   useEffect(() => {
+    onBlockingIssueChangeRef.current?.(eventSlotsFailed);
+  }, [eventSlotsFailed, onBlockingIssueChangeRef]);
+
+  const configWarning = useMemo(() => {
     if (eventType === "consultation" || eventType === "webinar") {
-      if (!durationInHours || durationInHours <= 0) {
-        setConfigWarning(
-          `${eventType === "consultation" ? "Consultation" : "Webinar"} duration not configured. Using 1-hour default.`,
-        );
-      } else {
-        setConfigWarning(null);
-      }
-    } else if (isRecurringEventType(eventType)) {
-      if (!sessionDurationInHours || sessionDurationInHours <= 0) {
-        setConfigWarning(
-          `${eventType === "subscription" ? "Session" : "Class"} duration not configured. Using 1-hour default.`,
-        );
-      } else {
-        setConfigWarning(null);
-      }
+      return !durationInHours || durationInHours <= 0
+        ? `${eventTypeLabel(eventType)} length isn't set, so 1 hour is assumed.`
+        : null;
     }
+    return !sessionDurationInHours || sessionDurationInHours <= 0
+      ? `${eventType === "subscription" ? "Session" : "Class"} length isn't set, so 1 hour is assumed.`
+      : null;
   }, [eventType, durationInHours, sessionDurationInHours]);
 
-  // Week view dates. Deliberately LOCAL time: the grid renders in the
-  // consultant's timezone. Limit BUCKETING is UTC (ScheduleCalculationService) —
-  // do not "unify" these; display and bucketing are different concerns.
+  // The visible week as local-noon calendar dates; the fetch window uses the same start.
   const weekDates = useMemo(() => {
-    // Pinned like the fetch window (useCalendarData): display and quota
-    // bucketing are different concerns, but the week START must still be the
-    // same day the fetch used or week headers drift from fetched weeks.
-    const startDate = startOfWeek(currentDate, { weekStartsOn });
-    return [...Array(7)].map((_, i) => addDays(startDate, i));
+    const start = startOfWeek(currentDate, { weekStartsOn });
+    return [...Array(7)].map((_, i) => {
+      const day = addDays(start, i);
+      return new Date(day.getFullYear(), day.getMonth(), day.getDate(), 12);
+    });
   }, [currentDate, weekStartsOn]);
 
-  // A callback ref in STATE, not a plain ref: the week grid does not exist
-  // until `consultantDetails` has arrived, and a ref mutating cannot wake an
-  // effect. Keyed off the element, the effect runs when the grid appears —
-  // whichever of the two independent fetches wins the race, and again if the
-  // user visits month view before the grid has ever been focused.
-  const [weekGridEl, setWeekGridEl] = useState<HTMLDivElement | null>(null);
-  // Once per open. A ref rather than effect deps: re-running this would drag
-  // the grid back while the consultant is reading somewhere else, and the
-  // callback-identity loop this component already hit (React #185, see
-  // onSlotsSelectedRef) is what a deps-driven "focus" would become.
-  const focusAppliedRef = useRef(false);
-
-  /**
-   * Builds an auto-expanded group of consecutive slots starting from a clicked slot.
-   * Strategy: forward → backward → mixed → fallback to single slot.
-   */
-  const buildAutoExpandGroup = useCallback(
-    (clickedSlot: CalendarInterval, clickedDate: Date): CalendarInterval[] => {
-      const targetSize = slotLimits.slotsPerSession;
-
-      // No expansion needed for single-slot sessions
-      if (!targetSize || targetSize <= 1) return [clickedSlot];
-
-      const clickedLocalStart = new Date(clickedSlot.startTime);
-
-      // Check if a candidate slot at a given offset is eligible for auto-expansion
-      const getEligibleSlot = (
-        offsetSteps: number,
-      ): CalendarInterval | null => {
-        const offsetMs = offsetSteps * 30 * 60 * 1000;
-        const targetTime = new Date(clickedLocalStart.getTime() + offsetMs);
-
-        // Derive the candidate's calendar day in gridZone so cross-midnight
-        // offsets look up the next/previous day's status cell rather than clickedDate.
-        const targetPos = focusGridPosition(targetTime, gridZone);
-        const targetGridDate = new Date(
-          targetPos.year,
-          targetPos.month - 1,
-          targetPos.day,
-          12,
-        );
-        const interval = { hour: targetPos.hour, minute: targetPos.minute };
-        const status = getSlotStatusForInterval(interval, targetGridDate);
-
-        // Must be available, not booked, not in past
-        if (!status.isAvailable || status.isBookedForDisplay || status.isInPast)
-          return null;
-
-        // Must not be already selected
-        const candidateStartMs = new Date(
-          status.intervalStartUTCString,
-        ).getTime();
-        if (
-          selectedSlots.some((s) => s.startTime.getTime() === candidateStartMs)
-        )
-          return null;
-
-        // Must be within allowed range
-        if (
-          isOutsideAllowedRange(
-            new Date(status.intervalStartUTCString),
-            new Date(status.intervalEndUTCString),
-            allowedStart,
-            allowedEnd,
-          )
-        )
-          return null;
-
-        return {
-          startTime: new Date(status.intervalStartUTCString),
-          endTime: new Date(status.intervalEndUTCString),
-          isAvailable: status.isAvailable,
-          isBooked: status.isBooked,
-        };
-      };
-
-      // Try forward expansion: clicked + N-1 forward slots
-      const forwardGroup: CalendarInterval[] = [clickedSlot];
-      for (let step = 1; step < targetSize; step++) {
-        const eligible = getEligibleSlot(step);
-        if (!eligible) break;
-        forwardGroup.push(eligible);
-      }
-      if (forwardGroup.length === targetSize) return forwardGroup;
-
-      // Try backward expansion: N-1 backward slots + clicked
-      const backwardGroup: CalendarInterval[] = [clickedSlot];
-      for (let step = 1; step < targetSize; step++) {
-        const eligible = getEligibleSlot(-step);
-        if (!eligible) break;
-        backwardGroup.unshift(eligible);
-      }
-      if (backwardGroup.length === targetSize) return backwardGroup;
-
-      // Try mixed: use forward slots + fill remaining from backward
-      if (forwardGroup.length > 1 || backwardGroup.length > 1) {
-        const mixedGroup: CalendarInterval[] = [...forwardGroup];
-        for (let step = 1; mixedGroup.length < targetSize; step++) {
-          const eligible = getEligibleSlot(-step);
-          if (!eligible) break;
-          mixedGroup.unshift(eligible);
-        }
-        if (mixedGroup.length === targetSize) return mixedGroup;
-      }
-
-      // Fallback: single slot (degrades to manual selection)
-      return [clickedSlot];
-    },
-    [
-      slotLimits.slotsPerSession,
-      getSlotStatusForInterval,
-      selectedSlots,
-      allowedStart,
-      allowedEnd,
-      effectiveSchedulingTz,
-      gridZone,
-    ],
+  const rowModel = useMemo(
+    () => weekRowModel(weekDates, gridZone),
+    [weekDates, gridZone],
+  );
+  const weekCells = useMemo(
+    () => buildWeekCells(rowModel, atomContext),
+    [rowModel, atomContext],
+  );
+  const folded = useMemo(
+    () => foldDeadHourBands(weekCells.live, weekCells.outsidePeriod),
+    [weekCells],
   );
 
-  // Handle slot click
-  const handleSlotClick = useCallback(
-    (interval: { hour: number; minute: number }, date: Date) => {
-      if (mode === "view") return;
-
-      const status = getSlotStatusForInterval(interval, date);
-      const bucketTz = effectiveSchedulingTz ?? undefined;
-
-      const slot: CalendarInterval = {
-        startTime: new Date(status.intervalStartUTCString),
-        endTime: new Date(status.intervalEndUTCString),
-        isAvailable: status.isAvailable,
-        isBooked: status.isBooked,
-      };
-
-      // Check if this slot belongs to the current event — O(1) via Set lookup
-      const isCurrentEventSlot = eventSlotsSet.has(
-        Math.round(slot.startTime.getTime() / 1000),
-      );
-      // This event's own slot currently being rescheduled (tentative).
-      const isCurrentEventTentative = eventTentativeSlotsSet.has(
-        Math.round(slot.startTime.getTime() / 1000),
-      );
-
-      // First-line guard: allow click but block selection with feedback if outside allowed range
-      if (
-        isOutsideAllowedRange(
-          new Date(status.intervalStartUTCString),
-          new Date(status.intervalEndUTCString),
-          allowedStart,
-          allowedEnd,
-        )
-      ) {
-        toast(
-          outsideSchedulingWindow(
-            formatAllowedRange(gridZone, allowedStart, allowedEnd),
-          ),
-        );
-        return;
-      }
-      // Weekly limit guard for subscriptions: fire on FIRST slot of a new day.
-      // Bucketed by the event's scheduling-timezone week (ADR B9) — the SAME
-      // definition the server validates with.
-      if (
-        eventType === "subscription" &&
-        eventId &&
-        sessionsPerWeek &&
-        sessionDurationInHours
-      ) {
-        const intervalStart = new Date(status.intervalStartUTCString);
-        const targetDayKey = ScheduleCalculationService.dayKey(
-          intervalStart,
-          bucketTz,
-        );
-        const isStartingNewDay = !selectedSlots.some(
-          (s) =>
-            ScheduleCalculationService.dayKey(s.startTime, bucketTz) ===
-            targetDayKey,
-        );
-
-        if (isStartingNewDay) {
-          const targetWeekKey = ScheduleCalculationService.weekKey(
-            intervalStart,
-            bucketTz,
-          );
-          const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
-          // #997 Phase 3 — server-precomputed confirmed-call count for this
-          // week (bucketed with the SAME ScheduleCalculationService.weekKey the
-          // server validator uses), fetched alongside eventSlots. Replaces
-          // re-deriving this from a separate whole-window appointment fetch
-          // on every slot click.
-          const completedCalls =
-            effectiveWeeklyConfirmedCallCounts[targetWeekKey] || 0;
-
-          // Also include already selected complete calls in this same week
-          const selectedCompleted = countCompletedSelectedCallsForWeek(
-            selectedSlots,
-            slotsPerCall,
-            targetWeekKey,
-            bucketTz,
-          );
-          const totalCompletedThisWeek = completedCalls + selectedCompleted;
-
-          // sessionsPerWeek is guaranteed truthy by the enclosing guard
-          if (totalCompletedThisWeek >= sessionsPerWeek) {
-            toast(
-              weeklyLimitReached(
-                sessionsPerWeek,
-                schedulingWeekBucket(intervalStart, bucketTz),
-              ),
-            );
-            return;
-          }
-        }
-      }
-
-      // Past "This Event" slots: allow deselection, block re-selection
-      if (isCurrentEventSlot && status.isInPast) {
-        const isCurrentlySelected = selectedSlots.some(
-          (s) => s.startTime.getTime() === slot.startTime.getTime(),
-        );
-        if (isCurrentlySelected) {
-          toggleSlot(slot);
-          return;
-        }
-        toast(pastSessionBlocked());
-        return;
-      }
-
-      // Imminent "This Event" slots (<24h away): block deselection
-      if (isCurrentEventSlot && !status.isInPast) {
-        const now = new Date();
-        const imminentCutoff = new Date(
-          now.getTime() + TWENTY_FOUR_HOURS_IN_MS,
-        );
-        if (slot.startTime < imminentCutoff) {
-          toast(sessionTooSoon());
-          return;
-        }
-      }
-
-      // Block selection of unavailable, booked, or past non-event slots
-      if (status.isInPast) {
-        toast(pastSlotBlocked());
-        return;
-      }
-
-      // This event's own tentative slot (being rescheduled) — NOT a foreign
-      // booking. Don't show "already booked"; guide the consultant to pick a new
-      // time. The old slot is freed when the re-allocation completes.
-      if (isCurrentEventTentative) {
-        toast(sessionBeingRescheduled());
-        return;
-      }
-
-      // Allow current event slots to be toggled for rescheduling
-      if (
-        !isCurrentEventSlot &&
-        (!status.isAvailable || status.isBookedForDisplay)
-      ) {
-        toast(slotUnavailable(Boolean(status.isBookedForDisplay)));
-        return;
-      }
-
-      if (mode === "select" || mode === "allocate") {
-        const isCurrentlySelected = selectedSlots.some(
-          (s) => s.startTime.getTime() === slot.startTime.getTime(),
-        );
-
-        if (isCurrentlySelected) {
-          // Deselect: hook's REMOVE path handles consecutive group detection
-          toggleSlot(slot);
-        } else {
-          // Add: build auto-expanded consecutive group
-          const expandedGroup = buildAutoExpandGroup(slot, date);
-
-          // Block selection if we can't find enough consecutive slots for a complete session
-          const requiredSlots = slotLimits.slotsPerSession;
-          if (requiredSlots > 1 && expandedGroup.length < requiredSlots) {
-            toast(notEnoughConsecutive(requiredSlots, expandedGroup.length));
-            return;
-          }
-
-          toggleSlot(slot, expandedGroup);
-        }
-      }
-    },
-    [
-      mode,
-      getSlotStatusForInterval,
-      toggleSlot,
-      buildAutoExpandGroup,
-      slotLimits,
-      // Dependencies used inside the callback
-      eventType,
-      eventId,
-      sessionsPerWeek,
-      sessionDurationInHours,
-      effectiveSchedulingTz,
-      allowedStart,
-      allowedEnd,
-      selectedSlots,
-      effectiveWeeklyConfirmedCallCounts,
-      eventSlotsSet,
-      eventTentativeSlotsSet,
-      toast,
-      gridZone,
-    ],
-  );
-
-  /** What one cell is, before any of it becomes markup. */
-  interface CellState {
-    status: ReturnType<typeof getSlotStatusForInterval>;
-    statusKey: SlotStatusKey;
-    /** The word the cell would carry; empty for an unpublished interval. */
-    label: string;
-    isCurrentEventSlot: boolean;
-    isCurrentEventTentative: boolean;
-    isOutsideAllowedRange: boolean;
-    /** Published, booked or this event's — the row it sits on is not dead. */
-    isLive: boolean;
-  }
-
-  /**
-   * One resolver for the cell's state, shared by the cell renderer, the
-   * dead-hour fold and the "first cell of a run" check — three readers of the
-   * same flags that must never disagree about what a cell is (#1703 F1).
-   */
-  const describeCell = useCallback(
-    (interval: { hour: number; minute: number }, date: Date): CellState => {
-      const status = getSlotStatusForInterval(interval, date);
-      const startSeconds = Math.round(
-        new Date(status.intervalStartUTCString).getTime() / 1000,
-      );
-      const isCurrentEventSlot = eventSlotsSet.has(startSeconds);
-      const isCurrentEventTentative = eventTentativeSlotsSet.has(startSeconds);
-
-      const intervalStart = new Date(status.intervalStartUTCString);
-      const intervalEnd = new Date(status.intervalEndUTCString);
-      const outsideAllowedRange = isOutsideAllowedRange(
-        intervalStart,
-        intervalEnd,
-        allowedStart,
-        allowedEnd,
-      );
-
-      const statusKey = resolveSlotStatusKey({
-        isSelected: isSlotSelected({
-          startTime: intervalStart,
-          endTime: intervalEnd,
-          isAvailable: status.isAvailable,
-          isBooked: status.isBooked,
-        }),
-        isThisEventSlot: isCurrentEventSlot,
-        isRescheduling: isCurrentEventTentative,
-        isBookedForDisplay: status.isBookedForDisplay,
-        isPartiallyBooked: status.isPartiallyBooked,
-        isAvailable: status.isAvailable,
-        // Typed, not forced into `unavailable`: the token carries the hatch
-        // and the legend row (#1703 F4).
-        isOutsidePeriod: outsideAllowedRange,
-        isInPast: status.isInPast,
-      });
-
-      let label = SLOT_STATUS_TOKENS[statusKey].label;
-      if (statusKey === "thisEvent" && status.isInPast) label = "Past session";
-      if (statusKey === "unavailable") label = "";
-      // #1764/#1766 — outside-period rows collapse into one band; a per-cell
-      // "Outside period" word is noise whether the band is open or closed.
-      if (statusKey === "outsidePeriod") label = "";
-
-      return {
-        status,
-        statusKey,
-        label,
-        isCurrentEventSlot,
-        isCurrentEventTentative,
-        isOutsideAllowedRange: outsideAllowedRange,
-        isLive:
-          status.isAvailable ||
-          status.isBooked ||
-          isCurrentEventSlot ||
-          isCurrentEventTentative,
-      };
-    },
-    [
-      getSlotStatusForInterval,
-      isSlotSelected,
-      eventSlotsSet,
-      eventTentativeSlotsSet,
-      allowedStart,
-      allowedEnd,
-    ],
-  );
-
-  // Dead-hour fold (#1703 F1): a row is live when any column in the visible
-  // week has something in it. Computed from the fetched grid so a custom
-  // week folds to its own shape, not the profile's.
-  // One pass over the week gives the dead-hour fold, the set of states
-  // painted (which the legend is trimmed to, #1703 QA-2) and the per-state
-  // cell counts the legend annotates — no second traversal.
-  const { folded, paintedKeys, paintedCounts } = useMemo(() => {
-    const painted = new Set<SlotStatusKey>();
-    const counts = new Map<SlotStatusKey, number>();
-    // Two liveness vectors, not one: `live` excludes outside-period cells so
-    // a row whose only content is outside this booking's period bands as its
-    // own "Outside the scheduling period" strip rather than the plain
-    // "Unavailable" one (#1764/#1766).
-    const live: boolean[] = [];
-    const outsidePeriod: boolean[] = [];
-    for (const interval of INTERVALS) {
-      let rowLive = false;
-      let rowOutsidePeriod = false;
-      for (const date of weekDates) {
-        const cell = describeCell(interval, date);
-        painted.add(cell.statusKey);
-        counts.set(cell.statusKey, (counts.get(cell.statusKey) ?? 0) + 1);
-        if (cell.statusKey === "outsidePeriod") rowOutsidePeriod = true;
-        else if (cell.isLive) rowLive = true;
-      }
-      live.push(rowLive);
-      outsidePeriod.push(rowOutsidePeriod);
-    }
-    return {
-      folded: foldDeadHourBands(live, outsidePeriod),
-      paintedKeys: painted,
-      paintedCounts: counts,
-    };
-  }, [weekDates, describeCell]);
-
-  // Reported through a ref for the same reason as onSlotsSelected: a host
-  // passing an inline arrow must not restart this effect every render.
-  const onPaintedKeysChangeRef = useRef(onPaintedKeysChange);
+  const onPaintedKeysChangeRef = useLatest(onPaintedKeysChange);
   useEffect(() => {
-    onPaintedKeysChangeRef.current = onPaintedKeysChange;
-  });
-  useEffect(() => {
-    onPaintedKeysChangeRef.current?.(paintedKeys, paintedCounts);
-  }, [paintedKeys, paintedCounts]);
+    onPaintedKeysChangeRef.current?.(
+      weekCells.paintedKeys,
+      weekCells.paintedCounts,
+    );
+  }, [weekCells, onPaintedKeysChangeRef]);
 
-  // Which bands the consultant has opened; remembered for the tab's session
-  // and keyed by consultant so one grid's choice does not leak into another.
+  // Opened bands are remembered for the tab's session, per consultant.
   const bandStorageKey = `fw:calendar:open-bands:${consultantId}`;
   const [openBands, setOpenBands] = useState<ReadonlySet<string>>(() => {
     if (typeof window === "undefined") return new Set();
@@ -1594,24 +1090,77 @@ export function UnifiedCalendar({
     [bandStorageKey],
   );
 
-  /** The rows the grid actually renders this week, ascending. */
-  const visibleRows = useMemo(() => {
-    const rows: number[] = [];
+  const navRows = useMemo<NavRow[]>(() => {
+    const rows: NavRow[] = [];
     for (const segment of folded.segments) {
-      if (segment.kind === "band" && !openBands.has(bandKey(segment))) continue;
-      for (let row = segment.from; row < segment.to; row += 1) rows.push(row);
+      if (segment.kind === "band") {
+        // Keyed by wall-clock rows, not indices, so a DST week keeps it open.
+        const toggleKey = `${rowModel.axis[segment.from]?.key}-${rowModel.axis[segment.to - 1]?.key}`;
+        const open = openBands.has(toggleKey);
+        rows.push({
+          kind: "band",
+          key: `band:${toggleKey}`,
+          toggleKey,
+          segment,
+          open,
+        });
+        if (!open) continue;
+      }
+      for (let index = segment.from; index < segment.to; index += 1) {
+        rows.push({
+          kind: "cells",
+          key: `row:${rowModel.axis[index].key}`,
+          axisIndex: index,
+        });
+      }
     }
     return rows;
-  }, [folded, openBands]);
+  }, [folded, openBands, rowModel]);
 
-  // Where the now-line sits: the row holding the current minute in the grid
-  // zone, and how far down that row.
-  const { rowIndex: nowRow, fraction: nowFraction } = rowOf(now, gridZone);
-  const footerZone = footerZoneLine(now, gridZone, schedulingTimezone);
+  const visibleRows = useMemo(
+    () =>
+      navRows.flatMap((row) => (row.kind === "cells" ? [row.axisIndex] : [])),
+    [navRows],
+  );
 
-  // "Go to selection" (#1703 F2): the footer counter scrolls the earliest
-  // selected cell into view, changing week first when it is not on screen.
-  // The scroll itself waits for the week to render, hence the ref + effect.
+  const midnightLabel = useMemo(
+    () =>
+      formatClockTime(dayStartInstant(weekDates[0], gridZone), {
+        zone: gridZone,
+      }),
+    [weekDates, gridZone],
+  );
+  const bandLabelOf = useCallback(
+    (segment: RowSegment) => {
+      const from = rowModel.axis[segment.from]?.label ?? midnightLabel;
+      const to = rowModel.axis[segment.to]?.label ?? midnightLabel;
+      const name =
+        segment.kind === "band" && segment.variant === "outsidePeriod"
+          ? "Outside this booking's dates"
+          : "Unavailable";
+      return `${name} · ${from}–${to}`;
+    },
+    [rowModel, midnightLabel],
+  );
+
+  const todayIndex = weekDates.findIndex((date) =>
+    isOnCalendarDay(date, now, gridZone),
+  );
+  const nowAtom = atomOf(now);
+  const periodDays = useMemo(
+    () => inPeriodDays(weekDates, gridZone, allowedStart, allowedEnd),
+    [weekDates, gridZone, allowedStart, allowedEnd],
+  );
+  const footerZone = footerZoneLine(now, gridZone, effectiveSchedulingTz);
+
+  const [weekGridEl, setWeekGridEl] = useState<HTMLDivElement | null>(null);
+  const focusAppliedRef = useRef(false);
+  const [gridFocus, setGridFocus] = useState<GridFocus>({
+    rowKey: "",
+    dayIndex: 0,
+  });
+
+  // "Go to selection": switch week if needed, then scroll once it renders.
   const pendingSelectionScrollRef = useRef<string | null>(null);
   const scrollToSelection = useCallback(() => {
     const first = earliestSelectedSlot(selectedSlots);
@@ -1639,321 +1188,296 @@ export function UnifiedCalendar({
       row.getBoundingClientRect().height * FOCUS_LEAD_ROWS;
   }, [weekGridEl, weekDates, visibleRows, selectedSlots]);
 
-  // Once per open; see focusAppliedRef above (#1073).
+  // Where to look on open, once; a user who already scrolled keeps their place.
   useEffect(() => {
     if (!focus || focusAppliedRef.current || !weekGridEl) return;
-    // The element's mere existence is the real guard: it renders only past
-    // the `loading`/`error`/`consultantDetails` gates below, and `loading` is
-    // held true from mount until the availability fetch settles — so by the
-    // time there is a grid, `availableSlots` is final. (`loading` alone would
-    // NOT do: it starts false, before anything is fetched.)
-    if (weekGridEl.children.length === 0) return;
-    // The user got here first. Leave them where they are, permanently.
+    if (!weekGridEl.querySelector("[data-row]")) return;
     if (weekGridEl.scrollTop > 0) {
       focusAppliedRef.current = true;
       return;
     }
-
-    const targetRow = focusTargetRow(focus, availableSlots, gridZone);
-    // Rows inside a folded band are not in the DOM, so aim at the nearest
-    // rendered row rather than a child index (#1703 F1).
+    const targetRow = rowIndexForMinute(
+      rowModel.axis,
+      focusTargetMinute(focus, availableSlots, gridZone),
+    );
     const scrollRow = nearestVisibleRow(focusScrollRow(targetRow), visibleRows);
     if (scrollRow === null) return;
     const row = weekGridEl.querySelector(`[data-row="${scrollRow}"]`);
     if (!(row instanceof HTMLElement)) return;
-
     focusAppliedRef.current = true;
-    // Measured, not rowIndex × height: the row heights are a Tailwind detail
-    // this component should not be re-deriving.
     weekGridEl.scrollTop +=
       row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
-  }, [focus, weekGridEl, availableSlots, visibleRows, gridZone]);
+  }, [focus, weekGridEl, availableSlots, visibleRows, gridZone, rowModel]);
 
-  // #1715 — Roving tabIndex & keyboard cell navigation across the 7 × 48 grid.
-  const [focusedCell, setFocusedCell] = useState<{
-    dayIndex: number;
-    slotIndex: number;
-  }>({ dayIndex: 0, slotIndex: 0 });
-  const pendingFocusCellRef = useRef<{
-    dayIndex: number;
-    slotIndex: number;
-  } | null>(null);
+  /** Consecutive free atoms around a clicked one, to fill one whole session. */
+  const buildAutoExpandGroup = useCallback(
+    (clickedSlot: CalendarInterval): CalendarInterval[] => {
+      const targetSize = slotLimits.slotsPerSession;
+      if (!targetSize || targetSize <= 1) return [clickedSlot];
+      const clickedMs = clickedSlot.startTime.getTime();
 
-  const activeFocusedDayIndex = Math.max(0, Math.min(6, focusedCell.dayIndex));
-  const activeFocusedSlotIndex = useMemo(() => {
-    if (visibleRows.length === 0) return focusedCell.slotIndex;
-    if (visibleRows.includes(focusedCell.slotIndex)) {
-      return focusedCell.slotIndex;
-    }
-    return (
-      nearestVisibleRow(focusedCell.slotIndex, visibleRows) ?? visibleRows[0]
-    );
-  }, [focusedCell.slotIndex, visibleRows]);
-
-  useEffect(() => {
-    const pending = pendingFocusCellRef.current;
-    if (!pending || !weekGridEl) return;
-    const target = weekGridEl.querySelector<HTMLElement>(
-      `[data-day-index="${pending.dayIndex}"][data-slot-index="${pending.slotIndex}"]`,
-    );
-    if (target) {
-      pendingFocusCellRef.current = null;
-      target.focus();
-    }
-  }, [weekGridEl, weekDates, visibleRows, focusedCell]);
-
-  const handleCellKeyDown = useCallback(
-    (
-      event: React.KeyboardEvent<HTMLElement>,
-      dayIndex: number,
-      rowIndex: number,
-      interval: { hour: number; minute: number },
-      date: Date,
-      isDisabled: boolean,
-    ) => {
-      const moveFocus = (nextDay: number, nextSlot: number) => {
-        const clampedDay = Math.max(0, Math.min(6, nextDay));
-        const clampedSlot = Math.max(0, Math.min(47, nextSlot));
-        pendingFocusCellRef.current = {
-          dayIndex: clampedDay,
-          slotIndex: clampedSlot,
-        };
-        setFocusedCell({ dayIndex: clampedDay, slotIndex: clampedSlot });
-        const target = weekGridEl?.querySelector<HTMLElement>(
-          `[data-day-index="${clampedDay}"][data-slot-index="${clampedSlot}"]`,
-        );
-        if (target) {
-          pendingFocusCellRef.current = null;
-          target.focus();
+      const eligible = (offsetSteps: number): CalendarInterval | null => {
+        const startMs = clickedMs + offsetSteps * ATOM_MS;
+        if (!serverCells.has(startMs)) return null;
+        const atom = describeAtom(startMs, startMs + ATOM_MS, atomContext);
+        if (
+          !atom.isAvailable ||
+          atom.isInPast ||
+          atom.isOutsidePeriod ||
+          atom.isTooSoon ||
+          atom.isLimitReached ||
+          selectedStarts.has(startMs)
+        ) {
+          return null;
         }
+        return {
+          startTime: new Date(startMs),
+          endTime: new Date(startMs + ATOM_MS),
+          isAvailable: true,
+          isBooked: false,
+        };
       };
 
-      switch (event.key) {
-        case "ArrowRight": {
-          event.preventDefault();
-          moveFocus(dayIndex + 1, rowIndex);
-          break;
-        }
-        case "ArrowLeft": {
-          event.preventDefault();
-          moveFocus(dayIndex - 1, rowIndex);
-          break;
-        }
-        case "ArrowDown": {
-          event.preventDefault();
-          const pos = visibleRows.indexOf(rowIndex);
-          const nextSlot =
-            pos >= 0 && pos + 1 < visibleRows.length
-              ? visibleRows[pos + 1]
-              : Math.min(47, rowIndex + 1);
-          moveFocus(dayIndex, nextSlot);
-          break;
-        }
-        case "ArrowUp": {
-          event.preventDefault();
-          const pos = visibleRows.indexOf(rowIndex);
-          const prevSlot =
-            pos > 0 ? visibleRows[pos - 1] : Math.max(0, rowIndex - 1);
-          moveFocus(dayIndex, prevSlot);
-          break;
-        }
-        case "Home": {
-          event.preventDefault();
-          const firstRow = visibleRows.length > 0 ? visibleRows[0] : 0;
-          moveFocus(dayIndex, firstRow);
-          break;
-        }
-        case "End": {
-          event.preventDefault();
-          const lastRow =
-            visibleRows.length > 0 ? visibleRows[visibleRows.length - 1] : 47;
-          moveFocus(dayIndex, lastRow);
-          break;
-        }
-        case "PageUp": {
-          event.preventDefault();
-          pendingFocusCellRef.current = {
-            dayIndex,
-            slotIndex: rowIndex,
-          };
-          setFocusedCell({ dayIndex, slotIndex: rowIndex });
-          setCurrentDate((prev) => subWeeks(prev, 1));
-          break;
-        }
-        case "PageDown": {
-          event.preventDefault();
-          pendingFocusCellRef.current = {
-            dayIndex,
-            slotIndex: rowIndex,
-          };
-          setFocusedCell({ dayIndex, slotIndex: rowIndex });
-          setCurrentDate((prev) => addWeeks(prev, 1));
-          break;
-        }
-        case "Enter":
-        case " ": {
-          event.preventDefault();
-          if (!isDisabled) {
-            handleSlotClick(interval, date);
-          }
-          break;
-        }
+      const forward: CalendarInterval[] = [clickedSlot];
+      for (let step = 1; step < targetSize; step++) {
+        const next = eligible(step);
+        if (!next) break;
+        forward.push(next);
       }
+      if (forward.length === targetSize) return forward;
+
+      const backward: CalendarInterval[] = [clickedSlot];
+      for (let step = 1; step < targetSize; step++) {
+        const previous = eligible(-step);
+        if (!previous) break;
+        backward.unshift(previous);
+      }
+      if (backward.length === targetSize) return backward;
+
+      if (forward.length > 1 || backward.length > 1) {
+        const mixed: CalendarInterval[] = [...forward];
+        for (let step = 1; mixed.length < targetSize; step++) {
+          const previous = eligible(-step);
+          if (!previous) break;
+          mixed.unshift(previous);
+        }
+        if (mixed.length === targetSize) return mixed;
+      }
+      return [clickedSlot];
     },
-    [visibleRows, weekGridEl, handleSlotClick],
+    [slotLimits.slotsPerSession, serverCells, atomContext, selectedStarts],
   );
 
-  // Render time cell
-  const renderTimeCell = useCallback(
-    (
-      interval: { hour: number; minute: number },
-      date: Date,
-      dayIndex: number,
-    ) => {
-      const cell = describeCell(interval, date);
-      const { status, statusKey, isCurrentEventSlot } = cell;
-      const intervalStart = new Date(status.intervalStartUTCString);
-      const token = SLOT_STATUS_TOKENS[statusKey];
-      const rowIndex = interval.hour * 2 + (interval.minute >= 30 ? 1 : 0);
-      const isFocusedCell =
-        activeFocusedDayIndex === dayIndex &&
-        activeFocusedSlotIndex === rowIndex;
-      const isSelected = statusKey === "selected";
-      // Full state on every cell, so the visible word can leave the cell
-      // without the screen reader or the hover losing it (#1703 F1).
-      const accessibleLabel = `${token.label} · ${formatDateTimeLabel(intervalStart, { zone: gridZone })}`;
+  const handleCellActivate = useCallback(
+    (startMs: number) => {
+      // The live cell, never one a memoised button closed over.
+      const cell = weekCells.byStart.get(startMs);
+      if (mode === "view" || !cell) return;
+      const bucketTz = effectiveSchedulingTz ?? undefined;
+      const slot: CalendarInterval = {
+        startTime: new Date(cell.startMs),
+        endTime: new Date(cell.endMs),
+        isAvailable: cell.isAvailable,
+        isBooked: cell.isBooked,
+      };
+      const isSelected = selectedStarts.has(cell.startMs);
 
-      // Fast-exit: a cell with nothing published, nothing booked and already
-      // past is never interactive, so it renders as an aria-disabled button in
-      // the roving-tabindex grid. It paints from the same `unavailable` token
-      // as every other dead cell (#1064).
-      if (!status.isAvailable && !status.isBooked && status.isInPast) {
-        return (
-          <button
-            type="button"
-            className={slotCellClassName("unavailable", { faded: true })}
-            title={accessibleLabel}
-            aria-label={accessibleLabel}
-            tabIndex={isFocusedCell ? 0 : -1}
-            aria-disabled={true}
-            data-day-index={dayIndex}
-            data-slot-index={rowIndex}
-            onFocus={() => setFocusedCell({ dayIndex, slotIndex: rowIndex })}
-            onKeyDown={(e) =>
-              handleCellKeyDown(e, dayIndex, rowIndex, interval, date, true)
-            }
-            // A selection that ages into this branch must stay findable by
-            // "Go to selection" (#1703 F2).
-            data-slot-start={status.intervalStartUTCString}
-          />
+      // Already being dropped by the conflict effect.
+      if (cell.statusKey === "justTaken") return;
+
+      if (cell.isOutsidePeriod) {
+        toast(
+          outsideSchedulingWindow(
+            formatAllowedRange(gridZone, allowedStart, allowedEnd),
+          ),
         );
+        return;
       }
 
-      // The word stays on the first cell of a contiguous run only: the row
-      // above, same column, saying the same thing means this cell is a
-      // continuation and the text is noise (#1703 F1).
-      const above = rowIndex > 0 ? INTERVALS[rowIndex - 1] : null;
-      const continuesRun =
-        above !== null && describeCell(above, date).label === cell.label;
-      const buttonText = continuesRun ? "" : cell.label;
-
-      const cellClassName = buildInteractiveSlotCellClassName(
-        statusKey,
-        mode,
-        eventType,
-        status.isInPast,
-      );
-      const showTooltip =
-        ((status.isBookedForDisplay || status.isPartiallyBooked) &&
-          status.overlappingAppointments.length > 0) ||
-        isCurrentEventSlot;
-
-      // Only disable in view mode or if no availability at all (gray slots)
-      const isButtonDisabled =
-        mode === "view" || (!status.isAvailable && !status.isBooked);
-
-      const buttonElement = (
-        <button
-          type="button"
-          className={cellClassName}
-          onClick={() => {
-            if (!isButtonDisabled) {
-              handleSlotClick(interval, date);
-            }
-          }}
-          tabIndex={isFocusedCell ? 0 : -1}
-          aria-pressed={isSelected}
-          aria-disabled={isButtonDisabled}
-          onFocus={() => setFocusedCell({ dayIndex, slotIndex: rowIndex })}
-          onKeyDown={(e) =>
-            handleCellKeyDown(
-              e,
-              dayIndex,
-              rowIndex,
-              interval,
-              date,
-              isButtonDisabled,
-            )
+      // Subscription weekly limit, bucketed by the scheduling-zone week.
+      if (
+        !isSelected &&
+        eventType === "subscription" &&
+        eventId &&
+        sessionsPerWeek &&
+        sessionDurationInHours
+      ) {
+        const targetDayKey = ScheduleCalculationService.dayKey(
+          slot.startTime,
+          bucketTz,
+        );
+        const isStartingNewDay = !selectedSlots.some(
+          (s) =>
+            ScheduleCalculationService.dayKey(s.startTime, bucketTz) ===
+            targetDayKey,
+        );
+        if (isStartingNewDay) {
+          const targetWeekKey = ScheduleCalculationService.weekKey(
+            slot.startTime,
+            bucketTz,
+          );
+          const completedCalls =
+            effectiveWeeklyConfirmedCallCounts[targetWeekKey] || 0;
+          const selectedCompleted = countCompletedSelectedCallsForWeek(
+            selectedSlots,
+            getSlotsPerCall(sessionDurationInHours),
+            targetWeekKey,
+            bucketTz,
+          );
+          if (completedCalls + selectedCompleted >= sessionsPerWeek) {
+            toast(
+              weeklyLimitReached(
+                sessionsPerWeek,
+                schedulingWeekBucket(slot.startTime, bucketTz),
+              ),
+            );
+            return;
           }
-          title={accessibleLabel}
-          aria-label={accessibleLabel}
-          data-day-index={dayIndex}
-          data-slot-index={rowIndex}
-          data-slot-start={status.intervalStartUTCString}
-          data-slot-state={statusKey}
-        >
-          {buttonText}
-        </button>
-      );
-
-      if (showTooltip) {
-        return wrapCellWithSlotTooltip(
-          buttonElement,
-          isCurrentEventSlot,
-          eventType,
-          status.isInPast,
-          status.overlappingAppointments,
-        );
+        }
       }
 
-      return buttonElement;
+      // Past sessions of this booking: deselect allowed, reselect blocked.
+      if (cell.isThisEvent && cell.isInPast) {
+        if (isSelected) toggleSlot(slot);
+        else toast(pastSessionBlocked());
+        return;
+      }
+      // A session of this booking under 24 hours away cannot be moved.
+      if (
+        cell.isThisEvent &&
+        cell.startMs < Date.now() + TWENTY_FOUR_HOURS_IN_MS
+      ) {
+        toast(sessionTooSoon());
+        return;
+      }
+      if (cell.isInPast) {
+        toast(pastSlotBlocked());
+        return;
+      }
+      if (cell.isTentative) {
+        toast(sessionBeingRescheduled());
+        return;
+      }
+      if (!cell.isThisEvent && cell.statusKey === "tooSoon") {
+        toast({
+          title: "Too soon",
+          description: `That time starts in less than ${Math.round(MINIMUM_BOOKING_LEAD_TIME_MS / 60_000)} minutes — pick a later one.`,
+        });
+        return;
+      }
+      if (!cell.isThisEvent && cell.statusKey === "limitReached") {
+        toast({
+          title: "Limit reached",
+          description: quota
+            ? `${quotaFooterText(quota, gridZone)}. Pick a day or week that still has room.`
+            : "This plan's sessions for that week or day are already used.",
+        });
+        return;
+      }
+      if (cell.statusKey === "partiallyBooked") {
+        toast({
+          title: "Partly booked",
+          description: "Part of this half-hour is taken — choose another time.",
+        });
+        return;
+      }
+      if (!cell.isThisEvent && (!cell.isAvailable || cell.isBooked)) {
+        toast(slotUnavailable(cell.statusKey === "fullyBooked"));
+        return;
+      }
+
+      if (isSelected) {
+        toggleSlot(slot);
+        return;
+      }
+      const group = buildAutoExpandGroup(slot);
+      const needed = slotLimits.slotsPerSession;
+      if (needed > 1 && group.length < needed) {
+        toast(notEnoughConsecutive(needed, group.length));
+        return;
+      }
+      toggleSlot(slot, group);
     },
     [
-      describeCell,
-      handleSlotClick,
-      handleCellKeyDown,
-      activeFocusedDayIndex,
-      activeFocusedSlotIndex,
       mode,
-      eventType,
+      effectiveSchedulingTz,
+      selectedStarts,
+      toast,
       gridZone,
+      allowedStart,
+      allowedEnd,
+      eventType,
+      eventId,
+      sessionsPerWeek,
+      sessionDurationInHours,
+      selectedSlots,
+      effectiveWeeklyConfirmedCallCounts,
+      toggleSlot,
+      quota,
+      buildAutoExpandGroup,
+      slotLimits.slotsPerSession,
+      weekCells,
     ],
   );
 
-  // Render month view
-  const renderMonthView = useCallback(() => {
+  const tooltipOf = useCallback(
+    (cell: CellView): CellTooltip | null => {
+      if (cell.isThisEvent) {
+        return {
+          title: "This booking",
+          lines: [
+            eventTypeLabel(eventType),
+            cell.isInPast ? "Past session" : "Click to change this time",
+          ],
+        };
+      }
+      if (
+        cell.statusKey === "fullyBooked" ||
+        cell.statusKey === "partiallyBooked"
+      ) {
+        return overlapTooltip(cell.overlapping);
+      }
+      return null;
+    },
+    [eventType],
+  );
+
+  const pageWeek = useCallback((direction: -1 | 1) => {
+    setCurrentDate((previous) =>
+      direction < 0 ? subWeeks(previous, 1) : addWeeks(previous, 1),
+    );
+  }, []);
+
+  // Free, bookable half-hours per calendar day of the visible month.
+  const monthFreeCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (view !== "month") return counts;
+    serverCells.forEach((cell) => {
+      if (
+        cell.bookingStatus !== "available" ||
+        cell.tooSoon ||
+        cell.limitReached ||
+        cell.endMs < matrixNowMs
+      ) {
+        return;
+      }
+      const key = formatInTimeZone(cell.startMs, gridZone, "yyyy-MM-dd");
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    });
+    return counts;
+  }, [view, serverCells, gridZone, matrixNowMs]);
+
+  const renderMonthView = () => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const firstDayOfMonth = new Date(year, month, 1).getDay();
-    const today = calendarDayOf(now, gridZone);
-    today.setHours(0, 0, 0, 0);
-
-    const countAvailableSlotsForDay = (date: Date): number => {
-      let count = 0;
-      for (const interval of INTERVALS) {
-        const status = getSlotStatusForInterval(interval, date);
-        if (status.isAvailable && !status.isInPast) {
-          count++;
-        }
-      }
-      return count;
-    };
-
+    const todayKey = calendarDateKey(calendarDayOf(now, gridZone));
+    const weekdayHeaders = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     return (
-      <div className="grid grid-cols-7 gap-1 flex-1 min-h-0 overflow-y-auto">
-        {DAYS.map((day) => (
-          <div key={day} className="text-center font-bold p-2">
-            {day.slice(0, 3)}
+      <div className="grid min-h-0 flex-1 grid-cols-7 gap-1 overflow-y-auto">
+        {weekdayHeaders.map((day) => (
+          <div key={day} className="p-2 text-center font-bold">
+            {day}
           </div>
         ))}
         {Array.from({ length: firstDayOfMonth }, (_, i) => (
@@ -1962,100 +1486,169 @@ export function UnifiedCalendar({
             className="min-h-[100px] border bg-gray-50/50"
           />
         ))}
-        {Array.from(
-          { length: new Date(year, month + 1, 0).getDate() },
-          (_, i) => {
-            const date = new Date(year, month, i + 1);
-            const isCurrentDay = isOnCalendarDay(date, now, gridZone);
-            const isPastDay = date < today;
-            const availableCount = isPastDay
-              ? 0
-              : countAvailableSlotsForDay(date);
-
-            return (
+        {Array.from({ length: getDaysInMonth(currentDate) }, (_, i) => {
+          const date = new Date(year, month, i + 1, 12);
+          const key = calendarDateKey(date);
+          const isCurrentDay = key === todayKey;
+          const isPastDay = key < todayKey;
+          const freeCount = isPastDay ? 0 : (monthFreeCounts.get(key) ?? 0);
+          return (
+            <div
+              key={key}
+              className={cn(
+                "flex min-h-[100px] flex-col border p-1",
+                isCurrentDay && "ring-2 ring-primary",
+                isPastDay ? "bg-gray-100 text-gray-500" : "bg-white",
+              )}
+            >
               <div
-                key={date.toISOString()}
-                className={`min-h-[100px] border p-1 flex flex-col ${
-                  isCurrentDay ? "ring-2 ring-primary" : ""
-                } ${isPastDay ? "bg-gray-100 text-gray-400" : "bg-white"}`}
+                className={cn(
+                  "mb-1 text-xs font-bold",
+                  isCurrentDay && "text-primary",
+                  !isPastDay && "text-gray-700",
+                )}
               >
-                <div
-                  className={`font-bold mb-1 text-xs ${
-                    isCurrentDay ? "text-primary" : ""
-                  } ${isPastDay ? "" : "text-gray-700"}`}
-                >
-                  {i + 1}
-                </div>
-                <div className="flex-grow flex items-center justify-center">
-                  {!isPastDay && availableCount > 0 && (
-                    <Badge variant="outline" className="text-[10px] p-1">
-                      {availableCount} slots
-                    </Badge>
-                  )}
-                  {!isPastDay && availableCount === 0 && (
-                    <span className="text-xs text-muted-foreground">
-                      No Slots
-                    </span>
-                  )}
-                </div>
+                {i + 1}
               </div>
-            );
-          },
-        )}
+              <div className="flex flex-grow items-center justify-center">
+                {!isPastDay && freeCount > 0 && (
+                  <Badge variant="outline" className="p-1 text-[10px]">
+                    {formatDurationLabel(freeCount * 30)} free
+                  </Badge>
+                )}
+                {!isPastDay && freeCount === 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    Nothing free
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
-  }, [currentDate, getSlotStatusForInterval, now, gridZone]);
+  };
 
-  // Loading state — keep week-grid anatomy to avoid spinner → calendar CLS
   if (loading) {
     return <CalendarGridSkeleton className={className} />;
   }
 
-  // Error state
   if (error) {
     return (
-      <div className={`bg-red-50 p-4 rounded-md text-red-700 ${className}`}>
-        <p>Error loading calendar: {error}</p>
+      <div
+        role="alert"
+        className={cn("rounded-md bg-red-50 p-4 text-red-800", className)}
+      >
+        <p>{error}</p>
         <Button variant="outline" size="sm" onClick={refetch} className="mt-2">
-          <RotateCcw className="h-4 w-4 mr-2" />
-          Retry
+          <RotateCcw className="mr-2 h-4 w-4" />
+          Try again
         </Button>
       </div>
     );
   }
 
-  // No consultant data
   if (!consultantDetails) {
     return (
-      <div className={`text-center p-8 text-muted-foreground ${className}`}>
-        <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50" />
-        <p>No calendar data available</p>
+      <div className={cn("p-8 text-center text-muted-foreground", className)}>
+        <Calendar className="mx-auto mb-4 h-12 w-12 opacity-50" />
+        <p>This calendar isn&apos;t available right now.</p>
       </div>
     );
   }
 
+  const slotsPerSession = Math.max(1, slotLimits.slotsPerSession || 1);
+  const pickedSessions = Math.floor(selectedSlots.length / slotsPerSession);
+  const neededSessions = Math.max(
+    1,
+    Math.round(requiredSlots / slotsPerSession),
+  );
+  const manualBlockedReason = (() => {
+    if (isAllocating)
+      return "Saving times — wait for the current attempt to finish.";
+    if (eventSlotsFailed)
+      return "This booking's own sessions didn't load. Try again before saving.";
+    if (selectedSlots.length === 0) return "Pick the times first.";
+    if (!isValid)
+      return `This selection can't be saved: ${validationErrors.join(", ")}`;
+    if (selectedSlots.length !== requiredSlots) {
+      const missing = neededSessions - pickedSessions;
+      return missing > 0
+        ? `Pick ${sessionsPhrase(missing)} more.`
+        : `Remove ${sessionsPhrase(-missing)} — ${sessionsPhrase(neededSessions)} needed.`;
+    }
+    return null;
+  })();
+
+  const footerText = (() => {
+    try {
+      if (eventType === "subscription") {
+        return subscriptionFooterText({
+          selectedSlots,
+          allowedStart,
+          allowedEnd,
+          sessionsPerWeek,
+          sessionDurationInHours,
+          totalSessions,
+          pastEventSlotCount,
+          maxSlots: slotLimits.totalSessions,
+          schedulingTimezone: effectiveSchedulingTz ?? undefined,
+          entitlement,
+          zone: gridZone,
+        });
+      }
+      if (eventType === "class") {
+        return classFooterText({
+          selectedSlots,
+          sessionDurationInHours,
+          totalSessions: slotLimits.totalSessions,
+          pastEventSlotCount,
+          schedulingTimezone: effectiveSchedulingTz ?? undefined,
+        });
+      }
+      const duration =
+        eventType === "consultation" || eventType === "webinar"
+          ? durationInHours
+          : sessionDurationInHours;
+      const totalMinutes =
+        calculateRequiredSlots(
+          eventType,
+          durationInMonths,
+          sessionsPerWeek,
+          duration,
+        ) * 30;
+      const chosenMinutes = selectedSlots.length * 30;
+      if (chosenMinutes === 0)
+        return `Pick a ${formatDurationLabel(totalMinutes)} time`;
+      if (chosenMinutes >= totalMinutes)
+        return `${formatDurationLabel(totalMinutes)} picked`;
+      return `${formatDurationLabel(chosenMinutes)} of ${formatDurationLabel(totalMinutes)} picked · pick ${formatDurationLabel(totalMinutes - chosenMinutes)} more`;
+    } catch (footerError) {
+      Sentry.captureException(
+        footerError instanceof Error
+          ? footerError
+          : new Error(String(footerError)),
+        { tags: { subsystem: "client" } },
+      );
+      return `${pickedSessions} of ${neededSessions} times picked`;
+    }
+  })();
+
   return (
-    <div className={`flex flex-col gap-4 min-h-0 ${className}`}>
-      {/* Warning Banner */}
+    <div className={cn("flex min-h-0 flex-col gap-4", className)}>
       {configWarning && (
-        <div className="shrink-0 rounded-md bg-yellow-50 border border-yellow-200 px-4 py-3">
-          <div className="flex items-start">
-            <span className="text-yellow-600 mr-2">⚠️</span>
-            <div className="flex-1">
-              <p className="text-sm font-medium text-yellow-800">
-                Using Default Value
-              </p>
-              <p className="text-sm text-yellow-700">{configWarning}</p>
-            </div>
-          </div>
+        <div className="shrink-0 rounded-md border border-yellow-200 bg-yellow-50 px-4 py-3">
+          <p className="text-sm text-yellow-800">{configWarning}</p>
         </div>
       )}
 
-      {/* Scheduling Period Info Banner */}
       {allowedStart && allowedEnd && (
-        <div className="shrink-0 rounded-md bg-blue-50 border border-blue-200 px-4 py-3">
+        <div className="shrink-0 rounded-md border border-blue-200 bg-blue-50 px-4 py-3">
           <div className="flex items-start">
-            <Calendar className="h-5 w-5 text-blue-600 mr-2 flex-shrink-0" />
+            <Calendar
+              className="mr-2 h-5 w-5 flex-shrink-0 text-blue-600"
+              aria-hidden
+            />
             <div className="flex-1">
               <p className="text-sm font-medium text-blue-800">
                 {windowBannerLabel(eventType)}
@@ -2068,13 +1661,53 @@ export function UnifiedCalendar({
         </div>
       )}
 
-      {/* Header */}
-      <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 sm:gap-4">
+      {refreshFailed && (
+        <div
+          role="alert"
+          className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
+          <span className="flex-1">
+            We couldn&apos;t refresh this calendar. The times below are the last
+            ones that loaded.
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refetchAvailability()}
+          >
+            Try again
+          </Button>
+        </div>
+      )}
+
+      {eventSlotsFailed && (
+        <div
+          role="alert"
+          className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
+          <span className="flex-1">
+            This booking&apos;s own sessions didn&apos;t load, so they may show
+            as booked and limits can&apos;t be checked yet.
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refetchEventSlots()}
+          >
+            Try again
+          </Button>
+        </div>
+      )}
+
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 sm:gap-4">
         <div className="flex gap-2">
           <Button
             variant={view === "week" ? "default" : "outline"}
             size="sm"
             onClick={() => setView("week")}
+            aria-pressed={view === "week"}
           >
             Week
           </Button>
@@ -2082,6 +1715,7 @@ export function UnifiedCalendar({
             variant={view === "month" ? "default" : "outline"}
             size="sm"
             onClick={() => setView("month")}
+            aria-pressed={view === "month"}
           >
             Month
           </Button>
@@ -2091,6 +1725,7 @@ export function UnifiedCalendar({
           <Button
             variant="outline"
             size="sm"
+            aria-label={view === "week" ? "Previous week" : "Previous month"}
             onClick={() =>
               setCurrentDate(
                 view === "week"
@@ -2112,6 +1747,7 @@ export function UnifiedCalendar({
           <Button
             variant="outline"
             size="sm"
+            aria-label={view === "week" ? "Next week" : "Next month"}
             onClick={() =>
               setCurrentDate(
                 view === "week"
@@ -2128,7 +1764,7 @@ export function UnifiedCalendar({
             onClick={() => setCurrentDate(calendarDayOf(now, gridZone))}
             disabled={
               view === "week"
-                ? weekDates.some((date) => isOnCalendarDay(date, now, gridZone))
+                ? todayIndex >= 0
                 : isSameMonth(currentDate, calendarDayOf(now, gridZone))
             }
             title="Jump to today"
@@ -2145,351 +1781,140 @@ export function UnifiedCalendar({
             onClick={clearSlots}
             disabled={isAllocating || selectedSlots.length === 0}
           >
-            <RotateCcw className="h-4 w-4 mr-2" />
-            Clear Selection
+            <RotateCcw className="mr-2 h-4 w-4" />
+            Clear selection
           </Button>
         ) : (
-          <div className="hidden w-20 sm:block"></div>
+          <div className="hidden w-20 sm:block" />
         )}
       </div>
 
-      {/* Calendar View */}
+      {showZoneSwitch && (
+        <ZoneSwitch
+          className="shrink-0"
+          zone={gridZone}
+          usingDeviceZone={canSwitchZone && usingDeviceZone}
+          canSwitch={canSwitchZone}
+          onToggle={() => setUsingDeviceZone((value) => !value)}
+          now={now}
+        />
+      )}
+
       {view === "week" ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          {/* Week header */}
-          <div
-            className={`shrink-0 ${GRID_COLS} gap-0.5 md:gap-1 bg-background z-20 pb-1`}
-          >
-            <div></div>
-            {weekDates.map((date, index) => {
-              const isToday = isOnCalendarDay(date, now, gridZone);
-              const isInPeriod = isDateInSchedulingPeriod(
-                date,
-                allowedStart,
-                allowedEnd,
-              );
-              return (
-                <div
-                  key={DAYS[index]}
-                  aria-current={isToday ? "date" : undefined}
-                  className={cn(
-                    "rounded-sm p-1 text-center md:p-2",
-                    isInPeriod && "border-x-2 border-blue-200 bg-blue-50",
-                    isToday && "bg-primary/10 ring-1 ring-primary/40",
-                  )}
-                >
-                  <div
-                    className={`font-bold text-xs md:text-base ${
-                      isToday ? "text-primary" : ""
-                    }`}
-                  >
-                    {formatWeekdayShort(date)}
-                  </div>
-                  <div className="text-xs md:text-sm text-muted-foreground">
-                    {formatDayOfMonth(date)}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Week grid — pt-1 keeps the first row's pills clear of the
-              sticky week header; the row hairline below gives the sparse
-              cells grid structure without re-filling unavailable cells. */}
-          <div
-            ref={setWeekGridEl}
-            role="grid"
-            aria-label="Availability slot grid"
-            className="flex-1 overflow-y-auto scrollbar-thin min-h-0 pt-1"
-          >
-            {folded.allDead && (
-              <p
-                role="status"
-                className="mb-1 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
-              >
-                Nothing is published this week. Every hour is shown so you can
-                see where the days are.
-              </p>
-            )}
-            {folded.segments.map((segment) => {
-              const key = bandKey(segment);
-              const isOpenBand = segment.kind === "band" && openBands.has(key);
-              // "Now" inside a folded band still gets its marker, so Today
-              // always shows the moment (#1703 QA-5): a primary rule on the
-              // strip's left edge and a "· now" word, since a folded strip
-              // has no columns to place the line under.
-              const stripHoldsNow =
-                segment.kind === "band" &&
-                !isOpenBand &&
-                nowRow >= segment.from &&
-                nowRow < segment.to &&
-                weekDates.some((date) => isOnCalendarDay(date, now, gridZone));
-              const strip =
-                segment.kind === "band" ? (
-                  <button
-                    key={`band-${key}`}
-                    type="button"
-                    onClick={() => toggleBand(key)}
-                    aria-expanded={isOpenBand}
-                    className={cn(
-                      "relative my-0.5 flex h-6 w-full items-center justify-center gap-1 rounded-sm border border-dashed border-border text-[10px] text-muted-foreground hover:bg-muted",
-                      stripHoldsNow && "border-primary/60",
-                    )}
-                  >
-                    {stripHoldsNow && (
-                      <span
-                        aria-hidden
-                        className="absolute inset-y-0 left-0 w-0.5 rounded-full bg-primary"
-                      />
-                    )}
-                    {segment.variant === "outsidePeriod"
-                      ? outsidePeriodBandLabel(segment)
-                      : bandLabel(segment)}
-                    <span aria-hidden>{isOpenBand ? "· hide" : "· show"}</span>
-                    {stripHoldsNow && <span aria-hidden>· now</span>}
-                  </button>
-                ) : null;
-              if (segment.kind === "band" && !isOpenBand) return strip;
-              const rows: React.ReactNode[] = strip ? [strip] : [];
-              for (
-                let rowIndex = segment.from;
-                rowIndex < segment.to;
-                rowIndex += 1
-              ) {
-                const interval = INTERVALS[rowIndex];
-                rows.push(
-                  <div
-                    key={`interval-row-${interval.hour}-${interval.minute}`}
-                    data-row={rowIndex}
-                    role="row"
-                    className={`${GRID_COLS} gap-0.5 border-b border-border/40 md:gap-1`}
-                  >
-                    <div className="min-w-0">
-                      <div className="flex h-7 items-start justify-end whitespace-nowrap pr-1 text-[10px] tabular-nums text-muted-foreground md:pr-2 md:text-xs">
-                        {formatClockTime(
-                          new Date(1970, 0, 1, interval.hour, interval.minute),
-                        )}
-                      </div>
-                    </div>
-                    {weekDates.map((date, dayIndex) => {
-                      const holdsNow =
-                        isOnCalendarDay(date, now, gridZone) &&
-                        nowRow === rowIndex;
-                      const isCellSelected =
-                        describeCell(interval, date).statusKey === "selected";
-                      return (
-                        <div
-                          key={date.toISOString()}
-                          role="gridcell"
-                          aria-selected={isCellSelected}
-                          className="relative col-span-1"
-                        >
-                          {renderTimeCell(interval, date, dayIndex)}
-                          {holdsNow && (
-                            // The now-line: a 2px rule across today's column at
-                            // the minute, moved by the once-a-minute tick.
-                            <div
-                              aria-hidden
-                              className="pointer-events-none absolute inset-x-0 z-10 border-t-2 border-primary"
-                              style={{ top: `${nowFraction * 100}%` }}
-                            >
-                              <span className="absolute -left-1 -top-[5px] h-2 w-2 rounded-full bg-primary" />
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>,
-                );
-              }
-              return rows;
-            })}
-          </div>
+          {folded.allDead && (
+            <p
+              role="status"
+              className="mb-1 shrink-0 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
+            >
+              Nothing is published this week. Every hour is shown so you can see
+              where the days are.
+            </p>
+          )}
+          <WeekGrid
+            days={weekDates}
+            axis={rowModel.axis}
+            matrix={weekCells.matrix}
+            navRows={navRows}
+            bandLabelOf={bandLabelOf}
+            todayIndex={todayIndex}
+            inPeriodDays={periodDays}
+            nowAtomStartMs={nowAtom.start.getTime()}
+            nowFraction={nowAtom.fraction}
+            focus={gridFocus}
+            zone={gridZone}
+            readOnly={mode === "view"}
+            refreshing={refreshing}
+            tooltipOf={tooltipOf}
+            onActivate={handleCellActivate}
+            onToggleBand={toggleBand}
+            onFocusChange={setGridFocus}
+            onPageWeek={pageWeek}
+            gridRef={setWeekGridEl}
+            label="Available half-hour times"
+          />
         </div>
       ) : (
         renderMonthView()
       )}
 
-      {/* #1715 — Visually-hidden live region announcing current slot selection */}
-      <div role="status" aria-live="polite" className="sr-only">
-        Selected {selectedSlots.length} of {requiredSlots} slots
-      </div>
+      {mode !== "view" && (
+        <div role="status" aria-live="polite" className="sr-only">
+          {`${pickedSessions} of ${neededSessions} ${neededSessions === 1 ? "time" : "times"} picked`}
+        </div>
+      )}
 
-      {/* Footer */}
       {aboveActionsSlot}
-      <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="flex flex-wrap items-center gap-2 sm:gap-4">
           <div className="text-sm">
-            {(() => {
-              const text = (() => {
-                try {
-                  // Per-type arms live in helpers so this stays under S3776.
-                  if (eventType === "subscription") {
-                    return subscriptionFooterText({
-                      selectedSlots,
-                      allowedStart,
-                      allowedEnd,
-                      sessionsPerWeek,
-                      sessionDurationInHours,
-                      totalSessions,
-                      pastEventSlotCount,
-                      maxSlots: slotLimits.totalSessions,
-                      schedulingTimezone: effectiveSchedulingTz ?? undefined,
-                      entitlement,
-                      zone: gridZone,
-                    });
-                  }
-                  if (eventType === "class") {
-                    return classFooterText({
-                      selectedSlots,
-                      sessionDurationInHours,
-                      totalSessions: slotLimits.totalSessions,
-                      pastEventSlotCount,
-                      schedulingTimezone: effectiveSchedulingTz ?? undefined,
-                    });
-                  }
-
-                  const duration =
-                    eventType === "consultation" || eventType === "webinar"
-                      ? durationInHours
-                      : sessionDurationInHours;
-
-                  const requiredSlotsForThisEvent = calculateRequiredSlots(
-                    eventType,
-                    durationInMonths,
-                    sessionsPerWeek,
-                    duration,
-                  );
-
-                  // Never "N slots": the 30-minute atom (ADR B1) is our
-                  // bookkeeping unit, not something a buyer should have to
-                  // translate. A one-hour consultation is ONE session, and
-                  // "2 required slots" reads as two appointments.
-                  const totalMinutes = requiredSlotsForThisEvent * 30;
-                  const chosenMinutes = selectedSlots.length * 30;
-                  if (chosenMinutes === 0)
-                    return `Select a ${formatDurationLabel(totalMinutes)} time`;
-                  if (chosenMinutes >= totalMinutes)
-                    return `${formatDurationLabel(totalMinutes)} selected`;
-                  // Says what is missing, not just what is there (#1703 F2).
-                  return `${formatDurationLabel(chosenMinutes)} of ${formatDurationLabel(totalMinutes)} selected · pick ${formatDurationLabel(totalMinutes - chosenMinutes)} more`;
-                } catch (error) {
-                  Sentry.captureException(
-                    error instanceof Error ? error : new Error(String(error)),
-                    { tags: { subsystem: "client" } },
-                  );
-                  console.error("Error calculating footer stats:", error);
-                  if (error instanceof Error) {
-                    return error.message;
-                  }
-                  return `Selected: ${selectedSlots.length} slots`;
-                }
-              })();
-              // A counter you can act on: with a selection it scrolls the
-              // first selected cell into view (#1703 F2).
-              if (selectedSlots.length === 0) return text;
-              return (
-                <button
-                  type="button"
-                  onClick={scrollToSelection}
-                  className="text-left underline decoration-dotted underline-offset-4 hover:decoration-solid"
-                  title="Go to selection"
-                >
-                  {text}
-                </button>
-              );
-            })()}
+            {selectedSlots.length === 0 ? (
+              footerText
+            ) : (
+              <button
+                type="button"
+                onClick={scrollToSelection}
+                className="text-left underline decoration-dotted underline-offset-4 hover:decoration-solid"
+                title="Go to selection"
+              >
+                {footerText}
+              </button>
+            )}
           </div>
-          {/* Pre-commit preview: what is actually chosen, as sessions not
-              atoms, in the event's scheduling timezone (#1703 F2). Static
-              text — the counter above stays the "Go to selection" control. */}
           {selectedSlots.length > 0 && (
             <ul
               className="flex flex-wrap items-center gap-1.5"
-              aria-label="Selected times"
+              aria-label="Picked times"
             >
-              {groupSelectedIntoSessions(
-                selectedSlots,
-                schedulingTimezone ?? gridZone,
-              ).map((session) => {
-                const zone = schedulingTimezone ?? gridZone;
-                const label = `${formatDayLabel(session.start, { zone })} · ${formatClockTime(session.start, { zone })}–${formatClockTime(session.end, { zone })}`;
-                return (
-                  <li
-                    key={`${session.start.toISOString()}/${session.end.toISOString()}`}
-                    title={label}
-                    className="rounded-full border border-emerald-600/30 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-900"
-                  >
-                    {label}
-                  </li>
-                );
-              })}
+              {groupSelectedIntoSessions(selectedSlots, gridZone).map(
+                (session) => {
+                  const label = `${formatDayLabel(session.start, { zone: gridZone })} · ${formatClockTime(session.start, { zone: gridZone })}–${formatClockTime(session.end, { zone: gridZone })}`;
+                  return (
+                    <li
+                      key={`${session.start.toISOString()}/${session.end.toISOString()}`}
+                      title={label}
+                      className="rounded-full border border-emerald-700/40 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-900"
+                    >
+                      {label}
+                    </li>
+                  );
+                },
+              )}
             </ul>
           )}
-          {allocationError && (
-            <div className="text-sm text-red-600">{allocationError}</div>
+          {quota && (
+            <span className="rounded-full border border-slate-400 px-2 py-0.5 text-xs text-slate-700">
+              {quotaFooterText(quota, gridZone)}
+            </span>
           )}
         </div>
 
-        <div className="text-sm text-muted-foreground flex flex-wrap items-center gap-1.5">
-          {/* #1076 — the day/week caps bucket on the EVENT's scheduling
-              timezone, not the viewer's. When they differ, say so here
-              instead of letting the viewer assume their own midnight. Only
-              cap-bearing surfaces thread the prop; others keep the old line.
-              Named as "IST (UTC+05:30)" with the IANA zone in the title (F3). */}
-          <span title={footerZone.title}>{footerZone.label}</span>
+        <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
           {footerZone.limits && (
             <span title={footerZone.limits.title}>
-              {" · "}
               {footerZone.limits.label}
             </span>
           )}
-          {/* #1168 — Toggle between the recurring event's schedulingTimezone
-              and the viewer's own timezone when they differ. */}
-          {(eventType === "subscription" || eventType === "class") &&
-            effectiveSchedulingTz &&
-            viewerZone &&
-            effectiveSchedulingTz !== viewerZone && (
-              <button
-                type="button"
-                onClick={() => setPreferViewerZone((prev) => !prev)}
-                data-testid="grid-zone-toggle"
-                className="ml-1 inline-flex items-center rounded-full border border-border bg-muted/50 px-2 py-0.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
-              >
-                {preferViewerZone
-                  ? `Your zone (${viewerZone})`
-                  : `Expert zone (${effectiveSchedulingTz})`}
-              </button>
-            )}
-          {/* #1863 — the same footer carries how old the cells are. Silent when
-              fresh (the overwhelming majority of the time) so it is not noise
-              the consultant learns to skip, and loud when it is not: amber for
-              ageing, red for a grid that has stopped updating. Purely
-              informational — the allocator re-validates server-side, so this
-              never gates a click, it only stops a refusal arriving with no
-              explanation of what the consultant was looking at. */}
           {freshness.label && (
             <span
               className={cn(
-                "ml-1 font-medium",
+                "font-medium",
                 freshness.failed || freshness.freshness === "stale"
-                  ? "text-red-600 dark:text-red-400"
-                  : "text-amber-700 dark:text-amber-400",
+                  ? "text-red-700 dark:text-red-400"
+                  : "text-amber-800 dark:text-amber-400",
               )}
               title={
                 freshness.failed
-                  ? "The background refresh is failing. The cells below are the last ones that loaded — reload or retry in a moment."
-                  : "This grid refreshes about once a minute. Times are re-checked when you save them, so a stale cell can cost a click but cannot double-book."
+                  ? "The background refresh is failing. The times shown are the last ones that loaded — reload or try again in a moment."
+                  : "This calendar refreshes about once a minute. Times are re-checked when you save them, so an old view can cost a click but cannot double-book."
               }
             >
-              {" · "}
               {freshness.label}
             </span>
           )}
         </div>
       </div>
 
-      {/* Allocation Buttons - Bottom */}
       {showAllocationButtons && mode === "allocate" && (
         <div className="mt-2 flex shrink-0 flex-wrap justify-end gap-2">
           {onClose && (
@@ -2502,7 +1927,6 @@ export function UnifiedCalendar({
               Cancel
             </Button>
           )}
-
           <Button
             variant="default"
             size="sm"
@@ -2514,52 +1938,22 @@ export function UnifiedCalendar({
                 : "Automatically place every session on free times."
             }
           >
-            <Zap className="h-4 w-4 mr-2" />
+            <Zap className="mr-2 h-4 w-4" />
             Auto Allocate
           </Button>
-
-          {requestedSlots.length > 0 && (
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => allocateRequestedSlots(requestedSlots)}
-              disabled={isAllocating}
-            >
-              <Clock className="h-4 w-4 mr-2" />
-              Use Requested Times
-            </Button>
-          )}
-
           <Button
             variant="default"
             size="sm"
             onClick={() => manualAllocate()}
-            disabled={
-              isAllocating ||
-              !isValid ||
-              selectedSlots.length === 0 ||
-              selectedSlots.length !== requiredSlots
-            }
-            title={
-              !isValid
-                ? `Invalid selection: ${validationErrors.join(", ")}`
-                : selectedSlots.length === 0
-                  ? "Please select slots first"
-                  : selectedSlots.length !== requiredSlots
-                    ? `Need ${requiredSlots} slots, but ${selectedSlots.length} selected`
-                    : "Allocate the selected slots"
-            }
+            disabled={manualBlockedReason !== null}
+            title={manualBlockedReason ?? "Save the picked times."}
           >
-            <Users className="h-4 w-4 mr-2" />
-            {isAllocating ? "Allocating..." : "Allocate Manual Slots"}
+            <Users className="mr-2 h-4 w-4" />
+            {isAllocating ? "Saving…" : "Save picked times"}
           </Button>
         </div>
       )}
 
-      {/* #1206 — auto-allocation found room for only part of the plan. The
-          consultant decides between placing those sessions now and leaving the
-          request unallocated until more availability exists; nothing is
-          scheduled without this answer. */}
       <AlertDialog
         open={!!partialOffer}
         onOpenChange={(open) => {
@@ -2573,13 +1967,13 @@ export function UnifiedCalendar({
               sessions fit
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Your published availability in this scheduling period can hold{" "}
+              Your published availability in this period can hold{" "}
               {offer?.placeableSessions} session
               {offer?.placeableSessions === 1 ? "" : "s"}. Schedule those now
               and leave the remaining{" "}
               {(offer?.requiredSessions ?? 0) - (offer?.placeableSessions ?? 0)}{" "}
-              pending? The consultee is told how many are booked, and you can
-              allocate the rest once you open up more time.
+              pending? The client is told how many are booked, and you can
+              schedule the rest once you open up more time.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -2589,8 +1983,7 @@ export function UnifiedCalendar({
             <AlertDialogAction
               disabled={isAllocating}
               onClick={(event) => {
-                // The dialog must stay under the hook's control: closing it
-                // here would drop the in-flight state the retry reports into.
+                // Stays under the hook's control so the retry reports into it.
                 event.preventDefault();
                 void autoAllocate(availableSlots, { allowPartial: true });
               }}

@@ -165,7 +165,7 @@ export function allocatePolicy(handlers: PolicyHandlers): TimePickerPolicy {
     kind: "ALLOCATE",
     minLeadHours: 0,
     showReleasedSlots: false,
-    submitLabel: "Allocate slots",
+    submitLabel: "Save times",
     allowReleaseWithoutTime: false,
     calendarMode: "allocate",
     appliesInitialAllocationGuard: true,

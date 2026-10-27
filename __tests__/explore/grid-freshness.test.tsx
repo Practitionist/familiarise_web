@@ -13,11 +13,11 @@ import React, { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { isSlotStillOffered } from "../../app/explore/experts/[consultantId]/hooks/useAvailabilityWindow";
 import {
   availabilityQueryKey,
-  isSlotStillOffered,
   useAvailabilityWindow,
-} from "../../app/explore/experts/[consultantId]/hooks/useAvailabilityWindow";
+} from "../../lib/scheduling/use-availability-window";
 import { useSlotJustTaken } from "../../app/explore/experts/[consultantId]/hooks/useSlotJustTaken";
 import { useToast } from "../../hooks/use-toast";
 import {

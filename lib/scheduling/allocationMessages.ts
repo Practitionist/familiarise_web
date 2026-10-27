@@ -420,6 +420,14 @@ export const requestChangedElsewhere = (): AllocationToast => ({
     "This request was updated in another tab or by a teammate and can no longer be allocated. Refreshing the list.",
 });
 
+/** The request's tentative times moved in another tab; the page reloaded them. */
+export const requestRefreshedInPlace = (): AllocationToast => ({
+  variant: "destructive",
+  title: "This request just changed",
+  description:
+    "Its times were updated in another tab or by a teammate. The calendar has been refreshed — check the times and save again.",
+});
+
 /** Plan data anomaly: no totalSessions and no scheduling period. */
 export const planConfigIncomplete = (): AllocationToast => ({
   variant: "destructive",
@@ -439,11 +447,7 @@ export function signInHref(currentPath: string): string {
 }
 
 export type ValidationFailureKind =
-  | "session-ended"
-  | "forbidden"
-  | "indeterminate"
-  | "retry-later"
-  | "refused";
+  "session-ended" | "forbidden" | "indeterminate" | "retry-later" | "refused";
 
 /**
  * What a failed validate call means for the dialog. A 401 is now reserved
