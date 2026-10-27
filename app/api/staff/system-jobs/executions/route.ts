@@ -46,15 +46,12 @@ export async function GET(req: NextRequest) {
 
     const SYSTEM_TRIGGER_LABELS: Record<string, string> = {
       cron: "System (Cron)",
-      "cron-tick": "System (Cron)",
       "github-actions": "GitHub Actions",
-      manual: "Manual",
-      system: "System",
     };
 
-    // An admin run records `admin:<userId>` (or `admin-drain:<userId>`); older rows hold a bare user id.
+    // An admin run records `admin:<userId>`; older rows hold a bare user id.
     const userIdOf = (triggeredBy: string) =>
-      /^admin(?:-drain)?:(.+)$/.exec(triggeredBy)?.[1] ?? triggeredBy;
+      /^admin:(.+)$/.exec(triggeredBy)?.[1] ?? triggeredBy;
 
     // Get user info for user-triggered executions (excluding system trigger labels)
     const triggeredByIds = executions

@@ -209,9 +209,7 @@ function verdictOfError(error: unknown): RunVerdict | null {
 }
 
 const tickIdSchema = z.string().uuid();
-const runTriggerSchema = z
-  .string()
-  .regex(/^(cron|admin:[A-Za-z0-9_-]+|admin-drain:[A-Za-z0-9_-]+)$/);
+const runTriggerSchema = z.string().regex(/^(cron|admin:[A-Za-z0-9_-]+)$/);
 
 /** The ticker's per-tick id, when the caller is the ticker. */
 function tickIdOf(req: NextRequest): string | undefined {

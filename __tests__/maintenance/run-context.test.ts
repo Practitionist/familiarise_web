@@ -43,7 +43,7 @@ describe("run context", () => {
   });
 
   it("names the admin actor only for admin triggers", async () => {
-    await withRunContext({ triggeredBy: "admin-drain:user-9" }, async () => {
+    await withRunContext({ triggeredBy: "admin:user-9" }, async () => {
       expect(adminActorId()).toBe("user-9");
     });
     await withRunContext({ triggeredBy: "cron" }, async () => {

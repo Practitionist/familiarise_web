@@ -9,7 +9,7 @@ import {
 export interface RunContext {
   /** Execution rows `withCronLock` opened inside this run. */
   runIds: string[];
-  /** `cron`, `github-actions`, `admin:<userId>` or `admin-drain:<userId>`. */
+  /** `cron`, `github-actions` or `admin:<userId>`. */
   triggeredBy: string;
   tickId?: string;
   opsActionLogId?: string;
@@ -69,7 +69,7 @@ export function schedulerTrigger(): string {
   return process.env.GITHUB_ACTIONS ? "github-actions" : "cron";
 }
 
-const ADMIN_TRIGGER = /^admin(?:-drain)?:(.+)$/;
+const ADMIN_TRIGGER = /^admin:(.+)$/;
 
 /** The admin user who started the active run, for money writes that attribute a maker. */
 export function adminActorId(): string | undefined {
