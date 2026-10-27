@@ -30,7 +30,7 @@ Owner decision of 2026-10-26, recorded in `docs/decisions/2026-10-26-launch-swee
 ```bash
 gh pr view <n> --json headRefOid,isDraft,state
 gh pr view <n> --json headRefOid,author,comments \
-  --jq '.headRefOid as $h | .author.login as $pr | .comments[] | select(.body | startswith("READY TO LAND")) | {commentAuthor: .author.login, prAuthor: $pr, matchesHead: (.body | contains($h))}'
+  --jq '.headRefOid as $h | .author.login as $pr | .comments[] | select(.body | startswith("READY TO LAND")) | {commentAuthor: .author.login, prAuthor: $pr, createdAt: .createdAt, matchesHead: ([.body | scan("`([0-9a-f]{40})`") | .[0]] | first == $h)}'
 ```
 
-Accept a comment only when `matchesHead` is true and `commentAuthor` is `prAuthor` or the repository owner's account. Report which of the two it was. A comment from any other account does not count, even when it carries the right SHA.
+This listing only narrows the candidates; it is not the merge gate. `matchesHead` compares the first full 40-character SHA written in backticks with the live head, so a SHA inside quoted or unrelated text does not count. Accept a comment only when `matchesHead` is true, the comment is newer than the head commit, and `commentAuthor` is `prAuthor` or the repository owner's account. Report which of the two it was. A comment from any other account does not count, even when it carries the right SHA.

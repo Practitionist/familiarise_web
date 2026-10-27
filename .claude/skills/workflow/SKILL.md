@@ -15,4 +15,4 @@ This is the index for cross-cutting process — how a PR gets reviewed and how a
 
 ## Non-negotiables
 
-Every reviewer claim gets checked against the code as it stands today, not accepted or dismissed on the strength of the comment alone. Money-semantics threads on a non-money PR are reported as needs-decision and never changed unilaterally. A subagent fleet always runs its executors on a cheaper tier than the orchestrator that dispatches them, and every long-running agent prompt carries a limit clause so a dying agent leaves a resumable worktree rather than stranded work. Full detail and sources live in the two references above.
+Every reviewer claim gets checked against the code as it stands today, not accepted or dismissed on the strength of the comment alone. Money-semantics threads on a non-money PR are reported as needs-decision and never changed unilaterally. A subagent fleet always runs its executors on a cheaper tier than the orchestrator that dispatches them, and every long-running agent prompt carries a limit clause so a dying agent leaves a resumable worktree rather than stranded work. Full detail and sources live in the references above.
