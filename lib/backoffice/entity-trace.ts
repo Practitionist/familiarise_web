@@ -106,6 +106,18 @@ class TraceCollector {
     this.rows.push(...rows);
   }
 
+  /** A nested relation read with `take: cap + 1`: keeps `cap` items and records a cut. */
+  addCapped<T>(
+    source: TraceSource,
+    items: readonly T[],
+    cap: number,
+    toRows: (kept: T[]) => TraceRow[],
+  ): T[] {
+    const kept = items.slice(0, cap);
+    this.add(source, toRows(kept), items.length > cap);
+    return kept;
+  }
+
   /** One read: keeps the first `cap` items, records a cut, and survives a failure. */
   async read<T>(
     source: TraceSource,
@@ -179,7 +191,7 @@ async function readRootPayments(kind: EntityTrace["kind"], id: string) {
         childPayments: {
           select: PAYMENT_SELECT,
           orderBy: { createdAt: "desc" },
-          take: TRACE_PAYMENT_CAP,
+          take: TRACE_PAYMENT_CAP + 1,
         },
       },
       relationLoadStrategy: "join",
@@ -189,6 +201,7 @@ async function readRootPayments(kind: EntityTrace["kind"], id: string) {
     return {
       appointmentId: root.appointmentId,
       payments: [root, ...childPayments],
+      cap: TRACE_PAYMENT_CAP + 1,
     };
   }
   const appointment = await prisma.appointment.findUnique({
@@ -198,13 +211,17 @@ async function readRootPayments(kind: EntityTrace["kind"], id: string) {
       payment: {
         select: PAYMENT_SELECT,
         orderBy: { createdAt: "desc" },
-        take: TRACE_PAYMENT_CAP,
+        take: TRACE_PAYMENT_CAP + 1,
       },
     },
     relationLoadStrategy: "join",
   });
   if (!appointment) return null;
-  return { appointmentId: appointment.id, payments: appointment.payment };
+  return {
+    appointmentId: appointment.id,
+    payments: appointment.payment,
+    cap: TRACE_PAYMENT_CAP,
+  };
 }
 
 type RootPayment = NonNullable<
@@ -261,8 +278,9 @@ export async function readEntityTrace(args: {
   const root = await readRootPayments(args.kind, args.id);
   if (!root) return null;
   const t = new TraceCollector();
-  const payments = root.payments;
-  t.add("payment", payments.flatMap(paymentRows));
+  const payments = t.addCapped("payment", root.payments, root.cap, (kept) =>
+    kept.flatMap(paymentRows),
+  );
   const P = payments.map((p) => p.id);
   const A = root.appointmentId;
   const take = TRACE_ROW_CAP + 1;
@@ -467,7 +485,7 @@ export async function readEntityTrace(args: {
       note: true,
     },
     orderBy: { placedAt: "desc" },
-    take: TRACE_ROW_CAP,
+    take: TRACE_ROW_CAP + 1,
   } as const;
 
   const earnings = hasPayments
@@ -505,7 +523,7 @@ export async function readEntityTrace(args: {
             amountPaise: e.consultantSharePaise,
             currency: e.currency,
           };
-          t.add("hold", holdRows(e.holds));
+          t.addCapped("hold", e.holds, TRACE_ROW_CAP, holdRows);
           return [
             ...makeRow("earnings", e.id, "created", e.createdAt, {
               status: "Earnings recorded",
@@ -563,7 +581,7 @@ export async function readEntityTrace(args: {
           }),
         (e) => {
           const money = { amountPaise: e.orgSharePaise, currency: e.currency };
-          t.add("hold", holdRows(e.holds));
+          t.addCapped("hold", e.holds, TRACE_ROW_CAP, holdRows);
           return [
             ...makeRow("earnings", e.id, "created", e.createdAt, {
               status: "Organisation earnings recorded",
@@ -734,15 +752,14 @@ export async function readEntityTrace(args: {
                 issuedAt: true,
               },
               orderBy: { issuedAt: "desc" },
-              take: TRACE_ROW_CAP,
+              take: TRACE_ROW_CAP + 1,
             },
           },
           relationLoadStrategy: "join",
         }),
       (inv) => {
-        t.add(
-          "creditNote",
-          inv.creditNotes.flatMap((cn) =>
+        t.addCapped("creditNote", inv.creditNotes, TRACE_ROW_CAP, (kept) =>
+          kept.flatMap((cn) =>
             makeRow("creditNote", cn.id, "issued", cn.issuedAt, {
               status: `Credit note ${cn.creditNoteNumber}`,
               amountPaise: cn.totalPaise,
@@ -928,7 +945,7 @@ export async function readEntityTrace(args: {
                     actor: { select: { name: true } },
                   },
                   orderBy: { createdAt: "desc" },
-                  take: CASE_EVENT_CAP,
+                  take: CASE_EVENT_CAP + 1,
                 },
                 recommendations: {
                   where: { paymentId: { in: P } },
@@ -942,52 +959,56 @@ export async function readEntityTrace(args: {
                     proposedBy: { select: { name: true } },
                     decidedBy: { select: { name: true } },
                   },
-                  take: TRACE_ROW_CAP,
+                  take: TRACE_ROW_CAP + 1,
                 },
               },
               relationLoadStrategy: "join",
             }),
-          (c) => [
-            ...makeRow("support", c.id, "opened", c.createdAt, {
+          (c) => {
+            t.addCapped("support", c.events, CASE_EVENT_CAP, (events) =>
+              events.flatMap((ev) =>
+                makeRow("support", c.id, `event:${ev.id}`, ev.createdAt, {
+                  status: `Case ${c.referenceNumber}: ${ev.kind}`,
+                  actor: ev.actor?.name ?? null,
+                  detail:
+                    ev.fromValue || ev.toValue
+                      ? `${ev.fromValue ?? "—"} → ${ev.toValue ?? "—"}`
+                      : null,
+                }),
+              ),
+            );
+            t.addCapped("support", c.recommendations, TRACE_ROW_CAP, (recs) =>
+              recs.flatMap((rec) => [
+                ...makeRow("support", rec.id, "proposed", rec.createdAt, {
+                  status: "Refund recommended",
+                  amountPaise: rec.amountPaise,
+                  currency: "INR",
+                  actor: rec.proposedBy.name,
+                  detail: `case ${c.referenceNumber}`,
+                }),
+                ...makeRow("support", rec.id, "decided", rec.decidedAt, {
+                  status: rec.approved
+                    ? "Recommendation approved"
+                    : "Recommendation declined",
+                  actor: rec.decidedBy?.name ?? null,
+                }),
+                ...makeRow("support", rec.id, "voided", rec.voidedAt, {
+                  status: "Recommendation voided",
+                }),
+              ]),
+            );
+            return makeRow("support", c.id, "opened", c.createdAt, {
               status: `Case ${c.referenceNumber} opened`,
               actor: c.requester.name,
               detail: c.title,
-            }),
-            ...c.events.flatMap((ev) =>
-              makeRow("support", c.id, `event:${ev.id}`, ev.createdAt, {
-                status: `Case ${c.referenceNumber}: ${ev.kind}`,
-                actor: ev.actor?.name ?? null,
-                detail:
-                  ev.fromValue || ev.toValue
-                    ? `${ev.fromValue ?? "—"} → ${ev.toValue ?? "—"}`
-                    : null,
-              }),
-            ),
-            ...c.recommendations.flatMap((rec) => [
-              ...makeRow("support", rec.id, "proposed", rec.createdAt, {
-                status: "Refund recommended",
-                amountPaise: rec.amountPaise,
-                currency: "INR",
-                actor: rec.proposedBy.name,
-                detail: `case ${c.referenceNumber}`,
-              }),
-              ...makeRow("support", rec.id, "decided", rec.decidedAt, {
-                status: rec.approved
-                  ? "Recommendation approved"
-                  : "Recommendation declined",
-                actor: rec.decidedBy?.name ?? null,
-              }),
-              ...makeRow("support", rec.id, "voided", rec.voidedAt, {
-                status: "Recommendation voided",
-              }),
-            ]),
-          ],
+            });
+          },
         )
       : [];
 
   const caseIds = cases.map((c) => c.id);
   const recommendationIds = cases.flatMap((c) =>
-    c.recommendations.map((r) => r.id),
+    c.recommendations.slice(0, TRACE_ROW_CAP).map((r) => r.id),
   );
   const targets: { targetKind: string; ids: (string | null)[] }[] = [
     { targetKind: "Payment", ids: P },

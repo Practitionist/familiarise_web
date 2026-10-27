@@ -56,6 +56,21 @@ describe("missed window", () => {
     expect(batch(new Date("2026-10-26T20:10:00Z"), afterOpen)).toBe("ok");
   });
 
+  it("maps an overridden execution name and stops judging a window older than the trail", () => {
+    expect(scheduleForJob("tds-26q-draft-export")?.name).toBe(
+      "tds-return-draft",
+    );
+    const tds = (at: string) =>
+      assessMissedWindow({
+        jobName: "tds-26q-draft-export",
+        lastSuccessAt: null,
+        now: new Date(at),
+      }).state;
+    // The Jul 5 window is 91 days old, past the 90-day trail; Oct 5 has opened.
+    expect(tds("2026-10-04T12:00:00Z")).toBe("ok");
+    expect(tds("2026-10-05T04:00:00Z")).toBe("missed");
+  });
+
   it("leaves a job with no SLO and no ticker cadence unscheduled", () => {
     expect(
       assessMissedWindow({
@@ -146,4 +161,25 @@ it("reports no-runs instead of missed when a non-production deployment has no su
   expect(
     production.jobs.find((j) => j.jobName === "prune-audit-logs")?.missed.state,
   ).not.toBe("no-runs");
+});
+
+it("keeps a stopped ticker job with no run in 7 days on the table as missed", () => {
+  const metrics = buildJobRunMetrics({
+    now,
+    environment: "production",
+    counts: [],
+    percentiles: [],
+    daily: [],
+    lastSuccess: [
+      { jobName: "cleanup-abandoned-payments", endedAt: ago(9 * 24 * 60) },
+    ],
+  });
+  const names = metrics.jobs.map((j) => j.jobName);
+  expect(names).toContain("cleanup-abandoned-payments");
+  expect(names).toContain("tds-26q-draft-export");
+  expect(names).not.toContain("tds-return-draft");
+  expect(
+    metrics.jobs.find((j) => j.jobName === "cleanup-abandoned-payments")
+      ?.missed,
+  ).toEqual({ state: "missed", basis: "interval" });
 });

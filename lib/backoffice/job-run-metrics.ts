@@ -8,6 +8,7 @@ import {
 } from "@/lib/cron/operational-health";
 import {
   JOB_SCHEDULES,
+  jobNameFor,
   windowStartFor,
   type JobSchedule,
 } from "@/lib/cron/schedule";
@@ -67,9 +68,16 @@ export function istDayKeys(now: Date, count = METRICS_DAYS): string[] {
   );
 }
 
-/** The ticker target a lock name runs under: the same name, else the longest `-<target>` suffix. */
+/** Execution-row names of every ticker target that writes one. */
+const TICKER_JOB_NAMES = JOB_SCHEDULES.map((s) => jobNameFor(s.name)).filter(
+  (name): name is string => name !== null,
+);
+
+/** The ticker target a job name runs under: its name or override, else the longest `-<target>` suffix. */
 export function scheduleForJob(jobName: string): JobSchedule | undefined {
-  const exact = JOB_SCHEDULES.find((s) => s.name === jobName);
+  const exact = JOB_SCHEDULES.find(
+    (s) => s.name === jobName || jobNameFor(s.name) === jobName,
+  );
   if (exact) return exact;
   return JOB_SCHEDULES.filter((s) => jobName.endsWith(`-${s.name}`)).sort(
     (a, b) => b.name.length - a.name.length,
@@ -123,7 +131,11 @@ export function assessMissedWindow(args: {
   if (!schedule) return { state: "unscheduled", basis: null };
   if (schedule.window) {
     const due = latestDueWindowStart(schedule, now);
-    const missed = due !== null && (!lastSuccessAt || lastSuccessAt < due);
+    // A window opened before the lookback may have a success the trail no longer holds.
+    const judgeable =
+      due !== null &&
+      due.getTime() >= now.getTime() - LAST_SUCCESS_LOOKBACK_DAYS * DAY_MS;
+    const missed = judgeable && (!lastSuccessAt || lastSuccessAt < due);
     return { state: missed ? "missed" : "ok", basis: "window" };
   }
   const limitMs = (2 * schedule.everyMinutes + 5) * MINUTE_MS;
@@ -149,12 +161,17 @@ export interface MetricInputs {
 const roundMs = (v: number | null | undefined) =>
   v === null || v === undefined ? null : Math.round(v);
 
-/** Folds the four reads into one row per job; missed jobs sort first. */
+/**
+ * Folds the four reads into one row per job; missed jobs sort first. A job off
+ * the ticker with no SLO drops out once it has no run in 7 days and no success in 90.
+ */
 export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
   const days = istDayKeys(input.now);
   const names = new Set<string>([
     ...input.counts.map((c) => c.jobName),
+    ...input.lastSuccess.map((l) => l.jobName),
     ...OPERATIONAL_COMPLETION_REQUIREMENTS.map((r) => r.jobName),
+    ...TICKER_JOB_NAMES,
   ]);
   const jobs = [...names].map((jobName): JobRunMetric => {
     const mine = input.counts.filter((c) => c.jobName === jobName);

@@ -177,7 +177,9 @@ export function JobRunMetrics({
               )}
               <TableCell className="whitespace-nowrap text-xs">
                 {job.lastSuccessAt
-                  ? new Date(job.lastSuccessAt).toLocaleString()
+                  ? new Date(job.lastSuccessAt).toLocaleString("en-IN", {
+                      timeZone: "Asia/Kolkata",
+                    })
                   : "None recorded"}
               </TableCell>
               <TableCell>

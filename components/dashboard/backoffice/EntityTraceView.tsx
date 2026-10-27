@@ -58,7 +58,9 @@ const KIND_LABEL: Record<TraceKind, string> = {
   user: "User",
 };
 
-const when = (iso: string) => new Date(iso).toLocaleString();
+/** Pinned to IST so the server render and hydration print the same text. */
+const when = (iso: string) =>
+  new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
 
 function Empty({ children }: Readonly<{ children: ReactNode }>) {
   return <p className="py-6 text-sm text-muted-foreground">{children}</p>;
