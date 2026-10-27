@@ -18,11 +18,10 @@
  * bounded email and is not idempotent, so it never repeats inside its window.
  */
 
-import { COMPLIANCE_ALERT_EMAIL } from "@/lib/company";
+import { COMPLIANCE_ALERT_EMAIL, SUPPORT_EMAIL } from "@/lib/company";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
-import { OPS_EMAIL } from "@/lib/email/config";
 import { sendComplianceAlertEmail } from "@/lib/email/senders/onboarding";
 import { notifyComplianceAlert } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
@@ -179,7 +178,7 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
         {
           from: SENDERS.ops,
           to,
-          replyTo: OPS_EMAIL,
+          replyTo: SUPPORT_EMAIL,
           subject: title,
           html: `<p>${summaryReason}</p><p><a href="${dashboardUrl}">Open compliance dashboard</a></p>`,
         },

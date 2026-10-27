@@ -44,7 +44,6 @@ Outbound Bulk / Waitlist (@news.familiarisenow.com):
 
 Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
   connect@practitionist.com              -- The one live mailbox (SUPPORT_EMAIL): Reply-To, support, contact, billing, grievance and compliance alerts
-  ops@familiarisenow.com                 -- Reply-To for ops/canary/quota/compliance alerts (OPS_EMAIL)
   dpdp@familiarisenow.com                -- Privacy & DPDP statutory contact
   billing@familiarisenow.com             -- Optional alias; tax invoices print BILLING_EMAIL, which equals SUPPORT_EMAIL
   dmarc@familiarisenow.com               -- Aggregate DMARC reports (rua=mailto:dmarc@familiarisenow.com)

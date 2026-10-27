@@ -7,9 +7,6 @@ import {
   SUPPORT_EMAIL,
 } from "@/lib/company";
 
-/** Reply-To on ops alerts, so a reply never loops back to the alert recipient. */
-export const OPS_EMAIL = "ops@familiarisenow.com";
-
 export function transactionalDomain(): string {
   return EMAIL_TRANSACTIONAL_DOMAIN;
 }

@@ -4,12 +4,12 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { BREACH_REPORTING_DEADLINE_HOURS } from "@/lib/backoffice/queue-predicates";
 import { stage } from "@/lib/email/deliver";
-import { SENDERS, OPS_EMAIL } from "@/lib/email/config";
+import { SENDERS } from "@/lib/email/config";
 import { notifyComplianceAlert } from "@/lib/novu/service";
 import { postOpsChat } from "@/lib/observability/ops-chat";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { getAppUrl } from "@/lib/url";
-import { COMPLIANCE_ALERT_EMAIL } from "@/lib/company";
+import { COMPLIANCE_ALERT_EMAIL, SUPPORT_EMAIL } from "@/lib/company";
 
 const ACTIVE_PREFIX = "compliance:databreach-deadline:active:";
 const COMPLETE_PREFIX = "compliance:databreach-deadline:complete:";
@@ -143,7 +143,7 @@ async function stageOfficer(
         {
           from: SENDERS.ops,
           to: officer,
-          replyTo: OPS_EMAIL,
+          replyTo: SUPPORT_EMAIL,
           subject: title,
           html: `<p>${reason}</p><p><a href="${dashboardUrl}">Open compliance dashboard</a></p>`,
         },

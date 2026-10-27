@@ -187,7 +187,7 @@ stateDiagram-v2
 
 ```text
 lib/email/
-├── config.ts             -- SENDERS getters, OPS_EMAIL, EMAIL_BUDGET_MS, domain/mailbox helpers
+├── config.ts             -- SENDERS getters, EMAIL_BUDGET_MS, domain/mailbox helpers
 ├── deliver.ts            -- deliver() = stage() (60s inline lease) + attempt(); getResendClient()
 ├── idempotency.ts        -- idempotencyKeyFor(msg, type, rowId) -> "<TYPE>/failed-email/<rowId>"
 ├── unsubscribe.ts        -- HMAC link tokens, RFC 8058 headers & stateless reconstructUnsubscribeHeaders()
@@ -229,10 +229,10 @@ lib/email/
    - **Lifecycle (`/api/notifications/unsubscribe`)**: `GET` performs zero DB writes and returns a `303` redirect to `/email/unsubscribe`; `POST` verifies the HMAC token, sets `emailEnabled: false` on `NotificationPreference` (leaving in-app notifications untouched), and syncs Novu via `updateSubscriberPreferences`.
    - **Waitlist (`/api/waitlist/unsubscribe`)**: `GET` performs zero DB writes and renders a self-contained HTML confirmation page with a `<form method="post">`; `POST` executes immediate one-click opt-out (`unsubscribe({ email, token })`), preventing corporate mail link scanners from silently unsubscribing users on prefetch.
 
-### Inbound Mailboxes, ImprovMX & DMARC Alignment
+### Sending Domains & DMARC Alignment
 
 - **Sending Subdomains**: `mail.familiarisenow.com` (transactional/ops) and `news.familiarisenow.com` (newsletter) use verified Resend DKIM keys (`resend._domainkey.mail` / `.news`) and Return-Path SPF/MX alignment (`send.mail` / `send.news` -> `ap-northeast-1` SES).
-- **Apex Inbound Forwarding (ImprovMX) & DMARC**: Root `@` MX records point to `mx1.improvmx.com` and `mx2.improvmx.com` to deliver `support@`, `ops@` (`OPS_EMAIL`), `dpdp@`, `billing@`, and `dmarc@familiarisenow.com` to operator mailboxes, paired with apex TXT `v=spf1 -all` and `_dmarc` TXT `v=DMARC1; p=quarantine; rua=mailto:dmarc@familiarisenow.com`.
+- **Send-only product domain**: `familiarisenow.com` is send-only (Resend): it has no MX record, so nothing sent to an address on it arrives. Every inbound address is `connect@practitionist.com` through `SUPPORT_EMAIL` in `lib/company.ts`, and inbound mail for the product domain is an open item in the Practitionist vendor-architecture planning issue.
 
 ---
 
@@ -352,3 +352,5 @@ flowchart LR
   - **Fail-Open Subscriber Sync**: Replaced catch-all defaults (`masterEnabled: true`) and 404-prone PATCH calls with fail-closed DB propagation and idempotent `novu.subscribers.create(...)`.
 - **Intentionally Retained Vendor-Plane Split (Novu In-App vs. Direct Resend Email)**:
   - Outbound emails are **not** routed through Novu's email step so transactional notices never depend on a second vendor's multi-tenant queue availability, bypass Novu's 20-workflow plan cap across 45+ React Email templates, and preserve native `resend.batch.send` throughput and `EmailEvent` Svix telemetry.
+
+- **Inbound forwarding via ImprovMX (planned, never configured)**: root `@` MX records `mx1.improvmx.com` and `mx2.improvmx.com` were meant to deliver `support@`, `ops@`, `dpdp@`, `billing@` and `dmarc@familiarisenow.com` to operator mailboxes, with apex TXT `v=spf1 -all` and a `_dmarc` TXT. The MX records were never created; remove any leftover reference.

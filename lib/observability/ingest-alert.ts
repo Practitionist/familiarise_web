@@ -24,12 +24,8 @@
  * simple as possible.
  */
 
-import {
-  EMAIL_BUDGET_MS,
-  OPS_EMAIL,
-  SENDERS,
-  supportEmail,
-} from "@/lib/email/config";
+import { SUPPORT_EMAIL } from "@/lib/company";
+import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "@/lib/email/config";
 import { deliver } from "@/lib/email/deliver";
 import { describeIngest, type IngestProbeResult } from "./ingest-canary";
 import { postOpsChat } from "./ops-chat";
@@ -361,7 +357,7 @@ export async function sendSentryIngestAlert(
     {
       from: SENDERS.ops,
       to: canaryAlertRecipient(),
-      replyTo: OPS_EMAIL,
+      replyTo: SUPPORT_EMAIL,
       subject,
       text,
       html,
