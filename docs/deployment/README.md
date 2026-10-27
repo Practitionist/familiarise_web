@@ -45,7 +45,7 @@ This is the one inventory of domains, registrars, nameservers and mail records. 
 | Domain               | Registrar (expires)  | Nameservers                                                   | Mail                                                  |
 | :------------------- | :------------------- | :------------------------------------------------------------ | :---------------------------------------------------- |
 | `familiarisenow.com` | GoDaddy (2027-01-13) | Netlify DNS (NS1: `dns1.p06.nsone.net`, `dns2.p06.nsone.net`) | Send-only through Resend. Receives no mail (null MX). |
-| `practitionist.com`  | GoDaddy (2027-02-02) | GoDaddy DNS (`domaincontrol.com`)                             | GoDaddy-hosted mailboxes `dipankar@` and `connect@`.  |
+| `practitionist.com`  | GoDaddy (2027-02-02) | GoDaddy DNS (`domaincontrol.com`)                             | Two GoDaddy-hosted mailboxes, including `connect@`.   |
 
 The registrar only holds the registration and the nameserver delegation. For `familiarisenow.com`, every record is edited in the Netlify zone, never in GoDaddy.
 
