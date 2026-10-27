@@ -174,26 +174,47 @@ there is no separate Actions wrapper or data-export workflow.
 
 ## Bundle shape
 
-Flat JSON, schemaVersion `1`. Top-level keys:
+Flat JSON, schemaVersion `1`. New requests select one kind; keys from the
+other kind are absent. These examples show the top-level shape with empty
+collections.
+
+`PEOPLE`:
 
 ```json
 {
   "organizationId": "org_xxx",
   "generatedAt": "2026-05-15T10:00:00.000Z",
   "schemaVersion": 1,
-  "organization": { ... },
-  "members": [ { id, name, email } ],
-  "memberships": [ ... ],
-  "contracts": [ ... ],
-  "programs": [ ... ],
-  "invoices": [ ... ],
-  "earnings": [ ... ],
-  "payouts": [ ... ],
-  "auditLog": [ ... ]
+  "kinds": ["PEOPLE"],
+  "organization": { "id": "org_xxx" },
+  "members": [],
+  "memberships": [],
+  "auditLog": [],
+  "excludedForConsent": 0
 }
 ```
 
-The audit log included reflects the platform-wide retention policy
+`FINANCE`:
+
+```json
+{
+  "organizationId": "org_xxx",
+  "generatedAt": "2026-05-15T10:00:00.000Z",
+  "schemaVersion": 1,
+  "kinds": ["FINANCE"],
+  "organization": { "id": "org_xxx" },
+  "contracts": [],
+  "programs": [],
+  "invoices": [],
+  "earnings": [],
+  "payouts": []
+}
+```
+
+An existing `FULL` job combines both sets and declares both entries in `kinds`.
+New requests do not accept `FULL`.
+
+When included in a people export, the audit log reflects the platform-wide retention policy
 (7y for INVOICE / PAYOUT / WALLET / CONTRACT / CONSENT; 2y for
 everything else — see `scripts/cleanup/prune-audit-logs.ts`). Older
 rows have already been pruned by the `prune-audit-logs` cron and are
