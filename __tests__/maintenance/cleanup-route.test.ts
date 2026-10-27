@@ -70,7 +70,11 @@ jest.mock("../../lib/prisma", () => ({
 
 import type { NextRequest } from "next/server";
 import prisma from "../../lib/prisma";
-import { noteRunFinished, noteRunId } from "../../lib/cron/run-context";
+import {
+  currentRun,
+  noteRunFinished,
+  noteRunId,
+} from "../../lib/cron/run-context";
 import * as Sentry from "@sentry/core";
 
 import {
@@ -96,8 +100,11 @@ const SECRET = "test-cron-secret";
 
 const TICK = "6f1c2b8e-3d4a-4f5b-9c6d-7e8f9a0b1c2d";
 
-function request(auth: string | null = `Bearer ${SECRET}`): NextRequest {
-  const headers = new Headers({ "x-tick-id": TICK });
+function request(
+  auth: string | null = `Bearer ${SECRET}`,
+  extra: Record<string, string> = {},
+): NextRequest {
+  const headers = new Headers({ "x-tick-id": TICK, ...extra });
   if (auth !== null) headers.set("authorization", auth);
   return { headers } as unknown as NextRequest;
 }
@@ -429,6 +436,27 @@ describe("cleanupRoute run record", () => {
       status: "FAILED",
       result: expect.objectContaining({ outcome: "partial" }),
     });
+  });
+
+  it("takes the run trigger header only behind a valid bearer, and only in the allowed shape", async () => {
+    const seen: (string | undefined)[] = [];
+    const { POST } = cleanupRoute({
+      job: "transfer-recordings",
+      run: async () => {
+        seen.push(currentRun()?.triggeredBy);
+        return { success: true };
+      },
+    });
+    const admin = { "x-run-trigger": "admin:user_1" };
+
+    const refused = await POST(
+      request("Bearer wrong-secret-of-equal-length", admin),
+    );
+    expect(refused.status).toBe(401);
+    expect(executions.create).not.toHaveBeenCalled();
+    await POST(request(undefined, { "x-run-trigger": "admin:x;drop" }));
+    await POST(request(undefined, admin));
+    expect(seen).toEqual(["cron", "admin:user_1"]);
   });
 
   it("writes a zero-duration CANCELLED held row naming the holder on a 409", async () => {

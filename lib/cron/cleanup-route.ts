@@ -205,6 +205,9 @@ function verdictOfError(error: unknown): RunVerdict | null {
 }
 
 const tickIdSchema = z.string().uuid();
+const runTriggerSchema = z
+  .string()
+  .regex(/^(cron|admin:[A-Za-z0-9_-]+|admin-drain:[A-Za-z0-9_-]+)$/);
 
 /** The ticker's per-tick id, when the caller is the ticker. */
 function tickIdOf(req: NextRequest): string | undefined {
@@ -368,6 +371,12 @@ export function cleanupRoute<T extends object>(
             outcome: "failure",
           };
         }
+        // An authenticated dispatcher (the admin door's background hop) names the trigger.
+        const trigger = runTriggerSchema.safeParse(
+          req.headers.get("x-run-trigger"),
+        );
+        const active = currentRun();
+        if (trigger.success && active) active.triggeredBy = trigger.data;
       }
       // The cron core is shared with the jobs/** entrypoint, which exits on
       // maintenance; this HTTP twin cannot exit, so it answers 503 instead.

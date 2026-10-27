@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { currentRun } from "@/lib/cron/run-context";
 import { STREAM_LIFECYCLE_JOBS, targetRequest } from "@/lib/cron/schedule";
 
 export const backgroundJobSchema = z.enum([
@@ -35,9 +36,14 @@ export async function dispatchBackgroundJob(
   const destination = new URL(targetRequest(configured.origin, job).url);
   if (job === "stream-sync" && options.dryRun)
     destination.searchParams.set("dry-run", "true");
+  // The worker records who started it; the route trusts this only behind the bearer check.
+  const trigger = currentRun()?.triggeredBy;
   const response = await fetch(destination, {
     method: "POST",
-    headers: { authorization: `Bearer ${secret}` },
+    headers: {
+      authorization: `Bearer ${secret}`,
+      ...(trigger ? { "x-run-trigger": trigger } : {}),
+    },
     redirect: "error",
     signal: AbortSignal.timeout(10_000),
   });
