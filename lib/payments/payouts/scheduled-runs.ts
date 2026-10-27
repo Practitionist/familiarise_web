@@ -41,6 +41,7 @@ export async function runCreatePayoutBatches(opts: {
       const org = await createOrgPayoutBatches({
         periodEnd: opts.windowStart ?? new Date(),
         limit: opts.limit,
+        createdBy: opts.createdBy,
       });
       return {
         success: true,
@@ -132,7 +133,10 @@ export async function runProcessPayouts(opts: {
       }
     }
 
-    const org = await processPendingOrgPayouts({ limit: opts.limit });
+    const org = await processPendingOrgPayouts({
+      limit: opts.limit,
+      triggeredByUserId: opts.triggeredByUserId,
+    });
     errors.push(...org.errors);
 
     return {

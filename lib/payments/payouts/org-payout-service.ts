@@ -21,6 +21,7 @@ import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { assertPayoutBalance } from "./balance-preflight";
 import { PAYOUT_CONSTANTS } from "./constants";
+import { isMakerCheckerDisbursementBlocked } from "./maker-checker";
 import {
   payoutAccountChangedAt,
   payoutAccountHold,
@@ -1063,7 +1064,7 @@ export interface OrgProcessingResult {
 
 /** `limit` caps the claims plus failures per pass; an unclaimable row does not count. */
 export async function processPendingOrgPayouts(
-  opts: { limit?: number } = {},
+  opts: { limit?: number; triggeredByUserId?: string } = {},
 ): Promise<OrgProcessingResult> {
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
 
@@ -1072,7 +1073,7 @@ export async function processPendingOrgPayouts(
       status: { in: PAYOUT_ALLOWED_FROM.PROCESSING },
       platformHeldAt: null,
     },
-    select: { id: true },
+    select: { id: true, approvedBy: true, orgApprovedBy: true },
     orderBy: { createdAt: "asc" },
   });
   result.scanned = pending.length;
@@ -1083,6 +1084,18 @@ export async function processPendingOrgPayouts(
       result.advanced + result.errors.length >= opts.limit
     ) {
       break;
+    }
+    // Either approver who also triggered this run is skipped before any claim, as on the consultant rail.
+    const approver =
+      p.approvedBy === opts.triggeredByUserId ? p.approvedBy : p.orgApprovedBy;
+    if (
+      await isMakerCheckerDisbursementBlocked(
+        p.id,
+        approver,
+        opts.triggeredByUserId,
+      )
+    ) {
+      continue;
     }
     try {
       const out = await processOrgPayout(p.id);
@@ -2200,6 +2213,8 @@ export async function createOrgPayoutBatches(opts?: {
   periodEnd?: Date;
   /** Caps the payouts created plus failures; already-batched and refused orgs do not count. */
   limit?: number;
+  /** The admin who started a manual run; scheduled runs leave it unset and mint as SYSTEM_CRON. */
+  createdBy?: string;
 }): Promise<OrgBatchResult> {
   const { createHash } = await import("crypto");
   const { getActiveOrgMaintenanceWindow } = await import("@/lib/maintenance");
@@ -2259,6 +2274,7 @@ export async function createOrgPayoutBatches(opts?: {
       const out = await createOrgPayoutBatch(orgId, periodStart, periodEnd, {
         idempotencyKey,
         notes: `Weekly cron batch ${periodStart.toISOString()} → ${periodEnd.toISOString()}`,
+        createdBy: opts?.createdBy,
       });
       if (out.alreadyExisted) {
         result.payoutsAlreadyExisted++;
