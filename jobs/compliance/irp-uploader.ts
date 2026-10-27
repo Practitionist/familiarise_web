@@ -32,32 +32,18 @@ import { buildIrpPayload } from "@/lib/compliance/irp-payload";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
 import * as Sentry from "@sentry/nextjs";
-import { isValidGstin } from "@/lib/compliance/gst";
-import { supplierStateCode } from "@/lib/payments/billing/consumer-invoice";
+import { REGISTERED_OFFICE } from "@/lib/company";
+import { getPlatformSupplier } from "@/lib/pdf/supplier";
 
-// #703 — platform-side seller constants. GSTIN mirrors the invoice-PDF
-// route (PLATFORM_GSTIN); the rest are env-overridable for a future
-// per-region supplier. Seller state code is derived from the GSTIN prefix
-// inside the mapper, SUPPLIER_STATE_CODE is the fallback.
-// CR #1234 — the dummy-GSTIN fallback is gone: an unset or malformed
-// PLATFORM_GSTIN yields null, the uploader skips the batch item with a
-// logged reason, and buildIrpPayload's own missing-GSTIN guard stays the
-// second net. No statutory payload may carry a fabricated identity.
-const SELLER = (() => {
-  const gstin = process.env.PLATFORM_GSTIN?.trim();
-  return {
-    gstin: gstin && isValidGstin(gstin) ? gstin : null,
-    legalName:
-      process.env.SUPPLIER_LEGAL_NAME ??
-      "Familiarise Technologies Private Limited",
-    address1: process.env.SUPPLIER_ADDR1 ?? "Koramangala 1st Block",
-    location: process.env.SUPPLIER_LOCATION ?? "Bangalore",
-    pincode: process.env.SUPPLIER_PINCODE ?? "560034",
-  };
-})();
-
-/** The per-run seller identity: the validated GSTIN plus the state resolved from it (#1447). */
-type SellerIdentity = { gstin: string; stateCode: string };
+/** The seller block: the legal entity in lib/company.ts with the gated GSTIN. */
+type SellerIdentity = {
+  gstin: string;
+  legalName: string;
+  address1: string;
+  location: string;
+  pincode: string;
+  stateCode: string;
+};
 
 // #476 — entry-level cron lock, fail-closed: an IRN is a statutory object
 // registered with the government and cancellable only inside a 24-hour window,
@@ -109,7 +95,7 @@ function buildPayloadFor(
       stateCode: candidate.organization.taxInfo?.gstStateCode ?? null,
       hsnDefault: candidate.organization.taxInfo?.hsnDefault ?? "999293",
     },
-    seller: { ...SELLER, ...seller },
+    seller,
   });
 }
 
@@ -270,23 +256,21 @@ async function runIrpUploaderUnlocked(opts: {
   console.log("[cron][irp-uploader] starting");
   Sentry.logger.info("job:irp-uploader started");
 
-  // Config gate before any invoice is touched: a missing/malformed
-  // PLATFORM_GSTIN is an ENV outage, not a per-invoice defect — failing each
-  // candidate permanently (MAP: seller GSTIN missing) would burn the whole
-  // queue on a fixable config slip.
-  const sellerGstin = SELLER.gstin;
-  if (!sellerGstin) {
+  // Config gate before any invoice is touched: an unset, malformed or
+  // wrong-state PLATFORM_GSTIN is an ENV outage, not a per-invoice defect, so
+  // the run is skipped and every row stays PENDING.
+  const supplier = getPlatformSupplier();
+  if (!supplier) {
     return configSkip("PLATFORM_GSTIN not configured", opts.windowStart);
   }
-  // #1447 — GSTIN-first seller state; a GSTIN/env mismatch is the same ENV
-  // outage as a missing GSTIN, so the run is skipped and every row stays PENDING.
-  let seller: SellerIdentity;
-  try {
-    seller = { gstin: sellerGstin, stateCode: supplierStateCode() };
-  } catch (err) {
-    console.error(`[cron][irp-uploader] ${String(err)} — skipping run`);
-    return { processed: 0, failed: 0, skippedRows: 0 };
-  }
+  const seller: SellerIdentity = {
+    gstin: supplier.gstin,
+    legalName: supplier.name,
+    address1: REGISTERED_OFFICE.line1,
+    location: REGISTERED_OFFICE.city,
+    pincode: REGISTERED_OFFICE.pincode,
+    stateCode: REGISTERED_OFFICE.stateCode,
+  };
   // CR #1234 r5 — preflight the FULL provider configuration. generateIrn
   // marks rows FAILED on a missing CLEARTAX_* credential, so an auth outage
   // would burn all twelve retries per pending invoice and permanently fail

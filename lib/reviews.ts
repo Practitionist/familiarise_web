@@ -614,6 +614,7 @@ function loadReviewableAppointments(
   unreviewedOnly?: boolean,
 ) {
   return prisma.appointment.findMany({
+    relationLoadStrategy: "join",
     where: {
       ...(appointmentId ? { id: appointmentId } : {}),
       ...(unreviewedOnly

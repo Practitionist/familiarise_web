@@ -1,16 +1,12 @@
 /**
  * Platform supplier identity for statutory documents (tax invoices, credit
- * notes, IRP payloads).
- *
- * #1132/#1230 — this used to fall back to a hard-coded dummy GSTIN
- * ("29AAFCF1234Q1ZN") when PLATFORM_GSTIN was unset, which produced
- * legal-looking tax invoices carrying a fabricated GSTIN if an env var ever
- * slipped. The contract is now FAIL-CLOSED: callers must handle the null
- * case (the PDF routes return 503 with an ops-actionable message) rather
- * than minting documents a GST officer would flag as impersonation.
+ * notes, IRP payloads). The name and address are the legal entity in
+ * `lib/company.ts`; only the GSTIN is deployment config.
  */
 
 import { isValidGstin } from "@/lib/compliance/gst";
+import { numericStateCode } from "@/lib/compliance/state-codes";
+import { COMPANY_INFO, REGISTERED_OFFICE } from "@/lib/company";
 import { billingEmail } from "@/lib/email/config";
 
 export interface PlatformSupplier {
@@ -20,22 +16,52 @@ export interface PlatformSupplier {
   email: string;
 }
 
+/** The refusal every statutory-document reader answers when `getPlatformSupplier()` is null. */
+export const SUPPLIER_UNAVAILABLE_MESSAGE =
+  "PLATFORM_GSTIN is unset, malformed, or registered in a state other than the registered office; the platform cannot issue statutory documents.";
+
+/** PLATFORM_GSTIN when it is well-formed, whatever its state. */
+export function configuredGstin(): string | null {
+  const gstin = process.env.PLATFORM_GSTIN?.trim();
+  return gstin && isValidGstin(gstin) ? gstin : null;
+}
+
 /**
- * Returns the platform supplier identity, or null when PLATFORM_GSTIN is
- * not configured. Kept as a read (not a throwing helper) so callers choose
- * their own failure shape — a 503 on a download route vs. skipping an IRP
- * batch item with EXPIRED_WINDOW semantics.
+ * PURE. The supplier's own GST state: the GSTIN's first two digits, which are
+ * the state of registration by law, or the registered office's while no GSTIN
+ * is set. A GSTIN from another state contradicts the address every document
+ * prints, so it resolves to no state and the caller refuses.
+ */
+export function resolveSupplierStateCode(
+  gstin: string | null | undefined,
+  registeredStateCode: string,
+): {
+  stateCode: string | null;
+  mismatch: { fromGstin: string; registered: string } | null;
+} {
+  const fromGstin = numericStateCode(gstin, null);
+  const registered = numericStateCode(null, registeredStateCode);
+  if (fromGstin && registered && fromGstin !== registered) {
+    return { stateCode: null, mismatch: { fromGstin, registered } };
+  }
+  return { stateCode: fromGstin ?? registered, mismatch: null };
+}
+
+/**
+ * The supplier identity, or null when PLATFORM_GSTIN is unset, malformed, or
+ * from a state other than the registered office's. Fail-closed: every GST
+ * document reader refuses (a 503, a skipped run) rather than mint one.
  */
 export function getPlatformSupplier(): PlatformSupplier | null {
-  const gstin = process.env.PLATFORM_GSTIN?.trim();
-  // Format-gate (CR #1234): a typo'd PLATFORM_GSTIN must fail closed like an
-  // absent one — "not-a-gstin" on statutory documents is the same defect as
-  // the old dummy fallback, just quieter.
-  if (!gstin || !isValidGstin(gstin)) return null;
+  const gstin = configuredGstin();
+  if (!gstin) return null;
+  if (resolveSupplierStateCode(gstin, REGISTERED_OFFICE.stateCode).mismatch) {
+    return null;
+  }
   return {
-    name: "Familiarise Technologies Private Limited",
+    name: COMPANY_INFO.name,
     gstin,
-    address: "Koramangala 1st Block, Bangalore, Karnataka 560034, India",
+    address: COMPANY_INFO.registeredAddress,
     email: billingEmail(),
   };
 }
