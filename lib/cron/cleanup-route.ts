@@ -14,6 +14,15 @@ import {
   MaintenanceActiveError,
   MaintenanceUnavailableError,
 } from "@/lib/maintenance-cron";
+import { isPoolExhaustion } from "@/lib/db/pg-errors";
+import {
+  currentRun,
+  noteCounter,
+  schedulerTrigger,
+  withRunContext,
+} from "@/lib/cron/run-context";
+import { routeOutcome } from "@/lib/cron/run-outcome";
+import { recordRouteRun, type RouteRunRecord } from "@/lib/cron/run-record";
 
 /**
  * The one result→status mapping the whole cohort shares. Failure is tested
@@ -165,6 +174,47 @@ interface CleanupExecutionResult {
   outcome: JobOutcome;
 }
 
+type RunVerdict = Omit<RouteRunRecord, "jobName" | "httpStatus">;
+
+/** How a thrown run is recorded; null leaves no row (a lease the database could not grant). */
+function verdictOfError(error: unknown): RunVerdict | null {
+  if (error instanceof CronLockHeldError) {
+    return {
+      outcome: "held",
+      reason: "lock-held",
+      holderRunId: error.holderRunId,
+    };
+  }
+  if (error instanceof CronLockUnavailableError) return null;
+  if (error instanceof MaintenanceActiveError) {
+    return { outcome: "refused", reason: `maintenance:${error.phase}` };
+  }
+  if (error instanceof MaintenanceUnavailableError) {
+    return { outcome: "refused", reason: "maintenance-state-unreadable" };
+  }
+  return {
+    outcome: "failed",
+    reason: error instanceof Error ? error.name : "thrown",
+  };
+}
+
+const tickIdSchema = z.string().uuid();
+
+/** The ticker's per-tick id, when the caller is the ticker. */
+function tickIdOf(req: NextRequest): string | undefined {
+  const parsed = tickIdSchema.safeParse(req.headers.get("x-tick-id"));
+  return parsed.success ? parsed.data : undefined;
+}
+
+export interface CleanupRouteHandlers {
+  GET: (req: NextRequest) => Promise<NextResponse>;
+  POST: (req: NextRequest) => Promise<NextResponse>;
+  /** The job name the route gates and records under. */
+  job: string;
+  /** The same run without the bearer check, for the authenticated admin door in-process. */
+  invoke: (req: NextRequest) => Promise<NextResponse>;
+}
+
 function cleanupFailure(
   error: unknown,
   job: string,
@@ -192,8 +242,9 @@ function cleanupFailure(
       },
       CRON_FAILURE_REPORT_WINDOW_MS,
     );
+    // The ticker counts this code in its summary line, the only record a refused lease leaves.
     return {
-      body: { error: error.message },
+      body: { error: error.message, code: error.code },
       status: 503,
       ok: false,
       outcome: "failure",
@@ -267,32 +318,32 @@ export function cleanupRoute<T extends object>(opts: {
   failureMessage?: string;
   /** Extra `message` field on the 401 body, for routes that carry one. */
   unauthorizedMessage?: string;
-}): {
-  GET: (req: NextRequest) => Promise<NextResponse>;
-  POST: (req: NextRequest) => Promise<NextResponse>;
-} {
+}): CleanupRouteHandlers {
   const { job, run, summarize, status, failureMessage, unauthorizedMessage } =
     opts;
 
   async function executeCleanupJob(
     req: NextRequest,
+    authorize: boolean,
   ): Promise<CleanupExecutionResult> {
     const startedAt = Date.now();
     try {
-      const authHeader = req.headers.get("authorization");
-      const cronSecret =
-        process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+      if (authorize) {
+        const authHeader = req.headers.get("authorization");
+        const cronSecret =
+          process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
 
-      if (!cronSecret || !bearerMatches(authHeader, cronSecret)) {
-        console.warn(`Unauthorized ${job} attempt`);
-        return {
-          body: unauthorizedMessage
-            ? { error: "Unauthorized", message: unauthorizedMessage }
-            : { error: "Unauthorized" },
-          status: 401,
-          ok: true,
-          outcome: "failure",
-        };
+        if (!cronSecret || !bearerMatches(authHeader, cronSecret)) {
+          console.warn(`Unauthorized ${job} attempt`);
+          return {
+            body: unauthorizedMessage
+              ? { error: "Unauthorized", message: unauthorizedMessage }
+              : { error: "Unauthorized" },
+            status: 401,
+            ok: true,
+            outcome: "failure",
+          };
+        }
       }
       // The cron core is shared with the jobs/** entrypoint, which exits on
       // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
@@ -312,6 +363,11 @@ export function cleanupRoute<T extends object>(opts: {
 
       // An explicit per-job mapping is authoritative, so the outcome header follows its status.
       const responseStatus = status ? status(result) : statusFor(result);
+      await record({
+        ...routeOutcome(result, responseStatus),
+        httpStatus: responseStatus,
+        summary,
+      });
       return {
         body: result,
         status: responseStatus,
@@ -319,21 +375,55 @@ export function cleanupRoute<T extends object>(opts: {
         outcome: status ? outcomeOfStatus(responseStatus) : jobOutcome(result),
       };
     } catch (error) {
-      return cleanupFailure(error, job, failureMessage);
+      if (isPoolExhaustion(error)) noteCounter("poolTimeout");
+      const failure = cleanupFailure(error, job, failureMessage);
+      const verdict = verdictOfError(error);
+      // A held row carries the lock's own name, which a route core may spell differently.
+      const lockJob = error instanceof CronLockHeldError ? error.jobName : job;
+      if (verdict)
+        await record({ ...verdict, httpStatus: failure.status }, lockJob);
+      return failure;
     }
   }
 
-  async function handle(req: NextRequest): Promise<NextResponse> {
-    const canary = ingestCanaryEnabled(job);
-    const outcome = await executeCleanupJob(req);
-    if (canary || !outcome.ok) {
-      await Sentry.flush(2_000);
-    }
-    return NextResponse.json(outcome.body, {
-      status: outcome.status,
-      headers: { "X-Job-Outcome": outcome.outcome },
-    });
+  async function record(
+    verdict: Omit<RouteRunRecord, "jobName">,
+    jobName = job,
+  ): Promise<void> {
+    const active = currentRun();
+    if (active) await recordRouteRun(active, { ...verdict, jobName });
   }
 
-  return { GET: handle, POST: handle };
+  async function respond(
+    req: NextRequest,
+    authorize: boolean,
+  ): Promise<NextResponse> {
+    const outer = currentRun();
+    return withRunContext(
+      {
+        triggeredBy: outer?.triggeredBy ?? schedulerTrigger(),
+        tickId: outer?.tickId ?? tickIdOf(req),
+        opsActionLogId: outer?.opsActionLogId,
+      },
+      async () => {
+        const canary = ingestCanaryEnabled(job);
+        const outcome = await executeCleanupJob(req, authorize);
+        if (canary || !outcome.ok) {
+          await Sentry.flush(2_000);
+        }
+        return NextResponse.json(outcome.body, {
+          status: outcome.status,
+          headers: { "X-Job-Outcome": outcome.outcome },
+        });
+      },
+    );
+  }
+
+  const handle = (req: NextRequest) => respond(req, true);
+  return {
+    GET: handle,
+    POST: handle,
+    job,
+    invoke: (req: NextRequest) => respond(req, false),
+  };
 }

@@ -15,6 +15,7 @@ import type {
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import type { ConfigSkip } from "@/lib/cron/config-skip";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import {
   getRazorpayClient,
@@ -64,7 +65,7 @@ const reconPageSchema = z
 
 interface SettlementReconResult {
   success: true;
-  skipped?: "NO_GATEWAY_CLIENT";
+  skipped?: ConfigSkip;
   fetched: number;
   inserted: number;
   feesPosted: number;
@@ -504,7 +505,13 @@ async function reconcileGatewaySettlements(
     byStatus: { MATCHED: 0, AMOUNT_MISMATCH: 0, FEE_MISMATCH: 0, UNMATCHED: 0 },
   };
   const client = getRazorpayClient();
-  if (!client) return { ...result, skipped: "NO_GATEWAY_CLIENT", done: true };
+  if (!client) {
+    return {
+      ...result,
+      skipped: "RAZORPAY_KEY_ID or RAZORPAY_SECRET not configured",
+      done: true,
+    };
+  }
   const isPastDeadline = startDeadline(startedAt);
 
   for (const daysBack of DAYS_BACK) {

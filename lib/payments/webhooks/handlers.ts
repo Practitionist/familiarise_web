@@ -3,6 +3,7 @@
  * Core business logic for processing payment capture and failure events.
  */
 
+import { casMiss } from "@/lib/cron/run-counters";
 import {
   reportSentryError,
   reportSentryMessage,
@@ -435,6 +436,7 @@ export async function handlePaymentSuccess(
               },
             });
             if (claimed.count === 0) {
+              casMiss();
               await reportTerminalCaptureRace({
                 db: tx,
                 paymentId: payment.id,
@@ -658,6 +660,7 @@ export async function handlePaymentSuccess(
                 },
               });
           if (confirmed.count === 0) {
+            casMiss();
             await reportTerminalCaptureRace({
               db: tx,
               paymentId: payment.id,

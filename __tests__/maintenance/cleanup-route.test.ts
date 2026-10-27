@@ -31,7 +31,14 @@ jest.mock("@sentry/core", () => ({
  * test must not need a Redis to prove a status code.
  */
 jest.mock("../../lib/cron/with-cron-lock", () => ({
-  CronLockHeldError: class CronLockHeldError extends Error {},
+  CronLockHeldError: class CronLockHeldError extends Error {
+    constructor(
+      readonly jobName: string,
+      readonly holderRunId: string | null = null,
+    ) {
+      super(jobName);
+    }
+  },
   // #1822 Q-2 — cleanup-route.ts now checks `instanceof CronLockUnavailableError`
   // too; without this export the check throws on `undefined`.
   CronLockUnavailableError: class CronLockUnavailableError extends Error {},
@@ -51,7 +58,19 @@ jest.mock("../../lib/maintenance-cron", () => ({
   },
 }));
 
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    systemJobExecution: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      create: jest.fn().mockResolvedValue({ id: "row" }),
+    },
+  },
+}));
+
 import type { NextRequest } from "next/server";
+import prisma from "../../lib/prisma";
+import { noteRunFinished, noteRunId } from "../../lib/cron/run-context";
 import * as Sentry from "@sentry/core";
 
 import {
@@ -75,11 +94,15 @@ const guard = assertNotInMaintenance as jest.Mock;
 
 const SECRET = "test-cron-secret";
 
+const TICK = "6f1c2b8e-3d4a-4f5b-9c6d-7e8f9a0b1c2d";
+
 function request(auth: string | null = `Bearer ${SECRET}`): NextRequest {
-  const headers = new Headers();
+  const headers = new Headers({ "x-tick-id": TICK });
   if (auth !== null) headers.set("authorization", auth);
   return { headers } as unknown as NextRequest;
 }
+
+const executions = jest.mocked(prisma.systemJobExecution);
 
 describe("statusFor", () => {
   it("puts failure ahead of the needs-attention flag", () => {
@@ -330,5 +353,125 @@ describe("cleanupRoute", () => {
 
     expect(res.status).toBe(500);
     expect(Sentry.flush).toHaveBeenCalledWith(2_000);
+  });
+});
+
+describe("cleanupRoute run record", () => {
+  const OLD_ENV = process.env;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    resetThrottledCaptureForTesting();
+    guard.mockResolvedValue(undefined);
+    process.env = { ...OLD_ENV, CRON_SECRET: SECRET };
+  });
+
+  afterAll(() => {
+    process.env = OLD_ENV;
+  });
+
+  it("records a 207 run as FAILED/partial with its summary, items and tick", async () => {
+    const { POST } = cleanupRoute({
+      job: "retry-auto-refunds",
+      run: async () => {
+        noteRunId("exec-1");
+        noteRunFinished("exec-1", { checkpoint: "c-2" });
+        return { success: true, scanned: 4, failed: 1 };
+      },
+      status: () => 207,
+    });
+
+    expect((await POST(request())).status).toBe(207);
+    expect(executions.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "exec-1",
+        status: { in: ["COMPLETED", "FAILED", "CANCELLED"] },
+      },
+      data: {
+        status: "FAILED",
+        result: expect.objectContaining({
+          outcome: "partial",
+          httpStatus: 207,
+          tickId: TICK,
+          checkpoint: "c-2",
+          summary: { success: true, scanned: 4, failed: 1 },
+          counters: expect.objectContaining({ casMiss: 0 }),
+        }),
+        itemsProcessed: 4,
+        errorCount: 1,
+      },
+    });
+    expect(executions.create).not.toHaveBeenCalled();
+  });
+
+  it("writes a zero-duration CANCELLED held row naming the holder on a 409", async () => {
+    const { POST } = cleanupRoute({
+      job: "appointment-reminders",
+      run: async () => {
+        throw new CronLockHeldError("send-appointment-reminders", "exec-live");
+      },
+    });
+
+    expect((await POST(request())).status).toBe(409);
+    expect(executions.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        jobName: "send-appointment-reminders",
+        status: "CANCELLED",
+        durationMs: 0,
+        triggeredBy: "cron",
+        result: expect.objectContaining({
+          outcome: "held",
+          holderRunId: "exec-live",
+          tickId: TICK,
+        }),
+      }),
+      select: { id: true },
+    });
+  });
+
+  it("writes a refused row when maintenance holds the job, and nothing for a bad bearer", async () => {
+    guard.mockRejectedValue(new MaintenanceActiveError("test-job", "DEGRADED"));
+    const { POST } = cleanupRoute({ job: "test-job", run: jest.fn() });
+
+    await POST(request("Bearer wrong-secret-of-equal-length"));
+    expect(executions.create).not.toHaveBeenCalled();
+
+    expect((await POST(request())).status).toBe(503);
+    expect(executions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          jobName: "test-job",
+          status: "CANCELLED",
+          result: expect.objectContaining({
+            outcome: "refused",
+            reason: "maintenance:DEGRADED",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("records a config skip as CANCELLED/skipped even when the core opened no row", async () => {
+    const { POST } = cleanupRoute({
+      job: "heal-consumer-invoices",
+      run: async () => ({
+        scanned: 0,
+        failed: 0,
+        skipped: "PLATFORM_GSTIN not configured",
+      }),
+    });
+
+    expect((await POST(request())).status).toBe(200);
+    expect(executions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "CANCELLED",
+          result: expect.objectContaining({
+            outcome: "skipped",
+            reason: "PLATFORM_GSTIN not configured",
+          }),
+        }),
+      }),
+    );
   });
 });

@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { Prisma } from "@prisma/client";
 
 import { isDeadlock } from "@/lib/db/pg-errors";
+import { noteRunCounter } from "@/lib/cron/run-counters";
 
 const SERIALIZABLE_MAX_RETRIES = 3;
 
@@ -11,6 +12,9 @@ function reportSerializableRetry(
   maxRetries: number,
   exhausted: boolean,
 ): void {
+  noteRunCounter(
+    reason === "40001" ? "serializationRetry" : "deadlockOrLockTimeout",
+  );
   try {
     Sentry.metrics?.count?.("db.serializable_retry", 1, {
       attributes: {

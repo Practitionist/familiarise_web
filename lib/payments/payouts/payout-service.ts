@@ -3,6 +3,7 @@
  * Provider-agnostic consultant payout orchestration with admin approval workflow.
  */
 
+import { casMiss } from "@/lib/cron/run-counters";
 import * as Sentry from "@sentry/nextjs";
 import {
   reportSentryError,
@@ -286,6 +287,7 @@ export interface PayoutBatchSlice extends PayoutBatchRun {
 export async function createPayoutBatchSlice(opts: {
   limit: number;
   windowStart?: Date;
+  createdBy?: string;
 }): Promise<PayoutBatchSlice> {
   return runPayoutBatch(undefined, opts);
 }
@@ -640,6 +642,7 @@ export async function approvePayout(
     },
   });
   if (claimed.count === 0) {
+    casMiss();
     const current = await prisma.consultantPayout.findUnique({
       where: { id: payoutId },
       select: { status: true },
@@ -852,6 +855,7 @@ export async function rejectPayout(
       },
     });
     if (claimed.count === 0) {
+      casMiss();
       const current = await tx.consultantPayout.findUnique({
         where: { id: payoutId },
         select: { status: true },
@@ -1390,6 +1394,7 @@ async function runConsultantPayoutClaimGate(
     data: { status: PayoutStatus.PROCESSING, tdsCatchUpFy: null },
   });
   if (claimed.count === 0) {
+    casMiss();
     return { kind: "already_claimed" };
   }
   return { kind: "claimed" };
