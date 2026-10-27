@@ -152,6 +152,10 @@ const tdsReturnParamsSchema = z.object({
   fy: z
     .string()
     .regex(/^\d{4}-\d{2}$/)
+    .refine(
+      (fy) => (Number(fy.slice(0, 4)) + 1) % 100 === Number(fy.slice(5)),
+      "fy must name consecutive years",
+    )
     .optional(),
   quarter: z.coerce.number().int().min(1).max(4).optional(),
 });
@@ -168,6 +172,14 @@ export function parseTdsReturnParams(req: NextRequest): {
   });
   if (!parsed.success) throw new InvalidPeriodParamError();
   return { financialYear: parsed.data.fy, quarter: parsed.data.quarter };
+}
+
+const deleteFlagSchema = z.literal("1");
+
+/** `?delete=1` opts a count-only job into deleting; anything else leaves it counting. */
+export function parseDeleteFlag(req: NextRequest): boolean {
+  return deleteFlagSchema.safeParse(req.nextUrl.searchParams.get("delete"))
+    .success;
 }
 
 /**

@@ -69,10 +69,11 @@ it.each([
 
 it.each([
   ["", false],
-  ["&dryRun=1", true],
+  ["&delete=1", true],
+  ["&delete=0", false],
 ])(
-  "passes dryRun for the consent sweeper twin (%j -> %s)",
-  async (query, dryRun) => {
+  "passes delete for the consent sweeper twin (%j -> %s)",
+  async (query, del) => {
     consent.mockResolvedValueOnce({ success: true, hasMore: false });
     const handlers = getCleanupJobHandlers("consent-retention-sweeper");
     if (!handlers) throw new Error("Missing registered job");
@@ -81,6 +82,8 @@ it.each([
       { headers: { authorization: "Bearer test-cron-secret" } },
     );
     expect((await handlers.POST(request)).status).toBe(200);
-    expect(consent).toHaveBeenCalledWith(expect.objectContaining({ dryRun }));
+    expect(consent).toHaveBeenCalledWith(
+      expect.objectContaining({ delete: del }),
+    );
   },
 );

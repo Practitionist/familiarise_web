@@ -29,9 +29,9 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 afterEach(() => jest.useRealTimers());
-it("only counts expired consents on a dry run", async () => {
+it("only counts expired consents by default", async () => {
   findConsent.mockResolvedValue([{ id: "expired" }]);
-  expect(await runConsentRetentionSweeper({ dryRun: true })).toMatchObject({
+  expect(await runConsentRetentionSweeper()).toMatchObject({
     deleteMode: false,
     deleted: 0,
   });
@@ -74,7 +74,7 @@ it("drains25 expired consents in three bounded slices while preserving a concurr
   );
   const results = [];
   for (let i = 0; i < 3; i++)
-    results.push(await runConsentRetentionSweeper({ limit: 10 }));
+    results.push(await runConsentRetentionSweeper({ limit: 10, delete: true }));
   expect(results.reduce((n, r) => n + r.deleted, 0)).toBe(24);
   expect(rows).toEqual([{ id: "0", deadline: new Date("2099-01-01") }]);
   expect(results[0].hasMore).toBe(true);
@@ -132,6 +132,7 @@ it("does not delete a selected consent or event page after selection uses the bu
   const consent = await runConsentRetentionSweeper({
     limit: 10,
     startedAt: Date.now(),
+    delete: true,
   });
   jest.setSystemTime(new Date("2026-10-23T01:00:00Z"));
   const events = await pruneSystemEvents({ limit: 10, startedAt: Date.now() });

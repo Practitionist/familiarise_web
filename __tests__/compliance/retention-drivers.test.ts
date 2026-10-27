@@ -79,7 +79,7 @@ it.each([
     await driver(job)();
     const args =
       job === "consent-retention-sweeper"
-        ? { limit: 500, startedAt, dryRun: false }
+        ? { limit: 500, startedAt, delete: false }
         : { limit: 500, startedAt };
     expect(run.mock.calls).toEqual([[args], [args]]);
     expect(disconnect).toHaveBeenCalledTimes(1);

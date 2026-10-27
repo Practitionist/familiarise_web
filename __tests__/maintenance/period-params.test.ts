@@ -46,8 +46,18 @@ describe("parseTdsReturnParams", () => {
     });
   });
 
+  it("accepts consecutive years including the century rollover", () => {
+    expect(parseTdsReturnParams(req("?fy=2026-27")).financialYear).toBe(
+      "2026-27",
+    );
+    expect(parseTdsReturnParams(req("?fy=2099-00")).financialYear).toBe(
+      "2099-00",
+    );
+  });
+
   it.each([
     "?fy=2026",
+    "?fy=2026-99",
     "?quarter=0",
     "?quarter=5",
     "?quarter=1.5",

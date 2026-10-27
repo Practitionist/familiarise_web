@@ -372,7 +372,7 @@ See A.4. Recording retention runs daily in [`lib/stream/recording-retention.ts`]
 
 - **Schema:** `OrganizationInvoice.{irn, ackNumber, signedQrPayload, irpStatus, irpRetryCount, irpLastError, irpLastAttemptAt}`.
 - **Code paths:** [`jobs/compliance/irp-uploader.ts`](../../../jobs/compliance/irp-uploader.ts) → [`lib/compliance/irp.ts:generateIrn`](../../../lib/compliance/irp.ts) + payload mapper [`lib/compliance/irp-payload.ts:buildIrpPayload`](../../../lib/compliance/irp-payload.ts), ClearTax GSP connector with retry telemetry.
-- **Why:** Body is live but gated behind `ENABLE_IRP_UPLOADER` + ClearTax creds (`CLEARTAX_API_KEY`/`CLEARTAX_GSP_TOKEN`, plus `PLATFORM_GSTIN` as the supplier GSTIN). With creds absent `generateIrn` returns `{ status: "FAILED", reason: "STUB" }` and the cron records a normal retry — never crashes on missing credentials.
+- **Why:** Body is live but gated on `PLATFORM_GSTIN` (the supplier GSTIN) plus the ClearTax creds (`CLEARTAX_API_KEY`/`CLEARTAX_GSP_TOKEN`); there is no `ENABLE_IRP_UPLOADER` flag. With any of them absent the run touches no invoice and returns `skipped: "<NAME> not configured"` — it never crashes on missing credentials.
 - **Future work:** Production approval + sandbox proof; accountant/legal sign-off on IRN format (PR-2).
 
 ### F.6 HRIS provisioning — ⏸ Parked (no schema yet)

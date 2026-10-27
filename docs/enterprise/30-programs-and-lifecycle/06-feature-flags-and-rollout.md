@@ -28,7 +28,7 @@ Every flag exported from the module except `ENABLE_TDS_194O_GROSS` is the litera
 
 The starter credit limit for new, not-yet-verified INVOICE-funded orgs is not a gate: it is the exported constant `MAX_INVOICE_BOOKING_PAISE` (5,000,000 paise, ₹50,000) in `lib/enterprise/governance.ts`, returned by `getInvoiceCreditLimitPaise`. It defends against the "book everything then ghost" abuse pattern, and raising it is a code change.
 
-> **Other non-module gates** live in `.github/workflows/*.yml` (`ENABLE_IRP_UPLOADER`, `ENABLE_STRIPE_PAYOUTS`) and are tracked in `50-operations/07-required-secrets.md`.
+> **Other non-module gates** live in `.github/workflows/*.yml` (`ENABLE_STRIPE_PAYOUTS`) and are tracked in `50-operations/07-required-secrets.md`.
 > | `ENABLE_TDS_ADMIN_VIEW` | off | Admin TDS dashboard + Form 26Q filing surfaces. | `app/api/admin/tds/route.ts` returns 404 (hides from discovery). TDS data is still captured continuously by the payout pipeline; only the _filing workflow_ (mark-as-filed, decrypted-PAN view) is gated. |
 > | `ENABLE_BETTERSTACK_TELEMETRY` | off | Better Stack Telemetry log sink for operational events (#776 §K). | `recordSystemEvent`/`recordSystemError` always write the `SystemEvent` table (source of truth); the flag (plus `BETTERSTACK_SOURCE_TOKEN` + `BETTERSTACK_INGEST_URL`) only adds the fire-and-forget side-channel that ships those events so a stuck payout / failed reconcile / HMAC failure can page someone. Never on the critical path. |
 
@@ -76,9 +76,9 @@ IRP #713, TDS #737). None is a runtime toggle.
 
 The gates below are read inline at the point of use rather than re-exported from `lib/feature-flags.ts`, because each one gates a single call-site and centralising it would only add indirection.
 
-| Env var               | Read at                                          | Effect                                                                                                                                                                                                                                                                                                                      |
-| --------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ENABLE_IRP_UPLOADER` | `jobs/compliance/irp-uploader.ts` + its workflow | IRP (Invoice Registration Portal) live e-invoice submission. Read directly from `process.env`, **not** exported from `lib/feature-flags.ts`. Off ⇒ the job short-circuits so CI doesn't burn minutes on a stub; sub-₹5cr orgs ride the `{ status: "FAILED", reason: "STUB" }` return (they don't need an IRN to claim ITC). |
+| Env var     | Read at                           | Effect                                                                                                                                                                                                                                     |
+| ----------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| _(no flag)_ | `jobs/compliance/irp-uploader.ts` | IRP (Invoice Registration Portal) live e-invoice submission has no enable flag. The run gates on `PLATFORM_GSTIN` plus the `CLEARTAX_*` credentials; with any absent it touches no invoice and returns `skipped: "<NAME> not configured"`. |
 
 ## Capability-gated UI
 
@@ -138,4 +138,4 @@ The layer ships in one piece, because there is no per-funding-source flag — wa
 
 ## Deprecated & Superseded Approaches
 
-- **Env switches that no longer exist**: `DPDP_SWEEPER_DELETE` (the consent-retention sweeper now deletes by default and `?dryRun=1` only counts), `ENABLE_MOCK_PAYMENTS` (mock payments follow `NODE_ENV=development` alone) and `MAX_INVOICE_BOOKING_PAISE` (now a constant). Delete leftover copies from every environment.
+- **Env switches that no longer exist**: `DPDP_SWEEPER_DELETE` (the consent-retention sweeper is count-only by default and `?delete=1` deletes), `ENABLE_MOCK_PAYMENTS` (mock payments follow `NODE_ENV=development` alone) and `MAX_INVOICE_BOOKING_PAISE` (now a constant). Delete leftover copies from every environment.

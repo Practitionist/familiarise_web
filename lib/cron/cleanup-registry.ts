@@ -2,6 +2,7 @@ import type { NextRequest, NextResponse } from "next/server";
 import {
   cleanupRoute,
   parseLimitParam,
+  parseDeleteFlag,
   parseGstPeriodParam,
   parseLimitParamOrDefault,
   parseTdsReturnParams,
@@ -84,7 +85,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           return runConsentRetentionSweeper({
             limit: parseLimitParamOrDefault(req, 100),
             startedAt,
-            dryRun: req.nextUrl.searchParams.get("dryRun") === "1",
+            delete: parseDeleteFlag(req),
           });
         },
         failureMessage: "Consent retention slice failed",
