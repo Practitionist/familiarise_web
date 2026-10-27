@@ -106,8 +106,15 @@ const drift = {
     },
   ],
   accountsChecked: 1,
+  inSync: [],
 };
-const clean = { findings: [], accountsChecked: 1 };
+const clean = {
+  findings: [],
+  accountsChecked: 1,
+  inSync: [
+    { billingAccountId: "ba_1", organizationId: "org_1", driftFreezeId: null },
+  ],
+};
 
 beforeEach(() => {
   jest.clearAllMocks();
