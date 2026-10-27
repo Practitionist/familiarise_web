@@ -39,6 +39,9 @@ Detailed invariants and regime facts live in `references/doctrine.md`; verificat
 
 ## Invoice capture recovery
 
+Provider holding reads reject nonpositive, unsafe or non-INR captured amounts;
+invalid evidence must retain the order reference for recovery.
+
 Lock a payable invoice without invalidating its current order. Booking-refund
 credits and bank receipts retain the reference until gateway inspection; gateway
 settlement clears it only when the captured payment has been accounted for.

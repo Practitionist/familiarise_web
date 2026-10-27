@@ -191,6 +191,8 @@ including when bank receipts settle the invoice PAID. No gateway call runs insid
 those transactions. The healer includes retained PAID references: an additional
 capture goes through canonical settlement into UNAPPLIED_RECEIPTS, then the exact
 PAID/order pointer is conditionally retired with its audit in that transaction.
+Captured amounts must be positive safe integers in INR at the provider-read
+boundary; invalid evidence throws and retains the recovery reference.
 An empty payment read requires a second order read confirming identity, currency
 and created/attempted status before retirement. A paid order with no visible
 capture, a live payment or unreadable evidence retains the pointer.
