@@ -4,13 +4,13 @@ Scenario scripts under `scenarios/`, each a standalone `tsx` process that exits 
 
 | Category                              | Kind                                                     | Needs                                                                             |
 | ------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| 01 to 06, 10, 11                      | In-process simulation (in-memory registry, lock helpers) | Nothing; set `USE_MOCK_REDIS=true` to keep real Upstash keys untouched            |
+| 01 to 06, 10, 11                      | In-process simulation (in-memory registry, lock helpers) | Nothing; set `NODE_ENV=test` to keep real Upstash keys untouched                  |
 | 07 real-api-booking, 09 webhook-storm | Drives the real app over HTTP                            | Seeded DB, a reachable server, `CHAOS_BASE_URL` (default `http://localhost:3000`) |
 
 Runbook: `docs/enterprise/50-operations/06-chaos-test-runbook.md`.
 
 ```bash
-USE_MOCK_REDIS=true npx tsx tests/typescript/race-conditions/master-runner.ts sequential --category=01-concurrent-access
+NODE_ENV=test npx tsx tests/typescript/race-conditions/master-runner.ts sequential --category=01-concurrent-access
 CHAOS_BASE_URL=https://<deploy>.netlify.app npx tsx tests/typescript/race-conditions/scenarios/07-real-api-booking/test-last-seat-storm.ts
 ```
 
@@ -30,4 +30,4 @@ CHAOS_BASE_URL=https://<deploy>.netlify.app npx tsx tests/typescript/race-condit
 
 ## Deploy previews and `isMockPayment`
 
-`isMockPayment` cannot be honoured on a deploy preview. `app/api/checkout/route.ts` keeps the flag only when `NODE_ENV === "development"`, and a preview is a production build; `ENABLE_MOCK_PAYMENTS=true` only widens the second gate in `createPaymentIntent` and cannot override the first. So on a preview every booking round creates a Razorpay TEST-key order (unpaid, no money moves) and its winner stays `PENDING`, which teardown releases through the API. To get instant mock confirmation, run the scenario against a local `next dev` server (shared DB, seeded users only).
+`isMockPayment` cannot be honoured on a deploy preview. `app/api/checkout/route.ts` keeps the flag only when `NODE_ENV === "development"`, and a preview is a production build. So on a preview every booking round creates a Razorpay TEST-key order (unpaid, no money moves) and its winner stays `PENDING`, which teardown releases through the API. To get instant mock confirmation, run the scenario against a local `next dev` server (shared DB, seeded users only).

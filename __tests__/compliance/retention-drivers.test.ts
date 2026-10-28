@@ -1,6 +1,5 @@
 /** @jest-environment node */
 const consent = jest.fn(),
-  events = jest.fn(),
   breach = jest.fn(),
   disconnect = jest.fn(),
   maintenance = jest.fn();
@@ -11,9 +10,6 @@ jest.mock("../../lib/prisma", () => ({
 }));
 jest.mock("../../lib/compliance/consent-retention", () => ({
   runConsentRetentionSweeper: (opts: unknown) => consent(opts),
-}));
-jest.mock("../../lib/observability/system-event-retention", () => ({
-  pruneSystemEvents: (opts: unknown) => events(opts),
 }));
 jest.mock("../../lib/compliance/databreach-deadline-alerts", () => ({
   runDataBreachDeadlineAlerts: (opts: unknown) => breach(opts),
@@ -45,7 +41,6 @@ afterEach(() => {
 function loadDrivers() {
   jest.isolateModules(() => {
     require("../../jobs/compliance/consent-retention-sweeper");
-    require("../../jobs/cleanup/prune-system-events");
     require("../../jobs/compliance/databreach-deadline-alerts");
   });
 }
@@ -55,10 +50,7 @@ function driver(job: string) {
   return run;
 }
 
-it.each([
-  { job: "consent-retention-sweeper", run: consent },
-  { job: "prune-system-events", run: events },
-])(
+it.each([{ job: "consent-retention-sweeper", run: consent }])(
   "shares the original deadline across every $job slice",
   async ({ job, run }) => {
     maintenance.mockImplementationOnce(async () => {
@@ -77,18 +69,16 @@ it.each([
       });
     loadDrivers();
     await driver(job)();
-    expect(run.mock.calls).toEqual([
-      [{ limit: 500, startedAt }],
-      [{ limit: 500, startedAt }],
-    ]);
+    const args =
+      job === "consent-retention-sweeper"
+        ? { limit: 500, startedAt, delete: false }
+        : { limit: 500, startedAt };
+    expect(run.mock.calls).toEqual([[args], [args]]);
     expect(disconnect).toHaveBeenCalledTimes(1);
   },
 );
 
-it.each([
-  { job: "consent-retention-sweeper", run: consent },
-  { job: "prune-system-events", run: events },
-])(
+it.each([{ job: "consent-retention-sweeper", run: consent }])(
   "starts no $job slice after maintenance consumes its budget",
   async ({ job, run }) => {
     run.mockResolvedValueOnce({

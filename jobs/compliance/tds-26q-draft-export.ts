@@ -62,25 +62,18 @@ function quarterEndExclusiveUTC(financialYear: string, quarter: number): Date {
  * instant; taking the year from one clock and the quarter from another is how
  * impossible periods like FY 2025-26 Q1 get filed.
  */
-function resolveReturnPeriod(): { financialYear: string; quarter: number } {
+function resolveReturnPeriod(requested: {
+  financialYear?: string;
+  quarter?: number;
+}): {
+  financialYear: string;
+  quarter: number;
+} {
   const closed = closedIndianFyQuarterOf(new Date());
-  const financialYear = process.env.TDS_RETURN_FY || closed.financialYear;
-  // CR #1234 r3.5 — fail fast on malformed overrides rather than emitting
-  // a mislabeled compliance draft from a workflow typo.
-  if (!/^\d{4}-\d{2}$/.test(financialYear)) {
-    throw new Error(
-      `TDS_RETURN_FY must look like "2026-27", got "${financialYear}"`,
-    );
-  }
-  const quarter = process.env.TDS_RETURN_QUARTER
-    ? Number.parseInt(process.env.TDS_RETURN_QUARTER, 10)
-    : closed.quarter;
-  if (!Number.isInteger(quarter) || quarter < 1 || quarter > 4) {
-    throw new Error(
-      `TDS_RETURN_QUARTER must be 1-4, got "${process.env.TDS_RETURN_QUARTER}"`,
-    );
-  }
-  return { financialYear, quarter };
+  return {
+    financialYear: requested.financialYear ?? closed.financialYear,
+    quarter: requested.quarter ?? closed.quarter,
+  };
 }
 
 /**
@@ -506,7 +499,9 @@ function decryptPansByDeducteeKey(
  * The locked export, driven by the `/api/cleanup/tds-return-draft` twin;
  * `cleanupRoute` applies the maintenance guard.
  */
-export async function runTdsReturnDraftExport(): Promise<{
+export async function runTdsReturnDraftExport(
+  requested: { financialYear?: string; quarter?: number } = {},
+): Promise<{
   financialYear: string;
   quarter: number;
   deducteeCount: number;
@@ -519,7 +514,7 @@ export async function runTdsReturnDraftExport(): Promise<{
     "tds-26q-draft-export",
     { failMode: "open" },
     async () => {
-      const { financialYear, quarter } = resolveReturnPeriod();
+      const { financialYear, quarter } = resolveReturnPeriod(requested);
 
       const records = await prisma.tDSRecord.findMany({
         where: { financialYear, quarter },

@@ -38,7 +38,9 @@ const request = (secret = "test") =>
     headers: { authorization: `Bearer ${secret}` },
   });
 const fresh = () =>
-  OPERATIONAL_COMPLETION_REQUIREMENTS.map((job) => ({
+  OPERATIONAL_COMPLETION_REQUIREMENTS.filter(
+    (job) => job.tier === "paging",
+  ).map((job) => ({
     jobName: job.jobName,
     endedAt: now,
   }));
@@ -110,16 +112,30 @@ describe("operational absence checks", () => {
     expect((await GET(request("wrong"))).status).toBe(401);
     expect(groupBy).not.toHaveBeenCalled();
   });
-  it("returns503 for missing completions and counts only completed runs", async () => {
+  it("returns503 for missing completions and counts completed or partial paging runs", async () => {
     groupBy.mockResolvedValueOnce([]);
     const response = await GET(request());
     expect(response.status).toBe(503);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(groupBy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ status: "COMPLETED" }),
-      }),
-    );
+    const where = groupBy.mock.calls[0][0].where;
+    expect(where?.OR).toEqual([
+      { status: "COMPLETED" },
+      { status: "FAILED", result: { path: ["outcome"], equals: "partial" } },
+    ]);
+    expect(where?.jobName).toEqual({
+      in: expect.not.arrayContaining(["process-payouts"]),
+    });
+    const body = await response.json();
+    expect(
+      body.jobs.every((job: { tier: string }) => job.tier === "paging"),
+    ).toBe(true);
+  });
+  it("lets an overdue watched SLO redden the report without failing health", () => {
+    const report = assessOperationalCompletions(fresh(), now);
+    expect(report.healthy).toBe(true);
+    expect(
+      report.jobs.find((job) => job.jobName === "process-payouts"),
+    ).toMatchObject({ tier: "watched", overdue: true, maxAgeMinutes: 150 });
   });
   it("does not treat unscoped shared-database history as production evidence", async () => {
     process.env.SENTRY_ENVIRONMENT = "preview";

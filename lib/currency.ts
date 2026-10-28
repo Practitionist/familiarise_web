@@ -9,11 +9,7 @@
 // RATE_PROVIDER_URL in lib/currency-codes.ts carry it to the navbar and the
 // checkout estimate note.
 
-// The endpoint is configurable so a provider change (or a paid-tier host) does
-// not need a code deploy; the default is the free Open Access endpoint we use
-// today.
-const EXCHANGE_RATE_API_URL =
-  process.env.EXCHANGE_RATE_API_URL ?? "https://open.er-api.com/v6/latest/INR";
+const EXCHANGE_RATE_API_URL = "https://open.er-api.com/v6/latest/INR";
 
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour (reduced from 24h)
 

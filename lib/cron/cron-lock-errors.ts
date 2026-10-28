@@ -14,7 +14,11 @@
 export class CronLockHeldError extends Error {
   readonly httpStatus = 409 as const;
   readonly code = "CRON_LOCK_HELD" as const;
-  constructor(readonly jobName: string) {
+  /** The live RUNNING row's id when the holder is known; a unique-index race leaves it null. */
+  constructor(
+    readonly jobName: string,
+    readonly holderRunId: string | null = null,
+  ) {
     super(`${jobName} is already running — skipped (cron lock held)`);
     this.name = "CronLockHeldError";
   }

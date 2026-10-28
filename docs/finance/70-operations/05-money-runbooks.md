@@ -176,7 +176,7 @@ When the call platform or the app fails for everyone, an admin declares the wind
 
 ## 10. A finance alert did not arrive
 
-The MSME digest, the dispute-deadline alerts and the SLA alerts are emails sent through the single delivery function, so a missing email is first a configuration or a bounce question. For the MSME digest (`msme-payment-alerts`, one slot a day at 03:45 UTC) check the provider for bounces and run the job. It notifies every admin user (a bell notification and an email) and also emails `MSME_ALERT_EMAIL` when that address is set and is not already an admin. The digest lists organisation payouts within 5 days (`ALERT_WINDOW_DAYS`) of their Section 43B(h) deadline that are not yet `COMPLETED`; the window is a code constant, not an environment setting. The dispute-deadline and SLA alert emails dedupe on the staged `FailedEmail` row, so a re-run of `support-sla-sweep` does not send twice.
+The MSME digest, the dispute-deadline alerts and the SLA alerts are emails sent through the single delivery function, so a missing email is first a configuration or a bounce question. For the MSME digest (`msme-payment-alerts`, one slot a day at 03:45 UTC) check the provider for bounces and run the job. It notifies every admin user (a bell notification and an email) and also emails `COMPLIANCE_ALERT_EMAIL` (a constant in `lib/company.ts`) when that address is not already an admin. The digest lists organisation payouts within 5 days (`ALERT_WINDOW_DAYS`) of their Section 43B(h) deadline that are not yet `COMPLETED`; the window is a code constant, not an environment setting. The dispute-deadline and SLA alert emails dedupe on the staged `FailedEmail` row, so a re-run of `support-sla-sweep` does not send twice.
 
 ## Alerts that lead to a runbook
 

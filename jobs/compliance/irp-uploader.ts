@@ -3,7 +3,7 @@
  *
  * STATUS: body live, env-gated. The cron iterates eligible invoices and
  * calls `lib/compliance/irp.generateIrn`. When `CLEARTAX_API_KEY`,
- * `CLEARTAX_GSP_TOKEN`, and `CLEARTAX_GSTIN` are configured, the
+ * `CLEARTAX_GSP_TOKEN`, and `PLATFORM_GSTIN` are configured, the
  * connector posts the invoice payload to ClearTax GSP and persists
  * `irn`, `ackNumber`, `signedQrPayload`, `irpStatus`, plus retry
  * telemetry (`irpRetryCount`, `irpLastError`, `irpLastAttemptAt`).
@@ -279,7 +279,7 @@ async function runIrpUploaderUnlocked(opts: {
   const missingCleartax = [
     "CLEARTAX_API_KEY",
     "CLEARTAX_GSP_TOKEN",
-    "CLEARTAX_GSTIN",
+    "PLATFORM_GSTIN",
   ].filter((k) => !process.env[k]?.trim());
   if (missingCleartax.length > 0) {
     return configSkip(

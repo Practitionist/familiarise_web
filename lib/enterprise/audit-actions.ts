@@ -107,6 +107,7 @@ export const AUDIT_ACTIONS = {
     // bookings are gated until the invoice is paid (config-gated cascade).
     INVOICE_DUNNING_SUSPENDED: "INVOICE_DUNNING_SUSPENDED",
     INVOICE_PAYMENT_INITIATED: "INVOICE_PAYMENT_INITIATED",
+    INVOICE_PAYMENT_ORDER_RETIRED: "INVOICE_PAYMENT_ORDER_RETIRED",
     INVOICE_PAID: "INVOICE_PAID",
     // A platform admin recorded a bank transfer (UTR) against an invoice.
     INVOICE_RECEIPT_RECORDED: "INVOICE_RECEIPT_RECORDED",

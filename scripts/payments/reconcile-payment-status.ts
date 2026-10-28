@@ -72,13 +72,6 @@ const reconcilableIntentWhere = {
   ],
 } satisfies Prisma.PaymentWhereInput;
 
-function orphanPendingMaxAgeMs(): number {
-  const raw = Number(process.env.RECONCILE_ORPHAN_PENDING_MAX_AGE_MS);
-  return Number.isFinite(raw) && raw > 0
-    ? raw
-    : DEFAULT_ORPHAN_PENDING_MAX_AGE_MS;
-}
-
 export interface PaymentReconciliationResult {
   success: boolean;
   totalProcessed: number;
@@ -129,11 +122,7 @@ async function getRazorpayPaymentStatus(
   deadlineAt: number,
 ): Promise<GatewayLookup> {
   const keyId = process.env.RAZORPAY_KEY_ID;
-  // #677 PM-1 — prod env defines RAZORPAY_SECRET (the canonical name the
-  // core lib reads); reading only RAZORPAY_KEY_SECRET silently disabled
-  // this reconciliation in production while it looked green.
-  const keySecret =
-    process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET;
+  const keySecret = process.env.RAZORPAY_SECRET;
 
   if (!keyId || !keySecret) {
     console.warn("Razorpay credentials not configured");
@@ -293,7 +282,7 @@ async function reconcilePaymentStatusUnlocked(
 
   const minAge = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000);
   const maxAge = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
-  const orphanCutoff = new Date(Date.now() - orphanPendingMaxAgeMs());
+  const orphanCutoff = new Date(Date.now() - DEFAULT_ORPHAN_PENDING_MAX_AGE_MS);
 
   // Find stale PENDING payments
   const stalePendingPayments = await prisma.payment.findMany({
@@ -341,8 +330,7 @@ async function reconcilePaymentStatusUnlocked(
   let totalProcessed = 0;
 
   const razorpayConfigured = !!(
-    process.env.RAZORPAY_KEY_ID &&
-    (process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET)
+    process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_SECRET
   );
   if (!razorpayConfigured) {
     console.warn(

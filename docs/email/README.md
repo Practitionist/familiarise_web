@@ -170,14 +170,14 @@ Four email types can be aimed at any inbox by a stranger who types an address in
 
 ### Operational & Compliance Alerts (`Familiarise Ops <system@mail.familiarisenow.com>`)
 
-All ops alerts set `Reply-To: ops@familiarisenow.com` (`OPS_EMAIL` in `lib/email/config.ts`) so replies route to operations rather than looping back to the sender.
+All ops alerts set `Reply-To: connect@practitionist.com` (`SUPPORT_EMAIL` in `lib/company.ts`) so replies reach the one live mailbox rather than looping back to the sender. `familiarisenow.com` is send-only (Resend): it publishes a null MX (`0 .`), so nothing sent to an address on it arrives. Every inbound address is `connect@practitionist.com` through `SUPPORT_EMAIL` in `lib/company.ts`.
 
 | Alert                       | Trigger                                      | Recipient Variable                                       | Slack Mirror (`SLACK_OPS_WEBHOOK_URL`) | Source Path                                     |
 | --------------------------- | -------------------------------------------- | -------------------------------------------------------- | -------------------------------------- | ----------------------------------------------- |
 | Sentry ingest canary alert  | Ingest canary detects discarded errors       | `OBSERVABILITY_ALERT_EMAIL` (fallback: `supportEmail()`) | Yes (5s timeout, after send)           | `lib/observability/ingest-alert.ts`             |
 | Sentry quota alert          | Accepted errors reach 70% monthly quota      | `OBSERVABILITY_ALERT_EMAIL` (fallback: `supportEmail()`) | No                                     | `lib/observability/quota-alert.ts`              |
-| DPDP breach deadline alert  | Unreported breach nears 72h statutory window | `DATABREACH_ALERT_EMAIL`                                 | Yes (5s timeout, after send)           | `jobs/compliance/databreach-deadline-alerts.ts` |
-| MSME payment deadline alert | Payouts near Section 43B(h) deadline         | `MSME_ALERT_EMAIL`                                       | No                                     | `jobs/compliance/msme-payment-alerts.ts`        |
+| DPDP breach deadline alert  | Unreported breach nears 72h statutory window | `COMPLIANCE_ALERT_EMAIL` (`lib/company.ts`)              | Yes (5s timeout, after send)           | `jobs/compliance/databreach-deadline-alerts.ts` |
+| MSME payment deadline alert | Payouts near Section 43B(h) deadline         | `COMPLIANCE_ALERT_EMAIL` (`lib/company.ts`)              | No                                     | `jobs/compliance/msme-payment-alerts.ts`        |
 
 ### Newsletter & Waitlist (`newsletter@news.familiarisenow.com`)
 
@@ -242,13 +242,12 @@ Enforced in `lib/email/delivery-guard.ts` across `stage()`, `attempt()`, `retry-
 - **Allowlist Matching**: Permits recipients on `familiarisenow.com` (and its subdomains) or explicit entries in comma-separated `EMAIL_ALLOWLIST` (exact addresses or `@domain`/`domain`). If any recipient in `to`, `cc`, or `bcc` is disallowed, the entire message is held in `FailedEmail` as `DEAD_LETTER` (`lastError = "held:pre-launch"`).
 - **Production Launch Requirement**: Set `EMAIL_DELIVERY_MODE=live` in both Netlify production environment variables AND GitHub repository variables (`cron-intra-day.yml`, `cron-daily.yml`).
 
-| Host                               | Type     | Value                                                                              | Purpose                                                                        |
-| ---------------------------------- | -------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `@` (apex)                         | MX       | ImprovMX `mx1.improvmx.com` (10) & `mx2.improvmx.com` (20)                         | Routes `support@`, `ops@`, `dpdp@`, `billing@`, and `dmarc@` to operator inbox |
-| `@` (apex)                         | TXT      | `v=spf1 -all`                                                                      | Prevents spoofing on non-sending root domain                                   |
-| `_dmarc`                           | TXT      | `v=DMARC1; p=quarantine; rua=mailto:dmarc@familiarisenow.com`                      | Enforces DMARC alignment and aggregate reporting                               |
-| `resend._domainkey.mail` / `.news` | TXT      | Resend DKIM public keys                                                            | Signs transactional (`mail.`) and newsletter (`news.`) traffic                 |
-| `send.mail` / `send.news`          | MX + TXT | `feedback-smtp.ap-northeast-1.amazonses.com` + `v=spf1 include:amazonses.com ~all` | Return-Path bounce handling and SPF alignment                                  |
+The full zone is in [Domains and DNS records](../deployment/README.md#domains-and-dns-records). In short:
+
+- The apex has SPF `v=spf1 -all` and a null MX (`0 .`), so `familiarisenow.com` neither sends nor receives as itself.
+- `_dmarc` is `v=DMARC1; p=none; rua=mailto:connect@practitionist.com; fo=1`. The policy tightens to `quarantine` and then `reject` after about two weeks of reports.
+- `mail.` and `news.` each have four records (DKIM, bounce MX, SPF and the `rsend` CNAME), verified in Resend region `ap-northeast-1`.
+- `EMAIL_ALLOWLIST` in the Netlify context `all` includes `connect@practitionist.com`, so pre-launch support and compliance mail is not held.
 
 ---
 
@@ -276,3 +275,5 @@ flowchart LR
 - **Immediate `nextRetryAt: NOW()` on Outbox Insert & Content-Hashed Retry Keys**: Superseded by `nextRetryAt: NOW() + 60s` inline lease grace windows and `<EMAIL_TYPE>/failed-email/<row.id>` keys (`idempotencyKeyFor(..., row.id)`), eliminating concurrent inline-vs-relay races and preventing Resend's 24-hour payload hash cache from silently dropping legitimate repeat emails.
 - **Dropping RFC 8058 Unsubscribe Headers on Relay Retries & Mutating DB on `GET /api/waitlist/unsubscribe`**: Superseded by stateless `reconstructUnsubscribeHeaders(row)` header extraction on retry and read-only HTML confirmation on `GET /api/waitlist/unsubscribe` so link scanners cannot trigger false unsubscribes.
 - **Per-Row Loop Sentry Captures in Outbox Sweepers & Non-Transactional Webhook Suppression**: Superseded by per-tick alert aggregation in `runEmailRetryTick` (`email.outbox.dead_letter` gauge + `postOpsChat`) and single-`$transaction(tx)` `EmailEvent` + `EmailSuppression` writes with 30-day batched pruning.
+- **Inbound forwarding via ImprovMX (planned, never configured)**: the design routed role addresses (`support@`, `ops@`, `dpdp@`, `billing@`) on `familiarisenow.com` to the operator inbox through MX records `mx1.improvmx.com` and `mx2.improvmx.com`. Those records were never created; the apex now publishes a null MX instead. Delete any residual references instead of configuring them.
+- **Personal-inbox DMARC reports and an unpublished root SPF**: the `rua` target used to be a personal Gmail that never authorised external reports, and the apex had no SPF. Both were replaced on 2026-10-28 by the records in the deployment inventory.

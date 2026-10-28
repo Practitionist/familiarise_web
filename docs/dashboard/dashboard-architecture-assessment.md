@@ -547,9 +547,9 @@ Implementation: A `Cmd+K` style search bar in `DashboardNavbar` that queries a u
 #### 7.9 Add Audit Log
 
 Track who did what:
-- "Admin Kaustav approved payout PO-123 for ₹50,000"
+- "Admin Olivia Brown approved payout PO-123 for ₹50,000"
 - "Staff Shubham resolved ticket TKT-456"
-- "Admin Kaustav put platform in maintenance mode"
+- "Admin Olivia Brown put platform in maintenance mode"
 
 Critical for financial compliance and debugging "who changed this?"
 

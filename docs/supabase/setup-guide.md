@@ -50,7 +50,6 @@ Make sure you have these environment variables set:
 ```bash
 # Required
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 
 # Required for document storage (private bucket operations)
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key

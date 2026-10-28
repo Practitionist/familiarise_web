@@ -108,6 +108,34 @@ it("recovers a lost capture through canonical settlement before suspension", asy
   expect(mockNotify).not.toHaveBeenCalled();
 });
 
+it("starts the suspension admission budget after reminder work", async () => {
+  const reminder = {
+    ...candidate,
+    markedOverdueAt: new Date("2026-09-01T00:00:00Z"),
+    lastDunningReminderAt: null,
+    dunningReminderCount: 2,
+  };
+  mockFindMany
+    .mockReset()
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([reminder])
+    .mockResolvedValueOnce([candidate]);
+  mockNotify.mockImplementationOnce(async () => {
+    mockNow += 11_000;
+    return [];
+  });
+
+  const result = await runDunning({ limit: 5 });
+
+  expect(result).toMatchObject({ remindersSent: 1, suspended: 1, failed: 0 });
+  expect(mockReadHolding).toHaveBeenCalledWith("order_1", 5_000);
+  expect(mockTx.organizationInvoice.updateMany).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: expect.objectContaining({ id: "inv-1", status: "OVERDUE" }),
+    }),
+  );
+});
+
 it("checks net debt on the transaction client and CASes the inspected order", async () => {
   const result = await runDunning({ limit: 5 });
 

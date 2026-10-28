@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
+import { Prisma, type OrgInvoiceStatus } from "@prisma/client";
 
 import {
   LONG_JOB_TTL_MS,
@@ -11,7 +11,11 @@ import { reportSentryError } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { applyOrgInvoiceCapture } from "@/lib/payments/billing/org-invoice-settlement";
-import { readRazorpayOrderHolding } from "@/lib/payments/core/razorpay";
+import {
+  fetchRazorpayOrder,
+  readRazorpayOrderHolding,
+} from "@/lib/payments/core/razorpay";
+import type { Tx } from "@/lib/prisma";
 import prisma from "@/lib/prisma";
 
 const JOB_NAME = "reconcile-org-invoice-payments";
@@ -42,6 +46,7 @@ export interface ReconcileOrgInvoicePaymentsResult {
 type InvoiceCandidate = {
   id: string;
   organizationId: string;
+  status: OrgInvoiceStatus;
   providerPaymentOrderId: string;
 };
 
@@ -56,13 +61,18 @@ async function findCandidates(
 ): Promise<InvoiceCandidate[]> {
   const rows = await prisma.organizationInvoice.findMany({
     where: {
-      status: { in: ["ISSUED", "OVERDUE"] },
+      status: { in: ["ISSUED", "OVERDUE", "PAID"] },
       providerPaymentOrderId: { not: null },
       ...(afterId ? { id: { gt: afterId } } : {}),
     },
     orderBy: { id: "asc" },
     take: limit,
-    select: { id: true, organizationId: true, providerPaymentOrderId: true },
+    select: {
+      id: true,
+      organizationId: true,
+      status: true,
+      providerPaymentOrderId: true,
+    },
   });
   return rows.flatMap((row) =>
     row.providerPaymentOrderId
@@ -70,11 +80,45 @@ async function findCandidates(
           {
             id: row.id,
             organizationId: row.organizationId,
+            status: row.status,
             providerPaymentOrderId: row.providerPaymentOrderId,
           },
         ]
       : [],
   );
+}
+
+/** Retire only the inspected pointer on an invoice already settled by another rail. */
+async function retireSettledOrder(
+  tx: Tx,
+  invoice: InvoiceCandidate,
+  reason: "CAPTURE_ACCOUNTED" | "NO_LIVE_PAYMENT",
+): Promise<void> {
+  const retired = await tx.organizationInvoice.updateMany({
+    where: {
+      id: invoice.id,
+      organizationId: invoice.organizationId,
+      status: "PAID",
+      providerPaymentOrderId: invoice.providerPaymentOrderId,
+    },
+    data: { providerPaymentOrderId: null },
+  });
+  if (retired.count === 0) return;
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId: invoice.organizationId,
+      actorMembershipId: null,
+      category: "INVOICE",
+      action: AUDIT_ACTIONS.INVOICE.INVOICE_PAYMENT_ORDER_RETIRED,
+      description:
+        "Invoice checkout reference retired after gateway inspection",
+      details: {
+        invoiceId: invoice.id,
+        razorpayOrderId: invoice.providerPaymentOrderId,
+        reason,
+      },
+    },
+  });
 }
 
 /**
@@ -97,6 +141,15 @@ async function reconcileOrgInvoicePaymentsUnlocked(
 ): Promise<ReconcileOrgInvoicePaymentsResult> {
   const startedAt = options.startedAt ?? Date.now();
   const pastDeadline = () => Date.now() >= startedAt + ADMISSION_BUDGET_MS;
+  const providerTimeout = () => {
+    const remaining = Math.min(
+      PROVIDER_READ_TIMEOUT_MS,
+      startedAt + ADMISSION_BUDGET_MS - Date.now(),
+    );
+    if (remaining <= 0)
+      throw new Error("Invoice recovery provider budget elapsed");
+    return remaining;
+  };
   const limit = boundedLimit(options.limit);
   const errors: string[] = [];
   let scanned = 0;
@@ -126,11 +179,36 @@ async function reconcileOrgInvoicePaymentsUnlocked(
     try {
       const holding = await readRazorpayOrderHolding(
         invoice.providerPaymentOrderId,
-        PROVIDER_READ_TIMEOUT_MS,
+        providerTimeout(),
       );
       if (holding.kind === "live") {
         live++;
       } else if (holding.kind === "empty") {
+        if (invoice.status === "PAID") {
+          const order = await fetchRazorpayOrder(
+            invoice.providerPaymentOrderId,
+            providerTimeout(),
+          );
+          if (
+            !order ||
+            order.id !== invoice.providerPaymentOrderId ||
+            order.notes.type !== "invoice_payment" ||
+            order.notes.invoiceId !== invoice.id ||
+            order.notes.organizationId !== invoice.organizationId ||
+            order.currency !== "INR" ||
+            (order.status !== "created" && order.status !== "attempted")
+          ) {
+            throw new Error(
+              "Settled invoice order remains unconfirmed at the gateway",
+            );
+          }
+          await withSerializableRetry(() =>
+            prisma.$transaction(
+              (tx) => retireSettledOrder(tx, invoice, "NO_LIVE_PAYMENT"),
+              { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+            ),
+          );
+        }
         empty++;
       } else {
         captured++;
@@ -158,6 +236,7 @@ async function reconcileOrgInvoicePaymentsUnlocked(
                   },
                 });
               }
+              await retireSettledOrder(tx, invoice, "CAPTURE_ACCOUNTED");
               return result;
             },
             { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },

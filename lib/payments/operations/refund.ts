@@ -37,6 +37,7 @@
  * the paise.
  */
 
+import { casMiss } from "@/lib/cron/run-counters";
 import {
   reportSentryError,
   reportSentryMessage,
@@ -826,6 +827,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             data: { status: RefundStatus.SUCCEEDED },
           });
           if (settledClaim.count === 0) {
+            casMiss();
             const current = await tx.refund.findUnique({
               where: { id: boundRefundRowId },
               select: { status: true },
@@ -1004,6 +1006,7 @@ export async function applyRefundCascade(
     data: { cascadedAt: new Date() },
   });
   if (claim.count === 0) {
+    casMiss();
     // Idempotency short-circuit — the system working as designed (a
     // redelivered webhook or a racing cron lost the claim). Reported for
     // volume/pattern visibility only.
@@ -2207,16 +2210,7 @@ export async function mintRefundCreditNote(
     },
     select: { id: true },
   });
-  // The invoice row is locked; a positive credit invalidates its old checkout amount.
-  if (
-    cnTotal > 0 &&
-    (invoice.status === "ISSUED" || invoice.status === "OVERDUE")
-  ) {
-    await tx.organizationInvoice.updateMany({
-      where: { id: invoice.id, status: { in: ["ISSUED", "OVERDUE"] } },
-      data: { providerPaymentOrderId: null },
-    });
-  }
+  // Retain the order until gateway inspection; its capture webhook may be missing.
   await restorePurchaseOrderForCredit(tx, {
     invoice,
     credit: {

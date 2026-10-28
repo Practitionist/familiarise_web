@@ -13,8 +13,8 @@
  *    has to restart at the withdrawal.
  *
  * 2. Three separate places told users the retention sweeper is a "daily cron"
- *    that "purges rows". It is weekly, and count-only unless
- *    DPDP_SWEEPER_DELETE is set. A user reading a dashboard that overstates both
+ *    that "purges rows". It is weekly, and deletes only rows
+ *    past their retention deadline. A user reading a dashboard that overstates both
  *    the cadence and the deletion has been told something untrue about their own
  *    data.
  */

@@ -85,6 +85,42 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+describe("order holding capture evidence", () => {
+  it.each([
+    [0, "INR"],
+    [-100, "INR"],
+    [1.5, "INR"],
+    [Number.MAX_SAFE_INTEGER + 1, "INR"],
+    [Number.NaN, "INR"],
+    [100, "USD"],
+  ])("rejects a captured amount of %s %s", async (amount, currency) => {
+    ordersFetchPayments.mockResolvedValue({
+      count: 1,
+      items: [{ id: "pay_invalid", status: "captured", amount, currency }],
+    });
+
+    await expect(readRazorpayOrderHolding("order_invalid")).rejects.toThrow(
+      /Order order_invalid captured/,
+    );
+  });
+
+  it("returns a positive whole-INR capture after a failed payment attempt", async () => {
+    ordersFetchPayments.mockResolvedValue({
+      count: 2,
+      items: [
+        { id: "pay_failed", status: "failed", amount: 0, currency: "INR" },
+        { id: "pay_valid", status: "captured", amount: 100, currency: "INR" },
+      ],
+    });
+
+    await expect(readRazorpayOrderHolding("order_valid")).resolves.toEqual({
+      kind: "captured",
+      paymentId: "pay_valid",
+      amountPaise: 100,
+    });
+  });
+});
+
 describe("PM-12 — createRazorpayRefund targets the captured payment", () => {
   it("refunds items[1] (captured) when items[0] is a failed attempt", async () => {
     ordersFetchPayments.mockResolvedValue({

@@ -177,9 +177,9 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
 - **Alternatives considered:** An ADR was considered, but the rule is operating procedure for agents and belongs next to the other process references.
 - **Consequences:** The procedure is edited in one place.
 
-### ADR-13. The operations console has four levels, audited controls, an integrity panel and a per-item run log
+### ADR-13. The operations console: a needs-attention inbox, audited controls, an integrity panel and a per-item run log
 
-- **Status:** Accepted on 2026-10-27. The design is recorded in #2424 and will be built in a later session.
+- **Status:** Accepted on 2026-10-27. The design is recorded in #2424. **Status note, 2026-10-27:** Phase 1 ("record the truth") is implemented. It covers the real outcome vocabulary (`completed`, `attention`, `partial`, `failed`, `held`, `skipped`, `refused`, `paused`), the stored summary, `itemsProcessed` and `errorCount`, zero-duration rows for held, refused and skipped runs, the per-run counters, the run id and tick id (`job_run_id` Sentry tag, `context.jobRunId` on system events, `x-tick-id`), a watched tier of 16 money SLOs, the registry-driven in-process admin Run door (which repeats a windowed job's latest due window, audits by the recorded outcome and keeps maker-checker on both payout rails), and the retention jobs moved to the ticker. Phases 2 and 3 remain to be built: Pause/Resume and Retry failed items, the needs-attention inbox and job health table, the per-item table and the Run detail page.
 - **Context:** Today's System Jobs page is a grid of Run Now buttons plus the last ten runs, and every run there reads "Completed". The job machinery catalog (document 11 in `docs/maintenance`) shows why: a run row records only a narrow result. Partial runs, failed runs and config skips can still be stored as COMPLETED. Held runs and skipped runs leave no row at all. Nothing links a run to the payments, refunds or payouts it touched. Operators therefore cannot answer the root-cause questions that support needs answered, such as which run tried a given refund, what the gateway said, and whether the refund is stuck.
 - **Decision:**
   - **Four levels in the back-office:**
@@ -211,6 +211,14 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
   - Roughly a few thousand item rows a day, under a retention job.
   - Every money and recovery job must report its touched items through one `createMany` per run.
   - The Entity trace gains a "touched by run" row for each attempt.
+- **Amendment 2026-10-28 (owner decision, re-scoping Phases 2 and 3 around "which item failed and why"):**
+  - **Principle.** Sentry and Better Stack fix the system: one grouped issue per failure class, with a sample of ids. The console fixes the customer: for one user's stuck refund, payout or dispute, an operator sees the specific item, why it failed and what was tried, then remediates through the audited money doors and the linked support case. Both are needed. The console is therefore a failed-items list plus a run log, not a metrics dashboard.
+  - **Why Sentry cannot do this job.** A cron failure in Sentry is one grouped issue per failing step (the fingerprint is the subsystem and the operation, from `createRunFailureReporter`), and `extra.sample` holds at most ten failed ids. It carries no user identity, because identity is stamped only on request-scoped events. Better Stack receives one aggregate line per tick. The per-item truth lives in Postgres: domain columns now, `SystemJobRunItem` later. The run id (the `job_run_id` Sentry tag and `SystemEvent.context.jobRunId`) links the three.
+  - **Phase 2 (no DDL)** is a "Needs attention" inbox of failed or stuck items, not of counters: refunds owed and retired, payouts `PROCESSING` or `FAILED`, unpaid invoice captures, dead-lettered emails and recording copies. It is built from existing domain columns (owed markers, attempt counts, `failureReason`, statuses and ages). Each row shows the reason, the attempts, the age, a Retry door where one is allowed (payouts are covered by #2433) and a link to the Entity trace.
+  - **The inbox is registry-driven (planned).** An "owed-work source" registry declares, per source, its stuck-item query, its reason field, its age limit and its remediation door, in the same way `lib/cron/cleanup-registry.ts` drives jobs. Adding a source is one registry entry, never a hand-coded panel per job.
+  - **Job health table.** Each job shows its last real outcome, its age, its backlog, its SLO tier, Run and Pause. **Drain is dropped**: Run now plus Pause and Resume cover the need. The p50 and p95 durations move to a collapsed Performance tab.
+  - **Sub-tabs.** The console uses sub-tabs, in the same pattern as the support inbox: Overview (the inbox), Jobs, Runs, Integrity and Performance. This replaces the "four levels" navigation above for Phase 2; the Run detail page arrives in Phase 3.
+  - **Phase 3 (DDL)** is unchanged: `SystemJobRunItem` and Run detail give the attempt history for each item. Phase 1 already records the outcomes, summaries, item counts and run ids that these views read.
 
 ## References
 
@@ -229,3 +237,4 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
 | Hardcoded "Familiarise Technologies, Bangalore" supplier text | Not the registered entity (ADR-04)                                         | Read the identity from `lib/company.ts` only                                             |
 | Undocumented hourly `rl:mail` caps in `lib/auth.ts`           | One per-recipient daily check now applies to every auth send (ADR-05)      | Delete the old limiters when the pull request merges                                     |
 | A Sentry error for every failing ticker target                | Noise and email per new issue (ADR-08)                                     | Use the grouped warning and the streak test                                              |
+| A Drain control and a percentile-first Overview (ADR-13)      | The console answers "which item failed", not "how fast" (amendment)        | Do not build Drain; keep p50 and p95 on the Performance tab                              |

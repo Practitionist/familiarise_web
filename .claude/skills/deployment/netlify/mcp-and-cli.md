@@ -90,7 +90,7 @@ comm -23 /tmp/b /tmp/a   # in .env only
 comm -13 /tmp/b /tmp/a   # on Netlify only
 ```
 
-On 2026-09-12 the `.env`-only keys were `NEXT_PUBLIC_TEST_USERID`, `SEED_PASSWORD`, the four `R2_*` keys for the unimplemented recording bucket (#1314), and a dead `REDIS_URL` that nothing reads (the code and production both use `UPSTASH_REDIS_REST_URL`/`_TOKEN`); the Netlify-only keys were build and observability configuration. `comm` needs the same collation on both inputs, hence `LC_ALL=C`.
+On 2026-09-12 the `.env`-only keys were `SEED_PASSWORD`, a since-deleted test-user id, the four `R2_*` keys for the unimplemented recording bucket (#1314), and a dead `REDIS_URL` that nothing reads (the code and production both use `UPSTASH_REDIS_REST_URL`/`_TOKEN`); the Netlify-only keys were build and observability configuration. `comm` needs the same collation on both inputs, hence `LC_ALL=C`.
 
 ## Recipes added in the week of 2026-09-14
 
@@ -99,6 +99,10 @@ Build logs are not reachable through the public API: `GET /api/v1/deploys/{id}/l
 A production rebuild without a commit — needed when a build-time `NEXT_PUBLIC_*` value changes — is one call: `netlify api createSiteBuild --data '{"site_id":"…"}'`; the deploy id comes back as `deploy_id`, and `netlify api getDeploy --data '{"deploy_id":"…"}'` polled every 30 s until `state` is `ready` or `error` is the wait. `netlify api listSiteDeploys` filtered on `context == "production"` gives the currently published commit through `commit_ref`.
 
 Environment values are per context. `netlify env:set NAME value --context production` scopes a value to production only and leaves the other contexts on whatever they had; `netlify env:set NAME value` without `--context` writes every context; `netlify env:unset NAME` removes the name everywhere. `netlify env:list --context <production|deploy-preview|branch-deploy|dev> --json` is the only honest way to see what a given context will receive, and it is how the Novu cutover was verified (production on the Production identifier and key, every other context on Development). Print prefixes and lengths, never values.
+
+A value held in the context `all` (for example `EMAIL_ALLOWLIST`) cannot be changed through the MCP `setEnvVarValue` path: it answers 422. Send a full PUT with `netlify api updateEnvVar` instead.
+
+DNS for `familiarisenow.com` lives in the Netlify zone (`netlify api getDnsRecords`, `createDnsRecord`, `deleteDnsRecord`); the inventory is `docs/deployment/README.md` under "Domains and DNS records". GoDaddy holds only the registration, and no GoDaddy API key exists.
 
 `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` need the same per-context split (#1822): every `deploy-preview` and `branch-deploy` build shared production's single Upstash database until the vendor's 500k-command free-tier cap was hit twice in September 2026, once from production traffic alone and once with preview traffic riding along. The fix is the same `netlify env:set --context deploy-preview` / `--context branch-deploy` pattern as the Novu cutover above, pointed at a second Upstash database (its own free tier), leaving `--context production` on the paid database after the owner's pay-as-you-go upgrade.
 

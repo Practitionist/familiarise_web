@@ -18,7 +18,7 @@ The organisation is on the Developer (free) plan (`docs/observability/sentry/06-
 ## 3. Exposure in this repo
 
 - `applyErrorBudget` in `sentry.shared.config.ts` is the `beforeSend` stage: it drops `expected` info events, assigns fingerprint families, throttles each key to one event per `INFRA_THROTTLE_MS` (one hour), and lets at most `BUDGET_BREAKER_MAX` (10) non-fatal events an hour through per process. Fatal events skip the breaker. It is per process only.
-- `resolveDefaultTracesSampleRate()` caps `tracesSampleRate` at 0.1 in production and preview (0.2 local), overridable by `NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE`; `/api/cleanup/` traces sample at 0.02. Never set `1.0` in production or preview.
+- `resolveDefaultTracesSampleRate()` caps `tracesSampleRate` at 0.1 in production and preview (0.2 elsewhere), fixed in code with no env override; `/api/cleanup/` traces sample at 0.02. Never set `1.0` in production or preview.
 - Session replay is not configured anywhere (no replay integration or sample rates in `sentry.shared.config.ts` or `instrumentation-client.ts`), so it stays at the SDK default of off. Do not add replay without a budget.
 - `instrumentation-client.ts` loads `@sentry/nextjs` lazily and skips synthetic traffic when `navigator.webdriver` is true or the user agent matches `HeadlessChrome|Lighthouse|PTST`.
 - The ingest canary (`lib/observability/ingest-canary.ts`, target `sentry-ingest-canary` in `netlify/functions/cron-tick.mts`) runs every 6 hours (360 minutes), 120 stored events a month, because five-minute cadence would be 8,640 a month, 173 percent of the allowance. Its alert goes by email through Resend, never through Sentry.

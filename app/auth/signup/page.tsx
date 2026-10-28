@@ -1,5 +1,6 @@
 "use client";
 
+import { SUPPORT_EMAIL } from "@/lib/company";
 import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,10 +49,6 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSignedInRedirect } from "../useSignedInRedirect";
 import { stashPendingVerificationEmail } from "../pending-verification";
 import { AuthFormSkeleton } from "../AuthFormSkeleton";
-
-/** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
-const SUPPORT_EMAIL =
-  process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
 
 /**
  * A thrown Better Auth `APIError` keeps `{ code, message }` in `body`; the

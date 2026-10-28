@@ -16,7 +16,7 @@ import type {
   JobRunMetric,
   JobRunMetrics as Metrics,
 } from "@/lib/backoffice/job-run-metrics";
-import type { Tone } from "@/lib/ui/tone";
+import { toneTextClass, type Tone } from "@/lib/ui/tone";
 
 const OK_FILL = "hsl(var(--muted-foreground))";
 const FAIL_FILL = "hsl(var(--destructive))";
@@ -100,8 +100,8 @@ export function JobRunMetrics({
       variant="card"
       description={
         <>
-          Counts cover every environment writing to this database; last success
-          and the window check count only{" "}
+          Counts cover every environment writing to this database; the last
+          finished run (completed or partial) and the window check count only{" "}
           {metrics.environment ?? "every environment"} runs.{" "}
           {missed.length > 0
             ? `${missed.length} ${missed.length === 1 ? "job has" : "jobs have"} missed a window.`
@@ -136,14 +136,16 @@ export function JobRunMetrics({
             <TableHead>Job</TableHead>
             <TableHead className="text-right">Runs</TableHead>
             <TableHead className="text-right">Succeeded</TableHead>
+            <TableHead className="text-right">Attention</TableHead>
+            <TableHead className="text-right">Partial</TableHead>
             <TableHead className="text-right">Failed</TableHead>
-            <TableHead className="text-right">Held</TableHead>
+            <TableHead className="text-right">Held / skipped</TableHead>
             <TableHead className="text-right">p50</TableHead>
             <TableHead className="text-right">p95</TableHead>
             {itemsRecorded && (
               <TableHead className="text-right">Items</TableHead>
             )}
-            <TableHead>Last success</TableHead>
+            <TableHead>Last finished</TableHead>
             <TableHead>Window</TableHead>
             <TableHead>Daily</TableHead>
           </TableRow>
@@ -158,11 +160,19 @@ export function JobRunMetrics({
               <TableCell className="text-right tabular-nums">
                 {job.succeeded}
               </TableCell>
+              <TableCell
+                className={`text-right tabular-nums ${toneTextClass(job.attention > 0 ? "caution" : "neutral")}`}
+              >
+                {job.attention}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {job.partial}
+              </TableCell>
               <TableCell className="text-right tabular-nums">
                 {job.failed}
               </TableCell>
               <TableCell className="text-right tabular-nums">
-                {job.held}
+                {job.held} / {job.skipped}
               </TableCell>
               <TableCell className="text-right tabular-nums">
                 {duration(job.p50Ms)}
