@@ -7,6 +7,7 @@
 import { formatInTimeZone } from "date-fns-tz";
 import { z } from "zod";
 
+import { lastInstantBefore } from "@/lib/booking/entitlement";
 import type {
   CycleUnit,
   EntitlementOccurrence,
@@ -27,8 +28,10 @@ export interface GridQuota {
   allBooked: boolean;
   /** ISO start of the cycle window. */
   windowStart: string;
-  /** ISO end of the cycle window, as the entitlement gives it. */
+  /** ISO end of the cycle window, exclusive: a session may end exactly here. */
   windowEnd: string;
+  /** ISO fixed plan end, exclusive; incident extensions move it. Nothing is placed at or after it. */
+  planEndsAt: string;
   perDayCap: number;
   /** yyyy-MM-dd days in `schedulingTimezone` that already hold `perDayCap` live sessions. */
   fullDays: string[];
@@ -43,6 +46,7 @@ export const gridQuotaSchema: z.ZodType<GridQuota> = z.object({
   allBooked: z.boolean(),
   windowStart: z.string().datetime(),
   windowEnd: z.string().datetime(),
+  planEndsAt: z.string().datetime(),
   perDayCap: z.number().int().positive(),
   fullDays: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
   schedulingTimezone: z.string().min(1),
@@ -91,6 +95,7 @@ export function computeGridQuota(input: {
     allBooked: remaining === 0 && rescheduling === 0,
     windowStart: cycle.windowStart.toISOString(),
     windowEnd: cycle.windowEnd.toISOString(),
+    planEndsAt: entitlement.planEndsAt.toISOString(),
     perDayCap,
     fullDays,
     schedulingTimezone,
@@ -98,21 +103,22 @@ export function computeGridQuota(input: {
 }
 
 /**
- * True when a cell [startMs,endMs) must paint "Limit reached": every session
- * of the plan is held, or the cell is inside a full cycle's window, or on a
- * full day.
+ * True when a cell [startMs,endMs) must paint "Limit reached": the plan has
+ * ended for it, every session of the plan is held, the cell overlaps a full
+ * cycle's (half-open) window, or it falls on a full day.
  */
 export function cellLimitReached(
   quota: GridQuota,
   startMs: number,
   endMs: number,
 ): boolean {
+  if (endMs > Date.parse(quota.planEndsAt)) return true;
   if (quota.allBooked) return true;
   const windowStartMs = Date.parse(quota.windowStart);
   const windowEndMs = Date.parse(quota.windowEnd);
   if (
     quota.remainingThisCycle === 0 &&
-    startMs <= windowEndMs &&
+    startMs < windowEndMs &&
     endMs > windowStartMs
   ) {
     return true;
@@ -122,11 +128,22 @@ export function cellLimitReached(
   );
 }
 
-/** Footer copy, e.g. "2 of 3 this week · next opens Sun 8 Mar" (when full) / "2 of 3 this week" (room left). */
-export function quotaFooterText(quota: GridQuota, zone: string): string {
+/**
+ * Footer copy: "2 of 3 this week" while there is room, "… · next opens Sun
+ * 8 Mar" when the cycle is full, "Plan ended on Fri 6 Mar" once it is over.
+ */
+export function quotaFooterText(
+  quota: GridQuota,
+  zone: string,
+  nowMs: number = Date.now(),
+): string {
+  const planEndMs = Date.parse(quota.planEndsAt);
+  if (nowMs >= planEndMs) {
+    return `Plan ended on ${formatDayLabel(lastInstantBefore(new Date(planEndMs)), { zone })}`;
+  }
   const held = `${quota.filled} of ${quota.capacity} this ${quota.unit}`;
   if (quota.remainingThisCycle > 0 || quota.allBooked) return held;
-  // The entitlement's window ends one millisecond before the next cycle starts.
-  const nextOpens = new Date(Date.parse(quota.windowEnd) + 1);
-  return `${held} · next opens ${formatDayLabel(nextOpens, { zone })}`;
+  const nextOpensMs = Date.parse(quota.windowEnd);
+  if (nextOpensMs >= planEndMs) return held;
+  return `${held} · next opens ${formatDayLabel(new Date(nextOpensMs), { zone })}`;
 }

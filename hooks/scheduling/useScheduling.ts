@@ -25,11 +25,9 @@ import {
   countSessionsForDay,
   findConsecutiveGroupContaining,
   dayKey,
-  weekKey,
 } from "@/lib/scheduling/intervalSelectionValidation";
 import {
   AllocationToast,
-  weeklyLimitReached,
   dailyLimitReached,
   oneSessionPerDay,
   sessionLimitReached,
@@ -43,13 +41,13 @@ import {
   autoScheduled,
   partiallyScheduled,
   requestRefreshedInPlace,
+  timesJustTaken,
   allocationFailed,
   allocationFailedWithCode,
   allocatedElsewhere,
   requestChangedElsewhere,
   rateLimited,
   schedulingDayBucket,
-  schedulingWeekBucket,
 } from "@/lib/scheduling/allocationMessages";
 
 /**
@@ -81,6 +79,7 @@ type AllocationFailureAction =
   | "allocated-elsewhere"
   | "request-changed"
   | "request-refresh"
+  | "times-taken"
   | "stay-open-refresh"
   | "key-reset"
   | "generic";
@@ -99,6 +98,7 @@ function classifyAllocationFailure(
     return "key-reset";
   }
   if (result.httpStatus !== 409) return "generic";
+  if (result.takenSlotStarts?.length) return "times-taken";
   // 409s branch on the server's code, never on its wording. Only a
   // genuine ALREADY_ALLOCATED removes the row; any code this switch does
   // not know keeps the dialog open with a refetch, because closing and
@@ -202,13 +202,6 @@ export interface UseEventSlotAllocationOptions {
   /** Number of confirmed past event slots (for in-progress recurring events) */
   pastConfirmedSlotCount?: number;
 
-  /**
-   * #997 Phase 3 — server-bucketed confirmed calls per scheduling-timezone
-   * week key. Used so the interactive weekly-limit guard does not re-derive
-   * aggregates from a whole-window appointment fetch on every click.
-   */
-  weeklyConfirmedCallCounts?: Record<string, number>;
-
   /** Preferred time slots (if any) */
   preferredTimeSlots?: CalendarInterval[];
 
@@ -269,6 +262,9 @@ export interface UseEventSlotAllocationOptions {
    * subject in place and the dialog stays open.
    */
   onRequestChanged?: () => void;
+
+  /** The zone times in messages are written in (the grid's display zone). */
+  displayZone?: string;
 
   /** Validation change callback */
   onValidationChange?: (isValid: boolean, result: ValidationResult) => void;
@@ -692,6 +688,26 @@ export function useEventSlotAllocation(
           toast(requestChangedElsewhere());
           onConflict?.();
           break;
+        case "times-taken": {
+          // Only the named times leave the selection; the other picks stay.
+          const taken = (result.takenSlotStarts ?? [])
+            .map((iso) => new Date(iso))
+            .filter((date) => Number.isFinite(date.getTime()));
+          const sessionMs = slotLimits.slotsPerSession * 30 * 60 * 1000;
+          setSelectedSlots((current) =>
+            current.filter(
+              (slot) =>
+                !taken.some(
+                  (start) =>
+                    slot.startTime.getTime() >= start.getTime() &&
+                    slot.startTime.getTime() < start.getTime() + sessionMs,
+                ),
+            ),
+          );
+          toast(timesJustTaken(taken, options.displayZone));
+          onStaleData?.();
+          break;
+        }
         case "request-refresh":
           toast(requestRefreshedInPlace());
           if (onRequestChanged) onRequestChanged();
@@ -722,7 +738,15 @@ export function useEventSlotAllocation(
       }
       onError?.(errorMessage);
     },
-    [toast, onConflict, onStaleData, onRequestChanged, onError],
+    [
+      toast,
+      onConflict,
+      onStaleData,
+      onRequestChanged,
+      onError,
+      slotLimits.slotsPerSession,
+      options.displayZone,
+    ],
   );
 
   // ==========================================
@@ -771,79 +795,14 @@ export function useEventSlotAllocation(
               : [slot];
           const newSelection = [...currentSlots, ...slotsToAdd];
 
-          // Subscription: weekly-limit and complete-call guards
+          // Subscription: the plan's total. The rolling cycle (not a calendar
+          // week) is the only weekly cap; the grid paints it as "Limit reached".
           if (eventType === "subscription") {
             const slotsPerCall = slotLimits.slotsPerSession;
-            const sessionsPerWeek = options.sessionsPerWeek || 1;
-
-            // Determine week/day for the slot being added
-            const targetWeekKey = weekKey(
-              slot.startTime,
-              options.schedulingTimezone,
-            );
             const targetDayKey = dayKey(
               slot.startTime,
               options.schedulingTimezone,
             );
-
-            // Build state BEFORE adding this slot
-            const currentWeekSlots = currentSlots.filter(
-              (s) =>
-                weekKey(s.startTime, options.schedulingTimezone) ===
-                targetWeekKey,
-            );
-
-            // Group by day for the current week (pre-add)
-            const preSlotsByDay = groupSlotsByDay(
-              currentWeekSlots,
-              options.schedulingTimezone,
-            );
-
-            // Count complete calls already in this week (pre-add), plus
-            // server-confirmed calls for the same week key (#997 Phase 3).
-            let completeCallsThisWeek =
-              options.weeklyConfirmedCallCounts?.[targetWeekKey] || 0;
-            preSlotsByDay.forEach((daySlots) => {
-              if (isCompleteCall(daySlots, slotsPerCall))
-                completeCallsThisWeek++;
-            });
-
-            const preDaySlots = preSlotsByDay.get(targetDayKey) || [];
-
-            // If starting a NEW day and weekly limit already reached → block immediately
-            if (
-              preDaySlots.length === 0 &&
-              completeCallsThisWeek >= sessionsPerWeek
-            ) {
-              queueToast(
-                weeklyLimitReached(
-                  sessionsPerWeek,
-                  schedulingWeekBucket(
-                    slot.startTime,
-                    options.schedulingTimezone,
-                  ),
-                ),
-              );
-              return currentSlots;
-            }
-
-            // If continuing the same day, block if completing this call would exceed weekly limit
-            if (
-              preDaySlots.length > 0 &&
-              isCompleteCall([...preDaySlots, slot], slotsPerCall) &&
-              completeCallsThisWeek >= sessionsPerWeek
-            ) {
-              queueToast(
-                weeklyLimitReached(
-                  sessionsPerWeek,
-                  schedulingWeekBucket(
-                    slot.startTime,
-                    options.schedulingTimezone,
-                  ),
-                ),
-              );
-              return currentSlots;
-            }
 
             // Count total complete calls across ALL weeks for newSelection (post-add)
             const totalCompleteCalls = countCompleteCallsInMap(
@@ -971,73 +930,12 @@ export function useEventSlotAllocation(
           // Subscription: per-day consecutiveness and progress feedback
           if (eventType === "subscription" && options.sessionDurationInHours) {
             const slotsPerCall = slotLimits.slotsPerSession;
-            const sessionsPerWeek = options.sessionsPerWeek || 1;
             const maxTotalCalls = slotLimits.totalSessions;
 
-            const slotsByDay = groupSlotsByDay(
-              newSelection,
-              options.schedulingTimezone,
-            );
-
-            // Confirmed calls per week WITHOUT the new slot.
-            // Seed from `weeklyConfirmedCallCounts` (server truth for sessions
-            // already allocated this week) — the earlier weekly-limit block
-            // already does; this sibling block used to count only `currentSlots`
-            // and under-reported progress toasts on partially confirmed weeks.
-            const existingSlotsByDay = groupSlotsByDay(
-              currentSlots,
-              options.schedulingTimezone,
-            );
-            const existingWeeklyConfirmedCallCounts = new Map<string, number>(
-              Object.entries(options.weeklyConfirmedCallCounts ?? {}),
-            );
-            existingSlotsByDay.forEach((daySlots) => {
-              if (
-                daySlots.length === slotsPerCall &&
-                isCompleteCall(daySlots, slotsPerCall)
-              ) {
-                const wk = weekKey(
-                  daySlots[0].startTime,
-                  options.schedulingTimezone,
-                );
-                existingWeeklyConfirmedCallCounts.set(
-                  wk,
-                  (existingWeeklyConfirmedCallCounts.get(wk) || 0) + 1,
-                );
-              }
-            });
-
-            const targetWeekKey = weekKey(
-              slot.startTime,
-              options.schedulingTimezone,
-            );
             const targetDayKey = dayKey(
               slot.startTime,
               options.schedulingTimezone,
             );
-
-            // Get current day slots plus the new slot
-            const dayWithNewSlot = [...(slotsByDay.get(targetDayKey) || [])];
-
-            // Block if adding this slot COMPLETES a call and the week is already at its sessionsPerWeek limit
-            const existingCallsThisWeek =
-              existingWeeklyConfirmedCallCounts.get(targetWeekKey) || 0;
-            if (
-              dayWithNewSlot.length === slotsPerCall &&
-              isCompleteCall(dayWithNewSlot, slotsPerCall) &&
-              existingCallsThisWeek >= sessionsPerWeek
-            ) {
-              queueToast(
-                weeklyLimitReached(
-                  sessionsPerWeek,
-                  schedulingWeekBucket(
-                    slot.startTime,
-                    options.schedulingTimezone,
-                  ),
-                ),
-              );
-              return currentSlots;
-            }
 
             // Check daily call limit BEFORE adding the new slot
             const currentDaySlots = currentSlots.filter(
@@ -1399,6 +1297,7 @@ export function useEventSlotAllocation(
               error: response.error,
               httpStatus: response.httpStatus,
               errorCode: response.errorCode,
+              takenSlotStarts: response.takenSlotStarts,
             },
             "Auto allocation failed",
           );

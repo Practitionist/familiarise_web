@@ -269,17 +269,6 @@ export function TimePicker({
     });
   };
 
-  const movingSessionStarts = React.useMemo(() => {
-    if (!isSelectMode) return undefined;
-    if (picksSpecificSessions) {
-      return sessions
-        .filter((session) =>
-          session.slots.every((slot) => selectedSlotIds.includes(slot.id)),
-        )
-        .map((session) => session.startTime);
-    }
-    return sessions.map((session) => session.startTime);
-  }, [isSelectMode, picksSpecificSessions, sessions, selectedSlotIds]);
   /** The occurrences this submit would release, for the plan-limit overlay. */
   const releasingIds = React.useMemo(() => {
     if (!isSelectMode || !policy.showReleasedSlots) return undefined;
@@ -345,7 +334,6 @@ export function TimePicker({
       sessionsPerWeek={subject.sessionsPerWeek}
       durationInMonths={subject.durationInMonths}
       totalSessions={isSelectMode ? sessionsBeingMoved : subject.totalSessions}
-      movingSessionStarts={movingSessionStarts}
       schedulingTimezone={subject.schedulingTimezone}
       allowedStart={subject.allowedStart}
       allowedEnd={subject.allowedEnd}

@@ -363,6 +363,33 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
     expect(host.textContent).toContain("Pick 3 for");
     expect(host.textContent).toContain("3 per week · 0 of 144 booked");
   });
+
+  it.each([
+    // A one-month plan that ended in February: nothing more to pick.
+    ["ended", new Date(2026, 1, 1).toISOString(), "Plan ended on"],
+    // The same plan extended by an incident far into the future opens again.
+    ["extended", new Date(2031, 0, 1).toISOString(), "Pick 3 for"],
+  ])("reads the stored plan end (%s)", (_label, planEndsAt, expected) => {
+    setCalendarData({
+      eventSlots: [],
+      eventOccurrences: [],
+      subscriptionMeta: {
+        sessionsTotal: 12,
+        sessionsPerWeek: 3,
+        durationInMonths: 1,
+        schedulingPeriodStartsAt: new Date(2026, 0, 1).toISOString(),
+        schedulingTimezone: "Asia/Kolkata",
+        planEndsAt,
+      },
+    });
+    render({
+      eventType: "subscription",
+      sessionDurationInHours: 1,
+      sessionsPerWeek: 3,
+      totalSessions: 12,
+    });
+    expect(host.textContent).toContain(expected);
+  });
 });
 
 // #1775 PR-B — a subscription's week grid starts on its cycle's start day;

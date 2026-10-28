@@ -57,6 +57,8 @@ export interface AllocationResult {
   error?: string;
   /** Structured code from the server (NO_AVAILABILITY, PERIOD_ENDED, etc.). */
   errorCode?: string;
+  /** On a 409 TIMES_TAKEN: the session starts (ISO) someone else took. */
+  takenSlotStarts?: string[];
   strategy?: string;
   /** HTTP status of a failed allocate call — 409 means "allocated elsewhere". */
   httpStatus?: number;
@@ -202,6 +204,7 @@ export class AllocationAlgorithms {
           selectedSlots: [],
           error: allocationResult.error,
           errorCode: allocationResult.errorCode,
+          takenSlotStarts: allocationResult.takenSlotStarts,
           httpStatus: allocationResult.httpStatus,
         };
       }
@@ -291,6 +294,7 @@ export class AllocationAlgorithms {
           selectedSlots: [],
           error: allocationResult.error,
           errorCode: allocationResult.errorCode,
+          takenSlotStarts: allocationResult.takenSlotStarts,
           httpStatus: allocationResult.httpStatus,
         };
       }

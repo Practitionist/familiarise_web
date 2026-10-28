@@ -8,6 +8,7 @@ import {
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 import { CalendarInterval } from "./calendarUtils";
 import { gridQuotaSchema } from "./grid-quota";
+import { z } from "zod";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 
 /** #997 Phase 2 — tooltip display metadata for a booked slot, computed
@@ -20,6 +21,28 @@ export interface OverlappingAppointmentMeta {
 }
 
 /** Shape of a raw availability slot returned from the availability-with-allocation API */
+const takenStartsSchema = z.array(z.string().datetime());
+
+/** The refusal's code, from `errorCode` or the shared `code` field. */
+function codeOf(body: unknown): string | undefined {
+  const parsed = z.object({ code: z.string() }).safeParse(body);
+  return parsed.success ? parsed.data.code : undefined;
+}
+
+/** `takenSlotStarts` from a TIMES_TAKEN refusal, top level or under `details`. */
+function takenSlotStartsOf(body: unknown): string[] | undefined {
+  const parsed = z
+    .object({
+      takenSlotStarts: takenStartsSchema.optional(),
+      details: z
+        .object({ takenSlotStarts: takenStartsSchema.optional() })
+        .optional(),
+    })
+    .safeParse(body);
+  if (!parsed.success) return undefined;
+  return parsed.data.takenSlotStarts ?? parsed.data.details?.takenSlotStarts;
+}
+
 /** Event context for the availability grid read. */
 export interface AvailabilityContext {
   webinarId?: string;
@@ -82,6 +105,8 @@ export interface AllocationResponse {
   error?: string;
   /** Structured code from the server (NO_AVAILABILITY, PERIOD_ENDED, etc.). */
   errorCode?: string;
+  /** On a 409 TIMES_TAKEN: the session starts (ISO) someone else took. */
+  takenSlotStarts?: string[];
   /** HTTP status of the failed response — 409 means "allocated elsewhere". */
   httpStatus?: number;
   /** #1206 — set on success when fewer sessions were placed than the plan
@@ -255,7 +280,8 @@ export class AllocationService {
         return {
           success: false,
           error: data.error || fallback,
-          errorCode: data.errorCode,
+          errorCode: data.errorCode ?? codeOf(data),
+          takenSlotStarts: takenSlotStartsOf(data),
           httpStatus: response.status,
           // #1206 — a shortage the consultant can still act on.
           placeableSessions: data.placeableSessions,
@@ -722,20 +748,13 @@ export class AllocationService {
   }
 
   /**
-   * Fetches specific event slots for any event type
-   * Used to display "This Event" (black) instead of "Booked" (gray) in calendar
-   *
-   * #997 Phase 3 — when `slotsPerCall` is given for a subscription, the
-   * response also carries `weeklyConfirmedCallCounts` (server-bucketed by
-   * scheduling-timezone week, ADR B9) so the calendar's interactive
-   * weekly-limit guard no longer needs a separate whole-window appointment
-   * fetch to re-derive it.
+   * This event's own sessions, so the grid paints them "This booking" rather
+   * than someone else's "Booked".
    */
   static async fetchEventSlots(
     eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
     consultantProfileId: string,
-    slotsPerCall?: number,
     /** Lets the caller cancel on unmount; an aborted read is not a fault. */
     signal?: AbortSignal,
   ) {
@@ -752,9 +771,6 @@ export class AllocationService {
         params.append("classId", eventId);
       } else if (eventType === "subscription") {
         params.append("subscriptionId", eventId);
-        if (slotsPerCall && slotsPerCall > 0) {
-          params.append("slotsPerCall", String(slotsPerCall));
-        }
       } else if (eventType === "consultation") {
         params.append("consultationId", eventId);
       }
@@ -772,18 +788,13 @@ export class AllocationService {
         });
       }
 
-      const { data, weeklyConfirmedCallCounts } = await response.json();
-      return {
-        data: data || [],
-        weeklyConfirmedCallCounts:
-          (weeklyConfirmedCallCounts as Record<string, number> | undefined) ||
-          {},
-      };
+      const { data } = await response.json();
+      return { data: data || [] };
     } catch (error) {
       if (isAbortedFetch(error, signal)) {
         // The page moved on mid-read: the same quiet "nothing known" the
         // hook degrades to, minus the Sentry event (FAMILIARISE_WEB-4J).
-        return { data: [], weeklyConfirmedCallCounts: {} };
+        return { data: [] };
       }
       console.error("Error fetching event slots:", error);
       const httpStatus =

@@ -46,11 +46,11 @@ import {
   calculateCallProgress,
   countSundayWeeksInclusive,
   groupSelectedIntoSessions,
-  validateDayBasedConsecutiveSlots,
 } from "@/lib/scheduling/calendarUtils";
 import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
 import { useCalendarData } from "@/hooks/scheduling/useCalendarData";
 import {
+  lastInstantBefore,
   subscriptionCycleHeading,
   subscriptionEntitlement,
   type SubscriptionEntitlement,
@@ -63,14 +63,12 @@ import type { AllocationResponse } from "@/lib/scheduling/allocationService";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import {
   outsideSchedulingWindow,
-  weeklyLimitReached,
   pastSlotBlocked,
   pastSessionBlocked,
   sessionTooSoon,
   sessionBeingRescheduled,
   slotUnavailable,
   notEnoughConsecutive,
-  schedulingWeekBucket,
 } from "@/lib/scheduling/allocationMessages";
 import { useToast } from "@/hooks/use-toast";
 import type { SlotStatusKey } from "@/lib/scheduling/interval-status-tokens";
@@ -166,7 +164,7 @@ function inPeriodDays(
     ? calendarDateKey(calendarDayOf(allowedStart, zone))
     : null;
   const endKey = allowedEnd
-    ? calendarDateKey(calendarDayOf(new Date(allowedEnd.getTime() - 1), zone))
+    ? calendarDateKey(calendarDayOf(lastInstantBefore(allowedEnd), zone))
     : null;
   return days.map((day) => {
     const key = calendarDateKey(day);
@@ -272,42 +270,15 @@ function formatAllowedRange(
     date
       ? `${formatDateLabel(date, { zone })} at ${formatClockTime(date, { zone })}`
       : "-";
-  return `${at(allowedStart)} – ${at(allowedEnd)}`;
-}
-
-/**
- * Completed calls in the current selection for one week: exactly
- * `slotsPerCall` consecutive half-hours on the same day.
- */
-function countCompletedSelectedCallsForWeek(
-  selectedSlots: CalendarInterval[],
-  slotsPerCall: number,
-  targetWeekKey: string,
-  schedulingTimezone?: string,
-): number {
-  if (!selectedSlots?.length) return 0;
-  const byDay = new Map<string, CalendarInterval[]>();
-  for (const s of selectedSlots) {
-    if (
-      ScheduleCalculationService.weekKey(s.startTime, schedulingTimezone) !==
-      targetWeekKey
-    )
-      continue;
-    const key = ScheduleCalculationService.dayKey(
-      s.startTime,
-      schedulingTimezone,
-    );
-    const list = byDay.get(key) ?? [];
-    list.push(s);
-    byDay.set(key, list);
-  }
-  let completed = 0;
-  byDay.forEach((daySlots) => {
-    if (daySlots.length !== slotsPerCall) return;
-    if (validateDayBasedConsecutiveSlots(daySlots, schedulingTimezone))
-      completed += 1;
-  });
-  return completed;
+  // The end is exclusive: a midnight end means "through the day before".
+  const until = (date?: Date) => {
+    if (!date) return "-";
+    const { hour, minute } = ScheduleCalculationService.wallClock(date, zone);
+    return hour === 0 && minute === 0
+      ? `end of ${formatDateLabel(lastInstantBefore(date), { zone })}`
+      : at(date);
+  };
+  return `${at(allowedStart)} – ${until(allowedEnd)}`;
 }
 
 /**
@@ -356,7 +327,10 @@ function computeSubscriptionFooter(
     maxTotalCalls = totalSessions;
   } else {
     if (!allowedStart || !allowedEnd || !sessionsPerWeek) return null;
-    const weeks = countSundayWeeksInclusive(allowedStart, allowedEnd);
+    const weeks = countSundayWeeksInclusive(
+      allowedStart,
+      lastInstantBefore(allowedEnd),
+    );
     maxTotalCalls = weeks * sessionsPerWeek;
   }
   const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
@@ -492,8 +466,6 @@ export interface UnifiedCalendarProps {
   allowedEnd?: Date;
   /** Authoritative session count from the plan. */
   totalSessions?: number;
-  /** Starts of sessions being moved, so their weeks do not block replacements. */
-  movingSessionStarts?: (Date | string)[];
   /** The event's scheduling zone: the limit day/week buckets. */
   schedulingTimezone?: string;
   /** Where to be looking on open; applied once. */
@@ -541,7 +513,7 @@ function resolveMaxTotalCalls(
   if (totalSessions && totalSessions > 0) return totalSessions;
   if (allowedStart && allowedEnd && sessionsPerWeek) {
     return (
-      countSundayWeeksInclusive(allowedStart, allowedEnd) *
+      countSundayWeeksInclusive(allowedStart, lastInstantBefore(allowedEnd)) *
       (sessionsPerWeek || 1)
     );
   }
@@ -600,7 +572,6 @@ export function UnifiedCalendar({
   allowedStart,
   allowedEnd,
   totalSessions,
-  movingSessionStarts,
   schedulingTimezone,
   focus,
   viewerZone,
@@ -651,7 +622,6 @@ export function UnifiedCalendar({
     availableSlots,
     eventSlots,
     eventTentativeSlots,
-    weeklyConfirmedCallCounts,
     eventOccurrences,
     subscriptionMeta,
     quota,
@@ -673,7 +643,6 @@ export function UnifiedCalendar({
     mode,
     allowedStart,
     allowedEnd,
-    sessionDurationInHours,
     consulteeUserId,
     gridZone,
     weekStartsOn,
@@ -729,43 +698,6 @@ export function UnifiedCalendar({
   const hasReschedule =
     eventTentativeSlots.length > 0 ||
     (entitlement ? entitlement.rescheduling > 0 : false);
-
-  // Sessions being moved stay SCHEDULED until the proposal is approved; free
-  // their week buckets so a same-week replacement is not blocked.
-  const effectiveWeeklyConfirmedCallCounts = useMemo(() => {
-    if (
-      mode !== "select" ||
-      !weeklyConfirmedCallCounts ||
-      !movingSessionStarts?.length
-    ) {
-      return weeklyConfirmedCallCounts;
-    }
-    const tentativeStartSeconds = new Set(
-      eventTentativeSlots.map((s) => Math.round(s.startTime.getTime() / 1000)),
-    );
-    const adjusted = { ...weeklyConfirmedCallCounts };
-    for (const start of movingSessionStarts) {
-      const startDate = start instanceof Date ? start : new Date(start);
-      if (Number.isNaN(startDate.getTime())) continue;
-      if (tentativeStartSeconds.has(Math.round(startDate.getTime() / 1000))) {
-        continue;
-      }
-      const weekKey = ScheduleCalculationService.weekKey(
-        startDate,
-        effectiveSchedulingTz ?? undefined,
-      );
-      if (adjusted[weekKey] && adjusted[weekKey] > 0) {
-        adjusted[weekKey] -= 1;
-      }
-    }
-    return adjusted;
-  }, [
-    mode,
-    weeklyConfirmedCallCounts,
-    movingSessionStarts,
-    eventTentativeSlots,
-    effectiveSchedulingTz,
-  ]);
 
   // A refusal proves the cells stale: refetch both, best-effort, never
   // masking the toast that explained the refusal.
@@ -829,10 +761,10 @@ export function UnifiedCalendar({
       maxTotalCalls,
       pastConfirmedSlotCount,
       topUp,
-      weeklyConfirmedCallCounts: effectiveWeeklyConfirmedCallCounts,
       initialAllocation,
       expectedTentativeSlotCount,
       schedulingTimezone: effectiveSchedulingTz ?? undefined,
+      displayZone: gridZone,
       onSuccess: handleAllocationSuccess,
       onConflict: handleConflict,
       onRequestChanged: handleRequestChanged,
@@ -851,10 +783,10 @@ export function UnifiedCalendar({
       maxTotalCalls,
       pastConfirmedSlotCount,
       topUp,
-      effectiveWeeklyConfirmedCallCounts,
       initialAllocation,
       expectedTentativeSlotCount,
       effectiveSchedulingTz,
+      gridZone,
       handleAllocationSuccess,
       handleConflict,
       handleRequestChanged,
@@ -1273,7 +1205,6 @@ export function UnifiedCalendar({
       // The live cell, never one a memoised button closed over.
       const cell = weekCells.byStart.get(startMs);
       if (mode === "view" || !cell) return;
-      const bucketTz = effectiveSchedulingTz ?? undefined;
       const slot: CalendarInterval = {
         startTime: new Date(cell.startMs),
         endTime: new Date(cell.endMs),
@@ -1292,48 +1223,6 @@ export function UnifiedCalendar({
           ),
         );
         return;
-      }
-
-      // Subscription weekly limit, bucketed by the scheduling-zone week.
-      if (
-        !isSelected &&
-        eventType === "subscription" &&
-        eventId &&
-        sessionsPerWeek &&
-        sessionDurationInHours
-      ) {
-        const targetDayKey = ScheduleCalculationService.dayKey(
-          slot.startTime,
-          bucketTz,
-        );
-        const isStartingNewDay = !selectedSlots.some(
-          (s) =>
-            ScheduleCalculationService.dayKey(s.startTime, bucketTz) ===
-            targetDayKey,
-        );
-        if (isStartingNewDay) {
-          const targetWeekKey = ScheduleCalculationService.weekKey(
-            slot.startTime,
-            bucketTz,
-          );
-          const completedCalls =
-            effectiveWeeklyConfirmedCallCounts[targetWeekKey] || 0;
-          const selectedCompleted = countCompletedSelectedCallsForWeek(
-            selectedSlots,
-            getSlotsPerCall(sessionDurationInHours),
-            targetWeekKey,
-            bucketTz,
-          );
-          if (completedCalls + selectedCompleted >= sessionsPerWeek) {
-            toast(
-              weeklyLimitReached(
-                sessionsPerWeek,
-                schedulingWeekBucket(slot.startTime, bucketTz),
-              ),
-            );
-            return;
-          }
-        }
       }
 
       // Past sessions of this booking: deselect allowed, reselect blocked.
@@ -1400,18 +1289,11 @@ export function UnifiedCalendar({
     },
     [
       mode,
-      effectiveSchedulingTz,
       selectedStarts,
       toast,
       gridZone,
       allowedStart,
       allowedEnd,
-      eventType,
-      eventId,
-      sessionsPerWeek,
-      sessionDurationInHours,
-      selectedSlots,
-      effectiveWeeklyConfirmedCallCounts,
       toggleSlot,
       quota,
       buildAutoExpandGroup,

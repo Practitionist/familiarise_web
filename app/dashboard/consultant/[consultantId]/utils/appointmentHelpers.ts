@@ -264,6 +264,7 @@ type EntitledSubscription = {
   sessionsTotal?: number | null;
   schedulingPeriodStartsAt?: Date | string | null;
   schedulingTimezone?: string | null;
+  planEndsAt?: Date | string | null;
   subscriptionPlan?: {
     sessionsPerWeek?: number;
     durationInMonths?: number;
@@ -318,6 +319,7 @@ export const calculateSessionProgress = (
       })),
       schedulingPeriodStartsAt: sub?.schedulingPeriodStartsAt ?? referenceDate,
       schedulingTimezone: sub?.schedulingTimezone ?? "Asia/Kolkata",
+      planEndsAt: sub?.planEndsAt ?? null,
       now: referenceDate,
     });
     totalSessions = entitlement.total;

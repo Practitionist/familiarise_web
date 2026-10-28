@@ -23,6 +23,8 @@ import {
 import { formatDayLabel } from "@/lib/time/display";
 
 const HALF_HOUR = 30 * 60 * 1000;
+/** The fixtures' "now": inside the plan. */
+const FIXTURE_NOW = Date.parse("2026-03-02T06:00:00.000Z");
 const IST = "Asia/Kolkata";
 
 const session = (
@@ -39,7 +41,12 @@ const session = (
 
 function quotaFor(
   occurrences: EntitlementOccurrence[],
-  opts: { zone?: string; now?: string; periodStart?: string } = {},
+  opts: {
+    zone?: string;
+    now?: string;
+    periodStart?: string;
+    planEndsAt?: string;
+  } = {},
 ): GridQuota {
   const zone = opts.zone ?? IST;
   const entitlement = subscriptionEntitlement({
@@ -49,6 +56,7 @@ function quotaFor(
     occurrences,
     schedulingPeriodStartsAt: opts.periodStart ?? "2026-03-01T18:30:00.000Z",
     schedulingTimezone: zone,
+    planEndsAt: opts.planEndsAt ?? null,
     now: new Date(opts.now ?? "2026-03-02T06:00:00.000Z"),
   });
   return computeGridQuota({
@@ -212,15 +220,17 @@ describe("quotaFooterText", () => {
         zone: IST,
       },
     );
-    expect(quotaFooterText(quota, IST)).toBe(
+    expect(quotaFooterText(quota, IST, FIXTURE_NOW)).toBe(
       `3 of 3 this week · next opens ${nextOpens}`,
     );
-    expect(quotaFooterText(quota, IST)).not.toMatch(/slot|T\d\d:|Z\b/);
+    expect(quotaFooterText(quota, IST, FIXTURE_NOW)).not.toMatch(
+      /slot|T\d\d:|Z\b/,
+    );
   });
 
   it("shows only the count while there is room", () => {
     const quota = quotaFor([session("2026-03-04T04:30:00.000Z")]);
-    expect(quotaFooterText(quota, IST)).toBe("1 of 3 this week");
+    expect(quotaFooterText(quota, IST, FIXTURE_NOW)).toBe("1 of 3 this week");
   });
 
   it("names no next opening once every session is booked", () => {
@@ -230,6 +240,51 @@ describe("quotaFooterText", () => {
       remainingThisCycle: 0,
       allBooked: true,
     };
-    expect(quotaFooterText(quota, IST)).toBe("3 of 3 this week");
+    expect(quotaFooterText(quota, IST, FIXTURE_NOW)).toBe("3 of 3 this week");
+  });
+});
+
+describe("the fixed plan end", () => {
+  // Plan ends at midnight IST starting 21 Mar (exclusive).
+  const PLAN_END = "2026-03-20T18:30:00.000Z";
+  const at = (iso: string) => Date.parse(iso);
+
+  it("paints every cell at or after the plan end, and a session may end exactly on it", () => {
+    const quota = quotaFor([], {
+      planEndsAt: PLAN_END,
+      now: "2026-03-18T06:00:00.000Z",
+    });
+    expect(quota.planEndsAt).toBe(new Date(PLAN_END).toISOString());
+    const lastHalfHour = at(PLAN_END) - HALF_HOUR;
+    expect(cellLimitReached(quota, lastHalfHour, at(PLAN_END))).toBe(false);
+    expect(
+      cellLimitReached(quota, at(PLAN_END), at(PLAN_END) + HALF_HOUR),
+    ).toBe(true);
+    const later = at("2026-03-23T04:30:00.000Z");
+    expect(cellLimitReached(quota, later, later + HALF_HOUR)).toBe(true);
+  });
+
+  it("an incident extension moves the end, so those days open again", () => {
+    const extended = new Date(
+      at(PLAN_END) + 7 * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const quota = quotaFor([], {
+      planEndsAt: extended,
+      now: "2026-03-18T06:00:00.000Z",
+    });
+    const after = at("2026-03-23T04:30:00.000Z");
+    expect(cellLimitReached(quota, after, after + HALF_HOUR)).toBe(false);
+  });
+
+  it("says when the plan ended, naming the last day it covered", () => {
+    const quota = quotaFor([], {
+      planEndsAt: PLAN_END,
+      now: "2026-03-18T06:00:00.000Z",
+    });
+    const lastDay = formatDayLabel(new Date(at(PLAN_END) - 1), { zone: IST });
+    expect(quotaFooterText(quota, IST, at("2026-03-22T00:00:00.000Z"))).toBe(
+      `Plan ended on ${lastDay}`,
+    );
+    expect(gridQuotaSchema.safeParse(quota).success).toBe(true);
   });
 });

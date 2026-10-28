@@ -50,8 +50,6 @@ export interface UseCalendarDataOptions {
    * guard); the fetch window always follows the visible week or month. */
   allowedStart?: Date;
   allowedEnd?: Date;
-  /** Subscription per-call atom count, so the server buckets the weekly counts. */
-  sessionDurationInHours?: number;
   /** The user whose calendar is being booked; their other bookings read busy. */
   consulteeUserId?: string;
   /** The zone the grid is drawn in; cells, the fetch window and `timezone` follow it. */
@@ -89,6 +87,8 @@ interface AppointmentSubscription {
   sessionsTotal?: number | null;
   schedulingPeriodStartsAt?: string;
   schedulingTimezone?: string;
+  /** The fixed, exclusive plan end (incident extensions move it). */
+  planEndsAt?: string | null;
 }
 
 /** What the cycle heading needs from the subscription row. */
@@ -98,6 +98,8 @@ export interface SubscriptionMeta {
   durationInMonths: number;
   schedulingPeriodStartsAt: string;
   schedulingTimezone: string;
+  /** Null on rows written before the fixed plan end existed. */
+  planEndsAt: string | null;
 }
 
 /** One live-or-dead row of the event's wrapper, as the entitlement helper reads it. */
@@ -158,6 +160,7 @@ function subscriptionMetaOf(
     durationInMonths: plan.durationInMonths,
     schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
     schedulingTimezone: subscription.schedulingTimezone,
+    planEndsAt: subscription.planEndsAt ?? null,
   };
 }
 
@@ -194,8 +197,6 @@ interface CalendarData {
   eventSlots: BookableInterval[];
   /** This event's own sessions released for a reschedule ("Being moved"). */
   eventTentativeSlots: BookableInterval[];
-  /** Confirmed call counts for this event, bucketed by scheduling-zone week. */
-  weeklyConfirmedCallCounts: Record<string, number>;
   eventOccurrences: EventOccurrence[];
   subscriptionMeta: SubscriptionMeta | null;
   /** The plan's weekly/day limit for the subscription being booked, if any. */
@@ -235,7 +236,6 @@ export function useCalendarData(
     autoLoad = true,
     view,
     currentDate,
-    sessionDurationInHours,
     consulteeUserId,
     includeAppointmentDetails = false,
     weekStartsOn = 0,
@@ -258,9 +258,6 @@ export function useCalendarData(
   const [eventTentativeSlots, setEventTentativeSlots] = useState<
     BookableInterval[]
   >([]);
-  const [weeklyConfirmedCallCounts, setWeeklyConfirmedCallCounts] = useState<
-    Record<string, number>
-  >({});
   const [eventOccurrences, setEventOccurrences] = useState<EventOccurrence[]>(
     [],
   );
@@ -500,7 +497,6 @@ export function useCalendarData(
     if (!eventType || !eventId) {
       setEventSlots([]);
       setEventTentativeSlots([]);
-      setWeeklyConfirmedCallCounts({});
       setEventOccurrences([]);
       setSubscriptionMeta(null);
       setEventSlotsFailed(false);
@@ -511,20 +507,13 @@ export function useCalendarData(
     const controller = new AbortController();
     eventSlotsAbortRef.current = controller;
     try {
-      const slotsPerCall =
-        eventType === "subscription"
-          ? Math.ceil((sessionDurationInHours || 1) / 0.5)
-          : undefined;
-      const { data, weeklyConfirmedCallCounts: weeklyCounts } =
-        await AllocationService.fetchEventSlots(
-          eventType,
-          eventId,
-          consultantId,
-          slotsPerCall,
-          controller.signal,
-        );
+      const { data } = await AllocationService.fetchEventSlots(
+        eventType,
+        eventId,
+        consultantId,
+        controller.signal,
+      );
       if (controller.signal.aborted) return;
-      setWeeklyConfirmedCallCounts(weeklyCounts);
 
       const activeData: Appointment[] = Array.isArray(data)
         ? data.filter((appt: Appointment) => {
@@ -598,7 +587,7 @@ export function useCalendarData(
       console.error("Error fetching event slots:", fetchError);
       setEventSlotsFailed(true);
     }
-  }, [eventType, eventId, consultantId, sessionDurationInHours]);
+  }, [eventType, eventId, consultantId]);
 
   const fetchAllData = useCallback(async (): Promise<void> => {
     if (!consultantId) return;
@@ -684,7 +673,6 @@ export function useCalendarData(
     availableSlots,
     eventSlots,
     eventTentativeSlots,
-    weeklyConfirmedCallCounts,
     eventOccurrences,
     subscriptionMeta,
     quota,

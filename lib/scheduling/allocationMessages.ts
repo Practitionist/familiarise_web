@@ -8,6 +8,7 @@
  * the scheduling bucket and translate its span onto the viewer's clock.
  */
 
+import { formatClockTime, formatDayLabel } from "@/lib/time/display";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { REQUEST_INDETERMINATE_ERROR } from "./allocationService";
 
@@ -418,6 +419,24 @@ export const requestChangedElsewhere = (): AllocationToast => ({
   title: "Request changed",
   description:
     "This request was updated in another tab or by a teammate and can no longer be allocated. Refreshing the list.",
+});
+
+/** A 409 named the times someone else took; the rest of the picks stand. */
+export const timesJustTaken = (
+  starts: readonly Date[],
+  zone?: string,
+): AllocationToast => ({
+  variant: "destructive",
+  title:
+    starts.length === 1
+      ? "This time was just taken"
+      : "These times were just taken",
+  description: `${starts
+    .map(
+      (start) =>
+        `${formatDayLabel(start, { zone })} ${formatClockTime(start, { zone })}`,
+    )
+    .join(", ")}. Your other picks are still selected — choose replacements.`,
 });
 
 /** The request's tentative times moved in another tab; the page reloaded them. */

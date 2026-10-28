@@ -384,6 +384,7 @@ export async function GET(
       durationInMonths: number;
       schedulingPeriodStartsAt: Date;
       schedulingTimezone: string;
+      planEndsAt: Date | null;
       fold: string;
     } | null = null;
     if (requestedSubscriptionId) {
@@ -399,6 +400,7 @@ export async function GET(
           sessionsTotal: true,
           schedulingPeriodStartsAt: true,
           schedulingTimezone: true,
+          planEndsAt: true,
           requestedBy: { select: { userId: true } },
           subscriptionPlan: {
             select: {
@@ -437,6 +439,7 @@ export async function GET(
         durationInMonths: subscription.subscriptionPlan.durationInMonths,
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
         schedulingTimezone: subscription.schedulingTimezone,
+        planEndsAt: subscription.planEndsAt,
         fold: subscriptionQuotaFold({
           subscriptionId: subscription.id,
           subscriptionUpdatedAt: subscription.updatedAt,
@@ -1120,6 +1123,7 @@ export async function GET(
         occurrences,
         schedulingPeriodStartsAt: quotaSubject.schedulingPeriodStartsAt,
         schedulingTimezone: quotaSubject.schedulingTimezone,
+        planEndsAt: quotaSubject.planEndsAt,
         now,
       });
       quotaSource = {
