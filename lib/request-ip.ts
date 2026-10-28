@@ -11,8 +11,17 @@ export type ClientIpHeader =
 /** The runtime environment, where each host sets its platform marker. */
 export type RuntimeEnv = Readonly<Record<string, string | undefined>>;
 
+/** Literal reads, so the build can inline `NETLIFY`, which Netlify sets only at build time. */
+function hostEnv(): RuntimeEnv {
+  return {
+    NETLIFY: process.env.NETLIFY,
+    VERCEL: process.env.VERCEL,
+    FLY_APP_NAME: process.env.FLY_APP_NAME,
+  };
+}
+
 export function trustedClientIpHeaders(
-  env: RuntimeEnv = process.env,
+  env: RuntimeEnv = hostEnv(),
 ): ClientIpHeader[] {
   if (env.NETLIFY === "true") return ["x-nf-client-connection-ip"];
   if (env.VERCEL === "1") return ["x-vercel-forwarded-for"];
@@ -26,7 +35,7 @@ export function trustedClientIpHeaders(
  */
 export function clientIpFrom(
   headers: { get(name: string): string | null },
-  env: RuntimeEnv = process.env,
+  env: RuntimeEnv = hostEnv(),
 ): string {
   const [header] = trustedClientIpHeaders(env);
   const hops = (headers.get(header) ?? "")
