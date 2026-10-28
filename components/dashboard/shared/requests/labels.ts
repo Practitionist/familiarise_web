@@ -83,6 +83,19 @@ export function nextCycleLine(entitlement: SubscriptionEntitlement): string {
   return `Schedule the next ${entitlement.cycle.nextBatch} · ${entitlement.held} of ${entitlement.total} booked`;
 }
 
+/** A ranked sort pages a bounded window; say so when rows sit outside it. */
+export const RANKED_WINDOW_NOTE = (shown: number, total: number) =>
+  `Showing ${shown} of ${total} — sort by oldest to page through every request`;
+
+/** A direct checkout the buyer is paying for right now: never answerable. */
+export const CHECKOUT_HOLD_BADGE = toneBadge("info", "Checkout in progress");
+export const CHECKOUT_HOLD_LINE =
+  "The learner is paying now — nothing to do. The time stays held until then.";
+
+/** A request whose asked-for time is too close or gone. */
+export const REQUESTED_TIME_PASSED =
+  "Requested time has passed — propose new times";
+
 /** One verb per toast. */
 export const TOAST = {
   approved: "Approved",

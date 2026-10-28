@@ -25,6 +25,8 @@ export interface BucketInput {
   occurrences: OccurrenceVM[];
   /** Consultant-side event with no Appointment rows yet — always needs scheduling. */
   isUnscheduled?: boolean;
+  /** A consultation is one agreed session, so losing it means re-timing it. */
+  kind?: string;
   now?: Date;
 }
 
@@ -69,14 +71,31 @@ export function deriveBucket(
     else if (viewer === "consultant") bucket = "inRequests";
     return { bucket, needsActionReason: "PENDING_APPROVAL" };
   }
+  const active = liveOccurrences(occurrences);
+  // An approved booking with no live session is never "past" and never silent.
+  if (active.length === 0) {
+    return {
+      bucket: "needsAction",
+      needsActionReason:
+        occurrences.length === 0 && input.kind !== "CONSULTATION"
+          ? "AWAITING_SCHEDULING"
+          : "NEEDS_RESCHEDULING",
+    };
+  }
   if (allOccurrencesOver(occurrences, now)) {
     return { bucket: "past", needsActionReason: null };
   }
 
-  const active = liveOccurrences(occurrences);
   if (active.length > 0 && active.every((s) => s.isTentative)) {
     return { bucket: "needsAction", needsActionReason: "TENTATIVE" };
   }
 
   return { bucket: "upcoming", needsActionReason: null };
+}
+
+/** What a row with no live session says in place of a time. */
+export function noSessionLabel(reason: NeedsActionReason | null): string {
+  if (reason === "AWAITING_SCHEDULING") return "Awaiting scheduling";
+  if (reason === "NEEDS_RESCHEDULING") return "Needs rescheduling";
+  return "Not scheduled";
 }

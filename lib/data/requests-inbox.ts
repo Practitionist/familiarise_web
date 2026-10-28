@@ -1,25 +1,29 @@
 /**
- * #1775 / #1704 / #1705 — the ONE read behind the consultant Requests inbox:
- * the RSC page seeds react-query with it, `/api/bookings/inbox` answers with
- * it, and the Home preview shows its first rows. Every row carries the input
+ * The ONE read behind the consultant Requests inbox: the RSC page seeds
+ * react-query with it, `/api/bookings/inbox` answers with it, and the Home
+ * preview shows its first rows. Every row carries the input
  * `deriveBookingPresentation` (lib/dashboard/money-state.ts) reads, built the
  * way the payment history builds its own (lifecycleOf / planOf), so the inbox,
  * Home and the detail page cannot disagree about a booking.
  *
- * Cohort per type: consultation and subscription requests in PENDING and
- * APPROVED_PENDING_PAYMENT (the needs-you predicates Home counts with),
- * subscriptions whose live cycle is finished (#1766 next-cycle rows), and
- * trials in PENDING / AWAITING_PAYMENT. Chips narrow it server-side; sort
- * and paging happen here over a bounded scan because deadline, money and
- * bucket are derived, not stored.
+ * Sources per type: consultation and subscription requests in PENDING and
+ * APPROVED_PENDING_PAYMENT (the needs-you predicates), subscriptions whose
+ * live cycle is finished, trials in PENDING / AWAITING_PAYMENT, and unpaid
+ * direct checkouts still inside their pay window (listed, never counted).
+ * Chips narrow the sources server-side. Cursor sorts page in SQL by the
+ * request clock; ranked sorts page a bounded window sorted here, because
+ * bucket and money are derived, not stored.
  *
  * Auth stays with the caller: the route checks the session against
  * `consultantProfileId`, the page runs `requirePersonalProfileAccess`.
  */
 
 import prisma from "@/lib/prisma";
-import type { Prisma, TrialStatus } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
+import { liveCheckoutHold } from "@/lib/booking/request-cohort";
+import { mapLimit, poolLimit } from "@/lib/db/bounded";
+import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import { lifecycleOf, planOf } from "@/lib/appointments/presentation-input";
 import { isSponsoredPayment } from "@/lib/appointments/payment-display";
 import {
@@ -40,9 +44,17 @@ import {
 } from "@/lib/dashboard/money-state";
 import {
   INBOX_DEFAULT_LIMIT,
+  INBOX_RANKED_WINDOW,
+  INBOX_TYPES,
+  decodeInboxCursor,
+  encodeInboxCursor,
   inboxBucketOf,
+  isCursorSort,
   sortInboxRows,
+  toStampDate,
+  type InboxBucket,
   type InboxChip,
+  type InboxCursor,
   type InboxRowInput,
   type InboxSort,
   type InboxType,
@@ -54,6 +66,7 @@ import {
   pendingConsultationWhere,
   pendingSubscriptionWhere,
   subscriptionRequestWhere,
+  trialRequestWhere,
 } from "@/lib/data/needs-you";
 import { BUYER_PAYMENT_DISPLAY_SELECT } from "@/lib/data/payments-select";
 import { toPlain } from "@/lib/data/serialize";
@@ -67,6 +80,10 @@ export interface ReadRequestsInboxArgs {
   chip?: InboxChip;
   sort: InboxSort;
   page: number;
+  /** Cursor sorts: the encoded last row of the previous page. */
+  after?: string | null;
+  /** Ranked sorts: open the page that holds this request. */
+  focusId?: string | null;
   limit?: number;
   now?: Date;
 }
@@ -183,42 +200,71 @@ const TRIAL_SELECT = {
   appointment: INBOX_APPOINTMENT_SELECT,
 } satisfies Prisma.TrialSelect;
 
-/** Rows read per sub-cohort before sorting; PENDING expires in 48 h / 30 d. */
-const INBOX_SCAN = 200;
+/** Where a page starts and which way it reads; every read is bounded by `take`. */
+interface ReadWindow {
+  dir: Prisma.SortOrder;
+  after: InboxCursor | null;
+  take: number;
+}
 
-/** `[{ requestedAt desc }, { id asc }]` — a total order, so a scan is stable (#1704 P1). */
-const INBOX_ORDER = [
-  { requestedAt: "desc" },
-  { id: "asc" },
-] satisfies Prisma.ConsultationOrderByWithRelationInput[];
+/** `(requestedAt, id)` in one direction: a total order, so paging is stable. */
+const orderOf = (dir: Prisma.SortOrder) => [{ requestedAt: dir }, { id: dir }];
+
+/**
+ * Rows past the cursor in the window's direction. The cursor holds whole
+ * milliseconds while the column holds microseconds, so the cursor's
+ * millisecond is one tie band ordered by id.
+ */
+function keysetWhere(dir: Prisma.SortOrder, after: InboxCursor | null) {
+  if (!after) return {};
+  const { requestedAt, id } = after;
+  const nextMs = new Date(requestedAt.getTime() + 1);
+  const band = { gte: requestedAt, lt: nextMs };
+  return dir === "asc"
+    ? {
+        OR: [
+          { requestedAt: { gte: nextMs } },
+          { requestedAt: band, id: { gt: id } },
+        ],
+      }
+    : {
+        OR: [
+          { requestedAt: { lt: requestedAt } },
+          { requestedAt: band, id: { lt: id } },
+        ],
+      };
+}
 
 // Typed off the calls, not GetPayload: the read-path `$extends` hands money
 // back as `number`, which GetPayload still spells `bigint`.
-const findConsultations = (where: Prisma.ConsultationWhereInput) =>
+const findConsultations = (
+  where: Prisma.ConsultationWhereInput,
+  w: ReadWindow,
+) =>
   prisma.consultation.findMany({
     // No `deletedAt`: a request is retired by `status` + `cancelledAt`, both
     // written by the transition that closed it. See the Consultation model.
-    where,
+    where: { AND: [where, keysetWhere(w.dir, w.after)] },
     select: CONSULTATION_SELECT,
-    orderBy: INBOX_ORDER,
-    take: INBOX_SCAN,
+    orderBy: orderOf(w.dir),
+    take: w.take,
   });
 const findSubscriptions = (
   where: Prisma.SubscriptionWhereInput,
-  orderBy: Prisma.SubscriptionOrderByWithRelationInput[] = INBOX_ORDER,
+  w: ReadWindow,
 ) =>
   prisma.subscription.findMany({
-    where: { ...where, deletedAt: null },
+    where: { AND: [where, keysetWhere(w.dir, w.after)], deletedAt: null },
     select: SUBSCRIPTION_SELECT,
-    orderBy,
-    take: INBOX_SCAN,
+    orderBy: orderOf(w.dir),
+    take: w.take,
   });
-const findTrials = (where: Prisma.TrialWhereInput) =>
+const findTrials = (where: Prisma.TrialWhereInput, w: ReadWindow) =>
   prisma.trial.findMany({
-    where,
+    where: { AND: [where, keysetWhere(w.dir, w.after)] },
     select: TRIAL_SELECT,
-    orderBy: INBOX_ORDER,
-    take: INBOX_SCAN,
+    orderBy: orderOf(w.dir),
+    take: w.take,
   });
 
 type ConsultationRow = Awaited<ReturnType<typeof findConsultations>>[number];
@@ -253,6 +299,46 @@ function pendingPayLinkDeadline(a: AppointmentRow | null): Date | null {
       .map((p) => new Date(p.expiresAt as Date))
       .sort((x, y) => x.getTime() - y.getTime())[0] ?? null
   );
+}
+
+/** An unpaid direct checkout's pay window; null for anything else. */
+function checkoutHoldOf(
+  row: { status: string; bookingSource: string | null },
+  a: AppointmentRow | null,
+): InboxRowInput["checkoutHold"] {
+  if (row.status !== "PENDING" || row.bookingSource !== "DIRECT_CHECKOUT") {
+    return null;
+  }
+  if ((a?.payment ?? []).some((p) => p.paymentStatus === "SUCCEEDED")) {
+    return null;
+  }
+  const expiresAt = pendingPayLinkDeadline(a);
+  return expiresAt ? { expiresAt } : null;
+}
+
+/**
+ * A request must be answered by the sooner of its own clock and its first
+ * requested start less the booking lead time; past that point the requested
+ * time can no longer be confirmed, only re-timed or declined.
+ */
+function requestUrgency(
+  status: string,
+  clock: Date | null,
+  slots: { startsAt: Date; isTentative: boolean; completionStatus: string }[],
+  now: Date,
+): { deadline: Date | null; requestedStartPassed: boolean } {
+  const firstStart = slots
+    .filter((s) => s.isTentative && s.completionStatus === "SCHEDULED")
+    .map((s) => toStampDate(s.startsAt).getTime())
+    .sort((a, b) => a - b)[0];
+  if (status !== "PENDING" || firstStart === undefined) {
+    return { deadline: clock, requestedStartPassed: false };
+  }
+  const latest = new Date(firstStart - MINIMUM_BOOKING_LEAD_TIME_MS);
+  return {
+    deadline: clock && clock < latest ? clock : latest,
+    requestedStartPassed: latest <= now,
+  };
 }
 
 /** The same rule as presentationNames: the requester pays, the plan's owner delivers. */
@@ -327,7 +413,7 @@ function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
     "CONSULTANT",
     { now },
   );
-  // #1775 C-5 — a paid plan's clock is capture + 48 h, not the request hold.
+  // A paid plan's clock is capture + 48 h, not the request hold.
   const timed =
     nextAction.kind === "ALLOCATE" && nextAction.deadline
       ? { ...row, deadline: nextAction.deadline }
@@ -356,11 +442,15 @@ function consultationRow(
     c.status === "PENDING"
       ? requestHoldDeadline("CONSULTATION", c.requestedAt)
       : null;
-  const deadline = pendingPayLinkDeadline(c.appointment) ?? holdDeadline;
+  const clock = pendingPayLinkDeadline(c.appointment) ?? holdDeadline;
+  const checkoutHold = checkoutHoldOf(c, c.appointment);
+  const { deadline, requestedStartPassed } = checkoutHold
+    ? { deadline: checkoutHold.expiresAt, requestedStartPassed: false }
+    : requestUrgency(c.status, clock, facts.slots, now);
   const presentation: BookingPresentationInput = {
     ...facts,
     request,
-    holdExpiresAt: deadline,
+    holdExpiresAt: clock,
     plan: planOf({ consultation: c }),
     names: namesOf(c.requestedBy, c.consultationPlan.consultantProfile),
   };
@@ -400,6 +490,8 @@ function consultationRow(
       schedulingTimezone: null,
       entitlement: null,
       trial: null,
+      checkoutHold,
+      requestedStartPassed,
     },
     now,
   );
@@ -408,6 +500,7 @@ function consultationRow(
 /** The fields the entitlement needs; the slim next-cycle count reads only these. */
 const ENTITLEMENT_SELECT = {
   id: true,
+  requestedAt: true,
   sessionsTotal: true,
   schedulingPeriodStartsAt: true,
   schedulingTimezone: true,
@@ -477,14 +570,19 @@ function subscriptionRow(
       ? requestHoldDeadline("SUBSCRIPTION", s.requestedAt)
       : null;
   // A next-cycle row's clock is the cycle window it must be placed in.
-  const deadline =
+  const clock =
     kind === "next-cycle"
       ? (entitlement?.cycle.windowStart ?? null)
       : (pendingPayLinkDeadline(s.appointment) ?? holdDeadline);
+  const checkoutHold =
+    kind === "next-cycle" ? null : checkoutHoldOf(s, s.appointment);
+  const { deadline, requestedStartPassed } = checkoutHold
+    ? { deadline: checkoutHold.expiresAt, requestedStartPassed: false }
+    : requestUrgency(s.status, clock, facts.slots, now);
   const presentation: BookingPresentationInput = {
     ...facts,
     request,
-    holdExpiresAt: kind === "next-cycle" ? null : deadline,
+    holdExpiresAt: kind === "next-cycle" ? null : clock,
     plan: planOf({ subscription: s }),
     names: namesOf(s.requestedBy, s.subscriptionPlan.consultantProfile),
   };
@@ -535,6 +633,8 @@ function subscriptionRow(
       schedulingTimezone: s.schedulingTimezone,
       entitlement,
       trial: null,
+      checkoutHold,
+      requestedStartPassed,
     },
     now,
   );
@@ -593,6 +693,8 @@ function trialRow(
       schedulingTimezone: null,
       entitlement: null,
       trial: { durationMinutes: t.subscriptionPlan.trialDurationMinutes },
+      checkoutHold: null,
+      requestedStartPassed: false,
     },
     now,
   );
@@ -600,37 +702,36 @@ function trialRow(
 
 const PERSONAL: Scope = { kind: "personal" };
 
-/** Trials are scoped by their own `organizationId` column, as `/api/trials` does. */
-function trialWhere(
-  consultantProfileId: string,
-  scope: Scope,
-  statuses: TrialStatus[],
-): Prisma.TrialWhereInput {
-  return {
-    ...scopeToWhereOrgId(scope),
-    consultantProfileId,
-    // No `deletedAt`: every terminal trial outcome is a TrialStatus value, so
-    // the status filter below is already the liveness test. See the Trial model.
-    status: { in: statuses },
-  };
-}
-
-/** "Answer today" server-side: the hold (48 h / 30 d) has under 24 h left. */
-function dueWithinDay(holdMs: number, now: Date): { lte: Date } {
-  return { lte: new Date(now.getTime() - (holdMs - DAY_MS)) };
-}
 const CONSULTATION_HOLD_MS = 48 * HOUR_MS;
 const SUBSCRIPTION_HOLD_MS = 30 * DAY_MS;
 
-interface CohortPlan {
-  consultationStatuses: Prisma.ConsultationWhereInput[];
-  subscriptionStatuses: Prisma.SubscriptionWhereInput[];
-  nextCycle: boolean;
-  trialStatuses: TrialStatus[];
+/**
+ * "Answer today" server-side, the same rule the bucket applies: the hold has
+ * under 24 h left, or the first requested time is within 24 h plus the lead.
+ */
+function answerToday(holdMs: number, now: Date) {
+  return {
+    OR: [
+      { requestedAt: { lte: new Date(now.getTime() - (holdMs - DAY_MS)) } },
+      {
+        appointment: {
+          occurrences: {
+            some: {
+              isTentative: true,
+              completionStatus: "SCHEDULED" as const,
+              deletedAt: null,
+              startsAt: {
+                lte: new Date(
+                  now.getTime() + DAY_MS + MINIMUM_BOOKING_LEAD_TIME_MS,
+                ),
+              },
+            },
+          },
+        },
+      },
+    ],
+  };
 }
-
-type ChipKey = InboxChip | "all";
-const chipKey = (chip: InboxChip | undefined): ChipKey => chip ?? "all";
 
 /**
  * An APPROVED consultation whose whole-booking reschedule ended (declined or
@@ -665,303 +766,264 @@ function strandedApprovedConsultationWhere(
   };
 }
 
-/** The consultation sub-cohorts a chip reads; an unknown chip reads nothing. */
-function consultationCohort(
-  cp: string,
-  scope: Scope,
-  chip: InboxChip | undefined,
-  now: Date,
-): Prisma.ConsultationWhereInput[] {
-  const awaiting = consultationRequestWhere(
-    cp,
-    scope,
-    "APPROVED_PENDING_PAYMENT",
-  );
-  const stranded = strandedApprovedConsultationWhere(cp, scope);
-  const byChip: Partial<Record<ChipKey, Prisma.ConsultationWhereInput[]>> = {
-    all: [pendingConsultationWhere(cp, scope), stranded, awaiting],
-    "answer-today": [
-      {
-        ...pendingConsultationWhere(cp, scope),
-        requestedAt: dueWithinDay(CONSULTATION_HOLD_MS, now),
-      },
-      stranded,
-    ],
-    "awaiting-payment": [awaiting],
-    declined: [consultationRequestWhere(cp, scope, "REJECTED")],
-  };
-  return byChip[chipKey(chip)] ?? [];
+/**
+ * One list the inbox reads. `onTab` sources make up the tab label; a live
+ * checkout hold is listed for context but never counted anywhere.
+ */
+interface InboxSource {
+  onTab: boolean;
+  count: () => Promise<number>;
+  read: (w: ReadWindow) => Promise<InboxRowInput[]>;
 }
 
-/** The subscription sub-cohorts a chip reads, plus whether next-cycle rows join. */
-function subscriptionCohort(
+function consultationSource(
   cp: string,
-  scope: Scope,
-  chip: InboxChip | undefined,
+  where: Prisma.ConsultationWhereInput,
   now: Date,
-): { statuses: Prisma.SubscriptionWhereInput[]; nextCycle: boolean } {
-  const awaiting = subscriptionRequestWhere(
-    cp,
-    scope,
-    "APPROVED_PENDING_PAYMENT",
-  );
-  const byChip: Partial<Record<ChipKey, Prisma.SubscriptionWhereInput[]>> = {
-    all: [pendingSubscriptionWhere(cp, scope), awaiting],
-    "answer-today": [
-      {
-        ...pendingSubscriptionWhere(cp, scope),
-        requestedAt: dueWithinDay(SUBSCRIPTION_HOLD_MS, now),
-      },
-    ],
-    "awaiting-payment": [awaiting],
-    "next-cycle": [],
-    declined: [subscriptionRequestWhere(cp, scope, "REJECTED")],
-  };
+  onTab = true,
+): InboxSource {
   return {
-    statuses: byChip[chipKey(chip)] ?? [],
-    nextCycle: chip === undefined || chip === "next-cycle",
+    onTab,
+    count: () => prisma.consultation.count({ where }),
+    read: async (w) =>
+      (await findConsultations(where, w)).map((c) =>
+        consultationRow(c, cp, now),
+      ),
   };
 }
 
-/** A trial has no hold clock, so "answer today" is every pending one. */
-function trialCohort(chip: InboxChip | undefined): TrialStatus[] {
-  const byChip: Partial<Record<ChipKey, TrialStatus[]>> = {
-    all: ["PENDING", "AWAITING_PAYMENT"],
-    "answer-today": ["PENDING"],
-    "awaiting-payment": ["AWAITING_PAYMENT"],
-    declined: ["REJECTED"],
+function subscriptionSource(
+  cp: string,
+  where: Prisma.SubscriptionWhereInput,
+  now: Date,
+  onTab = true,
+): InboxSource {
+  return {
+    onTab,
+    count: () =>
+      prisma.subscription.count({ where: { ...where, deletedAt: null } }),
+    read: async (w) =>
+      (await findSubscriptions(where, w)).map((s) =>
+        subscriptionRow(s, cp, now, "subscription"),
+      ),
   };
-  return byChip[chipKey(chip)] ?? [];
 }
 
-/** Which sub-cohorts a (type, chip) pair reads; every predicate is needs-you's. */
-function planCohort(
+/** Candidates one next-cycle read pulls before the `remaining > 0` filter. */
+const NEXT_CYCLE_BATCH = INBOX_RANKED_WINDOW;
+/** The tab count reads at most this many candidates, in batches. */
+const NEXT_CYCLE_COUNT_CAP = 10 * NEXT_CYCLE_BATCH;
+
+/**
+ * `remaining > 0` is derived (frozen entitlement minus delivered and held
+ * sessions), so SQL cannot filter or count it. Both the read and the count
+ * walk the candidates in keyset order and filter each batch: a page never
+ * skips a survivor past a filtered batch, and the count is exact up to
+ * NEXT_CYCLE_COUNT_CAP candidates.
+ */
+function nextCycleSource(cp: string, scope: Scope, now: Date): InboxSource {
+  const where = nextCycleSubscriptionWhere(cp, scope);
+  return {
+    onTab: true,
+    count: async () => {
+      let after: InboxCursor | null = null;
+      let survivors = 0;
+      for (
+        let read = 0;
+        read < NEXT_CYCLE_COUNT_CAP;
+        read += NEXT_CYCLE_BATCH
+      ) {
+        const batch: EntitlementRow[] = await prisma.subscription.findMany({
+          where: {
+            AND: [where, keysetWhere("asc", after)],
+          },
+          select: ENTITLEMENT_SELECT,
+          orderBy: orderOf("asc"),
+          take: NEXT_CYCLE_BATCH,
+        });
+        survivors += batch.filter(
+          (s) => (entitlementOf(s, now)?.remaining ?? 0) > 0,
+        ).length;
+        const last = batch[batch.length - 1];
+        if (batch.length < NEXT_CYCLE_BATCH || !last) break;
+        after = { requestedAt: last.requestedAt, id: last.id };
+      }
+      return survivors;
+    },
+    read: async (w) => {
+      const rows: InboxRowInput[] = [];
+      let after = w.after;
+      for (;;) {
+        const batch = await findSubscriptions(where, {
+          ...w,
+          after,
+          take: NEXT_CYCLE_BATCH,
+        });
+        rows.push(
+          ...batch
+            .map((s) => subscriptionRow(s, cp, now, "next-cycle"))
+            .filter((row) => (row.entitlement?.remaining ?? 0) > 0),
+        );
+        const last = batch[batch.length - 1];
+        if (batch.length < NEXT_CYCLE_BATCH || !last || rows.length >= w.take) {
+          return rows;
+        }
+        after = { requestedAt: last.requestedAt, id: last.id };
+      }
+    },
+  };
+}
+
+function trialSource(
+  cp: string,
+  where: Prisma.TrialWhereInput,
+  now: Date,
+): InboxSource {
+  return {
+    onTab: true,
+    count: () => prisma.trial.count({ where }),
+    read: async (w) =>
+      (await findTrials(where, w)).map((t) => trialRow(t, cp, now)),
+  };
+}
+
+type ChipKey = InboxChip | "all";
+
+/** The sources a (type, chip) pair reads; a chip the tab lacks reads nothing. */
+function planSources(
   cp: string,
   scope: Scope,
   type: InboxType,
   chip: InboxChip | undefined,
   now: Date,
-): CohortPlan {
-  const plan: CohortPlan = {
-    consultationStatuses: [],
-    subscriptionStatuses: [],
-    nextCycle: false,
-    trialStatuses: [],
-  };
+): InboxSource[] {
+  const key: ChipKey = chip ?? "all";
   if (type === "consultation") {
-    plan.consultationStatuses = consultationCohort(cp, scope, chip, now);
-  } else if (type === "subscription") {
-    const sub = subscriptionCohort(cp, scope, chip, now);
-    plan.subscriptionStatuses = sub.statuses;
-    plan.nextCycle = sub.nextCycle;
-  } else {
-    plan.trialStatuses = trialCohort(chip);
+    const pending = pendingConsultationWhere(cp, scope);
+    const stranded = consultationSource(
+      cp,
+      strandedApprovedConsultationWhere(cp, scope),
+      now,
+    );
+    const awaiting = consultationSource(
+      cp,
+      consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
+      now,
+    );
+    const byChip: Partial<Record<ChipKey, InboxSource[]>> = {
+      all: [
+        consultationSource(cp, pending, now),
+        stranded,
+        awaiting,
+        consultationSource(
+          cp,
+          {
+            AND: [
+              consultationRequestWhere(cp, scope, "PENDING"),
+              liveCheckoutHold(now),
+            ],
+          },
+          now,
+          false,
+        ),
+      ],
+      "answer-today": [
+        consultationSource(
+          cp,
+          { AND: [pending, answerToday(CONSULTATION_HOLD_MS, now)] },
+          now,
+        ),
+        stranded,
+      ],
+      "awaiting-payment": [awaiting],
+      declined: [
+        consultationSource(
+          cp,
+          consultationRequestWhere(cp, scope, "REJECTED"),
+          now,
+        ),
+      ],
+    };
+    return byChip[key] ?? [];
   }
-  return plan;
-}
-
-/**
- * Bounded concurrency for the serverless pool: with PG_POOL_MAX=1 every extra
- * concurrent query queues behind the single connection, and a 6-deep queue at
- * ~700ms each can exceed the 3s PG_CONNECT_TIMEOUT_MS before it starts.
- * Cap in-flight reads (2 when pool<=1, else 6) instead of unbounded
- * Promise.all — still parallel locally, safe on Netlify.
- */
-function poolLimit(): number {
-  const max = Number(process.env.PG_POOL_MAX);
-  return Number.isFinite(max) && max <= 1 ? 2 : 6;
-}
-
-async function mapLimit<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const workers = new Array(Math.min(limit, items.length))
-    .fill(null)
-    .map(async () => {
-      while (next < items.length) {
-        const i = next++;
-        out[i] = await fn(items[i]);
-      }
-    });
-  await Promise.all(workers);
-  return out;
-}
-
-/**
- * Cohort reads run concurrently (bounded): each sub-cohort is an independent
- * bounded scan (take 200), so serial awaits only summed their latencies.
- */
-async function readCohort(
-  cp: string,
-  scope: Scope,
-  plan: CohortPlan,
-  now: Date,
-): Promise<InboxRowInput[]> {
-  const limit = poolLimit();
-  const [consultationGroups, subscriptionGroups, nextCycleRows, trialRows] =
-    await Promise.all([
-      mapLimit(plan.consultationStatuses, limit, async (where) => {
-        const found = await findConsultations(where);
-        return found.map((c) => consultationRow(c, cp, now));
-      }),
-      mapLimit(plan.subscriptionStatuses, limit, async (where) => {
-        const found = await findSubscriptions(where);
-        return found.map((s) => subscriptionRow(s, cp, now, "subscription"));
-      }),
-      plan.nextCycle ? readNextCycleRows(cp, scope, now) : Promise.resolve([]),
-      plan.trialStatuses.length > 0
-        ? findTrials(trialWhere(cp, scope, plan.trialStatuses)).then((found) =>
-            found.map((t) => trialRow(t, cp, now)),
-          )
-        : Promise.resolve([]),
-    ]);
-  return [
-    ...consultationGroups.flat(),
-    ...subscriptionGroups.flat(),
-    ...nextCycleRows,
-    ...trialRows,
-  ];
-}
-
-/** #1766 — the predicate cannot count; `remaining > 0` is decided here. */
-async function readNextCycleRows(
-  cp: string,
-  scope: Scope,
-  now: Date,
-): Promise<InboxRowInput[]> {
-  const candidates = await findSubscriptions(
-    nextCycleSubscriptionWhere(cp, scope),
-    [{ updatedAt: "asc" }, { id: "asc" }],
-  );
-  return candidates
-    .map((s) => subscriptionRow(s, cp, now, "next-cycle"))
-    .filter((row) => (row.entitlement?.remaining ?? 0) > 0);
-}
-
-/** #1766 — how many finished cycles still have sessions left, without building rows. */
-async function countNextCycle(
-  cp: string,
-  scope: Scope,
-  now: Date,
-): Promise<number> {
-  const candidates = await prisma.subscription.findMany({
-    where: { ...nextCycleSubscriptionWhere(cp, scope), deletedAt: null },
-    select: ENTITLEMENT_SELECT,
-    take: INBOX_SCAN,
-  });
-  return candidates.filter((s) => (entitlementOf(s, now)?.remaining ?? 0) > 0)
-    .length;
-}
-
-/** Tab labels: the default cohort's size per type, read with the same predicates. */
-async function readCounts(
-  cp: string,
-  scope: Scope,
-  now: Date,
-  known: { type: InboxType; total: number } | null,
-): Promise<Record<InboxType, number>> {
-  // Counts are independent but pool-bounded (see poolLimit above): 6 at once
-  // can queue past PG_CONNECT_TIMEOUT_MS on pool=1. The `known` shortcut
-  // still avoids re-counting the active tab (its total came from the cohort).
-  type CountTask = () => Promise<number>;
-  const tasks: CountTask[] = [];
-  if (known?.type !== "consultation") {
-    tasks.push(() =>
-      prisma.consultation.count({
-        where: pendingConsultationWhere(cp, scope),
-      }),
+  if (type === "subscription") {
+    const pending = pendingSubscriptionWhere(cp, scope);
+    const awaiting = subscriptionSource(
+      cp,
+      subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
+      now,
     );
-    tasks.push(() =>
-      prisma.consultation.count({
-        where: strandedApprovedConsultationWhere(cp, scope),
-      }),
-    );
-    tasks.push(() =>
-      prisma.consultation.count({
-        where: consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-      }),
-    );
+    const nextCycle = nextCycleSource(cp, scope, now);
+    const byChip: Partial<Record<ChipKey, InboxSource[]>> = {
+      all: [
+        subscriptionSource(cp, pending, now),
+        awaiting,
+        nextCycle,
+        subscriptionSource(
+          cp,
+          {
+            AND: [
+              subscriptionRequestWhere(cp, scope, "PENDING"),
+              liveCheckoutHold(now),
+            ],
+          },
+          now,
+          false,
+        ),
+      ],
+      "answer-today": [
+        subscriptionSource(
+          cp,
+          { AND: [pending, answerToday(SUBSCRIPTION_HOLD_MS, now)] },
+          now,
+        ),
+      ],
+      "awaiting-payment": [awaiting],
+      "next-cycle": [nextCycle],
+      declined: [
+        subscriptionSource(
+          cp,
+          subscriptionRequestWhere(cp, scope, "REJECTED"),
+          now,
+        ),
+      ],
+    };
+    return byChip[key] ?? [];
   }
-  if (known?.type !== "subscription") {
-    tasks.push(() =>
-      prisma.subscription.count({
-        where: { ...pendingSubscriptionWhere(cp, scope), deletedAt: null },
-      }),
-    );
-    tasks.push(() =>
-      prisma.subscription.count({
-        where: {
-          ...subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-          deletedAt: null,
-        },
-      }),
-    );
-    tasks.push(() => countNextCycle(cp, scope, now));
-  }
-  if (known?.type !== "trial") {
-    tasks.push(() =>
-      prisma.trial.count({
-        where: trialWhere(cp, scope, ["PENDING", "AWAITING_PAYMENT"]),
-      }),
-    );
-  }
-  const results = await mapLimit(tasks, poolLimit(), (run) => run());
-  let i = 0;
-  const consultationPending =
-    known?.type === "consultation" ? 0 : (results[i++] ?? 0);
-  const consultationStranded =
-    known?.type === "consultation" ? 0 : (results[i++] ?? 0);
-  const consultationAwaiting =
-    known?.type === "consultation" ? 0 : (results[i++] ?? 0);
-  const subscriptionPending =
-    known?.type === "subscription" ? 0 : (results[i++] ?? 0);
-  const subscriptionAwaiting =
-    known?.type === "subscription" ? 0 : (results[i++] ?? 0);
-  const nextCycle = known?.type === "subscription" ? 0 : (results[i++] ?? 0);
-  const trial = known?.type === "trial" ? 0 : (results[i++] ?? 0);
-  const counts: Record<InboxType, number> = {
-    consultation:
-      known?.type === "consultation"
-        ? known.total
-        : consultationPending + consultationStranded + consultationAwaiting,
-    subscription:
-      known?.type === "subscription"
-        ? known.total
-        : subscriptionPending + subscriptionAwaiting + nextCycle,
-    trial: known?.type === "trial" ? known.total : trial,
+  // A trial has no hold clock, so "answer today" is every pending one.
+  const trialStatuses: Partial<
+    Record<ChipKey, ("PENDING" | "AWAITING_PAYMENT" | "REJECTED")[]>
+  > = {
+    all: ["PENDING", "AWAITING_PAYMENT"],
+    "answer-today": ["PENDING"],
+    "awaiting-payment": ["AWAITING_PAYMENT"],
+    declined: ["REJECTED"],
   };
-  return counts;
+  const statuses = trialStatuses[key];
+  return statuses
+    ? [trialSource(cp, trialRequestWhere(cp, scope, statuses), now)]
+    : [];
 }
 
-/**
- * Rows only this consultant can clear (the REQUESTED state): the nav
- * badge and Home's "requests to answer". Awaiting-payment and next-cycle rows
- * wait on the client, so they stay on the tabs but not on the badge. Personal
- * scope by default (org-funded requests belong to that org's dashboard).
- */
-export async function readRequestsToAnswerCount(args: {
-  consultantProfileId: string;
-  orgScope?: Scope;
-}): Promise<number> {
-  const cp = args.consultantProfileId;
-  const scope = args.orgScope ?? PERSONAL;
-  const tasks: (() => Promise<number>)[] = [
-    () =>
-      prisma.consultation.count({
-        where: pendingConsultationWhere(cp, scope),
-      }),
-    () =>
-      prisma.subscription.count({
-        where: { ...pendingSubscriptionWhere(cp, scope), deletedAt: null },
-      }),
-    () => prisma.trial.count({ where: trialWhere(cp, scope, ["PENDING"]) }),
-  ];
-  const results = await mapLimit(tasks, poolLimit(), (run) => run());
-  return results.reduce((sum, n) => sum + n, 0);
+/** Cursor order across sources: the same `(requestedAt, id)` the SQL used. */
+function byKey(dir: Prisma.SortOrder) {
+  const sign = dir === "asc" ? 1 : -1;
+  const idOrder = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  return (a: InboxRowInput, b: InboxRowInput) =>
+    sign *
+    (toStampDate(a.requestedAt).getTime() -
+      toStampDate(b.requestedAt).getTime() || idOrder(a.id, b.id));
+}
+
+function bucketTotalsOf(rows: InboxRowInput[]): Record<InboxBucket, number> {
+  const totals: Record<InboxBucket, number> = {
+    "answer-today": 0,
+    "this-week": 0,
+    later: 0,
+    "waiting-on-them": 0,
+  };
+  for (const row of rows) totals[row.bucket] += 1;
+  return totals;
 }
 
 export async function readRequestsInbox(
@@ -971,33 +1033,87 @@ export async function readRequestsInbox(
   const scope = args.orgScope ?? PERSONAL;
   const limit = args.limit ?? INBOX_DEFAULT_LIMIT;
   const cp = args.consultantProfileId;
-  const plan = planCohort(cp, scope, args.type, args.chip, now);
-  // Chip-filtered views don't reuse the cohort total for tab counts, so the
-  // list scan and the tab counts are independent — run them together. The
-  // default (no chip) view reuses its own total, so it stays sequential.
-  if (args.chip) {
-    const [rows, counts] = await Promise.all([
-      readCohort(cp, scope, plan, now).then((cohort) =>
-        sortInboxRows(cohort, args.sort),
-      ),
-      readCounts(cp, scope, now, null),
-    ]);
-    const total = rows.length;
-    const pages = Math.max(1, Math.ceil(total / limit));
-    const page = Math.min(Math.max(1, args.page), pages);
+  const sources = planSources(cp, scope, args.type, args.chip, now);
+  const window: ReadWindow = isCursorSort(args.sort)
+    ? {
+        dir: args.sort === "new" ? "desc" : "asc",
+        after: decodeInboxCursor(args.after),
+        take: limit + 1,
+      }
+    : { dir: "asc", after: null, take: INBOX_RANKED_WINDOW };
+
+  // Tab labels count each type's default view with the sources it lists; the
+  // default view's total adds the uncounted holds. Every count and read runs
+  // in ONE pool-bounded queue, so the inbox never exceeds poolLimit().
+  const counts: Record<InboxType, number> = {
+    consultation: 0,
+    subscription: 0,
+    trial: 0,
+  };
+  let extra = 0;
+  const listed: InboxRowInput[] = [];
+  const tasks: (() => Promise<void>)[] = [
+    ...INBOX_TYPES.flatMap((type) =>
+      planSources(cp, scope, type, undefined, now)
+        .filter((source) => source.onTab)
+        .map((source) => async () => {
+          // Await first: `+= await` reads the old total before the await.
+          const n = await source.count();
+          counts[type] += n;
+        }),
+    ),
+    ...(args.chip ? sources : sources.filter((s) => !s.onTab)).map(
+      (source) => async () => {
+        const n = await source.count();
+        extra += n;
+      },
+    ),
+    ...sources.map((source) => async () => {
+      listed.push(...(await source.read(window)));
+    }),
+  ];
+  await mapLimit(tasks, poolLimit(), (run) => run());
+  const total = args.chip ? extra : counts[args.type] + extra;
+
+  if (isCursorSort(args.sort)) {
+    const merged = listed.sort(byKey(args.sort === "new" ? "desc" : "asc"));
+    const rows = merged.slice(0, limit);
+    const last = rows[rows.length - 1];
     return toPlain({
-      rows: rows.slice((page - 1) * limit, page * limit),
-      meta: { total, page, limit, counts },
+      rows,
+      meta: {
+        total,
+        limit,
+        counts,
+        nextCursor:
+          merged.length > limit && last ? encodeInboxCursor(last) : null,
+        page: 1,
+        windowSize: rows.length,
+        bucketTotals: null,
+      },
     });
   }
-  const cohort = sortInboxRows(
-    await readCohort(cp, scope, plan, now),
-    args.sort,
-  );
-  const total = cohort.length;
-  const pages = Math.max(1, Math.ceil(total / limit));
-  const page = Math.min(Math.max(1, args.page), pages);
-  const rows = cohort.slice((page - 1) * limit, page * limit);
-  const counts = await readCounts(cp, scope, now, { type: args.type, total });
-  return toPlain({ rows, meta: { total, page, limit, counts } });
+
+  // Ranked: the oldest rows of each source are the nearest their clocks.
+  const ranked = sortInboxRows(listed, args.sort).slice(0, INBOX_RANKED_WINDOW);
+  const pages = Math.max(1, Math.ceil(ranked.length / limit));
+  const focusAt = args.focusId
+    ? ranked.findIndex((row) => row.id === args.focusId)
+    : -1;
+  const page =
+    focusAt >= 0
+      ? Math.floor(focusAt / limit) + 1
+      : Math.min(Math.max(1, args.page), pages);
+  return toPlain({
+    rows: ranked.slice((page - 1) * limit, page * limit),
+    meta: {
+      total,
+      limit,
+      counts,
+      nextCursor: null,
+      page,
+      windowSize: ranked.length,
+      bucketTotals: bucketTotalsOf(ranked),
+    },
+  });
 }

@@ -1,9 +1,9 @@
 /**
- * #1775 / #1704 / #1705 — the Requests inbox's pure half: the row shape the
- * read (lib/data/requests-inbox.ts) emits and the client renders, the URL
- * enums for tabs / chips / sort, and the deadline-bucket + sort rules the
- * read applies server-side. Prisma-free so the client component, the RSC
- * page and a jest pin share one definition (same posture as earnings-state).
+ * The Requests inbox's pure half: the row shape the read
+ * (lib/data/requests-inbox.ts) emits and the client renders, the URL enums
+ * for tabs / chips / sort / cursor, and the bucket + sort rules the read
+ * applies server-side. Prisma-free so the client component, the RSC page and
+ * a jest pin share one definition.
  */
 
 import type { SubscriptionEntitlement } from "@/lib/booking/entitlement";
@@ -39,11 +39,21 @@ export const INBOX_SORTS = [
 ] as const;
 export type InboxSort = (typeof INBOX_SORTS)[number];
 
+/**
+ * Sorts on the request clock page through SQL keyset cursors over every row;
+ * the ranked sorts (priority, money) mix derived fields, so they page an
+ * in-memory window of the most urgent rows instead.
+ */
+export const INBOX_CURSOR_SORTS = ["new", "old", "deadline"] as const;
+export type InboxCursorSort = (typeof INBOX_CURSOR_SORTS)[number];
+export const isCursorSort = (sort: InboxSort): sort is InboxCursorSort =>
+  (INBOX_CURSOR_SORTS as readonly string[]).includes(sort);
+
+/** How many rows a ranked sort holds: "Showing the 200 most urgent". */
+export const INBOX_RANKED_WINDOW = 200;
+
 export type InboxRowKind =
-  | "consultation"
-  | "subscription"
-  | "trial"
-  | "next-cycle";
+  "consultation" | "subscription" | "trial" | "next-cycle";
 
 /**
  * Where a row sits inside its tab. "Answer today" is under 24 h (or overdue)
@@ -112,17 +122,32 @@ export interface InboxRowInput {
   proposal: InboxProposal | null;
   schedulingPeriod: { start: Stamp; end: Stamp } | null;
   schedulingTimezone: string | null;
-  /** #1766 — a subscription's one counter; drives "Schedule the next N · a of b booked". */
+  /** A subscription's one counter; drives "Schedule the next N · a of b booked". */
   entitlement: SubscriptionEntitlement | null;
   trial: { durationMinutes: number } | null;
+  /**
+   * The buyer is paying for a direct checkout right now: shown so the held
+   * slot makes sense, never answerable and never counted.
+   */
+  checkoutHold: { expiresAt: Stamp } | null;
+  /** The requested time is too close or gone; it can only be re-timed or declined. */
+  requestedStartPassed: boolean;
 }
 
 export interface InboxMeta {
+  /** Every row this view holds (a separate count, not a scan length). */
   total: number;
-  page: number;
   limit: number;
   /** Rows per type tab (the default cohort, no chip), for the tab labels. */
   counts: Record<InboxType, number>;
+  /** Cursor sorts: the cursor for the next page, null on the last one. */
+  nextCursor: string | null;
+  /** Ranked sorts: the page inside the window. Always 1 for cursor sorts. */
+  page: number;
+  /** Ranked sorts: rows the window holds (≤ INBOX_RANKED_WINDOW). */
+  windowSize: number;
+  /** Ranked sorts: rows per bucket across the whole window, for the headers. */
+  bucketTotals: Record<InboxBucket, number> | null;
 }
 
 export interface RequestsInboxPayload {
@@ -138,18 +163,23 @@ export const toStampDate = (v: Stamp): Date =>
 
 /**
  * REQUESTED is the one state this consultant answers; it is banded by how
- * much of the hold is left. Every other state's clock is the other party's
- * (a pay link, a finished cycle) or has already run out.
+ * much of its clock is left. Every other state's clock is the other party's
+ * (a pay link, a checkout in progress, a finished cycle) or has run out.
  */
 export function inboxBucketOf(
-  row: { kind: InboxRowKind; deadline: Stamp | null },
+  row: {
+    kind: InboxRowKind;
+    deadline: Stamp | null;
+    checkoutHold?: InboxRowInput["checkoutHold"];
+    requestedStartPassed?: boolean;
+  },
   state: BookingStateKind,
   now: Date = new Date(),
 ): InboxBucket {
-  if (row.kind === "next-cycle" || state !== "REQUESTED") {
+  if (row.kind === "next-cycle" || row.checkoutHold || state !== "REQUESTED") {
     return "waiting-on-them";
   }
-  if (row.deadline === null) return "answer-today";
+  if (row.requestedStartPassed || row.deadline === null) return "answer-today";
   const left = toStampDate(row.deadline).getTime() - now.getTime();
   if (left < DAY_MS) return "answer-today";
   if (left < 7 * DAY_MS) return "this-week";
@@ -218,6 +248,36 @@ export interface InboxQueryArgs {
   chip: InboxChip | null;
   sort: InboxSort;
   page: number;
+  /** Cursor sorts: the last row of the previous page; null on the first. */
+  after: string | null;
+  /** A deep-linked request: ranked sorts open the page that holds it. */
+  focus: string | null;
+}
+
+/** A keyset position: the request clock, then the id as the tiebreaker. */
+export interface InboxCursor {
+  requestedAt: Date;
+  id: string;
+}
+
+const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+const CURSOR_PATTERN = /^(\d{1,15})\.([A-Za-z0-9_-]{1,64})$/;
+
+/** `<epoch ms>.<id>`: opaque to the user, safe in a URL. */
+export function encodeInboxCursor(row: {
+  requestedAt: Stamp;
+  id: string;
+}): string {
+  return `${toStampDate(row.requestedAt).getTime()}.${row.id}`;
+}
+
+/** Null for anything that is not a cursor this module wrote. */
+export function decodeInboxCursor(
+  raw: string | null | undefined,
+): InboxCursor | null {
+  const match = raw ? CURSOR_PATTERN.exec(raw) : null;
+  if (!match) return null;
+  return { requestedAt: new Date(Number(match[1])), id: match[2] };
 }
 
 /** The RSC seed and the client `useQuery` MUST build this identically. */
@@ -230,6 +290,8 @@ export function inboxQueryKey(args: InboxQueryArgs) {
     args.chip,
     args.sort,
     args.page,
+    args.after,
+    args.focus,
   ] as const;
 }
 
@@ -244,18 +306,23 @@ export function inboxQueryString(args: InboxQueryArgs): string {
     limit: String(INBOX_DEFAULT_LIMIT),
   });
   if (args.chip) params.set("chip", args.chip);
+  if (args.after) params.set("after", args.after);
+  if (args.focus) params.set("focus", args.focus);
   return params.toString();
 }
 
 /** URL → inbox state; anything unknown falls to the default. */
 export function readInboxParams(
   get: (key: string) => string | null,
-): Pick<InboxQueryArgs, "type" | "chip" | "sort" | "page"> {
+): Pick<InboxQueryArgs, "type" | "chip" | "sort" | "page" | "after" | "focus"> {
   const type = get("type");
   const chip = get("chip");
   const sort = get("sort");
   const page = Number.parseInt(get("page") ?? "1", 10);
+  const after = get("after");
+  const focus = get("focus");
   const safeType = isInboxType(type) ? type : INBOX_DEFAULT_TYPE;
+  const safeSort = isInboxSort(sort) ? sort : INBOX_DEFAULT_SORT;
   // A chip the tab does not offer is dropped, never sent.
   return {
     type: safeType,
@@ -263,8 +330,11 @@ export function readInboxParams(
       isInboxChip(chip) && CHIPS_FOR_TYPE[safeType].includes(chip)
         ? chip
         : null,
-    sort: isInboxSort(sort) ? sort : INBOX_DEFAULT_SORT,
+    sort: safeSort,
     page: Number.isFinite(page) && page >= 1 ? page : 1,
+    // A cursor only means something to a cursor sort.
+    after: isCursorSort(safeSort) && decodeInboxCursor(after) ? after : null,
+    focus: focus && ID_PATTERN.test(focus) ? focus : null,
   };
 }
 
@@ -273,13 +343,14 @@ export interface InboxParamsPatch {
   chip?: InboxChip | null;
   sort?: InboxSort;
   page?: number;
+  after?: string | null;
 }
 
 /**
- * The next search string after a tab / chip / sort / page change. A type
- * change clears the chip and page; any other change resets the page; page 1
- * and a cleared chip are absent, not "null". `focus` is dropped; other keys
- * pass through.
+ * The next search string after a tab / chip / sort / page / cursor change. A
+ * type change clears the chip; any change resets the page and the cursor
+ * unless it sets them; page 1, a cleared chip and the first cursor page are
+ * absent, not "null". `focus` is dropped; other keys pass through.
  */
 export function nextInboxSearch(
   current: string,
@@ -292,21 +363,17 @@ export function nextInboxSearch(
     if (value === null) next.delete(key);
     else next.set(key, value);
   };
+  apply("page", null);
+  apply("after", null);
   if (patch.type !== undefined) {
     apply("type", patch.type);
     apply("chip", null);
-    apply("page", null);
   }
-  if (patch.chip !== undefined) {
-    apply("chip", patch.chip);
-    apply("page", null);
-  }
-  if (patch.sort !== undefined) {
-    apply("sort", patch.sort);
-    apply("page", null);
-  }
+  if (patch.chip !== undefined) apply("chip", patch.chip);
+  if (patch.sort !== undefined) apply("sort", patch.sort);
   if (patch.page !== undefined) {
     apply("page", patch.page <= 1 ? null : String(patch.page));
   }
+  if (patch.after !== undefined) apply("after", patch.after);
   return next.toString();
 }

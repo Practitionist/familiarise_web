@@ -60,6 +60,8 @@ export function RequestsInboxPreview({
     chip: null,
     sort: "priority" as const,
     page: 1,
+    after: null,
+    focus: null,
   };
   const query = useQuery({
     queryKey: inboxQueryKey(queryArgs),
@@ -121,7 +123,10 @@ export function RequestsInboxPreview({
       </div>
     );
   }
-  const rows = query.data.rows.slice(0, PREVIEW_ROWS);
+  // A checkout the learner is paying for is nobody's request: not on Home.
+  const rows = query.data.rows
+    .filter((row) => row.checkoutHold === null)
+    .slice(0, PREVIEW_ROWS);
   if (rows.length === 0) {
     return (
       <p className="p-4 text-center text-sm text-muted-foreground">

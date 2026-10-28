@@ -13,6 +13,9 @@ import {
 import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
+/** The unscheduled side list is a to-do list, not a history. */
+const UNSCHEDULED_TAKE = 100;
+
 export async function GET(request: NextRequest) {
   // Require authentication (middleware already enforces cookie presence for /api/bookings/)
   const authResult = await requireApiAuth();
@@ -57,6 +60,8 @@ export async function GET(request: NextRequest) {
     }
     const startDateStr = searchParams.get("startDate");
     const endDateStr = searchParams.get("endDate");
+    // The Appointments tab's side list: live runs that still have no sessions.
+    const unscheduled = searchParams.get("unscheduled") === "1";
     // #1592 A-P1-04 — an unparsable date used to reach Prisma as Invalid Date
     // and 500; the ISO schema also refuses a real-looking 2026-02-30.
     const dateRange = listDateFilterSchema.safeParse({
@@ -189,6 +194,10 @@ export async function GET(request: NextRequest) {
           consultantProfileId,
           ...(webinarPlanOrgWhere ?? {}),
         },
+        ...(unscheduled && {
+          appointment: null,
+          status: { notIn: ["CANCELLED" as const, "COMPLETED" as const] },
+        }),
       };
 
       if (startDateStr && endDateStr) {
@@ -219,6 +228,10 @@ export async function GET(request: NextRequest) {
             },
           },
         },
+        ...(unscheduled && {
+          orderBy: { createdAt: "desc" as const },
+          take: UNSCHEDULED_TAKE,
+        }),
       });
     } else {
       webinars = await prisma.webinar.findMany({

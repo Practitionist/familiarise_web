@@ -1,7 +1,13 @@
 import prisma from "@/lib/prisma";
-import type { AppointmentStatus, Prisma } from "@prisma/client";
+import type { AppointmentStatus, Prisma, TrialStatus } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
+import {
+  ANSWERABLE_CONSULTATION,
+  ANSWERABLE_SUBSCRIPTION,
+} from "@/lib/booking/request-cohort";
+import { runBounded } from "@/lib/db/bounded";
+import { requestHoldDeadline } from "@/lib/dashboard/money-state";
 import { readPayoutRequirements } from "@/lib/data/consultant-payout-setup";
 import type { PayoutRequirements } from "@/lib/payments/payouts/payout-requirements";
 
@@ -51,7 +57,12 @@ export function pendingConsultationWhere(
   consultantProfileId: string,
   scope: Scope,
 ): Prisma.ConsultationWhereInput {
-  return consultationRequestWhere(consultantProfileId, scope, "PENDING");
+  return {
+    AND: [
+      consultationRequestWhere(consultantProfileId, scope, "PENDING"),
+      ANSWERABLE_CONSULTATION,
+    ],
+  };
 }
 
 /** The pending predicate at any status; Home's "Awaiting payment" row reads
@@ -77,8 +88,105 @@ export function pendingSubscriptionWhere(
   consultantProfileId: string,
   scope: Scope,
 ): Prisma.SubscriptionWhereInput {
-  return subscriptionRequestWhere(consultantProfileId, scope, "PENDING");
+  return {
+    AND: [
+      subscriptionRequestWhere(consultantProfileId, scope, "PENDING"),
+      ANSWERABLE_SUBSCRIPTION,
+    ],
+    deletedAt: null,
+  };
 }
+
+/** Trials are scoped by their own `organizationId` column, as `/api/trials` does. */
+export function trialRequestWhere(
+  consultantProfileId: string,
+  scope: Scope,
+  statuses: TrialStatus[],
+): Prisma.TrialWhereInput {
+  return {
+    ...scopeToWhereOrgId(scope),
+    consultantProfileId,
+    // No `deletedAt`: every terminal trial outcome is a TrialStatus value, so
+    // the status filter below is already the liveness test. See the Trial model.
+    status: { in: statuses },
+  };
+}
+
+/**
+ * The one "requests to answer" number: PENDING consultations and live
+ * subscriptions that are real requests (never an unpaid checkout in flight),
+ * plus PENDING trials. The nav badge, Home, NeedsYou and the request cap all
+ * read it, so they cannot disagree. `db` lets a caller count inside its lock.
+ */
+export async function countRequestsToAnswer(
+  args: { consultantProfileId: string; orgScope?: Scope },
+  db: RequestCounters = prisma,
+): Promise<number> {
+  const cp = args.consultantProfileId;
+  const scope = args.orgScope ?? { kind: "personal" };
+  const [consultations, subscriptions, trials] = await runBounded([
+    () => db.consultation.count({ where: pendingConsultationWhere(cp, scope) }),
+    () => db.subscription.count({ where: pendingSubscriptionWhere(cp, scope) }),
+    () => db.trial.count({ where: trialRequestWhere(cp, scope, ["PENDING"]) }),
+  ] as const);
+  return consultations + subscriptions + trials;
+}
+
+/** A PENDING request asked for at or after this instant still holds its slots. */
+function holdingSince(kind: "CONSULTATION" | "SUBSCRIPTION", now: Date): Date {
+  const releasesAt = requestHoldDeadline(kind, now) ?? now;
+  return new Date(2 * now.getTime() - releasesAt.getTime());
+}
+
+/**
+ * The request cap's count, across every tenant: real submitted requests
+ * (PENDING, REQUEST_SUBMITTED, still inside their hold) plus PENDING trial
+ * requests. No appointment arm, so an unallocated request counts, and no
+ * direct checkout ever does. Call it inside the cap lock with `tx`.
+ */
+export async function countOpenRequestsForCap(
+  consultantProfileId: string,
+  db: RequestCounters = prisma,
+  now: Date = new Date(),
+): Promise<number> {
+  const [consultations, subscriptions, trials] = await runBounded([
+    () =>
+      db.consultation.count({
+        where: {
+          status: "PENDING",
+          bookingSource: "REQUEST_SUBMITTED",
+          consultationPlan: { consultantProfileId },
+          requestedAt: { gte: holdingSince("CONSULTATION", now) },
+        },
+      }),
+    () =>
+      db.subscription.count({
+        where: {
+          status: "PENDING",
+          bookingSource: "REQUEST_SUBMITTED",
+          deletedAt: null,
+          subscriptionPlan: { consultantProfileId },
+          requestedAt: { gte: holdingSince("SUBSCRIPTION", now) },
+        },
+      }),
+    () => db.trial.count({ where: { consultantProfileId, status: "PENDING" } }),
+  ] as const);
+  return consultations + subscriptions + trials;
+}
+
+// Structural, not Pick<PrismaClient>: the extended client (lib/prisma) and a
+// transaction client both satisfy it, and tsc rejects a dropped column.
+export type RequestCounters = {
+  consultation: {
+    count: (args: { where: Prisma.ConsultationWhereInput }) => Promise<number>;
+  };
+  subscription: {
+    count: (args: { where: Prisma.SubscriptionWhereInput }) => Promise<number>;
+  };
+  trial: {
+    count: (args: { where: Prisma.TrialWhereInput }) => Promise<number>;
+  };
+};
 
 export function subscriptionRequestWhere(
   consultantProfileId: string,
@@ -177,34 +285,20 @@ export async function getNeedsYouSummary(
   userId: string,
   consultantProfileId: string,
 ): Promise<NeedsYouSummary> {
-  // Memberships + personal-scope counts share no dependency — fetch together
-  // so the personal context does not wait on the membership round-trip.
-  const [deliveringMemberships, personalConsultations, personalSubscriptions] =
-    await Promise.all([
-      prisma.membership.findMany({
-        where: {
-          userId,
-          status: "ACTIVE",
-          consultantProfileId,
-          organization: { canHost: true },
-        },
-        select: {
-          organizationId: true,
-          organization: { select: { name: true } },
-        },
-        relationLoadStrategy: "join",
-      }),
-      prisma.consultation.count({
-        where: pendingConsultationWhere(consultantProfileId, {
-          kind: "personal",
-        }),
-      }),
-      prisma.subscription.count({
-        where: pendingSubscriptionWhere(consultantProfileId, {
-          kind: "personal",
-        }),
-      }),
-    ]);
+  const deliveringMemberships = await prisma.membership.findMany({
+    where: {
+      userId,
+      status: "ACTIVE",
+      consultantProfileId,
+      organization: { canHost: true },
+    },
+    select: {
+      organizationId: true,
+      organization: { select: { name: true } },
+    },
+    relationLoadStrategy: "join",
+  });
+  const personalRequests = await countRequestsToAnswer({ consultantProfileId });
 
   const orgScopes = deliveringMemberships.map((m) => ({
     organizationId: m.organizationId as string,
@@ -212,35 +306,24 @@ export async function getNeedsYouSummary(
     href: `/dashboard/organization/${m.organizationId}/requests`,
   }));
 
-  const orgCounts = await Promise.all(
-    orgScopes.map(async (scope) => {
-      const [consultations, subscriptions] = await Promise.all([
-        prisma.consultation.count({
-          where: pendingConsultationWhere(consultantProfileId, {
-            kind: "org",
-            orgId: scope.organizationId,
-          }),
-        }),
-        prisma.subscription.count({
-          where: pendingSubscriptionWhere(consultantProfileId, {
-            kind: "org",
-            orgId: scope.organizationId,
-          }),
-        }),
-      ]);
-      return {
-        ...scope,
-        pendingRequests: consultations + subscriptions,
-      };
-    }),
-  );
+  // One org at a time: each count already runs its three reads bounded.
+  const orgCounts: NeedsYouContext[] = [];
+  for (const scope of orgScopes) {
+    orgCounts.push({
+      ...scope,
+      pendingRequests: await countRequestsToAnswer({
+        consultantProfileId,
+        orgScope: { kind: "org", orgId: scope.organizationId },
+      }),
+    });
+  }
 
   const contexts = [
     {
       organizationId: null,
       label: "Personal",
       href: `/dashboard/consultant/${consultantProfileId}/requests`,
-      pendingRequests: personalConsultations + personalSubscriptions,
+      pendingRequests: personalRequests,
     },
     ...orgCounts,
   ].filter((c) => c.pendingRequests > 0);

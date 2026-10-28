@@ -41,7 +41,14 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { useState } from "react";
 
-import { KIND_LABEL, NEXT_CYCLE_BADGE, nextCycleLine } from "./labels";
+import {
+  CHECKOUT_HOLD_BADGE,
+  CHECKOUT_HOLD_LINE,
+  KIND_LABEL,
+  NEXT_CYCLE_BADGE,
+  REQUESTED_TIME_PASSED,
+  nextCycleLine,
+} from "./labels";
 import { FREE_TRIAL_LABEL } from "@/lib/appointments/trial-labels";
 import { requestCountLine } from "./request-count-line";
 
@@ -52,6 +59,7 @@ export type RowAction =
   | { kind: "remind" }
   | { kind: "withdraw" }
   | { kind: "allocate-next" }
+  | { kind: "propose-times" }
   | { kind: "pick-time" }
   | { kind: "trial-decline" };
 
@@ -66,6 +74,7 @@ const ACTION_LABEL: Record<RowAction["kind"], string> = {
   remind: "Remind",
   withdraw: "Withdraw approval",
   "allocate-next": "Allocate",
+  "propose-times": "Propose new times",
   "pick-time": "Pick a time",
   "trial-decline": "Decline",
 };
@@ -96,6 +105,7 @@ export function isDialogFreeApproval(row: InboxRowInput): boolean {
   return (
     (row.kind === "consultation" || row.kind === "subscription") &&
     row.bookingSource === "REQUEST_SUBMITTED" &&
+    !row.requestedStartPassed &&
     row.rescheduledSlotCount === 0 &&
     row.proposal === null &&
     row.requiredSlots !== null &&
@@ -115,6 +125,8 @@ export function rowActions(
   presentation: Pick<BookingPresentation, "bookingState" | "nextAction">,
 ): RowActions {
   const { bookingState, nextAction } = presentation;
+  // The buyer is paying right now; nothing here may race them.
+  if (row.checkoutHold) return { primary: null, secondary: [] };
   if (row.kind === "next-cycle" || nextAction.kind === "ALLOCATE") {
     return { primary: { kind: "allocate-next" }, secondary: [] };
   }
@@ -128,6 +140,16 @@ export function rowActions(
     }
     return { primary: null, secondary: [] };
   }
+  if (
+    nextAction.kind === "APPROVE_OR_DECLINE" &&
+    row.requestedStartPassed &&
+    answerableProposal(row) === null
+  ) {
+    return {
+      primary: { kind: "propose-times" },
+      secondary: [{ kind: "decline" }],
+    };
+  }
   if (nextAction.kind === "APPROVE_OR_DECLINE") {
     const requested =
       answerableProposal(row) !== null || isDialogFreeApproval(row);
@@ -140,8 +162,7 @@ export function rowActions(
       secondary: [{ kind: "decline" }],
     };
   }
-  // #1775 — PR-B adds a REMIND_OR_WITHDRAW kind to money-state; until it
-  // lands on dev the awaiting-payment row derives the pair from the state.
+  // The awaiting-payment row derives remind / withdraw from the state too.
   const kind: string = nextAction.kind;
   if (
     kind === "REMIND_OR_WITHDRAW" ||
@@ -289,12 +310,14 @@ export function InboxRow({
   );
   const { bookingState, moneyState } = presentation;
   const actions = rowActions(row, presentation);
-  const badge =
-    row.kind === "next-cycle"
+  const badge = row.checkoutHold
+    ? CHECKOUT_HOLD_BADGE
+    : row.kind === "next-cycle"
       ? NEXT_CYCLE_BADGE
       : toneBadge(bookingState.tone, bookingState.label);
   const deadline = row.deadline ? toStampDate(row.deadline) : null;
-  const showCountdown = deadline !== null && row.kind !== "next-cycle";
+  const showCountdown =
+    deadline !== null && row.kind !== "next-cycle" && !row.requestedStartPassed;
   const isDesktop = useIsDesktop();
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -306,7 +329,9 @@ export function InboxRow({
       : ACTION_LABEL[action.kind];
 
   const linkFor = (action: RowAction): string | null => {
-    if (action.kind === "allocate-next") return row.hrefs.allocate;
+    if (action.kind === "allocate-next" || action.kind === "propose-times") {
+      return row.hrefs.allocate;
+    }
     if (action.kind === "approve" && action.mode === "allocate") {
       return row.hrefs.allocate;
     }
@@ -473,6 +498,16 @@ export function InboxRow({
           {row.proposal && (
             <p className="text-xs text-muted-foreground">
               Proposed new times · round {row.proposal.round}
+            </p>
+          )}
+          {row.checkoutHold && (
+            <p className="text-xs text-muted-foreground">
+              {CHECKOUT_HOLD_LINE}
+            </p>
+          )}
+          {row.requestedStartPassed && (
+            <p className="text-xs font-medium text-red-700 dark:text-red-400">
+              {REQUESTED_TIME_PASSED}
             </p>
           )}
           {note && (

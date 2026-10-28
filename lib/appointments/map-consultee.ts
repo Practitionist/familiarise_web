@@ -106,7 +106,10 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
     counterpart: person(c.consultationPlan.consultantProfile?.user),
     consultantProfileId: c.consultationPlan.consultantProfile?.id ?? null,
     status,
-    ...deriveBucket({ status, occurrences, now }, "consultee"),
+    ...deriveBucket(
+      { status, occurrences, kind: "CONSULTATION", now },
+      "consultee",
+    ),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: null,

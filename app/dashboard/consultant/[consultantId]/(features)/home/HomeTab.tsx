@@ -87,7 +87,6 @@ const ORG_JOIN_STATE_LABEL: Record<OccurrenceJoinState, string> = {
 interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
-  pendingRequestsCount?: number;
   orgSessions?: TConsultantDashboardResponse["orgSessions"];
   /** The "Add your bank account" row's input; absent on older payloads. #1675 PR-Y2 */
   payoutSetup: TConsultantDashboardResponse["payoutSetup"];
@@ -123,7 +122,6 @@ const MotionLink = motion(Link);
 export function HomeTab({
   appointments,
   consultantId,
-  pendingRequestsCount = 0,
   orgSessions = [],
   payoutSetup,
   needsYou,
@@ -209,8 +207,8 @@ export function HomeTab({
   const actionItems = useMemo(
     () =>
       deriveConsultantActionItems({
-        // The Requests badge's own count (#1345); the older total is the fallback.
-        pendingApprovals: needsYou?.requestsToAnswer ?? pendingRequestsCount,
+        // The Requests badge's own count: one number on every surface.
+        pendingApprovals: needsYou?.requestsToAnswer ?? 0,
         documentsAwaitingReview: needsYou?.documentsAwaitingReview ?? 0,
         rescheduleReplies: needsYou?.rescheduleReplies ?? [],
         owedMakeUps: needsYou?.owedMakeUps ?? [],
@@ -229,14 +227,7 @@ export function HomeTab({
         livePayoutsEnabled: payoutSetup?.livePayoutsEnabled ?? true,
         now,
       }),
-    [
-      allUpcomingAppointments,
-      pendingRequestsCount,
-      needsYou,
-      consultantId,
-      payoutSetup,
-      now,
-    ],
+    [allUpcomingAppointments, needsYou, consultantId, payoutSetup, now],
   );
 
   return (

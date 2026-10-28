@@ -66,7 +66,6 @@ export default function HomePageClient({
       <HomeTab
         appointments={dashboardData.appointments}
         consultantId={consultantId}
-        pendingRequestsCount={dashboardData.pendingRequestsCount ?? 0}
         orgSessions={dashboardData.orgSessions}
         payoutSetup={dashboardData.payoutSetup}
         needsYou={dashboardData.needsYou}

@@ -30,7 +30,11 @@ import type { TAppointment } from "@/types/appointment";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import {
-  recentWindowStart,
+  CONSULTANT_APPOINTMENTS_PAGE,
+  CONSULTANT_APPOINTMENTS_RECENT_CAP,
+  CONSULTANT_APPOINTMENTS_RECENT_PAST,
+  encodeAppointmentsCursor,
+  type AppointmentsCursor,
   type ConsultantAppointmentsWindow,
 } from "@/lib/appointments/window";
 
@@ -57,11 +61,56 @@ export interface GetConsultantAppointmentsArgs {
   /// read spans every tenant when unfiltered, so the caller has to say which
   /// slice it means rather than inheriting one.
   scope: Scope;
-  /** #1703 B12 — "recent" (default) keeps rows with a live occurrence ending
-   * inside the last 12 months or in the future, plus unscheduled rows; "all"
-   * is the unbounded read behind the "Load older" control. Ignored when a
-   * date range or an event id already bounds the read. */
+  /** "recent" (default) is every live row, capped, plus the first page of
+   * past rows; "older" is one further page of past rows behind "Load older".
+   * Ignored when a date range or an event id already bounds the read. */
   window?: ConsultantAppointmentsWindow;
+  /** "older" only: the last row of the previous page (null = after recent). */
+  before?: AppointmentsCursor | null;
+  now?: Date;
+}
+
+/** A page of the list plus where the next "older" page starts. */
+export interface ConsultantAppointmentsPage {
+  rows: ConsultantListAppointment[];
+  /** Null once the past rows are exhausted (or the read is not windowed). */
+  nextCursor: string | null;
+}
+
+/** A row still to happen or still to be placed: a session ending later, or none at all. */
+const liveRowWhere = (now: Date): Prisma.AppointmentWhereInput => ({
+  OR: [
+    { occurrences: { some: { deletedAt: null, endsAt: { gte: now } } } },
+    { occurrences: { none: { deletedAt: null } } },
+  ],
+});
+
+/** The exact complement of live: it has sessions and every one has ended. */
+const pastRowWhere = (now: Date): Prisma.AppointmentWhereInput => ({
+  occurrences: {
+    some: { deletedAt: null },
+    none: { deletedAt: null, endsAt: { gte: now } },
+  },
+});
+
+const NEWEST_FIRST = [{ createdAt: "desc" as const }, { id: "desc" as const }];
+
+/**
+ * Rows after the cursor, newest-created first. The cursor holds whole
+ * milliseconds and the column microseconds, so the cursor's millisecond is
+ * one tie band ordered by id.
+ */
+function olderThan(cursor: AppointmentsCursor): Prisma.AppointmentWhereInput {
+  const nextMs = new Date(cursor.createdAt.getTime() + 1);
+  return {
+    OR: [
+      { createdAt: { lt: cursor.createdAt } },
+      {
+        createdAt: { gte: cursor.createdAt, lt: nextMs },
+        id: { lt: cursor.id },
+      },
+    ],
+  };
 }
 
 /**
@@ -84,6 +133,12 @@ export type ConsultantListAppointment = TAppointment;
 export async function getConsultantAppointments(
   args: GetConsultantAppointmentsArgs,
 ): Promise<ConsultantListAppointment[]> {
+  return (await readConsultantAppointmentsPage(args)).rows;
+}
+
+export async function readConsultantAppointmentsPage(
+  args: GetConsultantAppointmentsArgs,
+): Promise<ConsultantAppointmentsPage> {
   const {
     type,
     consultantProfileId,
@@ -95,6 +150,8 @@ export async function getConsultantAppointments(
     eventIds,
     scope,
     window = "recent",
+    before = null,
+    now = new Date(),
   } = args;
 
   const whereClause: Prisma.AppointmentWhereInput = {
@@ -107,20 +164,9 @@ export async function getConsultantAppointments(
     eventIds?.consultationId ||
     eventIds?.subscriptionId,
   );
-  // #1703 B12 — the list had no bound at all, so a busy consultant's page
-  // grew with every year of history. Unscheduled rows stay: they are the
-  // ones that still need a decision — including rows whose only occurrences
-  // were released (soft-deleted) for a reschedule.
-  if (window === "recent" && !(startDate && endDate) && !eventScoped) {
-    whereClause.OR = [
-      {
-        occurrences: {
-          some: { deletedAt: null, endsAt: { gte: recentWindowStart() } },
-        },
-      },
-      { occurrences: { none: { deletedAt: null } } },
-    ];
-  }
+  // Every list read is bounded unless a date range or an event id already
+  // narrows it. Unscheduled rows are live: they still need a decision.
+  const windowed = !(startDate && endDate) && !eventScoped;
 
   // Date range filtering for appointments. This is the primary filter.
   // It looks for appointments where any of its slots overlap with the given date range.
@@ -297,124 +343,88 @@ export async function getConsultantAppointments(
   // Host and co-host rows render name and image only, so no email is selected.
   const hostUserSelect = { id: true, name: true, image: true } as const;
 
-  const appointments = await prisma.appointment.findMany({
-    where: whereClause,
-    include: {
-      occurrences: {
-        where: { deletedAt: null },
-        orderBy: { startsAt: "asc" },
-        include: {
-          meeting: {
-            select: { id: true, endedAt: true, endedReason: true },
-          },
+  const include = {
+    occurrences: {
+      where: { deletedAt: null },
+      orderBy: { startsAt: "asc" },
+      include: {
+        meeting: {
+          select: { id: true, endedAt: true, endedReason: true },
         },
       },
-      consultation: {
-        include: {
-          consultationPlan: {
-            include: {
-              consultantProfile: {
-                select: {
-                  id: true,
-                  userId: true,
-                  user: { select: hostUserSelect },
-                },
-              },
-            },
-          },
-          requestedBy: {
-            include: {
-              user: { select: listUserSelect },
-            },
-          },
-        },
-      },
-      subscription: {
-        select: {
-          id: true,
-          subscriptionPlan: {
-            include: {
-              consultantProfile: {
-                select: {
-                  id: true,
-                  userId: true,
-                  user: { select: hostUserSelect },
-                },
-              },
-            },
-          },
-          requestedBy: {
-            include: {
-              user: { select: listUserSelect },
-            },
-          },
-          schedulingPeriodStartsAt: true,
-          schedulingPeriodEndsAt: true,
-          // The allocate grid's entitlement clamps its cycle to the plan end.
-          planEndsAt: true,
-          schedulingTimezone: true,
-          // #1766 — the allocate grid's cycle heading reads the frozen entitlement.
-          sessionsTotal: true,
-          status: true,
-        },
-      },
-      webinar: {
-        include: {
-          webinarPlan: {
-            include: {
-              consultantProfile: {
-                select: {
-                  id: true,
-                  userId: true,
-                  user: { select: hostUserSelect },
-                },
-              },
-              collaborators: {
-                where: { status: "ACCEPTED" },
-                include: {
-                  consultantProfile: {
-                    select: {
-                      id: true,
-                      userId: true,
-                      user: {
-                        select: {
-                          id: true,
-                          name: true,
-                          image: true,
-                        },
-                      },
-                    },
-                  },
-                },
+    },
+    consultation: {
+      include: {
+        consultationPlan: {
+          include: {
+            consultantProfile: {
+              select: {
+                id: true,
+                userId: true,
+                user: { select: hostUserSelect },
               },
             },
           },
         },
+        requestedBy: {
+          include: {
+            user: { select: listUserSelect },
+          },
+        },
       },
-      class: {
-        include: {
-          classPlan: {
-            include: {
-              consultantProfile: {
-                select: {
-                  id: true,
-                  userId: true,
-                  user: { select: hostUserSelect },
-                },
+    },
+    subscription: {
+      select: {
+        id: true,
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              select: {
+                id: true,
+                userId: true,
+                user: { select: hostUserSelect },
               },
-              collaborators: {
-                where: { status: "ACCEPTED" },
-                include: {
-                  consultantProfile: {
-                    select: {
-                      id: true,
-                      userId: true,
-                      user: {
-                        select: {
-                          id: true,
-                          name: true,
-                          image: true,
-                        },
+            },
+          },
+        },
+        requestedBy: {
+          include: {
+            user: { select: listUserSelect },
+          },
+        },
+        schedulingPeriodStartsAt: true,
+        schedulingPeriodEndsAt: true,
+        // The allocate grid's entitlement clamps its cycle to the plan end.
+        planEndsAt: true,
+        schedulingTimezone: true,
+        // #1766 — the allocate grid's cycle heading reads the frozen entitlement.
+        sessionsTotal: true,
+        status: true,
+      },
+    },
+    webinar: {
+      include: {
+        webinarPlan: {
+          include: {
+            consultantProfile: {
+              select: {
+                id: true,
+                userId: true,
+                user: { select: hostUserSelect },
+              },
+            },
+            collaborators: {
+              where: { status: "ACCEPTED" },
+              include: {
+                consultantProfile: {
+                  select: {
+                    id: true,
+                    userId: true,
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
                       },
                     },
                   },
@@ -425,8 +435,95 @@ export async function getConsultantAppointments(
         },
       },
     },
-    relationLoadStrategy: "join",
-  });
+    class: {
+      include: {
+        classPlan: {
+          include: {
+            consultantProfile: {
+              select: {
+                id: true,
+                userId: true,
+                user: { select: hostUserSelect },
+              },
+            },
+            collaborators: {
+              where: { status: "ACCEPTED" },
+              include: {
+                consultantProfile: {
+                  select: {
+                    id: true,
+                    userId: true,
+                    user: {
+                      select: {
+                        id: true,
+                        name: true,
+                        image: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  } satisfies Prisma.AppointmentInclude;
+  const find = (where: Prisma.AppointmentWhereInput, page?: { take: number }) =>
+    prisma.appointment.findMany({
+      where,
+      include,
+      relationLoadStrategy: "join",
+      ...(page && { orderBy: NEWEST_FIRST, take: page.take }),
+    });
+
+  let appointments: Awaited<ReturnType<typeof find>> = [];
+  let nextCursor: string | null = null;
+  // The next cursor comes from the last row in keyset order, before the
+  // display sort below reorders the page by session time.
+  const pastPage = async (cursor: AppointmentsCursor | null, take: number) => {
+    const rows = await find(
+      {
+        AND: [
+          whereClause,
+          pastRowWhere(now),
+          ...(cursor ? [olderThan(cursor)] : []),
+        ],
+      },
+      { take },
+    );
+    const last = rows[rows.length - 1];
+    nextCursor =
+      rows.length === take && last ? encodeAppointmentsCursor(last) : null;
+    return rows;
+  };
+  if (!windowed) {
+    appointments = await find(whereClause);
+  } else if (window === "recent") {
+    const live = await find(
+      { AND: [whereClause, liveRowWhere(now)] },
+      { take: CONSULTANT_APPOINTMENTS_RECENT_CAP },
+    );
+    const past = await pastPage(null, CONSULTANT_APPOINTMENTS_RECENT_PAST);
+    appointments = [...live, ...past];
+  } else {
+    // The first "older" page starts after the recent read's past rows.
+    const anchor =
+      before ??
+      (
+        await prisma.appointment.findMany({
+          where: { AND: [whereClause, pastRowWhere(now)] },
+          select: { id: true, createdAt: true },
+          orderBy: NEWEST_FIRST,
+          skip: CONSULTANT_APPOINTMENTS_RECENT_PAST - 1,
+          take: 1,
+        })
+      )[0] ??
+      null;
+    appointments = anchor
+      ? await pastPage(anchor, CONSULTANT_APPOINTMENTS_PAGE)
+      : [];
+  }
 
   // Sort appointments by slot start time
   // Include appointments with 0 slots (push them to the end)
@@ -446,5 +543,8 @@ export async function getConsultantAppointments(
   // result extension carries an inspect symbol), so the payload must be
   // plainified before it crosses the RSC→Client HydrationBoundary. Preserves
   // Dates as Dates. No-op for the route path (JSON drops symbols).
-  return toPlain(sorted) as unknown as ConsultantListAppointment[];
+  return {
+    rows: toPlain(sorted) as unknown as ConsultantListAppointment[],
+    nextCursor,
+  };
 }

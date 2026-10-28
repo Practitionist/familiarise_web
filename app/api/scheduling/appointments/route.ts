@@ -3,9 +3,12 @@ import prisma from "@/lib/prisma";
 import { AppointmentsType } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
-import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
+import { readConsultantAppointmentsPage } from "@/lib/data/consultant-appointments";
 import { z } from "zod";
-import { CONSULTANT_APPOINTMENTS_WINDOWS } from "@/lib/appointments/window";
+import {
+  CONSULTANT_APPOINTMENTS_WINDOWS,
+  decodeAppointmentsCursor,
+} from "@/lib/appointments/window";
 import { canReadEventSlots } from "@/lib/booking/event-slots-access";
 
 export async function GET(request: NextRequest) {
@@ -154,20 +157,25 @@ export async function GET(request: NextRequest) {
   try {
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
-    // #1703 B12 — ?window=all is the "Load older" read; absent means recent.
+    // ?window=older&before=<cursor> is one "Load older" page; absent means recent.
     const windowParse = z
       .enum(CONSULTANT_APPOINTMENTS_WINDOWS)
       .default("recent")
       .safeParse(searchParams.get("window") ?? undefined);
-    if (!windowParse.success) {
+    const rawBefore = searchParams.get("before");
+    const before = decodeAppointmentsCursor(rawBefore);
+    if (!windowParse.success || (rawBefore !== null && before === null)) {
       return NextResponse.json(
-        { error: "window must be 'recent' or 'all'", code: "INVALID_WINDOW" },
+        {
+          error: "window must be 'recent' or 'older', with a valid cursor",
+          code: "INVALID_WINDOW",
+        },
         { status: 400 },
       );
     }
     const window = windowParse.data;
 
-    const appointments = await getConsultantAppointments({
+    const { rows, nextCursor } = await readConsultantAppointmentsPage({
       type: type as AppointmentsType | undefined,
       consultantProfileId,
       consulteeProfileId,
@@ -193,9 +201,11 @@ export async function GET(request: NextRequest) {
       // their personal ones — the opposite of picking one org.
       scope: scopeResolution.scope,
       window,
+      before,
     });
 
-    return NextResponse.json({ data: appointments });
+    // `meta.nextCursor` is where the next "Load older" page starts.
+    return NextResponse.json({ data: rows, meta: { nextCursor } });
   } catch (error) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(

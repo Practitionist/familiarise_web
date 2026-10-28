@@ -338,7 +338,7 @@ export async function POST(request: NextRequest) {
       return bookingRuleResponse(
         new BookingRuleError(
           "NOT_ACCEPTING_BOOKINGS",
-          "This expert is not taking new bookings right now. Pick another expert, or try again later.",
+          "This expert is not taking new 1:1 bookings or trials right now. Pick another expert, or try again later.",
         ),
       );
     }

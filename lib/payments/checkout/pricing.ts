@@ -111,11 +111,15 @@ export async function calculateAmountAndValidate(
       },
       label: string,
     ) => {
-      // A paused expert takes no new booking of any kind; approved pay-links are minted elsewhere.
-      if (p.consultantProfile?.acceptingRequests === false) {
+      // A paused expert takes no new 1:1 booking; webinar and class seats keep
+      // selling, and approved pay-links are minted elsewhere.
+      const oneToOne =
+        validatedData.appointmentType === "CONSULTATION" ||
+        validatedData.appointmentType === "SUBSCRIPTION";
+      if (oneToOne && p.consultantProfile?.acceptingRequests === false) {
         throw new BookingRuleError(
           "NOT_ACCEPTING_BOOKINGS",
-          "This expert is not taking new bookings right now. Pick another expert, or try again later.",
+          "This expert is not taking new 1:1 bookings right now. Pick another expert, or try again later.",
         );
       }
       // #1527 Q4 — new sales only. Pay-links minted for approved requests

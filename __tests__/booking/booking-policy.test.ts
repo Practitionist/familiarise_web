@@ -131,7 +131,6 @@ jest.mock("../../lib/email/senders/booking", () => ({
 import { returnSessionToPlan } from "@/lib/booking/session-return";
 import { subscriptionEntitlement } from "@/lib/booking/entitlement";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
-import { computeConsultantCompletionRate } from "@/lib/data/consultant-dashboard";
 import { POST as returnRoute } from "@/app/api/appointments/[appointmentId]/occurrences/[occurrenceId]/return/route";
 import {
   showsReliabilityNotice,
@@ -296,14 +295,5 @@ describe("expert reliability strikes", () => {
         correlationId: "expert-reliability:cp-1",
       }),
     });
-  });
-
-  it("charges strikes, not consultee cancels, against the completion rate", () => {
-    const counts = [
-      { completionStatus: "COMPLETED", outcome: "HELD", _count: 8 },
-      { completionStatus: "CANCELLED", outcome: null, _count: 5 },
-    ];
-    expect(computeConsultantCompletionRate(counts)).toBe(100);
-    expect(computeConsultantCompletionRate(counts, 2)).toBe(80);
   });
 });

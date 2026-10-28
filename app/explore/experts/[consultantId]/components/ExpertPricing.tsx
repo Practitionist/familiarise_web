@@ -235,7 +235,7 @@ export function ExpertPricing({
             Choose your preferred option
           </p>
           {/* Metadata only: how this expert takes bookings, shown for consultations
-              (a plan is always paid at purchase). A pause stops every new booking, so it shows on every tab. */}
+              (a plan is always paid at purchase). A pause stops new 1:1 bookings and trials, so it shows on every tab. */}
           {(consultantDetails.acceptingRequests === false ||
             (hasConsultations &&
               (!hasSubscriptions || activeServiceTab === "consultations"))) && (

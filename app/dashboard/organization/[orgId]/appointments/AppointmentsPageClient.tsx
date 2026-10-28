@@ -25,6 +25,7 @@
  */
 
 import { useMemo, useState } from "react";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
@@ -283,8 +284,11 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
       const res = await fetch(
         `/api/organizations/${orgId}/appointments?${sp.toString()}`,
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+      // A refusal carries the server's sentence; the table shows its own copy.
+      return (await requireJsonResponse(
+        res,
+        "Couldn't load appointments",
+      )) as AppointmentsResponse;
     },
   });
 

@@ -23,7 +23,10 @@ import type {
   AppointmentActionAdapter,
   AppointmentChatTarget,
 } from "@/lib/appointments/adapter";
-import type { AppointmentVM } from "@/lib/appointments/view-model";
+import type {
+  AppointmentVM,
+  NeedsActionReason,
+} from "@/lib/appointments/view-model";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import { useZonedFormat } from "@/lib/time/zoned-format";
@@ -31,6 +34,15 @@ import { CountdownBadge } from "./CountdownBadge";
 import { KIND_LABEL } from "./AppointmentRow";
 import { RowPrimaryAction } from "./RowPrimaryAction";
 import { SessionTimeline } from "./SessionTimeline";
+
+/** The note a row with no live session shows in place of its timeline. */
+const NO_SESSION_NOTE: Partial<Record<NeedsActionReason, string>> = {
+  UNSCHEDULED: "No sessions scheduled yet — set a schedule to get started.",
+  AWAITING_SCHEDULING:
+    "Awaiting scheduling — the expert places the sessions next.",
+  NEEDS_RESCHEDULING:
+    "Needs rescheduling — this booking has no session time any more. Message the other party or contact support to agree a new one.",
+};
 
 function initials(name: string): string {
   return name
@@ -194,9 +206,9 @@ export function AppointmentSheet({
               <p className="text-xs text-muted-foreground rounded-lg bg-muted border border-border p-3">
                 {allTentative
                   ? "Awaiting schedule confirmation."
-                  : vm.needsActionReason === "UNSCHEDULED"
-                    ? "No sessions scheduled yet — set a schedule to get started."
-                    : "No sessions scheduled yet."}
+                  : ((vm.needsActionReason &&
+                      NO_SESSION_NOTE[vm.needsActionReason]) ??
+                    "No sessions scheduled yet.")}
               </p>
             )}
             {hasConcreteSessions && (

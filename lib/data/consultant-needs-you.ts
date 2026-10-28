@@ -8,7 +8,7 @@ import {
   UNSETTLED_MISS,
   missedAt,
 } from "@/lib/booking/misses";
-import { readRequestsToAnswerCount } from "@/lib/data/requests-inbox";
+import { countRequestsToAnswer } from "@/lib/data/needs-you";
 
 /**
  * #1527 §7.2 — the consultant Home's "Needs you" strip: only what is blocked
@@ -133,9 +133,7 @@ export async function readConsultantNeedsYou(
   consultantProfileId: string,
   now: Date = new Date(),
 ): Promise<ConsultantNeedsYou> {
-  const requestsToAnswer = await readRequestsToAnswerCount({
-    consultantProfileId,
-  });
+  const requestsToAnswer = await countRequestsToAnswer({ consultantProfileId });
   const rescheduleReplies = await readRescheduleReplies(consultantProfileId);
   const owedMakeUps = await readOwedMakeUps(consultantProfileId, now);
   const documentsAwaitingReview = await prisma.appointmentDocument.count({

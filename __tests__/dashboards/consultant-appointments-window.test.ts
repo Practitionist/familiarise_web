@@ -3,14 +3,23 @@
  */
 
 /**
- * #1703 B12 — the consultant Appointments read is bounded by default (last 12
- * months + future + unscheduled), unbounded on `window: "all"`, and never
- * bounded when an event id or a date range already narrows it.
+ * The consultant Appointments read is bounded: "recent" is every live row
+ * (capped) plus the first page of past rows, "older" pages the rest of the
+ * past rows through one `(createdAt, id)` keyset, and the server hands back
+ * the next cursor from the keyset order, never from the display order.
  */
 
 import prisma from "@/lib/prisma";
-import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
-import { recentWindowStart } from "@/lib/appointments/window";
+import {
+  getConsultantAppointments,
+  readConsultantAppointmentsPage,
+} from "@/lib/data/consultant-appointments";
+import {
+  CONSULTANT_APPOINTMENTS_PAGE,
+  CONSULTANT_APPOINTMENTS_RECENT_CAP,
+  CONSULTANT_APPOINTMENTS_RECENT_PAST,
+  decodeAppointmentsCursor,
+} from "@/lib/appointments/window";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -18,44 +27,143 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 const findMany = prisma.appointment.findMany as jest.Mock;
-
+const NOW = new Date("2026-10-27T12:00:00Z");
 const base = {
   consultantProfileId: "cp-1",
   scope: { kind: "personal" } as const,
+  now: NOW,
 };
 
+type Row = {
+  id: string;
+  createdAt: Date;
+  live: boolean;
+  occurrences: { startsAt: Date }[];
+};
+type Where = {
+  AND?: Where[];
+  OR?: Where[];
+  occurrences?: { some?: { endsAt?: unknown }; none?: { endsAt?: unknown } };
+  createdAt?: { lt?: Date; gte?: Date };
+  id?: { lt?: string };
+};
+
+/**
+ * 600 past rows created a minute apart, several sharing a millisecond (the
+ * column holds microseconds), each with a session time unrelated to its
+ * creation order, plus three live rows.
+ */
+const PAST: Row[] = Array.from({ length: 600 }, (_, i) => ({
+  id: `a-${String(i).padStart(3, "0")}`,
+  // Rows 100-104 share one millisecond.
+  createdAt: new Date(
+    Date.UTC(2025, 0, 1) + (i >= 100 && i <= 104 ? 100 : i) * 60_000,
+  ),
+  live: false,
+  occurrences: [
+    {
+      startsAt: new Date(Date.UTC(2025, 6, 1) + ((i * 7919) % 600) * 3_600_000),
+    },
+  ],
+}));
+const LIVE: Row[] = ["l-1", "l-2", "l-3"].map((id, i) => ({
+  id,
+  createdAt: new Date(Date.UTC(2026, 9, 1 + i)),
+  live: true,
+  occurrences: [],
+}));
+const ROWS = [...PAST, ...LIVE];
+
+/** Honours the live / past split, the keyset band, the order, skip and take. */
+function matches(row: Row, where: Where): boolean {
+  if (where.AND && !where.AND.every((w) => matches(row, w))) return false;
+  const first = where.OR?.[0];
+  if (first?.occurrences?.some?.endsAt) return row.live;
+  if (where.occurrences?.none?.endsAt) return !row.live;
+  if (first?.createdAt) {
+    const [older, band] = where.OR as [Where, Where];
+    const t = row.createdAt.getTime();
+    if (t < older.createdAt!.lt!.getTime()) return true;
+    return (
+      t >= band.createdAt!.gte!.getTime() &&
+      t < band.createdAt!.lt!.getTime() &&
+      row.id < band.id!.lt!
+    );
+  }
+  return true;
+}
+const newestFirst = (a: Row, b: Row) =>
+  b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1);
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  findMany.mockImplementation(
+    async (args: { where: Where; take?: number; skip?: number }) =>
+      ROWS.filter((r) => matches(r, args.where))
+        .sort(newestFirst)
+        .slice(args.skip ?? 0, (args.skip ?? 0) + (args.take ?? ROWS.length)),
+  );
+});
+
 describe("consultant appointments window", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    findMany.mockResolvedValue([]);
+  it("recent = every live row plus the newest past page, each read capped", async () => {
+    const page = await readConsultantAppointmentsPage(base);
+    const [live, past] = findMany.mock.calls.map(([args]) => args);
+    expect(live.take).toBe(CONSULTANT_APPOINTMENTS_RECENT_CAP);
+    expect(past.take).toBe(CONSULTANT_APPOINTMENTS_RECENT_PAST);
+    expect(past.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+    expect(page.rows).toHaveLength(3 + CONSULTANT_APPOINTMENTS_RECENT_PAST);
+    // The cursor is the oldest-created past row read, not the last by session time.
+    expect(decodeAppointmentsCursor(page.nextCursor)?.id).toBe("a-100");
   });
 
-  it("bounds the default read to the recent window plus rows with no live occurrence", async () => {
-    await getConsultantAppointments(base);
-    const where = findMany.mock.calls[0][0].where;
-    expect(where.OR).toEqual([
-      {
-        occurrences: {
-          some: { deletedAt: null, endsAt: { gte: expect.any(Date) } },
-        },
-      },
-      // `none: {}` dropped a row whose only occurrences were soft-deleted.
-      { occurrences: { none: { deletedAt: null } } },
+  it("Load older walks every remaining past row once, ties included", async () => {
+    const recent = await readConsultantAppointmentsPage(base);
+    const seen = recent.rows.map((r) => r.id);
+    let before: string | null = null;
+    for (let guard = 0; guard < 10; guard++) {
+      const page = await readConsultantAppointmentsPage({
+        ...base,
+        window: "older",
+        before: decodeAppointmentsCursor(before),
+      });
+      seen.push(...page.rows.map((r) => r.id));
+      before = page.nextCursor;
+      if (!before) break;
+    }
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen).toHaveLength(ROWS.length);
+    const firstOlder = findMany.mock.calls.find(([args]) => args.skip);
+    expect(firstOlder?.[0].skip).toBe(CONSULTANT_APPOINTMENTS_RECENT_PAST - 1);
+  });
+
+  it("an older page holds at most one page and stops when the past runs out", async () => {
+    const page = await readConsultantAppointmentsPage({
+      ...base,
+      window: "older",
+      before: { createdAt: PAST[150].createdAt, id: PAST[150].id },
+    });
+    expect(page.rows.length).toBeLessThanOrEqual(CONSULTANT_APPOINTMENTS_PAGE);
+    const last = await readConsultantAppointmentsPage({
+      ...base,
+      window: "older",
+      before: { createdAt: PAST[3].createdAt, id: PAST[3].id },
+    });
+    expect(last.rows.map((r) => r.id).sort()).toEqual([
+      "a-000",
+      "a-001",
+      "a-002",
     ]);
-    const gte: Date = where.OR[0].occurrences.some.endsAt.gte;
-    expect(
-      Math.abs(gte.getTime() - recentWindowStart().getTime()),
-    ).toBeLessThan(60_000);
+    expect(last.nextCursor).toBeNull();
   });
 
-  it("leaves 'all' and event-scoped reads unbounded", async () => {
-    await getConsultantAppointments({ ...base, window: "all" });
-    expect(findMany.mock.calls[0][0].where.OR).toBeUndefined();
-
+  it("leaves event-scoped reads to their own filter", async () => {
     await getConsultantAppointments({
       ...base,
       eventIds: { subscriptionId: "sub-1" },
     });
-    expect(findMany.mock.calls[1][0].where.OR).toBeUndefined();
+    const [args] = findMany.mock.calls[0];
+    expect(args.take).toBeUndefined();
+    expect(args.orderBy).toBeUndefined();
   });
 });

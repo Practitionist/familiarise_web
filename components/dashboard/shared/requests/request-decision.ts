@@ -60,10 +60,13 @@ export function classifyRequestedConflict(result: {
     case "ALREADY_ALLOCATED":
       return "genuine-conflict";
     case "RESCHEDULE_STATE_CHANGED":
+    case "ILLEGAL_TRANSITION":
+    case "REQUEST_CHANGED_ELSEWHERE":
+    case "NOT_PENDING":
       return "stale";
     default:
-      // Co-host clash, illegal transition, slot taken, lock busy, or a code
-      // this switch does not know: the request is still allocatable.
+      // Co-host clash, slot taken, lock busy, or a code this switch does not
+      // know: the request is still allocatable.
       return "stay-open";
   }
 }
