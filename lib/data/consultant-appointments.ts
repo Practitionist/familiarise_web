@@ -26,6 +26,10 @@ import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { AppointmentsType, AppointmentStatus, Prisma } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
+import {
+  bookingAnomalies,
+  scheduleAnomalyReport,
+} from "@/lib/appointments/report-anomalies";
 import type { TAppointment } from "@/types/appointment";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
@@ -538,6 +542,9 @@ export async function readConsultantAppointmentsPage(
 
     return new Date(aTime).getTime() - new Date(bTime).getTime();
   });
+
+  // Impossible session times on this page: one standing finding per row per day.
+  scheduleAnomalyReport(bookingAnomalies(sorted), "consultant-appointments");
 
   // toPlain — rows spread the money-extended plan/payment models (#780/#781
   // result extension carries an inspect symbol), so the payload must be

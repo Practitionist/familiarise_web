@@ -146,7 +146,7 @@ export async function createReferralCodes() {
           ...seedCredit(50000, faker.helpers.arrayElement([50000, 30000, 0])),
           currency: "INR",
           source: "REFERRAL_BONUS",
-          expiresAt: faker.date.future({ years: 0.5 }),
+          expiresAt: faker.date.soon({ days: 182 }),
         },
       });
       creditsCreated++;
@@ -158,7 +158,7 @@ export async function createReferralCodes() {
           ...seedCredit(20000, faker.helpers.arrayElement([20000, 10000, 0])),
           currency: "INR",
           source: "REFEREE_BONUS",
-          expiresAt: faker.date.future({ years: 0.5 }),
+          expiresAt: faker.date.soon({ days: 182 }),
         },
       });
       creditsCreated++;

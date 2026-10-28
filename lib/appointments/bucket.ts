@@ -14,6 +14,7 @@ import {
   normalizeStatus,
 } from "./status";
 import { liveOccurrences, allOccurrencesOver } from "./occurrences";
+import { sessionGapOf } from "./normalize";
 import type {
   AppointmentBucket,
   NeedsActionReason,
@@ -73,15 +74,12 @@ export function deriveBucket(
   }
   const active = liveOccurrences(occurrences);
   // An approved booking with no live session is never "past" and never silent.
-  if (active.length === 0) {
-    return {
-      bucket: "needsAction",
-      needsActionReason:
-        occurrences.length === 0 && input.kind !== "CONSULTATION"
-          ? "AWAITING_SCHEDULING"
-          : "NEEDS_RESCHEDULING",
-    };
-  }
+  const gap = sessionGapOf({
+    kind: input.kind,
+    rows: occurrences.length,
+    liveRows: active.length,
+  });
+  if (gap) return { bucket: "needsAction", needsActionReason: gap };
   if (allOccurrencesOver(occurrences, now)) {
     return { bucket: "past", needsActionReason: null };
   }

@@ -11,6 +11,7 @@ import {
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import { isSponsoredPayment } from "./payment-display";
+import { normalizeOccurrences } from "./normalize";
 import { seriesLedgerFrom } from "@/lib/booking/class-series";
 import {
   requestHoldDeadline,
@@ -67,7 +68,7 @@ export function detailEntitlement(
     sessionsTotal: sub.sessionsTotal ?? plan.totalSessions,
     sessionsPerWeek: plan.sessionsPerWeek,
     durationInMonths: plan.durationInMonths,
-    occurrences: a.occurrences.map((o) => ({
+    occurrences: normalizeOccurrences(a.occurrences).map((o) => ({
       ...o,
       endsAt: o.endsAt ?? o.startsAt,
     })),
@@ -193,7 +194,7 @@ export function toPresentationInput(
   return {
     appointmentType: a.appointmentType,
     request,
-    occurrences: a.occurrences,
+    occurrences: normalizeOccurrences(a.occurrences),
     payments,
     refunds: a.payment.flatMap((p) => p.refunds),
     disputes: a.payment.flatMap((p) => p.disputes),
@@ -218,7 +219,7 @@ function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
   if (!a.class || !N) return null;
   const ledger = seriesLedgerFrom({
     N,
-    occurrences: a.occurrences
+    occurrences: normalizeOccurrences(a.occurrences)
       .filter((o) => !o.deletedAt && !o.isTentative)
       .map((o) => ({
         ordinal: o.ordinal,

@@ -16,6 +16,7 @@ import type {
   TTrialWithPlan,
 } from "@/hooks/useEvents";
 import { deriveBucket } from "./bucket";
+import { normalizeOccurrences } from "./normalize";
 import {
   REJOIN_GRACE_MS,
   getAnchorTime,
@@ -69,7 +70,7 @@ function collaborators(
  * keep slots whose end + rejoin grace window hasn't passed, sorted ascending.
  */
 function actionableSlots(slots: OccurrenceLike[], now: Date): OccurrenceLike[] {
-  return slots
+  return normalizeOccurrences(slots)
     .filter((slot) => {
       if (isDeadOccurrence(slot)) return false;
       if (isDeliberateEnd(slot.meeting)) return false;

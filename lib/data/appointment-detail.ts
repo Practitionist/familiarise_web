@@ -16,6 +16,10 @@ import { liveParticipant } from "@/lib/booking/participants";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type { AppointmentFeedbackRole, RefundStatus } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
+import {
+  bookingAnomalies,
+  scheduleAnomalyReport,
+} from "@/lib/appointments/report-anomalies";
 
 const userSelect = {
   select: { id: true, name: true, image: true },
@@ -220,7 +224,19 @@ export async function readAppointmentDetail(appointmentId: string) {
 
   // #1554 — the whole programme is this one wrapper's occurrences; there are
   // no sibling appointments to fetch.
-  return toPlain({ appointment });
+  const detail = toPlain({ appointment });
+  // The read carries the live proposal, so a lost session can be judged here.
+  scheduleAnomalyReport(
+    bookingAnomalies([detail.appointment], {
+      openRescheduleIds: new Set(
+        detail.appointment.rescheduleRequests.length > 0
+          ? [detail.appointment.id]
+          : [],
+      ),
+    }),
+    "appointment-detail",
+  );
+  return detail;
 }
 
 export type TAppointmentDetail = NonNullable<

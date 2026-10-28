@@ -22,6 +22,7 @@ import {
   type OccurrenceLike,
   type OccurrenceVM,
 } from "./view-model";
+import { normalizeOccurrences, type AnomalySink } from "./normalize";
 
 /** The engine's unit of arithmetic: every interval and duration is a multiple. */
 export const SCHEDULING_INTERVAL_MS = 30 * 60 * 1000;
@@ -510,12 +511,13 @@ export interface OccurrenceSourceAppointment {
   occurrences?: OccurrenceLike[] | null;
 }
 
-/** One OccurrenceVM per stored row, chronological — the timeline's input. */
+/** One OccurrenceVM per drawable stored row (`normalizeOccurrences`), chronological. */
 export function occurrencesOfAppointment(
   appointment: OccurrenceSourceAppointment | null | undefined,
+  sink?: AnomalySink,
 ): OccurrenceVM[] {
   return sortOccurrences(
-    (appointment?.occurrences ?? []).map((row) =>
+    normalizeOccurrences(appointment?.occurrences, sink).map((row) =>
       toOccurrenceVM({ ...row, appointmentId: appointment?.id ?? null }),
     ),
   );

@@ -53,6 +53,11 @@ import {
   type NullableWeeklyRowLocalColumns,
 } from "@/utils/schedule/weekly-projection";
 import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-rows";
+import {
+  anomalyCollector,
+  occupiedIntervalsIn,
+} from "@/lib/appointments/normalize";
+import { scheduleAnomalyReport } from "@/lib/appointments/report-anomalies";
 import type { TIntervalTiming } from "@/types/slots";
 import type { BookingStatus } from "@/utils/scheduling-engine/intervals";
 
@@ -841,74 +846,19 @@ export async function GET(
       }
     }
 
-    // Extract appointment slots using flatMap with defensive filtering
-    // Defensive Programming: Filter out corrupt appointment slots
-    const appointmentSlots: AppointmentSlot[] = rawSlotsOfAppointment
-      .filter((slot) => {
-        // Validate slot has required fields
-        if (!slot.startsAt || !slot.endsAt) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: missing start or end time`,
-          );
-          return false;
-        }
-
-        // Validate slot times are valid dates
-        const start = new Date(slot.startsAt);
-        const end = new Date(slot.endsAt);
-        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: invalid date format`,
-          );
-          return false;
-        }
-
-        // Filter out invalid appointment slots (allow legitimate overnight slots)
-        if (!isValidOvernightSlot(start, end)) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: end time ${end.toISOString()} <= start time ${start.toISOString()} (not a valid overnight slot)`,
-          );
-          return false;
-        }
-
-        // Defensive: Filter out slots that are unreasonably far in the past (>10 years)
-        // This likely indicates data corruption
-        const tenYearsAgo = new Date();
-        tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
-        if (end < tenYearsAgo) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: end time is more than 10 years in the past (${end.toISOString()}) - possible data corruption`,
-          );
-          return false;
-        }
-
-        // Defensive: Filter out slots that are unreasonably far in the future (>10 years)
-        // This likely indicates data corruption
-        const tenYearsFromNow = new Date();
-        tenYearsFromNow.setFullYear(tenYearsFromNow.getFullYear() + 10);
-        if (start > tenYearsFromNow) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: start time is more than 10 years in the future (${start.toISOString()}) - possible data corruption`,
-          );
-          return false;
-        }
-
-        // Defensive: Filter out slots with duration > 24 hours (likely data corruption)
-        const durationHours =
-          (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-        if (durationHours > 24) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: duration is > 24 hours (${durationHours.toFixed(1)}h) - possible data corruption`,
-          );
-          return false;
-        }
-
-        return true;
-      })
-      .map((slot) => ({
-        startsAt: slot.startsAt,
-        endsAt: slot.endsAt,
-      }));
+    // Occupied time clipped to the window; an impossible row is dropped and
+    // reported once per row per day, never once per poll.
+    const occupiedFindings = anomalyCollector();
+    const occupiedSlots = occupiedIntervalsIn(
+      rawSlotsOfAppointment,
+      { start: startDate, end: endDate },
+      occupiedFindings.sink,
+    );
+    scheduleAnomalyReport(occupiedFindings.anomalies(), "availability-grid");
+    const appointmentSlots: AppointmentSlot[] = occupiedSlots.map((slot) => ({
+      startsAt: slot.startsAt,
+      endsAt: slot.endsAt,
+    }));
 
     // Rows without valid local columns are a data error: refused, reported once.
     const weeklyPartition = partitionWeeklyRows(
@@ -1076,7 +1026,7 @@ export async function GET(
     // `includeAppointmentDetails` (ADR 20).
     const orphanCells = synthesizeOrphanCells({
       existing: Object.values(slotsByDate).flat(),
-      occupied: rawSlotsOfAppointment,
+      occupied: occupiedSlots,
       rangeStart: startDate,
       rangeEnd: endDate,
       timezone,
