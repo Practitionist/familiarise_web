@@ -69,10 +69,11 @@ it.each([{ job: "consent-retention-sweeper", run: consent }])(
       });
     loadDrivers();
     await driver(job)();
-    expect(run.mock.calls).toEqual([
-      [{ limit: 500, startedAt }],
-      [{ limit: 500, startedAt }],
-    ]);
+    const args =
+      job === "consent-retention-sweeper"
+        ? { limit: 500, startedAt, delete: false }
+        : { limit: 500, startedAt };
+    expect(run.mock.calls).toEqual([[args], [args]]);
     expect(disconnect).toHaveBeenCalledTimes(1);
   },
 );

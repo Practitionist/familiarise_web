@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/prisma";
+import { PLATFORM_INVOICE_PREFIX } from "@/lib/company";
 /**
  * Per-org invoice numbering — CGST Rule 46 sequential rule.
  *
@@ -115,12 +116,11 @@ export async function generateOrgInvoiceNumber(
 /**
  * The platform-wide invoice prefix for consumer tax invoices. One series
  * serves every B2C buyer, so unlike the org series there is no per-tenant
- * prefix to fall back to; `PLATFORM_INVOICE_PREFIX` lets finance rename the
- * series without a deploy, and "FAM" is the default.
+ * prefix to fall back to; it is `PLATFORM_INVOICE_PREFIX` in `lib/company.ts`.
  */
 function platformPrefix(nonPrefixLength: number): string {
   return fitPrefixToRule46(
-    (process.env.PLATFORM_INVOICE_PREFIX ?? "FAM").toUpperCase(),
+    PLATFORM_INVOICE_PREFIX.toUpperCase(),
     nonPrefixLength,
   );
 }

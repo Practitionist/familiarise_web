@@ -5,6 +5,8 @@
  * ever echoing raw server/library error strings (`error.message`).
  */
 
+import { SUPPORT_EMAIL } from "@/lib/company";
+
 export type AuthErrorField =
   "name" | "email" | "password" | "newPassword" | "referral" | "code";
 
@@ -30,7 +32,6 @@ export interface AuthErrorCopy {
 export type AuthFlowName = "signin" | "signup" | "forgot" | "reset" | "verify";
 export type { AuthFlowName as AuthFlow };
 
-const SUPPORT = "support@familiarisenow.com";
 const FIELDS = new Set<string>([
   "name",
   "email",
@@ -94,7 +95,7 @@ export const AUTH_ERROR_COPY = {
   ),
   BANNED_USER: entry(
     "This account is suspended",
-    `Contact ${SUPPORT} if you think this is a mistake.`,
+    `Contact ${SUPPORT_EMAIL} if you think this is a mistake.`,
     "contact-support",
   ),
   SESSION_EXPIRED: entry(
@@ -224,17 +225,17 @@ export const AUTH_ERROR_COPY = {
   ),
   SSO_PROVIDER_MISCONFIGURED: entry(
     "Your organisation's sign-in is not set up yet",
-    `Ask an administrator to finish the SSO setup, or contact ${SUPPORT}.`,
+    `Ask an administrator to finish the SSO setup, or contact ${SUPPORT_EMAIL}.`,
     "contact-support",
   ),
   SSO_EMAIL_DOMAIN_MISMATCH: entry(
     "This email isn't on your organisation's domain",
-    `Sign in another way, or ask your administrator to check the SSO setup. Still stuck? Contact ${SUPPORT}.`,
+    `Sign in another way, or ask your administrator to check the SSO setup. Still stuck? Contact ${SUPPORT_EMAIL}.`,
     "contact-support",
   ),
   SSO_ORGANIZATION_INACTIVE: entry(
     "Your organisation's sign-in is paused",
-    `Your organisation's account is suspended, so its single sign-on is off. Ask your administrator, or contact ${SUPPORT}.`,
+    `Your organisation's account is suspended, so its single sign-on is off. Ask your administrator, or contact ${SUPPORT_EMAIL}.`,
     "contact-support",
   ),
   SSO_NOT_PROVEN: entry(
@@ -243,7 +244,7 @@ export const AUTH_ERROR_COPY = {
   ),
   SSO_ID_TOKEN_MISSING: entry(
     "Your organisation's sign-in didn't finish",
-    `Your identity provider didn't send the details we need. Try again, and if it keeps happening ask your organisation's administrator to check the SSO setup or contact ${SUPPORT}.`,
+    `Your identity provider didn't send the details we need. Try again, and if it keeps happening ask your organisation's administrator to check the SSO setup or contact ${SUPPORT_EMAIL}.`,
     "retry",
   ),
   SSO_EMAIL_NOT_VERIFIED: entry(
@@ -343,12 +344,12 @@ export const AUTH_ERROR_COPY = {
   ),
   INVALID_PROVIDER: entry(
     "Your organisation's sign-in didn't work",
-    `The response from your organisation's sign-in couldn't be verified. Try again, or ask your administrator to check the SSO setup. Still stuck? Contact ${SUPPORT}.`,
+    `The response from your organisation's sign-in couldn't be verified. Try again, or ask your administrator to check the SSO setup. Still stuck? Contact ${SUPPORT_EMAIL}.`,
     "contact-support",
   ),
   TOKEN_NOT_VERIFIED: entry(
     "Your organisation's sign-in didn't work",
-    `The response from your organisation's sign-in couldn't be verified. Try again, or ask your administrator to check the SSO setup. Still stuck? Contact ${SUPPORT}.`,
+    `The response from your organisation's sign-in couldn't be verified. Try again, or ask your administrator to check the SSO setup. Still stuck? Contact ${SUPPORT_EMAIL}.`,
     "contact-support",
   ),
   UNABLE_TO_CREATE_USER: entry(

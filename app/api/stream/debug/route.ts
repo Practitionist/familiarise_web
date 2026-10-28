@@ -2,9 +2,9 @@
  * Stream Debug API Route
  *
  * Provides diagnostic information about Stream Chat state for a user.
- * SECURED: Requires authentication and only available in development mode by default.
+ * SECURED: staff or admin session, and only served under `next dev`.
  *
- * Usage: GET /api/stream/debug?userId=USER_ID&secret=YOUR_SECRET
+ * Usage: GET /api/stream/debug?userId=USER_ID
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -16,20 +16,9 @@ import { streamLogger } from "@/lib/stream-logger";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 
-// Only allow in development or with explicit production flag
-const ALLOW_IN_PRODUCTION = process.env.ALLOW_DEBUG_IN_PRODUCTION === "true";
-const DEBUG_SECRET = process.env.STREAM_DEBUG_SECRET;
-
 export async function GET(req: NextRequest) {
-  // Security checks
   const isDev = process.env.NODE_ENV === "development";
 
-  // #1134 P1-12 — this route had NO session check at all. Its only production
-  // gate was a shared secret in the query string — which lands in access logs,
-  // browser history and any Referer header — and it dumps an arbitrary user's
-  // full Stream channel list. A session is now required everywhere, and staff
-  // or admin on top of that, so the secret is defence in depth rather than the
-  // whole defence.
   const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -41,26 +30,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (!isDev && !ALLOW_IN_PRODUCTION) {
+  if (!isDev) {
     return NextResponse.json(
       { error: "Debug endpoint not available in production" },
       { status: 403 },
     );
-  }
-
-  // Require secret in production
-  if (!isDev) {
-    const url = new URL(req.url);
-    const secret = url.searchParams.get("secret");
-
-    // A missing STREAM_DEBUG_SECRET must fail closed. `secret !== undefined`
-    // would have compared two undefineds and passed.
-    if (!DEBUG_SECRET || !secret || secret !== DEBUG_SECRET) {
-      streamLogger.warn("Unauthorized debug attempt", {
-        userId: session.user.id,
-      });
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
   }
 
   try {

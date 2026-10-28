@@ -1,7 +1,10 @@
 import {
   cleanupRoute,
   parseLimitParam,
+  parseDeleteFlag,
+  parseGstPeriodParam,
   parseLimitParamOrDefault,
+  parseTdsReturnParams,
   parseWindowStartParam,
   statusFor,
   type CleanupRouteHandlers,
@@ -100,6 +103,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           return runConsentRetentionSweeper({
             limit: parseLimitParamOrDefault(req, 100),
             startedAt,
+            delete: parseDeleteFlag(req),
           });
         },
         items: (r) => ({ processed: r.expiredSampled }),
@@ -865,6 +869,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             await import("@/jobs/compliance/gst-outward-register-export");
           return runGstOutwardRegisterExport({
             limit: parseLimitParamOrDefault(req, MAX_GST_HEALER_MINTS),
+            period: parseGstPeriodParam(req),
           });
         },
         summarize: (r) => ({
@@ -2263,10 +2268,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     build: () =>
       cleanupRoute({
         job: "tds-26q-draft-export",
-        run: async () => {
+        run: async (req) => {
           const { runTdsReturnDraftExport } =
             await import("@/jobs/compliance/tds-26q-draft-export");
-          return runTdsReturnDraftExport();
+          return runTdsReturnDraftExport(parseTdsReturnParams(req));
         },
         summarize: (r) => ({
           financialYear: r.financialYear,

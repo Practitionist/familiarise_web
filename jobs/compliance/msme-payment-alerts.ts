@@ -8,7 +8,7 @@
  *
  *   1. Query OrganizationPayout rows within 5 days of `mustPayByDate`
  *      that haven't yet COMPLETED.
- *   2. If any exist, email the finance inbox (env: `MSME_ALERT_EMAIL`)
+ *   2. If any exist, email the compliance inbox (`COMPLIANCE_ALERT_EMAIL`)
  *      with a deadline-sorted list + direct links into the finance
  *      dashboard.
  *   3. Emit a structured log line that Cloud Logging can route to the
@@ -18,10 +18,10 @@
  * bounded email and is not idempotent, so it never repeats inside its window.
  */
 
+import { COMPLIANCE_ALERT_EMAIL, SUPPORT_EMAIL } from "@/lib/company";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
-import { OPS_EMAIL } from "@/lib/email/config";
 import { sendComplianceAlertEmail } from "@/lib/email/senders/onboarding";
 import { notifyComplianceAlert } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
@@ -125,7 +125,7 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
     },
   );
 
-  const to = process.env.MSME_ALERT_EMAIL;
+  const to = COMPLIANCE_ALERT_EMAIL;
   const appUrl = getAppUrl();
   const dashboardUrl = `${appUrl}/dashboard/admin/compliance?tab=msme`;
   const earliestDeadline = atRiskRows[0].mustPayByDate ?? windowEnd;
@@ -134,7 +134,7 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
 
   const adminUsers = await prisma.user.findMany({
     where: {
-      OR: [{ role: "ADMIN" }, ...(to ? [{ email: to }] : [])],
+      OR: [{ role: "ADMIN" }, { email: to }],
     },
     select: { id: true, email: true },
   });
@@ -172,16 +172,13 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
     });
   }
 
-  if (
-    to &&
-    !adminUsers.some((u) => u.email?.toLowerCase() === to.toLowerCase())
-  ) {
+  if (!adminUsers.some((u) => u.email?.toLowerCase() === to.toLowerCase())) {
     try {
       const outcome = await deliver(
         {
           from: SENDERS.ops,
           to,
-          replyTo: OPS_EMAIL,
+          replyTo: SUPPORT_EMAIL,
           subject: title,
           html: `<p>${summaryReason}</p><p><a href="${dashboardUrl}">Open compliance dashboard</a></p>`,
         },

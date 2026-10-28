@@ -172,14 +172,14 @@ Every row here represents a condition where money integrity, subscription contin
 
 Each row describes a condition that signals a degraded but not yet broken state — IRP backlog, webhook grace-window lapses, dunning stalls — where a Slack notification gives the on-call team time to investigate before it escalates.
 
-| Alert                                                            | Condition                                                                                                                                                                                                                                        |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| IRP upload failure rate                                          | `invoice.irp.failed` / `invoice.irp.attempted` > 20 % over a rolling hour, meaningful only when `ENABLE_IRP_UPLOADER=true`; the uploader and its retry are described in [GST invoices](../../finance/60-tax/02-gst-invoices-and-credit-notes.md) |
-| Outbound webhook backlog                                         | `WEBHOOK`/WARN `SystemEvent` "queue backlog" (fires at > 200 due deliveries)                                                                                                                                                                     |
-| Webhook secret rotation not adopted                              | `WEBHOOK_DELIVERY_FAILED` for an endpoint still failing > 24h after its `WEBHOOK_SECRET_ROTATED` row (consumer never swapped — grace window lapsed)                                                                                              |
-| DPDP sweeper skipped                                             | `dpdp.sweeper.counted` without a `dpdp.sweeper.deleted` follow-up for 7 days when `DPDP_SWEEPER_DELETE=true` — **and note** the sweeper has no scheduled workflow today (see `runbooks` catalogue ⚠️)                                            |
-| Transactional email or Novu outbox dead-letter (`#1926`, `#531`) | Any Sentry error event with tag `outbox_dead_letter:true` (`subsystem:email` or `subsystem:novu`), or `email.outbox.pending` / `notifications.outbox.pending` gauge > 100 for 15 min                                                             |
-| Database pool exhaustion (`#1696`, `#698`, `#1452`)              | Sentry events tagged `pool_exhaustion:true` > 5 in 10 min                                                                                                                                                                                        |
+| Alert                                                            | Condition                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IRP upload failure rate                                          | `invoice.irp.failed` / `invoice.irp.attempted` > 20 % over a rolling hour, meaningful only once `PLATFORM_GSTIN` and the ClearTax credentials are set; the uploader and its retry are described in [GST invoices](../../finance/60-tax/02-gst-invoices-and-credit-notes.md) |
+| Outbound webhook backlog                                         | `WEBHOOK`/WARN `SystemEvent` "queue backlog" (fires at > 200 due deliveries)                                                                                                                                                                                                |
+| Webhook secret rotation not adopted                              | `WEBHOOK_DELIVERY_FAILED` for an endpoint still failing > 24h after its `WEBHOOK_SECRET_ROTATED` row (consumer never swapped — grace window lapsed)                                                                                                                         |
+| DPDP sweeper not running                                         | No `consent-retention-sweeper` count run for 8 days. Deletion stays off by default until the hash-only archive exists, so a count without a delete is expected — **and note** the sweeper has no scheduled workflow today (see `runbooks` catalogue ⚠️)                     |
+| Transactional email or Novu outbox dead-letter (`#1926`, `#531`) | Any Sentry error event with tag `outbox_dead_letter:true` (`subsystem:email` or `subsystem:novu`), or `email.outbox.pending` / `notifications.outbox.pending` gauge > 100 for 15 min                                                                                        |
+| Database pool exhaustion (`#1696`, `#698`, `#1452`)              | Sentry events tagged `pool_exhaustion:true` > 5 in 10 min                                                                                                                                                                                                                   |
 
 ### Info (dashboard only)
 
@@ -238,7 +238,7 @@ curl -s "$PROD/api/admin/reconcile-ledgers?id=$REPORT_ID" \
   -H "Authorization: Bearer $TOKEN" | jq '.data | {status: .summary.status, ok}'
 
 # MSME alert dry-run
-MSME_ALERT_EMAIL=dev-null@familiarisenow.com npx tsx jobs/compliance/msme-payment-alerts.ts
+npx tsx jobs/compliance/msme-payment-alerts.ts
 ```
 
 All three should emit deterministic output — wrap them in Bash `set -e`

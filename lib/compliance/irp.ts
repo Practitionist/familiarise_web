@@ -21,7 +21,7 @@
  *   - CLEARTAX_API_KEY        — primary auth header (`api-key`)
  *   - CLEARTAX_GSP_TOKEN      — short-lived bearer token, refresh hourly
  *                               via `POST /authenticate`
- *   - CLEARTAX_GSTIN          — your registered GSTIN
+ *   - PLATFORM_GSTIN          — the supplier GSTIN sent as the `gstin` header
  *   - CLEARTAX_ENV            — "sandbox" | "production"
  *                               (default: "sandbox" if absent)
  *
@@ -61,7 +61,7 @@ export function isClearTaxConfigured(): boolean {
   return Boolean(
     process.env.CLEARTAX_API_KEY &&
     process.env.CLEARTAX_GSP_TOKEN &&
-    process.env.CLEARTAX_GSTIN,
+    process.env.PLATFORM_GSTIN,
   );
 }
 
@@ -76,7 +76,7 @@ function clearTaxHeaders(): Record<string, string> {
     "Content-Type": "application/json",
     "api-key": process.env.CLEARTAX_API_KEY ?? "",
     Authorization: `Bearer ${process.env.CLEARTAX_GSP_TOKEN ?? ""}`,
-    gstin: process.env.CLEARTAX_GSTIN ?? "",
+    gstin: process.env.PLATFORM_GSTIN ?? "",
   };
 }
 
@@ -103,7 +103,7 @@ export async function generateIrn(params: {
       signedQrPayload: null,
       status: "FAILED",
       reason:
-        "STUB: ClearTax not configured (set CLEARTAX_API_KEY + CLEARTAX_GSP_TOKEN + CLEARTAX_GSTIN to enable).",
+        "STUB: ClearTax not configured (set CLEARTAX_API_KEY + CLEARTAX_GSP_TOKEN + PLATFORM_GSTIN to enable).",
     };
   }
 
@@ -187,7 +187,7 @@ export async function cancelIrn(params: {
     return {
       cancelled: false,
       reason:
-        "STUB: ClearTax not configured (set CLEARTAX_API_KEY + CLEARTAX_GSP_TOKEN + CLEARTAX_GSTIN to enable).",
+        "STUB: ClearTax not configured (set CLEARTAX_API_KEY + CLEARTAX_GSP_TOKEN + PLATFORM_GSTIN to enable).",
     };
   }
 

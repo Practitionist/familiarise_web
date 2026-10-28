@@ -62,10 +62,10 @@ withdrawal-of-consent request doesn't propagate.
 
 1. Verify the sweeper ran: check the last scheduled run of
    `jobs/compliance/consent-retention-sweeper.ts` in CI logs.
-2. If `DPDP_SWEEPER_DELETE=false` (default), the sweeper only counts —
-   **this is the deliberate pre-MVP posture**. Flip the env flag to
-   `true` in production to enable deletions, roll out behind a feature
-   flag per tenant if needed.
+2. The sweeper is count-only by default. Deletion needs `?delete=1` on
+   `/api/cleanup/consent-retention-sweeper` (or `--delete` on the script) and
+   waits for the hash-only consent-proof archive. The admin system-jobs Run
+   button only counts.
 3. For individual withdrawal, call the API:
    ```bash
    curl -X DELETE "https://app.familiarise.com/api/organizations/$ORG/consent" \

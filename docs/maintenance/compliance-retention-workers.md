@@ -4,7 +4,7 @@ The cleanup registry exposes consent-retention-sweeper, databreach-deadline-aler
 
 ## Consent and event retention
 
-Consent retention uses the stored auditRetainedUntil deadline. DPDP_SWEEPER_DELETE must be exactly true to delete; otherwise the slice reports a bounded sample. No new retention duration or legal policy is introduced. The worker selects oldest deadlines and IDs, examines cap-plus-one candidates and deletes only selected IDs whose deadline is still expired. A concurrent extension therefore survives the mutation. Deletion does not depend on a stale preliminary count.
+Consent retention uses the stored auditRetainedUntil deadline. The sweeper is count-only by default; `?delete=1` on the cleanup route (or `--delete` on the CLI entrypoint) deletes, and deletion waits for the hash-only consent-proof archive. The admin System Jobs Run button sends no query argument, so it only counts. No new retention duration or legal policy is introduced. The worker selects oldest deadlines and IDs, examines cap-plus-one candidates and deletes only selected IDs whose deadline is still expired. A concurrent extension therefore survives the mutation. Deletion does not depend on a stale preliminary count.
 
 SystemEvent keeps the existing 400-day policy. It selects the oldest expired IDs with the same bounded sample/hasMore pattern and rechecks createdAt in deleteMany. HTTP/admin defaults examine 100 rows, capped at 500. These bounds describe candidate work, not total remaining history. A successful slice is not proof that the backlog is drained.
 

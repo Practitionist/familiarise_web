@@ -252,9 +252,9 @@ export function reportableToSentry(name: string): boolean {
   return name !== "sentry-ingest-canary";
 }
 
-/** Netlify may carry only the public DSN name, so the ticker accepts either. */
+/** The ticker shares the app's single public DSN. */
 function tickerSentryDsn(): string | undefined {
-  return process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN;
+  return process.env.NEXT_PUBLIC_SENTRY_DSN;
 }
 
 /** A missing secret is a silent fleet outage; page Sentry, not just the log. */
@@ -406,7 +406,7 @@ async function alertFailedTargets(
  * Sentry's HTTP check-in (https://docs.sentry.io/product/crons/getting-started/http/)
  * is a plain POST, so no `@sentry/node` import is needed on the happy path.
  *
- * The endpoint is built by parsing SENTRY_DSN as Sentry's own DSN shape
+ * The endpoint is built by parsing NEXT_PUBLIC_SENTRY_DSN as Sentry's own DSN shape
  * (`https://<publicKey>@<host>/<projectId>`) into
  * `https://<host>/api/<projectId>/cron/<monitorSlug>/<publicKey>/`, which is
  * exactly the template that doc page gives. A POST body carrying

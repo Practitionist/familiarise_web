@@ -22,31 +22,7 @@ describe("UNVERIFIED_ORG_SEAT_CAP", () => {
 });
 
 describe("getInvoiceCreditLimitPaise", () => {
-  const original = process.env.MAX_INVOICE_BOOKING_PAISE;
-  afterEach(() => {
-    if (original === undefined) delete process.env.MAX_INVOICE_BOOKING_PAISE;
-    else process.env.MAX_INVOICE_BOOKING_PAISE = original;
-  });
-
-  it("falls back to ₹50,000 when env not set", () => {
-    delete process.env.MAX_INVOICE_BOOKING_PAISE;
-    expect(getInvoiceCreditLimitPaise()).toBe(50_000_00);
-  });
-
-  it("respects MAX_INVOICE_BOOKING_PAISE env override", () => {
-    process.env.MAX_INVOICE_BOOKING_PAISE = "1000000"; // ₹10,000
-    expect(getInvoiceCreditLimitPaise()).toBe(1_000_000);
-  });
-
-  it("ignores non-positive env values and falls back to default", () => {
-    process.env.MAX_INVOICE_BOOKING_PAISE = "0";
-    expect(getInvoiceCreditLimitPaise()).toBe(50_000_00);
-    process.env.MAX_INVOICE_BOOKING_PAISE = "-100";
-    expect(getInvoiceCreditLimitPaise()).toBe(50_000_00);
-  });
-
-  it("ignores garbage env values", () => {
-    process.env.MAX_INVOICE_BOOKING_PAISE = "not-a-number";
+  it("is the ₹50,000 starter limit", () => {
     expect(getInvoiceCreditLimitPaise()).toBe(50_000_00);
   });
 });

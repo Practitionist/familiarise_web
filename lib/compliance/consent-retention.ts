@@ -5,13 +5,13 @@ import { startDeadline } from "@/lib/cron/run-deadline";
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
 
-/** Uses the stored retention deadline; deletion remains explicitly opt-in. */
+/** Counts rows past the stored retention deadline; deletes them only when `delete` is true. */
 export async function runConsentRetentionSweeper(
-  opts: { limit?: number; startedAt?: number } = {},
+  opts: { limit?: number; startedAt?: number; delete?: boolean } = {},
 ) {
   const limit = Math.min(MAX_LIMIT, Math.max(1, opts.limit ?? DEFAULT_LIMIT));
   const outOfTime = startDeadline(opts.startedAt);
-  const deleteMode = process.env.DPDP_SWEEPER_DELETE === "true";
+  const deleteMode = opts.delete === true;
   return withCronLock(
     "consent-retention-sweeper",
     { failMode: "closed" },

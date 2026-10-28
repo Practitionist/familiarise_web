@@ -22,68 +22,51 @@ async function testBucketCreation(): Promise<void> {
   console.log("📅 Test time:", new Date().toISOString());
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   console.log("\n📋 Environment Check:");
   console.log("- SUPABASE_URL:", supabaseUrl ? "✅ SET" : "❌ MISSING");
-  console.log("- ANON_KEY:", supabaseAnonKey ? "✅ SET" : "❌ MISSING");
   console.log("- SERVICE_KEY:", supabaseServiceKey ? "✅ SET" : "❌ MISSING");
 
-  if (!supabaseUrl || !supabaseAnonKey) {
+  if (!supabaseUrl || !supabaseServiceKey) {
     console.log("❌ Missing required environment variables");
     process.exit(1);
   }
 
-  // Create clients
-  const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey);
-  const supabaseAdmin: SupabaseClient | null = supabaseServiceKey
-    ? createClient(supabaseUrl, supabaseServiceKey)
-    : null;
+  const supabaseAdmin: SupabaseClient = createClient(
+    supabaseUrl,
+    supabaseServiceKey,
+  );
 
   console.log("\n🔍 Testing bucket operations...");
 
   try {
-    // Test 1: Check if documents bucket exists with regular client
-    console.log("\n📦 Test 1: Checking documents bucket with ANON key...");
-    const anonResult = await testBucketExists(supabase, "documents");
+    // Test 1: Check if documents bucket exists
+    console.log("\n🔑 Test 1: Checking documents bucket with SERVICE key...");
+    const adminResult = await testBucketExists(supabaseAdmin, "documents");
     console.log(
-      `   Result: ${anonResult.exists ? "✅ EXISTS" : "❌ NOT FOUND"}`,
+      `   Result: ${adminResult.exists ? "✅ EXISTS" : "❌ NOT FOUND"}`,
     );
-    if (anonResult.error) console.log(`   Error: ${anonResult.error}`);
+    if (adminResult.error) console.log(`   Error: ${adminResult.error}`);
 
-    // Test 2: Check if documents bucket exists with admin client
-    if (supabaseAdmin) {
-      console.log("\n🔑 Test 2: Checking documents bucket with SERVICE key...");
-      const adminResult = await testBucketExists(supabaseAdmin, "documents");
-      console.log(
-        `   Result: ${adminResult.exists ? "✅ EXISTS" : "❌ NOT FOUND"}`,
-      );
-      if (adminResult.error) console.log(`   Error: ${adminResult.error}`);
-    }
-
-    // Test 3: List all buckets
-    console.log("\n📋 Test 3: Listing all buckets...");
-    if (supabaseAdmin) {
-      const { data: buckets, error: listError } =
-        await supabaseAdmin.storage.listBuckets();
-      if (listError) {
-        console.log(`   Error: ${listError.message}`);
-      } else {
-        console.log(`   Found ${buckets?.length || 0} buckets:`);
-        buckets?.forEach((bucket) => {
-          console.log(
-            `   - ${bucket.name} (${bucket.public ? "Public" : "Private"})`,
-          );
-        });
-      }
+    // Test 2: List all buckets
+    console.log("\n📋 Test 2: Listing all buckets...");
+    const { data: buckets, error: listError } =
+      await supabaseAdmin.storage.listBuckets();
+    if (listError) {
+      console.log(`   Error: ${listError.message}`);
     } else {
-      console.log("   ⚠️  Skipped - no service key available");
+      console.log(`   Found ${buckets?.length || 0} buckets:`);
+      buckets?.forEach((bucket) => {
+        console.log(
+          `   - ${bucket.name} (${bucket.public ? "Public" : "Private"})`,
+        );
+      });
     }
 
-    // Test 4: Test file upload simulation
-    console.log("\n📄 Test 4: Simulating file upload check...");
-    const { data: _files, error: uploadTestError } = await supabase.storage
+    // Test 3: Test file upload simulation
+    console.log("\n📄 Test 3: Simulating file upload check...");
+    const { data: _files, error: uploadTestError } = await supabaseAdmin.storage
       .from("documents")
       .list("test-folder", { limit: 1 });
 
