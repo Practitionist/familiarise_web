@@ -34,7 +34,7 @@ updates:
       prefix-development: "chore(dev-deps)"
       include: "scope"
     assignees:
-      - "kaustavghosh"
+      - "teetangh"
     milestone: 1
 
     groups:

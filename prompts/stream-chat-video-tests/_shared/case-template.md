@@ -82,7 +82,7 @@ When a QA subagent executes any workflow in `prompts/stream-chat-video-tests/` a
       "responseBody": {}
     },
     "consoleErrors": [],
-    "screenshotArtifactPath": "/usr/local/google/home/kaustavg/.gemini/jetski/brain/<conv-id>/<filename>.png",
+    "screenshotArtifactPath": "<home>/.gemini/jetski/brain/<conv-id>/<filename>.png",
     "sentryIssueIds": []
   },
   "rootCauseSuspects": [
