@@ -79,7 +79,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|cleanup-auth-tokens|reconcile-document-storage|prune-system-events|prune-audit-logs|sweep-verification|prune-system-job-executions|expire-stale-collaborator-invites|purge-unverified-users)
+            ""|all|cleanup-auth-tokens|reconcile-document-storage|prune-audit-logs|sweep-verification|expire-stale-collaborator-invites|purge-unverified-users)
               ;;
             *)
               echo "::error::Unknown daily job slug '${INPUT_JOB}'"
@@ -111,15 +111,6 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/reconcile-document-storage.ts
 
-      - name: Prune system events
-        id: prune-system-events
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'prune-system-events'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/cleanup/prune-system-events.ts
-
       - name: Prune audit logs
         id: prune-audit-logs
         if: >-
@@ -137,15 +128,6 @@ jobs:
         timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/cleanup/sweep-verification.ts
-
-      - name: Prune system job executions
-        id: prune-system-job-executions
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'prune-system-job-executions'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/cleanup/prune-system-job-executions.ts
 
       - name: Expire stale collaborator invites
         id: expire-stale-collaborator-invites
@@ -189,10 +171,8 @@ jobs:
           for entry in \
             "cleanup-auth-tokens:${{ steps.cleanup-auth-tokens.outcome }}" \
             "reconcile-document-storage:${{ steps.reconcile-document-storage.outcome }}" \
-            "prune-system-events:${{ steps.prune-system-events.outcome }}" \
             "prune-audit-logs:${{ steps.prune-audit-logs.outcome }}" \
             "sweep-verification:${{ steps.sweep-verification.outcome }}" \
-            "prune-system-job-executions:${{ steps.prune-system-job-executions.outcome }}" \
             "expire-stale-collaborator-invites:${{ steps.expire-stale-collaborator-invites.outcome }}" \
             "purge-unverified-users:${{ steps.purge-unverified-users.outcome }}"
           do

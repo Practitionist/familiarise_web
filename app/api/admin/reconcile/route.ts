@@ -12,7 +12,8 @@ export async function GET() {
   const jobs = [];
   for (const [key, job] of Object.entries(RECONCILE_JOBS)) {
     const last = await prisma.systemJobExecution.findFirst({
-      where: { jobName: job.lockName },
+      // A stand-down (held, refused, skipped) is not a run of the job.
+      where: { jobName: job.lockName, status: { not: "CANCELLED" } },
       orderBy: { startedAt: "desc" },
       select: {
         status: true,

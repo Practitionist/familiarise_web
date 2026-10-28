@@ -25,6 +25,7 @@ import type {
 } from "@prisma/client";
 
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { casMiss } from "@/lib/cron/run-counters";
 import { reportSentryMessage } from "@/lib/observability/report";
 
 /**
@@ -233,6 +234,7 @@ export async function transitionConsultationRequest(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("Consultation", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,
@@ -280,6 +282,7 @@ export async function transitionSubscriptionRequest(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("Subscription", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,
@@ -347,6 +350,7 @@ export async function transitionWebinarEvent(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("Webinar", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,
@@ -384,6 +388,7 @@ export async function transitionClassEvent(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("Class", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,
@@ -476,6 +481,7 @@ export async function transitionOccurrenceCompletion(
     select: { id: true, appointmentId: true },
   });
   if (moved.length === 0 && !args.allowZero) {
+    casMiss();
     const entityId =
       typeof args.where.id === "string" ? args.where.id : undefined;
     throw new IllegalTransitionError(
@@ -552,6 +558,7 @@ export async function transitionTrial(
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("Trial", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,
@@ -644,6 +651,7 @@ export async function transitionRescheduleRequest(
     },
   });
   if (res.count === 0) {
+    casMiss();
     throw new IllegalTransitionError("RescheduleRequest", args.to, {
       entityId: args.where.id,
       from: before?.status ?? null,

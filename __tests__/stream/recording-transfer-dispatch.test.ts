@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { dispatchBackgroundJob } from "../../lib/cron/dispatch-background";
+import { withRunContext } from "../../lib/cron/run-context";
 
 const originalEnv = process.env;
 const originalFetch = global.fetch;
@@ -35,6 +36,20 @@ it("accepts only background queue admission and passes the bearer without follow
       signal: expect.any(AbortSignal),
     }),
   );
+});
+
+it("names the admin who dispatched it, so the worker's row is not recorded as cron", async () => {
+  const fetchMock = jest
+    .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
+    .mockResolvedValue(new Response(null, { status: 202 }));
+  global.fetch = fetchMock;
+  await withRunContext({ triggeredBy: "admin:user_1" }, () =>
+    dispatchBackgroundJob("transfer-recordings"),
+  );
+  expect(fetchMock.mock.calls[0][1]?.headers).toEqual({
+    authorization: "Bearer dispatch-test",
+    "x-run-trigger": "admin:user_1",
+  });
 });
 
 it.each([200, 301, 401, 404, 500, 503])(

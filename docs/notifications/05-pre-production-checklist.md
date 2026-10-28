@@ -158,15 +158,15 @@ The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; 
 
 ## Scheduled Outbox Drains & Sweep Cadences
 
-Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), while batch maintenance jobs run in GitHub Actions (`.github/workflows/cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`):
+Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), while the remaining batch maintenance jobs run in GitHub Actions (the two retention prunes now run on the ticker) (`.github/workflows/cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`):
 
-| Job Target                    | Driver          | Cadence & Offset                  | Batch / Timeout       | Purpose                                                           |
-| ----------------------------- | --------------- | --------------------------------- | --------------------- | ----------------------------------------------------------------- |
-| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`** | `limit=20`, `20s` cap | Replays due `NotificationOutbox` rows (`notBefore <= now`)        |
-| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:00`** | `limit=20`, `20s` cap | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs |
-| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`** | `limit=25`, `20s` cap | Dispatches pre-session email & in-app appointment reminders       |
-| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`** | `limit=25`, `20s` cap | Auto-completes past sessions and triggers post-session flows      |
-| `prune-system-job-executions` | GitHub Actions  | Daily (`cron-daily.yml`)          | Unbounded             | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows      |
+| Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                           |
+| ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ----------------------------------------------------------------- |
+| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`**                     | `limit=20`, `20s` cap  | Replays due `NotificationOutbox` rows (`notBefore <= now`)        |
+| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:00`**                     | `limit=20`, `20s` cap  | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs |
+| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`**                     | `limit=25`, `20s` cap  | Dispatches pre-session email & in-app appointment reminders       |
+| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`**                     | `limit=25`, `20s` cap  | Auto-completes past sessions and triggers post-session flows      |
+| `prune-system-job-executions` | `cron-tick.mts` | Every **30m** at offset **`:25`**, 20:00 to 23:30 UTC | `limit=500`, `24s` cap | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows      |
 
 Every target routes through `/api/cleanup/[job]`, authenticates via `CRON_SECRET`, and acquires an atomic Postgres lease on `SystemJobExecution` (`withCronLock`).
 

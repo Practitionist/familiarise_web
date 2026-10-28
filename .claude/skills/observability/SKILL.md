@@ -14,7 +14,7 @@ The index for the error-tracking and job-telemetry domain: how an event leaves a
 | `references/diagnosing.md`                                | First, for any report of a missing, duplicated, unattributed or unverifiable error. It is the branching procedure from "is the code even reporting" to "is the identity attached".                               |
 | `references/sentry.md`                                    | Changing the Sentry setup or quota posture, adding a throw, a report call or a tag, touching the canary, or proving an event arrived. It holds the full non-negotiables and the 2026-10 error-budget guardrails. |
 | `references/job-telemetry.md`                             | Changing what a job records or reports, the ticker (check-in, summary, streak escalation), the lease, a health endpoint, a Better Stack or Sentry cron monitor, or running the missed-run drill.                 |
-| `references/entity-trace-and-console.md`                  | Extending the entity trace or the Run metrics card, or building the operations console (#2424, ADR-13).                                                                                                          |
+| `references/entity-trace-and-console.md`                  | Extending the entity trace or the Run metrics card, or building the operations console (#2424, ADR-13 and its 2026-10-28 amendment: an items-first Needs attention inbox, sub-tabs, no Drain).                   |
 | `docs/observability/00-system-design.md`                  | The HLD: signal sources and sinks, the three questions, quota rules, ticker escalation, the planned console.                                                                                                     |
 | `docs/observability/sentry/01-setup-and-configuration.md` | The DSNs, where the code lives, source maps and the `SENTRY_*` coordinates, and what does and does not reach Sentry today.                                                                                       |
 | `docs/observability/sentry/02-conventions.md`             | Why a modelled refusal is a warning and not an error, which tags carry meaning, why `SystemEvent` is the row and Sentry the pager, why transient platform failures are breadcrumbs.                              |
@@ -40,6 +40,7 @@ The full reasoning for each rule is in `references/sentry.md` and `references/jo
 - **Modelled refusals are warnings.** A `BUSINESS_ERROR_CODES` code is `expected: true`, re-levelled by `beforeSend`, and never an error event.
 - **A repetition is throttled; a set is aggregated.** Never aggregate a repetition, and remember that a shared `fingerprint` groups events without saving any.
 - **Never capture to Sentry per row.** Collect failures with `createRunFailureReporter` and flush once per run, with a stable fingerprint and a ten-id sample.
+- **Sentry fixes the system; the console fixes the customer.** Per-item remediation reads Postgres, never Sentry samples.
 - **Never attach a person to a synthetic event.** The canary carries no user, org, IP or URL.
 - **The identity disclosure is opt-in and off.** `SENTRY_IDENTITY_ENABLED` must be exactly `on`; `Users: 0` is the expected state.
 - **`SystemEvent` is the row; Sentry is the pager.** When they disagree, believe the row.

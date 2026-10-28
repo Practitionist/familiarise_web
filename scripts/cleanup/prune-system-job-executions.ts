@@ -320,7 +320,3 @@ export async function pruneSystemJobExecutions(
     },
   );
 }
-
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}
