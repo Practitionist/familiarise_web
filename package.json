@@ -48,7 +48,7 @@
     "cron:reference:check": "tsx scripts/maintenance/generate-cron-reference.ts --check"
   },
   "dependencies": {
-    "@better-auth/core": "1.7.7",
+    "@better-auth/core": "1.7.12",
     "@better-auth/passkey": "1.7.7",
     "@better-auth/sso": "1.7.7",
     "@hookform/resolvers": "^5.9.1",
