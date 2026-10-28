@@ -19,10 +19,10 @@ import { useState } from "react";
 
 import { PricingOption } from "../defaults";
 import { bookingModeBadge } from "@/lib/booking/booking-mode";
-
-const getDurationLabel = (durationInHours: number): string => {
-  return `${durationInHours} Hour${durationInHours > 1 ? "s" : ""}`;
-};
+import {
+  formatSessionLength,
+  formatSessionLengthModifier,
+} from "../utils/session-length";
 
 const getSubscriptionDurationLabel = (durationInMonths: number): string => {
   return `${durationInMonths} Month${durationInMonths > 1 ? "s" : ""}`;
@@ -80,34 +80,9 @@ export function ExpertPricing({
     )[],
     type: "consultation" | "subscription",
   ): PricingOption[] => {
-    // Count plans per duration so we can disambiguate titles when multiple
-    // plans share the same duration (e.g. two 1-hour consultations).
-    const durationCounts = new Map<number, number>();
-    for (const plan of plans) {
-      const key =
-        type === "consultation" && "durationInHours" in plan
-          ? plan.durationInHours
-          : type === "subscription" && "durationInMonths" in plan
-            ? plan.durationInMonths
-            : undefined;
-      if (key !== undefined) {
-        durationCounts.set(key, (durationCounts.get(key) || 0) + 1);
-      }
-    }
-    const seen = new Map<number, number>();
-    const disambiguate = (label: string, duration: number): string => {
-      if ((durationCounts.get(duration) || 0) <= 1) return label;
-      const next = (seen.get(duration) || 0) + 1;
-      seen.set(duration, next);
-      return `${label} (${next})`;
-    };
-
     return plans.map((plan) => {
       if (type === "consultation" && "durationInHours" in plan) {
-        const durationLabel = disambiguate(
-          getDurationLabel(plan.durationInHours),
-          plan.durationInHours,
-        );
+        const sessionLength = formatSessionLength(plan.durationInHours);
 
         // The consultant's own inclusions win. The duration switch below is a
         // placeholder from before `whatsIncluded` existed: it asserted
@@ -115,60 +90,37 @@ export function ExpertPricing({
         // given length, whether or not that consultant offered either.
         let features: string[] = plan.whatsIncluded ?? [];
         if (features.length === 0) {
-          switch (plan.durationInHours) {
-            case 1:
-              features = ["Document verification", "1 on 1 call"];
-              break;
-            case 2:
-              features = [
-                "Document verification",
-                "1 on 1 call",
-                "Extended chat facility",
-              ];
-              break;
-            case 4:
-              features = [
-                "Document verification",
-                "1 on 1 call",
-                "Extended chat facility",
-                "Priority support",
-              ];
-              break;
-            default:
-              features = [`${plan.durationInHours} hour consultation`];
-          }
+          features = [
+            `${formatSessionLengthModifier(plan.durationInHours)} 1-on-1 session`,
+          ];
         }
 
         return {
           id: plan.id,
-          title: durationLabel,
-          // Surface the real plan title so duplicate-duration plans
-          // (e.g. "Career Strategy Session" vs "[ATEST] Career Strategy
-          // Session") stay distinguishable in the panel.
-          description:
-            plan.subtitle ||
-            plan.title ||
-            `${plan.durationInHours} hour consultation`,
+          // The expert's title heads the card. An expert may hold several plans
+          // of the same length, so the duration is metadata beside it, never the
+          // identity of the row — keying either by duration collapsed those
+          // plans into indistinguishable tabs reading "1 Hour (1)", "(2)", …
+          title: plan.title,
+          description: plan.subtitle ?? plan.description ?? "",
           price: plan.price,
           priceCurrency: plan.priceCurrency || "INR",
-          duration: `${plan.durationInHours} hour${plan.durationInHours > 1 ? "s" : ""}`,
+          duration: sessionLength,
           durationInHours: plan.durationInHours,
-          features: features,
+          isFeatured: plan.isFeatured,
+          features,
         };
       } else if (type === "subscription" && "durationInMonths" in plan) {
-        const durationLabel = disambiguate(
-          getSubscriptionDurationLabel(plan.durationInMonths),
-          plan.durationInMonths,
-        );
+        const sessionLength = formatSessionLength(plan.sessionDurationInHours);
         return {
           id: plan.id,
-          title: durationLabel,
-          description:
-            plan.title || `${plan.durationInMonths} month subscription`,
+          title: plan.title,
+          description: plan.subtitle ?? plan.description ?? "",
           price: plan.price,
           priceCurrency: plan.priceCurrency || "INR",
-          duration: `${plan.durationInMonths}`,
+          duration: getSubscriptionDurationLabel(plan.durationInMonths),
           durationInMonths: plan.durationInMonths,
+          isFeatured: plan.isFeatured,
           totalHours: plan.totalHours,
           totalSessions: plan.totalSessions,
           sessionsPerWeek: plan.sessionsPerWeek,
@@ -177,7 +129,7 @@ export function ExpertPricing({
             `${plan.totalHours} total hours`,
             `${plan.totalSessions} sessions`,
             `${plan.sessionsPerWeek} session${plan.sessionsPerWeek > 1 ? "s" : ""} per week`,
-            `${plan.sessionDurationInHours}h per session`,
+            `${sessionLength} per session`,
             `${plan.emailSupport} email support`,
           ],
         };
@@ -192,16 +144,15 @@ export function ExpertPricing({
     });
   };
 
+  // The server already returns each tab in the expert's merchandising order
+  // (`sortOrder`, then duration). Sorting here would overwrite it, so these
+  // arrays pass through untouched.
   const consultationOptions = formatPricingOptions(
-    consultantDetails.consultationPlans.sort(
-      (a, b) => a.durationInHours - b.durationInHours,
-    ),
+    consultantDetails.consultationPlans,
     "consultation",
   );
   const subscriptionOptions = formatPricingOptions(
-    consultantDetails.subscriptionPlans.sort(
-      (a, b) => a.durationInMonths - b.durationInMonths,
-    ),
+    consultantDetails.subscriptionPlans,
     "subscription",
   );
 

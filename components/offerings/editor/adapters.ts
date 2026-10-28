@@ -40,6 +40,8 @@ const sharedDefaults = {
   targetAudience: [] as string[],
   whatsIncluded: [] as string[],
   faqs: [] as { question: string; answer: string; order?: number }[],
+  sortOrder: 0,
+  isFeatured: false,
 };
 
 /**

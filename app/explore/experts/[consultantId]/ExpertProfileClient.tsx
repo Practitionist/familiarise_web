@@ -22,6 +22,7 @@ import { ConsultantAvailability } from "./components/ConsultantAvailability";
 import { ExperienceSection } from "./components/ExperienceSection";
 import { ExpertPricing } from "./components/ExpertPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
+import { ProfileFaqSection } from "./components/ProfileFaqSection";
 import { ReviewsSection } from "./components/ReviewsSection";
 import { ProfileReviewComposer } from "@/components/reviews/ProfileReviewComposer";
 import { useTimezone } from "@/hooks/useTimezone";
@@ -440,6 +441,8 @@ export function ExpertProfileClient({
                 userDetails={userDetails}
                 consultantDetails={consultantDetails}
               />
+
+              <ProfileFaqSection consultantDetails={consultantDetails} />
 
               <ExperienceSection
                 workExperiences={userDetails.workExperiences || []}

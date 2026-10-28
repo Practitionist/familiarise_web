@@ -198,6 +198,8 @@ export async function POST(request: NextRequest) {
       startDate,
       lateJoinUntilSession,
       lateJoinersGetPastRecordings,
+      sortOrder,
+      isFeatured,
     } = validatedData;
 
     // Verify ownership - user must own this consultant profile
@@ -309,6 +311,8 @@ export async function POST(request: NextRequest) {
               totalSessions,
               totalHours,
               emailSupport,
+              sortOrder,
+              isFeatured,
               consultantProfile: { connect: { id: consultantProfileId } },
               topics: topicIds // Use validated topics here
                 ? { connect: topicIds.map((id: string) => ({ id })) }
@@ -575,6 +579,8 @@ export async function PATCH(request: NextRequest) {
       sessionDurationInHours: patchSessionDuration,
       lateJoinUntilSession,
       lateJoinersGetPastRecordings,
+      sortOrder,
+      isFeatured,
     } = validatedData;
 
     // Find or create topics by name if provided
@@ -711,6 +717,8 @@ export async function PATCH(request: NextRequest) {
             updateData.certificateProvided = certificateProvided;
           if (recordingEnabled !== undefined)
             updateData.recordingEnabled = recordingEnabled;
+          if (sortOrder !== undefined) updateData.sortOrder = sortOrder;
+          if (isFeatured !== undefined) updateData.isFeatured = isFeatured;
           if (sessionsPerWeek !== undefined)
             updateData.sessionsPerWeek = sessionsPerWeek;
           if (emailSupport !== undefined)

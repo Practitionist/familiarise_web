@@ -49,3 +49,23 @@ interface RecordingPlan {
 export const recordingPayload = (plan: RecordingPlan = {}) => ({
   recordingEnabled: plan.recordingEnabled ?? false,
 });
+
+interface MerchandisingPlan {
+  sortOrder?: number;
+  isFeatured?: boolean;
+}
+
+/**
+ * Storefront position and the flagship badge. Sent only when the editor
+ * actually holds a value: the columns default to 0 / false, so omitting the
+ * keys leaves an existing plan's merchandising untouched rather than resetting
+ * it on an unrelated save.
+ */
+export const merchandisingPayload = (
+  plan: MerchandisingPlan = {},
+): { sortOrder?: number; isFeatured?: boolean } => ({
+  ...(typeof plan.sortOrder === "number" ? { sortOrder: plan.sortOrder } : {}),
+  ...(typeof plan.isFeatured === "boolean"
+    ? { isFeatured: plan.isFeatured }
+    : {}),
+});
