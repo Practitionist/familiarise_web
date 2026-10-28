@@ -163,7 +163,7 @@ Publish all records below in **Netlify DNS** (`familiarisenow.com` zone):
 
 ## Scheduled Outbox Drains & Sweep Cadences
 
-Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), while batch maintenance jobs run in GitHub Actions (`.github/workflows/cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`):
+Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), while the remaining batch maintenance jobs run in GitHub Actions (the two retention prunes now run on the ticker) (`.github/workflows/cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`):
 
 | Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                           |
 | ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ----------------------------------------------------------------- |

@@ -163,7 +163,7 @@ A run's HTTP status, not the job's own boolean, decides what is stored. `cleanup
 | ----------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `completed` | `COMPLETED` | Answered 2xx other than 207.                                                                                                                                                 |
 | `attention` | `COMPLETED` | Answered 207 through the route's `needsAttention` with no item failing: findings for a person. It counts as a success for streaks and paging and shows amber in the console. |
-| `partial`   | `FAILED`    | Any other 207. It ran to the end with some items failing, and counts as a failure for the streak rule.                                                                       |
+| `partial`   | `FAILED`    | Any other 207: items failed, or work remained that the job reports as partial. It counts as a failure for the streak rule.                                                   |
 | `failed`    | `FAILED`    | Answered 400 or above, threw, or was taken over after its lease expired.                                                                                                     |
 | `held`      | `CANCELLED` | Another run held the lease (409). The row stores `holderRunId`.                                                                                                              |
 | `skipped`   | `CANCELLED` | A configuration skip, or a core that declined.                                                                                                                               |

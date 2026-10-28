@@ -179,6 +179,7 @@ describe("cleanupRoute", () => {
     resetThrottledCaptureForTesting();
     guard.mockResolvedValue(undefined);
     process.env = { ...OLD_ENV, CRON_SECRET: SECRET };
+    delete process.env.GITHUB_ACTIONS;
   });
 
   afterAll(() => {
@@ -371,6 +372,7 @@ describe("cleanupRoute run record", () => {
     resetThrottledCaptureForTesting();
     guard.mockResolvedValue(undefined);
     process.env = { ...OLD_ENV, CRON_SECRET: SECRET };
+    delete process.env.GITHUB_ACTIONS;
   });
 
   afterAll(() => {

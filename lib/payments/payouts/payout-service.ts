@@ -996,8 +996,25 @@ export async function processApprovedPayouts(
       orderBy: [{ approvedAt: "asc" }, { createdAt: "asc" }],
     });
 
+    // Payouts this run's admin approved are skipped up front, so they never count toward the balance check.
+    const results: PayoutResult[] = [];
+    const disbursable: typeof approvedPayouts = [];
+    for (const payout of approvedPayouts) {
+      if (
+        await isMakerCheckerDisbursementBlocked(
+          payout.id,
+          payout.approvedBy,
+          opts.triggeredByUserId,
+        )
+      ) {
+        results.push({ payoutId: payout.id, success: false, skipped: true });
+      } else {
+        disbursable.push(payout);
+      }
+    }
+
     // The balance must cover what this run can disburse: the oldest `limit` rows, or all of them.
-    const batchTotalPaise = approvedPayouts
+    const batchTotalPaise = disbursable
       .slice(0, opts.limit)
       .reduce((s, p) => s + p.amount, 0);
     const preflight = await assertPayoutBalance(batchTotalPaise);
@@ -1006,9 +1023,7 @@ export async function processApprovedPayouts(
       return [];
     }
 
-    const results: PayoutResult[] = [];
-
-    for (const payout of approvedPayouts) {
+    for (const payout of disbursable) {
       if (
         opts.budgetMs !== undefined &&
         Date.now() - startedAt >= opts.budgetMs
@@ -1024,7 +1039,7 @@ export async function processApprovedPayouts(
       ) {
         break;
       }
-      const result = await processSinglePayout(payout, opts.triggeredByUserId);
+      const result = await processSinglePayout(payout);
       results.push(result);
     }
 
@@ -1581,29 +1596,26 @@ async function handleProcessSinglePayoutError(
   };
 }
 
-async function processSinglePayout(
-  payout: {
-    id: string;
-    consultantProfileId: string;
-    provider: PaymentGateway;
-    amount: number;
-    currency: string;
-    method: PayoutMethod;
-    idempotencyKey: string | null;
-    payoutAccount: PayoutDestination | null;
-    consultantProfile: {
-      payoutAccounts?: PayoutDestination[];
-      user: {
-        name: string | null;
-        email: string | null;
-        [key: string]: unknown;
-      };
+async function processSinglePayout(payout: {
+  id: string;
+  consultantProfileId: string;
+  provider: PaymentGateway;
+  amount: number;
+  currency: string;
+  method: PayoutMethod;
+  idempotencyKey: string | null;
+  payoutAccount: PayoutDestination | null;
+  consultantProfile: {
+    payoutAccounts?: PayoutDestination[];
+    user: {
+      name: string | null;
+      email: string | null;
       [key: string]: unknown;
     };
     [key: string]: unknown;
-  },
-  triggeredByUserId?: string,
-): Promise<PayoutResult> {
+  };
+  [key: string]: unknown;
+}): Promise<PayoutResult> {
   let providerPayoutId: string | undefined;
   let submittedToGateway = false;
   const markSubmitted = () => {
@@ -1611,16 +1623,6 @@ async function processSinglePayout(
   };
   const financialYear = getIndianFinancialYear();
   try {
-    if (
-      await isMakerCheckerDisbursementBlocked(
-        payout.id,
-        payout.approvedBy,
-        triggeredByUserId,
-      )
-    ) {
-      return { payoutId: payout.id, success: false, skipped: true };
-    }
-
     const blockedResult = await claimConsultantPayoutForDisbursement(
       payout.id,
       payout.amount,
