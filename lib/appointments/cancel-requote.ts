@@ -10,6 +10,14 @@ import {
 export type ShownCancelQuote = {
   estimatedRefundPaise: number;
   creditRestoresInFull?: boolean;
+  /** False when the dialog showed an unpaid booking. */
+  expectedPaid?: boolean;
+};
+
+/** The binding for a dialog that showed an unpaid booking (an approval awaiting payment). */
+export const UNPAID_CANCEL_QUOTE: ShownCancelQuote = {
+  estimatedRefundPaise: 0,
+  expectedPaid: false,
 };
 
 export const cancelPreviewUrl = (appointmentId: string) =>
@@ -27,8 +35,15 @@ export function shownQuoteBody(quote: ShownCancelQuote | undefined) {
     ...(quote.creditRestoresInFull === undefined
       ? {}
       : { expectedCreditRestoresInFull: quote.creditRestoresInFull }),
+    ...(quote.expectedPaid === undefined
+      ? {}
+      : { expectedPaid: quote.expectedPaid }),
   };
 }
+
+/** A re-quote of a click made on an unpaid screen: the payment landed, so the dialog must reopen on the paid quote. */
+export const paymentLandedUnderClick = (quote: ShownCancelQuote | undefined) =>
+  quote?.expectedPaid === false;
 
 /** The server's new figure from a 409 `REFUND_QUOTE_CHANGED` body, or null for any other answer. */
 export function readRefundQuoteChanged(
@@ -53,6 +68,8 @@ export function applyRefundRequote(
             estimatedRefundPaise: requote.refundPaise,
             refundPct: requote.refundPct,
             creditRestoresInFull: requote.creditRestoresInFull,
+            // The server only re-quotes a paid booking.
+            ...(prior.expectedPaid === undefined ? {} : { expectedPaid: true }),
           }
         : prior,
   );

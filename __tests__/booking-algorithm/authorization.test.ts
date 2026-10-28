@@ -38,7 +38,11 @@ jest.mock("../../lib/prisma", () => ({
       // #1554 — the refund context reads the one wrapper; none here.
       findFirst: jest.fn().mockResolvedValue(null),
     },
-    payment: { findMany: jest.fn().mockResolvedValue([]) },
+    payment: {
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     // #1780 R-3 — free seats are read off the participant rows as well.
     appointmentParticipant: { findMany: jest.fn().mockResolvedValue([]) },
     // #1580 C-P1-5 — group-event cancel and reschedule read the ACCEPTED
@@ -61,6 +65,9 @@ jest.mock("../../utils/appointmentlock", () => ({
   __esModule: true,
   withAppointmentLock: jest.fn(
     async (_id: string, fn: () => Promise<unknown>) => fn(),
+  ),
+  withEventCheckoutLock: jest.fn(
+    async (_key: unknown, fn: () => Promise<unknown>) => fn(),
   ),
   BookingLockUnavailableError: class extends Error {},
   AppointmentBusyError: class extends Error {},
@@ -330,6 +337,12 @@ function makeMockTx(appointmentData: any = null) {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest.fn().mockResolvedValue([{ id: "slot-1" }]),
       deleteMany: jest.fn(),
+    },
+    // The cancel expires the booking's live payments in its own commit.
+    payment: {
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),

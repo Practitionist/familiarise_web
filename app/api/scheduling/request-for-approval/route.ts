@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { AppointmentStatus, type Prisma } from "@prisma/client";
 import {
-  lockSlotBooking,
-  unlockSlotBooking,
+  lockSlotBatch,
+  unlockSlotInterval,
   lockConsulteeBooking,
   unlockConsulteeBooking,
+  lockRequestCap,
+  unlockRequestCap,
   BookingLockUnavailableError,
   LockContentionError,
+  RequestCapBusyError,
+  type SlotBatchGrant,
 } from "@/utils/appointmentlock";
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
@@ -94,6 +98,17 @@ async function replayRequest(
     { message: SUBMITTED_MESSAGE, data: original },
     { status: 201 },
   );
+}
+
+/** A refusal decided inside the request transaction; nothing was written. */
+class RequestRefusal extends Error {
+  constructor(
+    readonly httpStatus: number,
+    readonly body: Record<string, unknown>,
+  ) {
+    super(String(body.error));
+    this.name = "RequestRefusal";
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -330,15 +345,20 @@ export async function POST(req: NextRequest) {
     // without it the same user could race this route against their own
     // checkout on a DIFFERENT consultant and double-book themselves — the
     // GiST guard is consultant-keyed and cannot see it.
+    let requestCapLock: Awaited<ReturnType<typeof lockRequestCap>> | null =
+      null;
     let consulteeLock: Awaited<ReturnType<typeof lockConsulteeBooking>> | null =
       null;
-    let lock;
+    let lock: SlotBatchGrant | undefined;
     let stagedBell: StagedTrigger | undefined;
     let stagedEmailRows: StagedRecipientEmail[] = [];
     let createdConsultation:
       Awaited<ReturnType<typeof prisma.consultation.create>> | undefined;
 
     try {
+      // Lock order: request cap (consultant tier) → consultee → slot batch.
+      // The cap's count and the insert below both run under it.
+      requestCapLock = await lockRequestCap(consultantProfileId);
       consulteeLock = await lockConsulteeBooking(session.user.id);
 
       // Under the consultee lock, so a concurrent same-key retry sees the first commit.
@@ -373,7 +393,20 @@ export async function POST(req: NextRequest) {
         // ACQUIRE LOCK for the whole requested interval (#1169 PR 1 — one key
         // per 30-min atom, so overlapping requests with different starts collide)
         // Use default 60s TTL (15s was too short for slow database operations)
-        lock = await lockSlotBooking(consultantProfileId, startsAt, endsAt);
+        // An expert booking another expert also holds their own calendar's atoms.
+        lock = await lockSlotBatch([
+          { consultantProfileId, startsAt, endsAt },
+          ...(session.user.consultantProfileId &&
+          session.user.consultantProfileId !== consultantProfileId
+            ? [
+                {
+                  consultantProfileId: session.user.consultantProfileId,
+                  startsAt,
+                  endsAt,
+                },
+              ]
+            : []),
+        ]);
 
         console.log(
           JSON.stringify({
@@ -384,19 +417,6 @@ export async function POST(req: NextRequest) {
             timestamp: new Date().toISOString(),
           }),
         );
-
-        // #1703 D4 — counted under the slot lock (consultant + interval atoms)
-        // so a burst on one slot overshoots the cap by at most what it allows.
-        const atCapacity = await capacityRefusal(
-          prisma,
-          consultationPlan.consultantProfile,
-        );
-        if (atCapacity) {
-          return NextResponse.json(
-            { error: atCapacity.message, code: atCapacity.code },
-            { status: 409 },
-          );
-        }
 
         // The 30-minute interval starts the window covers — the validator's
         // unit of arithmetic (#1554: the persisted shape is one row below).
@@ -417,59 +437,6 @@ export async function POST(req: NextRequest) {
         });
         const slotChunkStarts = intervalStartsOf(occurrenceToCreate);
 
-        // RE-VALIDATE inside lock: Ensure ALL 30-min chunks are still available
-        // This is the critical missing piece - prevents double-booking even after lock
-        // #1583 B-P1-06 / E-P1-05 — both parties and the co-host arm: the
-        // consultee's own overlap on another consultant, and an ACCEPTED
-        // webinar/class seat the consultant holds, are conflicts too.
-        const validationService = new ScheduleValidationService(prisma);
-        const validation = await validationService.checkSlotAvailability(
-          slotChunkStarts,
-          consultationPlan.consultantProfile.user.id,
-          consultantProfileId,
-          session.user.id,
-        );
-
-        if (!validation.isValid) {
-          console.log(
-            JSON.stringify({
-              event: "slot_booking_validation_failed",
-              consultant: consultantProfileId,
-              slot: startsAt,
-              user: session.user.id,
-              errors: validation.errors,
-              timestamp: new Date().toISOString(),
-            }),
-          );
-
-          // Typed like the allocator's 409 family (#1702); the other party's
-          // name stays out of a consultee-facing body.
-          const ownOverlap = validation.conflicts?.some(
-            (c) => c.otherParty?.userId === session.user.id,
-          );
-          return NextResponse.json(
-            {
-              error: ownOverlap
-                ? "You already have a session booked during this time."
-                : "Slot no longer available",
-              code: "SLOT_TAKEN",
-              conflicts:
-                validation.conflicts?.length ?? validation.errors.length,
-            },
-            { status: 409 },
-          );
-        }
-
-        console.log(
-          JSON.stringify({
-            event: "slot_booking_validation_passed",
-            consultant: consultantProfileId,
-            slot: startsAt,
-            user: session.user.id,
-            timestamp: new Date().toISOString(),
-          }),
-        );
-
         // CRITICAL SECTION: Create consultation (protected by lock AND validated)
         // #1333 — the request and its opening timeline row commit together, so
         // a booking that exists is never one the staff timeline has nothing to
@@ -478,6 +445,50 @@ export async function POST(req: NextRequest) {
         // budget sits well inside the 60 s slot lock held above.
         const consultation = await prisma.$transaction(
           async (tx) => {
+            // Cap and availability are read on this transaction, after every
+            // lock, so the insert below commits against what they saw.
+            const atCapacity = await capacityRefusal(
+              tx,
+              consultationPlan.consultantProfile,
+            );
+            if (atCapacity) {
+              throw new RequestRefusal(409, {
+                error: atCapacity.message,
+                code: atCapacity.code,
+              });
+            }
+            const validation = await new ScheduleValidationService(
+              tx,
+            ).checkSlotAvailability(
+              slotChunkStarts,
+              consultationPlan.consultantProfile.user.id,
+              consultantProfileId,
+              session.user.id,
+            );
+            if (!validation.isValid) {
+              console.log(
+                JSON.stringify({
+                  event: "slot_booking_validation_failed",
+                  consultant: consultantProfileId,
+                  slot: startsAt,
+                  user: session.user.id,
+                  errors: validation.errors,
+                  timestamp: new Date().toISOString(),
+                }),
+              );
+              // The other party's name stays out of a consultee-facing body.
+              const ownOverlap = validation.conflicts?.some(
+                (c) => c.otherParty?.userId === session.user.id,
+              );
+              throw new RequestRefusal(409, {
+                error: ownOverlap
+                  ? "You already have a session booked during this time."
+                  : "Slot no longer available",
+                code: "SLOT_TAKEN",
+                conflicts:
+                  validation.conflicts?.length ?? validation.errors.length,
+              });
+            }
             const created = await tx.consultation.create({
               data: {
                 consultationPlanId: consultationPlanId,
@@ -589,6 +600,11 @@ export async function POST(req: NextRequest) {
         stagedEmailRows = emailRows;
         createdConsultation = consultation;
       } catch (lockError) {
+        if (lockError instanceof RequestRefusal) {
+          return NextResponse.json(lockError.body, {
+            status: lockError.httpStatus,
+          });
+        }
         console.error(
           JSON.stringify({
             event: "slot_booking_error",
@@ -637,7 +653,7 @@ export async function POST(req: NextRequest) {
       } finally {
         // ALWAYS release lock (even on error)
         if (lock) {
-          await unlockSlotBooking(lock);
+          await unlockSlotInterval(lock);
           console.log(
             JSON.stringify({
               event: "slot_booking_lock_released",
@@ -650,9 +666,12 @@ export async function POST(req: NextRequest) {
         }
       }
     } finally {
-      // Release the consultee arm last (reverse acquisition order).
+      // Release in reverse acquisition order.
       if (consulteeLock) {
         await unlockConsulteeBooking(consulteeLock);
+      }
+      if (requestCapLock) {
+        await unlockRequestCap(requestCapLock);
       }
     }
 
@@ -685,6 +704,16 @@ export async function POST(req: NextRequest) {
     if (error instanceof BookingLockUnavailableError) {
       return NextResponse.json(
         { error: error.message },
+        { status: error.httpStatus },
+      );
+    }
+    if (error instanceof RequestCapBusyError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: error.code,
+          retryAfter: error.retryAfterSeconds,
+        },
         { status: error.httpStatus },
       );
     }

@@ -38,7 +38,9 @@ export function isModeledOutcome(error: unknown): boolean {
     isExclusionViolation(error) ||
     // AE-2 (#784) — a co-host already committed elsewhere is a scheduling
     // answer, not a fault.
-    error instanceof CollaboratorUnavailableError
+    error instanceof CollaboratorUnavailableError ||
+    // Another lifecycle write holds the booking right now.
+    isAppointmentBusy(error)
   );
 }
 
@@ -90,6 +92,9 @@ export function classifyError(error: unknown): {
   if (error instanceof CollaboratorUnavailableError) {
     return { errorCode: "COLLABORATOR_UNAVAILABLE", httpStatus: 409 };
   }
+  if (isAppointmentBusy(error)) {
+    return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
+  }
 
   // Structured DB-conflict detection (no message sniffing): unique (P2002 /
   // 23505) and the #440 exclusion constraint (23P01). createAppointments
@@ -114,4 +119,12 @@ export function classifyError(error: unknown): {
     return { errorCode: "NOT_FOUND", httpStatus: 400 };
   }
   return { errorCode: "UNKNOWN_ERROR", httpStatus: 500 };
+}
+
+/** The appointment lock's busy refusal, by its stable code. */
+function isAppointmentBusy(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as { code?: unknown }).code === "APPOINTMENT_BUSY"
+  );
 }

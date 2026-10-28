@@ -165,6 +165,7 @@ export function OrgActorDetail({
             ? {
                 estimatedRefundPaise: shown.estimatedRefundPaise,
                 creditRestoresInFull: shown.creditRestoresInFull,
+                expectedPaid: shown.expectedPaid,
               }
             : undefined,
         ),

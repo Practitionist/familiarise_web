@@ -270,12 +270,13 @@ export async function POST(
     // own consultant/consultee locks are keyed by person, not by appointment,
     // and never contend with a cancel at all. Lock order is unchanged: the
     // appointment atom is the coarsest and is taken before the allocator's.
-    const result = await withAppointmentLock(appointmentId, () =>
+    const result = await withAppointmentLock(appointmentId, (lock) =>
       acceptProposal({
         rescheduleRequestId: open.id,
         eventType,
         eventId,
         resolvedById: session.user.id,
+        heldAppointmentLock: lock,
       }),
     );
     if (!result.done) {

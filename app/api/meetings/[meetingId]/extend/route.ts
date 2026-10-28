@@ -24,7 +24,13 @@ import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
 import { getPlatformVideoConfig } from "@/lib/stream/video-config";
 import {
+  hostBatchEntries,
+  withHostSlotBatch,
+} from "@/lib/booking/host-slot-batch";
+import {
   buildCohostCommitmentFilter,
+  buildDeadHoldFilter,
+  OCCUPYING_OCCURRENCE_WHERE,
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
@@ -179,9 +185,9 @@ async function hasExtensionScheduleConflict(
       where: {
         id: { not: occurrence.id },
         ...conflictScope,
-        isTentative: false,
-        deletedAt: null,
-        completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+        // Live holds and pending requests count, as for every reader; a lapsed hold does not.
+        ...OCCUPYING_OCCURRENCE_WHERE,
+        NOT: { appointment: buildDeadHoldFilter(new Date()) },
         startsAt: { lt: conflictHorizon },
         endsAt: { gt: slotStartsAt },
       },
@@ -307,6 +313,18 @@ const alreadyExtendedResponse = (roomEndsAt: Date) =>
       endsAt: roomEndsAt.toISOString(),
       hasConflictingNextBooking: false,
       error: "Free +15m extension has already been used for this session.",
+    },
+    { status: 409 },
+  );
+
+const nextTimeBookedResponse = () =>
+  NextResponse.json(
+    {
+      extended: false,
+      hasConflictingNextBooking: true,
+      code: "SESSION_NOT_EXTENDABLE",
+      error:
+        "The time right after this session is booked, so it can't be extended.",
     },
     { status: 409 },
   );
@@ -478,43 +496,68 @@ export async function POST(
         MEETING_EXTENSION_SECONDS * 1000,
     );
 
-    const conflicted = await hasExtensionScheduleConflict(
-      occurrence,
-      consultantProfileId,
-      participantUserIds,
-      startsAt,
-      conflictHorizon,
-    );
-    if (conflicted) {
-      return NextResponse.json(
-        {
-          extended: false,
-          hasConflictingNextBooking: true,
-          error:
-            "Cannot extend because another confirmed session starts within 15 minutes.",
-        },
-        { status: 409 },
-      );
-    }
+    // The +15 minutes are host time: hold their atoms (host and presenters)
+    // across the probe and the claim, so no booking lands in them meanwhile.
+    const presenterProfileIds = (
+      occurrence.appointment?.webinar?.webinarPlan?.collaborators ??
+      occurrence.appointment?.class?.classPlan?.collaborators ??
+      []
+    ).map((c) => c.consultantProfileId);
+    const extensionWindow = {
+      startsAt: new Date(Math.max(currentRoomEndsAt.getTime(), Date.now())),
+      endsAt: conflictHorizon,
+    };
+    let refusal: NextResponse | null;
+    try {
+      refusal = await withHostSlotBatch(
+        hostBatchEntries(
+          consultantProfileId
+            ? [consultantProfileId, ...presenterProfileIds]
+            : presenterProfileIds,
+          [extensionWindow],
+        ),
+        async (_renew, keepUntil) => {
+          const conflicted = await hasExtensionScheduleConflict(
+            occurrence,
+            consultantProfileId,
+            participantUserIds,
+            startsAt,
+            conflictHorizon,
+          );
+          if (conflicted) return nextTimeBookedResponse();
 
-    const claimed = await prisma.meeting.updateMany({
-      where: extendableWhere(meetingRow.id, meetingRow.extensionsUsed),
-      data: {
-        extendedSeconds: { increment: MEETING_EXTENSION_SECONDS },
-        extensionsUsed: { increment: 1 },
-      },
-    });
-    if (claimed.count === 0) {
-      const latest = await prisma.meeting.findUnique({
-        where: { id: meetingRow.id },
-        select: { extensionsUsed: true, extendedSeconds: true },
-      });
-      return latest && latest.extensionsUsed >= MAX_MEETING_EXTENSIONS
-        ? alreadyExtendedResponse(
-            resolveRoomEndsAt(bookedEndsAt, latest.extendedSeconds),
-          )
-        : notExtendableResponse();
+          const claimed = await prisma.meeting.updateMany({
+            where: extendableWhere(meetingRow.id, meetingRow.extensionsUsed),
+            data: {
+              extendedSeconds: { increment: MEETING_EXTENSION_SECONDS },
+              extensionsUsed: { increment: 1 },
+            },
+          });
+          if (claimed.count === 0) {
+            const latest = await prisma.meeting.findUnique({
+              where: { id: meetingRow.id },
+              select: { extensionsUsed: true, extendedSeconds: true },
+            });
+            return latest && latest.extensionsUsed >= MAX_MEETING_EXTENSIONS
+              ? alreadyExtendedResponse(
+                  resolveRoomEndsAt(bookedEndsAt, latest.extendedSeconds),
+                )
+              : notExtendableResponse();
+          }
+
+          // No occurrence row carries the extra minutes, so their atoms stay
+          // held until the extension ends: no booking lands in them meanwhile.
+          await keepUntil(conflictHorizon);
+          return null;
+        },
+      );
+    } catch (err) {
+      if (err instanceof ConsultantScheduleConflictError) {
+        return nextTimeBookedResponse();
+      }
+      throw err;
     }
+    if (refusal) return refusal;
 
     const extendedSeconds =
       meetingRow.extendedSeconds + MEETING_EXTENSION_SECONDS;

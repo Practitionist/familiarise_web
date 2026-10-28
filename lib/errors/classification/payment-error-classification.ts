@@ -119,6 +119,10 @@ export const ErrorTypes = {
   SLOT_NOT_ON_GRID: "SLOT_NOT_ON_GRID",
   // Another buyer took this 1:1 time first; rides as `code` beside AVAILABILITY_ERROR.
   SLOT_TAKEN: "SLOT_TAKEN",
+  // A seat checkout whose hold ended before its gateway order was filled in.
+  SEAT_HOLD_LAPSED: "SEAT_HOLD_LAPSED",
+  // A replay of a seat checkout whose order is still being minted; 409 + retryAfter.
+  CHECKOUT_IN_PROGRESS: "CHECKOUT_IN_PROGRESS",
 
   // Catch-all
   UNKNOWN: "UNKNOWN_ERROR",
@@ -583,6 +587,20 @@ const BUSINESS_ERROR_ENTRIES = [
     code: "PAYMENT_LINK_FAILED",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 502,
+  },
+  {
+    code: "SEAT_HOLD_LAPSED",
+    errorType: ErrorTypes.SEAT_HOLD_LAPSED,
+    httpStatus: 409,
+    userMessage:
+      "Your seat was held for a while, but payment didn't open in time. Your card was not charged — start checkout again.",
+  },
+  {
+    code: "CHECKOUT_IN_PROGRESS",
+    errorType: ErrorTypes.CHECKOUT_IN_PROGRESS,
+    httpStatus: 409,
+    userMessage:
+      "Your checkout is still being prepared. Try again in a moment — your card was not charged.",
   },
 ] as const satisfies ReadonlyArray<BusinessErrorEntry>;
 

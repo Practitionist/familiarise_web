@@ -24,13 +24,17 @@ jest.mock("../../lib/profiles/ensure-consultee-profile", () => ({
   ensureConsulteeProfile: jest.fn(async () => undefined),
 }));
 const mockLockSlotBooking = jest.fn(async () => ({ key: "slot" }));
+const mockLockRequestCap = jest.fn(async () => ({ key: "request-cap" }));
 jest.mock("../../utils/appointmentlock", () => ({
-  lockSlotBooking: (...a: unknown[]) => mockLockSlotBooking(...(a as [])),
-  unlockSlotBooking: jest.fn(async () => undefined),
+  lockSlotBatch: (...a: unknown[]) => mockLockSlotBooking(...(a as [])),
+  unlockSlotInterval: jest.fn(async () => undefined),
   lockConsulteeBooking: jest.fn(async () => ({ key: "consultee" })),
   unlockConsulteeBooking: jest.fn(async () => undefined),
+  lockRequestCap: (...a: unknown[]) => mockLockRequestCap(...(a as [])),
+  unlockRequestCap: jest.fn(async () => undefined),
   BookingLockUnavailableError: class extends Error {},
   LockContentionError: class extends Error {},
+  RequestCapBusyError: class extends Error {},
 }));
 const mockCheckSlotAvailability = jest.fn(async () => ({
   isValid: true,
@@ -164,7 +168,9 @@ describe("consultant request gate", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("CONSULTANT_AT_CAPACITY");
     expect(mockLockSlotBooking).toHaveBeenCalledTimes(1);
-    // The consultant count (second count call) runs after the lock, not before.
+    // The consultant count runs under the expert's request-cap lock and after
+    // the slot batch, inside the insert's own transaction.
+    expect(mockLockRequestCap).toHaveBeenCalledWith("cp_1");
     expect(mockConsultationCount.mock.invocationCallOrder[1]).toBeGreaterThan(
       mockLockSlotBooking.mock.invocationCallOrder[0],
     );

@@ -1,7 +1,7 @@
 // The one price derivation: plan gates, discount, GST, referral credits and
 // the buyer country, read in its own transaction before any lock.
 
-import { liveParticipant } from "@/lib/booking/participants";
+import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import prisma from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import { firstCycleWindow } from "@/lib/booking/entitlement";
@@ -277,8 +277,9 @@ export async function calculateAmountAndValidate(
             appointment: {
               include: {
                 occurrences: true,
+                // A lapsed seat hold holds no place (the seat twin of a dead hold).
                 participants: {
-                  where: { ...liveParticipant(), role: "CONSULTEE" },
+                  where: seatHoldingParticipant(new Date()),
                   select: { userId: true, status: true },
                 },
               },
@@ -344,8 +345,9 @@ export async function calculateAmountAndValidate(
             appointment: {
               include: {
                 occurrences: true,
+                // A lapsed seat hold holds no place (the seat twin of a dead hold).
                 participants: {
-                  where: { ...liveParticipant(), role: "CONSULTEE" },
+                  where: seatHoldingParticipant(new Date()),
                   select: { userId: true, status: true },
                 },
               },

@@ -8,6 +8,10 @@ import {
   type AllocationTxOptions,
 } from "@/utils/scheduling-engine/types";
 import { SlotShortageError } from "@/utils/scheduling-engine/errors";
+import {
+  AllocationRaceError,
+  SlotsTakenError,
+} from "@/lib/booking/allocation/slot-batch";
 import { attemptTrigger } from "@/lib/novu";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import {
@@ -17,6 +21,13 @@ import {
 import { autoAllocate } from "@/lib/booking/allocation/modes/auto";
 import { manualAllocate } from "@/lib/booking/allocation/modes/manual";
 import { useRequestedSlots } from "@/lib/booking/allocation/modes/use-requested";
+import { getEventRelationField } from "@/lib/booking/allocation/identity";
+import prisma from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
+import {
+  renewAppointmentLock,
+  withAppointmentLock,
+} from "@/utils/appointmentlock";
 
 /**
  * Main entry point for slot allocation
@@ -26,7 +37,8 @@ export async function allocate(
   request: AllocationRequest,
 ): Promise<AllocationResult> {
   try {
-    const { stagedNotices, overageNotice, ...result } = await dispatch(request);
+    const { stagedNotices, overageNotice, ...result } =
+      await underAppointmentLock(request, () => dispatch(request));
     // PR 2c — the allocation-time notification (audit G1 / B9's promised
     // completion): APPOINTMENT_BOOKED was deliberately skipped at payment
     // when no slots existed; THIS is where the times finally exist, so both
@@ -103,8 +115,38 @@ export async function allocate(
             requiredSessions: error.requiredSessions,
           }
         : {}),
+      ...(error instanceof SlotsTakenError
+        ? { takenSlotStarts: error.takenSlotStarts }
+        : {}),
+      ...(error instanceof AllocationRaceError
+        ? { retryAfterSeconds: error.retryAfterSeconds }
+        : {}),
     };
   }
+}
+
+/**
+ * Lock order: appointment → auto-allocate → consultee → slot batch. An event
+ * that already has its booking wrapper is allocated under that wrapper's
+ * appointment lock, so no cancel or reschedule interleaves; a caller already
+ * holding the grant hands it over and it is renewed, never re-acquired.
+ */
+async function underAppointmentLock<T>(
+  request: AllocationRequest,
+  run: () => Promise<T>,
+): Promise<T> {
+  if (request.heldAppointmentLock) {
+    await renewAppointmentLock(request.heldAppointmentLock);
+    return run();
+  }
+  const wrapper = await prisma.appointment.findFirst({
+    where: {
+      [`${getEventRelationField(request.eventType)}Id`]: request.eventId,
+      deletedAt: null,
+    } as Prisma.AppointmentWhereInput,
+    select: { id: true },
+  });
+  return wrapper ? withAppointmentLock(wrapper.id, run) : run();
 }
 
 /**
@@ -147,7 +189,6 @@ export async function dispatch(
         request.slots,
         request.idempotencyKey,
         request.initialAllocation,
-        request.wideLock,
         request.expectedTentativeSlotCount,
         request.excludeRescheduleRequestId,
         // The consultant explicitly accepting these times as-is. Gated to

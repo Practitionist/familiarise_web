@@ -13,14 +13,22 @@ import {
   isRecurringEventType,
 } from "@/utils/scheduling-engine/types";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { assertSlotsStillPublished } from "@/lib/booking/allocation/coverage";
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import {
   lockAutoAllocate,
   unlockAutoAllocate,
   lockConsulteeBooking,
   unlockConsulteeBooking,
+  unlockSlotInterval,
+  type SlotBatchGrant,
   type ApprovalLock,
 } from "@/utils/appointmentlock";
+import {
+  allocationBatchProfiles,
+  lockPickedSlots,
+  renewAllocationBatch,
+} from "@/lib/booking/allocation/slot-batch";
 import type { FreedWindow } from "@/lib/booking/class-series";
 import {
   AllocationValidationError,
@@ -94,7 +102,6 @@ export async function manualAllocate(
   slotStrings: string[],
   idempotencyKey?: string,
   initialAllocation?: boolean,
-  wideLock?: boolean,
   expectedTentativeSlotCount?: number,
   /**
    * #1340 — see `AllocationRequest.excludeRescheduleRequestId`. Both
@@ -141,37 +148,9 @@ export async function manualAllocate(
     };
   }
 
-  // Acquire consultant-level distributed lock before the transaction.
-  // Without this, concurrent manual allocations for the same subscription/class
-  // can both pass validateNoConflicts() and create duplicate appointments.
-  // #860 — shard the lock by the earliest target day so allocations for
-  // different days don't serialize; same-day (the actual duplicate risk)
-  // still shares the key.
-  //
-  // #440's `occurrence_no_confirmed_overlap` GiST constraint backstops only what it
-  // is keyed on: two confirmed slots of one consultant covering the same
-  // instant. It cannot see a COUNT, so it is no backstop for a weekly cap —
-  // and the sessions that race that cap sit on different days, so they never
-  // overlap and the constraint stays silent.
-  //
-  // #1319 — the shard is therefore only safe for a cap-less placement. The
-  // recurring types are exactly the ones whose validator enforces
-  // sessionsPerWeek (subscription via SubscriptionValidationService, class via
-  // the [WEEKLY_LIMIT] check), and a week spans days: two manual allocations
-  // on different days of one week would take different keys and each clear the
-  // cap on a count the other has not committed yet. They take the
-  // consultant-wide key whatever wideLock says; wideLock stays the explicit
-  // opt-out for callers placing times nobody picked per-day.
-  const hasWeeklyCap = isRecurringEventType(eventType);
-  const lockScope =
-    wideLock || hasWeeklyCap
-      ? undefined
-      : slotStrings
-          .map((s) => new Date(s))
-          .filter((d) => !Number.isNaN(d.getTime()))
-          .sort((a, b) => a.getTime() - b.getTime())[0]
-          ?.toISOString()
-          .slice(0, 10);
+  // One consultant-wide key for every mode and event, so two allocations for
+  // the same expert never both clear a count (weekly cap) the other has not
+  // committed; the slot batch below serialises the times themselves.
   // #1697 item 3 — the loser's fast exit. Mirrors checkout's EventFullError
   // gate: one indexed probe against what the GiST constraint would refuse,
   // BEFORE the lock wait and the full validation, so the 499 losers of a
@@ -185,10 +164,11 @@ export async function manualAllocate(
     slotStrings,
   );
 
-  const lock = await lockAutoAllocate(consultantProfileId, lockScope);
+  const lock = await lockAutoAllocate(consultantProfileId);
   // #898 follow-up — serialize on the consultee too (consultant → consultee
   // lock order) so one person can't be booked with two consultants at once.
   let consulteeLock: ApprovalLock | null = null;
+  let slotGrant: SlotBatchGrant | null = null;
   try {
     const consulteeLockUserId = await getConsulteeUserId(eventType, eventId);
     if (consulteeLockUserId) {
@@ -480,9 +460,22 @@ export async function manualAllocate(
       );
     }
 
+    // Lock order: consultant → consultee → slot batch over every busy profile.
+    // Picked times never wait: a held one is a typed 409 naming the times.
+    slotGrant = await lockPickedSlots(
+      slots,
+      await allocationBatchProfiles({
+        eventType,
+        planId,
+        consultantProfileId,
+        consulteeUserId,
+      }),
+    );
+
     // SHORT write-only transaction (see autoAllocate for the rationale).
     return await prisma.$transaction(
       async (tx) => {
+        await renewAllocationBatch(slotGrant);
         // #1692 — per-event serialisation first (see autoAllocate).
         const lockedReplay = await guardAllocationInTx(
           tx,
@@ -519,6 +512,10 @@ export async function manualAllocate(
             `Slot taken during allocation: ${recheck.errors.join("; ")}`,
             "SLOT_TAKEN",
           );
+        }
+        // The consultant's explicit override waives availability, here as out of tx.
+        if (!override) {
+          await assertSlotsStillPublished(tx, consultantProfileId, slots);
         }
 
         // AE-2 (#784) — a webinar/class co-host is not a slot participant, so
@@ -644,6 +641,7 @@ export async function manualAllocate(
       },
     );
   } finally {
+    if (slotGrant) await unlockSlotInterval(slotGrant);
     if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
     await unlockAutoAllocate(lock);
   }

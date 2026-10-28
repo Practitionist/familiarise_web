@@ -162,8 +162,14 @@ export function buildConsultantOccupancyWhere(
   const reachesConsultant: Prisma.AppointmentWhereInput[] = [
     {
       // The consultant holds a seat (as consultee elsewhere) on an
-      // appointment with a row that still holds its time.
-      participants: { some: liveParticipant(consultantUserId) },
+      // appointment with a row that still holds its time; a lapsed seat hold
+      // holds nothing.
+      participants: {
+        some: {
+          ...liveParticipant(consultantUserId),
+          ...(now ? { NOT: buildDeadSeatFilter(now) } : {}),
+        },
+      },
       occurrences: { some: OCCUPYING_OCCURRENCE_WHERE },
     },
   ];
@@ -262,5 +268,38 @@ export function buildDeadHoldFilter(now: Date): Prisma.AppointmentWhereInput {
         ...allPaymentsDead,
       },
     ],
+  };
+}
+
+/**
+ * The seat twin of buildDeadHoldFilter: a HELD seat whose own payment has
+ * lapsed (EXPIRED, FAILED, or PENDING past its window) no longer occupies the
+ * event's capacity or the buyer's calendar, even before a sweep releases it.
+ */
+export function buildDeadSeatFilter(
+  now: Date,
+): Prisma.AppointmentParticipantWhereInput {
+  return {
+    status: "HELD",
+    payment: {
+      is: {
+        OR: [
+          { paymentStatus: PaymentStatus.EXPIRED },
+          { paymentStatus: PaymentStatus.FAILED },
+          { paymentStatus: PaymentStatus.PENDING, expiresAt: { lt: now } },
+        ],
+      },
+    },
+  };
+}
+
+/** A consultee seat that holds a place on a group event right now. */
+export function seatHoldingParticipant(
+  now: Date,
+): Prisma.AppointmentParticipantWhereInput {
+  return {
+    ...liveParticipant(),
+    role: "CONSULTEE",
+    NOT: buildDeadSeatFilter(now),
   };
 }

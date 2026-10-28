@@ -4,7 +4,9 @@ import {
   buildConsultantOccupancyWhere,
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
+  OCCUPYING_OCCURRENCE_WHERE,
 } from "@/utils/scheduling-engine/occupancyPolicy";
+import { liveParticipant } from "@/lib/booking/participants";
 
 /**
  * AE-2 (#784) — collaborator double-booking guard.
@@ -40,13 +42,15 @@ export class ConsultantScheduleConflictError extends Error {
 
 /**
  * A co-host's existing commitments: appointments they own (across all 5
- * offering types or direct occurrence ownership), or have ACCEPTED a
- * collaboration on.
+ * offering types or direct occurrence ownership), have ACCEPTED a
+ * collaboration on, or hold a seat on as someone else's client.
  */
 function commitmentClauses(
   consultantProfileId: string,
+  consultantUserId: string,
 ): Prisma.AppointmentWhereInput[] {
   return [
+    { participants: { some: liveParticipant(consultantUserId) } },
     { consultation: { consultationPlan: { consultantProfileId } } },
     { subscription: { subscriptionPlan: { consultantProfileId } } },
     { webinar: { webinarPlan: { consultantProfileId } } },
@@ -68,11 +72,7 @@ function commitmentClauses(
     },
     {
       occurrences: {
-        some: {
-          consultantProfileId,
-          deletedAt: null,
-          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"] },
-        },
+        some: { consultantProfileId, ...OCCUPYING_OCCURRENCE_WHERE },
       },
     },
   ];
@@ -143,7 +143,9 @@ export async function assertCollaboratorsAvailableForWindows(
     },
     select: {
       consultantProfileId: true,
-      consultantProfile: { select: { user: { select: { name: true } } } },
+      consultantProfile: {
+        select: { user: { select: { id: true, name: true } } },
+      },
     },
   });
   if (collaborators.length === 0) return;
@@ -162,8 +164,8 @@ export async function assertCollaboratorsAvailableForWindows(
       startsAt: { lt: w.endsAt },
       endsAt: { gt: w.startsAt },
     })),
-    deletedAt: null,
-    completionStatus: { notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"] },
+    // A pending reschedule's RESCHEDULED hold occupies, as for every reader.
+    ...OCCUPYING_OCCURRENCE_WHERE,
     ...(excluded.length > 0 ? { appointmentId: { notIn: excluded } } : {}),
     appointment: {
       deletedAt: null,
@@ -179,7 +181,7 @@ export async function assertCollaboratorsAvailableForWindows(
   const anyClash = await db.appointmentOccurrence.findFirst({
     where: overlapWhere({
       OR: collaborators.flatMap((c) =>
-        commitmentClauses(c.consultantProfileId),
+        commitmentClauses(c.consultantProfileId, c.consultantProfile.user.id),
       ),
     }),
     select: { id: true },
@@ -191,7 +193,12 @@ export async function assertCollaboratorsAvailableForWindows(
   const clashing: string[] = [];
   for (const c of collaborators) {
     const conflict = await db.appointmentOccurrence.findFirst({
-      where: overlapWhere({ OR: commitmentClauses(c.consultantProfileId) }),
+      where: overlapWhere({
+        OR: commitmentClauses(
+          c.consultantProfileId,
+          c.consultantProfile.user.id,
+        ),
+      }),
       select: { id: true },
     });
     if (conflict) {
@@ -262,8 +269,7 @@ export async function assertConsultantAvailableForWindows(
         startsAt: { lt: w.endsAt },
         endsAt: { gt: w.startsAt },
       })),
-      deletedAt: null,
-      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"] },
+      ...OCCUPYING_OCCURRENCE_WHERE,
       ...(excluded.length > 0 ? { appointmentId: { notIn: excluded } } : {}),
       appointment: buildConsultantOccupancyWhere(
         params.consultantProfileId,

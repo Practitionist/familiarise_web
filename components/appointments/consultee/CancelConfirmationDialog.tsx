@@ -25,6 +25,7 @@ import {
   cancelPreviewQueryKey,
   cancelPreviewUrl,
   type ShownCancelQuote,
+  UNPAID_CANCEL_QUOTE,
 } from "@/lib/appointments/cancel-requote";
 
 /** #1780 — `GET …/cancel/preview?scope=seat`: leaving the viewer's own seat. */
@@ -280,6 +281,17 @@ export function CancelConfirmationDialog({
     );
   };
 
+  /** What the click binds to: the quote shown, or the unpaid screen of an approval awaiting payment. */
+  const shownQuote = (): ShownCancelQuote | undefined => {
+    if (isPendingPayment) return UNPAID_CANCEL_QUOTE;
+    if (!preview || preview.paid === false) return undefined;
+    return {
+      estimatedRefundPaise: preview.estimatedRefundPaise,
+      creditRestoresInFull: preview.creditRestoresInFull,
+      expectedPaid: preview.expectedPaid,
+    };
+  };
+
   return (
     <AlertDialog open={isOpen} onOpenChange={(open) => !open && onCancel()}>
       <AlertDialogContent>
@@ -323,16 +335,7 @@ export function CancelConfirmationDialog({
             {isLeave ? "Stay enrolled" : "Keep Appointment"}
           </AlertDialogCancel>
           <AlertDialogAction
-            onClick={() =>
-              onConfirm(
-                preview && preview.paid !== false
-                  ? {
-                      estimatedRefundPaise: preview.estimatedRefundPaise,
-                      creditRestoresInFull: preview.creditRestoresInFull,
-                    }
-                  : undefined,
-              )
-            }
+            onClick={() => onConfirm(shownQuote())}
             disabled={
               isLoading ||
               isPreviewLoading ||

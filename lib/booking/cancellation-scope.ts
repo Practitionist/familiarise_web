@@ -50,6 +50,12 @@ export const LIVE_SLOT_WHERE = {
   completionStatus: { in: [...LIVE_SLOT_STATUSES] },
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
+/** A payment that funds its booking now: captured and not retired. */
+export const LIVE_SUCCEEDED_PAYMENT_WHERE = {
+  paymentStatus: "SUCCEEDED",
+  deletedAt: null,
+} as const satisfies Prisma.PaymentWhereInput;
+
 export type BookingRefundContext = {
   /** The single SUCCEEDED payment funding this booking (zero-amount credit-funded included), if any. */
   paidPayment: {
@@ -151,12 +157,11 @@ export async function resolveBookingRefundContext(
       cancellationPolicy: POLICY_TERMS_INCLUDE,
       payment: {
         where: {
-          paymentStatus: "SUCCEEDED",
           // #1161 — no amount floor: a fully-credit-funded payment (amount 0,
           // free_ intent) must surface here or the cancel route's credit-
           // restoration branch can never fire (it was dead code behind this
           // filter — caught by the #1180 preview work).
-          deletedAt: null,
+          ...LIVE_SUCCEEDED_PAYMENT_WHERE,
           ...(payerUserId ? { userId: payerUserId } : {}),
         },
         select: {

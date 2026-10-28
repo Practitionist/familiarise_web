@@ -21,15 +21,22 @@ import "./setup";
 // #908 — read/validate now run on the BASE client outside the write txn, so the
 // base mock carries appointment.findMany too. beforeEach points these read fns
 // at the same mockTx instances so existing per-test wiring still drives them.
+// The in-transaction availability re-read has its own suite; these isolate the allocator.
+jest.mock("../../lib/booking/allocation/coverage", () => ({
+  assertSlotsStillPublished: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // The allocator's slot batch reads co-host seats and an expert consultee's own profile.
+    consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
+    collaborator: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(),
     consultation: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
-    appointment: { findMany: jest.fn() },
+    appointment: { findMany: jest.fn(), findFirst: jest.fn() },
     // #1065 — a reschedule reads the initiator's stated placement preference
     // before searching. Unstubbed it resolves undefined, which is the "no
     // preference" case every test here means.
@@ -41,6 +48,10 @@ jest.mock("../../lib/prisma", () => ({
 
 // Mock appointmentlock to avoid @upstash/redis ESM import issues in Jest
 jest.mock("../../utils/appointmentlock", () => ({
+  // allocate() takes an existing booking's appointment lock first.
+  withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) =>
+    fn({ key: "appointment-lock" }),
+  renewAppointmentLock: async () => true,
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),
@@ -50,6 +61,9 @@ jest.mock("../../utils/appointmentlock", () => ({
     .fn()
     .mockResolvedValue({ key: "mock-consultee-key", value: "mock-value" }),
   unlockConsulteeBooking: jest.fn().mockResolvedValue(undefined),
+  tryLockSlotBatch: jest.fn().mockResolvedValue({ ok: true, grant: [] }),
+  extendSlotInterval: jest.fn().mockResolvedValue(true),
+  unlockSlotInterval: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Mock ScheduleValidationService to isolate unit under test.
@@ -3230,22 +3244,13 @@ describe("Manual allocation - distributed lock", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    // Lock should have been acquired with the consultant profile ID,
-    // day-sharded (#860) by the earliest target slot's day.
-    expect(lockAutoAllocate).toHaveBeenCalledWith(
-      "consultant-profile-1",
-      "2025-01-06",
-    );
+    // One consultant-wide key for every mode; the slot batch serialises times.
+    expect(lockAutoAllocate).toHaveBeenCalledWith("consultant-profile-1");
     // Lock should have been released in finally block
     expect(unlockAutoAllocate).toHaveBeenCalled();
   });
 
-  /**
-   * #1319 — the day shard is narrower than the weekly cap it has to hold. Two
-   * manual allocations on different days of one week took different keys and
-   * each cleared sessionsPerWeek on a stale count; #440's GiST constraint sees
-   * overlap, never a count. Every weekly-capped type takes the wide key.
-   */
+  /** A weekly cap is a count the slot batch cannot see, so the key is consultant-wide. */
   it("takes the consultant-wide lock when a weekly cap applies", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
 
@@ -3256,10 +3261,7 @@ describe("Manual allocation - distributed lock", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    expect(mockLockAutoAllocate).toHaveBeenCalledWith(
-      "consultant-profile-1",
-      undefined,
-    );
+    expect(mockLockAutoAllocate).toHaveBeenCalledWith("consultant-profile-1");
   });
 
   it("should release lock even when transaction fails", async () => {

@@ -33,6 +33,15 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
+import {
+  driveRefundOwed,
+  stampRefundOwed,
+  type RefundOwedMarker,
+} from "@/lib/payments/operations/refund-owed";
+import {
+  renewAppointmentLock,
+  withAppointmentLock,
+} from "@/utils/appointmentlock";
 import { revokeEndedEventChatAccess } from "@/lib/stream/access-revocation";
 import { BookingRuleError } from "./booking-rule-error";
 import {
@@ -324,9 +333,11 @@ export async function quoteSeatLeave(
 }
 
 /**
- * Release one seat under the rule, then refund it. Returns null when there was
- * no live seat to release (DELETE is idempotent). Throws BookingRuleError when
- * the rule refuses; the transaction has rolled back and the seat stays.
+ * Release one seat under the rule, stamp the refund it owes in the same commit,
+ * then refund it. Returns null when there was no live seat to release (DELETE
+ * is idempotent). Throws BookingRuleError when the rule refuses; the
+ * transaction has rolled back and the seat stays. Serialised with whole-event
+ * cancel and the session settle sweep on the event's appointment lock.
  */
 export async function leaveEventSeat(args: {
   kind: EventKind;
@@ -338,49 +349,69 @@ export async function leaveEventSeat(args: {
   exit?: boolean;
 }) {
   const filter = eventFilter(args.kind, args.eventId);
-  const released = await withSerializableRetry(() =>
-    prisma.$transaction(
-      async (tx) => {
-        const seat = await tx.appointmentParticipant.findFirst({
-          where: {
+  const eventAppointment = await prisma.appointment.findFirst({
+    where: filter,
+    select: { id: true },
+  });
+  if (!eventAppointment) return null;
+  const keyPrefix = args.exit ? "seat-exit" : "seat-leave";
+  const released = await withAppointmentLock(eventAppointment.id, (lock) =>
+    withSerializableRetry(async () => {
+      await renewAppointmentLock(lock);
+      return prisma.$transaction(
+        async (tx) => {
+          const seat = await tx.appointmentParticipant.findFirst({
+            where: {
+              appointment: filter,
+              ...liveParticipant(args.userId),
+              role: "CONSULTEE",
+            },
+            select: {
+              id: true,
+              appointmentId: true,
+              createdAt: true,
+              refundWindowHours: true,
+              sessionsPurchased: true,
+            },
+          });
+          if (!seat) return null;
+          let plan: SeatRefundPlan = { mode: "full" };
+          if (args.exit) {
+            plan = await planSeriesExit(tx, args.eventId, args.userId, seat);
+          } else if (args.isSelfLeave) {
+            plan = await planSelfLeave(
+              tx,
+              args.kind,
+              args.eventId,
+              args.userId,
+              seat,
+            );
+          }
+          const count = await releaseParticipant(tx, {
             appointment: filter,
-            ...liveParticipant(args.userId),
+            userId: args.userId,
             role: "CONSULTEE",
-          },
-          select: {
-            id: true,
-            appointmentId: true,
-            createdAt: true,
-            refundWindowHours: true,
-            sessionsPurchased: true,
-          },
-        });
-        if (!seat) return null;
-        let plan: SeatRefundPlan = { mode: "full" };
-        if (args.exit) {
-          plan = await planSeriesExit(tx, args.eventId, args.userId, seat);
-        } else if (args.isSelfLeave) {
-          plan = await planSelfLeave(
+          });
+          if (count === 0) return null;
+          const payment = await seatPayment(
             tx,
             args.kind,
             args.eventId,
             args.userId,
-            seat,
           );
-        }
-        const count = await releaseParticipant(tx, {
-          appointment: filter,
-          userId: args.userId,
-          role: "CONSULTEE",
-        });
-        return count > 0 ? { seat, plan } : null;
-      },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        maxWait: 10_000,
-        timeout: 15_000,
-      },
-    ),
+          const owed = payment
+            ? seatRefundOwed(payment, plan, `${keyPrefix}:${seat.id}`)
+            : null;
+          if (owed) await stampRefundOwed(tx, owed);
+          return { seat, plan, payment, owed };
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000,
+          timeout: 15_000,
+        },
+      );
+    }),
   );
   if (!released) return null;
 
@@ -393,8 +424,37 @@ export async function leaveEventSeat(args: {
     ...("mode" in released.plan
       ? { mode: released.plan.mode }
       : { amountPaise: released.plan.amountPaise }),
-    dedupeKey: `${args.exit ? "seat-exit" : "seat-leave"}:${released.seat.id}`,
+    dedupeKey: `${keyPrefix}:${released.seat.id}`,
+    ...(released.payment ? { paymentId: released.payment.id } : {}),
   });
+  // Clears the marker by replaying the refund just made, or retries it once;
+  // a death before this line leaves the marker for retry-auto-refunds.
+  if (released.owed) {
+    await driveRefundOwed(released.owed, {
+      initiatedByUserId: args.actorUserId,
+    });
+  }
   await revokeEndedEventChatAccess(args.kind, args.eventId, [args.userId]);
   return { refund };
+}
+
+/**
+ * The marker for this seat's refund, under the key the seat door's Refund row
+ * carries (`<key>:pay:<paymentId>`); null when nothing is owed.
+ */
+function seatRefundOwed(
+  payment: NonNullable<Awaited<ReturnType<typeof seatPayment>>>,
+  plan: SeatRefundPlan,
+  key: string,
+): RefundOwedMarker | null {
+  const balance = refundableBalancePaise(Number(payment.amount), payment);
+  const amountPaise =
+    "mode" in plan ? null : Math.min(plan.amountPaise, balance);
+  if (amountPaise !== null && amountPaise <= 0) return null;
+  return {
+    paymentId: payment.id,
+    amountPaise,
+    key: `${key}:pay:${payment.id}`,
+    reason: "seat released",
+  };
 }

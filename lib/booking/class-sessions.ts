@@ -44,7 +44,17 @@ import {
   type ClassExitAvailableEmailArgs,
 } from "@/lib/email/senders/booking";
 import { goHref } from "@/lib/dashboard/go";
-import { withAppointmentLock } from "@/utils/appointmentlock";
+import {
+  withAppointmentLock,
+  withEventCheckoutLock,
+} from "@/utils/appointmentlock";
+import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
+import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
+import {
+  acceptedCohostProfileIds,
+  hostBatchEntries,
+  withHostSlotBatch,
+} from "./host-slot-batch";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
@@ -134,7 +144,7 @@ const HOSTED_CLASS_SELECT = {
           title: true,
           consultantProfileId: true,
           consultantProfile: {
-            select: { user: { select: { name: true } } },
+            select: { user: { select: { id: true, name: true } } },
           },
         },
       },
@@ -502,6 +512,46 @@ async function verifyMakeUpCollaboratorsAvailable(
 }
 
 /**
+ * The host is free for the make-up window by every reader's predicate: live
+ * holds, pending requests, unpaid approvals, pending reschedules, co-hosted
+ * events and the host's own client bookings all occupy.
+ */
+async function verifyMakeUpHostFree(
+  tx: Tx,
+  args: {
+    consultantProfileId: string;
+    consultantUserId: string;
+    startsAt: Date;
+    endsAt: Date;
+    appointmentId: string;
+  },
+): Promise<void> {
+  const slots: Date[] = [];
+  for (
+    let t = args.startsAt.getTime();
+    t < args.endsAt.getTime();
+    t += SCHEDULING_INTERVAL_MS
+  ) {
+    slots.push(new Date(t));
+  }
+  const check = await new ScheduleValidationService(tx).revalidateConflicts(
+    slots,
+    args.consultantUserId,
+    [args.appointmentId],
+    undefined,
+    undefined,
+    args.consultantProfileId,
+  );
+  if (!check.isValid) {
+    throw new BookingRuleError(
+      "SCHEDULE_CONFLICT",
+      "That time conflicts with another session on your calendar.",
+      409,
+    );
+  }
+}
+
+/**
  * Inserts the make-up AppointmentOccurrence row and translates unique or
  * GiST exclusion constraint violations into typed BookingRuleErrors.
  */
@@ -562,103 +612,145 @@ export async function scheduleClassMakeUp(
     );
   }
   const appointmentId = hosted.appointment.id;
-  const result = await withAppointmentLock(appointmentId, () =>
-    prisma.$transaction(async (tx) => {
-      const now = new Date();
-      const source = await tx.appointmentOccurrence.findFirst({
-        where: { id: sourceOccurrenceId, appointmentId },
-        select: {
-          ordinal: true,
-          startsAt: true,
-          endsAt: true,
-          completionStatus: true,
-          hostCancelledAt: true,
-          voidedAt: true,
-          seatsSettledAt: true,
-          consultantProfileId: true,
-        },
-      });
-      // #1569 — a voided source is in the past; only the make-up must be ahead.
-      const lostAt = source ? missedAt(source) : null;
-      const deadline = lostAt
-        ? lostAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS
-        : 0;
-      if (
-        !source ||
-        !isMiss(source) ||
-        source.seatsSettledAt ||
-        (!bypass && startsAt.getTime() > deadline) ||
-        startsAt <= now
-      ) {
-        throw new BookingRuleError(
-          "MAKEUP_WINDOW_LAPSED",
-          `A make-up must be held within ${MAKEUP_WINDOW_DAYS} days of the missed session, and in the future.`,
-        );
-      }
-      const endsAt = new Date(
-        startsAt.getTime() +
-          (source.endsAt.getTime() - source.startsAt.getTime()),
-      );
-      const consultantProfileId =
-        source.consultantProfileId ?? hosted.cls.classPlan.consultantProfileId;
-      await verifyMakeUpCollaboratorsAvailable(
-        tx,
-        hosted.cls.classPlan.id,
-        startsAt,
-        endsAt,
-        appointmentId,
-      );
-      const makeUp = await createMakeUpOccurrence(tx, {
-        appointmentId,
-        ordinal: source.ordinal,
-        startsAt,
-        endsAt,
-        consultantProfileId,
-        movedAt: now,
-      });
-      // #1569 — the hold anchors on the last live session's end.
-      await recomputeEarningsHold(tx, appointmentId);
-      const seats = await tx.appointmentParticipant.findMany({
-        where: { appointmentId, ...SEATED },
-        select: { userId: true },
-      });
-      const seatUserIds = seats.map((s) => s.userId);
-      const dashboardUrl = goHref("client", "appointments");
-      let bells: StagedTrigger[] = [];
-      let rescheduleEmailArgs: AppointmentRescheduledEmailArgs | null = null;
-      if (seatUserIds.length > 0) {
-        bells = await stageBellsByZone(
-          tx,
-          NOVU_WORKFLOWS.CLASS_MAKEUP_SCHEDULED,
-          seatUserIds,
-          (zone) => ({
-            planTitle: hosted.cls.classPlan.title,
-            dateTime: zoned(startsAt, zone),
-            // #1527 — every seat holder here is a consultee.
-            dashboardUrl,
+  const plan = hosted.cls.classPlan;
+  // Lock order: event checkout → appointment → slot batch (host + ACCEPTED co-hosts).
+  const result = await withEventCheckoutLock(
+    { appointmentType: "CLASS", eventId: hosted.cls.id },
+    () =>
+      withAppointmentLock(appointmentId, async () => {
+        const span = await prisma.appointmentOccurrence.findFirst({
+          where: { id: sourceOccurrenceId, appointmentId },
+          select: { startsAt: true, endsAt: true, consultantProfileId: true },
+        });
+        const lockWindows = span
+          ? [
+              {
+                startsAt,
+                endsAt: new Date(
+                  startsAt.getTime() +
+                    (span.endsAt.getTime() - span.startsAt.getTime()),
+                ),
+              },
+            ]
+          : [];
+        // The host the make-up is written under: the source row's, else the plan's.
+        const hostProfileId =
+          span?.consultantProfileId ?? plan.consultantProfileId;
+        const profiles = [
+          ...(hostProfileId ? [hostProfileId] : []),
+          ...(await acceptedCohostProfileIds("CLASS", plan.id)),
+        ];
+        return withHostSlotBatch(hostBatchEntries(profiles, lockWindows), () =>
+          prisma.$transaction(async (tx) => {
+            const now = new Date();
+            const source = await tx.appointmentOccurrence.findFirst({
+              where: { id: sourceOccurrenceId, appointmentId },
+              select: {
+                ordinal: true,
+                startsAt: true,
+                endsAt: true,
+                completionStatus: true,
+                hostCancelledAt: true,
+                voidedAt: true,
+                seatsSettledAt: true,
+                consultantProfileId: true,
+              },
+            });
+            // #1569 — a voided source is in the past; only the make-up must be ahead.
+            const lostAt = source ? missedAt(source) : null;
+            const deadline = lostAt
+              ? lostAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS
+              : 0;
+            if (
+              !source ||
+              !isMiss(source) ||
+              source.seatsSettledAt ||
+              (!bypass && startsAt.getTime() > deadline) ||
+              startsAt <= now
+            ) {
+              throw new BookingRuleError(
+                "MAKEUP_WINDOW_LAPSED",
+                `A make-up must be held within ${MAKEUP_WINDOW_DAYS} days of the missed session, and in the future.`,
+              );
+            }
+            const endsAt = new Date(
+              startsAt.getTime() +
+                (source.endsAt.getTime() - source.startsAt.getTime()),
+            );
+            const consultantProfileId =
+              source.consultantProfileId ??
+              hosted.cls.classPlan.consultantProfileId;
+            await verifyMakeUpCollaboratorsAvailable(
+              tx,
+              hosted.cls.classPlan.id,
+              startsAt,
+              endsAt,
+              appointmentId,
+            );
+            if (consultantProfileId) {
+              await verifyMakeUpHostFree(tx, {
+                consultantProfileId,
+                consultantUserId: plan.consultantProfile?.user.id ?? "",
+                startsAt,
+                endsAt,
+                appointmentId,
+              });
+            }
+            const makeUp = await createMakeUpOccurrence(tx, {
+              appointmentId,
+              ordinal: source.ordinal,
+              startsAt,
+              endsAt,
+              consultantProfileId,
+              movedAt: now,
+            });
+            // #1569 — the hold anchors on the last live session's end.
+            await recomputeEarningsHold(tx, appointmentId);
+            const seats = await tx.appointmentParticipant.findMany({
+              where: { appointmentId, ...SEATED },
+              select: { userId: true },
+            });
+            const seatUserIds = seats.map((s) => s.userId);
+            const dashboardUrl = goHref("client", "appointments");
+            let bells: StagedTrigger[] = [];
+            let rescheduleEmailArgs: AppointmentRescheduledEmailArgs | null =
+              null;
+            if (seatUserIds.length > 0) {
+              bells = await stageBellsByZone(
+                tx,
+                NOVU_WORKFLOWS.CLASS_MAKEUP_SCHEDULED,
+                seatUserIds,
+                (zone) => ({
+                  planTitle: hosted.cls.classPlan.title,
+                  dateTime: zoned(startsAt, zone),
+                  // #1527 — every seat holder here is a consultee.
+                  dashboardUrl,
+                }),
+                `makeup:${sourceOccurrenceId}`,
+              );
+              rescheduleEmailArgs = {
+                appointmentId,
+                userIds: seatUserIds,
+                outcome: "MOVED",
+                appointmentType: "CLASS",
+                oldStartsAt: source.startsAt,
+                newStartsAt: startsAt,
+                proposedBy:
+                  hosted.cls.classPlan.consultantProfile?.user.name ??
+                  "Your host",
+                dashboardUrl,
+              };
+            }
+            return {
+              occurrenceId: makeUp.id,
+              startsAt,
+              endsAt,
+              bells,
+              rescheduleEmailArgs,
+            };
           }),
-          `makeup:${sourceOccurrenceId}`,
         );
-        rescheduleEmailArgs = {
-          appointmentId,
-          userIds: seatUserIds,
-          outcome: "MOVED",
-          appointmentType: "CLASS",
-          oldStartsAt: source.startsAt,
-          newStartsAt: startsAt,
-          proposedBy:
-            hosted.cls.classPlan.consultantProfile?.user.name ?? "Your host",
-          dashboardUrl,
-        };
-      }
-      return {
-        occurrenceId: makeUp.id,
-        startsAt,
-        endsAt,
-        bells,
-        rescheduleEmailArgs,
-      };
-    }),
+      }),
   );
   const emails = result.rescheduleEmailArgs
     ? await stageAppointmentRescheduledEmail(

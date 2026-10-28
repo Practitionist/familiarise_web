@@ -26,6 +26,8 @@ import {
   OccurrenceCompletionStatus,
 } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
+import { AUTO_REFUND_PENDING_PREFIX } from "@/lib/payments/webhooks/auto-refund-marker";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
 import {
@@ -136,6 +138,14 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
             OR: [
               { consultation: { status: "PENDING" } },
               { subscription: { status: "PENDING" } },
+              // A capture parked for auto-refund (a double-booking loser) never confirms its slots.
+              {
+                payment: {
+                  some: {
+                    description: { startsWith: AUTO_REFUND_PENDING_PREFIX },
+                  },
+                },
+              },
             ],
           },
         },
@@ -163,33 +173,50 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
     }
 
     if (slotsToFix.length > 0) {
-      // Bulk update to clear tentative flag — use exact IDs from the filtered
-      // query so we never touch a slot outside the cohort, AND repeat the
-      // cohort's own predicate so we never touch a slot that LEFT the cohort
-      // between the read and this write (#1424).
-      const ids = slotsToFix.map((s) => s.id);
-      const result = await prisma.appointmentOccurrence.updateMany({
-        where: { id: { in: ids }, ...LIVE_TENTATIVE_SLOT },
-        data: { isTentative: false },
-      });
+      // One write per row, repeating the cohort predicate: a row that left the
+      // cohort is skipped, and an overlap with a confirmed row (23P01) skips
+      // only that row; the double-booking scan below reports it.
+      let cleared = 0;
+      let overlapping = 0;
+      for (const slot of slotsToFix) {
+        try {
+          const result = await prisma.appointmentOccurrence.updateMany({
+            where: { id: slot.id, ...LIVE_TENTATIVE_SLOT },
+            data: { isTentative: false },
+          });
+          cleared += result.count;
+        } catch (error) {
+          if (!isExclusionViolation(error)) throw error;
+          overlapping += 1;
+        }
+      }
 
-      console.log(`✅ Cleared tentative flag on ${result.count} slots`);
-      if (result.count < ids.length) {
+      console.log(`✅ Cleared tentative flag on ${cleared} slots`);
+      if (overlapping > 0) {
+        console.warn(
+          JSON.stringify({
+            event: "reconcile_tentative_clear_overlap",
+            overlapping,
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      }
+      if (cleared + overlapping < slotsToFix.length) {
         // Not an error: the skipped rows were rescheduled, cancelled or
         // soft-deleted mid-run and will be picked up by the cohort that owns
         // them. Logged so a persistent gap is visible rather than silent.
         console.warn(
           JSON.stringify({
             event: "reconcile_tentative_clear_raced",
-            read: ids.length,
-            cleared: result.count,
-            skipped: ids.length - result.count,
+            read: slotsToFix.length,
+            cleared,
+            skipped: slotsToFix.length - cleared - overlapping,
             note: "slots left the cohort between the read and the write",
             timestamp: new Date().toISOString(),
           }),
         );
       }
-      return { cleared: result.count, errors };
+      return { cleared, errors };
     }
 
     return { cleared: 0, errors };

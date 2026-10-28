@@ -75,20 +75,16 @@ export async function tryAutoConfirmProposal(
   // booking. The route calls this helper after releasing its own grant, so
   // this is the only holder — no nesting, same lock order as accept.
   try {
-    return await withAppointmentLock(request.appointmentId, async () => {
+    return await withAppointmentLock(request.appointmentId, async (lock) => {
       const result = await allocate({
         eventType,
         eventId,
+        heldAppointmentLock: lock,
         // The proposed times go straight to the allocator, and nothing is written
         // unless it commits. On a reschedule, deleteExistingAppointments removes
         // only the tentative (released) slots, so confirmed sessions survive.
         mode: "manual",
         slots: request.proposedTimes.map((p) => p.startsAt.toISOString()),
-        // Consultant-wide lock: these times were not picked per-day by a human, so
-        // the day-sharded manual key would let two concurrent confirmations each
-        // pass the per-week cap on a stale count (#860 shards for throughput; GiST
-        // backstops overlap, but a cap is a count, not an overlap).
-        wideLock: true,
         // #1340 — the allocator closes every open proposal on these released slots
         // as DECLINED, because placing times supersedes them. THIS proposal is the
         // one being confirmed, not superseded, so it is excluded.

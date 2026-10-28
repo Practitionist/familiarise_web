@@ -3,7 +3,13 @@ import redisClient, {
   withCircuitBreaker,
   checkRedisHealth,
 } from "../lib/redis";
-import { RELEASE_LOCK_SCRIPT, RENEW_LOCK_SCRIPT } from "../lib/redis-mock";
+import {
+  RELEASE_LOCK_SCRIPT,
+  RENEW_LOCK_SCRIPT,
+  SLOT_BATCH_ACQUIRE_SCRIPT,
+  SLOT_BATCH_RELEASE_SCRIPT,
+  SLOT_BATCH_RENEW_SCRIPT,
+} from "../lib/redis-mock";
 import crypto from "crypto";
 import * as Sentry from "@sentry/nextjs";
 import { SCHEDULING_INTERVAL_MS } from "../lib/appointments/occurrences";
@@ -110,11 +116,15 @@ export const REQUEST_PATH_RETRY_CONFIG: LockRetryConfig = {
 
 const DEFAULT_LOCK_TTL = 60000;
 
+/**
+ * One checkout attempt plus slack; renewed per attempt. An event key held by
+ * a crashed invocation stalls that event's sales for at most this long.
+ */
 export const CHECKOUT_LOCK_TTL_MS: Record<string, number> = {
   CONSULTATION: 60_000,
-  SUBSCRIPTION: 120_000,
-  WEBINAR: 120_000,
-  CLASS: 600_000,
+  SUBSCRIPTION: 45_000,
+  WEBINAR: 45_000,
+  CLASS: 45_000,
 };
 
 // ============================================================================
@@ -501,9 +511,16 @@ export class EventCheckoutBusyError extends Error {
   readonly httpStatus = 409 as const;
   readonly retryAfterSeconds = 10;
   readonly code = "EVENT_CHECKOUT_BUSY";
-  constructor(readonly appointmentType: string) {
+  constructor(
+    readonly appointmentType: string,
+    /** Who is refused: a buyer, or the host changing the event. */
+    refused: "buyer" | "host" = "buyer",
+  ) {
+    const kind = appointmentType.toLowerCase();
     super(
-      `Another user is currently checking out this ${appointmentType.toLowerCase()}. Please try again in a few seconds.`,
+      refused === "host"
+        ? `Someone is booking a seat on this ${kind} right now. Please try again in a few seconds.`
+        : `Another user is currently checking out this ${kind}. Please try again in a few seconds.`,
     );
     this.name = "EventCheckoutBusyError";
   }
@@ -530,71 +547,255 @@ export function slotAtomStarts(startsAt: Date, endsAt: Date): Date[] {
   return atoms;
 }
 
+/** One profile's interval a write makes busy; a batch spans every profile the write touches. */
+export interface SlotBatchEntry {
+  consultantProfileId: string;
+  startsAt: Date | string;
+  endsAt: Date | string;
+}
+
+/**
+ * A held slot batch: one lock per atom key, all sharing one value, so the
+ * batch renews and releases in one round trip and each key still releases on
+ * its own compare-value.
+ */
+export type SlotBatchGrant = ApprovalLock[];
+
+const SLOT_KEY_PREFIX = "slot-booking:";
+
+function slotKey(consultantProfileId: string, atom: Date): string {
+  return `${SLOT_KEY_PREFIX}${consultantProfileId}:${atom.toISOString()}`;
+}
+
+/** The interval a slot key names, so a refused batch can say which times are taken. */
+export function parseSlotKey(
+  key: string,
+): { consultantProfileId: string; startsAt: Date; endsAt: Date } | null {
+  if (!key.startsWith(SLOT_KEY_PREFIX)) return null;
+  const rest = key.slice(SLOT_KEY_PREFIX.length);
+  const split = rest.indexOf(":");
+  if (split <= 0) return null;
+  const startsAt = new Date(rest.slice(split + 1));
+  if (Number.isNaN(startsAt.getTime())) return null;
+  return {
+    consultantProfileId: rest.slice(0, split),
+    startsAt,
+    endsAt: new Date(startsAt.getTime() + SLOT_ATOM_MS),
+  };
+}
+
+/** Every atom key of every entry, de-duplicated and sorted (a total order across profiles). */
+export function slotBatchKeys(entries: readonly SlotBatchEntry[]): string[] {
+  const keys = new Set<string>();
+  for (const entry of entries) {
+    const start = new Date(entry.startsAt);
+    const end = new Date(entry.endsAt);
+    const atoms = slotAtomStarts(start, end);
+    if (atoms.length === 0) {
+      const fmt = (d: Date, raw: Date | string) =>
+        Number.isNaN(d.getTime())
+          ? `unparseable(${String(raw)})`
+          : d.toISOString();
+      throw new Error(
+        `slot batch: empty interval ${fmt(start, entry.startsAt)} → ${fmt(end, entry.endsAt)}`,
+      );
+    }
+    for (const atom of atoms)
+      keys.add(slotKey(entry.consultantProfileId, atom));
+  }
+  return [...keys].sort();
+}
+
+/** A slow Redis is an unavailable Redis: the booking fails closed (503), never unlocked. */
+const SLOT_BATCH_REDIS_TIMEOUT_MS = 1_500;
+
+function evalWithTimeout(
+  client: Redis,
+  script: string,
+  keys: string[],
+  args: string[],
+): Promise<unknown> {
+  return withRedisTimeout(client.eval(script, keys, args));
+}
+
+async function withRedisTimeout<T>(pending: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("slot batch: Redis timed out")),
+          SLOT_BATCH_REDIS_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * All-or-nothing, never waits: one Lua call sets every key with NX semantics,
+ * or sets none and answers which keys are held. Redis down or slow throws
+ * BookingLockUnavailableError.
+ */
+export async function tryLockSlotBatch(
+  entries: readonly SlotBatchEntry[],
+  ttlMs: number = DEFAULT_LOCK_TTL,
+): Promise<
+  { ok: true; grant: SlotBatchGrant } | { ok: false; heldKeys: string[] }
+> {
+  const keys = slotBatchKeys(entries);
+  if (!(await checkRedisHealth())) {
+    throw new BookingLockUnavailableError("slot-batch");
+  }
+  const client = redisClient as Redis;
+  const value = generateLockValue();
+  const ttl = Math.floor(ttlMs * (1 - DEFAULT_RETRY_CONFIG.driftFactor));
+  let result: unknown;
+  let pending: Promise<unknown> | null = null;
+  try {
+    result = await withCircuitBreaker(() => {
+      pending = client.eval(SLOT_BATCH_ACQUIRE_SCRIPT, keys, [
+        value,
+        String(ttl),
+      ]);
+      return withRedisTimeout(pending);
+    });
+  } catch (error: unknown) {
+    // The script may have run (or still run) after we gave up, and a script
+    // error does not roll back: give back whatever it set under our value.
+    releaseAbandonedBatch(client, keys, value, pending);
+    console.error(
+      JSON.stringify({
+        event: "booking_lock_unavailable",
+        context: "slot-batch",
+        keys: keys.length,
+        error: getErrorMessage(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    throw new BookingLockUnavailableError("slot-batch");
+  }
+  const heldKeys = Array.isArray(result)
+    ? result.filter((k): k is string => typeof k === "string")
+    : [];
+  if (heldKeys.length > 0) return { ok: false, heldKeys };
+  const acquiredAt = Date.now();
+  return {
+    ok: true,
+    grant: keys.map((key) => ({ key, value, ttl, acquiredAt, client })),
+  };
+}
+
+/** Compare-value DEL now and again once the abandoned acquire settles; never throws. */
+function releaseAbandonedBatch(
+  client: Redis,
+  keys: string[],
+  value: string,
+  pending: Promise<unknown> | null,
+): void {
+  const release = () =>
+    client.eval(SLOT_BATCH_RELEASE_SCRIPT, keys, [value]).catch(() => null);
+  void release();
+  if (pending) void pending.then(release, release);
+}
+
+/**
+ * The waiting form for buyer doors (checkout, request, trial): retries the
+ * atomic batch inside the request-path budget, then throws SlotLockError
+ * naming the first held atom.
+ */
+export async function lockSlotBatch(
+  entries: readonly SlotBatchEntry[],
+  ttlMs: number = DEFAULT_LOCK_TTL,
+  config: LockRetryConfig = INTERVAL_RETRY_CONFIG,
+): Promise<SlotBatchGrant> {
+  let heldKeys: string[] = [];
+  for (let attempt = 0; attempt <= config.retryCount; attempt++) {
+    const outcome = await tryLockSlotBatch(entries, ttlMs);
+    if (outcome.ok) return outcome.grant;
+    heldKeys = outcome.heldKeys;
+    if (attempt < config.retryCount) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, calculateRetryDelay(attempt, config)),
+      );
+    }
+  }
+  reportLockContention("slot-interval", {
+    heldKeys: heldKeys.length,
+    attempts: config.retryCount + 1,
+  });
+  const held = parseSlotKey(heldKeys[0] ?? "");
+  throw new SlotLockError(
+    held?.consultantProfileId ?? entries[0]?.consultantProfileId ?? "unknown",
+    held?.startsAt.toISOString() ?? String(entries[0]?.startsAt),
+    60,
+  );
+}
+
 export async function lockSlotInterval(
   consultantProfileId: string,
   startsAt: Date | string,
   endsAt: Date | string,
   ttl: number = DEFAULT_LOCK_TTL,
-): Promise<ApprovalLock[]> {
-  const start = new Date(startsAt);
-  const end = new Date(endsAt);
-  const atoms = slotAtomStarts(start, end);
-  if (atoms.length === 0) {
-    const fmt = (d: Date, raw: Date | string) =>
-      Number.isNaN(d.getTime())
-        ? `unparseable(${String(raw)})`
-        : d.toISOString();
-    throw new Error(
-      `lockSlotInterval: empty interval ${fmt(start, startsAt)} → ${fmt(end, endsAt)}`,
+): Promise<SlotBatchGrant> {
+  return lockSlotBatch([{ consultantProfileId, startsAt, endsAt }], ttl);
+}
+
+/** Compare-value DEL of every key in one call; never throws. */
+export async function unlockSlotInterval(grant: SlotBatchGrant): Promise<void> {
+  const [first] = grant;
+  if (!first) return;
+  try {
+    await evalWithTimeout(
+      first.client,
+      SLOT_BATCH_RELEASE_SCRIPT,
+      grant.map((lock) => lock.key),
+      [first.value],
+    );
+  } catch (error: unknown) {
+    console.error(
+      JSON.stringify({
+        event: "lock_release_error",
+        context: "slot-batch",
+        keys: grant.length,
+        error: getErrorMessage(error),
+        timestamp: new Date().toISOString(),
+      }),
     );
   }
-
-  const acquired: ApprovalLock[] = [];
-  try {
-    for (const atom of atoms) {
-      const key = `slot-booking:${consultantProfileId}:${atom.toISOString()}`;
-      acquired.push(
-        await acquireGuarded(key, ttl, "slot-interval", INTERVAL_RETRY_CONFIG),
-      );
-    }
-    if (acquired.length > 1) {
-      const effectiveTTL = Math.floor(
-        ttl * (1 - INTERVAL_RETRY_CONFIG.driftFactor),
-      );
-      for (const lock of acquired) {
-        if (!(await extendLock(lock, effectiveTTL))) {
-          throw new LockContentionError(lock.key, 1);
-        }
-      }
-    }
-    return acquired;
-  } catch (error) {
-    for (const lock of [...acquired].reverse()) {
-      await releaseLock(lock);
-    }
-    if (error instanceof LockContentionError) {
-      const conflictingAtom =
-        atoms[acquired.length]?.toISOString() ?? String(startsAt);
-      throw new SlotLockError(consultantProfileId, conflictingAtom, 60);
-    }
-    throw error;
-  }
 }
 
-export async function unlockSlotInterval(locks: ApprovalLock[]): Promise<void> {
-  for (const lock of [...locks].reverse()) {
-    await releaseLock(lock);
-  }
-}
-
+/** Re-arm every key to a fresh TTL in one call; false when any key is no longer ours. */
 export async function extendSlotInterval(
-  locks: ApprovalLock[],
+  grant: SlotBatchGrant,
   additionalTtl: number,
 ): Promise<boolean> {
-  for (const lock of locks) {
-    if (!(await extendLock(lock, additionalTtl))) return false;
+  const [first] = grant;
+  if (!first) return true;
+  try {
+    const result = await evalWithTimeout(
+      first.client,
+      SLOT_BATCH_RENEW_SCRIPT,
+      grant.map((lock) => lock.key),
+      [first.value, String(additionalTtl)],
+    );
+    if (result === 1) return true;
+    reportLockContention("slot-batch-lost", { keys: grant.length });
+    return false;
+  } catch (error: unknown) {
+    console.error(
+      JSON.stringify({
+        event: "lock_extension_error",
+        context: "slot-batch",
+        error: getErrorMessage(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return false;
   }
-  return true;
 }
 
 export async function lockSlotBooking(
@@ -634,6 +835,45 @@ export async function lockEventCheckout(
 
 export async function unlockEventCheckout(lock: ApprovalLock): Promise<void> {
   await releaseLock(lock);
+}
+
+/** Outlives one lifecycle transaction (30 s) plus its maxWait, with margin. */
+export const EVENT_LIFECYCLE_LOCK_TTL_MS = 75_000;
+
+/**
+ * Run `fn` under the event's checkout key, the outermost booking tier (event →
+ * appointment → … → slot batch). A null key runs `fn` unlocked: a 1:1 booking
+ * has no event key. `renew` re-arms the key; call it at the top of every
+ * Serializable attempt so a retry chain never outlives it.
+ */
+export async function withEventCheckoutLock<T>(
+  key: { appointmentType: string; eventId: string } | null,
+  fn: (renew: () => Promise<void>) => Promise<T>,
+): Promise<T> {
+  if (!key) return fn(async () => undefined);
+  let lock: ApprovalLock;
+  try {
+    lock = await lockEventCheckout(
+      key.appointmentType,
+      key.eventId,
+      EVENT_LIFECYCLE_LOCK_TTL_MS,
+    );
+  } catch (error) {
+    if (error instanceof EventCheckoutBusyError) {
+      throw new EventCheckoutBusyError(key.appointmentType, "host");
+    }
+    throw error;
+  }
+  const renew = async () => {
+    if (!(await extendLock(lock, EVENT_LIFECYCLE_LOCK_TTL_MS))) {
+      throw new EventCheckoutBusyError(key.appointmentType, "host");
+    }
+  };
+  try {
+    return await fn(renew);
+  } finally {
+    await unlockEventCheckout(lock);
+  }
 }
 
 export const APPOINTMENT_LOCK_TTL_MS = 75_000;
@@ -692,12 +932,9 @@ export async function renewAppointmentLock(
 
 export async function lockAutoAllocate(
   consultantProfileId: string,
-  scope?: string,
   ttl: number = 150000,
 ): Promise<ApprovalLock> {
-  const key = scope
-    ? `auto-allocate:${consultantProfileId}:${scope}`
-    : `auto-allocate:${consultantProfileId}`;
+  const key = `auto-allocate:${consultantProfileId}`;
   try {
     return await acquireGuarded(key, ttl, "auto-allocate");
   } catch (error) {
@@ -709,6 +946,36 @@ export async function lockAutoAllocate(
 }
 
 export async function unlockAutoAllocate(lock: ApprovalLock): Promise<void> {
+  await releaseLock(lock);
+}
+
+export class RequestCapBusyError extends Error {
+  readonly httpStatus = 409 as const;
+  readonly retryAfterSeconds = 5;
+  readonly code = "REQUEST_CAP_BUSY" as const;
+  constructor() {
+    super(
+      "Another request to this expert is being sent right now. Please try again in a moment.",
+    );
+    this.name = "RequestCapBusyError";
+  }
+}
+
+/** One expert's open-request cap: held across its count and the request insert. */
+export async function lockRequestCap(
+  consultantProfileId: string,
+  ttl: number = 60_000,
+): Promise<ApprovalLock> {
+  const key = `request-cap:${consultantProfileId}`;
+  try {
+    return await acquireGuarded(key, ttl, "request-cap");
+  } catch (error) {
+    if (error instanceof BookingLockUnavailableError) throw error;
+    throw new RequestCapBusyError();
+  }
+}
+
+export async function unlockRequestCap(lock: ApprovalLock): Promise<void> {
   await releaseLock(lock);
 }
 

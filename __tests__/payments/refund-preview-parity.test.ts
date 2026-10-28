@@ -68,7 +68,11 @@ const txStub = {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
   // The refund the cancel owes is stamped on the payment in the same commit.
-  payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  payment: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findMany: jest.fn().mockResolvedValue([]),
+    count: jest.fn().mockResolvedValue(0),
+  },
   // #1766 — a subscription cancel stamps the undelivered earnings tranches.
   consultantEarnings: {
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),

@@ -17,6 +17,7 @@ import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { SlotPreference } from "@/components/scheduling/time-picker-policy";
 import {
   applyRefundRequote,
+  paymentLandedUnderClick,
   cancelPreviewUrl,
   readRefundQuoteChanged,
   shownQuoteBody,
@@ -294,6 +295,14 @@ export function useConsultantEventActions({
           error instanceof ApiResponseError && error.status === 409
             ? readRefundQuoteChanged(error.body)
             : null;
+        if (requote && paymentLandedUnderClick(quote)) {
+          toast({
+            title: "The payment just went through",
+            description: "Review the refund before you cancel.",
+          });
+          invalidateBookingData();
+          return true;
+        }
         if (requote) {
           applyRefundRequote(
             queryClient,

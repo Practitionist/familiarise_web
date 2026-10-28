@@ -1,20 +1,58 @@
 // Checkout's lock envelope: the event or slot lock, acquired and released as
 // one unit through utils/appointmentlock, and the in-lock plan re-read.
 
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  OCCUPYING_OCCURRENCE_WHERE,
+  seatHoldingParticipant,
+} from "@/utils/scheduling-engine/occupancyPolicy";
 import prisma, { type Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
   CHECKOUT_WAIT_RETRY_CONFIG,
   EventFullError,
-  lockSlotBooking,
+  lockSlotBatch,
   unlockSlotBooking,
   lockEventCheckout,
   unlockEventCheckout,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
+  type SlotBatchGrant,
 } from "@/utils/appointmentlock";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
+
+/**
+ * A seat buyer who is an expert too is busy on their own calendar for every
+ * session still ahead on the event: their own slot atoms, taken after the
+ * event and consultee keys. Null when the buyer hosts nothing.
+ */
+export async function lockBuyerSeatAtoms(
+  userId: string,
+  appointmentType: "WEBINAR" | "CLASS",
+  eventId: string,
+): Promise<SlotBatchGrant | null> {
+  const buyer = await prisma.consultantProfile.findUnique({
+    where: { userId },
+    select: { id: true },
+  });
+  if (!buyer) return null;
+  const sessions = await prisma.appointmentOccurrence.findMany({
+    where: {
+      appointment:
+        appointmentType === "WEBINAR"
+          ? { webinarId: eventId }
+          : { classId: eventId },
+      ...OCCUPYING_OCCURRENCE_WHERE,
+      endsAt: { gt: new Date() },
+    },
+    select: { startsAt: true, endsAt: true },
+  });
+  if (sessions.length === 0) return null;
+  return lockSlotBatch(
+    sessions.map((s) => ({ consultantProfileId: buyer.id, ...s })),
+    CHECKOUT_LOCK_TTL_MS[appointmentType],
+    CHECKOUT_WAIT_RETRY_CONFIG,
+  );
+}
 
 /**
  * Get plan data needed for lock acquisition
@@ -79,7 +117,7 @@ export async function readEventCapacity(
         appointment: {
           include: {
             participants: {
-              where: { ...liveParticipant(), role: "CONSULTEE" },
+              where: seatHoldingParticipant(new Date()),
               select: { userId: true },
             },
           },
@@ -102,7 +140,7 @@ export async function readEventCapacity(
       appointment: {
         include: {
           participants: {
-            where: { ...liveParticipant(), role: "CONSULTEE" },
+            where: seatHoldingParticipant(new Date()),
             select: { userId: true },
           },
         },
@@ -125,6 +163,8 @@ export async function readEventCapacity(
 export async function acquireCheckoutLock(
   data: CheckoutInput,
   planData: { consultantProfile?: { id: string } },
+  /** The buyer's own expert profile: an expert booking another expert is busy on both calendars. */
+  buyerConsultantProfileId: string | null = null,
 ): Promise<ApprovalLock | ApprovalLock[] | null> {
   const appointmentType = data.appointmentType;
 
@@ -159,10 +199,15 @@ export async function acquireCheckoutLock(
     // #1169 PR 1 — interval-granular: every 30-min atom of [startsAt, endsAt)
     // is locked, so an overlapping booking with a DIFFERENT start collides
     // instead of sailing past on a different instant key.
-    return await lockSlotBooking(
-      consultantProfileId,
-      data.startsAt,
-      data.endsAt!,
+    const window = { startsAt: data.startsAt, endsAt: data.endsAt };
+    return await lockSlotBatch(
+      [
+        { consultantProfileId, ...window },
+        ...(buyerConsultantProfileId &&
+        buyerConsultantProfileId !== consultantProfileId
+          ? [{ consultantProfileId: buyerConsultantProfileId, ...window }]
+          : []),
+      ],
       CHECKOUT_LOCK_TTL_MS[appointmentType], // #832 — per-type budget
     );
   }

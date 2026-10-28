@@ -20,6 +20,7 @@ import {
 import type { SlotPreference } from "@/components/scheduling/time-picker-policy";
 import {
   applyRefundRequote,
+  paymentLandedUnderClick,
   cancelPreviewUrl,
   readRefundQuoteChanged,
   shownQuoteBody,
@@ -384,6 +385,17 @@ export function useEventActions({
         error instanceof ApiResponseError && error.status === 409
           ? readRefundQuoteChanged(error.body)
           : null;
+      // A click made on an unpaid screen: the payment has since landed, so the
+      // booking reopens on its paid quote instead of re-asking in place.
+      if (requote && paymentLandedUnderClick(quote)) {
+        toast({
+          title: "Your payment just went through",
+          description: "Review the refund before you cancel.",
+        });
+        setShowCancelDialog(false);
+        invalidateBookingData();
+        return true;
+      }
       if (requote && appointmentId) {
         applyRefundRequote(
           queryClient,

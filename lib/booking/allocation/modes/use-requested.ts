@@ -19,8 +19,15 @@ import {
   unlockAutoAllocate,
   lockConsulteeBooking,
   unlockConsulteeBooking,
+  unlockSlotInterval,
+  type SlotBatchGrant,
   type ApprovalLock,
 } from "@/utils/appointmentlock";
+import {
+  allocationBatchProfiles,
+  lockPickedSlots,
+  renewAllocationBatch,
+} from "@/lib/booking/allocation/slot-batch";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   AllocationValidationError,
@@ -121,6 +128,7 @@ export async function useRequestedSlots(
   // consultant both pass their conflict validation under Read Committed and
   // both commit. Lock order matches the other two paths: consultant → consultee.
   let consulteeLock: ApprovalLock | null = null;
+  let slotGrant: SlotBatchGrant | null = null;
 
   try {
     const consulteeLockUserId = await getConsulteeUserId(eventType, eventId);
@@ -261,8 +269,20 @@ export async function useRequestedSlots(
       .flatMap((appointment) => appointment.occurrences.map((o) => o.id))
       .sort((a, b) => a.localeCompare(b));
 
+    // Lock order: consultant → consultee → slot batch over every busy profile.
+    slotGrant = await lockPickedSlots(
+      requestedSlots,
+      await allocationBatchProfiles({
+        eventType,
+        planId,
+        consultantProfileId,
+        consulteeUserId,
+      }),
+    );
+
     return await prisma.$transaction(
       async (tx) => {
+        await renewAllocationBatch(slotGrant);
         // Multi-tab guard: another tab already confirmed slots for this
         // event → typed 409 instead of re-approving over it. Advisory-locked
         // in-txn so it can't race the manual/auto write transactions; a
@@ -464,6 +484,7 @@ export async function useRequestedSlots(
       },
     );
   } finally {
+    if (slotGrant) await unlockSlotInterval(slotGrant);
     if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
     await unlockAutoAllocate(lock);
   }

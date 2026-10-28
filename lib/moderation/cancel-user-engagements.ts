@@ -53,7 +53,10 @@ import {
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
-import { withAppointmentLock } from "@/utils/appointmentlock";
+import {
+  withAppointmentLock,
+  withEventCheckoutLock,
+} from "@/utils/appointmentlock";
 
 export interface BulkCancelSummary {
   engagementsCancelled: number;
@@ -674,7 +677,13 @@ async function casCancelGroupEvent(
       );
       return 1;
     });
-  return eventWrapper ? withAppointmentLock(eventWrapper.id, cancel) : cancel();
+  // Event key first (event → appointment), so no seat checkout commits a HELD
+  // seat under the cancel's participant sweep.
+  return withEventCheckoutLock(
+    { appointmentType: isWebinar ? "WEBINAR" : "CLASS", eventId },
+    () =>
+      eventWrapper ? withAppointmentLock(eventWrapper.id, cancel) : cancel(),
+  );
 }
 
 /**

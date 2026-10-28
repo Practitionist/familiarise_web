@@ -9,6 +9,8 @@ export const CancelAppointmentSchema = z.object({
   expectedRefundPaise: z.number().int().nonnegative().optional(),
   /** The credits rail's all-or-nothing answer the dialog showed. */
   expectedCreditRestoresInFull: z.boolean().optional(),
+  /** False when the dialog showed an unpaid booking; a capture since then answers 409. */
+  expectedPaid: z.boolean().optional(),
 });
 
 /** The 409 a cancel answers when its quote no longer matches the one the dialog showed. */
@@ -116,6 +118,8 @@ const CancelRefundQuoteSchema = z.object({
   grossPaise: z.number().optional(),
   /** The credits rail restores whole; echoed back with the click. */
   creditRestoresInFull: z.boolean().optional(),
+  /** Whether a captured payment funds the 1:1 booking; echoed back with the click. */
+  expectedPaid: z.boolean().optional(),
 });
 
 /** The cancel preview: a priced quote, or the trial's `paid: false` when nothing was charged. */

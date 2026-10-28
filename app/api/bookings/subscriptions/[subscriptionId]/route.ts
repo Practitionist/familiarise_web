@@ -37,6 +37,11 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
+import {
+  assertHeldTimesStillFree,
+  HELD_TIME_TAKEN,
+} from "@/lib/booking/approve-recheck";
 import { stageSubscriptionLifecycleEmail } from "@/lib/email/senders/booking";
 import { notifySubscriptionStarted } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -398,6 +403,7 @@ export async function PATCH(
               // ORIGINAL startsAt; flipping them re-confirms the time the
               // consultee asked to leave (#1169 PR 2).
               if (subscription.appointment) {
+                await assertHeldTimesStillFree(tx, subscription.appointment.id);
                 await tx.appointmentOccurrence.updateMany({
                   where: {
                     appointmentId: subscription.appointment.id,
@@ -642,6 +648,13 @@ export async function PATCH(
     }
   } catch (error) {
     if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+    // The exclusion constraint backstopping the held-time re-check.
+    if (isExclusionViolation(error)) {
+      return NextResponse.json(
+        { error: HELD_TIME_TAKEN, code: "SCHEDULE_CONFLICT" },
+        { status: 409 },
+      );
+    }
     if (error instanceof ApprovalLockLostError) {
       return NextResponse.json(
         { error: error.message, code: error.code },

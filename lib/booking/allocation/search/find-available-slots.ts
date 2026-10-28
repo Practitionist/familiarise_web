@@ -31,7 +31,10 @@ import {
   MAX_CLASS_SESSIONS_PER_DAY,
   MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
 } from "@/utils/scheduling-engine/sessionCaps";
-import { createSearchBudget } from "@/utils/scheduling-engine/availability-search";
+import {
+  createSearchBudget,
+  type SearchBudget,
+} from "@/utils/scheduling-engine/availability-search";
 import {
   partitionWeeklyRows,
   weeklyRowIntervalsInRange,
@@ -104,6 +107,12 @@ export async function findAvailableSlots(
   // #1554 — the tentative occurrences a reschedule replaces: left out of
   // bookedSlots and of the weekly/daily seeds while their wrapper stays.
   excludeOccurrenceIds: string[] = [],
+  // 30-minute interval starts (ISO) another writer holds right now; a re-search
+  // after a refused slot batch treats them as booked.
+  heldSlotStarts: readonly string[] = [],
+  // A caller that searches more than once passes one budget for all of them;
+  // otherwise this search opens its own once the reads are done.
+  sharedBudget?: SearchBudget,
 ): Promise<Date[]> {
   const walk: AllocationWalkContext = {
     eventType,
@@ -257,6 +266,7 @@ export async function findAvailableSlots(
       )
       .forEach((iso) => bookedSlots.add(iso));
   }
+  for (const iso of heldSlotStarts) bookedSlots.add(iso);
 
   // Validate availability exists
   const projectableWeekly = projectableWeeklyRows(consultant);
@@ -279,7 +289,8 @@ export async function findAvailableSlots(
   // O(window) work in this request) and not the queries that feed it. A
   // truncated search answers through the same shortage tail below, so
   // `allowPartial` keeps working exactly as it does for a full calendar.
-  const searchBudget = createSearchBudget(ALLOCATOR_SEARCH_TIME_BUDGET_MS);
+  const searchBudget =
+    sharedBudget ?? createSearchBudget(ALLOCATOR_SEARCH_TIME_BUDGET_MS);
 
   // Sort weekly slots by next calendar occurrence (not raw clock time)
   // so auto-allocation picks the chronologically earliest slot first.

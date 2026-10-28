@@ -96,7 +96,7 @@ describe("fetchCheckoutWithBusyRetry (B5)", () => {
     return jsonResponse(409, { error: "busy", errorType, retryAfter });
   }
 
-  it("retries exactly once on a structured BUSY 409 and returns the second answer", async () => {
+  it("retries on a structured BUSY 409 and returns the next answer", async () => {
     const okResponse = jsonResponse(200, { success: true });
     let attempts = 0;
     const attempt = jest.fn(() => {
@@ -108,12 +108,27 @@ describe("fetchCheckoutWithBusyRetry (B5)", () => {
     const notify = jest.fn();
 
     const promise = fetchCheckoutWithBusyRetry(attempt, notify);
-    await jest.advanceTimersByTimeAsync(1100);
+    // The advised second plus up to a second of jitter.
+    await jest.advanceTimersByTimeAsync(2100);
     const result = await promise;
 
     expect(attempts).toBe(2);
     expect(notify).toHaveBeenCalledWith(1);
     expect(result.status).toBe(200);
+  });
+
+  it("retries a replay whose seat order is still being minted", async () => {
+    const okResponse = jsonResponse(200, { success: true });
+    const attempt = jest
+      .fn()
+      .mockResolvedValueOnce(busyResponse("CHECKOUT_IN_PROGRESS", 2))
+      .mockResolvedValueOnce(okResponse);
+
+    const promise = fetchCheckoutWithBusyRetry(attempt, jest.fn());
+    await jest.advanceTimersByTimeAsync(3100);
+
+    expect((await promise).status).toBe(200);
+    expect(attempt).toHaveBeenCalledTimes(2);
   });
 
   it("passes non-409 responses through untouched", async () => {
@@ -144,10 +159,23 @@ describe("fetchCheckoutWithBusyRetry (B5)", () => {
     const notify = jest.fn();
 
     const promise = fetchCheckoutWithBusyRetry(attempt, notify);
-    await jest.advanceTimersByTimeAsync(20_500);
+    await jest.advanceTimersByTimeAsync(3 * 21_100);
     await promise;
 
     expect(notify).toHaveBeenCalledWith(20);
+  });
+
+  it("gives up after three automatic retries and returns the last BUSY answer", async () => {
+    const attempt = jest.fn(() =>
+      Promise.resolve(busyResponse("EVENT_CHECKOUT_BUSY", 1)),
+    );
+
+    const promise = fetchCheckoutWithBusyRetry(attempt, jest.fn());
+    await jest.advanceTimersByTimeAsync(3 * 2100);
+    const result = await promise;
+
+    expect(attempt).toHaveBeenCalledTimes(4);
+    expect(result.status).toBe(409);
   });
 });
 

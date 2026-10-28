@@ -93,18 +93,20 @@ describe("reconcile-occurrence-availability × tentative-clear race (#1424)", ()
         endsAt: new Date("2026-10-01T11:30:00Z"),
       },
     ]);
-    (prisma.appointmentOccurrence.updateMany as jest.Mock).mockResolvedValue({
-      count: 1,
-    });
+    (prisma.appointmentOccurrence.updateMany as jest.Mock)
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
 
     const result = await reconcileOccurrenceAvailability();
 
-    const write = (prisma.appointmentOccurrence.updateMany as jest.Mock).mock
-      .calls[0][0];
+    const calls = (prisma.appointmentOccurrence.updateMany as jest.Mock).mock
+      .calls;
+    expect(calls.map((c) => c[0].where.id)).toEqual([
+      "slot-live",
+      "slot-rescheduled",
+    ]);
+    const write = calls[0][0];
     expect(write.data).toEqual({ isTentative: false });
-    expect(write.where.id).toEqual({
-      in: ["slot-live", "slot-rescheduled"],
-    });
     // The cohort predicate is repeated at write time, so a row that left the
     // cohort cannot be stamped confirmed by its id alone.
     expect(write.where.isTentative).toBe(true);
@@ -126,6 +128,54 @@ describe("reconcile-occurrence-availability × tentative-clear race (#1424)", ()
       expect.stringContaining("reconcile_tentative_clear_raced"),
     );
     warn.mockRestore();
+  });
+});
+
+describe("reconcile-occurrence-availability × overlapping tentative rows", () => {
+  it("skips a row that would violate the overlap constraint and still clears the rest", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValueOnce([
+      {
+        id: "slot-overlap",
+        appointmentId: "apt-1",
+        startsAt: new Date("2026-10-01T10:00:00Z"),
+        endsAt: new Date("2026-10-01T10:30:00Z"),
+      },
+      {
+        id: "slot-clean",
+        appointmentId: "apt-2",
+        startsAt: new Date("2026-10-01T11:00:00Z"),
+        endsAt: new Date("2026-10-01T11:30:00Z"),
+      },
+    ]);
+    const exclusion = Object.assign(
+      new Error(
+        'conflicting key value violates exclusion constraint "occurrence_no_confirmed_overlap"',
+      ),
+      { code: "23P01" },
+    );
+    (prisma.appointmentOccurrence.updateMany as jest.Mock)
+      .mockRejectedValueOnce(exclusion)
+      .mockResolvedValueOnce({ count: 1 });
+
+    const result = await reconcileOccurrenceAvailability();
+
+    expect(result.tentativeFlagsCleared).toBe(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("reconcile_tentative_clear_overlap"),
+    );
+    warn.mockRestore();
+  });
+
+  it("never selects slots whose capture is parked for an auto-refund", async () => {
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    await reconcileOccurrenceAvailability();
+    const where = (prisma.appointmentOccurrence.findMany as jest.Mock).mock
+      .calls[0][0].where;
+    expect(JSON.stringify(where.appointment.NOT)).toContain(
+      "Auto-refund pending:",
+    );
   });
 });
 

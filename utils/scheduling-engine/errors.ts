@@ -59,6 +59,9 @@ export type AllocationConflictCode = Extract<
   | "ALREADY_ALLOCATED"
   | "RESCHEDULE_STATE_CHANGED"
   | "SLOT_TAKEN"
+  | "TIMES_TAKEN"
+  | "ALLOCATION_RACE"
+  | "AVAILABILITY_CHANGED"
   | "RESCHEDULE_NO_LONGER_OPEN"
 >;
 

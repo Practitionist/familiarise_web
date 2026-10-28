@@ -898,15 +898,10 @@ export class ScheduleValidationService {
           continue;
         }
 
-        // Slot is genuinely booked - add error
-        // FIX: Use ISO string so the validate route regex can extract it for structured conflict reporting
-        let conflictDetails = `${slot.toISOString()}`;
-        if (existingAppointment.consultation) {
-          conflictDetails += ` (conflicts with consultation for ${existingAppointment.consultation.requestedBy?.user?.name || "unknown"})`;
-        } else if (existingAppointment.subscription) {
-          conflictDetails += ` (conflicts with subscription for ${existingAppointment.subscription.requestedBy?.user?.name || "unknown"})`;
-        }
-        errors.push(`[CONFLICT] Slot already booked: ${conflictDetails}`);
+        // Time only, never whose booking: the other booking may be the
+        // consultee's own with another expert. The ISO start is what the
+        // validate routes extract; `conflicts` carries the structured detail.
+        errors.push(`[CONFLICT] Slot already booked: ${slot.toISOString()}`);
         conflicts.push(conflictDetailOf(slot, existingAppointment));
       }
     }

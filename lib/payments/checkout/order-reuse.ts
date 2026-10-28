@@ -1,6 +1,7 @@
 // Resumes or supersedes this buyer's open PENDING order for the same booking
 // before any new gateway order is minted.
 
+import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
 import {
   flushBackupInterestNotices,
   stageNoticesForAppointmentHolds,
@@ -106,9 +107,10 @@ export async function findReusablePendingOrderPayment(
   },
 ): Promise<{
   reusable: ReusableOrder | null;
-  /** Scope/freshness matches rejected by the window/amount gates — the caller
-   *  EXPIRES these ("superseded") so they can neither be resumed nor re-minted
-   *  into a parallel charge. */
+  /** Lapsed holds, released seats and same-window stale-price orders — the
+   *  caller EXPIRES these ("superseded") so they can neither be resumed nor
+   *  re-minted into a parallel charge. A live order for another window is
+   *  neither reused nor superseded. */
   supersede: Array<{ id: string; reason: string }>;
 }> {
   // Plan identity per type — events are identified by their event row (the
@@ -194,6 +196,9 @@ export async function findReusablePendingOrderPayment(
       continue;
     }
 
+    // A seat whose order is still being minted is someone's in-flight attempt.
+    if (isPreMintIntent(candidate.paymentIntent)) continue;
+
     const appt = candidate.appointment;
 
     // A group order pays for the buyer's HELD seat; one released while the
@@ -207,19 +212,18 @@ export async function findReusablePendingOrderPayment(
       continue;
     }
 
-    // Gate 1 — slot window (#1220-triage Critical): a second checkout for a
-    // DIFFERENT appointment time must never resume the first attempt's order.
+    // Gate 1 — slot window: a checkout for a DIFFERENT time never resumes
+    // this order, and never kills it either: a live order for another window
+    // is another booking (open in another tab), and the consultee lock and
+    // overlap check already guard the two against each other.
     if (params.appointmentType === "CONSULTATION") {
       const run = slotRunWindow(appt?.occurrences);
-      if (!params.slotWindow || !run) {
-        supersede.push({ id: candidate.id, reason: "window-unmatchable" });
-        continue;
-      }
       if (
+        !params.slotWindow ||
+        !run ||
         run.startsAt.getTime() !== params.slotWindow.startsAt.getTime() ||
         run.endsAt.getTime() !== params.slotWindow.endsAt.getTime()
       ) {
-        supersede.push({ id: candidate.id, reason: "slot-window-mismatch" });
         continue;
       }
     }
@@ -237,17 +241,14 @@ export async function findReusablePendingOrderPayment(
               endsAt: subRow.schedulingPeriodEndsAt,
             }
           : null);
-      if (!!reqPeriod !== !!rowPeriod) {
-        supersede.push({ id: candidate.id, reason: "period-mismatch" });
-        continue;
-      }
+      // A live order for another window or period is another booking: left alone.
+      if (!!reqPeriod !== !!rowPeriod) continue;
       if (
         reqPeriod &&
         rowPeriod &&
         (rowPeriod.startsAt.getTime() !== reqPeriod.startsAt.getTime() ||
           rowPeriod.endsAt.getTime() !== reqPeriod.endsAt.getTime())
       ) {
-        supersede.push({ id: candidate.id, reason: "period-mismatch" });
         continue;
       }
     }

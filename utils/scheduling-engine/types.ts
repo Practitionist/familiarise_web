@@ -7,6 +7,7 @@
 
 import type { AppointmentStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
+import type { ApprovalLock } from "@/utils/appointmentlock";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import type { PendingOverageNotification } from "@/lib/payments/billing/overage-settlement";
 import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
@@ -89,18 +90,6 @@ export interface AllocationRequest {
    */
   expectedTentativeSlotCount?: number;
   /**
-   * Manual mode only. When true the Redis lock is taken consultant-WIDE rather
-   * than sharded by the target day.
-   *
-   * #860 shards the manual key so allocations on different days for one
-   * consultant run in parallel, with #440's GiST constraint backstopping
-   * overlap. But GiST only prevents time OVERLAP — per-day and per-week caps
-   * are validated by COUNTING, so two sharded allocations can each read the
-   * same count and both add, taking a 4-session week to 5. Callers that place
-   * times a human did not pick per-day (auto-confirm) must set this.
-   */
-  wideLock?: boolean;
-  /**
    * Consultant's explicit acceptance of times outside their own published
    * availability. Routes must only set this for the consultant or a privileged
    * caller — a consultee cannot wave away the consultant's schedule.
@@ -143,6 +132,11 @@ export interface AllocationRequest {
   approvableFrom?: AppointmentStatus[];
   /** Runs inside the allocator's transaction after the status CAS; a throw rolls the move back. */
   inTx?: (tx: Tx) => Promise<void>;
+  /**
+   * The caller already holds this booking's appointment lock (reschedule
+   * accept and auto-confirm): the allocator renews it instead of acquiring it.
+   */
+  heldAppointmentLock?: ApprovalLock;
 }
 
 /** The per-call extras every allocation mode threads into its transaction. */
@@ -212,6 +206,9 @@ export type AllocationErrorCode =
   | "ALREADY_ALLOCATED" // confirmed slots already exist for this event — 409
   | "RESCHEDULE_STATE_CHANGED" // #1012 stale-tab tentative count moved — 409
   | "SLOT_TAKEN" // a chosen time went to someone else mid-allocation — 409
+  | "TIMES_TAKEN" // a picked time is held by another writer right now — 409
+  | "ALLOCATION_RACE" // auto found no free times after its re-searches; retryable — 409
+  | "AVAILABILITY_CHANGED" // the host's published availability shrank under the allocation — 409
   | "IDEMPOTENCY_KEY_REUSE" // same Idempotency-Key, different payload — 422
   | "ILLEGAL_TRANSITION" // event left the approvable state mid-allocation (#836) — 409
   | "PROGRAM_CAP_EXHAUSTED" // org's per-cycle overage ceiling vetoed it — 402
@@ -272,6 +269,10 @@ export interface AllocationResult {
    * COULD have placed. Zero means offering a partial allocation is pointless.
    */
   placeableSessions?: number;
+  /** On TIMES_TAKEN: the 30-minute interval starts (ISO) another writer holds. */
+  takenSlotStarts?: string[];
+  /** On ALLOCATION_RACE: when a retry may succeed. */
+  retryAfterSeconds?: number;
 }
 
 /**

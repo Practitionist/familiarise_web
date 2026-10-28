@@ -1,7 +1,7 @@
 // Re-runs checkout's validation under the lock, and re-reads the org rail,
 // so nothing decided before the lock is trusted after it.
 
-import { liveParticipant } from "@/lib/booking/participants";
+import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import prisma from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
@@ -442,7 +442,7 @@ export async function revalidateInsideLock(
               include: {
                 occurrences: true,
                 participants: {
-                  where: { ...liveParticipant(), role: "CONSULTEE" },
+                  where: seatHoldingParticipant(new Date()),
                   select: { userId: true },
                 },
               },
@@ -502,7 +502,7 @@ export async function revalidateInsideLock(
               include: {
                 occurrences: true,
                 participants: {
-                  where: { ...liveParticipant(), role: "CONSULTEE" },
+                  where: seatHoldingParticipant(new Date()),
                   select: { userId: true },
                 },
               },

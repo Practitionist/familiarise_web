@@ -1,7 +1,6 @@
 import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
-  liveParticipant,
   recordParticipants,
   transitionParticipant,
 } from "@/lib/booking/participants";
@@ -37,7 +36,7 @@ import {
   logTrialConverted,
 } from "@/lib/activity/log-activity";
 import {
-  lockSlotBooking,
+  lockSlotBatch,
   unlockSlotBooking,
   lockConsulteeBooking,
   unlockConsulteeBooking,
@@ -57,10 +56,10 @@ import {
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import {
-  buildCohostCommitmentFilter,
-  buildDeadHoldFilter,
-  buildOccupiedAppointmentFilter,
+  buildConsultantOccupancyWhere,
+  OCCUPYING_OCCURRENCE_WHERE,
 } from "@/utils/scheduling-engine/occupancyPolicy";
+import { consulteeHasOverlappingSession } from "@/lib/payments/checkout/occupancy-validate";
 import {
   findUncoveredAtom,
   loadPublishedCoverage,
@@ -233,56 +232,40 @@ class OutsideAvailabilityWindowError extends Error {
  */
 async function validateSlotAvailability(
   db: Tx,
-  consultantProfileId: string,
+  seller: { consultantProfileId: string; userId: string },
   consulteeUserId: string,
   startTime: Date,
   endTime: Date,
+  selfHoldAppointmentIds: string[],
 ): Promise<boolean> {
-  // Use canonical occupancy policy for consistent conflict detection
-  const occupiedFilter = buildOccupiedAppointmentFilter(consultantProfileId);
-
+  // The host's calendar under checkout's own predicate: every occupying row
+  // they host, sit in as a client, or co-host, minus lapsed holds.
   const overlapping = await db.appointmentOccurrence.findFirst({
     where: {
-      appointment: {
-        AND: [
-          {
-            OR: [
-              ...occupiedFilter,
-              ...buildCohostCommitmentFilter(consultantProfileId),
-            ],
-          },
-          { OR: buildOccupiedAppointmentFilter() },
-          // #1319 — a lapsed checkout hold is not a booking (parity with checkout).
-          { NOT: buildDeadHoldFilter(new Date()) },
-        ],
-      },
-      // Canonical overlap predicate
+      ...OCCUPYING_OCCURRENCE_WHERE,
+      ...(selfHoldAppointmentIds.length > 0
+        ? { appointmentId: { notIn: selfHoldAppointmentIds } }
+        : {}),
+      appointment: buildConsultantOccupancyWhere(
+        seller.consultantProfileId,
+        seller.userId,
+        new Date(),
+      ),
       startsAt: { lt: endTime },
       endsAt: { gt: startTime },
     },
+    select: { id: true },
   });
   if (overlapping) return false;
 
-  // #1093 §1 follow-through — the consultee's own calendar. The GiST
-  // constraint is consultant-keyed, so a consultee double-booked across two
-  // consultants is only ever caught here (mirrors validateNoConflicts).
-  const consulteeConflict = await db.appointmentOccurrence.findFirst({
-    where: {
-      completionStatus: "SCHEDULED",
-      appointment: {
-        deletedAt: null,
-        participants: { some: liveParticipant(consulteeUserId) },
-        AND: [
-          { OR: buildOccupiedAppointmentFilter() },
-          { NOT: buildDeadHoldFilter(new Date()) },
-        ],
-      },
-      startsAt: { lt: endTime },
-      endsAt: { gt: startTime },
-    },
-  });
-
-  return !consulteeConflict;
+  // The consultee's calendar under checkout's buyer predicate (dual-role and
+  // lapsed seats included); the GiST constraint is consultant-keyed.
+  return !(await consulteeHasOverlappingSession(db, {
+    userId: consulteeUserId,
+    startsAt: startTime,
+    endsAt: endTime,
+    selfHoldAppointmentIds,
+  }));
 }
 
 /**
@@ -554,10 +537,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           consulteeLock = await lockConsulteeBooking(
             existingTrial.consulteeProfile.user.id,
           );
-          lock = await lockSlotBooking(
-            existingTrial.consultantProfileId,
-            startTime.toISOString(),
-            endTime.toISOString(),
+          // Self atoms: a consultee who is an expert too is busy on their
+          // own calendar, in the same all-or-nothing batch as the host's.
+          const buyerProfile = await prisma.consultantProfile.findUnique({
+            where: { userId: existingTrial.consulteeProfile.user.id },
+            select: { id: true },
+          });
+          lock = await lockSlotBatch(
+            [existingTrial.consultantProfileId, buyerProfile?.id]
+              .filter((id): id is string => !!id)
+              .map((consultantProfileId) => ({
+                consultantProfileId,
+                startsAt: startTime,
+                endsAt: endTime,
+              })),
           );
         } catch (error) {
           if (consulteeLock) {
@@ -605,10 +598,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
             const isAvailable = await validateSlotAvailability(
               tx,
-              existingTrial.consultantProfileId,
+              {
+                consultantProfileId: existingTrial.consultantProfileId,
+                userId: existingTrial.consultantProfile.user.id,
+              },
               existingTrial.consulteeProfile.user.id,
               startTime,
               endTime,
+              placeholderId ? [placeholderId] : [],
             );
             if (!isAvailable) {
               throw new TrialSlotUnavailableError();

@@ -236,6 +236,18 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
   // and retries ONCE, so this entry is what the SECOND attempt reads; the
   // first already toasted the during-wait notice. Not a fault and nothing was
   // charged, so the copy says the retry is worth making rather than "went wrong".
+  // A replay while the first attempt's seat order is still being minted; the
+  // client waits and retries, so this is what a repeated answer reads.
+  [ErrorTypes.CHECKOUT_IN_PROGRESS]: {
+    title: "Still Preparing Your Checkout",
+    description:
+      "Your checkout is still being prepared. Try again in a moment — your card was not charged.",
+  },
+  [ErrorTypes.SEAT_HOLD_LAPSED]: {
+    title: "Your Seat Hold Ended",
+    description:
+      "Payment didn't open before your seat hold ended. Your card was not charged — start checkout again.",
+  },
   [ErrorTypes.SERIALIZATION_CONFLICT]: {
     title: "The Booking System Was Busy",
     description:

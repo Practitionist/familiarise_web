@@ -1,4 +1,11 @@
 import * as Sentry from "@sentry/nextjs";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import {
+  assertHeldTimesStillFree,
+  HELD_TIME_TAKEN,
+} from "@/lib/booking/approve-recheck";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type Tx } from "@/lib/prisma";
 import { PaymentStatus, Prisma, AppointmentStatus } from "@prisma/client";
@@ -382,6 +389,10 @@ export async function PATCH(
                 });
                 // Payment already exists - check if tentative appointment exists
                 if (consultation.appointment) {
+                  await assertHeldTimesStillFree(
+                    tx,
+                    consultation.appointment.id,
+                  );
                   // Confirm existing tentative appointment. RESCHEDULED rows are
                   // excluded (#1169 PR 2): they keep their ORIGINAL startsAt, so
                   // flipping them re-confirms exactly the time the consultee
@@ -692,6 +703,14 @@ export async function PATCH(
     }
     if (error instanceof PaidWithoutAppointmentError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+    // The exclusion constraint backstopping the held-time re-check.
+    if (isExclusionViolation(error)) {
+      return NextResponse.json(
+        { error: HELD_TIME_TAKEN, code: "SCHEDULE_CONFLICT" },
+        { status: 409 },
+      );
     }
     console.error(
       "Error updating consultation:",

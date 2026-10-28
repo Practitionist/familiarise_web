@@ -322,6 +322,9 @@ async function quoteIndividualBooking(
         : null,
     wholeEvent: false,
     attendeeCount: null,
+    // The click echoes this back, so a capture landing after an unpaid quote
+    // re-quotes instead of cancelling a paid booking at the policy tier.
+    expectedPaid: ctx.paidPayment !== null,
   };
 }
 

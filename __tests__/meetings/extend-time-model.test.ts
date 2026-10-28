@@ -159,6 +159,8 @@ jest.mock("../../lib/observability/report", () => ({
 
 import { POST as extendPOST } from "../../app/api/meetings/[meetingId]/extend/route";
 import { classifySessionOutcome } from "../../lib/booking/session-outcome";
+import { getMockRedis } from "../../lib/redis-mock";
+import { tryLockSlotBatch } from "../../utils/appointmentlock";
 
 const extend = () =>
   extendPOST({} as never, {
@@ -168,6 +170,7 @@ const extend = () =>
 beforeEach(() => {
   resetStore();
   mockStreamUpdate.mockReset();
+  getMockRedis().clear();
 });
 
 describe("POST /api/meetings/[meetingId]/extend — immutable booked end", () => {
@@ -226,5 +229,18 @@ describe("POST /api/meetings/[meetingId]/extend — immutable booked end", () =>
     expect(again.status).toBe(409);
     expect(await again.json()).toMatchObject({ alreadyExtended: true });
     expect(mockStore.stream.cap).toBe(7200);
+  });
+
+  it("keeps the extra minutes' host atoms held, so no booking lands in them", async () => {
+    expect((await extend()).status).toBe(200);
+
+    const booking = await tryLockSlotBatch([
+      {
+        consultantProfileId: "cp-host",
+        startsAt: BOOKED_END,
+        endsAt: new Date(BOOKED_END.getTime() + 15 * MIN),
+      },
+    ]);
+    expect(booking.ok).toBe(false);
   });
 });

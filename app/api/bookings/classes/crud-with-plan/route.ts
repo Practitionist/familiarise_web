@@ -43,6 +43,17 @@ import {
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
+  BookingLockUnavailableError,
+  EventCheckoutBusyError,
+  EventCheckoutLockUnavailableError,
+  withEventCheckoutLock,
+} from "@/utils/appointmentlock";
+import {
+  acceptedCohostProfileIds,
+  hostBatchEntries,
+  withHostSlotBatch,
+} from "@/lib/booking/host-slot-batch";
+import {
   ScheduleLockedError,
   CLASS_SCHEDULE_LOCKED_MESSAGE,
 } from "@/lib/events/schedule-lock";
@@ -282,151 +293,166 @@ export async function POST(request: NextRequest) {
     // still running at Read Committed while the webinar arm was not. The
     // callback touches `tx` only, so a P2034 replay re-runs nothing that
     // already committed on the outer client.
-    const result = await withSerializableRetry(() =>
-      prisma.$transaction(
-        async (tx) => {
-          // 1. Create the class plan using validated data
-          const classPlan = await tx.classPlan.create({
-            data: {
-              title,
-              description,
-              durationInMonths,
-              price,
-              priceCurrency,
-              maxParticipants,
-              refundWindowHours,
-              lateJoinUntilSession,
-              lateJoinersGetPastRecordings,
-              language,
-              level,
-              prerequisites,
-              materialProvided,
-              learningOutcomes,
-              subtitle,
-              targetAudience,
-              whatsIncluded,
-              faqs: faqCreateNested(faqs),
-              certificateProvided,
-              recordingEnabled,
-              sessionsPerWeek,
-              sessionDurationInHours,
-              totalSessions,
-              totalHours,
-              emailSupport,
-              consultantProfile: { connect: { id: consultantProfileId } },
-              topics: topicIds // Use validated topics here
-                ? { connect: topicIds.map((id: string) => ({ id })) }
-                : undefined,
-              classContents: curriculumCreateNested(classContents),
-            },
-            include: {
-              consultantProfile: PROFILE_OWNER_SELECT,
-              topics: true,
-              classContents: true,
-              faqs: { orderBy: { order: "asc" } },
-            },
-          });
-
-          const sessionWindows = sessionStarts.map((startsAt) => ({
+    // A scheduled class makes the host busy at every session: hold those atoms.
+    const hostWindows =
+      classStatus === ClassStatus.SCHEDULED
+        ? sessionStarts.map((startsAt) => ({
             startsAt,
             endsAt: new Date(
               startsAt.getTime() + sessionDurationInHours * 60 * 60 * 1000,
             ),
-          }));
-
-          // AE-2 (#784) — mirrors the webinar PATCH: refuse to commit session
-          // times an ACCEPTED co-host is already busy for. A plan created in
-          // this very transaction has none, so this only bites once a plan can
-          // carry collaborators before its sessions are laid down.
-          await assertCollaboratorsAvailableForWindows(tx, {
-            planType: "CLASS",
-            planId: classPlan.id,
-            windows: sessionWindows,
-          });
-
-          // #2010 — also verify the host consultant has no overlapping live
-          // hold, co-host commitment, or confirmed session when publishing.
-          if (
-            classStatus === ClassStatus.SCHEDULED &&
-            sessionWindows.length > 0
-          ) {
-            await assertConsultantAvailableForWindows(tx, {
-              consultantProfileId,
-              consultantUserId: session.user.id,
-              windows: sessionWindows,
-            });
-          }
-
-          // 2. Create the class instance with appointments
-          const classEvent = await tx.class.create({
-            data: {
-              status: classStatus,
-              schedulingPeriodStartsAt: start, // Will be undefined if not provided
-              schedulingPeriodEndsAt: end, // Will be undefined if start is not provided
-              schedulingTimezone: resolveSchedulingTimezone(
-                consultantProfile.user.timezone,
-              ),
-              classPlan: { connect: { id: classPlan.id } },
-              // #1554 / #2010 — one wrapper with one occurrence per session;
-              // non-tentative when SCHEDULED so occurrence_no_confirmed_overlap
-              // enforces single-active-session across all offering types.
-              appointment:
-                sessionStarts.length > 0
-                  ? {
-                      create: {
-                        appointmentType: "CLASS" as const,
-                        occurrences: {
-                          create: sessionStarts.map((slotStart, index) =>
-                            buildOccurrence({
-                              startsAt: slotStart,
-                              durationInHours: sessionDurationInHours,
-                              consultantProfileId,
-                              isTentative:
-                                classStatus !== ClassStatus.SCHEDULED,
-                              ordinal: index + 1,
-                            }),
-                          ),
-                        },
-                      },
-                    }
-                  : undefined,
-            },
-            include: {
-              classPlan: {
+          }))
+        : [];
+    const result = await withHostSlotBatch(
+      hostBatchEntries([consultantProfileId], hostWindows),
+      (renewHostBatch) =>
+        withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              await renewHostBatch();
+              // 1. Create the class plan using validated data
+              const classPlan = await tx.classPlan.create({
+                data: {
+                  title,
+                  description,
+                  durationInMonths,
+                  price,
+                  priceCurrency,
+                  maxParticipants,
+                  refundWindowHours,
+                  lateJoinUntilSession,
+                  lateJoinersGetPastRecordings,
+                  language,
+                  level,
+                  prerequisites,
+                  materialProvided,
+                  learningOutcomes,
+                  subtitle,
+                  targetAudience,
+                  whatsIncluded,
+                  faqs: faqCreateNested(faqs),
+                  certificateProvided,
+                  recordingEnabled,
+                  sessionsPerWeek,
+                  sessionDurationInHours,
+                  totalSessions,
+                  totalHours,
+                  emailSupport,
+                  consultantProfile: { connect: { id: consultantProfileId } },
+                  topics: topicIds // Use validated topics here
+                    ? { connect: topicIds.map((id: string) => ({ id })) }
+                    : undefined,
+                  classContents: curriculumCreateNested(classContents),
+                },
                 include: {
                   consultantProfile: PROFILE_OWNER_SELECT,
                   topics: true,
                   classContents: true,
+                  faqs: { orderBy: { order: "asc" } },
                 },
-              },
-              appointment: {
+              });
+
+              const sessionWindows = sessionStarts.map((startsAt) => ({
+                startsAt,
+                endsAt: new Date(
+                  startsAt.getTime() + sessionDurationInHours * 60 * 60 * 1000,
+                ),
+              }));
+
+              // AE-2 (#784) — mirrors the webinar PATCH: refuse to commit session
+              // times an ACCEPTED co-host is already busy for. A plan created in
+              // this very transaction has none, so this only bites once a plan can
+              // carry collaborators before its sessions are laid down.
+              await assertCollaboratorsAvailableForWindows(tx, {
+                planType: "CLASS",
+                planId: classPlan.id,
+                windows: sessionWindows,
+              });
+
+              // #2010 — also verify the host consultant has no overlapping live
+              // hold, co-host commitment, or confirmed session when publishing.
+              if (
+                classStatus === ClassStatus.SCHEDULED &&
+                sessionWindows.length > 0
+              ) {
+                await assertConsultantAvailableForWindows(tx, {
+                  consultantProfileId,
+                  consultantUserId: session.user.id,
+                  windows: sessionWindows,
+                });
+              }
+
+              // 2. Create the class instance with appointments
+              const classEvent = await tx.class.create({
+                data: {
+                  status: classStatus,
+                  schedulingPeriodStartsAt: start, // Will be undefined if not provided
+                  schedulingPeriodEndsAt: end, // Will be undefined if start is not provided
+                  schedulingTimezone: resolveSchedulingTimezone(
+                    consultantProfile.user.timezone,
+                  ),
+                  classPlan: { connect: { id: classPlan.id } },
+                  // #1554 / #2010 — one wrapper with one occurrence per session;
+                  // non-tentative when SCHEDULED so occurrence_no_confirmed_overlap
+                  // enforces single-active-session across all offering types.
+                  appointment:
+                    sessionStarts.length > 0
+                      ? {
+                          create: {
+                            appointmentType: "CLASS" as const,
+                            occurrences: {
+                              create: sessionStarts.map((slotStart, index) =>
+                                buildOccurrence({
+                                  startsAt: slotStart,
+                                  durationInHours: sessionDurationInHours,
+                                  consultantProfileId,
+                                  isTentative:
+                                    classStatus !== ClassStatus.SCHEDULED,
+                                  ordinal: index + 1,
+                                }),
+                              ),
+                            },
+                          },
+                        }
+                      : undefined,
+                },
                 include: {
-                  occurrences: true,
+                  classPlan: {
+                    include: {
+                      consultantProfile: PROFILE_OWNER_SELECT,
+                      topics: true,
+                      classContents: true,
+                    },
+                  },
+                  appointment: {
+                    include: {
+                      occurrences: true,
+                    },
+                  },
                 },
-              },
+              });
+
+              // #1554 — the roster is AppointmentParticipant; the planner seats the
+              // consultant on the wrapper exactly as the allocator does, or the
+              // reconcile sweep reads every planner-scheduled class as drift.
+              if (classEvent.appointment) {
+                await recordParticipants(
+                  tx,
+                  classEvent.appointment.id,
+                  [{ userId: session.user.id, role: "CONSULTANT" }],
+                  { status: "CONFIRMED" },
+                );
+              }
+
+              return { classPlan, classEvent };
             },
-          });
-
-          // #1554 — the roster is AppointmentParticipant; the planner seats the
-          // consultant on the wrapper exactly as the allocator does, or the
-          // reconcile sweep reads every planner-scheduled class as drift.
-          if (classEvent.appointment) {
-            await recordParticipants(
-              tx,
-              classEvent.appointment.id,
-              [{ userId: session.user.id, role: "CONSULTANT" }],
-              { status: "CONFIRMED" },
-            );
-          }
-
-          return { classPlan, classEvent };
-        },
-        {
-          timeout: 25000,
-          maxWait: 5000,
-          isolationLevel: "Serializable",
-        },
-      ),
+            {
+              timeout: 25000,
+              maxWait: 5000,
+              isolationLevel: "Serializable",
+            },
+          ),
+        ),
     );
 
     // Transform topics to strings in response
@@ -449,6 +475,17 @@ export async function POST(request: NextRequest) {
     // AE-2 (#784) — co-host clash is a conflict, not a server error.
     if (error instanceof CollaboratorUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    // Lock outcomes are structured answers, never a 500.
+    if (
+      error instanceof EventCheckoutBusyError ||
+      error instanceof EventCheckoutLockUnavailableError ||
+      error instanceof BookingLockUnavailableError
+    ) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
     }
     // #2010 — host overlap against live hold / co-host commitment / session → 409.
     if (error instanceof ConsultantScheduleConflictError) {
@@ -670,423 +707,479 @@ export async function PATCH(request: NextRequest) {
 
     // Update class plan and related data in a transaction. Serializable +
     // retry to match the POST arm; the callback touches `tx` only.
-    const result = await withSerializableRetry(() =>
-      prisma.$transaction(
-        async (tx) => {
-          // Use topics from existingPlan fetched *before* the transaction
-          const currentTopicIdsFromOuterScope = existingPlan.topics.map(
-            (t) => t.id,
-          );
-          console.log(
-            `[Before Transaction Update] Topics from initial fetch for class plan ${id}:`,
-            currentTopicIdsFromOuterScope,
-          );
+    // Host time this edit can make busy: the live sessions of a class being
+    // published, moved or handed to another owner. Lock order: event → batch.
+    const ownerForBatch =
+      consultantProfileId ?? existingPlan.consultantProfileId;
+    const touchesHostTime =
+      status === "SCHEDULED" ||
+      startDateString !== undefined ||
+      endDateString !== undefined ||
+      (consultantProfileId !== undefined &&
+        consultantProfileId !== existingPlan.consultantProfileId);
+    const batchWindows =
+      classToUpdate && touchesHostTime
+        ? await prisma.appointmentOccurrence.findMany({
+            where: {
+              appointment: { classId: classToUpdate.id, deletedAt: null },
+              deletedAt: null,
+            },
+            select: { startsAt: true, endsAt: true },
+          })
+        : [];
+    const batchProfiles =
+      batchWindows.length > 0 && ownerForBatch
+        ? [ownerForBatch, ...(await acceptedCohostProfileIds("CLASS", id))]
+        : [];
+    const result = await withEventCheckoutLock(
+      classToUpdate
+        ? { appointmentType: "CLASS", eventId: classToUpdate.id }
+        : null,
+      (renewEventLock) =>
+        withHostSlotBatch(
+          hostBatchEntries(batchProfiles, batchWindows),
+          (renewHostBatch) =>
+            withSerializableRetry(() =>
+              prisma.$transaction(
+                async (tx) => {
+                  await renewEventLock();
+                  await renewHostBatch();
+                  // Use topics from existingPlan fetched *before* the transaction
+                  const currentTopicIdsFromOuterScope = existingPlan.topics.map(
+                    (t) => t.id,
+                  );
+                  console.log(
+                    `[Before Transaction Update] Topics from initial fetch for class plan ${id}:`,
+                    currentTopicIdsFromOuterScope,
+                  );
 
-          // Handle class contents update logic (only if provided in validated data)
-          let classContentsUpdateData = {};
-          if (classContents && Array.isArray(classContents)) {
-            // Zod validation for contents already happened via main schema parse
+                  // Handle class contents update logic (only if provided in validated data)
+                  let classContentsUpdateData = {};
+                  if (classContents && Array.isArray(classContents)) {
+                    // Zod validation for contents already happened via main schema parse
 
-            // Delete existing class contents first
-            await tx.classContent.deleteMany({
-              where: { classPlanId: id },
-            });
-            // Prepare new class contents for creation
-            classContentsUpdateData = {
-              classContents: curriculumCreateNested(classContents),
-            };
-            console.log(
-              `Updating class contents for plan ${id}. Creating ${classContents.length} new entries.`,
-            );
-          } else {
-            console.log(`No class contents provided for update on plan ${id}.`);
-          }
+                    // Delete existing class contents first
+                    await tx.classContent.deleteMany({
+                      where: { classPlanId: id },
+                    });
+                    // Prepare new class contents for creation
+                    classContentsUpdateData = {
+                      classContents: curriculumCreateNested(classContents),
+                    };
+                    console.log(
+                      `Updating class contents for plan ${id}. Creating ${classContents.length} new entries.`,
+                    );
+                  } else {
+                    console.log(
+                      `No class contents provided for update on plan ${id}.`,
+                    );
+                  }
 
-          // Prepare the main update data, only including fields present in validatedData
-          const updateData: Prisma.ClassPlanUpdateInput = {};
-          if (title !== undefined) updateData.title = title;
-          if (description !== undefined) updateData.description = description;
-          if (durationInMonths !== undefined)
-            updateData.durationInMonths = durationInMonths;
-          if (price !== undefined) updateData.price = price;
-          if (priceCurrency !== undefined)
-            updateData.priceCurrency = priceCurrency;
-          if (certificateProvided !== undefined)
-            updateData.certificateProvided = certificateProvided;
-          if (recordingEnabled !== undefined)
-            updateData.recordingEnabled = recordingEnabled;
-          if (sessionsPerWeek !== undefined)
-            updateData.sessionsPerWeek = sessionsPerWeek;
-          if (emailSupport !== undefined)
-            updateData.emailSupport = emailSupport;
+                  // Prepare the main update data, only including fields present in validatedData
+                  const updateData: Prisma.ClassPlanUpdateInput = {};
+                  if (title !== undefined) updateData.title = title;
+                  if (description !== undefined)
+                    updateData.description = description;
+                  if (durationInMonths !== undefined)
+                    updateData.durationInMonths = durationInMonths;
+                  if (price !== undefined) updateData.price = price;
+                  if (priceCurrency !== undefined)
+                    updateData.priceCurrency = priceCurrency;
+                  if (certificateProvided !== undefined)
+                    updateData.certificateProvided = certificateProvided;
+                  if (recordingEnabled !== undefined)
+                    updateData.recordingEnabled = recordingEnabled;
+                  if (sessionsPerWeek !== undefined)
+                    updateData.sessionsPerWeek = sessionsPerWeek;
+                  if (emailSupport !== undefined)
+                    updateData.emailSupport = emailSupport;
 
-          // Allow updating sessionDurationInHours
-          if (patchSessionDuration !== undefined)
-            updateData.sessionDurationInHours = patchSessionDuration;
+                  // Allow updating sessionDurationInHours
+                  if (patchSessionDuration !== undefined)
+                    updateData.sessionDurationInHours = patchSessionDuration;
 
-          // Recompute derived metrics if base fields are being updated
-          if (
-            sessionsPerWeek !== undefined ||
-            durationInMonths !== undefined ||
-            patchSessionDuration !== undefined
-          ) {
-            const finalMeetingsPerWeek =
-              sessionsPerWeek ?? existingPlan.sessionsPerWeek;
-            const finalDurationInMonths =
-              durationInMonths ?? existingPlan.durationInMonths;
-            const finalSessionDurationInHours =
-              patchSessionDuration ??
-              existingPlan.sessionDurationInHours ??
-              1.0;
+                  // Recompute derived metrics if base fields are being updated
+                  if (
+                    sessionsPerWeek !== undefined ||
+                    durationInMonths !== undefined ||
+                    patchSessionDuration !== undefined
+                  ) {
+                    const finalMeetingsPerWeek =
+                      sessionsPerWeek ?? existingPlan.sessionsPerWeek;
+                    const finalDurationInMonths =
+                      durationInMonths ?? existingPlan.durationInMonths;
+                    const finalSessionDurationInHours =
+                      patchSessionDuration ??
+                      existingPlan.sessionDurationInHours ??
+                      1.0;
 
-            updateData.totalSessions = planTotalSessions({
-              sessionsPerWeek: finalMeetingsPerWeek,
-              durationInMonths: finalDurationInMonths,
-            });
-            updateData.totalHours =
-              updateData.totalSessions * finalSessionDurationInHours;
-          }
-          // Capacity is per instance. Only move the plan's default when the
-          // caller is editing the plan itself rather than one of its classes.
-          if (maxParticipants !== undefined && !classToUpdate)
-            updateData.maxParticipants = maxParticipants;
-          // #1780 row 2 — the window lives on the plan; seats snapshot it.
-          if (refundWindowHours !== undefined)
-            updateData.refundWindowHours = refundWindowHours;
-          // #1819 — the host's late-join settings; null resets to "until session 1".
-          if (lateJoinUntilSession !== undefined)
-            updateData.lateJoinUntilSession = lateJoinUntilSession;
-          if (lateJoinersGetPastRecordings !== undefined)
-            updateData.lateJoinersGetPastRecordings =
-              lateJoinersGetPastRecordings;
-          if (language !== undefined) updateData.language = language;
-          if (level !== undefined) updateData.level = level;
-          if (prerequisites !== undefined)
-            updateData.prerequisites = prerequisites; // handles null too
-          if (materialProvided !== undefined)
-            updateData.materialProvided = materialProvided; // handles null too
-          if (learningOutcomes !== undefined)
-            updateData.learningOutcomes = learningOutcomes;
-          if (subtitle !== undefined) updateData.subtitle = subtitle;
-          if (targetAudience !== undefined)
-            updateData.targetAudience = targetAudience;
-          if (whatsIncluded !== undefined)
-            updateData.whatsIncluded = whatsIncluded;
-          if (faqs !== undefined) updateData.faqs = faqReplaceNested(faqs);
-          if (consultantProfileId !== undefined)
-            updateData.consultantProfile = {
-              connect: { id: consultantProfileId },
-            };
+                    updateData.totalSessions = planTotalSessions({
+                      sessionsPerWeek: finalMeetingsPerWeek,
+                      durationInMonths: finalDurationInMonths,
+                    });
+                    updateData.totalHours =
+                      updateData.totalSessions * finalSessionDurationInHours;
+                  }
+                  // Capacity is per instance. Only move the plan's default when the
+                  // caller is editing the plan itself rather than one of its classes.
+                  if (maxParticipants !== undefined && !classToUpdate)
+                    updateData.maxParticipants = maxParticipants;
+                  // #1780 row 2 — the window lives on the plan; seats snapshot it.
+                  if (refundWindowHours !== undefined)
+                    updateData.refundWindowHours = refundWindowHours;
+                  // #1819 — the host's late-join settings; null resets to "until session 1".
+                  if (lateJoinUntilSession !== undefined)
+                    updateData.lateJoinUntilSession = lateJoinUntilSession;
+                  if (lateJoinersGetPastRecordings !== undefined)
+                    updateData.lateJoinersGetPastRecordings =
+                      lateJoinersGetPastRecordings;
+                  if (language !== undefined) updateData.language = language;
+                  if (level !== undefined) updateData.level = level;
+                  if (prerequisites !== undefined)
+                    updateData.prerequisites = prerequisites; // handles null too
+                  if (materialProvided !== undefined)
+                    updateData.materialProvided = materialProvided; // handles null too
+                  if (learningOutcomes !== undefined)
+                    updateData.learningOutcomes = learningOutcomes;
+                  if (subtitle !== undefined) updateData.subtitle = subtitle;
+                  if (targetAudience !== undefined)
+                    updateData.targetAudience = targetAudience;
+                  if (whatsIncluded !== undefined)
+                    updateData.whatsIncluded = whatsIncluded;
+                  if (faqs !== undefined)
+                    updateData.faqs = faqReplaceNested(faqs);
+                  if (consultantProfileId !== undefined)
+                    updateData.consultantProfile = {
+                      connect: { id: consultantProfileId },
+                    };
 
-          // Spread the contents update if any (only if classContents was in validatedData)
-          if (classContents !== undefined) {
-            Object.assign(updateData, classContentsUpdateData);
-          }
+                  // Spread the contents update if any (only if classContents was in validatedData)
+                  if (classContents !== undefined) {
+                    Object.assign(updateData, classContentsUpdateData);
+                  }
 
-          // Handle topics: topicIds are already validated/created by findOrCreateTopics
-          if (topicIds !== undefined) {
-            updateData.topics = {
-              set: topicIds.map((topicId: string) => ({ id: topicId })),
-            };
-            console.log(
-              `Syncing class topics with provided IDs: [${topicIds.join(", ")}]`,
-            );
-          } else {
-            console.log(
-              "Class topics is undefined in the request. Existing topics will not be modified.",
-            );
-          }
+                  // Handle topics: topicIds are already validated/created by findOrCreateTopics
+                  if (topicIds !== undefined) {
+                    updateData.topics = {
+                      set: topicIds.map((topicId: string) => ({ id: topicId })),
+                    };
+                    console.log(
+                      `Syncing class topics with provided IDs: [${topicIds.join(", ")}]`,
+                    );
+                  } else {
+                    console.log(
+                      "Class topics is undefined in the request. Existing topics will not be modified.",
+                    );
+                  }
 
-          // Execute the plan update only if there's data to update
-          let updatedClassPlan = existingPlan; // Start with existing if no updates
-          // Check if updateData has keys, or if topics/contents were explicitly provided for update
-          if (
-            Object.keys(updateData).length > 0 ||
-            topicIds !== undefined ||
-            classContents !== undefined
-          ) {
-            updatedClassPlan = await tx.classPlan.update({
-              where: { id }, // Use validated id
-              data: updateData,
-              include: {
-                consultantProfile: PROFILE_OWNER_SELECT,
-                topics: true,
-                classContents: true,
-                classes: true, // Keep included to match existingPlan type
-              },
-            });
-          }
+                  // Execute the plan update only if there's data to update
+                  let updatedClassPlan = existingPlan; // Start with existing if no updates
+                  // Check if updateData has keys, or if topics/contents were explicitly provided for update
+                  if (
+                    Object.keys(updateData).length > 0 ||
+                    topicIds !== undefined ||
+                    classContents !== undefined
+                  ) {
+                    updatedClassPlan = await tx.classPlan.update({
+                      where: { id }, // Use validated id
+                      data: updateData,
+                      include: {
+                        consultantProfile: PROFILE_OWNER_SELECT,
+                        topics: true,
+                        classContents: true,
+                        classes: true, // Keep included to match existingPlan type
+                      },
+                    });
+                  }
 
-          console.log("Updated class plan:", {
-            id: updatedClassPlan.id,
-            title: updatedClassPlan.title,
-            topicsCount: updatedClassPlan.topics.length,
-            contentsCount: updatedClassPlan.classContents.length,
-          });
+                  console.log("Updated class plan:", {
+                    id: updatedClassPlan.id,
+                    title: updatedClassPlan.title,
+                    topicsCount: updatedClassPlan.topics.length,
+                    contentsCount: updatedClassPlan.classContents.length,
+                  });
 
-          // Update the class instance if it exists and relevant fields are provided
-          let updatedClass = classToUpdate;
-          if (updatedClass) {
-            // Prepare update data for the Class instance, handling optional validated fields
-            const classUpdateData: {
-              status?: ClassStatus;
-              schedulingPeriodStartsAt?: Date | null;
-              schedulingPeriodEndsAt?: Date | null;
-              maxParticipants?: number;
-            } = {};
+                  // Update the class instance if it exists and relevant fields are provided
+                  let updatedClass = classToUpdate;
+                  if (updatedClass) {
+                    // Prepare update data for the Class instance, handling optional validated fields
+                    const classUpdateData: {
+                      status?: ClassStatus;
+                      schedulingPeriodStartsAt?: Date | null;
+                      schedulingPeriodEndsAt?: Date | null;
+                      maxParticipants?: number;
+                    } = {};
 
-            // Publishing DRAFT -> SCHEDULED is the only status edge an edit may
-            // move; any other change matches zero rows and answers 409.
-            const publishing =
-              status === "SCHEDULED" && updatedClass.status === "DRAFT";
-            if (status !== undefined && status !== updatedClass.status) {
-              await transitionClassEvent(tx, {
-                where: { id: updatedClass.id },
-                to: status,
-                fromIn: EVENT_PUBLISHABLE_FROM,
-              });
-            }
+                    // Publishing DRAFT -> SCHEDULED is the only status edge an edit may
+                    // move; any other change matches zero rows and answers 409.
+                    const publishing =
+                      status === "SCHEDULED" && updatedClass.status === "DRAFT";
+                    if (
+                      status !== undefined &&
+                      status !== updatedClass.status
+                    ) {
+                      await transitionClassEvent(tx, {
+                        where: { id: updatedClass.id },
+                        to: status,
+                        fromIn: EVENT_PUBLISHABLE_FROM,
+                      });
+                    }
 
-            // #628 — shrinking below the students already enrolled would strand
-            // paying learners. Checked inside the tx (the old guard ran before
-            // it and left a TOCTOU window).
-            if (maxParticipants !== undefined) {
-              const classAppointment = await tx.appointment.findUnique({
-                where: { classId: updatedClass.id },
-                include: {
-                  participants: {
-                    where: liveParticipant(),
-                    select: { userId: true },
-                  },
+                    // #628 — shrinking below the students already enrolled would strand
+                    // paying learners. Checked inside the tx (the old guard ran before
+                    // it and left a TOCTOU window).
+                    if (maxParticipants !== undefined) {
+                      const classAppointment = await tx.appointment.findUnique({
+                        where: { classId: updatedClass.id },
+                        include: {
+                          participants: {
+                            where: liveParticipant(),
+                            select: { userId: true },
+                          },
+                        },
+                      });
+                      const consultantUserId =
+                        existingPlan.consultantProfile?.userId;
+                      const enrolledCount = countWebinarParticipants(
+                        classAppointment,
+                        consultantUserId ? [consultantUserId] : [],
+                      );
+                      if (maxParticipants < enrolledCount) {
+                        throw new CapacityBelowEnrollmentError(
+                          capacityBelowRegisteredMessage(
+                            maxParticipants,
+                            enrolledCount,
+                          ),
+                        );
+                      }
+                      classUpdateData.maxParticipants = maxParticipants;
+                    }
+
+                    // Handle startDate: update if provided, set to null if explicitly null, otherwise leave unchanged
+                    // Need to parse the string date from validated data
+                    if (startDateString !== undefined) {
+                      classUpdateData.schedulingPeriodStartsAt = startDateString
+                        ? new Date(startDateString)
+                        : null;
+                      // Optional: Add check for valid date parsing: !isNaN(classUpdateData.schedulingPeriodStartsAt?.getTime())
+                      if (
+                        classUpdateData.schedulingPeriodStartsAt &&
+                        isNaN(
+                          classUpdateData.schedulingPeriodStartsAt.getTime(),
+                        )
+                      ) {
+                        console.warn(
+                          "Invalid startDate received in PATCH:",
+                          startDateString,
+                        );
+                        // Decide how to handle: throw error, ignore, set null?
+                        // For now, let's ignore the invalid date update for startDate
+                        delete classUpdateData.schedulingPeriodStartsAt;
+                      }
+                    }
+
+                    // Handle endDate: update if provided, set to null if explicitly null, otherwise leave unchanged
+                    if (endDateString !== undefined) {
+                      classUpdateData.schedulingPeriodEndsAt = endDateString
+                        ? new Date(endDateString)
+                        : null;
+                      // Optional: Add check for valid date parsing
+                      if (
+                        classUpdateData.schedulingPeriodEndsAt &&
+                        isNaN(classUpdateData.schedulingPeriodEndsAt.getTime())
+                      ) {
+                        console.warn(
+                          "Invalid endDate received in PATCH:",
+                          endDateString,
+                        );
+                        // Ignore invalid date update for endDate
+                        delete classUpdateData.schedulingPeriodEndsAt;
+                      }
+                    }
+
+                    // #627 — a class with enrolled, paying learners may not have its
+                    // scheduling period moved here; the reschedule workflow is the front
+                    // door. Read INSIDE the txn: the pre-txn version counted payments and
+                    // then committed the move, so an enrolment landing in between moved
+                    // the schedule under a learner who had just paid.
+                    //
+                    // Compared at DAY granularity, and only for a value actually sent:
+                    // the planner client re-sends startDate/endDate even for a
+                    // title-only edit.
+                    const liveClass = await tx.class.findUnique({
+                      where: { id: updatedClass.id },
+                      select: {
+                        schedulingPeriodStartsAt: true,
+                        schedulingPeriodEndsAt: true,
+                      },
+                    });
+                    const dayKey = (d: Date | null | undefined) =>
+                      d?.toISOString()?.slice(0, 10);
+                    const startChanged =
+                      startDateString !== undefined &&
+                      startDateString !== null &&
+                      dayKey(liveClass?.schedulingPeriodStartsAt) !==
+                        dayKey(new Date(startDateString));
+                    const endChanged =
+                      endDateString !== undefined &&
+                      endDateString !== null &&
+                      dayKey(liveClass?.schedulingPeriodEndsAt) !==
+                        dayKey(new Date(endDateString));
+                    const periodMoved = startChanged || endChanged;
+
+                    if (periodMoved) {
+                      const activePayments = await tx.payment.count({
+                        where: {
+                          appointment: { classId: updatedClass.id },
+                          paymentStatus: { notIn: ["FAILED", "EXPIRED"] },
+                        },
+                      });
+                      if (activePayments > 0) {
+                        throw new ScheduleLockedError(
+                          CLASS_SCHEDULE_LOCKED_MESSAGE,
+                        );
+                      }
+                    }
+
+                    const effectiveClassStatus = status ?? updatedClass.status;
+                    const ownerProfileId =
+                      consultantProfileId ??
+                      updatedClassPlan.consultantProfile?.id ??
+                      existingPlan.consultantProfile?.id;
+                    let ownerUserId: string | undefined;
+                    if (
+                      updatedClassPlan.consultantProfile?.id === ownerProfileId
+                    ) {
+                      ownerUserId = updatedClassPlan.consultantProfile?.userId;
+                    } else if (
+                      existingPlan.consultantProfile?.id === ownerProfileId
+                    ) {
+                      ownerUserId = existingPlan.consultantProfile?.userId;
+                    }
+                    const ownerChanged = Boolean(
+                      consultantProfileId &&
+                      consultantProfileId !== existingPlan.consultantProfileId,
+                    );
+
+                    // AE-2 (#784) / #2010 — mirrors the webinar PATCH's guard at its
+                    // own time commit: when this PATCH moves the scheduling period,
+                    // publishes a DRAFT class to SCHEDULED, or transfers the plan to a
+                    // new consultant, the sessions it leaves standing must be free for
+                    // every ACCEPTED co-host and for the target host consultant.
+                    if (
+                      periodMoved ||
+                      publishing ||
+                      (ownerChanged && effectiveClassStatus === "SCHEDULED")
+                    ) {
+                      const liveSessions = await tx.appointment.findMany({
+                        where: { classId: updatedClass.id, deletedAt: null },
+                        select: {
+                          id: true,
+                          occurrences: {
+                            where: { deletedAt: null },
+                            select: { startsAt: true, endsAt: true },
+                          },
+                        },
+                      });
+                      const windows = liveSessions.flatMap(
+                        (a) => a.occurrences,
+                      );
+                      const excludeAppointmentIds = liveSessions.map(
+                        (a) => a.id,
+                      );
+                      if (periodMoved || publishing) {
+                        await assertCollaboratorsAvailableForWindows(tx, {
+                          planType: "CLASS",
+                          planId: id,
+                          windows,
+                          excludeAppointmentIds,
+                        });
+                      }
+                      if (
+                        effectiveClassStatus === "SCHEDULED" &&
+                        ownerProfileId &&
+                        windows.length > 0
+                      ) {
+                        await assertConsultantAvailableForWindows(tx, {
+                          consultantProfileId: ownerProfileId,
+                          consultantUserId: ownerUserId,
+                          windows,
+                          excludeAppointmentIds,
+                        });
+                      }
+                    }
+
+                    if (publishing || (ownerChanged && ownerProfileId)) {
+                      await tx.appointmentOccurrence.updateMany({
+                        where: {
+                          appointment: { classId: updatedClass.id },
+                          deletedAt: null,
+                        },
+                        data: {
+                          ...(publishing ? { isTentative: false } : {}),
+                          ...(ownerChanged && ownerProfileId
+                            ? { consultantProfileId: ownerProfileId }
+                            : {}),
+                        },
+                      });
+                    }
+
+                    if (Object.keys(classUpdateData).length > 0) {
+                      updatedClass = await tx.class.update({
+                        where: { id: updatedClass.id },
+                        data: classUpdateData,
+                        include: {
+                          classPlan: {
+                            include: {
+                              consultantProfile: PROFILE_OWNER_SELECT,
+                              topics: true,
+                              classContents: true,
+                            },
+                          },
+                          appointment: {
+                            include: {
+                              occurrences: true,
+                            },
+                          },
+                        },
+                      });
+                    } else {
+                      // No field updates (or only the status moved above): fetch it
+                      // with all its relations so the response reflects the current row.
+                      updatedClass = await tx.class.findUnique({
+                        where: { id: updatedClass.id },
+                        include: {
+                          classPlan: {
+                            include: {
+                              consultantProfile: PROFILE_OWNER_SELECT,
+                              topics: true,
+                              classContents: true,
+                            },
+                          },
+                          appointment: {
+                            include: {
+                              occurrences: true,
+                            },
+                          },
+                        },
+                      });
+                    }
+                  }
+
+                  // Return the results
+                  return {
+                    classPlan: updatedClassPlan,
+                    class: updatedClass,
+                  };
                 },
-              });
-              const consultantUserId = existingPlan.consultantProfile?.userId;
-              const enrolledCount = countWebinarParticipants(
-                classAppointment,
-                consultantUserId ? [consultantUserId] : [],
-              );
-              if (maxParticipants < enrolledCount) {
-                throw new CapacityBelowEnrollmentError(
-                  capacityBelowRegisteredMessage(
-                    maxParticipants,
-                    enrolledCount,
-                  ),
-                );
-              }
-              classUpdateData.maxParticipants = maxParticipants;
-            }
-
-            // Handle startDate: update if provided, set to null if explicitly null, otherwise leave unchanged
-            // Need to parse the string date from validated data
-            if (startDateString !== undefined) {
-              classUpdateData.schedulingPeriodStartsAt = startDateString
-                ? new Date(startDateString)
-                : null;
-              // Optional: Add check for valid date parsing: !isNaN(classUpdateData.schedulingPeriodStartsAt?.getTime())
-              if (
-                classUpdateData.schedulingPeriodStartsAt &&
-                isNaN(classUpdateData.schedulingPeriodStartsAt.getTime())
-              ) {
-                console.warn(
-                  "Invalid startDate received in PATCH:",
-                  startDateString,
-                );
-                // Decide how to handle: throw error, ignore, set null?
-                // For now, let's ignore the invalid date update for startDate
-                delete classUpdateData.schedulingPeriodStartsAt;
-              }
-            }
-
-            // Handle endDate: update if provided, set to null if explicitly null, otherwise leave unchanged
-            if (endDateString !== undefined) {
-              classUpdateData.schedulingPeriodEndsAt = endDateString
-                ? new Date(endDateString)
-                : null;
-              // Optional: Add check for valid date parsing
-              if (
-                classUpdateData.schedulingPeriodEndsAt &&
-                isNaN(classUpdateData.schedulingPeriodEndsAt.getTime())
-              ) {
-                console.warn(
-                  "Invalid endDate received in PATCH:",
-                  endDateString,
-                );
-                // Ignore invalid date update for endDate
-                delete classUpdateData.schedulingPeriodEndsAt;
-              }
-            }
-
-            // #627 — a class with enrolled, paying learners may not have its
-            // scheduling period moved here; the reschedule workflow is the front
-            // door. Read INSIDE the txn: the pre-txn version counted payments and
-            // then committed the move, so an enrolment landing in between moved
-            // the schedule under a learner who had just paid.
-            //
-            // Compared at DAY granularity, and only for a value actually sent:
-            // the planner client re-sends startDate/endDate even for a
-            // title-only edit.
-            const liveClass = await tx.class.findUnique({
-              where: { id: updatedClass.id },
-              select: {
-                schedulingPeriodStartsAt: true,
-                schedulingPeriodEndsAt: true,
-              },
-            });
-            const dayKey = (d: Date | null | undefined) =>
-              d?.toISOString()?.slice(0, 10);
-            const startChanged =
-              startDateString !== undefined &&
-              startDateString !== null &&
-              dayKey(liveClass?.schedulingPeriodStartsAt) !==
-                dayKey(new Date(startDateString));
-            const endChanged =
-              endDateString !== undefined &&
-              endDateString !== null &&
-              dayKey(liveClass?.schedulingPeriodEndsAt) !==
-                dayKey(new Date(endDateString));
-            const periodMoved = startChanged || endChanged;
-
-            if (periodMoved) {
-              const activePayments = await tx.payment.count({
-                where: {
-                  appointment: { classId: updatedClass.id },
-                  paymentStatus: { notIn: ["FAILED", "EXPIRED"] },
+                {
+                  timeout: 10000, // 10 second timeout
+                  maxWait: 5000, // 5 second max wait
+                  isolationLevel: "Serializable", // Highest isolation level
                 },
-              });
-              if (activePayments > 0) {
-                throw new ScheduleLockedError(CLASS_SCHEDULE_LOCKED_MESSAGE);
-              }
-            }
-
-            const effectiveClassStatus = status ?? updatedClass.status;
-            const ownerProfileId =
-              consultantProfileId ??
-              updatedClassPlan.consultantProfile?.id ??
-              existingPlan.consultantProfile?.id;
-            let ownerUserId: string | undefined;
-            if (updatedClassPlan.consultantProfile?.id === ownerProfileId) {
-              ownerUserId = updatedClassPlan.consultantProfile?.userId;
-            } else if (existingPlan.consultantProfile?.id === ownerProfileId) {
-              ownerUserId = existingPlan.consultantProfile?.userId;
-            }
-            const ownerChanged = Boolean(
-              consultantProfileId &&
-              consultantProfileId !== existingPlan.consultantProfileId,
-            );
-
-            // AE-2 (#784) / #2010 — mirrors the webinar PATCH's guard at its
-            // own time commit: when this PATCH moves the scheduling period,
-            // publishes a DRAFT class to SCHEDULED, or transfers the plan to a
-            // new consultant, the sessions it leaves standing must be free for
-            // every ACCEPTED co-host and for the target host consultant.
-            if (
-              periodMoved ||
-              publishing ||
-              (ownerChanged && effectiveClassStatus === "SCHEDULED")
-            ) {
-              const liveSessions = await tx.appointment.findMany({
-                where: { classId: updatedClass.id, deletedAt: null },
-                select: {
-                  id: true,
-                  occurrences: {
-                    where: { deletedAt: null },
-                    select: { startsAt: true, endsAt: true },
-                  },
-                },
-              });
-              const windows = liveSessions.flatMap((a) => a.occurrences);
-              const excludeAppointmentIds = liveSessions.map((a) => a.id);
-              if (periodMoved || publishing) {
-                await assertCollaboratorsAvailableForWindows(tx, {
-                  planType: "CLASS",
-                  planId: id,
-                  windows,
-                  excludeAppointmentIds,
-                });
-              }
-              if (
-                effectiveClassStatus === "SCHEDULED" &&
-                ownerProfileId &&
-                windows.length > 0
-              ) {
-                await assertConsultantAvailableForWindows(tx, {
-                  consultantProfileId: ownerProfileId,
-                  consultantUserId: ownerUserId,
-                  windows,
-                  excludeAppointmentIds,
-                });
-              }
-            }
-
-            if (publishing || (ownerChanged && ownerProfileId)) {
-              await tx.appointmentOccurrence.updateMany({
-                where: {
-                  appointment: { classId: updatedClass.id },
-                  deletedAt: null,
-                },
-                data: {
-                  ...(publishing ? { isTentative: false } : {}),
-                  ...(ownerChanged && ownerProfileId
-                    ? { consultantProfileId: ownerProfileId }
-                    : {}),
-                },
-              });
-            }
-
-            if (Object.keys(classUpdateData).length > 0) {
-              updatedClass = await tx.class.update({
-                where: { id: updatedClass.id },
-                data: classUpdateData,
-                include: {
-                  classPlan: {
-                    include: {
-                      consultantProfile: PROFILE_OWNER_SELECT,
-                      topics: true,
-                      classContents: true,
-                    },
-                  },
-                  appointment: {
-                    include: {
-                      occurrences: true,
-                    },
-                  },
-                },
-              });
-            } else {
-              // No field updates (or only the status moved above): fetch it
-              // with all its relations so the response reflects the current row.
-              updatedClass = await tx.class.findUnique({
-                where: { id: updatedClass.id },
-                include: {
-                  classPlan: {
-                    include: {
-                      consultantProfile: PROFILE_OWNER_SELECT,
-                      topics: true,
-                      classContents: true,
-                    },
-                  },
-                  appointment: {
-                    include: {
-                      occurrences: true,
-                    },
-                  },
-                },
-              });
-            }
-          }
-
-          // Return the results
-          return {
-            classPlan: updatedClassPlan,
-            class: updatedClass,
-          };
-        },
-        {
-          timeout: 10000, // 10 second timeout
-          maxWait: 5000, // 5 second max wait
-          isolationLevel: "Serializable", // Highest isolation level
-        },
-      ),
+              ),
+            ),
+        ),
     );
 
     console.log(
@@ -1128,6 +1221,17 @@ export async function PATCH(request: NextRequest) {
     // AE-2 (#784) — co-host clash is a conflict, not a server error.
     if (error instanceof CollaboratorUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    // Lock outcomes are structured answers, never a 500.
+    if (
+      error instanceof EventCheckoutBusyError ||
+      error instanceof EventCheckoutLockUnavailableError ||
+      error instanceof BookingLockUnavailableError
+    ) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
     }
     // #2010 — host overlap against live hold / co-host commitment / session → 409.
     if (error instanceof ConsultantScheduleConflictError) {

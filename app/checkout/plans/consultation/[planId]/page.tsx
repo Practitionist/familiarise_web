@@ -52,7 +52,7 @@ import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import { useReferralPricing } from "../../useReferralPricing";
 import {
   createRazorpayCheckoutHandlers,
-  mintClientIdempotencyKey,
+  useCheckoutAttemptKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
   reportPaymentsError,
@@ -147,8 +147,7 @@ export default function ConsultationCheckoutPage({
     );
   const [slotPassedError, setSlotPassedError] = useState<string | null>(null);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
-  // #828 — useState's lazy initializer runs once per mount.
-  const [idempotencyKey] = useState(mintClientIdempotencyKey);
+  const attemptKey = useCheckoutAttemptKey();
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
@@ -432,12 +431,11 @@ export default function ConsultationCheckoutPage({
         body: JSON.stringify({
           ...checkoutData,
           isMockPayment,
-          // #828 — stable per-mount; the server dedupes retries on this key.
-          clientIdempotencyKey: idempotencyKey,
+          clientIdempotencyKey: attemptKey(checkoutData),
         }),
       });
     },
-    [idempotencyKey],
+    [attemptKey],
   );
 
   const handleCheckout = useCallback(

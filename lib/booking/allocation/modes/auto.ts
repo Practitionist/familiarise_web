@@ -19,8 +19,20 @@ import {
   unlockAutoAllocate,
   lockConsulteeBooking,
   unlockConsulteeBooking,
+  tryLockSlotBatch,
+  unlockSlotInterval,
   type ApprovalLock,
+  type SlotBatchGrant,
 } from "@/utils/appointmentlock";
+import {
+  ALLOCATION_SLOT_BATCH_TTL_MS,
+  AllocationRaceError,
+  MAX_ALLOCATION_RESEARCHES,
+  allocationBatchEntries,
+  allocationBatchProfiles,
+  heldSlotStartsOf,
+  renewAllocationBatch,
+} from "@/lib/booking/allocation/slot-batch";
 import type { FreedWindow } from "@/lib/booking/class-series";
 import {
   AllocationValidationError,
@@ -62,6 +74,9 @@ import {
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 import { assertCollaboratorsFree } from "@/lib/booking/allocation/collaborators";
 import { findAvailableSlots } from "@/lib/booking/allocation/search/find-available-slots";
+import { assertSlotsStillPublished } from "@/lib/booking/allocation/coverage";
+import { ALLOCATOR_SEARCH_TIME_BUDGET_MS } from "@/lib/booking/allocation/search/constants";
+import { createSearchBudget } from "@/utils/scheduling-engine/availability-search";
 import { createAppointments } from "@/lib/booking/allocation/commit/create-appointments";
 import { deleteExistingAppointments } from "@/lib/booking/allocation/commit/release-tentative";
 import {
@@ -117,15 +132,14 @@ export async function autoAllocate(
 
   // Acquire consultant-level distributed lock before the transaction
   const lock = await lockAutoAllocate(consultantProfileId);
-  // #898 follow-up — also serialize on the consultee so one person can't be
-  // booked across two consultants concurrently (the GiST overlap guard is
-  // consultant-keyed). Lock order: consultant → consultee.
+  // Lock order: consultant → consultee → slot batch. The consultee key (one
+  // person is never booked with two experts at once) is held only from the
+  // batch to the write, so the buyer's own checkout is never refused while a
+  // search (first or re-search) runs.
   let consulteeLock: ApprovalLock | null = null;
+  let slotGrant: SlotBatchGrant | null = null;
   try {
     const consulteeLockUserId = await getConsulteeUserId(eventType, eventId);
-    if (consulteeLockUserId) {
-      consulteeLock = await lockConsulteeBooking(consulteeLockUserId);
-    }
 
     // #837 TOCTOU — the pre-lock replay check can miss a concurrent first
     // submit that stamped its key while we waited on the lock. Re-check now
@@ -351,64 +365,105 @@ export async function autoAllocate(
     const releasedOccurrenceIds = releasedOccurrenceIdsOf(existingAppointments);
     const preference = await findAllocationPreference(releasedOccurrenceIds);
 
-    // Find available slots (read-only; runs out-of-txn under the locks)
-    // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
-    // Pass existingAppointments so sessionsPerWeek is scoped to this event only
+    // Every profile these times make busy (host, ACCEPTED co-hosts, an expert
+    // consultee's own calendar), locked as one atomic batch after the search.
+    const batchProfiles = await allocationBatchProfiles({
+      eventType,
+      planId,
+      consultantProfileId,
+      consulteeUserId,
+    });
+    const heldSlotStarts: string[] = [];
+    // One search budget for the first search and every re-search, so the
+    // whole request stays inside the edge limit however often it re-searches.
+    const searchBudget = createSearchBudget(ALLOCATOR_SEARCH_TIME_BUDGET_MS);
     let selectedSlots: Date[];
-    try {
-      selectedSlots = await findAvailableSlots(
-        prisma,
-        consultant,
-        requiredSlots,
-        slotsPerCall,
+    let validation: Awaited<ReturnType<ScheduleValidationService["validate"]>>;
+    for (let research = 0; ; research++) {
+      // Find available slots (read-only; runs out-of-txn under the locks)
+      // Pass appointmentIdsToExclude so their slots are excluded from bookedSlots
+      // Pass existingAppointments so sessionsPerWeek is scoped to this event only
+      try {
+        selectedSlots = await findAvailableSlots(
+          prisma,
+          consultant,
+          requiredSlots,
+          slotsPerCall,
+          eventType,
+          config,
+          appointmentIdsToExclude,
+          existingAppointments,
+          consulteeUserId, // #898 — pick slots free for the consultee too
+          consultantProfileId,
+          preference,
+          eventId, // #1194 — names the event in the row-truncation warning
+          // #1206 — never on a reschedule: its tentative rows ARE the sessions
+          // being moved, and placing fewer would delete the remainder outright
+          // instead of leaving it pending.
+          allowPartial && isRecurringEventType(eventType) && !isReschedule,
+          occurrenceIdsToExclude,
+          heldSlotStarts,
+          searchBudget,
+        );
+      } catch (error) {
+        // #1206 — with `allowPartial` on, a shortage is only raised when the
+        // search could place NOTHING. For the hourly top-up sweep that is the
+        // ordinary answer ("still no room"), not a refusal worth reporting; a
+        // top-up WITHOUT allowPartial keeps the typed SLOT_SHORTAGE so the
+        // consultant's dialog can still offer to place what fits.
+        if (isTopUp && allowPartial && error instanceof SlotShortageError) {
+          return topUpNoChange();
+        }
+        // A shortage only after excluding held times is a race, not a full calendar.
+        if (research > 0 && error instanceof SlotShortageError) {
+          throw new AllocationRaceError();
+        }
+        throw error;
+      }
+
+      // Validate (read-only; runs out-of-txn under the locks)
+      // Pass the exclusions so the rows being replaced don't trigger false conflicts
+      validation = await new ScheduleValidationService(prisma).validate(
         eventType,
+        eventId,
+        selectedSlots,
+        consultant,
         config,
         appointmentIdsToExclude,
-        existingAppointments,
-        consulteeUserId, // #898 — pick slots free for the consultee too
-        consultantProfileId,
-        preference,
-        eventId, // #1194 — names the event in the row-truncation warning
-        // #1206 — never on a reschedule: its tentative rows ARE the sessions
-        // being moved, and placing fewer would delete the remainder outright
-        // instead of leaving it pending.
-        allowPartial && isRecurringEventType(eventType) && !isReschedule,
-        occurrenceIdsToExclude,
+        // #676 AE-1 — also check the consultee's calendar
+        {
+          consulteeUserId,
+          excludeOccurrenceIds: occurrenceIdsToExclude,
+          // Co-host arm: the consultant's own ACCEPTED seats occupy too.
+          consultantProfileId,
+        },
       );
-    } catch (error) {
-      // #1206 — with `allowPartial` on, a shortage is only raised when the
-      // search could place NOTHING. For the hourly top-up sweep that is the
-      // ordinary answer ("still no room"), not a refusal worth reporting; a
-      // top-up WITHOUT allowPartial keeps the typed SLOT_SHORTAGE so the
-      // consultant's dialog can still offer to place what fits.
-      if (isTopUp && allowPartial && error instanceof SlotShortageError) {
-        return topUpNoChange();
+
+      if (!validation.isValid) {
+        throw new AllocationValidationError(
+          `Validation failed: ${validation.errors.join("; ")}`,
+        );
       }
-      throw error;
-    }
 
-    // Validate (read-only; runs out-of-txn under the locks)
-    // Pass the exclusions so the rows being replaced don't trigger false conflicts
-    const validation = await new ScheduleValidationService(prisma).validate(
-      eventType,
-      eventId,
-      selectedSlots,
-      consultant,
-      config,
-      appointmentIdsToExclude,
-      // #676 AE-1 — also check the consultee's calendar
-      {
-        consulteeUserId,
-        excludeOccurrenceIds: occurrenceIdsToExclude,
-        // Co-host arm: the consultant's own ACCEPTED seats occupy too.
-        consultantProfileId,
-      },
-    );
-
-    if (!validation.isValid) {
-      throw new AllocationValidationError(
-        `Validation failed: ${validation.errors.join("; ")}`,
+      if (consulteeLockUserId) {
+        consulteeLock = await lockConsulteeBooking(consulteeLockUserId);
+      }
+      // Never waits: a held time is excluded and searched around instead.
+      const batch = await tryLockSlotBatch(
+        allocationBatchEntries(selectedSlots, batchProfiles),
+        ALLOCATION_SLOT_BATCH_TTL_MS,
       );
+      if (batch.ok) {
+        slotGrant = batch.grant;
+        break;
+      }
+      if (consulteeLock) {
+        await unlockConsulteeBooking(consulteeLock);
+        consulteeLock = null;
+      }
+      if (research >= MAX_ALLOCATION_RESEARCHES || searchBudget.exhausted())
+        throw new AllocationRaceError();
+      heldSlotStarts.push(...heldSlotStartsOf(batch.heldKeys));
     }
 
     // #1206 — whole sessions, the unit the consultant and the consultee both
@@ -438,6 +493,7 @@ export async function autoAllocate(
     // the route's eventMutationLimiter).
     return await prisma.$transaction(
       async (tx) => {
+        await renewAllocationBatch(slotGrant);
         // #1692 — per-event serialisation first, so every re-check below
         // reads what the previous writer committed; a same-key double
         // submit replays instead of 409ing (see guardAllocationInTx).
@@ -482,6 +538,7 @@ export async function autoAllocate(
             "SLOT_TAKEN",
           );
         }
+        await assertSlotsStillPublished(tx, consultantProfileId, selectedSlots);
 
         // AE-2 (#784) — a webinar/class co-host is not a slot participant, so
         // nothing else here can see their clash. Checked in-txn, next to the
@@ -633,6 +690,7 @@ export async function autoAllocate(
       },
     );
   } finally {
+    if (slotGrant) await unlockSlotInterval(slotGrant);
     if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
     await unlockAutoAllocate(lock);
   }

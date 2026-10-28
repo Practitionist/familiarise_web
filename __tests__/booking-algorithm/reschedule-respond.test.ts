@@ -197,7 +197,13 @@ import {
   declineProposal,
 } from "@/lib/booking/reschedule-respond";
 import { tryAutoConfirmProposal } from "@/lib/booking/reschedule-auto-confirm";
-import { AppointmentBusyError } from "@/utils/appointmentlock";
+import {
+  AppointmentBusyError,
+  type ApprovalLock,
+} from "@/utils/appointmentlock";
+
+/** The booking's appointment lock the accept route holds while it allocates. */
+const HELD_LOCK = { key: "appointment-lock:appt-1" } as ApprovalLock;
 // #1846 — the durable operator trace and the notification, both of which the
 // decline reaches now that it restores.
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
@@ -361,8 +367,9 @@ function reportedOps() {
 }
 
 describe("accept re-validates through the allocator before anything is written", () => {
-  it("sends the proposed times through manual allocation under the wide lock", async () => {
+  it("sends the proposed times through manual allocation", async () => {
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -375,11 +382,10 @@ describe("accept re-validates through the allocator before anything is written",
     expect(mockAllocate).toHaveBeenCalledWith({
       eventType: "consultation",
       eventId: "cons-1",
+      // The accept route's own grant: renewed, never re-acquired.
+      heldAppointmentLock: HELD_LOCK,
       mode: "manual",
       slots: ["2026-09-01T10:00:00.000Z", "2026-09-08T10:00:00.000Z"],
-      // Day-sharded keys would let two concurrent confirmations pass a
-      // per-week cap on stale counts.
-      wideLock: true,
       // #1340 — the allocator must not close this proposal as superseded by
       // its own times.
       excludeRescheduleRequestId: REQ,
@@ -398,6 +404,7 @@ describe("accept re-validates through the allocator before anything is written",
     );
 
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -410,6 +417,7 @@ describe("accept re-validates through the allocator before anything is written",
 
   it("finalizes ACCEPTED with a from-state guard, not a blind write", async () => {
     await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -443,6 +451,7 @@ describe("accept re-validates through the allocator before anything is written",
     });
 
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -463,6 +472,7 @@ describe("accept re-validates through the allocator before anything is written",
     );
 
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -478,6 +488,7 @@ describe("accept re-validates through the allocator before anything is written",
     mockRequestFindUnique.mockResolvedValue(proposalRow({ proposedTimes: [] }));
 
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -494,6 +505,7 @@ describe("accept re-validates through the allocator before anything is written",
     );
 
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -521,6 +533,7 @@ describe("accept re-validates through the allocator before anything is written",
 describe("#1340 — a confirmation keeps the proposal it is confirming", () => {
   it("accept names its own proposal to the allocator and then closes it ACCEPTED", async () => {
     const out = await acceptProposal({
+      heldAppointmentLock: HELD_LOCK,
       rescheduleRequestId: REQ,
       eventType: "consultation",
       eventId: "cons-1",
@@ -564,7 +577,6 @@ describe("#1340 — a confirmation keeps the proposal it is confirming", () => {
     expect(mockAllocate).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: "manual",
-        wideLock: true,
         excludeRescheduleRequestId: REQ,
       }),
     );

@@ -181,6 +181,8 @@ describe("checkSlotAvailability", () => {
     ]);
 
     const result = await service.checkSlotAvailability(slots, "user-1");
+    // The prose an error surfaces names the time only, never whose booking it is.
+    expect(result.errors.join(" ")).not.toContain("Existing User");
     expect(result.conflicts).toEqual([
       {
         slot: slots[0].toISOString().slice(0, 19),

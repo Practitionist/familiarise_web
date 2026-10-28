@@ -18,7 +18,8 @@ import type {
 export const MAX_CANDIDATE_STARTS_PER_ROW = 48;
 
 /**
- * Wall-clock ceiling on ONE availability search.
+ * Wall-clock ceiling on one allocation's availability searching (the first
+ * search and every re-search around held times share it).
  *
  * The search is O(window × rows) and runs outside the write transaction, so an
  * unbounded walk is the only thing in this path that can cross the ~25 s edge

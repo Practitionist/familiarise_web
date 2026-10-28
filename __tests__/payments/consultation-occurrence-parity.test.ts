@@ -66,6 +66,8 @@ const webhookTx = {
     updateMany: jest.fn(),
     update: jest.fn(),
   },
+  // The capture recheck reads whether the payer is an expert too.
+  consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
   // #1319 A9 / #1554 — the creators write the roster in the same tx and the
   // #827 recheck reads it back.
   appointmentParticipant: {

@@ -35,6 +35,7 @@ import {
   AppointmentBusyError,
   BookingLockUnavailableError,
   withAppointmentLock,
+  type ApprovalLock,
 } from "@/utils/appointmentlock";
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
@@ -76,6 +77,8 @@ export async function acceptProposal(args: {
   eventType: EventType;
   eventId: string;
   resolvedById: string;
+  /** The booking's appointment lock the caller holds; the allocator renews it. */
+  heldAppointmentLock: ApprovalLock;
 }): Promise<RespondOutcome> {
   const request = await prisma.rescheduleRequest.findUnique({
     where: { id: args.rescheduleRequestId },
@@ -115,12 +118,9 @@ export async function acceptProposal(args: {
   const result = await allocate({
     eventType: args.eventType,
     eventId: args.eventId,
+    heldAppointmentLock: args.heldAppointmentLock,
     mode: "manual",
     slots: request.proposedTimes.map((p) => p.startsAt.toISOString()),
-    // Same reasoning as auto-confirm: these times were not day-picked by a
-    // human on the grid, so the day-sharded key would let two concurrent
-    // confirmations pass a per-week cap on stale counts.
-    wideLock: true,
     // #1340 — same exclusion as auto-confirm: the allocator declines every open
     // proposal these released slots carry, and this one is being ACCEPTED, not
     // superseded.

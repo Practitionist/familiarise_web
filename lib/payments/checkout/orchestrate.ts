@@ -16,10 +16,23 @@ import {
   unlockConsulteeBooking,
   extendLock,
   extendSlotInterval,
+  unlockSlotInterval,
   CHECKOUT_LOCK_TTL_MS,
   ApprovalLock,
+  type SlotBatchGrant,
 } from "@/utils/appointmentlock";
-import { DIRECT_CHECKOUT_HOLD_MS } from "@/lib/payments/constants";
+import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
+import {
+  mintPreMintedSeatOrder,
+  newSeatPreMintIntent,
+  SeatHoldLapsedError,
+  SeatOrderMintFailure,
+} from "@/lib/payments/checkout/seat-pre-mint";
+import {
+  DIRECT_CHECKOUT_HOLD_MS,
+  SEAT_CHECKOUT_HOLD_MS,
+  seatGatewayDeadline,
+} from "@/lib/payments/constants";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { getExchangeRates } from "@/lib/currency";
 import { notifyCreditsAppliedBestEffort } from "@/lib/referrals/referral-notify";
@@ -44,6 +57,7 @@ import {
   getPlanDataForLock,
   releaseCheckoutLock,
   acquireCheckoutLock,
+  lockBuyerSeatAtoms,
 } from "@/lib/payments/checkout/locks";
 import { asSeatPaymentConflict } from "@/lib/payments/checkout/seats";
 import { SlotTakenError } from "@/lib/booking/booking-rule-error";
@@ -112,6 +126,8 @@ export async function handleCheckout(
   // #898 follow-up — tier-2 consultee lock (acquired alongside the checkout lock
   // below; see the ordering note at STEP 2).
   let consulteeLock: ApprovalLock | null = null;
+  // A dual-role seat buyer's own slot atoms (event → consultee → slot batch).
+  let buyerSeatGrant: SlotBatchGrant | null = null;
   // TYPE-1: Properly typed payment response instead of any
   let paymentResponse: { id: string; client_secret: string | null } | null =
     null;
@@ -224,7 +240,17 @@ export async function handleCheckout(
         CHECKOUT_WAIT_RETRY_CONFIG,
       );
     }
-    lock = await acquireCheckoutLock(validatedData, planData);
+    const buyerProfile = isSlotBasedCheckout
+      ? await prisma.consultantProfile.findUnique({
+          where: { userId },
+          select: { id: true },
+        })
+      : null;
+    lock = await acquireCheckoutLock(
+      validatedData,
+      planData,
+      buyerProfile?.id ?? null,
+    );
     lockType = validatedData.startsAt ? "slot-based" : "event-based";
     if (!isSlotBasedCheckout) {
       consulteeLock = await lockConsulteeBooking(
@@ -232,6 +258,16 @@ export async function handleCheckout(
         undefined,
         CHECKOUT_WAIT_RETRY_CONFIG,
       );
+      if (
+        (appointmentType === "WEBINAR" || appointmentType === "CLASS") &&
+        validatedData.eventId
+      ) {
+        buyerSeatGrant = await lockBuyerSeatAtoms(
+          userId,
+          appointmentType,
+          validatedData.eventId,
+        );
+      }
     }
 
     console.log(
@@ -395,6 +431,8 @@ export async function handleCheckout(
         success: true,
         reused: true,
         orderId: reusableOrder.paymentIntent,
+        // The row the buyer's "Cancel checkout" releases.
+        paymentId: reusableOrder.id,
         paymentIntent: {
           id: reusableOrder.paymentIntent,
           client_secret: null,
@@ -406,7 +444,12 @@ export async function handleCheckout(
         // org-sponsored payments never land in PENDING, see the comment
         // above findReusablePendingOrderPayment), so the page must open it.
         skipPayment: reusableOrder.isMockPayment,
-        holdExpiresAt: reusableOrder.expiresAt?.toISOString() ?? null,
+        holdExpiresAt: reusableOrder.expiresAt
+          ? (appointmentType === "WEBINAR" || appointmentType === "CLASS"
+              ? seatGatewayDeadline(reusableOrder.expiresAt)
+              : reusableOrder.expiresAt
+            ).toISOString()
+          : null,
         message: "Resuming your in-progress checkout.",
       };
     }
@@ -447,12 +490,50 @@ export async function handleCheckout(
           );
         }
       }
+      if (buyerSeatGrant && !(await extendSlotInterval(buyerSeatGrant, ttl))) {
+        throw new Error(
+          "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
+        );
+      }
     };
     await renewOrAbort(perAttemptTtl);
 
     // #1861 L1 — one deadline for the gateway's capture window and the
     // PENDING row, so a Serializable retry cannot push the row past the order.
-    const holdExpiresAt = new Date(Date.now() + DIRECT_CHECKOUT_HOLD_MS);
+    const isSeatCheckout =
+      validatedData.appointmentType === "WEBINAR" ||
+      validatedData.appointmentType === "CLASS";
+    const holdExpiresAt = new Date(
+      Date.now() +
+        (isSeatCheckout ? SEAT_CHECKOUT_HOLD_MS : DIRECT_CHECKOUT_HOLD_MS),
+    );
+    // A seat's gateway window ends a grace before its hold, so a capture the
+    // gateway accepted late still lands on a seat that counts.
+    const gatewayExpiresAt = isSeatCheckout
+      ? seatGatewayDeadline(holdExpiresAt)
+      : holdExpiresAt;
+    // A gateway seat is committed with a pre-mint intent under the event key;
+    // its order is minted after the key is released (see seat-pre-mint).
+    const preMintSeat =
+      isSeatCheckout &&
+      !isOrgSponsoredPayment &&
+      !isZeroAmountPayment &&
+      !isMockPayment;
+    const mintGatewayOrder = async () => {
+      const { createPaymentIntent } = await import("../index");
+      return createPaymentIntent({
+        amount,
+        currency,
+        metadata: buildPaymentMetadata(validatedData, userId, {
+          organizationId,
+          fundingSource,
+        }),
+        paymentGateway: validatedData.paymentGateway,
+        isMockPayment,
+        customerId: savedCardCustomer,
+        holdExpiresAt: gatewayExpiresAt,
+      });
+    };
 
     // Enterprise org funding skips the gateway entirely.
     if (isOrgSponsoredPayment) {
@@ -475,21 +556,11 @@ export async function handleCheckout(
           timestamp: new Date().toISOString(),
         }),
       );
+    } else if (preMintSeat) {
+      paymentResponse = newSeatPreMintIntent();
     } else {
       try {
-        const { createPaymentIntent } = await import("../index");
-        paymentResponse = await createPaymentIntent({
-          amount,
-          currency,
-          metadata: buildPaymentMetadata(validatedData, userId, {
-            organizationId,
-            fundingSource,
-          }),
-          paymentGateway: validatedData.paymentGateway,
-          isMockPayment,
-          customerId: savedCardCustomer,
-          holdExpiresAt,
-        });
+        paymentResponse = await mintGatewayOrder();
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);
         reportSentryError(paymentError, { subsystem: "payments" });
@@ -573,6 +644,25 @@ export async function handleCheckout(
         }
         throw err;
       });
+
+      if (preMintSeat) {
+        // The seat is committed: free the event and buyer keys for the next
+        // checkout before the gateway round trip, then fill in the order.
+        if (lock) await releaseCheckoutLock(lock, lockType);
+        lock = null;
+        if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
+        consulteeLock = null;
+        if (buyerSeatGrant) await unlockSlotInterval(buyerSeatGrant);
+        buyerSeatGrant = null;
+        paymentResponse = await mintPreMintedSeatOrder({
+          preMintIntent: mintedOrder.id,
+          userId,
+          gateway: validatedData.paymentGateway,
+          mint: mintGatewayOrder,
+        }).catch((mintError: unknown) => {
+          throw new SeatOrderMintFailure(mintError);
+        });
+      }
 
       // #1435 — post-COMMIT delivery for the bells that describe a booking that
       // actually happened. See dispatchProgramBell for why neither lookup can
@@ -664,6 +754,8 @@ export async function handleCheckout(
       return {
         success: true,
         paymentIntent: paymentResponse,
+        // The row the buyer's "Cancel checkout" releases.
+        paymentId: result.paymentId,
         message,
         referralCreditsDropped,
         amount,
@@ -678,9 +770,26 @@ export async function handleCheckout(
         skipPayment:
           isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
         // #1861 L1 — Checkout's `timeout` is sized to this.
-        holdExpiresAt: result.holdExpiresAt?.toISOString() ?? null,
+        holdExpiresAt: result.holdExpiresAt
+          ? (isSeatCheckout
+              ? seatGatewayDeadline(result.holdExpiresAt)
+              : result.holdExpiresAt
+            ).toISOString()
+          : null,
       };
     } catch (caught) {
+      // The seat was committed and is already released: a mint failure is a
+      // gateway answer, never a failed booking write.
+      if (caught instanceof SeatOrderMintFailure) {
+        const { mintError } = caught;
+        if (mintError instanceof SeatHoldLapsedError) throw mintError;
+        console.error("Payment intent creation failed:", mintError);
+        reportSentryError(mintError, { subsystem: "payments" });
+        if (mintError instanceof PaymentError) throw mintError;
+        throw new Error(
+          "Failed to create payment intent. Please try again later.",
+        );
+      }
       const dbError = asSeatPaymentConflict(asWelcomeDiscountConflict(caught));
       console.error("Failed to create payment record:", dbError);
       // Classification for Sentry tagging ONLY — deliberately NOT the same
@@ -752,7 +861,11 @@ export async function handleCheckout(
 
       // CRITICAL: Cancel payment intent since DB operation failed
       // (Skip cleanup for zero-amount payments — they have no real gateway intent)
-      if (paymentResponse && !isZeroAmountPayment) {
+      if (
+        paymentResponse &&
+        !isZeroAmountPayment &&
+        !isPreMintIntent(paymentResponse.id)
+      ) {
         try {
           const { cancelPaymentIntent } = await import("../index");
           await cancelPaymentIntent(paymentResponse.id);
@@ -775,8 +888,10 @@ export async function handleCheckout(
       // row: the capture handler claims it and auto-refunds. Best-effort, and
       // never on mock, org-funded or zero-amount intents, which the gateway
       // never sees.
+      // A seat's pre-mint intent names no gateway order: nothing to tombstone.
       if (
         paymentResponse &&
+        !isPreMintIntent(paymentResponse.id) &&
         !isZeroAmountPayment &&
         !isOrgSponsoredPayment &&
         !isMockPayment &&
@@ -909,6 +1024,9 @@ export async function handleCheckout(
     }
     if (consulteeLock) {
       await unlockConsulteeBooking(consulteeLock);
+    }
+    if (buyerSeatGrant) {
+      await unlockSlotInterval(buyerSeatGrant);
     }
   }
 }

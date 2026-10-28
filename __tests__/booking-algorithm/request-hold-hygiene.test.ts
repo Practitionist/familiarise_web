@@ -116,14 +116,14 @@ const rfaRoute = readFileSync(
 );
 
 describe("RFA route lock order", () => {
-  it("takes the consultee lock before the slot atoms", () => {
+  it("takes the request cap, then the consultee lock, then the slot atoms", () => {
+    const capAt = rfaRoute.indexOf("lockRequestCap(consultantProfileId)");
     const consulteeAt = rfaRoute.indexOf(
       "lockConsulteeBooking(session.user.id)",
     );
-    const atomsAt = rfaRoute.indexOf(
-      "lockSlotBooking(consultantProfileId, startsAt, endsAt)",
-    );
-    expect(consulteeAt).toBeGreaterThan(-1);
+    const atomsAt = rfaRoute.indexOf("lockSlotBatch([");
+    expect(capAt).toBeGreaterThan(-1);
+    expect(consulteeAt).toBeGreaterThan(capAt);
     expect(atomsAt).toBeGreaterThan(consulteeAt);
   });
 

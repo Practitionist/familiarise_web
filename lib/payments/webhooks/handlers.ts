@@ -27,9 +27,13 @@ import {
   TrialStatus,
 } from "@prisma/client";
 import {
+  buildCohostCommitmentFilter,
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
+  OCCUPYING_OCCURRENCE_WHERE,
+  seatHoldingParticipant,
 } from "@/utils/scheduling-engine/occupancyPolicy";
+import { effectiveMaxParticipants } from "@/lib/events/capacity";
 import {
   REQUEST_ALLOWED_FROM,
   transitionClassEvent,
@@ -840,6 +844,10 @@ export async function handlePaymentSuccess(
               },
             });
             await parkCapture();
+            // The loser's hold dies with the capture commit, so no sweep can confirm it while the refund is pending.
+            if (confirmResult.doubleBookingBlocked) {
+              await cleanupFailedPaymentAppointment(tx, appointment.id);
+            }
           } else {
             // Outside the savepoint: the booking confirms even when earnings
             // defer, and the deferred retry must not see the cash as parked.
@@ -1155,7 +1163,6 @@ export async function handlePaymentSuccess(
         reason: DOUBLE_BOOKING_BLOCKED_NOTE,
         initiatedByUserId: null,
       });
-      await releaseBlockedBookingHold(txResult.appointmentId);
       if (outcome?.status !== "PENDING") {
         await settleAutoRefundMarker(txResult.paymentId);
       }
@@ -1170,7 +1177,7 @@ export async function handlePaymentSuccess(
         },
       });
       console.error(
-        "Failed to auto-refund double-booking loser; slots left for #830 sweep (Phase 2):",
+        "Failed to auto-refund double-booking loser; retry-auto-refunds re-drives its marker (Phase 2):",
         refundError,
       );
     }
@@ -1694,8 +1701,24 @@ async function confirmSeatAfterCapture(
     eventId: string;
     appointmentId: string;
     userId: string;
+    /** Set when the seat's hold lapsed before this capture: it confirms only if a place is still free. */
+    lapsedAt?: Date;
   },
 ): Promise<SeatCaptureOutcome> {
+  // A lapsed seat stopped counting for capacity, so another buyer may hold
+  // the last place now; without room it is released and the capture refunded.
+  if (
+    args.lapsedAt &&
+    !(await seatStillFits(
+      tx,
+      args.kind,
+      args.eventId,
+      args.userId,
+      args.lapsedAt,
+    ))
+  ) {
+    await transitionParticipant(tx, args.casWhere, "CANCELLED");
+  }
   if ((await transitionParticipant(tx, args.casWhere, "CONFIRMED")) > 0) {
     return { kind: "confirmed" };
   }
@@ -1736,6 +1759,43 @@ async function confirmSeatAfterCapture(
     seatPaymentId: fresh.paymentId,
   });
   return { kind: "released" };
+}
+
+/** Whether the event still has a place for this buyer, counting only seats that hold one now. */
+async function seatStillFits(
+  tx: Tx,
+  kind: "class" | "webinar",
+  eventId: string,
+  userId: string,
+  now: Date,
+): Promise<boolean> {
+  const event =
+    kind === "webinar"
+      ? await tx.webinar.findUnique({
+          where: { id: eventId },
+          select: {
+            maxParticipants: true,
+            webinarPlan: { select: { maxParticipants: true } },
+          },
+        })
+      : await tx.class.findUnique({
+          where: { id: eventId },
+          select: {
+            maxParticipants: true,
+            classPlan: { select: { maxParticipants: true } },
+          },
+        });
+  if (!event) return false;
+  const plan = "webinarPlan" in event ? event.webinarPlan : event.classPlan;
+  const others = await tx.appointmentParticipant.count({
+    where: {
+      appointment:
+        kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
+      ...seatHoldingParticipant(now),
+      userId: { not: userId },
+    },
+  });
+  return others < effectiveMaxParticipants(event, plan);
 }
 
 /**
@@ -1989,26 +2049,35 @@ export async function confirmExistingAppointment(
       appointment.subscription?.subscriptionPlan?.consultantProfileId ??
       appointment.webinar?.webinarPlan?.consultantProfileId ??
       appointment.class?.classPlan?.consultantProfileId;
-    const { buildCohostCommitmentFilter } =
-      await import("@/utils/scheduling-engine/occupancyPolicy");
-    const cohostCommitments = consultantProfileId
-      ? buildCohostCommitmentFilter(consultantProfileId)
-      : [];
+    // Co-host seats of the host, and of the payer when the payer is an expert too.
+    const payerProfile = userId
+      ? await tx.consultantProfile.findUnique({
+          where: { userId },
+          select: { id: true },
+        })
+      : null;
+    const cohostCommitments = [
+      ...(consultantProfileId
+        ? buildCohostCommitmentFilter(consultantProfileId)
+        : []),
+      ...(payerProfile ? buildCohostCommitmentFilter(payerProfile.id) : []),
+    ];
     const holdExpired = opts?.holdExpired === true;
     const now = opts?.now ?? new Date();
+    // Same row predicate as every reader: a returned or host-cancelled row has freed its time.
     const conflictStates: Prisma.AppointmentOccurrenceWhereInput = holdExpired
       ? {
           OR: [
-            { isTentative: false },
+            { isTentative: false, ...OCCUPYING_OCCURRENCE_WHERE },
             {
               isTentative: true,
-              ...liveOccurrenceWhere,
+              ...OCCUPYING_OCCURRENCE_WHERE,
               appointmentId: { not: appointmentId },
               appointment: { NOT: buildDeadHoldFilter(now) },
             },
           ],
         }
-      : { isTentative: false };
+      : { isTentative: false, ...OCCUPYING_OCCURRENCE_WHERE };
     for (const slot of mySlots) {
       if (participantIds.length === 0 && cohostCommitments.length === 0) {
         continue;
@@ -2143,6 +2212,7 @@ export async function confirmExistingAppointment(
       eventId: classId,
       appointmentId,
       userId,
+      lapsedAt: opts?.holdExpired ? (opts.now ?? new Date()) : undefined,
     });
     if (seat.kind === "released" || seat.kind === "missing") {
       return { capturedAfterTerminal: true, seatReleased: true };
@@ -2183,6 +2253,7 @@ export async function confirmExistingAppointment(
       eventId: webinarId,
       appointmentId,
       userId,
+      lapsedAt: opts?.holdExpired ? (opts.now ?? new Date()) : undefined,
     });
     if (seat.kind === "released" || seat.kind === "missing") {
       return { capturedAfterTerminal: true, seatReleased: true };

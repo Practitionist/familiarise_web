@@ -29,7 +29,10 @@ import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
 import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-replay";
 import { reconcileOrphanedConfirmations } from "@/scripts/payments/reconcile-orphaned-confirmations";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
-import { buildDeadHoldFilter } from "@/utils/scheduling-engine/occupancyPolicy";
+import {
+  buildDeadHoldFilter,
+  OCCUPYING_OCCURRENCE_WHERE,
+} from "@/utils/scheduling-engine/occupancyPolicy";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -158,6 +161,7 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
       slotFindMany,
       conflictFindFirst,
       tx: {
+        consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
         appointmentParticipant: {
           createMany: jest.fn().mockResolvedValue({ count: 1 }),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -327,10 +331,10 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
     });
     expect(lost.slotUpdateMany).not.toHaveBeenCalled();
     expect(lost.conflictFindFirst.mock.calls[0][0].where.OR).toEqual([
-      { isTentative: false },
+      { isTentative: false, ...OCCUPYING_OCCURRENCE_WHERE },
       {
         isTentative: true,
-        ...liveOccurrenceWhere,
+        ...OCCUPYING_OCCURRENCE_WHERE,
         appointmentId: { not: "appt-1" },
         appointment: { NOT: buildDeadHoldFilter(now) },
       },
@@ -353,6 +357,7 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
 describe("#855 — capturedAfterTerminal signal on a cancelled booking", () => {
   function mockTx(consultationStatus: string, casCount: number) {
     return {
+      consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
       // #1846 SM-B13 — the capture's consultation CAS now appends history.
       bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
       appointmentParticipant: {
@@ -428,8 +433,8 @@ describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
       appointmentId: "appt-1",
       isMockPayment: false,
     });
-    const res = await replayByIdempotencyKey("user-1", "ck_abc12345");
-    const body = await res!.json();
+    const res = await replayByIdempotencyKey("user-1", "ck_abc12345", "fp");
+    const body = await (res as Response).json();
     expect(body.reused).toBe(true);
     expect(body.orderId).toBe("order_original");
     // scoped to the caller — a guessed key can't read another user's payment
@@ -450,8 +455,8 @@ describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
       appointmentId: "appt-1",
       isMockPayment: false,
     });
-    const res = await replayByIdempotencyKey("user-1", "ck_abc12345");
-    const body = await res!.json();
+    const res = await replayByIdempotencyKey("user-1", "ck_abc12345", "fp");
+    const body = await (res as Response).json();
     expect(body.reused).toBe(true);
     expect(body.skipPayment).toBe(true);
   });
@@ -466,8 +471,8 @@ describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
       appointmentId: null,
       isMockPayment: false,
     });
-    const res = await replayByIdempotencyKey("user-1", "ck_abc12345");
-    expect(res!.status).toBe(409);
+    const res = await replayByIdempotencyKey("user-1", "ck_abc12345", "fp");
+    expect((res as Response).status).toBe(409);
   });
 
   it("409s a PENDING attempt on a gateway with no implementation", async () => {
@@ -480,14 +485,14 @@ describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
       appointmentId: null,
       isMockPayment: false,
     });
-    const res = await replayByIdempotencyKey("user-1", "ck_abc12345");
-    expect(res!.status).toBe(409);
+    const res = await replayByIdempotencyKey("user-1", "ck_abc12345", "fp");
+    expect((res as Response).status).toBe(409);
   });
 
   it("returns null for an unknown key (fresh attempt proceeds)", async () => {
     mockPaymentFindFirst.mockResolvedValue(null);
     await expect(
-      replayByIdempotencyKey("user-1", "ck_unknown"),
+      replayByIdempotencyKey("user-1", "ck_unknown", "fp"),
     ).resolves.toBeNull();
   });
 });

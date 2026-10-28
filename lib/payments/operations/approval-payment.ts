@@ -157,6 +157,37 @@ export class ApprovalAlreadyPaidError extends Error {
   }
 }
 
+/** Whether the request behind this mint still awaits payment (the same states the reuse guard accepts). */
+async function requestStillPayable(
+  params: CreateApprovalPaymentParams,
+): Promise<boolean> {
+  if (params.appointmentType === "TRIAL" && params.trialId) {
+    const trial = await prisma.trial.findUnique({
+      where: { id: params.trialId },
+      select: { status: true, paymentId: true },
+    });
+    return (
+      trial?.status === TrialStatus.AWAITING_PAYMENT ||
+      (trial?.status === TrialStatus.PENDING && trial.paymentId === null)
+    );
+  }
+  if (params.appointmentType === "CONSULTATION" && params.consultationId) {
+    const row = await prisma.consultation.findUnique({
+      where: { id: params.consultationId },
+      select: { status: true },
+    });
+    return row?.status === AppointmentStatus.APPROVED_PENDING_PAYMENT;
+  }
+  if (params.appointmentType === "SUBSCRIPTION" && params.subscriptionId) {
+    const row = await prisma.subscription.findUnique({
+      where: { id: params.subscriptionId },
+      select: { status: true },
+    });
+    return row?.status === AppointmentStatus.APPROVED_PENDING_PAYMENT;
+  }
+  return false;
+}
+
 export async function createApprovalPaymentIntent(
   params: CreateApprovalPaymentParams,
 ): Promise<ApprovalPaymentResult> {
@@ -201,6 +232,11 @@ export async function createApprovalPaymentIntent(
   );
 
   try {
+    // Re-read under the mint lock: a request cancelled or expired since the
+    // caller decided to mint must never get a payable order.
+    if (!(await requestStillPayable(params))) {
+      throw new ApprovalWindowLapsedError();
+    }
     // BUG-D: Validate user has consultee profile (required for webhook to succeed)
     const user = await prisma.user.findUnique({
       where: { id: params.userId },
