@@ -31,6 +31,7 @@ export interface CreatePayoutBatchesRun {
 export async function runCreatePayoutBatches(opts: {
   limit: number;
   windowStart?: Date;
+  createdBy?: string;
 }): Promise<CreatePayoutBatchesRun> {
   return withCronLock(
     "create-payout-batch",
@@ -40,6 +41,7 @@ export async function runCreatePayoutBatches(opts: {
       const org = await createOrgPayoutBatches({
         periodEnd: opts.windowStart ?? new Date(),
         limit: opts.limit,
+        createdBy: opts.createdBy,
       });
       return {
         success: true,
@@ -96,11 +98,13 @@ export interface ProcessPayoutsRun {
  */
 export async function runProcessPayouts(opts: {
   limit: number;
+  triggeredByUserId?: string;
 }): Promise<ProcessPayoutsRun> {
   return withCronLock("process-payouts", { failMode: "closed" }, async () => {
     const results = await processApprovedPayouts({
       ...REQUEST_PAYOUT_RUN_BOUNDS,
       limit: opts.limit,
+      triggeredByUserId: opts.triggeredByUserId,
     });
     // A row claimed by a concurrent run belongs to that run.
     const counted = results.filter((r) => !r.skipped);
@@ -129,7 +133,10 @@ export async function runProcessPayouts(opts: {
       }
     }
 
-    const org = await processPendingOrgPayouts({ limit: opts.limit });
+    const org = await processPendingOrgPayouts({
+      limit: opts.limit,
+      triggeredByUserId: opts.triggeredByUserId,
+    });
     errors.push(...org.errors);
 
     return {

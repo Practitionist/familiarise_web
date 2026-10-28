@@ -68,6 +68,8 @@ export const TARGETS = [
   "stream-control-plane-drift",
   "transfer-recordings",
   "reconcile-sessions",
+  "prune-system-job-executions",
+  "prune-system-events",
   ...STREAM_LIFECYCLE_JOBS,
 ] as const;
 
@@ -161,6 +163,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "stream-control-plane-drift": null,
   "transfer-recordings": null,
   "reconcile-sessions": 5,
+  "prune-system-job-executions": 500,
+  "prune-system-events": 500,
   "expire-recordings": null,
   "reconcile-orphaned-recordings": null,
   "wind-down-deactivated-orgs": null,
@@ -233,6 +237,8 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "stream-control-plane-drift": 60,
   "transfer-recordings": 15,
   "reconcile-sessions": 30,
+  "prune-system-job-executions": 30,
+  "prune-system-events": 60,
   "expire-recordings": 60,
   "reconcile-orphaned-recordings": 60,
   "wind-down-deactivated-orgs": 60,
@@ -305,6 +311,8 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "stream-control-plane-drift": 15,
   "transfer-recordings": 0,
   "reconcile-sessions": 10,
+  "prune-system-job-executions": 25,
+  "prune-system-events": 10,
   "expire-recordings": 5,
   "reconcile-orphaned-recordings": 25,
   "wind-down-deactivated-orgs": 55,
@@ -330,6 +338,11 @@ export interface CalendarWindow {
 }
 const DAILY_0300: CalendarWindow = { startMinuteUtc: 180, windowMinutes: 1020 };
 const DAILY_2330: CalendarWindow = { startMinuteUtc: 1410, windowMinutes: 180 };
+/** Retention band between the daytime money window and the 23:30 one. */
+const DAILY_RETENTION: CalendarWindow = {
+  startMinuteUtc: 1200,
+  windowMinutes: 210,
+};
 
 /** Every windowed target re-runs on its slots until the window closes; each run is a bounded, claim-based slice. */
 export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
@@ -380,6 +393,8 @@ export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   },
   "reconcile-stream-memberships": { startMinuteUtc: 0, windowMinutes: 180 },
   "stream-control-plane-drift": { startMinuteUtc: 75, windowMinutes: 60 },
+  "prune-system-job-executions": DAILY_RETENTION,
+  "prune-system-events": DAILY_RETENTION,
 };
 
 /**
@@ -411,6 +426,32 @@ export function windowStartFor(name: Target, now: Date): Date | null {
     return null;
   }
   return start;
+}
+
+/** How far back a calendar window (weekly, monthly, quarterly) is searched. */
+const WINDOW_SEARCH_DAYS = 400;
+const DAY_MS = 24 * 60 * 60_000;
+const WINDOWED_TARGETS: ReadonlySet<string> = new Set(
+  Object.keys(TARGET_WINDOWS),
+);
+
+export function isWindowedTarget(name: string): name is Target {
+  return WINDOWED_TARGETS.has(name);
+}
+
+/** The start of the newest window that opened at or before `at`, or null when none has in the search range. */
+export function latestWindowStart(name: Target, at: Date): Date | null {
+  const w = TARGET_WINDOWS[name];
+  if (!w) return null;
+  const day = Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate());
+  for (let d = 0; d <= WINDOW_SEARCH_DAYS; d++) {
+    const start = new Date(day - d * DAY_MS + w.startMinuteUtc * 60_000);
+    if (start.getTime() > at.getTime()) continue;
+    if (windowStartFor(name, start)?.getTime() === start.getTime()) {
+      return start;
+    }
+  }
+  return null;
 }
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
@@ -480,6 +521,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "tds-return-draft": 20_000,
   "reconcile-stream-memberships": 24_000,
   "reconcile-sessions": 24_000,
+  "prune-system-job-executions": 24_000,
+  "prune-system-events": 20_000,
 };
 
 /**

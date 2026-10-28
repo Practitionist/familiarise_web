@@ -97,14 +97,13 @@ jest.mock("../../lib/observability/ops-chat", () => ({
   postOpsChat: (...args: unknown[]) => chat(...args),
 }));
 jest.mock("../../lib/url", () => ({ getAppUrl: () => "https://test.invalid" }));
+import { COMPLIANCE_ALERT_EMAIL } from "../../lib/company";
 import { runDataBreachDeadlineAlerts } from "../../lib/compliance/databreach-deadline-alerts";
-const original = process.env.DATABREACH_ALERT_EMAIL;
 beforeEach(() => {
   jest.clearAllMocks();
   recipientQueries.length = 0;
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2026-10-23T01:00:00Z"));
-  delete process.env.DATABREACH_ALERT_EMAIL;
   users = Array.from({ length: 25 }, (_, i) => ({
     id: String(i).padStart(2, "0"),
     email: `admin${i}@example.test`,
@@ -166,22 +165,21 @@ beforeEach(() => {
   );
 });
 afterEach(() => jest.useRealTimers());
-afterAll(() => {
-  if (original === undefined) delete process.env.DATABREACH_ALERT_EMAIL;
-  else process.env.DATABREACH_ALERT_EMAIL = original;
-});
+/** Rows staged for admins, without the always-on compliance mailbox. */
+const adminEmails = () =>
+  emails.filter((e) => e.recipient !== COMPLIANCE_ALERT_EMAIL);
 it("stages25recipients over three invocations and deduplicates the completed hour", async () => {
   const results = [];
   for (let i = 0; i < 3; i++)
     results.push(await runDataBreachDeadlineAlerts({ limit: 10 }));
   expect(results.map((r) => r.recipientsStaged)).toEqual([10, 10, 5]);
   expect(results.map((r) => r.hasMore)).toEqual([true, true, false]);
-  expect(new Set(emails.map((e) => e.recipient)).size).toBe(25);
-  expect(emails).toHaveLength(25);
+  expect(new Set(adminEmails().map((e) => e.recipient)).size).toBe(25);
+  expect(adminEmails()).toHaveLength(25);
   expect(
     (await runDataBreachDeadlineAlerts({ limit: 10 })).recipientsStaged,
   ).toBe(0);
-  expect(emails).toHaveLength(25);
+  expect(adminEmails()).toHaveLength(25);
 });
 it("finishes an older digest across an hour boundary before starting the new hour", async () => {
   await runDataBreachDeadlineAlerts({ limit: 10 });
@@ -204,40 +202,13 @@ it("rolls back notification staging when email staging fails and retries the mis
   expect(result.success).toBe(false);
   expect(page).toHaveBeenCalledTimes(1);
   expect(notices).toEqual(["01"]);
-  expect(emails).toHaveLength(1);
+  expect(adminEmails()).toHaveLength(1);
   const retry = await runDataBreachDeadlineAlerts({ limit: 10 });
   expect(retry.recipientsStaged).toBe(1);
   expect(new Set(notices)).toEqual(new Set(["00", "01"]));
-  expect(emails).toHaveLength(2);
+  expect(adminEmails()).toHaveLength(2);
 });
 
-it("reports an invalid optional officer address while preserving admin staging and the unfinished digest", async () => {
-  users = users.slice(0, 2);
-  process.env.DATABREACH_ALERT_EMAIL = "invalid-officer-address";
-  const first = await runDataBreachDeadlineAlerts({ limit: 10 });
-  expect(first.success).toBe(false);
-  expect(first.errors).toEqual([
-    "DATABREACH_ALERT_EMAIL is not a valid email address",
-  ]);
-  expect(first.recipientsStaged).toBe(2);
-  expect(first.officerStaged).toBe(false);
-  expect(first.hasMore).toBe(true);
-  expect(notices).toHaveLength(2);
-  expect(emails).toHaveLength(2);
-  expect(emails.every((row) => row.entityRef.includes(":active:"))).toBe(true);
-  expect(page).toHaveBeenCalledTimes(1);
-
-  process.env.DATABREACH_ALERT_EMAIL = "officer@example.test";
-  const retry = await runDataBreachDeadlineAlerts({ limit: 10 });
-  expect(retry.success).toBe(true);
-  expect(retry.recipientsStaged).toBe(0);
-  expect(retry.officerStaged).toBe(true);
-  expect(emails).toHaveLength(3);
-  expect(notices).toHaveLength(2);
-  expect(emails.every((row) => row.entityRef.includes(":complete:"))).toBe(
-    true,
-  );
-});
 it("counts guarded held mail as persisted progress and excludes missing addresses", async () => {
   users[0].email = "";
   const base = stageEmail.getMockImplementation();
@@ -247,7 +218,7 @@ it("counts guarded held mail as persisted progress and excludes missing addresse
     return { ...staged, held: true };
   });
   for (let i = 0; i < 3; i++) await runDataBreachDeadlineAlerts({ limit: 10 });
-  expect(emails).toHaveLength(24);
+  expect(adminEmails()).toHaveLength(24);
   expect(emails.every((e) => e.status === "DEAD_LETTER")).toBe(true);
   expect(notices).not.toContain("00");
 });
@@ -303,7 +274,7 @@ it("leaves a fully staged digest active when the ops notice consumes the remaini
 
   expect(first).toMatchObject({ deadlineReached: true, hasMore: true });
   expect(markDigest).not.toHaveBeenCalled();
-  expect(emails).toHaveLength(1);
+  expect(emails).toHaveLength(2);
   expect(emails[0].entityRef).toContain(":active:");
 
   const resumed = await runDataBreachDeadlineAlerts({ startedAt: Date.now() });
@@ -315,7 +286,6 @@ it("leaves a fully staged digest active when the ops notice consumes the remaini
 
 it("does not start configured officer mail after preliminary reads exhaust the budget", async () => {
   users = [];
-  process.env.DATABREACH_ALERT_EMAIL = "officer@example.test";
   findUser.mockImplementationOnce(async () => {
     jest.advanceTimersByTime(16_000);
     return null;
@@ -331,7 +301,6 @@ it("does not start configured officer mail after preliminary reads exhaust the b
 
 it("stages a configured officer mailbox without a user and detects empty persistence", async () => {
   users = [];
-  process.env.DATABREACH_ALERT_EMAIL = "officer@example.test";
   expect(await runDataBreachDeadlineAlerts()).toMatchObject({
     success: true,
     officerStaged: true,

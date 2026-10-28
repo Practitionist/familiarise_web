@@ -59,7 +59,7 @@ If the settlement report instead showed a fee of 2,400 paise while the books had
 3. It books any missing capture fee with `postGatewayFee`, then stores the page's new lines in one `createMany` at the end. A fee posting that throws therefore leaves its line unstored, and the next slice retries it.
 4. Once a day is fully read, it posts one `settlement:<setl_id>` journal per settlement, moving the net of credits less debits from clearing to cash. A negative net reverses the direction, and a settlement whose net is zero posts no journal.
 
-The job holds its cron lock fail-closed (`withCronLock`), reads the Razorpay client through `getRazorpayClient`, and stops at a deadline with a stored prefix so the next slice resumes at the right offset. Without a configured gateway client it reports `NO_GATEWAY_CLIENT` and finishes.
+The job holds its cron lock fail-closed (`withCronLock`), reads the Razorpay client through `getRazorpayClient`, and stops at a deadline with a stored prefix so the next slice resumes at the right offset. Without a configured gateway client it returns the standard configuration skip `RAZORPAY_KEY_ID or RAZORPAY_SECRET not configured` and finishes; the run is stored as a `CANCELLED` row with outcome `skipped`, so it does not count as a completed settlement read.
 
 ```mermaid
 stateDiagram-v2

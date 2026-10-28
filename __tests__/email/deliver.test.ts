@@ -39,6 +39,7 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
+import { SUPPORT_EMAIL } from "@/lib/company";
 import {
   attempt,
   deliver,
@@ -86,7 +87,7 @@ describe("deliver — missing key (#1298 Fix 3)", () => {
       htmlBody: "<p>token=abc</p>",
       textBody: "token=abc",
       // Every transactional message gets a real Reply-To.
-      replyTo: "support@familiarisenow.com",
+      replyTo: SUPPORT_EMAIL,
     });
     expect(mockUpdate.mock.calls[0][0].data.lastError).toContain(
       "not configured",

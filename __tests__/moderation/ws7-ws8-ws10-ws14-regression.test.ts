@@ -124,7 +124,7 @@ import {
   REVIEW_REPORT_REASONS,
 } from "../../schemas/moderation";
 import { moderationStatementOfReasons } from "../../lib/moderation/side-effects";
-import { COMPANY_INFO } from "../../lib/company";
+import { COMPANY_INFO, SUPPORT_EMAIL } from "../../lib/company";
 import {
   ACK_PROMISE_COPY,
   ANTI_SCAM_NOTICE,
@@ -511,7 +511,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(COMPANY_INFO.registeredAddress).toContain("122018");
     expect(COMPANY_INFO.jurisdiction).toBe("Haryana, India");
     // The public mailbox never follows the private contact-form delivery inbox.
-    expect(COMPANY_INFO.email).toBe("support@practitionist.com");
+    expect(COMPANY_INFO.email).toBe(SUPPORT_EMAIL);
     expect(GRIEVANCE_OFFICER.email).toBe(COMPANY_INFO.email);
     expect(ANTI_SCAM_NOTICE).toContain("never ask for your OTP");
     expect(INQUIRY_CATEGORIES.some((c) => c.value === "grievance")).toBe(true);

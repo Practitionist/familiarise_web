@@ -5,10 +5,11 @@
  * finishes any send a killed run left PENDING.
  */
 
+import { SUPPORT_EMAIL } from "@/lib/company";
 import type { IncidentRemedyKind, Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { EMAIL_BUDGET_MS, OPS_EMAIL, SENDERS } from "@/lib/email/config";
+import { EMAIL_BUDGET_MS, SENDERS } from "@/lib/email/config";
 import { attempt, stage, type RenderedEmail } from "@/lib/email/deliver";
 import { attemptStaged } from "@/lib/email/send-to-recipients";
 import {
@@ -231,7 +232,7 @@ export async function stageAndSendIncidentReport(
     const message: RenderedEmail = {
       from: SENDERS.ops,
       to: canaryAlertRecipient(),
-      replyTo: OPS_EMAIL,
+      replyTo: SUPPORT_EMAIL,
       subject: report.subject,
       text: report.text,
       html: report.text

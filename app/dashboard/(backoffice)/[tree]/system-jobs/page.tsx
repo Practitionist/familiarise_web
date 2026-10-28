@@ -6,6 +6,7 @@ import {
 } from "@/components/dashboard/PageScaffold";
 import { requireBackofficePage } from "@/lib/auth-guard";
 import { readJobRunMetrics } from "@/lib/backoffice/job-run-metrics";
+import { systemJobCards } from "@/lib/cron/job-catalog";
 
 async function metricsOrNull() {
   try {
@@ -32,7 +33,7 @@ export default async function BackofficeSystemJobsPage({
       />
       <DashboardContent>
         <JobRunMetrics metrics={metrics} />
-        <SystemJobsPanel />
+        <SystemJobsPanel jobs={systemJobCards()} />
       </DashboardContent>
     </>
   );

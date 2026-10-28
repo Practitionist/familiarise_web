@@ -17,6 +17,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import type { Prisma, SystemEventSeverity } from "@prisma/client";
 import { emitTelemetryLog } from "@/lib/observability/betterstack-telemetry";
+import { currentRun } from "@/lib/cron/run-context";
 import {
   reportSentryError,
   SYSTEM_EVENT_WRITE_FAILURE_MARKER,
@@ -29,6 +30,15 @@ function severityToTelemetryLevel(
   if (severity === "ERROR") return "error";
   if (severity === "WARN") return "warn";
   return "info";
+}
+
+/** Stamps the active job run on the event's context; `correlationId` stays the caller's own key. */
+function withJobRunId(
+  context: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | undefined {
+  const jobRunId = currentRun()?.runIds.at(-1);
+  if (!jobRunId) return context ?? undefined;
+  return { ...context, jobRunId };
 }
 
 export interface RecordSystemEventParams {
@@ -99,7 +109,7 @@ export async function recordSystemEvent(
         // `Record<string, unknown>` widens to Prisma's
         // `InputJsonValue` at the storage boundary. Cast is local
         // and intentional — the JSON shape is operator-defined.
-        context: (params.context ?? undefined) as Prisma.InputJsonValue,
+        context: withJobRunId(params.context) as Prisma.InputJsonValue,
         correlationId: params.correlationId ?? null,
       },
     });

@@ -13,10 +13,8 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
-import {
-  runConfirmPhrase,
-  type SystemJob,
-} from "@/components/dashboard/SystemJobsPanel";
+import { runConfirmPhrase } from "@/lib/cron/job-catalog";
+import type { JobCategory } from "@/lib/cron/job-categories";
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 
@@ -73,17 +71,26 @@ describe("QA wave 4 (backoffice)", () => {
   });
 
   it("B10 — the typed phrase is for jobs that move money only", () => {
-    const job = (id: string, category: SystemJob["category"] = "Payments") => ({
+    const job = (id: string, jobName: string, category: JobCategory) => ({
       id,
+      jobName,
       category,
     });
-    expect(runConfirmPhrase(job("cleanup-abandoned-payments"))).toBeUndefined();
-    expect(runConfirmPhrase(job("auth-tokens", "Cleanup"))).toBeUndefined();
-    expect(runConfirmPhrase(job("process-payouts", "Payouts"))).toBe(
-      "RUN PAYOUTS",
-    );
-    expect(runConfirmPhrase(job("release-earnings", "Earnings"))).toBe(
-      "release-earnings",
-    );
+    expect(
+      runConfirmPhrase(
+        job("abandoned-payments", "cleanup-abandoned-payments", "Payments"),
+      ),
+    ).toBeNull();
+    expect(
+      runConfirmPhrase(job("auth-tokens", "cleanup-auth-tokens", "Cleanup")),
+    ).toBeNull();
+    expect(
+      runConfirmPhrase(job("process-payouts", "process-payouts", "Payouts")),
+    ).toBe("RUN PAYOUTS");
+    expect(
+      runConfirmPhrase(
+        job("reconcile-refunds", "reconcile-pending-refunds", "Refunds"),
+      ),
+    ).toBe("reconcile-refunds");
   });
 });

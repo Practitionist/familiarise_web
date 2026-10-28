@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/prisma";
+import { casMiss } from "@/lib/cron/run-counters";
 /**
  * Central guarded status transitions for every enterprise lifecycle enum —
  * the generalization of `lib/payments/billing/overage-transitions.ts`, which
@@ -91,6 +92,7 @@ async function finalize(
   entityId?: string,
 ): Promise<void> {
   if (count === 0) {
+    casMiss();
     throw new IllegalTransitionError(
       entity,
       to,

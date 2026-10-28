@@ -61,6 +61,29 @@ it.each([
       { headers: { authorization: "Bearer test-cron-secret" } },
     );
     expect((await handlers.POST(request)).status).toBe(200);
-    expect(run).toHaveBeenCalledWith({ limit: 500, startedAt });
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 500, startedAt }),
+    );
+  },
+);
+
+it.each([
+  ["", false],
+  ["&delete=1", true],
+  ["&delete=0", false],
+])(
+  "passes delete for the consent sweeper twin (%j -> %s)",
+  async (query, del) => {
+    consent.mockResolvedValueOnce({ success: true, hasMore: false });
+    const handlers = getCleanupJobHandlers("consent-retention-sweeper");
+    if (!handlers) throw new Error("Missing registered job");
+    const request = new NextRequest(
+      `https://example.invalid/api/cleanup/consent-retention-sweeper?limit=5${query}`,
+      { headers: { authorization: "Bearer test-cron-secret" } },
+    );
+    expect((await handlers.POST(request)).status).toBe(200);
+    expect(consent).toHaveBeenCalledWith(
+      expect.objectContaining({ delete: del }),
+    );
   },
 );

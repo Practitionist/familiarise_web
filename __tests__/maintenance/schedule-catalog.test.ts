@@ -8,6 +8,8 @@ import {
   dueTargets,
   MAX_TARGETS_PER_TICK,
   STREAM_LIFECYCLE_JOBS,
+  isWindowedTarget,
+  latestWindowStart,
 } from "@/lib/cron/schedule";
 
 describe("shared capability schedule catalog", () => {
@@ -92,5 +94,35 @@ describe("shared capability schedule catalog", () => {
     });
     expect(dueTargets(outside)).not.toContain("reconcile-gateway-settlements");
     expect(dueTargets(inside)).toContain("reconcile-gateway-settlements");
+  });
+
+  it("finds the latest window a manual run repeats, the open one included", () => {
+    expect(isWindowedTarget("create-payout-batch")).toBe(true);
+    expect(isWindowedTarget("reconcile-refunds")).toBe(false);
+    expect(
+      latestWindowStart(
+        "create-payout-batch",
+        new Date("2026-10-28T10:00:00Z"),
+      )?.toISOString(),
+    ).toBe("2026-10-26T20:00:00.000Z");
+    expect(
+      latestWindowStart(
+        "create-payout-batch",
+        new Date("2026-10-26T20:30:00Z"),
+      )?.toISOString(),
+    ).toBe("2026-10-26T20:00:00.000Z");
+    // A window that runs past midnight is anchored to the day it opened.
+    expect(
+      latestWindowStart(
+        "dunning",
+        new Date("2026-10-28T01:00:00Z"),
+      )?.toISOString(),
+    ).toBe("2026-10-27T23:30:00.000Z");
+    expect(
+      latestWindowStart(
+        "settle-invoice-accruals",
+        new Date("2026-10-28T10:00:00Z"),
+      )?.toISOString(),
+    ).toBe("2026-10-01T04:00:00.000Z");
   });
 });
