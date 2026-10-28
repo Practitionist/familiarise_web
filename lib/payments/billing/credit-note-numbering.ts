@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/prisma";
+import { PLATFORM_INVOICE_PREFIX } from "@/lib/company";
 /**
  * Per-org credit-note numbering — CGST Rule 53 sequential rule (#776 / #778 §D).
  *
@@ -112,7 +113,7 @@ export async function generateConsumerCreditNoteNumber(
   const nonPrefixLength =
     "-CN-".length + String(fiscalYear).length + 1 + padded.length;
   const prefix = fitPrefixToRule46(
-    (process.env.PLATFORM_INVOICE_PREFIX ?? "FAM").toUpperCase(),
+    PLATFORM_INVOICE_PREFIX.toUpperCase(),
     nonPrefixLength,
   );
   return {

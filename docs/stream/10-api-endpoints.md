@@ -598,7 +598,7 @@ Provides comprehensive debugging information about a user's Stream Chat connecti
 
 **Location:** `/app/api/stream/debug/route.ts`
 
-**Authentication:** Required (implicitly via API keys)
+**Authentication:** A staff or admin session. The route answers 401 without a session, 403 for other roles, and 403 outside `next dev` (it checks `NODE_ENV` is `development`), so it does not exist on a deployed build. There is no secret query parameter and no environment variable that re-enables it.
 
 **Query Parameters:**
 

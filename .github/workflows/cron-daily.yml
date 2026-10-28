@@ -37,7 +37,6 @@ jobs:
       UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
       REDIS_URL: ${{ secrets.REDIS_URL }}
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       NEXT_PUBLIC_STREAM_API_KEY: ${{ secrets.NEXT_PUBLIC_STREAM_API_KEY }}
       STREAM_API_KEY: ${{ secrets.STREAM_API_KEY }}
@@ -49,8 +48,6 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       CLEARTAX_API_KEY: ${{ secrets.CLEARTAX_API_KEY }}
       CLEARTAX_GSP_TOKEN: ${{ secrets.CLEARTAX_GSP_TOKEN }}
-      CLEARTAX_GSTIN: ${{ secrets.CLEARTAX_GSTIN }}
-      MSME_ALERT_EMAIL: ${{ secrets.MSME_ALERT_EMAIL }}
       RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
       # Pre-launch delivery guard: unset means allowlist; set the repo variable to "live" at launch.
       EMAIL_DELIVERY_MODE: ${{ vars.EMAIL_DELIVERY_MODE }}

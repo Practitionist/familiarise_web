@@ -102,7 +102,7 @@ On the **Settings** tab:
 - **Company name**: `Familiarise`
 - **Subdomain**: `familiarise` → this creates `familiarise.betteruptime.com`
 - **What URL should your logo point to?**: `https://familiarisenow.com`
-- **Get in touch URL**: `mailto:support@familiarisenow.com`
+- **Get in touch URL**: `mailto:connect@practitionist.com` (`SUPPORT_EMAIL`)
 - **Status page design**: `Modern look` (default)
 - **Color theme**: `Light version` (default)
 

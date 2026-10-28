@@ -120,19 +120,20 @@ npm run dev
 
 Create a `.env` file based on `.env.sample`. Never commit `.env` or secrets to the repository.
 
+`.env.sample` is grouped into eight sections (core runtime, vendors, compliance and encryption, ops and observability, pre-launch guards and feature flags, seed only, build only, platform-provided) and lists every key the code reads. The test `__tests__/maintenance/env-sample-coverage.test.ts` fails when code reads a key that is missing from it, so add any new key there in the same change. Fixed values such as the support mailbox, the sending domains and the invoice prefix are constants in `lib/company.ts`, not environment variables.
+
 ### Required Variables
 
-| Variable                        | Description                             | Local Value             | Production Value             |
-| ------------------------------- | --------------------------------------- | ----------------------- | ---------------------------- |
-| `DATABASE_URL`                  | Supabase pooled connection string       | From Supabase dashboard | Same (or prod project)       |
-| `DIRECT_URL`                    | Supabase direct connection (migrations) | From Supabase dashboard | Same (or prod project)       |
-| `BETTER_AUTH_SECRET`            | Auth signing secret                     | Random 32+ char string  | Different secret for prod    |
-| `BETTER_AUTH_URL`               | App base URL for auth callbacks         | `http://localhost:3000` | `https://familiarisenow.com` |
-| `BETTER_AUTH_TRUSTED_ORIGINS`   | Allowed origins for auth                | `http://localhost:3000` | `https://familiarisenow.com` |
-| `NEXT_PUBLIC_APP_URL`           | Public-facing app URL                   | `http://localhost:3000` | `https://familiarisenow.com` |
-| `NODE_ENV`                      | Runtime environment                     | `development`           | `production`                 |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase project URL                    | From Supabase dashboard | Same                         |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key                       | From Supabase dashboard | Same                         |
+| Variable                      | Description                             | Local Value             | Production Value             |
+| ----------------------------- | --------------------------------------- | ----------------------- | ---------------------------- |
+| `DATABASE_URL`                | Supabase pooled connection string       | From Supabase dashboard | Same (or prod project)       |
+| `DIRECT_URL`                  | Supabase direct connection (migrations) | From Supabase dashboard | Same (or prod project)       |
+| `BETTER_AUTH_SECRET`          | Auth signing secret                     | Random 32+ char string  | Different secret for prod    |
+| `BETTER_AUTH_URL`             | App base URL for auth callbacks         | `http://localhost:3000` | `https://familiarisenow.com` |
+| `BETTER_AUTH_TRUSTED_ORIGINS` | Allowed origins for auth                | `http://localhost:3000` | `https://familiarisenow.com` |
+| `NEXT_PUBLIC_APP_URL`         | Public-facing app URL                   | `http://localhost:3000` | `https://familiarisenow.com` |
+| `NODE_ENV`                    | Runtime environment                     | `development`           | `production`                 |
+| `NEXT_PUBLIC_SUPABASE_URL`    | Supabase project URL                    | From Supabase dashboard | Same                         |
 
 <details>
 <summary>All Environment Variables</summary>
@@ -209,16 +210,14 @@ Create a `.env` file based on `.env.sample`. Never commit `.env` or secrets to t
 | ---------------------------- | ------------------------------ | -------------------------- |
 | `NEXT_PUBLIC_SENTRY_DSN`     | Sentry error tracking DSN      | Public, safe to expose     |
 | `SENTRY_AUTH_TOKEN`          | Sentry release/sourcemap token | Build-time only            |
-| `SENTRY_DSN`                 | Sentry server-side DSN         | Same as public DSN         |
 | `BETTERSTACK_API_KEY`        | BetterStack uptime monitoring  | For status page/alerts     |
 | `NEXT_PUBLIC_LOGO_DEV_TOKEN` | Logo.dev API token             | For company logo rendering |
 
 ### Dev/Test Only (DO NOT set on production)
 
-| Variable                  | Description                    | Notes          |
-| ------------------------- | ------------------------------ | -------------- |
-| `SEED_PASSWORD`           | Password for seeded test users | Local dev only |
-| `NEXT_PUBLIC_TEST_USERID` | Test user ID for dev tools     | Local dev only |
+| Variable        | Description                    | Notes          |
+| --------------- | ------------------------------ | -------------- |
+| `SEED_PASSWORD` | Password for seeded test users | Local dev only |
 
 </details>
 
@@ -228,7 +227,7 @@ When deploying to production (Netlify), ensure:
 
 - [ ] All `localhost:3000` URLs replaced with `https://familiarisenow.com`
 - [ ] `NODE_ENV` set to `production`
-- [ ] `SEED_PASSWORD` and `NEXT_PUBLIC_TEST_USERID` removed
+- [ ] `SEED_PASSWORD` removed
 - [ ] `REDIS_URL` removed (use `UPSTASH_REDIS_REST_URL` instead)
 - [ ] Payment keys switched from `test` to `live` when going live
 - [ ] `BETTER_AUTH_SECRET` is a unique production secret

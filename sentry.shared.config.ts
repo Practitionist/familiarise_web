@@ -21,13 +21,6 @@ import {
 type SentryInitOptions = NonNullable<Parameters<typeof Sentry.init>[0]>;
 
 export function resolveDefaultTracesSampleRate(): number {
-  const rawOverride = process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
-  if (rawOverride !== undefined && rawOverride !== "") {
-    const parsed = Number(rawOverride);
-    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) {
-      return parsed;
-    }
-  }
   if (
     isProductionEnvironment() ||
     process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview"
@@ -39,7 +32,7 @@ export function resolveDefaultTracesSampleRate(): number {
 
 /**
  * Route-aware trace sampling (#1926):
- * - Non-production: 20% (or NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE override)
+ * - Non-production: 20%
  * - Health probes & static assets (`/api/health`, `/_next/`, `/favicon.ico`, `/robots.txt`): 0%
  * - Background cleanup cron endpoints (`/api/cleanup/`): 2%
  * - Critical payment, checkout, and webhook routes (`/api/webhooks/`, `/api/payments/`, `/api/checkout`): 50% (or parent decision)
@@ -399,8 +392,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     },
 
     // Sample 10% of traces in production/preview (with route-aware overrides via
-    // tracesSampler) and 20% in non-production unless overridden via
-    // NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE.
+    // tracesSampler) and 20% in non-production.
     tracesSampleRate: resolveDefaultTracesSampleRate(),
     ...(overrides?.tracesSampleRate !== undefined ? {} : { tracesSampler }),
 

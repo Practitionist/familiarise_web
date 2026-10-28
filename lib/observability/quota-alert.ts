@@ -10,7 +10,8 @@
  * Never throws: it runs inside the canary and must not change its verdict.
  */
 
-import { EMAIL_BUDGET_MS, OPS_EMAIL, SENDERS } from "@/lib/email/config";
+import { SUPPORT_EMAIL } from "@/lib/company";
+import { EMAIL_BUDGET_MS, SENDERS } from "@/lib/email/config";
 import { deliver } from "@/lib/email/deliver";
 import redis from "@/lib/redis";
 import { canaryAlertRecipient } from "./ingest-alert";
@@ -125,7 +126,7 @@ export async function checkSentryQuota(
       {
         from: SENDERS.ops,
         to: canaryAlertRecipient(),
-        replyTo: OPS_EMAIL,
+        replyTo: SUPPORT_EMAIL,
         subject: `[Familiarise] Sentry error quota at ${pct}% (${accepted}/${quota}) this period`,
         text: [
           `Sentry has accepted ${accepted} of ${quota} errors since ${start.toISOString().slice(0, 10)}, which is ${pct}% of the free-plan quota.`,

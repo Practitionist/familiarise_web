@@ -25,17 +25,11 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 import { runConsentRetentionSweeper } from "../../lib/compliance/consent-retention";
 import { pruneSystemEvents } from "../../lib/observability/system-event-retention";
-const original = process.env.DPDP_SWEEPER_DELETE;
-afterAll(() => {
-  if (original === undefined) delete process.env.DPDP_SWEEPER_DELETE;
-  else process.env.DPDP_SWEEPER_DELETE = original;
-});
 beforeEach(() => {
   jest.clearAllMocks();
-  delete process.env.DPDP_SWEEPER_DELETE;
 });
 afterEach(() => jest.useRealTimers());
-it("keeps consent deletion off unless its existing gate is explicitly true", async () => {
+it("only counts expired consents by default", async () => {
   findConsent.mockResolvedValue([{ id: "expired" }]);
   expect(await runConsentRetentionSweeper()).toMatchObject({
     deleteMode: false,
@@ -49,7 +43,6 @@ it("keeps consent deletion off unless its existing gate is explicitly true", asy
   );
 });
 it("drains25 expired consents in three bounded slices while preserving a concurrent extension", async () => {
-  process.env.DPDP_SWEEPER_DELETE = "true";
   let rows = Array.from({ length: 25 }, (_, i) => ({
     id: String(i),
     deadline: new Date(0),
@@ -81,7 +74,7 @@ it("drains25 expired consents in three bounded slices while preserving a concurr
   );
   const results = [];
   for (let i = 0; i < 3; i++)
-    results.push(await runConsentRetentionSweeper({ limit: 10 }));
+    results.push(await runConsentRetentionSweeper({ limit: 10, delete: true }));
   expect(results.reduce((n, r) => n + r.deleted, 0)).toBe(24);
   expect(rows).toEqual([{ id: "0", deadline: new Date("2099-01-01") }]);
   expect(results[0].hasMore).toBe(true);
@@ -128,7 +121,6 @@ it("does not start either retention selection after the caller deadline", async 
 it("does not delete a selected consent or event page after selection uses the budget", async () => {
   jest.useFakeTimers();
   jest.setSystemTime(new Date("2026-10-23T01:00:00Z"));
-  process.env.DPDP_SWEEPER_DELETE = "true";
   findConsent.mockImplementationOnce(async () => {
     jest.advanceTimersByTime(16_000);
     return [{ id: "expired-consent" }];
@@ -140,6 +132,7 @@ it("does not delete a selected consent or event page after selection uses the bu
   const consent = await runConsentRetentionSweeper({
     limit: 10,
     startedAt: Date.now(),
+    delete: true,
   });
   jest.setSystemTime(new Date("2026-10-23T01:00:00Z"));
   const events = await pruneSystemEvents({ limit: 10, startedAt: Date.now() });

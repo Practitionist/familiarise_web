@@ -129,6 +129,59 @@ export function parseWindowStartParam(req: NextRequest): Date | undefined {
   return at;
 }
 
+/** Thrown by the GST and TDS period parsers for a malformed `?period=`, `?fy=` or `?quarter=`. */
+export class InvalidPeriodParamError extends Error {
+  constructor() {
+    super("INVALID_PERIOD");
+    this.name = "InvalidPeriodParamError";
+  }
+}
+
+const gstPeriodSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
+
+/** Optional `?period=YYYY-MM` for the GST outward-register export. */
+export function parseGstPeriodParam(req: NextRequest): string | undefined {
+  const raw = req.nextUrl.searchParams.get("period");
+  if (raw === null) return undefined;
+  const parsed = gstPeriodSchema.safeParse(raw);
+  if (!parsed.success) throw new InvalidPeriodParamError();
+  return parsed.data;
+}
+
+const tdsReturnParamsSchema = z.object({
+  fy: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/)
+    .refine(
+      (fy) => (Number(fy.slice(0, 4)) + 1) % 100 === Number(fy.slice(5)),
+      "fy must name consecutive years",
+    )
+    .optional(),
+  quarter: z.coerce.number().int().min(1).max(4).optional(),
+});
+
+/** Optional `?fy=YYYY-YY` and `?quarter=1..4` for the TDS return draft; each defaults to the closed quarter. */
+export function parseTdsReturnParams(req: NextRequest): {
+  financialYear?: string;
+  quarter?: number;
+} {
+  const { searchParams } = req.nextUrl;
+  const parsed = tdsReturnParamsSchema.safeParse({
+    fy: searchParams.get("fy") ?? undefined,
+    quarter: searchParams.get("quarter") ?? undefined,
+  });
+  if (!parsed.success) throw new InvalidPeriodParamError();
+  return { financialYear: parsed.data.fy, quarter: parsed.data.quarter };
+}
+
+const deleteFlagSchema = z.literal("1");
+
+/** `?delete=1` opts a count-only job into deleting; anything else leaves it counting. */
+export function parseDeleteFlag(req: NextRequest): boolean {
+  return deleteFlagSchema.safeParse(req.nextUrl.searchParams.get("delete"))
+    .success;
+}
+
 /**
  * Constant-time bearer comparison. Digesting first keeps both operands the
  * same fixed length, so neither the secret's length nor its matching prefix is
@@ -202,7 +255,8 @@ function cleanupFailure(
   // Each message is its 400 error code.
   if (
     error instanceof InvalidLimitError ||
-    error instanceof InvalidWindowStartError
+    error instanceof InvalidWindowStartError ||
+    error instanceof InvalidPeriodParamError
   ) {
     return {
       body: { error: error.message },

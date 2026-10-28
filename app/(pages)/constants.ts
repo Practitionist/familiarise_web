@@ -7,8 +7,7 @@ import {
 export const ACK_PROMISE_COPY = `within ${STATUTORY_ACK_HOURS} hours` as const;
 
 export const GRIEVANCE_OFFICER = {
-  // Empty until a named officer is appointed; the page omits the row.
-  name: process.env.NEXT_PUBLIC_GRIEVANCE_OFFICER_NAME?.trim() || "",
+  name: COMPANY_INFO.grievanceOfficerName,
   designation: "Grievance & Nodal Compliance Officer",
   email: COMPANY_INFO.email,
   phone: COMPANY_INFO.phone,
