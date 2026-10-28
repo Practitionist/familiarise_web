@@ -70,7 +70,7 @@ done; done
 
 Set a missing context with `netlify env:set KEY VALUE --context production --secret` (the `--secret` flag requires an explicit non-development context), then redeploy: functions read their environment at deploy time, so the change is inert until the next build of that context. Scheduled functions run only on the published production deploy, so production is the context that matters for the ticker.
 
-A value held in the context `all` cannot be changed with `setEnvVarValue` (HTTP 422). Use a full PUT through `netlify api updateEnvVar` instead. `EMAIL_ALLOWLIST` is held in `all`.
+A value held in the context `all` cannot be changed with `setEnvVarValue` (HTTP 422). Use a full PUT through `netlify api updateEnvVar` instead: the PUT replaces every context value of that key, so read the key first and send back all of its existing context values plus the change, with the same scopes. `EMAIL_ALLOWLIST` is held in `all` only.
 
 One name, one value per context — never two names for one secret. Novu's Development and Production tenants have keys that only work on their own tenant, and the 2026-09-14 cutover first tried the natural-looking shape of carrying both keys everywhere under two names; the owner chose a per-tenant name resolved from the deploy context instead (`NOVU_PRODUCTION_KEY` where `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production`, `NOVU_DEVELOPMENT_KEY` elsewhere, `lib/novu/secret-key.ts`), and the production key is set with `--context production` only, so a preview cannot reach real users' inboxes even by mistake. (`KEEP_WARM_CONCURRENCY` from PR #1685 was retired in PR #1972 when `keep-warm.mts` was deleted.)
 
