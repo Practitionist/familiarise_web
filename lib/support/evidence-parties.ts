@@ -11,6 +11,8 @@ export const CAPTURED_PAYMENT_WHERE = {
 export interface BookingParties {
   /** Consultant seats, plan consultants and accepted PRESENTER collaborators; crew never. */
   deliveringIds: Set<string>;
+  /** Accepted PRESENTER collaborators only; crew and the host consultant stay out. */
+  presenterIds: Set<string>;
   /** Organizations hosting delivery through the booking's captured payments. */
   hostOrganizationIds: Set<string>;
 }
@@ -67,6 +69,15 @@ export async function deliveringPartiesByAppointment(
         (c) => c.consultantProfileId,
       ),
     ].filter((profileId): profileId is string => Boolean(profileId));
+  const presenterProfileIdsOf = (booking: (typeof bookings)[number]) =>
+    [
+      ...(booking.webinar?.webinarPlan.collaborators ?? []).map(
+        (c) => c.consultantProfileId,
+      ),
+      ...(booking.class?.classPlan.collaborators ?? []).map(
+        (c) => c.consultantProfileId,
+      ),
+    ].filter((profileId): profileId is string => Boolean(profileId));
   const allProfileIds = [...new Set(bookings.flatMap(profileIdsOf))];
   const profiles = allProfileIds.length
     ? await db.consultantProfile.findMany({
@@ -83,8 +94,14 @@ export async function deliveringPartiesByAppointment(
       const userId = profileUser.get(profileId);
       if (userId) deliveringIds.add(userId);
     }
+    const presenterIds = new Set<string>();
+    for (const profileId of presenterProfileIdsOf(booking)) {
+      const userId = profileUser.get(profileId);
+      if (userId) presenterIds.add(userId);
+    }
     result.set(booking.id, {
       deliveringIds,
+      presenterIds,
       hostOrganizationIds: new Set(
         booking.payment.flatMap((p) =>
           p.hostOrganizationId ? [p.hostOrganizationId] : [],
@@ -94,3 +111,50 @@ export async function deliveringPartiesByAppointment(
   }
   return result;
 }
+
+/** Appointments where the user is an ACCEPTED PRESENTER collaborator on the plan. */
+export async function presenterAppointmentIds(
+  db: Pick<Tx, "appointment">,
+  userId: string,
+): Promise<string[]> {
+  const rows = await db.appointment.findMany({
+    where: {
+      OR: [
+        {
+          webinar: {
+            webinarPlan: {
+              collaborators: {
+                some: {
+                  status: "ACCEPTED",
+                  tier: "PRESENTER",
+                  consultantProfile: { userId, deletedAt: null },
+                },
+              },
+            },
+          },
+        },
+        {
+          class: {
+            classPlan: {
+              collaborators: {
+                some: {
+                  status: "ACCEPTED",
+                  tier: "PRESENTER",
+                  consultantProfile: { userId, deletedAt: null },
+                },
+              },
+            },
+          },
+        },
+      ],
+    },
+    select: { id: true },
+  });
+  return rows.map((row) => row.id);
+}
+
+/** The single party resolver access code reads; pass `tx` inside a transaction. */
+export const SubjectResolver = {
+  evidenceParties: deliveringPartiesByAppointment,
+  presenterAppointmentIds,
+} as const;

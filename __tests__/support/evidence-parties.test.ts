@@ -14,6 +14,14 @@ type PaymentRow = {
   deletedAt: Date | null;
 };
 
+type CollaboratorRow = {
+  consultantProfileId: string;
+  status: string;
+  tier: string;
+};
+
+type ProfileRow = { id: string; user: { id: string } | null };
+
 const payments: PaymentRow[] = [
   {
     hostOrganizationId: "org-paid",
@@ -38,37 +46,67 @@ const payments: PaymentRow[] = [
   { hostOrganizationId: null, paymentStatus: "SUCCEEDED", deletedAt: null },
 ];
 
-function fakeDb() {
-  const appointmentFindMany = jest.fn(
-    async (args: {
+type AppointmentArgs = {
+  select: {
+    payment: { where: Partial<PaymentRow>; select: unknown };
+    webinar?: {
       select: {
-        payment: { where: Partial<PaymentRow>; select: unknown };
+        webinarPlan: {
+          select: {
+            collaborators: { where: Record<string, string>; select: unknown };
+          };
+        };
       };
-    }) => {
-      const { where } = args.select.payment;
-      const rows = payments.filter((p) =>
-        Object.entries(where).every(
-          ([key, value]) => p[key as keyof PaymentRow] === value,
-        ),
-      );
-      return [
-        {
-          id: "appt-1",
-          participants: [{ userId: "consultant-1" }],
-          consultation: null,
-          subscription: null,
-          webinar: null,
-          class: null,
-          payment: rows.map((p) => ({
-            hostOrganizationId: p.hostOrganizationId,
-          })),
-        },
-      ];
-    },
-  );
+    };
+  };
+};
+
+function fakeDb(
+  options: {
+    webinarCollaborators?: CollaboratorRow[];
+    profiles?: ProfileRow[];
+  } = {},
+) {
+  const appointmentFindMany = jest.fn(async (args: AppointmentArgs) => {
+    const { where } = args.select.payment;
+    const rows = payments.filter((p) =>
+      Object.entries(where).every(
+        ([key, value]) => p[key as keyof PaymentRow] === value,
+      ),
+    );
+    const collaboratorWhere =
+      args.select.webinar?.select.webinarPlan.select.collaborators.where ?? {};
+    const collaborators = (options.webinarCollaborators ?? []).filter((c) =>
+      Object.entries(collaboratorWhere).every(
+        ([key, value]) => c[key as keyof CollaboratorRow] === value,
+      ),
+    );
+    return [
+      {
+        id: "appt-1",
+        participants: [{ userId: "consultant-1" }],
+        consultation: null,
+        subscription: null,
+        webinar: options.webinarCollaborators
+          ? {
+              webinarPlan: {
+                consultantProfileId: "host-profile",
+                collaborators,
+              },
+            }
+          : null,
+        class: null,
+        payment: rows.map((p) => ({
+          hostOrganizationId: p.hostOrganizationId,
+        })),
+      },
+    ];
+  });
   return {
     appointment: { findMany: appointmentFindMany },
-    consultantProfile: { findMany: jest.fn(async () => []) },
+    consultantProfile: {
+      findMany: jest.fn(async () => options.profiles ?? []),
+    },
   };
 }
 
@@ -105,5 +143,44 @@ describe("deliveringPartiesByAppointment", () => {
     expect(paymentArm).toEqual({
       payment: { some: { userId: "u-1", ...CAPTURED_PAYMENT_WHERE } },
     });
+  });
+
+  it("separates accepted presenters from crew while still delivering", async () => {
+    const db = fakeDb({
+      webinarCollaborators: [
+        {
+          consultantProfileId: "presenter-profile",
+          status: "ACCEPTED",
+          tier: "PRESENTER",
+        },
+        {
+          consultantProfileId: "crew-profile",
+          status: "ACCEPTED",
+          tier: "CREW",
+        },
+        {
+          consultantProfileId: "pending-presenter",
+          status: "PENDING",
+          tier: "PRESENTER",
+        },
+      ],
+      profiles: [
+        { id: "host-profile", user: { id: "host-user" } },
+        { id: "presenter-profile", user: { id: "presenter-user" } },
+        { id: "crew-profile", user: { id: "crew-user" } },
+      ],
+    });
+    const parties = await deliveringPartiesByAppointment(
+      db as unknown as Parameters<typeof deliveringPartiesByAppointment>[0],
+      ["appt-1"],
+    );
+    const booking = parties.get("appt-1");
+    expect([...(booking?.presenterIds ?? [])]).toEqual(["presenter-user"]);
+    expect([...(booking?.deliveringIds ?? [])]).toContain("presenter-user");
+    expect([...(booking?.deliveringIds ?? [])]).not.toContain("crew-user");
+    const select = db.appointment.findMany.mock.calls[0][0].select;
+    expect(
+      select.webinar.select.webinarPlan.select.collaborators.where,
+    ).toEqual({ status: "ACCEPTED", tier: "PRESENTER" });
   });
 });

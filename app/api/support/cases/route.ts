@@ -146,6 +146,8 @@ export async function GET(req: NextRequest) {
             ...row,
             callbackPhone:
               row.submitterUserId === user.id ? row.callbackPhone : null,
+            // A presenter sees the thread, never the caller's scheduling window.
+            callbackWindow: access.isPresenter(row) ? null : row.callbackWindow,
           };
         });
 

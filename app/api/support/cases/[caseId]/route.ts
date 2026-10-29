@@ -4,7 +4,7 @@ import { z } from "zod";
 import { requireApiAuth, requireBackofficeSurface } from "@/lib/auth-helpers";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import prisma from "@/lib/prisma";
-import { caseCorrespondentIds } from "@/lib/support/case-access";
+import { caseThreadPartyIds } from "@/lib/support/case-access";
 import { stageExternalRequesterEmail } from "@/lib/support/external-requester";
 import { notifySupportTicketUpdate } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -167,7 +167,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
             });
             return [{ stagedBell: null, emailRows: [email] }];
           }
-          const recipients = await caseCorrespondentIds(current);
+          const recipients = await caseThreadPartyIds(current);
           const dashboardUrl = supportRequestHref(
             caseKeyOf({ kind: "case", id: t.id }),
             t.organizationId,

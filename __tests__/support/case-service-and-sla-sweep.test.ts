@@ -33,6 +33,8 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn(),
     },
     membership: { findUnique: jest.fn(), findMany: jest.fn(async () => []) },
+    appointment: { findMany: jest.fn(async () => []) },
+    consultantProfile: { findMany: jest.fn(async () => []) },
     supportCaseCounter: { upsert: jest.fn(async () => ({ nextSeq: 2 })) },
     $transaction: jest.fn(),
   };
@@ -57,6 +59,7 @@ import {
 } from "../../lib/support/case-service";
 import { supportDeadline } from "../../lib/support/deadline-policy";
 import { slaStateOf } from "../../lib/support/sla";
+import { stageBell } from "../../lib/novu/stage-bell";
 const cases = prisma.supportCase;
 const now = new Date("2026-10-20T00:00:00Z");
 const record = (overrides: Record<string, unknown> = {}) => ({
@@ -201,6 +204,69 @@ it("rejects a stale public reply instead of overwriting a concurrent resolution"
       where: expect.objectContaining({ status: "OPEN", updatedAt: now }),
     }),
   );
+});
+it("stores a presenter reply as a provider message without reopening or claiming the case", async () => {
+  (cases.findUnique as jest.Mock).mockResolvedValueOnce(
+    record({ status: "RESOLVED", resolvedAt: now, assignedToId: "staff" }),
+  );
+  const result = await appendSupportCaseTurn(
+    {
+      caseId: "case",
+      authorUserId: "presenter",
+      sender: "AGENT",
+      actorKind: "PRESENTER",
+      body: "Reply",
+      isInternal: false,
+    },
+    now,
+  );
+  expect(result).toMatchObject({ ok: true });
+  expect(cases.updateMany).toHaveBeenCalledWith({
+    where: { id: "case" },
+    data: { messageSeq: { increment: 1 }, lastMessageAt: now },
+  });
+  const update = (cases.updateMany as jest.Mock).mock.calls[0][0];
+  expect(update.data).not.toHaveProperty("firstAgentReplyAt");
+  expect(update.data).not.toHaveProperty("assignedToId");
+  expect(update.data).not.toHaveProperty("awaitingUserSince");
+  expect(update.data).not.toHaveProperty("status");
+  expect(prisma.supportCaseEvent.create).not.toHaveBeenCalled();
+});
+it("notifies accepted presenters on staff replies", async () => {
+  (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce([
+    {
+      id: "appt-1",
+      participants: [],
+      consultation: null,
+      subscription: null,
+      webinar: {
+        webinarPlan: {
+          consultantProfileId: null,
+          collaborators: [{ consultantProfileId: "presenter-profile" }],
+        },
+      },
+      class: null,
+      payment: [],
+    },
+  ]);
+  (prisma.consultantProfile.findMany as jest.Mock).mockResolvedValueOnce([
+    { id: "presenter-profile", user: { id: "presenter" } },
+  ]);
+  (cases.findUnique as jest.Mock).mockResolvedValueOnce(
+    record({ appointmentId: "appt-1" }),
+  );
+  await appendSupportCaseTurn(
+    {
+      caseId: "case",
+      authorUserId: "staff",
+      sender: "AGENT",
+      body: "Reply",
+      isInternal: false,
+    },
+    now,
+  );
+  const recipients = (stageBell as jest.Mock).mock.calls[0][1].recipients;
+  expect(recipients).toEqual(expect.arrayContaining(["customer", "presenter"]));
 });
 it("never exposes internal notes or assignment details to the customer", async () => {
   (cases.findUnique as jest.Mock).mockResolvedValueOnce(

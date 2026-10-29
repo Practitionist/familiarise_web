@@ -1,6 +1,7 @@
 import {
   ORG_FILED_CASE_TITLE,
   canCorrespondOnCase,
+  isPresenterOnCase,
   projectCaseForViewer,
   visibleCaseWhere,
 } from "./case-access";
@@ -24,9 +25,11 @@ export async function readOwnSupportCase(
   });
   if (!c) return null;
   const canReply = await canCorrespondOnCase(c, { userId, role: "CONSULTEE" });
-  const redact = projectCaseForViewer(c, userId, canReply).summaryOnly;
+  const isPresenter = !canReply && (await isPresenterOnCase(c, userId));
+  const canRead = canReply || isPresenter;
+  const redact = projectCaseForViewer(c, userId, canRead).summaryOnly;
   const [payment, rows] = await Promise.all([
-    redact
+    redact || isPresenter
       ? null
       : readPayment(
           c.subjects.find((s) => s.subjectType === "PAYMENT")?.subjectId ??
@@ -52,9 +55,10 @@ export async function readOwnSupportCase(
     status: c.status,
     ackDueAt: c.ackDueAt?.toISOString() ?? null,
     resolvedAt: c.resolvedAt?.toISOString() ?? null,
-    csatRating: redact ? null : c.csatRating,
+    csatRating: redact || isPresenter ? null : c.csatRating,
     filedByOrganizationNotice: redact,
-    canReply: !redact && canReply,
+    canReply: !redact && canRead,
+    viewerIsPresenter: isPresenter,
     createdAt: c.createdAt.toISOString(),
     payment,
     organization: c.organization,

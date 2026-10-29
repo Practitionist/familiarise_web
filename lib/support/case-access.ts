@@ -6,6 +6,7 @@ import type {
 import prisma, { type Tx } from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
+import { SubjectResolver } from "./evidence-parties";
 
 /**
  * Personal-case categories that complain about an organization or its people,
@@ -83,6 +84,46 @@ export async function caseCorrespondentIds(
     .map((member) => member.userId);
 }
 
+/** Accepted PRESENTER collaborators on the case's appointment; crew never. */
+export async function casePresenterIds(
+  supportCase: { appointmentId?: string | null },
+  db: Pick<Tx, "appointment" | "consultantProfile"> = prisma,
+): Promise<string[]> {
+  if (!supportCase.appointmentId) return [];
+  const parties = await SubjectResolver.evidenceParties(db, [
+    supportCase.appointmentId,
+  ]);
+  return [...(parties.get(supportCase.appointmentId)?.presenterIds ?? [])];
+}
+
+export async function isPresenterOnCase(
+  supportCase: { appointmentId?: string | null },
+  userId: string,
+  db: Pick<Tx, "appointment" | "consultantProfile"> = prisma,
+): Promise<boolean> {
+  return (await casePresenterIds(supportCase, db)).includes(userId);
+}
+
+/**
+ * Everyone who receives thread notices: case correspondents plus accepted
+ * presenters. Decision and refund fanout stays on caseCorrespondentIds.
+ */
+export async function caseThreadPartyIds(
+  supportCase: {
+    ownershipScope: SupportCaseOwnership;
+    organizationId: string | null;
+    submitterUserId: string;
+    externalRequesterEmail?: string | null;
+    appointmentId?: string | null;
+  },
+  db: Pick<Tx, "appointment" | "consultantProfile" | "membership"> = prisma,
+): Promise<string[]> {
+  if (supportCase.externalRequesterEmail) return [];
+  const correspondents = await caseCorrespondentIds(supportCase, db);
+  const presenters = await casePresenterIds(supportCase, db);
+  return [...new Set([...correspondents, ...presenters])];
+}
+
 /**
  * The cases a viewer may list, and whether they may correspond on each row.
  * The subject of a case someone else filed sees it (as a summary) in any scope.
@@ -95,11 +136,16 @@ export async function visibleCaseAccess(viewer: {
     return {
       where: { deletedAt: null },
       canCorrespond: (_row: CorrespondenceRow) => true,
+      isPresenter: (_row: CorrespondenceRow) => false,
     };
-  const memberships = await prisma.membership.findMany({
-    where: { userId: viewer.userId, status: "ACTIVE" },
-    select: { organizationId: true, role: true },
-  });
+  const [memberships, presenterAppointmentIds] = await Promise.all([
+    prisma.membership.findMany({
+      where: { userId: viewer.userId, status: "ACTIVE" },
+      select: { organizationId: true, role: true },
+    }),
+    SubjectResolver.presenterAppointmentIds(prisma, viewer.userId),
+  ]);
+  const presenterSet = new Set(presenterAppointmentIds);
   const holds = (surface: OrgSurface, organizationId: string | null) =>
     organizationId !== null &&
     memberships.some(
@@ -123,6 +169,9 @@ export async function visibleCaseAccess(viewer: {
           requesterUserId: viewer.userId,
           NOT: { submitterUserId: viewer.userId },
         },
+        ...(presenterAppointmentIds.length
+          ? [{ appointmentId: { in: presenterAppointmentIds } }]
+          : []),
         ...memberships.flatMap((m) => [
           ...(hasOrgPermission(m.role, "supportCases.operations.manage")
             ? [
@@ -144,11 +193,15 @@ export async function visibleCaseAccess(viewer: {
       ],
     },
     canCorrespond: (row: CorrespondenceRow) => {
+      if (row.appointmentId != null && presenterSet.has(row.appointmentId))
+        return true;
       const permission = caseOwnershipPermission(row.ownershipScope);
       return permission
         ? holds(permission, row.organizationId)
         : row.submitterUserId === viewer.userId;
     },
+    isPresenter: (row: CorrespondenceRow) =>
+      row.appointmentId != null && presenterSet.has(row.appointmentId),
   };
 }
 
@@ -156,6 +209,7 @@ interface CorrespondenceRow {
   ownershipScope: SupportCaseOwnership;
   organizationId: string | null;
   submitterUserId: string;
+  appointmentId?: string | null;
 }
 
 export async function visibleCaseWhere(viewer: {

@@ -147,6 +147,8 @@ export interface OwnTicketCase {
   appointmentId?: string | null;
   filedByOrganizationNotice?: boolean;
   canReply?: boolean;
+  /** An accepted presenter on the linked booking: thread-only access, no CSAT or reopen. */
+  viewerIsPresenter?: boolean;
   subject: string;
   reference: string | null;
   topic: CaseTopic;

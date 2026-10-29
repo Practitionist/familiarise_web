@@ -22,6 +22,9 @@ import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
 import {
   canCorrespondOnCase,
   caseCorrespondentIds,
+  casePresenterIds,
+  caseThreadPartyIds,
+  isPresenterOnCase,
   projectCaseForViewer,
 } from "./case-access";
 import { REOPEN_WINDOW_MS, supportDeadline } from "./deadline-policy";
@@ -198,6 +201,8 @@ export const AppendSupportCaseTurnSchema = z.object({
   caseId: z.string().min(1).max(64),
   authorUserId: z.string().min(1).max(64).nullable().optional(),
   sender: SupportMessageSenderSchema,
+  /** A presenter replies as a provider without staff powers or state changes. */
+  actorKind: z.enum(["PRESENTER"]).optional(),
   body: z.string().trim().min(1).max(10_000),
   isInternal: z.boolean().default(false),
   clientTurnId: z.string().trim().min(1).max(128).nullable().optional(),
@@ -618,6 +623,7 @@ export async function stageSupportCaseIntakeTx(
     | "organizationId"
     | "ownershipScope"
     | "externalRequesterEmail"
+    | "appointmentId"
   >,
   initialSender?: "USER" | "AGENT" | "SYSTEM",
 ) {
@@ -644,10 +650,10 @@ export async function stageSupportCaseIntakeTx(
       },
     });
     if (initialSender !== "SYSTEM") {
-      const correspondentIds = await caseCorrespondentIds(created, tx);
+      const threadPartyIds = await caseThreadPartyIds(created, tx);
       await stageBell(tx, {
         workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
-        recipients: correspondentIds,
+        recipients: threadPartyIds,
         dedupeKey: `case-created:${created.id}:customer`,
         entityRef: `case-created:${created.id}`,
         payload: {
@@ -663,7 +669,7 @@ export async function stageSupportCaseIntakeTx(
         },
       });
       const recipients = await tx.user.findMany({
-        where: { id: { in: correspondentIds } },
+        where: { id: { in: threadPartyIds } },
         select: { email: true },
       });
       // Keep outbox writes sequential on the transaction’s single connection.
@@ -793,7 +799,9 @@ async function replayClientTurnIfExists(
     where: {
       caseId: input.caseId,
       seq: { gte: existingTurn.seq },
-      ...(input.sender !== "AGENT" ? { isInternal: false } : {}),
+      ...(input.sender !== "AGENT" || input.actorKind === "PRESENTER"
+        ? { isInternal: false }
+        : {}),
     },
     orderBy: { seq: "asc" },
     take: 200,
@@ -905,6 +913,13 @@ async function applyTurnStateUpdate(
   reopening: boolean,
   now: Date,
 ): Promise<boolean> {
+  if (input.actorKind === "PRESENTER") {
+    await tx.supportCase.updateMany({
+      where: { id: input.caseId },
+      data: { messageSeq: { increment: 1 }, lastMessageAt: now },
+    });
+    return true;
+  }
   if (input.sender === "USER") {
     return advanceUserTurnState(tx, existingCase, input, reopening, now);
   }
@@ -926,13 +941,26 @@ async function caseTurnRecipientIdsTx(
   existingCase: SupportCase,
   sender: AppendSupportCaseTurnInput["sender"],
 ): Promise<string[]> {
-  if (sender === "AGENT") return caseCorrespondentIds(existingCase, tx);
-  if (existingCase.assignedToId) return [existingCase.assignedToId];
-  const operators = await tx.user.findMany({
-    where: { role: { in: ["STAFF", "ADMIN"] }, banned: false },
-    select: { id: true },
-  });
-  return operators.map((operator) => operator.id);
+  const presenters = await casePresenterIds(existingCase, tx);
+  if (sender === "AGENT") {
+    const correspondents = await caseCorrespondentIds(existingCase, tx);
+    return [
+      ...new Set([
+        ...correspondents,
+        ...presenters,
+        ...(existingCase.assignedToId ? [existingCase.assignedToId] : []),
+      ]),
+    ];
+  }
+  const staffIds = existingCase.assignedToId
+    ? [existingCase.assignedToId]
+    : (
+        await tx.user.findMany({
+          where: { role: { in: ["STAFF", "ADMIN"] }, banned: false },
+          select: { id: true },
+        })
+      ).map((operator) => operator.id);
+  return [...new Set([...staffIds, ...presenters])];
 }
 
 async function stageCaseResponseEmailsTx(
@@ -999,11 +1027,9 @@ async function stageCaseTurnNotificationsTx(
     );
     return;
   }
-  const recipients = await caseTurnRecipientIdsTx(
-    tx,
-    existingCase,
-    input.sender,
-  );
+  const recipients = (
+    await caseTurnRecipientIdsTx(tx, existingCase, input.sender)
+  ).filter((recipientId) => recipientId !== input.authorUserId);
   await stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
     recipients,
@@ -1021,12 +1047,25 @@ async function stageCaseTurnNotificationsTx(
       ...notificationScope(existingCase.organizationId),
     },
   });
-  if (input.sender === "AGENT")
+  if (input.sender === "AGENT") {
     await stageCaseResponseEmailsTx(
       tx,
       existingCase,
       input.body,
       recipients,
+      messageId,
+    );
+    return;
+  }
+  const presenterRecipients = (await casePresenterIds(existingCase, tx)).filter(
+    (recipientId) => recipientId !== input.authorUserId,
+  );
+  if (presenterRecipients.length)
+    await stageCaseResponseEmailsTx(
+      tx,
+      existingCase,
+      input.body,
+      presenterRecipients,
       messageId,
     );
 }
@@ -1858,11 +1897,14 @@ export async function readSupportCaseForViewer(
       userId: viewer.userId,
       role: viewer.role ?? "CONSULTEE",
     }));
-  if (!canCorrespond && !isRequester) return null;
+  const isPresenter =
+    !canCorrespond && (await isPresenterOnCase(supportCase, viewer.userId));
+  const canRead = canCorrespond || isPresenter;
+  if (!canRead && !isRequester) return null;
 
   // The member a case was filed about gets the summary whatever its scope;
-  // only then does an org-owned case refuse everyone without the grant.
-  const view = projectCaseForViewer(supportCase, viewer.userId, canCorrespond);
+  // only then does an org-owned case refuse everyone without read rights.
+  const view = projectCaseForViewer(supportCase, viewer.userId, canRead);
   if (view.summaryOnly)
     return {
       ...view.summary,
@@ -1870,8 +1912,9 @@ export async function readSupportCaseForViewer(
       messages: [],
       events: [],
       subjects: [],
+      viewerIsPresenter: false as const,
     };
-  if (supportCase.ownershipScope !== "PERSONAL" && !canCorrespond) return null;
+  if (supportCase.ownershipScope !== "PERSONAL" && !canRead) return null;
 
   if (viewer.isStaff) {
     return {
@@ -1883,6 +1926,7 @@ export async function readSupportCaseForViewer(
           !["PAYMENT", "REFUND", "INVOICE"].includes(subject.subjectType),
       ),
       filedByOrganizationNotice: false as const,
+      viewerIsPresenter: false as const,
     };
   }
 
@@ -1909,7 +1953,7 @@ export async function readSupportCaseForViewer(
       viewer.userId === supportCase.submitterUserId
         ? supportCase.callbackPhone
         : null,
-    callbackWindow: supportCase.callbackWindow,
+    callbackWindow: isPresenter ? null : supportCase.callbackWindow,
     ackDueAt: supportCase.ackDueAt,
     acknowledgedAt: supportCase.acknowledgedAt,
     resolutionDueAt: supportCase.resolutionDueAt,
@@ -1917,17 +1961,23 @@ export async function readSupportCaseForViewer(
     closedAt: supportCase.closedAt,
     firstAgentReplyAt: supportCase.firstAgentReplyAt,
     lastMessageAt: supportCase.lastMessageAt,
-    csatRating: supportCase.csatRating,
-    csatAt: supportCase.csatAt,
+    csatRating: isPresenter ? null : supportCase.csatRating,
+    csatAt: isPresenter ? null : supportCase.csatAt,
     receivedAt: supportCase.receivedAt,
     createdAt: supportCase.createdAt,
     updatedAt: supportCase.updatedAt,
-    subjects: supportCase.subjects.map((subject) => ({
-      id: subject.id,
-      subjectType: subject.subjectType,
-      subjectId: subject.subjectId,
-      isPrimary: subject.isPrimary,
-    })),
+    subjects: supportCase.subjects
+      .filter(
+        (subject) =>
+          !isPresenter ||
+          !["PAYMENT", "REFUND", "INVOICE"].includes(subject.subjectType),
+      )
+      .map((subject) => ({
+        id: subject.id,
+        subjectType: subject.subjectType,
+        subjectId: subject.subjectId,
+        isPrimary: subject.isPrimary,
+      })),
     messages: supportCase.messages
       .filter((m) => !m.isInternal)
       .map((m) => ({
@@ -1955,6 +2005,7 @@ export async function readSupportCaseForViewer(
         note: null,
       })),
     filedByOrganizationNotice: false as const,
+    viewerIsPresenter: isPresenter,
   };
 }
 

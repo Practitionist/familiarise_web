@@ -246,6 +246,7 @@ function TicketComposer({
   closed,
   resolved,
   resolvedAt,
+  canReopen = true,
   requestsHref,
   draft,
   sending,
@@ -256,6 +257,7 @@ function TicketComposer({
   closed: boolean;
   resolved: boolean;
   resolvedAt: string | null | undefined;
+  canReopen?: boolean;
   requestsHref: string;
   draft: string;
   sending: boolean;
@@ -287,7 +289,7 @@ function TicketComposer({
         field.current?.focus();
       }}
     >
-      {resolved && (
+      {resolved && canReopen && (
         <ResolvedFollowUp
           caseId={caseId}
           resolvedAt={resolvedAt}
@@ -298,7 +300,9 @@ function TicketComposer({
       <Textarea
         ref={field}
         aria-label="Reply"
-        aria-describedby={resolved ? "support-reply-follow-up" : undefined}
+        aria-describedby={
+          resolved && canReopen ? "support-reply-follow-up" : undefined
+        }
         rows={3}
         value={draft}
         onChange={(e) => onDraftChange(e.target.value)}
@@ -406,7 +410,10 @@ function TicketRequest({
   const booking = useQuery({
     queryKey: supportKeys.thread(appointmentId ?? ""),
     queryFn: () => fetchSupportThread(appointmentId ?? ""),
-    enabled: appointmentId !== null && data?.canReply === true,
+    enabled:
+      appointmentId !== null &&
+      data?.canReply === true &&
+      data?.viewerIsPresenter !== true,
     select: (thread) => thread.booking,
   });
   useSetBreadcrumbLabel(data?.subject);
@@ -450,7 +457,7 @@ function TicketRequest({
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-4">
           <StatusTimeline stage={requestStage({ status: data.status })} />
-          {data.canReply && (
+          {data.canReply && !data.viewerIsPresenter && (
             <div id={CASE_RESOLUTION_ANCHOR}>
               <CustomerCaseResolution caseId={data.caseId} />
             </div>
@@ -496,7 +503,7 @@ function TicketRequest({
                   {describeWait(data.ackDueAt)}
                 </p>
               )}
-              {data.canReply && (
+              {data.canReply && !data.viewerIsPresenter && (
                 <CaseCsat
                   key={data.caseId}
                   caseId={data.caseId}
@@ -525,7 +532,7 @@ function TicketRequest({
                 </div>
               )}
             </div>
-            {!data.filedByOrganizationNotice && (
+            {!data.filedByOrganizationNotice && !data.viewerIsPresenter && (
               <CaseAttachments
                 caseId={data.caseId}
                 canUpload={data.canReply && !closed}
@@ -538,6 +545,7 @@ function TicketRequest({
                   closed={closed}
                   resolved={resolved}
                   resolvedAt={data.resolvedAt}
+                  canReopen={!data.viewerIsPresenter}
                   requestsHref={props.requestsHref}
                   draft={draft}
                   sending={reply.isPending}

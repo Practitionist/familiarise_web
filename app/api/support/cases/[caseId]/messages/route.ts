@@ -24,6 +24,7 @@ const PostMessageBodySchema = AppendSupportCaseTurnSchema.omit({
   caseId: true,
   authorUserId: true,
   sender: true,
+  actorKind: true,
 });
 
 interface RouteParams {
@@ -34,19 +35,22 @@ function buildTurnAppendParams(params: {
   caseId: string;
   userId: string;
   staff: boolean;
+  presenter: boolean;
   data: z.infer<typeof PostMessageBodySchema>;
 }) {
-  const { caseId, userId, staff, data } = params;
+  const { caseId, userId, staff, presenter, data } = params;
+  const provider = staff || presenter;
   return {
     caseId,
     authorUserId: userId,
-    sender: staff ? ("AGENT" as const) : ("USER" as const),
+    sender: provider ? ("AGENT" as const) : ("USER" as const),
+    actorKind: presenter ? ("PRESENTER" as const) : undefined,
     body: data.body,
     isInternal: staff ? data.isInternal : false,
     clientTurnId: data.clientTurnId,
     expectedLastMessageAt: staff ? data.expectedLastMessageAt : undefined,
-    // Operators reopen through the case status, never through a reply.
-    reopen: staff ? undefined : data.reopen,
+    // Operators and presenters reply without reopening; only customers reopen.
+    reopen: provider ? undefined : data.reopen,
   };
 }
 
@@ -96,6 +100,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         { status: 404 },
       );
     }
+    const presenter = !staff && access.viewerIsPresenter === true;
 
     const parsed = PostMessageBodySchema.safeParse(
       await req.json().catch(() => null),
@@ -118,6 +123,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         caseId,
         userId: user.id,
         staff,
+        presenter,
         data: parsed.data,
       }),
     );
