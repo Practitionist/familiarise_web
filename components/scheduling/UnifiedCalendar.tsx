@@ -1826,7 +1826,7 @@ export function UnifiedCalendar({
           <Button
             variant="default"
             size="sm"
-            onClick={() => manualAllocate()}
+            onClick={() => void manualAllocate()}
             disabled={manualBlockedReason !== null}
             title={manualBlockedReason ?? "Save the picked times."}
           >
@@ -1849,13 +1849,15 @@ export function UnifiedCalendar({
               sessions fit
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Your published availability in this period can hold{" "}
+              {offer?.mode === "manual"
+                ? "You picked times for "
+                : "Your published availability in this period can hold "}
               {offer?.placeableSessions} session
               {offer?.placeableSessions === 1 ? "" : "s"}. Schedule those now
               and leave the remaining{" "}
               {(offer?.requiredSessions ?? 0) - (offer?.placeableSessions ?? 0)}{" "}
               pending? The client is told how many are booked, and you can
-              schedule the rest once you open up more time.
+              schedule the rest later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1867,7 +1869,11 @@ export function UnifiedCalendar({
               onClick={(event) => {
                 // Stays under the hook's control so the retry reports into it.
                 event.preventDefault();
-                void autoAllocate(availableSlots, { allowPartial: true });
+                if (offer?.mode === "manual") {
+                  void manualAllocate({ allowPartial: true });
+                } else {
+                  void autoAllocate(availableSlots, { allowPartial: true });
+                }
               }}
             >
               Schedule {offer?.placeableSessions} now

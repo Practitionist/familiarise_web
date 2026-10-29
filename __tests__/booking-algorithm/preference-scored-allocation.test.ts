@@ -242,7 +242,7 @@ describe("an unsatisfiable preference still allocates", () => {
         { durationInHours: 5, schedulingTimezone: IST },
         { preferredTimeOfDay: "MORNING" },
       ),
-    ).rejects.toThrow(/No 10 consecutive slots available/);
+    ).rejects.toThrow(/No free time in the coming weeks/);
   });
 });
 

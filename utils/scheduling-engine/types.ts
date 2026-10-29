@@ -165,10 +165,8 @@ export interface ConflictDetail {
   slot: string;
   appointmentId: string;
   type: "Consultation" | "Subscription" | "Webinar" | "Class" | "Booking";
-  /** The consultee on the conflicting booking, when it has one. */
-  otherParty: { userId: string; name: string | null } | null;
-  /** A group event's plan title — what a webinar or class is "with". */
-  title: string | null;
+  /** On the consultant's own calendar; otherwise the consultee is the busy party. */
+  onConsultantCalendar: boolean;
 }
 
 /**
@@ -184,11 +182,15 @@ export interface SlotConflictResult {
       type: string;
       with: string;
       time: string;
-      /** The conflicting booking, for the event's own consultant only. */
+      /** The conflicting booking, only when it is the viewing consultant's own. */
       appointmentId?: string;
     };
   }>;
   outsideAvailability: Array<{
+    slot: string;
+  }>;
+  /** Slots that start inside the lead time (or have passed): never valid. */
+  tooSoon?: Array<{
     slot: string;
   }>;
   validSlots: string[];
@@ -217,7 +219,12 @@ export type AllocationErrorCode =
   | "SLOT_SHORTAGE" // not enough free slots in the window — 400
   | "COLLABORATOR_UNAVAILABLE" // AE-2 (#784) — a co-host is already committed — 409
   | "SUBSCRIPTION_UNPAID" // #1775 C-1 — a plan with no settled payment is never approved — 409
+  | "CHECKOUT_IN_PROGRESS" // the buyer's own direct checkout is still being paid — 409
+  | "TOO_CLOSE_TO_START" // an unpaid approval whose first session starts too soon to pay — 409
   | "RESCHEDULE_NO_LONGER_OPEN" // the confirmed proposal was answered or expired mid-move — 409
+  | "SESSION_HAS_REMEDY" // a session to be re-planned carries an incident remedy — 409
+  | "BOOKING_LOCK_UNAVAILABLE" // the locking service is down; retry shortly — 503
+  | "SEARCH_TIMEOUT" // the auto search ran out of time before placing every session — 503
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**

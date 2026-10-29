@@ -936,11 +936,22 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
         idempotencyKey: `topup:${candidate.eventType}:${candidate.eventId}:${candidate.confirmedSessions}->${candidate.requiredSessions}:${candidate.availabilityChangedAt?.toISOString() ?? "none"}`,
       });
 
-      // Every outcome advances the event's `updatedAt`, which is the attempt
-      // marker: a no-change or failed event rotates to the tail of the
-      // `updatedAt` order and is re-tried only after the consultant's
-      // availability moves again, instead of heading the list every hour.
-      await touchTopUpMarker(candidate);
+      // Every outcome advances the event's `updatedAt`, the attempt marker: a
+      // no-change or failed event is re-tried only after the consultant's
+      // availability moves again. A timed-out search never saw the whole
+      // calendar, so its first timeout keeps it due (marker just below the
+      // change) for one retry; a second timeout on the same change rests it.
+      if (
+        result.errorCode === "SEARCH_TIMEOUT" &&
+        !retriedAfterTimeout(candidate)
+      ) {
+        await touchTopUpMarker(
+          candidate,
+          new Date(candidate.availabilityChangedAt.getTime() - 1),
+        );
+      } else {
+        await touchTopUpMarker(candidate);
+      }
       if (!result.success) {
         summary.failed++;
         console.log(
@@ -989,8 +1000,11 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
  * write, so it does not go through the CAS helpers; it exists only so the
  * `updatedAt` order rotates attempted events to the tail.
  */
-async function touchTopUpMarker(candidate: TopUpCandidate): Promise<void> {
-  const data = { updatedAt: new Date() };
+async function touchTopUpMarker(
+  candidate: TopUpCandidate,
+  at: Date = new Date(),
+): Promise<void> {
+  const data = { updatedAt: at };
   if (candidate.eventType === "subscription") {
     await prisma.subscription.update({
       where: { id: candidate.eventId },
@@ -999,6 +1013,16 @@ async function touchTopUpMarker(candidate: TopUpCandidate): Promise<void> {
   } else {
     await prisma.class.update({ where: { id: candidate.eventId }, data });
   }
+}
+
+/** The event already had its one retry after timing out on this availability change. */
+function retriedAfterTimeout(
+  candidate: TopUpCandidate & { availabilityChangedAt: Date },
+): boolean {
+  return (
+    candidate.updatedAt.getTime() ===
+    candidate.availabilityChangedAt.getTime() - 1
+  );
 }
 
 export async function reconcileOccurrenceAvailability(): Promise<SlotReconciliationResult> {

@@ -147,8 +147,8 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
     const slotFindMany = jest.fn().mockResolvedValue([
       {
         id: "slot-1",
-        startsAt: new Date("2026-06-26T15:00:00Z"),
-        endsAt: new Date("2026-06-26T16:00:00Z"),
+        startsAt: new Date("2036-06-26T15:00:00Z"),
+        endsAt: new Date("2036-06-26T16:00:00Z"),
       },
     ]);
     const conflictFindFirst = jest
@@ -186,6 +186,8 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
           findMany: slotFindMany,
           findFirst: conflictFindFirst,
           updateMany: slotUpdateMany,
+          // The hold release on a capture after the session started.
+          updateManyAndReturn: jest.fn().mockResolvedValue([]),
         },
         systemEvent: {
           findFirst: jest
@@ -205,6 +207,30 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
       } as never,
     };
   }
+
+  it("refuses to confirm a capture that lands after the first session started (late-capture refund)", async () => {
+    const m = mockTx({ conflict: false });
+    m.slotFindMany.mockResolvedValue([
+      {
+        id: "slot-1",
+        startsAt: new Date(Date.now() - 5 * 60_000),
+        endsAt: new Date(Date.now() + 55 * 60_000),
+      },
+    ]);
+    const result = await confirmExistingAppointment(m.tx, "appt-1", "booker");
+    expect(result).toEqual({
+      capturedAfterTerminal: true,
+      sessionStarted: true,
+    });
+    // Closing the request and releasing its hold is pinned on real
+    // Postgres (approval-pay-window.db.test.ts); here: nothing confirms.
+    expect(m.slotUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { isTentative: false } }),
+    );
+    expect(mockSystemError).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "PAYMENT" }),
+    );
+  });
 
   it("blocks confirmation (occurrences stay tentative) when an overlapping confirmed occurrence exists", async () => {
     const m = mockTx({ conflict: true });
@@ -314,7 +340,7 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
   // #1861 L1 — a capture on a lapsed hold also yields to a live foreign hold
   // (checkout step 1's predicate); only the widened query can see Bob's hold.
   it("blocks an expired-hold capture against a live foreign hold, and confirms it when the slot is free (#1861)", async () => {
-    const now = new Date("2026-06-26T14:40:00Z");
+    const now = new Date("2036-06-26T14:40:00Z");
     const bobsHold = async (args: { where: { OR?: unknown } }) =>
       args.where.OR ? { id: "slot-bob", appointmentId: "appt-bob" } : null;
 
@@ -380,8 +406,8 @@ describe("#855 — capturedAfterTerminal signal on a cancelled booking", () => {
         findMany: jest.fn().mockResolvedValue([
           {
             id: "slot-1",
-            startsAt: new Date("2026-06-26T15:00:00Z"),
-            endsAt: new Date("2026-06-26T16:00:00Z"),
+            startsAt: new Date("2036-06-26T15:00:00Z"),
+            endsAt: new Date("2036-06-26T16:00:00Z"),
           },
         ]),
         findFirst: jest.fn().mockResolvedValue(null), // no #827 overlap

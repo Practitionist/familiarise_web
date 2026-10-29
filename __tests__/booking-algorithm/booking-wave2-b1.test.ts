@@ -202,6 +202,7 @@ describe("#1689 — ScheduleValidationService checks ACCEPTED co-hosts", () => {
               subscription: null,
               webinar: null,
               class: null,
+              participants: [],
             },
           ]),
       },

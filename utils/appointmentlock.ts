@@ -39,6 +39,7 @@ function reportLockContention(
 }
 
 export class LockContentionError extends Error {
+  readonly code = "LOCK_CONTENTION" as const;
   constructor(
     readonly key: string,
     readonly attempts: number,
@@ -112,6 +113,16 @@ const DEFAULT_RETRY_CONFIG: LockRetryConfig = {
 export const REQUEST_PATH_RETRY_CONFIG: LockRetryConfig = {
   ...DEFAULT_RETRY_CONFIG,
   retryCount: 5,
+};
+
+/**
+ * The allocator's wait per lock tier (appointment, consultant, consultee):
+ * at most ~0.9 s, so three tiers stay inside the allocate request budget.
+ */
+export const ALLOCATOR_LOCK_RETRY_CONFIG: LockRetryConfig = {
+  ...DEFAULT_RETRY_CONFIG,
+  retryCount: 2,
+  retryJitter: 150,
 };
 
 const DEFAULT_LOCK_TTL = 60000;
@@ -603,7 +614,8 @@ export function slotBatchKeys(entries: readonly SlotBatchEntry[]): string[] {
     for (const atom of atoms)
       keys.add(slotKey(entry.consultantProfileId, atom));
   }
-  return [...keys].sort();
+  // Code-unit order: the lock order must not depend on the runtime's locale.
+  return [...keys].sort(byCodeUnit);
 }
 
 /** A slow Redis is an unavailable Redis: the booking fails closed (503), never unlocked. */
@@ -850,7 +862,7 @@ export async function withEventCheckoutLock<T>(
   key: { appointmentType: string; eventId: string } | null,
   fn: (renew: () => Promise<void>) => Promise<T>,
 ): Promise<T> {
-  if (!key) return fn(async () => undefined);
+  if (!key) return fn(() => Promise.resolve());
   let lock: ApprovalLock;
   try {
     lock = await lockEventCheckout(
@@ -890,10 +902,11 @@ export class AppointmentBusyError extends Error {
 export async function lockAppointment(
   appointmentId: string,
   ttl: number = APPOINTMENT_LOCK_TTL_MS,
+  retryConfig: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<ApprovalLock> {
   const key = `appointment-lock:${appointmentId}`;
   try {
-    return await acquireGuarded(key, ttl, "appointment");
+    return await acquireGuarded(key, ttl, "appointment", retryConfig);
   } catch (error) {
     if (error instanceof BookingLockUnavailableError) throw error;
     throw new AppointmentBusyError(appointmentId);
@@ -908,8 +921,13 @@ export async function withAppointmentLock<T>(
   appointmentId: string,
   /** Receives the grant so a retry-loop body can re-grant it per attempt. */
   fn: (lock: ApprovalLock) => Promise<T>,
+  retryConfig: LockRetryConfig = REQUEST_PATH_RETRY_CONFIG,
 ): Promise<T> {
-  const lock = await lockAppointment(appointmentId);
+  const lock = await lockAppointment(
+    appointmentId,
+    APPOINTMENT_LOCK_TTL_MS,
+    retryConfig,
+  );
   try {
     return await fn(lock);
   } finally {
@@ -930,18 +948,34 @@ export async function renewAppointmentLock(
   return await extendLock(lock, ttl);
 }
 
+/** Another allocation for the same expert holds the consultant tier right now. */
+export class AutoAllocateBusyError extends Error {
+  readonly httpStatus = 409 as const;
+  readonly retryAfterSeconds = 5;
+  readonly code = "AUTO_ALLOCATE_BUSY" as const;
+  constructor() {
+    super(
+      "Another change to this expert's calendar is in progress. Please try again in a moment.",
+    );
+    this.name = "AutoAllocateBusyError";
+  }
+}
+
 export async function lockAutoAllocate(
   consultantProfileId: string,
   ttl: number = 150000,
 ): Promise<ApprovalLock> {
   const key = `auto-allocate:${consultantProfileId}`;
   try {
-    return await acquireGuarded(key, ttl, "auto-allocate");
+    return await acquireGuarded(
+      key,
+      ttl,
+      "auto-allocate",
+      ALLOCATOR_LOCK_RETRY_CONFIG,
+    );
   } catch (error) {
     if (error instanceof BookingLockUnavailableError) throw error;
-    throw new Error(
-      "Lock contention: Another auto-allocation is in progress for this consultant. Please try again.",
-    );
+    throw new AutoAllocateBusyError();
   }
 }
 
@@ -997,4 +1031,10 @@ export async function unlockConsulteeBooking(
   lock: ApprovalLock,
 ): Promise<void> {
   await releaseLock(lock);
+}
+
+/** Code-unit string order (never locale-aware): one lock order on every host. */
+export function byCodeUnit(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
 }

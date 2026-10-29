@@ -144,6 +144,11 @@ const CHIP: Record<
     className:
       "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
   },
+  tooSoon: {
+    label: "Too soon",
+    icon: XCircle,
+    className: "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-200",
+  },
   outsidePeriod: {
     label: "Outside period",
     icon: CalendarRange,
@@ -277,6 +282,7 @@ export function RequestedSlotsDialog({
       setValidationResult({
         conflicts: validationResponse.data?.conflicts || [],
         outsideAvailability: validationResponse.data?.outsideAvailability || [],
+        tooSoon: validationResponse.data?.tooSoon || [],
         outsidePeriod: outsidePeriodSlots,
         validSlots: validationResponse.data?.validSlots || [],
       });
@@ -312,11 +318,14 @@ export function RequestedSlotsDialog({
   const outsideHours = verdicts.filter(
     (v) => v.kind === "outsideAvailability",
   ).length;
-  // Conflicts and out-of-period slots cannot be overridden; out-of-hours can.
-  const blocked = conflicts > 0 || outsidePeriod > 0;
+  const tooSoon = verdicts.filter((v) => v.kind === "tooSoon").length;
+  // Conflicts, too-soon and out-of-period slots cannot be overridden; out-of-hours can.
+  const blocked = conflicts > 0 || outsidePeriod > 0 || tooSoon > 0;
   const firstBlockedSlot = requestedSlots.find((slot, index) => {
     const kind = verdicts[index].kind;
-    return kind === "conflict" || kind === "outsidePeriod";
+    return (
+      kind === "conflict" || kind === "outsidePeriod" || kind === "tooSoon"
+    );
   });
 
   // Mirrors the decline dialog: while the confirm is in flight the dialog

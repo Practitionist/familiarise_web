@@ -335,7 +335,10 @@ export interface UseEventSlotAllocationReturn {
   removeSlots: (slots: CalendarInterval[]) => void;
 
   /** Allocate using manually selected slots */
-  manualAllocate: () => Promise<void>;
+  /** `allowPartial` once the expert confirmed placing fewer sessions than the plan. */
+  manualAllocate: (allocateOptions?: {
+    allowPartial?: boolean;
+  }) => Promise<void>;
 
   /** Auto-allocate using available slots */
   autoAllocate: (
@@ -377,6 +380,8 @@ export interface UseEventSlotAllocationReturn {
 export interface PartialAllocationOffer {
   placeableSessions: number;
   requiredSessions: number;
+  /** Which path asked: auto (what fits) or manual (what the expert picked). */
+  mode: "auto" | "manual";
 }
 
 // ============================================================================
@@ -1089,104 +1094,121 @@ export function useEventSlotAllocation(
   /**
    * Allocate using manually selected slots
    */
-  const manualAllocate = useCallback(async () => {
-    if (!isValid) {
-      const errorMessage = validationErrors[0] || "Invalid slot selection";
-      setAllocationError(errorMessage);
-      onError?.(errorMessage);
-      return;
-    }
-
-    setIsAllocating(true);
-    setAllocationError(null);
-
-    try {
-      const sessionDuration =
-        eventType === "consultation" || eventType === "webinar"
-          ? options.durationInHours
-          : options.sessionDurationInHours;
-
-      const attempt = resolveAttemptKey(
-        attemptKeyRef.current,
-        computeAttemptFingerprint(
-          "manual",
-          eventId,
-          selectedSlots,
-          undefined,
-          // The hook names the intent allowOverride; the fingerprint and the
-          // wire call it override — mapped explicitly so the key separates
-          // override attempts from plain ones.
-          fingerprintGuards({
-            initialAllocation: options.initialAllocation,
-            expectedTentativeSlotCount: options.expectedTentativeSlotCount,
-            override: options.allowOverride,
-          }),
-        ),
-      );
-      attemptKeyRef.current = attempt;
-
-      const allocationOptions: AllocationOptions = {
-        eventType,
-        eventId,
-        durationInMonths: options.durationInMonths,
-        sessionsPerWeek: options.sessionsPerWeek,
-        sessionDurationInHours: sessionDuration,
-        startDate: options.startDate,
-        endDate: options.endDate,
-        totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
-        pastConfirmedSlotCount: options.pastConfirmedSlotCount,
-        schedulingTimezone: options.schedulingTimezone,
-        idempotencyKey: attempt.key,
-        initialAllocation: options.initialAllocation || undefined,
-        expectedTentativeSlotCount: options.expectedTentativeSlotCount,
-        // The consultant explicitly accepting these times as-is (outside
-        // their published availability). Was a dead option until wired here.
-        override: options.allowOverride || undefined,
-        topUp: options.topUp || undefined,
-      };
-
-      const result = await AllocationAlgorithms.manualAllocate(
-        selectedSlots,
-        allocationOptions,
-      );
-
-      if (result.success) {
-        // Saved times are this booking's now; keeping them selected would let
-        // the refetch judge them as someone else's.
-        setSelectedSlots([]);
-        toast(timingsSaved());
-        onSuccess?.(result);
-      } else {
-        handleAllocationFailure(result, "Manual allocation failed");
+  const manualAllocate = useCallback(
+    async (allocateOptions?: { allowPartial?: boolean }) => {
+      if (!isValid) {
+        const errorMessage = validationErrors[0] || "Invalid slot selection";
+        setAllocationError(errorMessage);
+        onError?.(errorMessage);
+        return;
       }
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Allocation failed";
-      setAllocationError(errorMessage);
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        {
-          tags: { subsystem: "client", feature: "scheduling" },
-          extra: { eventType, mode: "manual" },
-        },
-      );
-      toast(allocationFailed(errorMessage));
-      onError?.(errorMessage);
-    } finally {
-      setIsAllocating(false);
-    }
-  }, [
-    selectedSlots,
-    isValid,
-    validationErrors,
-    eventType,
-    eventId,
-    options,
-    onSuccess,
-    onError,
-    toast,
-    handleAllocationFailure,
-  ]);
+
+      setIsAllocating(true);
+      setAllocationError(null);
+      setPartialOffer(null);
+
+      try {
+        const sessionDuration =
+          eventType === "consultation" || eventType === "webinar"
+            ? options.durationInHours
+            : options.sessionDurationInHours;
+
+        const attempt = resolveAttemptKey(
+          attemptKeyRef.current,
+          computeAttemptFingerprint(
+            "manual",
+            eventId,
+            selectedSlots,
+            allocateOptions?.allowPartial ? "partial" : undefined,
+            // The hook names the intent allowOverride; the fingerprint and the
+            // wire call it override — mapped explicitly so the key separates
+            // override attempts from plain ones.
+            fingerprintGuards({
+              initialAllocation: options.initialAllocation,
+              expectedTentativeSlotCount: options.expectedTentativeSlotCount,
+              override: options.allowOverride,
+            }),
+          ),
+        );
+        attemptKeyRef.current = attempt;
+
+        const allocationOptions: AllocationOptions = {
+          eventType,
+          eventId,
+          durationInMonths: options.durationInMonths,
+          sessionsPerWeek: options.sessionsPerWeek,
+          sessionDurationInHours: sessionDuration,
+          startDate: options.startDate,
+          endDate: options.endDate,
+          totalSessions: options.maxTotalCalls, // maxTotalCalls is already totalSessions-aware
+          pastConfirmedSlotCount: options.pastConfirmedSlotCount,
+          schedulingTimezone: options.schedulingTimezone,
+          idempotencyKey: attempt.key,
+          initialAllocation: options.initialAllocation || undefined,
+          expectedTentativeSlotCount: options.expectedTentativeSlotCount,
+          // The consultant explicitly accepting these times as-is (outside
+          // their published availability). Was a dead option until wired here.
+          override: options.allowOverride || undefined,
+          topUp: options.topUp || undefined,
+          allowPartial: allocateOptions?.allowPartial || undefined,
+        };
+
+        const result = await AllocationAlgorithms.manualAllocate(
+          selectedSlots,
+          allocationOptions,
+        );
+
+        if (result.success) {
+          // Saved times are this booking's now; keeping them selected would let
+          // the refetch judge them as someone else's.
+          setSelectedSlots([]);
+          toast(timingsSaved());
+          onSuccess?.(result);
+        } else if (
+          !allocateOptions?.allowPartial &&
+          result.errorCode === "SLOT_SHORTAGE" &&
+          (result.placeableSessions ?? 0) > 0 &&
+          (result.requiredSessions ?? 0) > (result.placeableSessions ?? 0)
+        ) {
+          // Fewer sessions than the plan: ask before placing only those.
+          setPartialOffer({
+            placeableSessions: result.placeableSessions ?? 0,
+            requiredSessions: result.requiredSessions ?? 0,
+            mode: "manual",
+          });
+        } else {
+          handleAllocationFailure(result, "Manual allocation failed");
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Allocation failed";
+        setAllocationError(errorMessage);
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          {
+            tags: { subsystem: "client", feature: "scheduling" },
+            extra: { eventType, mode: "manual" },
+          },
+        );
+        toast(allocationFailed(errorMessage));
+        onError?.(errorMessage);
+      } finally {
+        setIsAllocating(false);
+      }
+    },
+    [
+      selectedSlots,
+      isValid,
+      validationErrors,
+      eventType,
+      eventId,
+      options,
+      onSuccess,
+      onError,
+      toast,
+      handleAllocationFailure,
+    ],
+  );
 
   /**
    * Auto-allocate using available slots
@@ -1287,6 +1309,7 @@ export function useEventSlotAllocation(
             setPartialOffer({
               placeableSessions: placeable,
               requiredSessions: required,
+              mode: "auto",
             });
             return;
           }

@@ -41,6 +41,7 @@ import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
   MAX_ACTIVE_REQUESTS_PER_USER,
+  REQUEST_CAP_REACHED,
   capacityRefusal,
   countActiveConsultationRequests,
   pausedRefusal,
@@ -380,10 +381,8 @@ export async function POST(req: NextRequest) {
       if (activeRequests >= MAX_ACTIVE_REQUESTS_PER_USER) {
         return NextResponse.json(
           {
-            error:
-              `You already have ${activeRequests} requests awaiting approval ` +
-              `(limit ${MAX_ACTIVE_REQUESTS_PER_USER}). Wait for a consultant ` +
-              `to respond, or withdraw an existing request from your dashboard.`,
+            error: REQUEST_CAP_REACHED.message,
+            code: REQUEST_CAP_REACHED.code,
           },
           { status: 429 },
         );
@@ -476,9 +475,9 @@ export async function POST(req: NextRequest) {
                   timestamp: new Date().toISOString(),
                 }),
               );
-              // The other party's name stays out of a consultee-facing body.
+              // A clash off the expert's calendar is the requester's own.
               const ownOverlap = validation.conflicts?.some(
-                (c) => c.otherParty?.userId === session.user.id,
+                (c) => !c.onConsultantCalendar,
               );
               throw new RequestRefusal(409, {
                 error: ownOverlap

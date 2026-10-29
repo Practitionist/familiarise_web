@@ -17,6 +17,7 @@ import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleVal
 import {
   lockAutoAllocate,
   unlockAutoAllocate,
+  ALLOCATOR_LOCK_RETRY_CONFIG,
   lockConsulteeBooking,
   unlockConsulteeBooking,
   tryLockSlotBatch,
@@ -41,6 +42,12 @@ import {
   SlotShortageError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
+import { leadTimeFor } from "@/lib/booking/lead-time";
+import { checkoutInProgressError } from "@/lib/booking/request-cohort";
+import {
+  slotTakenRefusal,
+  validationRefusal,
+} from "@/lib/booking/allocation/refusal-copy";
 import {
   getConsulteeUserId,
   getEventRelationField,
@@ -171,8 +178,16 @@ export async function autoAllocate(
       throw new AllocationNotFoundError(`${eventType} not found`);
     }
 
-    const { consultant, config, consulteeUserId, organizationId, planId } =
-      eventData;
+    const {
+      consultant,
+      config,
+      consulteeUserId,
+      organizationId,
+      planId,
+      settled,
+    } = eventData;
+    if (eventData.checkoutInProgress) throw checkoutInProgressError();
+    const leadTimeMs = leadTimeFor({ settled });
 
     // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
     // If tentative slots exist, this is a reschedule and we should preserve the original slot count
@@ -207,10 +222,8 @@ export async function autoAllocate(
     // carries tentative slots (request-for-approval and unpaid checkout both
     // create them that way), so the flag was never true for a consultation
     // and the multi-tab guard never ran. Having no CONFIRMED slot is the real
-    // "not allocated yet" condition. This matters most across modes: auto
-    // takes a consultant-wide lock and a cap-less manual one a day-sharded
-    // key (#860, narrowed by #1319), so two tabs are only serialized by the
-    // in-txn advisory lock this gates.
+    // "not allocated yet" condition; the in-txn advisory lock this gates
+    // serialises two tabs of the same event.
     const isFreshAllocation =
       initialAllocation === true || existingNonTentativeSlotCount === 0;
 
@@ -404,6 +417,7 @@ export async function autoAllocate(
           occurrenceIdsToExclude,
           heldSlotStarts,
           searchBudget,
+          leadTimeMs,
         );
       } catch (error) {
         // #1206 — with `allowPartial` on, a shortage is only raised when the
@@ -436,17 +450,20 @@ export async function autoAllocate(
           excludeOccurrenceIds: occurrenceIdsToExclude,
           // Co-host arm: the consultant's own ACCEPTED seats occupy too.
           consultantProfileId,
+          leadTimeMs,
         },
       );
 
       if (!validation.isValid) {
-        throw new AllocationValidationError(
-          `Validation failed: ${validation.errors.join("; ")}`,
-        );
+        throw validationRefusal(validation.errors);
       }
 
       if (consulteeLockUserId) {
-        consulteeLock = await lockConsulteeBooking(consulteeLockUserId);
+        consulteeLock = await lockConsulteeBooking(
+          consulteeLockUserId,
+          undefined,
+          ALLOCATOR_LOCK_RETRY_CONFIG,
+        );
       }
       // Never waits: a held time is excluded and searched around instead.
       const batch = await tryLockSlotBatch(
@@ -533,10 +550,7 @@ export async function autoAllocate(
           consultantProfileId,
         );
         if (!recheck.isValid) {
-          throw new AllocationConflictError(
-            `Slot taken during allocation: ${recheck.errors.join("; ")}`,
-            "SLOT_TAKEN",
-          );
+          throw slotTakenRefusal(recheck.errors);
         }
         await assertSlotsStillPublished(tx, consultantProfileId, selectedSlots);
 

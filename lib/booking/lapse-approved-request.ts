@@ -42,7 +42,8 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
  * string said "The expert withdrew the approval". REJECTED is the consultant
  * *declining*, which this is not, so CANCELLED is the only honest third option.
  */
-export type LapseReason = "PAYMENT_LAPSED" | "WITHDRAWN_BY_CONSULTANT";
+export type LapseReason =
+  "PAYMENT_LAPSED" | "WITHDRAWN_BY_CONSULTANT" | "TOO_CLOSE_TO_PAY";
 
 /**
  * The terminal status each reason earns. EXPIRED is reserved for a lapsed
@@ -53,6 +54,8 @@ export type LapseReason = "PAYMENT_LAPSED" | "WITHDRAWN_BY_CONSULTANT";
 const LAPSED_TO: Record<LapseReason, AppointmentStatus> = {
   PAYMENT_LAPSED: AppointmentStatus.EXPIRED,
   WITHDRAWN_BY_CONSULTANT: AppointmentStatus.CANCELLED,
+  // The pay window closed before it could open: a window that ran out.
+  TOO_CLOSE_TO_PAY: AppointmentStatus.EXPIRED,
 };
 
 export interface LapseApprovedRequestArgs {
@@ -362,4 +365,56 @@ export async function withdrawApproval(args: {
     });
   }
   return { status: "CANCELLED" };
+}
+
+export const TOO_CLOSE_TO_PAY_REASON =
+  "The session starts too soon to pay for it first, so the approval was released. No payment was taken.";
+
+/**
+ * The mint's safety net: an approval whose pay window can no longer open is
+ * lapsed (EXPIRED, holds released, open order expired) and the consultee told
+ * once, instead of sitting awaiting a payment nobody can make.
+ */
+export async function lapseTooCloseApproval(args: {
+  kind: "consultation" | "subscription";
+  id: string;
+  consulteeUserId: string;
+  consulteeName: string | null;
+  consultantName: string | null;
+  planTitle: string;
+  organizationId: string | null;
+  startsAt: Date | null;
+}): Promise<boolean> {
+  const outcome = await withSerializableRetry(() =>
+    prisma.$transaction(
+      (tx) =>
+        lapseApprovedRequest(tx, {
+          kind: args.kind,
+          id: args.id,
+          reason: "TOO_CLOSE_TO_PAY",
+          actorUserId: null,
+        }),
+      {
+        ...SLOT_TRANSITION_TX_OPTIONS,
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    ),
+  );
+  if (outcome.moved === 0) return false;
+  await flushBackupInterestNotices(outcome.holdNotices);
+  if (outcome.appointmentId) {
+    await notifyConsulteeRequestExpired({
+      appointmentId: outcome.appointmentId,
+      organizationId: args.organizationId,
+      consulteeUserId: args.consulteeUserId,
+      consulteeName: args.consulteeName ?? "Consultee",
+      consultantName: args.consultantName ?? "Consultant",
+      planTitle: args.planTitle,
+      appointmentType:
+        args.kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
+      startsAt: args.startsAt,
+      reason: TOO_CLOSE_TO_PAY_REASON,
+    });
+  }
+  return true;
 }

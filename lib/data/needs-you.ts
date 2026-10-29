@@ -133,7 +133,10 @@ export async function countRequestsToAnswer(
 }
 
 /** A PENDING request asked for at or after this instant still holds its slots. */
-function holdingSince(kind: "CONSULTATION" | "SUBSCRIPTION", now: Date): Date {
+export function holdingSince(
+  kind: "CONSULTATION" | "SUBSCRIPTION",
+  now: Date,
+): Date {
   const releasesAt = requestHoldDeadline(kind, now) ?? now;
   return new Date(2 * now.getTime() - releasesAt.getTime());
 }

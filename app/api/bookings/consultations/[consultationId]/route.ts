@@ -1,5 +1,8 @@
 import * as Sentry from "@sentry/nextjs";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
+import { assertUnpaidApprovalFits } from "@/lib/booking/lead-time";
+import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import {
   assertHeldTimesStillFree,
@@ -357,6 +360,12 @@ export async function PATCH(
             }
 
             if (status === AppointmentStatus.APPROVED) {
+              // The buyer's own checkout is not a request to answer yet.
+              await assertNoLiveCheckoutHold(
+                tx,
+                "consultation",
+                consultationId,
+              );
               const hasPayment = await checkConsultationPayment(
                 tx,
                 consultationId,
@@ -420,7 +429,17 @@ export async function PATCH(
                 // No payment — record the approval now; the pay-link is minted
                 // AFTER commit (#1169 PR 2). Transition directly to
                 // APPROVED_PENDING_PAYMENT so BookingStatusHistory is not
-                // polluted with a transient APPROVED row.
+                // polluted with a transient APPROVED row. The client must be
+                // able to pay before the session, checked before the write.
+                const firstSession = await tx.appointmentOccurrence.findFirst({
+                  where: {
+                    appointment: { consultationId },
+                    ...liveOccurrenceWhere,
+                  },
+                  orderBy: { startsAt: "asc" },
+                  select: { startsAt: true },
+                });
+                assertUnpaidApprovalFits(firstSession?.startsAt);
                 await transitionConsultationRequest(tx, {
                   where: { id: consultationId },
                   to: AppointmentStatus.APPROVED_PENDING_PAYMENT,

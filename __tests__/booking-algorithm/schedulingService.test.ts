@@ -460,8 +460,8 @@ describe("Manual allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Duplicate slots detected");
-    expect(result.error).toContain("2 slots provided but only 1 are unique");
+    expect(result.error).toContain("picked twice");
+    expect(result.error).toContain("picked twice");
   });
 
   it("should reject slot count not divisible by slotsPerCall", async () => {
@@ -480,8 +480,8 @@ describe("Manual allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Invalid slot count");
-    expect(result.error).toContain("multiples of 2 slots");
+    expect(result.error).toContain("Pick whole sessions");
+    expect(result.error).toContain("Pick whole sessions");
   });
 
   it("should reject when validation fails", async () => {
@@ -500,8 +500,8 @@ describe("Manual allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Validation failed");
-    expect(result.error).toContain("Slots conflict");
+    expect(result.errorCode).toBe("VALIDATION_ERROR");
+    expect(result.error).not.toContain("Slots conflict");
   });
 
   it("should create appointment on successful validation", async () => {
@@ -815,8 +815,7 @@ describe("Requested slot allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("No appointments found");
-    expect(result.error).toContain("resubmit their request");
+    expect(result.error).toContain("no requested times left");
   });
 
   it("should refuse to reuse requested times once a slot is awaiting reschedule", async () => {
@@ -853,8 +852,7 @@ describe("Requested slot allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Cannot reuse requested times");
-    expect(result.error).toContain("2 slot(s) are awaiting reschedule");
+    expect(result.error).toContain("being moved");
     // The status write must not have happened.
     expect(mockTx.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
   });
@@ -891,9 +889,7 @@ describe("Requested slot allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Appointment mismatch");
-    expect(result.error).toContain("cover 1 half-hour atoms");
-    expect(result.error).toContain("2 were requested");
+    expect(result.error).toContain("changed since this page loaded");
   });
 
   // #1319 — the gate counts COVERED atoms, not rows. A legacy 60-minute row
@@ -985,7 +981,7 @@ describe("Requested slot allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Validation failed");
+    expect(result.errorCode).toBe("VALIDATION_ERROR");
   });
 
   it("should clear isTentative flag on all appointment slots", async () => {
@@ -1050,8 +1046,28 @@ describe("Requested slot allocation", () => {
         },
       }),
     );
-    // s2 was tombstoned after validation: ids still match, but it is no
-    // longer flippable — approval must fail, not half-clear the hold.
+    // s2 was tombstoned after validation: the in-tx re-read no longer holds
+    // the validated set — approval must fail, not half-clear the hold.
+    const validatedRows = [
+      {
+        id: "apt-1",
+        occurrences: [
+          {
+            id: "s1",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+          {
+            id: "s2",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+        ],
+      },
+    ];
+    mockTx.appointment.findMany.mockResolvedValueOnce(validatedRows);
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-1",
@@ -1385,7 +1401,7 @@ describe("Auto allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("consecutive slots available");
+    expect(result.errorCode).toBe("SLOT_SHORTAGE");
   });
 
   // ── RV-2: allocator agrees with validator on expired pending-payment holds ──
@@ -1495,7 +1511,7 @@ describe("Auto allocation", () => {
 
     // A live hold blocks every Monday → no slot free → allocation fails.
     expect(result.success).toBe(false);
-    expect(result.error).toContain("consecutive slots available");
+    expect(result.errorCode).toBe("SLOT_SHORTAGE");
   });
 
   // ── Per-day cap parity (#1189 B-P2 adjacent): auto-allocate may stack up to
@@ -1590,7 +1606,7 @@ describe("Auto allocation", () => {
     // window → auto must refuse rather than stack same-day sessions the
     // validator would reject.
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Could only find 2 of 6");
+    expect(result.error).toContain("Only 1 of 3 sessions fit");
   });
 
   // ── Bounded occupancy reads (#908 family): selection only needs FUTURE
@@ -1649,7 +1665,7 @@ describe("Auto allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Validation failed");
+    expect(result.errorCode).toBe("VALIDATION_ERROR");
     // Should not create appointments when validation fails
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
   });
@@ -1838,6 +1854,7 @@ describe("fetchEventData - config extraction", () => {
         consulteeUserId: "consultee-1",
         excludeOccurrenceIds: [],
         consultantProfileId: "consultant-profile-1",
+        leadTimeMs: 15 * 60_000,
       },
     );
   });
@@ -1867,6 +1884,7 @@ describe("fetchEventData - config extraction", () => {
         consulteeUserId: undefined,
         excludeOccurrenceIds: [],
         consultantProfileId: "consultant-profile-1",
+        leadTimeMs: 15 * 60_000,
       },
     );
   });
@@ -1925,6 +1943,7 @@ describe("fetchEventData - config extraction", () => {
         consulteeUserId: undefined,
         excludeOccurrenceIds: [],
         consultantProfileId: "consultant-profile-1",
+        leadTimeMs: 15 * 60_000,
       },
     );
   });
@@ -2402,7 +2421,12 @@ describe("deleteExistingAppointments", () => {
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
     // Its sessionless slots were stripped so they no longer block availability.
     expect(mockTx.appointmentOccurrence.deleteMany).toHaveBeenCalledWith({
-      where: { appointmentId: "old-2", meeting: { is: null } },
+      where: {
+        appointmentId: "old-2",
+        meeting: { is: null },
+        deletedAt: null,
+        completionStatus: { not: "CANCELLED" },
+      },
     });
   });
 
@@ -2691,6 +2715,8 @@ describe("deleteExistingAppointments", () => {
       where: {
         appointmentId: "placeholder-apt",
         meeting: { is: null },
+        deletedAt: null,
+        completionStatus: { not: "CANCELLED" },
       },
     });
     // 1:N event → a fresh appointment row is created (no REUSE).
@@ -2791,6 +2817,8 @@ describe("deleteExistingAppointments", () => {
       where: {
         appointmentId: "paid-consult-apt",
         meeting: { is: null },
+        deletedAt: null,
+        completionStatus: { not: "CANCELLED" },
       },
     });
     expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({
@@ -3012,7 +3040,7 @@ describe("partial reschedule slot count", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("requires exactly 2 slots");
+    expect(result.error).toContain("exactly 2 sessions");
     expect(result.error).not.toContain("exactly 10");
   });
 
@@ -3290,9 +3318,9 @@ describe("Manual allocation - distributed lock", () => {
   it("should return 409 when lock acquisition fails", async () => {
     const { lockAutoAllocate } = require("../../utils/appointmentlock");
 
-    // Simulate lock contention
+    // Simulate lock contention: the typed refusal's stable code.
     lockAutoAllocate.mockRejectedValueOnce(
-      new Error("Lock acquisition failed: resource is locked"),
+      Object.assign(new Error("busy"), { code: "AUTO_ALLOCATE_BUSY" }),
     );
 
     const result = await allocate({
@@ -3328,7 +3356,7 @@ describe("Manual allocation - distributed lock", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    expect(lockConsulteeBooking).toHaveBeenCalledWith("consultee-9");
+    expect(lockConsulteeBooking.mock.calls[0][0]).toBe("consultee-9");
     expect(unlockConsulteeBooking).toHaveBeenCalled();
   });
 
@@ -3487,7 +3515,7 @@ describe("allocation resilience — error codes", () => {
 
     expect(result.success).toBe(false);
     expect(result.errorCode).toBe("SLOT_SHORTAGE");
-    expect(result.error).toContain("Could only find");
+    expect(result.errorCode).toBe("SLOT_SHORTAGE");
   });
 });
 

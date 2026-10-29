@@ -1,5 +1,5 @@
 // MANUAL mode: the consultant's chosen times, under the same lock envelope as
-// AUTO (a day-sharded key only for a cap-less placement).
+// AUTO (one consultant-wide key, then the consultee, then the slot batch).
 
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
@@ -18,6 +18,7 @@ import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleVal
 import {
   lockAutoAllocate,
   unlockAutoAllocate,
+  ALLOCATOR_LOCK_RETRY_CONFIG,
   lockConsulteeBooking,
   unlockConsulteeBooking,
   unlockSlotInterval,
@@ -33,10 +34,15 @@ import type { FreedWindow } from "@/lib/booking/class-series";
 import {
   AllocationValidationError,
   AllocationNotFoundError,
-  AllocationConflictError,
   SlotShortageError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
+import { leadTimeFor } from "@/lib/booking/lead-time";
+import { checkoutInProgressError } from "@/lib/booking/request-cohort";
+import {
+  slotTakenRefusal,
+  validationRefusal,
+} from "@/lib/booking/allocation/refusal-copy";
 import {
   getConsulteeUserId,
   getEventRelationField,
@@ -172,7 +178,11 @@ export async function manualAllocate(
   try {
     const consulteeLockUserId = await getConsulteeUserId(eventType, eventId);
     if (consulteeLockUserId) {
-      consulteeLock = await lockConsulteeBooking(consulteeLockUserId);
+      consulteeLock = await lockConsulteeBooking(
+        consulteeLockUserId,
+        undefined,
+        ALLOCATOR_LOCK_RETRY_CONFIG,
+      );
     }
 
     // #837 TOCTOU — the pre-lock replay check can miss a concurrent first
@@ -203,16 +213,25 @@ export async function manualAllocate(
       throw new AllocationNotFoundError(`${eventType} not found`);
     }
 
-    const { consultant, config, consulteeUserId, organizationId, planId } =
-      eventData;
+    const {
+      consultant,
+      config,
+      consulteeUserId,
+      organizationId,
+      planId,
+      settled,
+    } = eventData;
+    if (eventData.checkoutInProgress) throw checkoutInProgressError();
+    const leadTimeMs = leadTimeFor({ settled });
 
     // Convert to Date objects with validation
     const slots = slotStrings.map((s, i) => {
       const date = new Date(s);
       if (Number.isNaN(date.getTime())) {
         throw new AllocationValidationError(
-          `Invalid date string at position ${i + 1}: "${s}". ` +
-            `Expected ISO 8601 format (e.g., "2026-03-01T09:00:00.000Z").`,
+          "One of the picked times couldn't be read. Reload the page and pick the times again.",
+          "VALIDATION_ERROR",
+          { position: i + 1, value: s },
         );
       }
       return date;
@@ -226,8 +245,9 @@ export async function manualAllocate(
 
     if (uniqueSlots.length !== slots.length) {
       throw new AllocationValidationError(
-        `Duplicate slots detected: ${slots.length} slots provided but only ` +
-          `${uniqueSlots.length} are unique. Each slot can only be selected once.`,
+        "The same time was picked twice. Pick each time once.",
+        "VALIDATION_ERROR",
+        { provided: slots.length, unique: uniqueSlots.length },
       );
     }
 
@@ -245,9 +265,9 @@ export async function manualAllocate(
       const sessionDuration =
         config.sessionDurationInHours || config.durationInHours || 1;
       throw new AllocationValidationError(
-        `Invalid slot count: ${slots.length} slots provided, but ${sessionDuration}-hour ` +
-          `sessions require multiples of ${slotsPerCall} slots (30 minutes each). ` +
-          `Valid counts: ${slotsPerCall}, ${slotsPerCall * 2}, ${slotsPerCall * 3}, etc.`,
+        `Each session is ${sessionDuration} hour${sessionDuration === 1 ? "" : "s"} long. Pick whole sessions.`,
+        "VALIDATION_ERROR",
+        { atoms: slots.length, slotsPerCall },
       );
     }
 
@@ -297,10 +317,8 @@ export async function manualAllocate(
     // carries tentative slots (request-for-approval and unpaid checkout both
     // create them that way), so the flag was never true for a consultation
     // and the multi-tab guard never ran. Having no CONFIRMED slot is the real
-    // "not allocated yet" condition. This matters most across modes: auto
-    // takes a consultant-wide lock and a cap-less manual one a day-sharded
-    // key (#860, narrowed by #1319), so two tabs are only serialized by the
-    // in-txn advisory lock this gates.
+    // "not allocated yet" condition; the in-txn advisory lock this gates
+    // serialises two tabs of the same event.
     const isFreshAllocation =
       !isTopUp &&
       (initialAllocation === true || existingNonTentativeSlotCount === 0);
@@ -344,9 +362,9 @@ export async function manualAllocate(
         const rescheduleRequired = rescheduleSessions * slotsPerCall;
         if (slots.length !== rescheduleRequired) {
           throw new AllocationValidationError(
-            `This reschedule requires exactly ${rescheduleRequired} slots ` +
-              `(replacing ${rescheduleSessions} session(s)), ` +
-              `but ${slots.length} were provided.`,
+            `Pick times for exactly ${sessionsLabel(rescheduleSessions)} to replace the ones being moved.`,
+            "VALIDATION_ERROR",
+            { atoms: slots.length, requiredAtoms: rescheduleRequired },
           );
         }
       } else if (isTopUp) {
@@ -361,15 +379,15 @@ export async function manualAllocate(
         const requiredTopUpSlots = cycleTarget * slotsPerCall;
         if (slots.length > requiredTopUpSlots) {
           throw new AllocationValidationError(
-            `This cycle takes exactly ${cycleTarget} session(s) ` +
-              `(${requiredTopUpSlots} slots), but ${slots.length} were provided.`,
+            `This cycle takes ${sessionsLabel(cycleTarget)}. Pick no more than that.`,
+            "VALIDATION_ERROR",
+            { atoms: slots.length, requiredAtoms: requiredTopUpSlots },
           );
         }
         if (slots.length < requiredTopUpSlots) {
           if (!allowPartial) {
             throw new SlotShortageError(
-              `This cycle takes exactly ${cycleTarget} session(s) ` +
-                `(${requiredTopUpSlots} slots), but ${slots.length} were provided.`,
+              `This cycle takes ${sessionsLabel(cycleTarget)}; you picked ${sessionsLabel(Math.floor(slots.length / slotsPerCall))}.`,
               Math.floor(slots.length / slotsPerCall),
               cycleTarget,
             );
@@ -393,8 +411,9 @@ export async function manualAllocate(
         const expectedFutureSlots = fullRequired - pastConfirmedSlotCount;
         if (slots.length !== expectedFutureSlots) {
           throw new AllocationValidationError(
-            `In-progress ${eventType}: ${pastConfirmedSlotCount} past slot(s) preserved. ` +
-              `Expected ${expectedFutureSlots} future slots, but ${slots.length} were provided.`,
+            `Pick times for the ${sessionsLabel(Math.ceil(expectedFutureSlots / slotsPerCall))} still to come; past sessions stay as they are.`,
+            "VALIDATION_ERROR",
+            { atoms: slots.length, requiredAtoms: expectedFutureSlots },
           );
         }
       } else if (
@@ -407,9 +426,9 @@ export async function manualAllocate(
         );
         if (slots.length > requiredSlots) {
           throw new AllocationValidationError(
-            `This ${eventType} requires exactly ${requiredSlots} slots ` +
-              `(based on the scheduling period and session configuration), ` +
-              `but ${slots.length} were provided.`,
+            `This ${eventType} takes ${sessionsLabel(Math.ceil(requiredSlots / slotsPerCall))}. Pick no more than that.`,
+            "VALIDATION_ERROR",
+            { atoms: slots.length, requiredAtoms: requiredSlots },
           );
         }
         if (slots.length < requiredSlots) {
@@ -417,9 +436,7 @@ export async function manualAllocate(
           const requiredSessions = Math.ceil(requiredSlots / slotsPerCall);
           if (!allowPartial) {
             throw new SlotShortageError(
-              `This ${eventType} requires exactly ${requiredSlots} slots ` +
-                `(based on the scheduling period and session configuration), ` +
-                `but ${slots.length} were provided.`,
+              `This ${eventType} takes ${sessionsLabel(requiredSessions)}; you picked ${sessionsLabel(placedSessions)}.`,
               placedSessions,
               requiredSessions,
             );
@@ -449,15 +466,14 @@ export async function manualAllocate(
         excludeOccurrenceIds: occurrenceIdsToExclude,
         // Co-host arm: the consultant's own ACCEPTED seats occupy too.
         consultantProfileId,
+        leadTimeMs,
         // The consultant explicitly accepting these times as-is.
         overrideAvailabilityWindow: override,
       },
     );
 
     if (!validation.isValid) {
-      throw new AllocationValidationError(
-        `Validation failed: ${validation.errors.join("; ")}`,
-      );
+      throw validationRefusal(validation.errors);
     }
 
     // Lock order: consultant → consultee → slot batch over every busy profile.
@@ -508,10 +524,7 @@ export async function manualAllocate(
           consultantProfileId,
         );
         if (!recheck.isValid) {
-          throw new AllocationConflictError(
-            `Slot taken during allocation: ${recheck.errors.join("; ")}`,
-            "SLOT_TAKEN",
-          );
+          throw slotTakenRefusal(recheck.errors);
         }
         // The consultant's explicit override waives availability, here as out of tx.
         if (!override) {
@@ -645,4 +658,9 @@ export async function manualAllocate(
     if (consulteeLock) await unlockConsulteeBooking(consulteeLock);
     await unlockAutoAllocate(lock);
   }
+}
+
+/** "1 session" / "3 sessions". */
+function sessionsLabel(count: number): string {
+  return `${count} session${count === 1 ? "" : "s"}`;
 }

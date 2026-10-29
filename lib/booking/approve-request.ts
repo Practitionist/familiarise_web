@@ -237,7 +237,11 @@ export async function mintApprovalPaymentAfterCommit(args: {
   // Loaded here, not at module scope: the payments barrel and the email
   // senders are heavy, and the scheduling engine imports this module.
   const [
-    { ApprovalWindowLapsedError, createApprovalPaymentIntent },
+    {
+      ApprovalTooCloseToStartError,
+      ApprovalWindowLapsedError,
+      createApprovalPaymentIntent,
+    },
     email,
     { notifyPaymentLink, notificationScope },
   ] = await Promise.all([
@@ -292,6 +296,23 @@ export async function mintApprovalPaymentAfterCommit(args: {
     // #1319 review — a lapsed approval is not a retryable mint failure.
     if (linkError instanceof ApprovalWindowLapsedError) {
       return { status: "lapsed", message: linkError.message };
+    }
+    // The pay window can no longer open: release the approval rather than
+    // leave it awaiting a payment nobody can make.
+    if (linkError instanceof ApprovalTooCloseToStartError) {
+      const { lapseTooCloseApproval, TOO_CLOSE_TO_PAY_REASON } =
+        await import("@/lib/booking/lapse-approved-request");
+      await lapseTooCloseApproval({
+        kind: args.kind,
+        id: row.id,
+        consulteeUserId: row.requestedBy.user.id,
+        consulteeName: row.requestedBy.user.name,
+        consultantName: plan.consultantProfile.user.name,
+        planTitle: plan.title,
+        organizationId: row.appointment?.organizationId ?? null,
+        startsAt: slot?.startsAt ?? null,
+      });
+      return { status: "lapsed", message: TOO_CLOSE_TO_PAY_REASON };
     }
     report(linkError);
     return { status: "mint_failed", error: linkError };

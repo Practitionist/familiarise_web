@@ -474,7 +474,9 @@ describe("#1697 — pre-lock occupancy probe on manual allocation", () => {
       consultantProfileId: "cp-1",
       isTentative: false,
       deletedAt: null,
-      appointment: { NOT: { subscriptionId: "sub-1" } },
+      appointment: {
+        OR: [{ subscriptionId: null }, { subscriptionId: { not: "sub-1" } }],
+      },
     });
   });
 });
@@ -518,7 +520,7 @@ describe("expected refusals report as expected", () => {
     expect(odd.httpStatus).toBe(400);
     expect(reportSentryError).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        message: expect.stringContaining("Invalid slot count"),
+        message: expect.stringContaining("Pick whole sessions"),
       }),
       expect.objectContaining({ expected: true }),
     );

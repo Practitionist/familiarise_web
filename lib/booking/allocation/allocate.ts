@@ -5,9 +5,15 @@ import { reportSentryError } from "@/lib/observability/report";
 import {
   AllocationRequest,
   AllocationResult,
+  type AllocationErrorCode,
   type AllocationTxOptions,
 } from "@/utils/scheduling-engine/types";
-import { SlotShortageError } from "@/utils/scheduling-engine/errors";
+import {
+  AllocationConflictError,
+  AllocationError,
+  AllocationIdempotencyMismatchError,
+  SlotShortageError,
+} from "@/utils/scheduling-engine/errors";
 import {
   AllocationRaceError,
   SlotsTakenError,
@@ -22,9 +28,12 @@ import { autoAllocate } from "@/lib/booking/allocation/modes/auto";
 import { manualAllocate } from "@/lib/booking/allocation/modes/manual";
 import { useRequestedSlots } from "@/lib/booking/allocation/modes/use-requested";
 import { getEventRelationField } from "@/lib/booking/allocation/identity";
+import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import {
+  ALLOCATOR_LOCK_RETRY_CONFIG,
   renewAppointmentLock,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
@@ -71,40 +80,42 @@ export async function allocate(
       }
     }
     return result;
-  } catch (error) {
+  } catch (caught) {
+    const replayed = await replayAfterKeyRace(request, caught);
+    if (replayed && !(replayed instanceof Error)) return replayed;
+    const error: unknown = replayed ?? caught;
     const { errorCode, httpStatus } = classifyError(error);
-    // Full-coverage policy: every error reaching here is reported, modelled
-    // outcome or not, so volume/pattern of ordinary answers (slot taken,
-    // limit reached, lost CAS race) is visible in Sentry too — but at
-    // info + expected:true so a dashboard scan can't mistake "no slots
-    // available" for a database failure. Real faults keep the default
-    // error level with no expected tag.
-    // #1721 QA — every 4xx classification is an answer, including the
-    // untyped legacy throws classifyError maps by message; only a 5xx is a fault.
-    const modeled = isModeledOutcome(error) || httpStatus < 500;
+    // Every failure is reported. A modelled answer (slot taken, limit
+    // reached, lost race) goes at info + expected; an outage (locking service
+    // down, search out of time) is a warning that ships; anything else is a
+    // fault at error level.
+    const modeled = isModeledOutcome(error);
+    const outage =
+      errorCode === "BOOKING_LOCK_UNAVAILABLE" ||
+      errorCode === "SEARCH_TIMEOUT";
     reportSentryError(error, {
       subsystem: "scheduling",
       op: "scheduling",
       expected: modeled,
+      ...(outage
+        ? {
+            level: "warning" as const,
+            fingerprint: ["allocator", errorCode],
+          }
+        : {}),
       extra: {
         mode: request.mode,
         eventType: request.eventType,
         eventId: request.eventId,
         errorCode,
+        ...(error instanceof AllocationError && error.details
+          ? { details: error.details }
+          : {}),
       },
     });
     return {
       success: false,
-      // 5xx answers never carry raw error text: pool timeouts, Prisma
-      // validation dumps, and constraint internals are operator detail
-      // (already in Sentry above), not user copy. Indeterminate wording —
-      // a 500 can fire on either side of the commit.
-      error:
-        httpStatus >= 500
-          ? "Couldn't save these times — check whether they appear, then retry."
-          : error instanceof Error
-            ? error.message
-            : "Allocation failed",
+      error: allocationFailureCopy(error, errorCode, httpStatus),
       errorCode,
       httpStatus,
       // #1206 — a shortage refusal carries the count the client needs to
@@ -123,6 +134,66 @@ export async function allocate(
         : {}),
     };
   }
+}
+
+/**
+ * A same-key submit that lost the race to stamp its key replays the winner's
+ * committed batch; the same key with different picks is the caller's 422.
+ * Null when the failure was not that race (or the replay found nothing).
+ */
+async function replayAfterKeyRace(
+  request: AllocationRequest,
+  error: unknown,
+): Promise<AllocationResult | AllocationIdempotencyMismatchError | null> {
+  if (
+    !request.idempotencyKey ||
+    !isUniqueViolationOn(error, "allocationIdempotencyKey")
+  ) {
+    return null;
+  }
+  return findIdempotentAllocation(
+    request.eventType,
+    request.eventId,
+    request.idempotencyKey,
+    request.mode === "manual" ? request.slots : undefined,
+  ).catch((replayError: unknown) =>
+    replayError instanceof AllocationIdempotencyMismatchError
+      ? replayError
+      : null,
+  );
+}
+
+/**
+ * The user copy for a failed allocation: plain, actionable, never raw error
+ * text. Typed allocation errors carry their own copy; lock and outage answers
+ * get fixed copy (the lock family's messages address the buyer, not the
+ * expert); anything else is indeterminate, since a 500 can fire on either side
+ * of the commit.
+ */
+function allocationFailureCopy(
+  error: unknown,
+  errorCode: AllocationErrorCode,
+  httpStatus: number,
+): string {
+  switch (errorCode) {
+    case "LOCK_CONTENTION":
+      return "Another change to this booking is in progress. Please try again in a moment.";
+    case "BOOKING_LOCK_UNAVAILABLE":
+      return "Booking is briefly unavailable. Please try again in a minute.";
+    case "ILLEGAL_TRANSITION":
+      return "This request was cancelled or expired while you were scheduling it. Reload to see its status.";
+    case "SLOT_TAKEN":
+      if (!(error instanceof AllocationConflictError)) {
+        return "One of these times was just booked. Pick another time and try again.";
+      }
+      break;
+    default:
+      break;
+  }
+  if (httpStatus >= 500 && errorCode !== "SEARCH_TIMEOUT") {
+    return "Couldn't save these times — check whether they appear, then retry.";
+  }
+  return error instanceof Error ? error.message : "Allocation failed";
 }
 
 /**
@@ -146,7 +217,9 @@ async function underAppointmentLock<T>(
     } as Prisma.AppointmentWhereInput,
     select: { id: true },
   });
-  return wrapper ? withAppointmentLock(wrapper.id, run) : run();
+  return wrapper
+    ? withAppointmentLock(wrapper.id, run, ALLOCATOR_LOCK_RETRY_CONFIG)
+    : run();
 }
 
 /**

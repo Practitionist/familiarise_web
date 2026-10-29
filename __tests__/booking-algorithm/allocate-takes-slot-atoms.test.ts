@@ -163,7 +163,7 @@ it("searches around a time another writer holds, then places the free one", asyn
   expect(result.success).toBe(true);
   expect(search).toHaveBeenCalledTimes(2);
   // The re-search treats the held interval as booked.
-  const heldArg = search.mock.calls[1][search.mock.calls[1].length - 2];
+  const heldArg = search.mock.calls[1][search.mock.calls[1].length - 3];
   expect(heldArg).toEqual([T1.toISOString()]);
   expect(tryLock.mock.calls[1][0][0]).toMatchObject({ startsAt: T2 });
 });
@@ -203,7 +203,7 @@ it("shares one search budget across the first search and every re-search", async
 
   await autoAllocate("consultation", "cons-1");
 
-  const budgetOf = (call: unknown[]) => call[call.length - 1];
+  const budgetOf = (call: unknown[]) => call[call.length - 2];
   expect(budgetOf(search.mock.calls[0])).toBeDefined();
   expect(budgetOf(search.mock.calls[1])).toBe(budgetOf(search.mock.calls[0]));
 });

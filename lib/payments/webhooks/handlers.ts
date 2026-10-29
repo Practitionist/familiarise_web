@@ -9,7 +9,6 @@ import {
   reportSentryMessage,
 } from "@/lib/observability/report";
 import {
-  liveParticipant,
   transitionParticipant,
   RELEASED_PARTICIPANT_STATUSES,
 } from "@/lib/booking/participants";
@@ -32,6 +31,7 @@ import {
   buildOccupiedAppointmentFilter,
   OCCUPYING_OCCURRENCE_WHERE,
   seatHoldingParticipant,
+  timeHoldingParticipant,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { effectiveMaxParticipants } from "@/lib/events/capacity";
 import {
@@ -44,7 +44,7 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { isExclusionViolation } from "@/lib/db/pg-errors";
+import { isExclusionViolation, isWriteConflict } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import {
@@ -122,6 +122,13 @@ import {
   type AppointmentForEmails,
   type StagedOutboxEmail,
 } from "./staged-emails";
+import {
+  attemptStagedRequestExpired,
+  notifyConsulteeRequestExpired,
+  stageConsulteeRequestExpired,
+  type RequestExpiredNotice,
+  type StagedRequestExpiredNotice,
+} from "@/lib/booking/expiry-notices";
 
 export { createAppointmentFromWebhook, RecoveryAlreadyDoneError };
 
@@ -150,6 +157,10 @@ type PaymentSuccessTxResult =
       doubleBookingBlocked: boolean;
       // The capture's webinar/class seat was released before the money landed.
       seatReleased: boolean;
+      // The money landed after the first session had started; refunded in full.
+      sessionStarted: boolean;
+      // That consultee notice, staged in this transaction; null if staging failed.
+      startedNotice: StagedRequestExpiredNotice | null;
       earningsCreatedInPhase1: boolean;
       appointmentForEmails: AppointmentForEmails | null;
       successEmail: StagedOutboxEmail | null;
@@ -831,6 +842,7 @@ export async function handlePaymentSuccess(
             confirmResult.capturedAfterTerminal ||
             confirmResult.doubleBookingBlocked;
           let earningsCreatedInPhase1 = false;
+          let startedNotice: StagedRequestExpiredNotice | null = null;
           if (blocked) {
             await tx.payment.update({
               where: { id: payment.id },
@@ -840,7 +852,9 @@ export async function handlePaymentSuccess(
                     ? DOUBLE_BOOKING_BLOCKED_NOTE
                     : confirmResult.seatReleased
                       ? "capture landed after the seat was released"
-                      : "capture landed after the booking was cancelled",
+                      : confirmResult.sessionStarted
+                        ? "capture landed after the session started"
+                        : "capture landed after the booking was cancelled",
                 ),
               },
             });
@@ -848,6 +862,12 @@ export async function handlePaymentSuccess(
             // The loser's hold dies with the capture commit, so no sweep can confirm it while the refund is pending.
             if (confirmResult.doubleBookingBlocked) {
               await cleanupFailedPaymentAppointment(tx, appointment.id);
+            }
+            if (confirmResult.sessionStarted) {
+              startedNotice = await stageStartedBeforePaymentNotice(
+                tx,
+                appointment.id,
+              );
             }
           } else {
             // Outside the savepoint: the booking confirms even when earnings
@@ -952,6 +972,8 @@ export async function handlePaymentSuccess(
             capturedAfterTerminal: confirmResult.capturedAfterTerminal,
             doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
             seatReleased: confirmResult.seatReleased ?? false,
+            sessionStarted: confirmResult.sessionStarted ?? false,
+            startedNotice,
             earningsCreatedInPhase1,
             appointmentForEmails,
             successEmail,
@@ -1131,6 +1153,16 @@ export async function handlePaymentSuccess(
   }
 
   if (txResult.capturedAfterTerminal) {
+    // Before the refund and independent of it: the notice committed with the
+    // capture, so a refund failure (re-driven later) never leaves it unsent.
+    if (txResult.sessionStarted) {
+      await (txResult.startedNotice
+        ? attemptStagedRequestExpired(
+            txResult.startedNotice,
+            EMAIL_BUDGET_MS.WEBHOOK,
+          )
+        : notifyStartedBeforePayment(txResult.appointmentId));
+    }
     try {
       const outcome = txResult.seatReleased
         ? await refundBookingPayment({
@@ -1141,7 +1173,9 @@ export async function handlePaymentSuccess(
           })
         : await refundPayment({
             paymentId: txResult.paymentId,
-            reason: "capture after cancellation",
+            reason: txResult.sessionStarted
+              ? "capture after the session started"
+              : "capture after cancellation",
             initiatedByUserId: null,
           });
       if (outcome?.status !== "PENDING") {
@@ -2001,6 +2035,8 @@ export async function confirmExistingAppointment(
   doubleBookingBlocked?: boolean;
   /** A webinar/class seat was released before the capture landed. */
   seatReleased?: boolean;
+  /** The first session had started before the money landed: closed, refunded. */
+  sessionStarted?: boolean;
 }> {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
@@ -2039,10 +2075,12 @@ export async function confirmExistingAppointment(
       where: { appointmentId, isTentative: true, ...liveOccurrenceWhere },
       select: { id: true, startsAt: true, endsAt: true },
     });
+    // One clock for every seat-liveness read of this confirmation.
+    const now = opts?.now ?? new Date();
     // The payer is included: their own other live booking at this time is a double-book, refunded below.
     const participantIds = (
       await tx.appointmentParticipant.findMany({
-        where: { appointmentId, ...liveParticipant() },
+        where: { appointmentId, ...timeHoldingParticipant(now) },
         select: { userId: true },
       })
     ).map((p) => p.userId);
@@ -2065,7 +2103,21 @@ export async function confirmExistingAppointment(
       ...(payerProfile ? buildCohostCommitmentFilter(payerProfile.id) : []),
     ];
     const holdExpired = opts?.holdExpired === true;
-    const now = opts?.now ?? new Date();
+    // Nobody pays for a session that has already started: the request
+    // closes (EXPIRED, holds released) in this commit and the capture takes
+    // the late-capture path (parked, refunded in full), never a confirmation.
+    if (mySlots.some((slot) => slot.startsAt <= now)) {
+      await closeStartedBeforePayment(tx, appointment);
+      await recordSystemErrorSafe({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Payment captured after the first session of appointment ${appointmentId} started — refund needed`,
+        err: new Error("CAPTURE_AFTER_SESSION_START"),
+        context: { appointmentId },
+        db: tx,
+      });
+      return { capturedAfterTerminal: true, sessionStarted: true };
+    }
     // Same row predicate as every reader: a returned or host-cancelled row has freed its time.
     const conflictStates: Prisma.AppointmentOccurrenceWhereInput = holdExpired
       ? {
@@ -2103,7 +2155,7 @@ export async function confirmExistingAppointment(
                                 participants: {
                                   some: {
                                     userId: { in: participantIds },
-                                    ...liveParticipant(),
+                                    ...timeHoldingParticipant(now),
                                   },
                                 },
                               },
@@ -2119,7 +2171,7 @@ export async function confirmExistingAppointment(
                   participants: {
                     some: {
                       userId: { in: participantIds },
-                      ...liveParticipant(),
+                      ...timeHoldingParticipant(now),
                     },
                   },
                 },
@@ -2419,5 +2471,175 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
         }
       }
     }
+  }
+}
+
+const STARTED_BEFORE_PAYMENT_REASON =
+  "Your session had already started when your payment arrived, so we've refunded you in full.";
+
+/**
+ * A request whose first session started before its payment landed: EXPIRED
+ * (nobody cancelled or declined; its window ran out) and its tentative holds
+ * released, in the capture's commit. The CAS is the request's own; the money
+ * predicate does not apply because this capture is refunded in full.
+ */
+async function closeStartedBeforePayment(
+  tx: Tx,
+  appointment: {
+    id: string;
+    consultation: { id: string } | null;
+    subscription: { id: string } | null;
+  },
+): Promise<void> {
+  const meta = {
+    actorUserId: null,
+    reason: "PAID_AFTER_SESSION_STARTED",
+    to: AppointmentStatus.EXPIRED,
+    fromIn: [
+      AppointmentStatus.PENDING,
+      AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    ],
+    data: { pendingPaymentUrl: null },
+  };
+  try {
+    if (appointment.consultation) {
+      await transitionConsultationRequest(tx, {
+        ...meta,
+        where: { id: appointment.consultation.id },
+      });
+    } else if (appointment.subscription) {
+      await transitionSubscriptionRequest(tx, {
+        ...meta,
+        where: { id: appointment.subscription.id },
+      });
+    }
+  } catch (error) {
+    // Already terminal: the refund still runs; nothing else to close.
+    if (!(error instanceof IllegalTransitionError)) throw error;
+  }
+  await transitionOccurrenceCompletion(tx, {
+    actorUserId: null,
+    reason: "PAID_AFTER_SESSION_STARTED",
+    where: {
+      appointmentId: appointment.id,
+      isTentative: true,
+      deletedAt: null,
+    },
+    to: OccurrenceCompletionStatus.CANCELLED,
+    data: { deletedAt: new Date() },
+    allowZero: true,
+  });
+}
+
+/** The consultee notice for a capture that landed after the session started. */
+async function loadStartedBeforePaymentNotice(
+  db: Pick<Tx, "appointment">,
+  appointmentId: string,
+): Promise<RequestExpiredNotice | null> {
+  const row = await db.appointment.findUnique({
+    where: { id: appointmentId },
+    select: {
+      organizationId: true,
+      occurrences: {
+        orderBy: { startsAt: "asc" },
+        take: 1,
+        select: { startsAt: true },
+      },
+      consultation: {
+        select: {
+          requestedBy: {
+            select: { user: { select: { id: true, name: true } } },
+          },
+          consultationPlan: {
+            select: {
+              title: true,
+              consultantProfile: {
+                select: { user: { select: { name: true } } },
+              },
+            },
+          },
+        },
+      },
+      subscription: {
+        select: {
+          requestedBy: {
+            select: { user: { select: { id: true, name: true } } },
+          },
+          subscriptionPlan: {
+            select: {
+              title: true,
+              consultantProfile: {
+                select: { user: { select: { name: true } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const request = row?.consultation ?? row?.subscription;
+  const consultee = request?.requestedBy?.user;
+  if (!row || !request || !consultee) return null;
+  const plan =
+    "consultationPlan" in request
+      ? request.consultationPlan
+      : request.subscriptionPlan;
+  return {
+    appointmentId,
+    organizationId: row.organizationId,
+    consulteeUserId: consultee.id,
+    consulteeName: consultee.name ?? "Consultee",
+    consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
+    planTitle:
+      plan?.title ?? (row.consultation ? "Consultation" : "Subscription"),
+    appointmentType: row.consultation ? "CONSULTATION" : "SUBSCRIPTION",
+    startsAt: row.occurrences[0]?.startsAt ?? null,
+    reason: STARTED_BEFORE_PAYMENT_REASON,
+  };
+}
+
+/**
+ * Stages that notice in the capture transaction, so it commits with the
+ * close and the owed refund. A staging fault rolls back to its own savepoint
+ * (the capture still commits) and answers null; the caller then sends the
+ * notice directly after the commit.
+ */
+async function stageStartedBeforePaymentNotice(
+  tx: Tx,
+  appointmentId: string,
+): Promise<StagedRequestExpiredNotice | null> {
+  await tx.$executeRaw`SAVEPOINT sp_started_notice`;
+  try {
+    const notice = await loadStartedBeforePaymentNotice(tx, appointmentId);
+    const staged = notice
+      ? await stageConsulteeRequestExpired(tx, notice)
+      : null;
+    await tx.$executeRaw`RELEASE SAVEPOINT sp_started_notice`;
+    return staged;
+  } catch (error) {
+    await tx.$executeRaw`ROLLBACK TO SAVEPOINT sp_started_notice`;
+    if (isWriteConflict(error)) throw error;
+    reportSentryError(error, {
+      subsystem: "payments",
+      op: "capture.started-before-payment-notice.stage",
+      level: "warning",
+    });
+    return null;
+  }
+}
+
+/** The direct send, when staging failed. Never throws: the refund is separate. */
+async function notifyStartedBeforePayment(
+  appointmentId: string,
+): Promise<void> {
+  try {
+    const notice = await loadStartedBeforePaymentNotice(prisma, appointmentId);
+    if (notice) await notifyConsulteeRequestExpired(notice);
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "payments",
+      op: "capture.started-before-payment-notice",
+      level: "warning",
+    });
   }
 }

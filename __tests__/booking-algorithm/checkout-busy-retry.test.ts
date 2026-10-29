@@ -187,3 +187,14 @@ describe("busy-retry copy", () => {
     expect(copy.description).toContain("10s");
   });
 });
+
+describe("slot batch key order", () => {
+  it("is code-unit order, never locale order", () => {
+    const { byCodeUnit } = jest.requireActual<{
+      byCodeUnit: (a: string, b: string) => number;
+    }>("../../utils/appointmentlock");
+    expect(
+      ["slot-booking:b", "slot-booking:B", "slot-booking:a"].sort(byCodeUnit),
+    ).toEqual(["slot-booking:B", "slot-booking:a", "slot-booking:b"]);
+  });
+});

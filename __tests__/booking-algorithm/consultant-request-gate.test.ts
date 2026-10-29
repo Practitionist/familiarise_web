@@ -74,6 +74,7 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 const mockConsultationCount = jest.fn(async () => 0);
 const mockSubscriptionCount = jest.fn(async () => 0);
+const mockTrialCount = jest.fn(async () => 0);
 const mockProfile = {
   id: "cp_1",
   acceptingRequests: true,
@@ -107,6 +108,7 @@ jest.mock("../../lib/prisma", () => {
     subscription: {
       count: (...a: unknown[]) => mockSubscriptionCount(...(a as [])),
     },
+    trial: { count: (...a: unknown[]) => mockTrialCount(...(a as [])) },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),
   };
   return { __esModule: true, default: db };
@@ -174,6 +176,33 @@ describe("consultant request gate", () => {
     expect(mockConsultationCount.mock.invocationCallOrder[1]).toBeGreaterThan(
       mockLockSlotBooking.mock.invocationCallOrder[0],
     );
+  });
+
+  it("counts real submitted requests and trial requests, never checkout holds", async () => {
+    mockProfile.maxOpenRequests = 3;
+    mockConsultationCount.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+    mockSubscriptionCount.mockResolvedValueOnce(0);
+    mockTrialCount.mockResolvedValueOnce(2);
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("CONSULTANT_AT_CAPACITY");
+    const calls = mockConsultationCount.mock.calls as unknown as Array<
+      [{ where: Record<string, unknown> }]
+    >;
+    const consultantCount = calls[1][0];
+    expect(consultantCount.where).toMatchObject({
+      status: "PENDING",
+      bookingSource: "REQUEST_SUBMITTED",
+    });
+  });
+
+  it("answers the consultee's own cap with a typed code and plain copy", async () => {
+    mockConsultationCount.mockResolvedValueOnce(3);
+    const res = await POST(request());
+    expect(res.status).toBe(429);
+    const body = await res.json();
+    expect(body.code).toBe("REQUEST_CAP_REACHED");
+    expect(body.error).not.toMatch(/limit \d/);
   });
 
   it("below cap → 201", async () => {

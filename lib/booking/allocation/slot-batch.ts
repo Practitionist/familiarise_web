@@ -10,6 +10,7 @@ import { acceptedCohostProfileIds } from "@/lib/booking/host-slot-batch";
 import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 import type { EventType } from "@/utils/scheduling-engine/types";
 import {
+  byCodeUnit,
   extendSlotInterval,
   parseSlotKey,
   tryLockSlotBatch,
@@ -98,7 +99,7 @@ export function heldSlotStartsOf(heldKeys: readonly string[]): string[] {
     const parsed = parseSlotKey(key);
     if (parsed) starts.add(parsed.startsAt.toISOString());
   }
-  return [...starts].sort();
+  return [...starts].sort(byCodeUnit);
 }
 
 /** Picked times (manual / requested): no wait, no re-search; a held atom is a typed 409. */

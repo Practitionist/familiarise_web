@@ -2,7 +2,7 @@
 // whether it is a modelled answer or a fault.
 
 import { AllocationErrorCode } from "@/utils/scheduling-engine/types";
-import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import {
@@ -10,6 +10,7 @@ import {
   AllocationNotFoundError,
   AllocationConflictError,
   AllocationIdempotencyMismatchError,
+  SearchTimeoutError,
 } from "@/utils/scheduling-engine/errors";
 import { ProgramAssignmentLimitError } from "@/lib/api/organizations/program-helpers";
 import { CollaboratorUnavailableError } from "@/lib/collaborators/availability";
@@ -20,10 +21,7 @@ import { CollaboratorUnavailableError } from "@/lib/collaborators/availability";
  * an org cap reached) rather than an actual fault. Both branches are
  * reported to Sentry (full-coverage policy); this only decides the
  * level/tag so a modelled answer never reads as a fault on the dashboard.
- * Deliberately narrower than classifyError()'s message-sniffing fallback,
- * which exists only to pick an HTTP status for legacy untyped throws and
- * would otherwise also mark real bugs "expected" if the message happens to
- * contain "not found".
+ * An outage (lock service down, search out of time) is never modelled.
  */
 export function isModeledOutcome(error: unknown): boolean {
   return (
@@ -34,13 +32,12 @@ export function isModeledOutcome(error: unknown): boolean {
     error instanceof IllegalTransitionError ||
     error instanceof BookingRuleError ||
     error instanceof ProgramAssignmentLimitError ||
-    isUniqueViolation(error) ||
     isExclusionViolation(error) ||
     // AE-2 (#784) — a co-host already committed elsewhere is a scheduling
     // answer, not a fault.
     error instanceof CollaboratorUnavailableError ||
-    // Another lifecycle write holds the booking right now.
-    isAppointmentBusy(error)
+    // Another writer holds a booking lock right now.
+    isLockBusy(error)
   );
 }
 
@@ -68,9 +65,11 @@ export function classifyError(error: unknown): {
   // #1775 C-1 — an unpaid plan; the allocation rolled back.
   if (
     error instanceof BookingRuleError &&
-    error.code === "SUBSCRIPTION_UNPAID"
+    (error.code === "SUBSCRIPTION_UNPAID" ||
+      error.code === "CHECKOUT_IN_PROGRESS" ||
+      error.code === "TOO_CLOSE_TO_START")
   ) {
-    return { errorCode: "SUBSCRIPTION_UNPAID", httpStatus: error.httpStatus };
+    return { errorCode: error.code, httpStatus: error.httpStatus };
   }
   // #836 — consultee cancelled (or request expired) while the consultant
   // was allocating; the whole allocation tx rolled back.
@@ -92,39 +91,43 @@ export function classifyError(error: unknown): {
   if (error instanceof CollaboratorUnavailableError) {
     return { errorCode: "COLLABORATOR_UNAVAILABLE", httpStatus: 409 };
   }
-  if (isAppointmentBusy(error)) {
+  // Lock refusals by class: a held key is contention (409, retry); the
+  // locking service being down is an outage (503) and a fault.
+  if (lockErrorCode(error) === "BOOKING_LOCK_UNAVAILABLE") {
+    return { errorCode: "BOOKING_LOCK_UNAVAILABLE", httpStatus: 503 };
+  }
+  if (isLockBusy(error)) {
     return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
+  }
+  if (error instanceof SearchTimeoutError) {
+    return { errorCode: "SEARCH_TIMEOUT", httpStatus: 503 };
   }
 
-  // Structured DB-conflict detection (no message sniffing): unique (P2002 /
-  // 23505) and the #440 exclusion constraint (23P01). createAppointments
-  // already rethrows these as a typed AllocationConflictError at the source;
-  // this is the safety net for the conflict paths that don't (e.g. the
-  // requested-slots isTentative flip).
-  if (isUniqueViolation(error) || isExclusionViolation(error)) {
-    return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
-  }
-
-  // Last-resort fallback for untyped throws from legacy code paths. Matching on
-  // message text is fragile; migrating these callers to typed errors is #837.
-  const msg = error instanceof Error ? error.message : "";
-  if (
-    msg.includes("lock") ||
-    msg.includes("Lock") ||
-    msg.includes("in progress")
-  ) {
-    return { errorCode: "LOCK_CONTENTION", httpStatus: 409 };
-  }
-  if (msg.includes("not found") || msg.includes("no consultant")) {
-    return { errorCode: "NOT_FOUND", httpStatus: 400 };
+  // A unique or exclusion violation that reached here unclassified: the
+  // overlap constraint is a taken slot; any other constraint is a fault.
+  if (isExclusionViolation(error)) {
+    return { errorCode: "SLOT_TAKEN", httpStatus: 409 };
   }
   return { errorCode: "UNKNOWN_ERROR", httpStatus: 500 };
 }
 
-/** The appointment lock's busy refusal, by its stable code. */
-function isAppointmentBusy(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error as { code?: unknown }).code === "APPOINTMENT_BUSY"
-  );
+/**
+ * The lock family's refusals, by the stable `code` each error class carries
+ * (utils/appointmentlock.ts), never by message text.
+ */
+const LOCK_BUSY_CODES: ReadonlySet<string> = new Set([
+  "APPOINTMENT_BUSY",
+  "AUTO_ALLOCATE_BUSY",
+  "CONSULTEE_BOOKING_BUSY",
+  "LOCK_CONTENTION",
+]);
+
+function lockErrorCode(error: unknown): string | null {
+  if (!(error instanceof Error) || !("code" in error)) return null;
+  return typeof error.code === "string" ? error.code : null;
+}
+
+function isLockBusy(error: unknown): boolean {
+  const code = lockErrorCode(error);
+  return code !== null && LOCK_BUSY_CODES.has(code);
 }

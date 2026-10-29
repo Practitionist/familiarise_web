@@ -293,6 +293,21 @@ export function buildDeadSeatFilter(
   };
 }
 
+/**
+ * A participant row that holds its user's time right now, any role: live by
+ * status, and not a HELD seat whose own payment has lapsed. A CONFIRMED or
+ * attended seat always holds, whatever its old payment deadline said.
+ */
+export function timeHoldingParticipant(
+  now: Date,
+  userId?: string,
+): Prisma.AppointmentParticipantWhereInput {
+  return {
+    ...liveParticipant(userId),
+    NOT: buildDeadSeatFilter(now),
+  };
+}
+
 /** A consultee seat that holds a place on a group event right now. */
 export function seatHoldingParticipant(
   now: Date,

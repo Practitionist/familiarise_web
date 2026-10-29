@@ -2,6 +2,7 @@
 // outside the write transaction, under the caller's locks.
 
 import { liveParticipant } from "@/lib/booking/participants";
+import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import type { PrismaLike } from "@/lib/prisma";
 import { Prisma, ScheduleType } from "@prisma/client";
 import { addMonths } from "date-fns";
@@ -43,6 +44,7 @@ import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-r
 import {
   AllocationValidationError,
   SlotShortageError,
+  SearchTimeoutError,
 } from "@/utils/scheduling-engine/errors";
 import {
   matchCustomSlotToDay,
@@ -113,6 +115,8 @@ export async function findAvailableSlots(
   // A caller that searches more than once passes one budget for all of them;
   // otherwise this search opens its own once the reads are done.
   sharedBudget?: SearchBudget,
+  // No candidate starts sooner than this from now (`leadTimeFor`).
+  leadTimeMs: number = MINIMUM_BOOKING_LEAD_TIME_MS,
 ): Promise<Date[]> {
   const walk: AllocationWalkContext = {
     eventType,
@@ -283,7 +287,9 @@ export async function findAvailableSlots(
     );
   }
 
-  const now = occupancyClock;
+  // The earliest a placed session may start: occupancy is read from the real
+  // clock above, candidates start no sooner than the lead time after it.
+  const now = new Date(occupancyClock.getTime() + leadTimeMs);
   const selectedSlots: Date[] = [];
   // Opened once the reads are done, so the ceiling bounds the SEARCH (the only
   // O(window) work in this request) and not the queries that feed it. A
@@ -328,13 +334,13 @@ export async function findAvailableSlots(
       searchBudget,
     );
     if (singleSession) return singleSession;
+    // A walk the budget cut short never saw the whole calendar: not a shortage.
+    if (searchBudget.exhausted()) throw searchTimeout(searchBudget, walk);
 
     // One session, so nothing is placeable short of the whole thing —
     // placeableSessions 0 tells the client not to offer a partial schedule.
-    // A budget-truncated walk lands here too: it found nothing, and the
-    // shortage is the same answer a full calendar gets.
     throw new SlotShortageError(
-      `No ${slotsPerCall} consecutive slots available for ${eventType}`,
+      `No free time in the coming weeks fits this ${eventType}. Open up more availability or pick a time yourself.`,
       0,
       1,
     );
@@ -600,11 +606,8 @@ export async function findAvailableSlots(
    * totalSlotsNeeded).
    *
    * The budget stops the DAY walk, which is the coarsest unit that still
-   * bounds the overrun: one day is one pass over that day's rows. It leaves
-   * the search through the ordinary shortage tail below rather than a new
-   * error, so a truncated walk is answered as "no more room" and still
-   * honours `allowPartial` — the partial answer is what the consultant
-   * actually gets, and a 504 would have given them nothing.
+   * bounds the overrun: one day is one pass over that day's rows. A walk it
+   * truncates before every session is placed answers SEARCH_TIMEOUT below.
    */
   const sweepPeriod = (perfectOnly: boolean): void => {
     const cursor = new Date(
@@ -642,6 +645,9 @@ export async function findAvailableSlots(
   sweepPeriod(false);
 
   if (selectedSlots.length < totalSlotsNeeded) {
+    // A truncated sweep never saw the whole window, so neither a shortage nor a
+    // partial plan is the truth: the consultant retries or picks by hand.
+    if (searchBudget.exhausted()) throw searchTimeout(searchBudget, walk);
     // PR 2c resilience (audit gap #6) — a consultant staring at "Could only
     // find 0 of 12" deserves to know WHY: the scheduling period is over
     // (add availability or extend the period), vs everything is booked
@@ -649,10 +655,13 @@ export async function findAvailableSlots(
     // runs first because it's the most actionable answer.
     if (config.schedulingPeriodEndsAt && config.schedulingPeriodEndsAt < now) {
       throw new AllocationValidationError(
-        `The scheduling period ended on ${config.schedulingPeriodEndsAt.toLocaleDateString()}. ` +
-          `Found ${selectedSlots.length} of ${totalSlotsNeeded} required slots. ` +
-          `Extend the period on the plan to allocate more sessions.`,
+        "This plan's scheduling period has ended. Extend the period on the plan to place more sessions.",
         "PERIOD_ENDED",
+        {
+          schedulingPeriodEndsAt: config.schedulingPeriodEndsAt.toISOString(),
+          placedAtoms: selectedSlots.length,
+          requiredAtoms: totalSlotsNeeded,
+        },
       );
     }
     // #1206 — whole SESSIONS, which is the unit the consultant reasons in
@@ -671,11 +680,24 @@ export async function findAvailableSlots(
     }
 
     throw new SlotShortageError(
-      `Could only find ${selectedSlots.length} of ${totalSlotsNeeded} required slots`,
+      `Only ${placeableSessions} of ${requiredSessions} sessions fit in the free times. Open up more availability, or schedule the ones that fit now.`,
       placeableSessions,
       requiredSessions,
     );
   }
 
   return selectedSlots.sort((a, b) => a.getTime() - b.getTime());
+}
+
+/** The typed answer for a walk the time budget truncated before it finished. */
+function searchTimeout(
+  budget: SearchBudget,
+  walk: AllocationWalkContext | undefined,
+): SearchTimeoutError {
+  return new SearchTimeoutError({
+    budgetMs: budget.limitMs,
+    spentMs: budget.spentMs(),
+    eventType: walk?.eventType ?? null,
+    eventId: walk?.eventId ?? null,
+  });
 }

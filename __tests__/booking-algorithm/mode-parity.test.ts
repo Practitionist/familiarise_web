@@ -66,9 +66,14 @@ describe("required-count parity across the surviving modes", () => {
       ...makeConsecutiveTimeSlots("2026-08-17T09:00:00.000Z", 2),
     ] as CalendarInterval[];
 
+    // Fewer sessions than the plan is a partial for the expert to confirm.
     const manual = await AllocationAlgorithms.manualAllocate(sixSlots, base);
     expect(manual.success).toBe(false);
-    expect(manual.error).toContain("Expected 8 slots but received 6");
+    expect(manual).toMatchObject({
+      errorCode: "SLOT_SHORTAGE",
+      placeableSessions: 3,
+      requiredSessions: 4,
+    });
 
     const requested = await AllocationAlgorithms.allocateRequestedSlots({
       ...base,

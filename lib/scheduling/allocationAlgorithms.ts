@@ -46,6 +46,11 @@ export interface AllocationOptions {
   override?: boolean;
   /** #1766 — the subscription already holds sessions; append the next cycle. */
   topUp?: boolean;
+  /**
+   * The expert confirmed placing fewer sessions than the plan holds (recurring
+   * events only); the rest stay pending, exactly as an auto partial does.
+   */
+  allowPartial?: boolean;
   // Timezone defining the limit day/week buckets (ADR B9); defaults to
   // Asia/Kolkata in the shared helpers.
   schedulingTimezone?: string;
@@ -59,6 +64,9 @@ export interface AllocationResult {
   errorCode?: string;
   /** On a 409 TIMES_TAKEN: the session starts (ISO) someone else took. */
   takenSlotStarts?: string[];
+  /** On a SLOT_SHORTAGE: whole sessions picked vs the plan's, for the partial confirm. */
+  placeableSessions?: number;
+  requiredSessions?: number;
   strategy?: string;
   /** HTTP status of a failed allocate call — 409 means "allocated elsewhere". */
   httpStatus?: number;
@@ -93,12 +101,39 @@ export class AllocationAlgorithms {
           ? Math.max(0, rawRequired - pastCount)
           : rawRequired;
 
-      if (selectedSlots.length !== requiredSlots) {
-        return {
-          success: false,
-          selectedSlots: [],
-          error: `Expected ${requiredSlots} slots but received ${selectedSlots.length}`,
-        };
+      // A top-up's count is the server's (cycle-aware); fewer sessions than a
+      // recurring plan holds is a question for the expert, not a refusal.
+      if (!options.topUp && selectedSlots.length !== requiredSlots) {
+        const slotsPerSession = Math.max(
+          1,
+          Math.round(
+            (options.durationInHours || options.sessionDurationInHours || 1) *
+              2,
+          ),
+        );
+        const picked = Math.floor(selectedSlots.length / slotsPerSession);
+        const required = Math.ceil(requiredSlots / slotsPerSession);
+        const isShort =
+          isRecurringEventType(options.eventType) &&
+          selectedSlots.length < requiredSlots &&
+          picked > 0;
+        if (!isShort) {
+          return {
+            success: false,
+            selectedSlots: [],
+            error: `Pick times for ${required} session${required === 1 ? "" : "s"}; ${picked} picked.`,
+          };
+        }
+        if (!options.allowPartial) {
+          return {
+            success: false,
+            selectedSlots: [],
+            errorCode: "SLOT_SHORTAGE",
+            placeableSessions: picked,
+            requiredSessions: required,
+            error: `You picked ${picked} of ${required} sessions.`,
+          };
+        }
       }
 
       // VALIDATION: No past slots allowed
@@ -195,6 +230,7 @@ export class AllocationAlgorithms {
           expectedTentativeSlotCount: options.expectedTentativeSlotCount,
           override: options.override,
           topUp: options.topUp,
+          allowPartial: options.allowPartial,
         },
       );
 

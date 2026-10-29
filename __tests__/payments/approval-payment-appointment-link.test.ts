@@ -98,8 +98,12 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: jest.fn(async () => state.remintFreshRow),
       // #1775 P-1 — the trial arm reads through the appointment first; none here.
       findFirst: jest.fn(async () => null),
+      // No succeeded payment behind a lapsed request.
+      count: jest.fn(async () => 0),
     },
     paymentLeg: { updateMany: jest.fn(async () => ({ count: 1 })) },
+    // No placed session: the pay window is the plain 24 hours.
+    appointmentOccurrence: { findFirst: jest.fn(async () => null) },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
       fn({
         payment: {

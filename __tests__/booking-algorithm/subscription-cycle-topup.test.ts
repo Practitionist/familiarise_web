@@ -247,7 +247,7 @@ describe("#1766 manual allocation of a subscription's next cycle", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain("This cycle takes exactly 4 session(s)");
+    expect(result.error).toContain("This cycle takes 4 sessions");
     expect(mockTx.appointment.update).not.toHaveBeenCalled();
   });
 });

@@ -36,6 +36,7 @@ import {
 } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
@@ -390,6 +391,11 @@ export async function PATCH(
             // #1775 C-1 — a plan is paid at purchase: approval needs a settled
             // payment, and the throw rolls the APPROVED write above back.
             if (status === AppointmentStatus.APPROVED) {
+              await assertNoLiveCheckoutHold(
+                tx,
+                "subscription",
+                subscriptionId,
+              );
               const settled = await tx.subscription.count({
                 where: { id: subscriptionId, ...SETTLED_SUBSCRIPTION },
               });
