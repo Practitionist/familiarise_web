@@ -39,6 +39,8 @@ const mockPaymentFindMany = jest.fn();
 const mockPaymentFindFirst = jest.fn();
 const mockRefundBookingPayment = jest.fn();
 const mockGetSession = jest.fn();
+/** Referral credit the payment still holds consumed (0 for a 100% discount). */
+const mockCreditUsage = jest.fn();
 
 /** Flipped by the $transaction stub, mirroring the slot terminalisation. */
 let txCommitted = false;
@@ -67,17 +69,24 @@ const txStub = {
   appointmentParticipant: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
+  referralCreditUsage: {
+    aggregate: (...a: unknown[]) => mockCreditUsage(...a),
+  },
   // The refund the cancel owes is stamped on the payment in the same commit.
   payment: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     findMany: jest.fn().mockResolvedValue([]),
+    findUnique: jest.fn().mockResolvedValue(null),
     count: jest.fn().mockResolvedValue(0),
   },
   // #1766 — a subscription cancel stamps the undelivered earnings tranches.
   consultantEarnings: {
+    findMany: jest.fn().mockResolvedValue([]),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+  // No session of the subscription was refunded on its own.
+  refund: { findMany: jest.fn().mockResolvedValue([]) },
   // An expert-side cancel of a paid booking writes a reliability strike.
   systemEvent: { create: jest.fn().mockResolvedValue({}) },
   // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
@@ -122,10 +131,20 @@ jest.mock("../../lib/prisma", () => ({
       findFirst: (...a: unknown[]) => mockPaymentFindFirst(...a),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    // No earlier refund carries the cancel's key.
-    refund: { findUnique: jest.fn().mockResolvedValue(null) },
+    // No earlier refund carries the cancel's key, and no session was refunded on its own.
+    refund: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    // No session of the booking was ever released by a reschedule.
+    appointmentOccurrence: { findMany: jest.fn().mockResolvedValue([]) },
+    rescheduleRequest: { findMany: jest.fn().mockResolvedValue([]) },
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     membership: { findUnique: jest.fn().mockResolvedValue(null) },
+    systemEvent: { findFirst: jest.fn().mockResolvedValue(null) },
+    referralCreditUsage: {
+      aggregate: (...a: unknown[]) => mockCreditUsage(...a),
+    },
   },
 }));
 
@@ -169,6 +188,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
   return {
     recordSystemError,
     recordSystemErrorSafe: recordSystemError,
+    recordSystemEvent: jest.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -187,6 +207,8 @@ const CONSULTANT_USER = "consultant-1";
 const CONSULTEE_USER = "consultee-1";
 const CONSULTANT_PROFILE = "cp-1";
 const CONSULTEE_PROFILE = "ce-1";
+const HOST_ORG = "org-host";
+const OPERATOR_USER = "operator-1";
 
 /**
  * Both routes read the appointment through their own select, so the stub
@@ -226,6 +248,7 @@ function appointmentRow(kind: "consultation" | "subscription") {
         subscriptionPlan: {
           title: "Monthly plan",
           consultantProfileId: CONSULTANT_PROFILE,
+          organizationId: HOST_ORG,
           consultantProfile,
         },
       },
@@ -245,6 +268,7 @@ function appointmentRow(kind: "consultation" | "subscription") {
       consultationPlan: {
         title: "Strategy call",
         consultantProfileId: CONSULTANT_PROFILE,
+        organizationId: HOST_ORG,
         consultantProfile,
       },
     },
@@ -287,17 +311,21 @@ type Case = {
   completedSlotHours?: number[];
   grossPaise: number;
   priorRefundPaise?: number;
-  actor: "consultee" | "consultant";
+  actor: "consultee" | "consultant" | "operator";
 };
 
 /** The booking as the database answers it, before and after the cancel tx. */
 function bookingRows(c: Case) {
   const live = c.liveSlotHours.map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
+    endsAt: new Date(Date.now() + (h + 1) * HOUR),
+    ordinal: 1,
     completionStatus: txCommitted ? "CANCELLED" : "SCHEDULED",
   }));
   const done = (c.completedSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
+    endsAt: new Date(Date.now() + (h + 1) * HOUR),
+    ordinal: 1,
     completionStatus: "COMPLETED",
   }));
   return [
@@ -330,7 +358,17 @@ function bookingRows(c: Case) {
   ];
 }
 
-function sessionAs(role: "consultee" | "consultant") {
+function sessionAs(role: "consultee" | "consultant" | "operator") {
+  if (role === "operator") {
+    return {
+      user: {
+        id: OPERATOR_USER,
+        name: "Ops",
+        consultantProfileId: null,
+        consulteeProfileId: null,
+      },
+    };
+  }
   return {
     user:
       role === "consultant"
@@ -546,6 +584,7 @@ beforeEach(() => {
     { id: "slot-2" },
   ]);
   txStub.rescheduleRequest.findMany.mockResolvedValue([]);
+  mockCreditUsage.mockResolvedValue({ _sum: { amount: 50_000 } });
   mockPaymentFindMany.mockResolvedValue([]);
   mockPaymentFindFirst.mockResolvedValue({
     currency: "INR",
@@ -681,5 +720,230 @@ describe("the quote's own numbers hold up", () => {
     expect(preview.refundPct).toBe(100);
     expect(preview.estimatedRefundPaise).toBe(500_000);
     expect(cancelled.refund.amountRefundedPaise).toBe(500_000);
+  });
+});
+
+const prismaMock = jest.requireMock("../../lib/prisma").default as {
+  membership: { findUnique: jest.Mock };
+};
+
+describe("preview and POST share one cancel actor", () => {
+  afterEach(() => {
+    prismaMock.membership.findUnique.mockResolvedValue(null);
+  });
+
+  it("a host-org operator is quoted and charged at the consultant tier", async () => {
+    prismaMock.membership.findUnique.mockResolvedValue({
+      status: "ACTIVE",
+      role: "OWNER",
+      organization: { status: "ACTIVE" },
+    });
+    const { previewRes, preview, cancelRes, cancelled } = await quoteThenCancel(
+      {
+        name: "host-org operator inside the zero tier",
+        kind: "consultation",
+        policy: DEFAULT_POLICY,
+        liveSlotHours: [1],
+        grossPaise: 500_000,
+        actor: "operator",
+      },
+    );
+    expect(previewRes.status).toBe(200);
+    expect(preview.refundPct).toBe(100);
+    expect(cancelRes.status).toBe(200);
+    expect(cancelled.refund.amountRefundedPaise).toBe(
+      preview.estimatedRefundPaise,
+    );
+  });
+
+  it("a stranger is refused by both", async () => {
+    const { previewRes, cancelRes } = await quoteThenCancel({
+      name: "no relation to the booking",
+      kind: "consultation",
+      policy: DEFAULT_POLICY,
+      liveSlotHours: [48],
+      grossPaise: 500_000,
+      actor: "operator",
+    });
+    expect(previewRes.status).toBe(403);
+    expect(cancelRes.status).toBe(403);
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("the cancel window refuses at both doors", () => {
+  it.each([
+    ["a session starting in ten minutes", [10 / 60], [], "SESSION_IN_PROGRESS"],
+    ["a session under way", [-0.5], [], "SESSION_IN_PROGRESS"],
+    [
+      "a held session with nothing ahead",
+      [],
+      [-3],
+      "SESSION_ALREADY_DELIVERED",
+    ],
+  ])("%s", async (_label, liveSlotHours, completedSlotHours, code) => {
+    const { previewRes, preview, cancelRes, cancelled } = await quoteThenCancel(
+      {
+        name: String(_label),
+        kind: "consultation",
+        policy: DEFAULT_POLICY,
+        liveSlotHours,
+        completedSlotHours,
+        grossPaise: 500_000,
+        actor: "consultee",
+      },
+    );
+    expect(previewRes.status).toBe(409);
+    expect(preview.code).toBe(code);
+    expect(cancelRes.status).toBe(409);
+    expect(cancelled.code).toBe(code);
+    expect(txStub.consultation.updateMany).not.toHaveBeenCalled();
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("the consultant cannot cancel a held session either", async () => {
+    const { cancelRes, cancelled } = await quoteThenCancel({
+      name: "consultant after delivery",
+      kind: "consultation",
+      policy: DEFAULT_POLICY,
+      liveSlotHours: [],
+      completedSlotHours: [-3],
+      grossPaise: 500_000,
+      actor: "consultant",
+    });
+    expect(cancelRes.status).toBe(409);
+    expect(cancelled.code).toBe("SESSION_ALREADY_DELIVERED");
+  });
+});
+
+describe("the cancel owns the refund it drives", () => {
+  it("refuses with nothing committed when another door's refund is still owed", async () => {
+    // The owed-marker stamp is the only payment updateMany in the cancel tx.
+    txStub.payment.updateMany.mockResolvedValueOnce({ count: 0 });
+    const { cancelRes, cancelled } = await quoteThenCancel({
+      name: "marker held by another door",
+      kind: "consultation",
+      policy: DEFAULT_POLICY,
+      liveSlotHours: [48],
+      grossPaise: 500_000,
+      actor: "consultee",
+    });
+    expect(cancelRes.status).toBe(409);
+    expect(cancelled.code).toBe("REFUND_IN_PROGRESS");
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("names support, once, when the held marker has spent its attempts", async () => {
+    const events = jest.requireMock("../../lib/enterprise/system-events") as {
+      recordSystemEvent: jest.Mock;
+    };
+    const standing = jest.requireMock("../../lib/prisma").default as {
+      systemEvent: { findFirst: jest.Mock };
+    };
+    txStub.payment.updateMany.mockResolvedValue({ count: 0 });
+    txStub.payment.findUnique.mockResolvedValue({
+      refundOwedKey: "incident:inc-1:occ-1:user-1",
+      refundOwedAttempts: 3,
+      disputes: [],
+    });
+    const c: Case = {
+      name: "stuck marker",
+      kind: "consultation",
+      policy: DEFAULT_POLICY,
+      liveSlotHours: [48],
+      grossPaise: 500_000,
+      actor: "consultee",
+    };
+    const first = await quoteThenCancel(c);
+    expect(first.cancelRes.status).toBe(409);
+    expect(first.cancelled.code).toBe("REFUND_NEEDS_SUPPORT");
+    expect(events.recordSystemEvent).toHaveBeenCalledTimes(1);
+    expect(events.recordSystemEvent.mock.calls[0][0].correlationId).toBe(
+      "refund-needs-support:pay-1:incident:inc-1:occ-1:user-1",
+    );
+
+    standing.systemEvent.findFirst.mockResolvedValueOnce({ id: "evt-1" });
+    txCommitted = false;
+    const again = await quoteThenCancel(c);
+    expect(again.cancelled.code).toBe("REFUND_NEEDS_SUPPORT");
+    expect(events.recordSystemEvent).toHaveBeenCalledTimes(1);
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+
+    txStub.payment.updateMany.mockResolvedValue({ count: 1 });
+    txStub.payment.findUnique.mockResolvedValue(null);
+  });
+
+  it("stamps a zero-refund subscription's tranches inside the cancel transaction", async () => {
+    let stampedInTx = false;
+    txStub.consultantEarnings.findMany.mockImplementationOnce(async () => {
+      stampedInTx = !txCommitted;
+      return [];
+    });
+    const { cancelRes, cancelled } = await quoteThenCancel({
+      name: "subscription inside the zero tier",
+      kind: "subscription",
+      policy: DEFAULT_POLICY,
+      liveSlotHours: [1],
+      grossPaise: 500_000,
+      actor: "consultee",
+    });
+    expect(cancelRes.status).toBe(200);
+    expect(cancelled.refund.status).toBe("POLICY_ZERO");
+    expect(stampedInTx).toBe(true);
+  });
+});
+
+describe("a credit-funded plan cancelled after delivery goes to review", () => {
+  it("previews the review, queues it in the cancel commit and holds no tranche", async () => {
+    const events = jest.requireMock("../../lib/enterprise/system-events") as {
+      recordSystemEvent: jest.Mock;
+    };
+    const { preview, cancelRes, cancelled } = await quoteThenCancel({
+      name: "credit plan after delivery",
+      kind: "subscription",
+      policy: DEFAULT_POLICY,
+      paymentIntent: "free_1730000000_sub",
+      liveSlotHours: [48],
+      completedSlotHours: [-48],
+      grossPaise: 0,
+      actor: "consultee",
+    });
+    expect(preview.creditReturnNeedsReview).toBe(true);
+    expect(preview.creditRestoresInFull).toBe(false);
+    expect(cancelRes.status).toBe(200);
+    expect(cancelled.refund).toMatchObject({
+      status: "PENDING",
+      requiresManualReview: true,
+    });
+    expect(events.recordSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ correlationId: "partial-credit:pay-1" }),
+    );
+    expect(txStub.consultantEarnings.findMany).not.toHaveBeenCalled();
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("a plan paid by a 100% discount has no credit to return: no review, tranches held", async () => {
+    mockCreditUsage.mockResolvedValue({ _sum: { amount: null } });
+    const events = jest.requireMock("../../lib/enterprise/system-events") as {
+      recordSystemEvent: jest.Mock;
+    };
+    const { preview, cancelRes, cancelled } = await quoteThenCancel({
+      name: "discount-only plan after delivery",
+      kind: "subscription",
+      policy: DEFAULT_POLICY,
+      paymentIntent: "free_1730000000_sub",
+      liveSlotHours: [48],
+      completedSlotHours: [-48],
+      grossPaise: 0,
+      actor: "consultee",
+    });
+    expect(preview.creditReturnNeedsReview).toBe(false);
+    expect(cancelRes.status).toBe(200);
+    expect(cancelled.refund?.requiresManualReview).toBeUndefined();
+    expect(events.recordSystemEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ correlationId: "partial-credit:pay-1" }),
+    );
+    expect(txStub.consultantEarnings.findMany).toHaveBeenCalled();
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
   });
 });

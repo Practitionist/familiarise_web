@@ -19,6 +19,7 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_k: string, _o: unknown, fn: () => unknown) => fn(),
+  readJobCheckpoint: async () => null,
 }));
 jest.mock("../../lib/novu/outbox", () => ({ stageTrigger: jest.fn() }));
 jest.mock("../../utils/appointmentlock", () => ({

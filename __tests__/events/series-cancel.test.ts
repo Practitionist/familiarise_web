@@ -69,6 +69,7 @@ const ledger = {
   heldCount: 8,
   unitPaise: BigInt(10_000),
   deliveredHeld: 3,
+  inProgressHeld: 0,
   remaining: [],
   neverScheduled: 5,
 };

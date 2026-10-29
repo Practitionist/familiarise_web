@@ -27,6 +27,8 @@ import {
   applyRefundRequote,
   cancelPreviewQueryKey,
   cancelPreviewUrl,
+  cancelRefusalFrom,
+  CancelRefusedError,
   readRefundQuoteChanged,
   shownQuoteBody,
 } from "@/lib/appointments/cancel-requote";
@@ -81,7 +83,10 @@ function RefundQuote({ appointmentId }: Readonly<{ appointmentId: string }>) {
     queryKey: cancelPreviewQueryKey(url),
     queryFn: async () => {
       const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
-      if (!res.ok) throw new Error("Could not estimate the refund");
+      if (!res.ok) {
+        const refusal = cancelRefusalFrom(await res.json().catch(() => null));
+        throw refusal ?? new Error("Could not estimate the refund");
+      }
       const parsed = CancelRefundPreviewSchema.safeParse(await res.json());
       if (!parsed.success) throw new Error("Could not estimate the refund");
       return parsed.data;
@@ -94,6 +99,9 @@ function RefundQuote({ appointmentId }: Readonly<{ appointmentId: string }>) {
     return (
       <p className="text-sm text-muted-foreground">Estimating the refund…</p>
     );
+  }
+  if (quote.error instanceof CancelRefusedError) {
+    return <p className="text-sm text-destructive">{quote.error.message}</p>;
   }
   if (quote.isError) {
     return (

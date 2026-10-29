@@ -3,6 +3,7 @@ import type { PaymentGateway } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-payments";
 
@@ -44,6 +45,7 @@ export async function expirePendingPaymentsInTx(
     if (claimed.count === 0) continue;
     expired += 1;
     await reverseCreditsForPayment(payment.id, tx);
+    await returnDiscountUse(tx, payment.id);
     await reverseBookingUtilization(tx, {
       paymentId: payment.id,
       reason: args.reason,

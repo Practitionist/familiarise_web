@@ -94,6 +94,7 @@ import { notificationHref } from "@/lib/novu/resolve-href";
 import { goHref } from "@/lib/dashboard/go";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
 import { notifyCreditsAppliedForPaymentBestEffort } from "@/lib/referrals/referral-notify";
 import { isMockPaymentId } from "@/lib/payments/operations/mock";
@@ -1584,8 +1585,9 @@ export async function handlePaymentFailure(
       return;
     }
 
-    // Credits consumed at order creation go back under the same CAS once hold has expired.
+    // Credits and the discount use consumed at order creation go back under the same CAS.
     await reverseCreditsForPayment(payment.id, tx);
+    await returnDiscountUse(tx, payment.id);
 
     if (payment.appointment) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);

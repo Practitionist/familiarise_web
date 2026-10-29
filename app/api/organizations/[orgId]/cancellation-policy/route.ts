@@ -29,6 +29,7 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
+  CONSULTANT_INITIATED_PCT,
   MAX_POLICY_TIERS,
   PLATFORM_DEFAULT_TERMS,
   validateTierLadder,
@@ -49,12 +50,8 @@ const TierSchema = z.object({
 const PutBodySchema = z
   .object({
     tiers: z.array(TierSchema).min(1).max(MAX_POLICY_TIERS),
-    consultantInitiatedPct: z.coerce
-      .number()
-      .min(0)
-      .max(100)
-      .multipleOf(0.01)
-      .default(100),
+    // An expert-side cancel always refunds in full; the ladder never changes it.
+    consultantInitiatedPct: z.literal(CONSULTANT_INITIATED_PCT).optional(),
     policyText: z.string().max(5000).nullable().optional(),
   })
   // One ladder rule, shared with the publish helper and the seed, so the editor can
@@ -129,7 +126,6 @@ export async function PUT(
           const created = await publishOrgCancellationPolicy(tx, {
             organizationId: orgId,
             tiers: body.tiers,
-            consultantInitiatedPct: body.consultantInitiatedPct,
             policyText: body.policyText ?? null,
             publishedByUserId: access.member.userId,
           });
@@ -145,7 +141,6 @@ export async function PUT(
                 policyId: created.id,
                 version: created.version,
                 tiers: body.tiers,
-                consultantInitiatedPct: body.consultantInitiatedPct,
               },
             },
           });

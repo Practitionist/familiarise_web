@@ -18,6 +18,7 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import prisma, { type Tx } from "@/lib/prisma";
 import { PaymentGateway, PaymentStatus } from "@prisma/client";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 
 /** Why a superseded open order's booking was cancelled (#1463). */
 export const SUPERSEDED_HOLD_NOTE =
@@ -320,6 +321,7 @@ export async function releaseSupersededHolds(params: {
 
     for (const row of claimed) {
       await reverseCreditsForPayment(row.id, tx);
+      await returnDiscountUse(tx, row.id);
     }
 
     const appointmentIds = claimed

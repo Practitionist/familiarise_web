@@ -1912,9 +1912,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         },
         summarize: (r) => ({
           scanned: r.scanned,
+          plansScanned: r.plansScanned,
+          plansWaiting: r.plansWaiting,
           stamped: r.stamped,
           refunded: r.refunded,
           errors: r.errors,
+          checkpoint: r.checkpoint,
         }),
         failureMessage: "Failed to settle cancelled class sessions",
       }),

@@ -17,6 +17,7 @@ import {
 import {
   assertTrialQuoteConfirmed,
   quoteTrialRefund,
+  trialCancelWindowRefusal,
   refundCancelledTrial,
   softCancelTrialAppointment,
   softCancelTrialAppointmentInTx,
@@ -25,6 +26,8 @@ import {
   type TrialRefundOutcome,
 } from "@/lib/trials/cancellation";
 import {
+  heldMarkerRefusal,
+  recordRefundNeedsSupport,
   stampRefundOwed,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
@@ -48,6 +51,7 @@ import {
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { transitionTrial } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { isRefusal } from "@/lib/errors/refusal";
 import {
   notifyTrialScheduled,
   notifyTrialCompleted,
@@ -438,6 +442,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       // #1846 — a paid trial's cancel shows its refund quote first, and only
       // the quoted DELETE refunds, so this PATCH refuses to cancel one.
       if (status === TrialStatus.CANCELLED) {
+        const windowRefusal = await trialCancelWindowRefusal(
+          existingTrial.appointmentId,
+        );
+        if (windowRefusal) {
+          return NextResponse.json(
+            { error: windowRefusal.userMessage, code: windowRefusal.code },
+            { status: windowRefusal.httpStatus },
+          );
+        }
         const quote = await quoteTrialRefund({
           appointmentId: existingTrial.appointmentId,
           paymentId: existingTrial.paymentId,
@@ -1138,7 +1151,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           quote,
           isConsultantInitiated: deferredCancellation.isConsultantInitiated,
         });
-        if (owed) await stampRefundOwed(tx, owed);
+        if (owed && !(await stampRefundOwed(tx, owed))) {
+          throw await heldMarkerRefusal(tx, owed.paymentId, { trialId });
+        }
         declinedRefund.quote = quote;
         declinedRefund.owed = owed;
       }
@@ -1255,6 +1270,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (error instanceof IllegalTransitionError) {
       return NextResponse.json(
         { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
+    if (isRefusal(error)) {
+      await recordRefundNeedsSupport(error);
+      return NextResponse.json(
+        { error: error.userMessage, code: error.code },
         { status: error.httpStatus },
       );
     }
@@ -1376,7 +1398,11 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         }
         // The confirmed refund commits with the cancel, so a death before the
         // refund leaves a marker the retry sweep drives.
-        if (owed) await stampRefundOwed(tx, owed);
+        // Only the door that owns the marker drives it; another door's refund
+        // still owed refuses the cancel with nothing committed.
+        if (owed && !(await stampRefundOwed(tx, owed))) {
+          throw await heldMarkerRefusal(tx, owed.paymentId, { trialId });
+        }
         return cancelled;
       });
     // #1846 — a paid trial refunds only the amount the caller confirmed from
@@ -1384,6 +1410,8 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     // booking between the check and the cancel, and the refund below pays
     // exactly that quote.
     const quoteThenCancel = async () => {
+      const windowRefusal = await trialCancelWindowRefusal(lockId);
+      if (windowRefusal) throw windowRefusal;
       const quote = await quoteTrialRefund({
         appointmentId: existingTrial.appointmentId,
         paymentId: existingTrial.paymentId,
@@ -1476,6 +1504,13 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     if (error instanceof TrialRefundQuoteError) {
       return NextResponse.json(
         { error: error.message, code: error.code, quote: error.quote },
+        { status: error.httpStatus },
+      );
+    }
+    if (isRefusal(error)) {
+      await recordRefundNeedsSupport(error);
+      return NextResponse.json(
+        { error: error.userMessage, code: error.code },
         { status: error.httpStatus },
       );
     }

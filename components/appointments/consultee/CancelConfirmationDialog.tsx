@@ -24,6 +24,8 @@ import {
 import {
   cancelPreviewQueryKey,
   cancelPreviewUrl,
+  cancelRefusalFrom,
+  CancelRefusedError,
   type ShownCancelQuote,
   UNPAID_CANCEL_QUOTE,
 } from "@/lib/appointments/cancel-requote";
@@ -98,6 +100,7 @@ export function CancelConfirmationDialog({
     data: preview,
     isLoading: isPreviewLoading,
     isError: isPreviewError,
+    error: previewError,
   } = useQuery<CancelRefundPreview>({
     queryKey: cancelPreviewQueryKey(quoteUrl ?? ""),
     queryFn: async () => {
@@ -109,7 +112,13 @@ export function CancelConfirmationDialog({
         // behind a spinner that never stopped.
         { signal: AbortSignal.timeout(8_000) },
       );
-      if (!response.ok) throw new Error("Could not estimate the refund");
+      if (!response.ok) {
+        const refusal =
+          response.status === 409
+            ? cancelRefusalFrom(await response.json().catch(() => null))
+            : null;
+        throw refusal ?? new Error("Could not estimate the refund");
+      }
       const parsed = CancelRefundPreviewSchema.safeParse(await response.json());
       if (!parsed.success) throw new Error("Could not estimate the refund");
       return parsed.data;
@@ -142,6 +151,8 @@ export function CancelConfirmationDialog({
       retry: false,
     });
   const seatRefused = !!seatPreview?.seated && seatPreview.refused;
+  const cancelRefusal =
+    previewError instanceof CancelRefusedError ? previewError.message : null;
 
   const renderLeaveLine = () => {
     if (seatPreview?.seated && seatPreview.refused) {
@@ -197,6 +208,11 @@ export function CancelConfirmationDialog({
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           Checking what you&apos;d get back…
         </p>
+      );
+    }
+    if (cancelRefusal) {
+      return (
+        <p className="text-red-600 text-sm font-medium">{cancelRefusal}</p>
       );
     }
     if (!preview) {
@@ -275,7 +291,9 @@ export function CancelConfirmationDialog({
           </p>
         )}
         <p className="text-muted-foreground text-sm">
-          {refundRailLine(preview.fundingRail, preview)}
+          {preview.creditReturnNeedsReview
+            ? "Your refund will be reviewed by our team, who will return the credit for the sessions not yet held."
+            : refundRailLine(preview.fundingRail, preview)}
         </p>
       </>
     );
@@ -340,7 +358,8 @@ export function CancelConfirmationDialog({
               isLoading ||
               isPreviewLoading ||
               isSeatPreviewLoading ||
-              seatRefused
+              seatRefused ||
+              !!cancelRefusal
             }
             className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
           >

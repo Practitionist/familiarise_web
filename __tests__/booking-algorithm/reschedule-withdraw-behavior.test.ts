@@ -87,6 +87,8 @@ function makeTx() {
         return { count: 1 };
       }),
     },
+    // A restore re-anchors the payout hold; these bookings carry no earnings.
+    appointment: { findUnique: jest.fn(async () => null) },
     appointmentOccurrence: {
       findMany: jest.fn(async ({ where }: SlotCas) =>
         matchSlots(where).map((s) => ({

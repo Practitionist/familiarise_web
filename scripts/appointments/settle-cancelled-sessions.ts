@@ -15,6 +15,8 @@
  * A subscription whose plan end has passed settles once: every session not
  * delivered (voided, returned or never placed) is refunded pro rata through a
  * durable `plan-end:` owed marker stamped in the commit that completes the plan.
+ * The plan-end pass resumes each tick where the last one stopped, so plans
+ * that must wait never starve the ones behind them.
  *
  * Imported by jobs/appointments/settle-cancelled-sessions.ts (GitHub Actions)
  * and app/api/cleanup/settle-cancelled-sessions/route.ts (the ticker twin).
@@ -26,11 +28,14 @@ import {
   Prisma,
 } from "@prisma/client";
 
+import { z } from "zod";
+
 import prisma from "../../lib/prisma";
-import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-return";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -67,6 +72,7 @@ import { reportSentryError } from "@/lib/observability/report";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
+import { isFreeCreditIntent } from "@/lib/payments/funding-rail";
 import { formatNotificationMoney } from "@/lib/novu/humanize";
 
 export interface SettleCancelledSessionsResult {
@@ -74,11 +80,17 @@ export interface SettleCancelledSessionsResult {
   scanned: number;
   /** Plans past their end read by the plan-end pass. */
   plansScanned: number;
+  /** Plans past their end that could not settle yet and are revisited. */
+  plansWaiting: number;
   stamped: number;
   refunded: number;
   errors: number;
   timestamp: string;
+  /** Where the plan-end pass resumes next run; null starts both cohorts over. */
+  checkpoint: string | null;
 }
+
+const JOB_NAME = "settle-cancelled-sessions";
 
 // Per-seat refund failures collapse to one event per run.
 const runFailures = createRunFailureReporter("bookings");
@@ -108,7 +120,7 @@ const PLAN_LIVE_STATUSES: AppointmentStatus[] = [
 export async function settleCancelledSessions(
   opts: { limit?: number } = {},
 ): Promise<SettleCancelledSessionsResult> {
-  return withCronLock("settle-cancelled-sessions", { failMode: "closed" }, () =>
+  return withCronLock(JOB_NAME, { failMode: "closed" }, () =>
     settleUnlocked(opts.limit ?? DEFAULT_LIMIT),
   );
 }
@@ -121,10 +133,12 @@ async function settleUnlocked(
     success: true,
     scanned: 0,
     plansScanned: 0,
+    plansWaiting: 0,
     stamped: 0,
     refunded: 0,
     errors: 0,
     timestamp: now.toISOString(),
+    checkpoint: await readJobCheckpoint(JOB_NAME),
   };
   const due = await prisma.appointmentOccurrence.findMany({
     where: dueWhere(now),
@@ -254,34 +268,33 @@ async function settleAndStamp(
 export async function settleCancelledSessionForOne(
   occurrenceId: string,
 ): Promise<SettleCancelledSessionsResult> {
-  return withCronLock(
-    "settle-cancelled-sessions",
-    { failMode: "closed" },
-    async () => {
-      const now = new Date();
-      const result: SettleCancelledSessionsResult = {
-        success: true,
-        scanned: 0,
-        plansScanned: 0,
-        stamped: 0,
-        refunded: 0,
-        errors: 0,
-        timestamp: now.toISOString(),
-      };
-      const session = await prisma.appointmentOccurrence.findFirst({
-        where: { id: occurrenceId, ...dueWhere(now) },
-        select: DUE_SELECT,
-      });
-      if (!session) return result;
-      result.scanned = 1;
-      try {
-        await settleAndStamp(session, result);
-      } finally {
-        runFailures.flush();
-      }
-      return result;
-    },
-  );
+  return withCronLock(JOB_NAME, { failMode: "closed" }, async () => {
+    const now = new Date();
+    // This run reads no plans, so it hands the scheduled run's cursor on.
+    const result: SettleCancelledSessionsResult = {
+      success: true,
+      scanned: 0,
+      plansScanned: 0,
+      plansWaiting: 0,
+      stamped: 0,
+      refunded: 0,
+      errors: 0,
+      timestamp: now.toISOString(),
+      checkpoint: await readJobCheckpoint(JOB_NAME),
+    };
+    const session = await prisma.appointmentOccurrence.findFirst({
+      where: { id: occurrenceId, ...dueWhere(now) },
+      select: DUE_SELECT,
+    });
+    if (!session) return result;
+    result.scanned = 1;
+    try {
+      await settleAndStamp(session, result);
+    } finally {
+      runFailures.flush();
+    }
+    return result;
+  });
 }
 
 /** True when the session is made up or every seat that held it is refunded. */
@@ -625,10 +638,52 @@ class PlanEndMarkerHeld extends Error {
 
 const PLAN_PAGES_PER_RUN = 5;
 
+/** A cohort's resume point: the order key and id of the last plan it handled. */
+const planKeySchema = z.object({ at: z.coerce.date(), id: z.string() });
+const planCursorSchema = z.object({
+  stored: planKeySchema.nullable(),
+  derived: planKeySchema.nullable(),
+});
+type PlanKey = z.infer<typeof planKeySchema>;
+type PlanCursor = z.infer<typeof planCursorSchema>;
+
+/** An unreadable checkpoint starts both cohorts over; settling is idempotent. */
+export function parsePlanCursor(checkpoint: string | null): PlanCursor {
+  const start = { stored: null, derived: null };
+  if (!checkpoint) return start;
+  try {
+    const parsed = planCursorSchema.safeParse(JSON.parse(checkpoint));
+    return parsed.success ? parsed.data : start;
+  } catch {
+    return start;
+  }
+}
+
+/** Rows strictly after `key` in (`field`, id) order. */
+function afterKey(
+  field: "planEndsAt" | "schedulingPeriodStartsAt",
+  key: PlanKey | null,
+): Prisma.SubscriptionWhereInput {
+  if (!key) return {};
+  const tie = { id: { gt: key.id } };
+  return field === "planEndsAt"
+    ? {
+        OR: [{ planEndsAt: { gt: key.at } }, { planEndsAt: key.at, ...tie }],
+      }
+    : {
+        OR: [
+          { schedulingPeriodStartsAt: { gt: key.at } },
+          { schedulingPeriodStartsAt: key.at, ...tie },
+        ],
+      };
+}
+
 /**
- * Live plans whose fixed end has passed, in plan-end order and paged by a
- * keyset cursor. A row with no stored end (pre-reset) is prefiltered by its
- * start and its derived end is checked here; nothing is written back to it.
+ * Live plans whose fixed end has passed, in two keyset cohorts: a stored end,
+ * and no stored end (pre-reset), prefiltered by start with the derived end
+ * checked here; nothing is written back to the row. Each cohort resumes after
+ * the last plan the previous run handled and starts over once it reaches the
+ * end, so every plan is reached however many ahead of it must wait.
  */
 async function settleEndedPlans(
   now: Date,
@@ -643,79 +698,96 @@ async function settleEndedPlans(
   } satisfies Prisma.SubscriptionWhereInput;
   const failedIds: string[] = [];
   let firstError: unknown;
+  const cursor = parsePlanCursor(result.checkpoint);
 
-  const settlePage = async (plans: EndedPlan[]) => {
-    result.plansScanned += plans.length;
+  /** Settles the plans in order; false when the deadline cut the page short. */
+  const settlePage = async (
+    plans: EndedPlan[],
+    handled: (plan: EndedPlan) => void,
+  ): Promise<boolean> => {
     for (const plan of plans) {
-      if (outOfTime()) return;
-      if (!subscriptionIsOver(plan, now)) continue;
-      try {
-        await settleEndedPlan(plan, now, result);
-      } catch (error) {
-        result.errors += 1;
-        firstError ??= error;
-        failedIds.push(plan.id);
-        console.error(
-          `settle-cancelled-sessions: plan ${plan.id} failed:`,
-          scrubStringValue(
-            error instanceof Error ? error.message : String(error),
-          ),
-        );
+      if (outOfTime()) return false;
+      result.plansScanned += 1;
+      if (subscriptionIsOver(plan, now)) {
+        try {
+          if (!(await settleEndedPlan(plan, now, result))) {
+            result.plansWaiting += 1;
+          }
+        } catch (error) {
+          result.errors += 1;
+          firstError ??= error;
+          failedIds.push(plan.id);
+          console.error(
+            `settle-cancelled-sessions: plan ${plan.id} failed:`,
+            scrubStringValue(
+              error instanceof Error ? error.message : String(error),
+            ),
+          );
+        }
       }
+      handled(plan);
     }
+    return true;
   };
 
-  let stored: EndedPlan | undefined;
-  for (let page = 0; page < PLAN_PAGES_PER_RUN && !outOfTime(); page++) {
-    const plans = await prisma.subscription.findMany({
-      where: {
-        ...live,
-        planEndsAt: { lte: now },
-        ...(stored?.planEndsAt && {
-          OR: [
-            { planEndsAt: { gt: stored.planEndsAt } },
-            { planEndsAt: stored.planEndsAt, id: { gt: stored.id } },
-          ],
-        }),
-      },
-      orderBy: [{ planEndsAt: "asc" }, { id: "asc" }],
-      take: limit,
-      select: PLAN_END_SELECT,
-    });
-    await settlePage(plans);
-    if (plans.length < limit) break;
-    stored = plans[plans.length - 1];
-  }
+  /** One cohort's pass; returns where the next run resumes it. */
+  const scanCohort = async (
+    from: PlanKey | null,
+    read: (after: PlanKey | null) => Promise<EndedPlan[]>,
+    keyOf: (plan: EndedPlan) => PlanKey,
+  ): Promise<PlanKey | null> => {
+    let after = from;
+    for (let page = 0; page < PLAN_PAGES_PER_RUN; page++) {
+      if (outOfTime()) return after;
+      const plans = await read(after);
+      // Nothing left past the cursor: start the cohort over in this run.
+      if (plans.length === 0 && after && page === 0) {
+        after = null;
+        continue;
+      }
+      const whole = await settlePage(plans, (plan) => {
+        after = keyOf(plan);
+      });
+      if (!whole) return after;
+      if (plans.length < limit) return null;
+    }
+    return after;
+  };
 
-  let derived: EndedPlan | undefined;
-  for (let page = 0; page < PLAN_PAGES_PER_RUN && !outOfTime(); page++) {
-    const plans = await prisma.subscription.findMany({
-      where: {
-        ...live,
-        planEndsAt: null,
-        schedulingPeriodStartsAt: { lt: subMonths(now, 1) },
-        ...(derived && {
-          OR: [
-            {
-              schedulingPeriodStartsAt: {
-                gt: derived.schedulingPeriodStartsAt,
-              },
-            },
-            {
-              schedulingPeriodStartsAt: derived.schedulingPeriodStartsAt,
-              id: { gt: derived.id },
-            },
-          ],
-        }),
-      },
-      orderBy: [{ schedulingPeriodStartsAt: "asc" }, { id: "asc" }],
-      take: limit,
-      select: PLAN_END_SELECT,
-    });
-    await settlePage(plans);
-    if (plans.length < limit) break;
-    derived = plans[plans.length - 1];
-  }
+  const stored = await scanCohort(
+    cursor.stored,
+    (after) =>
+      prisma.subscription.findMany({
+        where: {
+          ...live,
+          planEndsAt: { lte: now },
+          ...afterKey("planEndsAt", after),
+        },
+        orderBy: [{ planEndsAt: "asc" }, { id: "asc" }],
+        take: limit,
+        select: PLAN_END_SELECT,
+      }),
+    // The cohort's WHERE guarantees a stored end.
+    (plan) => ({ at: plan.planEndsAt ?? now, id: plan.id }),
+  );
+  const derived = await scanCohort(
+    cursor.derived,
+    (after) =>
+      prisma.subscription.findMany({
+        where: {
+          ...live,
+          planEndsAt: null,
+          schedulingPeriodStartsAt: { lt: subMonths(now, 1) },
+          ...afterKey("schedulingPeriodStartsAt", after),
+        },
+        orderBy: [{ schedulingPeriodStartsAt: "asc" }, { id: "asc" }],
+        take: limit,
+        select: PLAN_END_SELECT,
+      }),
+    (plan) => ({ at: plan.schedulingPeriodStartsAt, id: plan.id }),
+  );
+  result.checkpoint =
+    stored || derived ? JSON.stringify({ stored, derived }) : null;
 
   if (failedIds.length > 0) {
     reportSentryError(firstError, {
@@ -803,19 +875,58 @@ async function settleEndedPlan(
               data: { seatsSettledAt: now },
             });
 
+            // A wholly credit-funded plan (amount 0) settles too: its value
+            // is the referral credit the buyer spent.
             const payments = await tx.payment.findMany({
               where: {
                 appointmentId,
                 paymentStatus: "SUCCEEDED",
                 deletedAt: null,
-                amount: { gt: 0 },
               },
-              select: { id: true, amount: true, ...REFUNDABLE_BALANCE_SELECT },
+              select: {
+                id: true,
+                amount: true,
+                paymentIntent: true,
+                ...REFUNDABLE_BALANCE_SELECT,
+              },
             });
             const markers: RefundOwedMarker[] = [];
             for (const payment of payments) {
+              const settlement = planEndSettlement(
+                plan.id,
+                payment,
+                unused,
+                total,
+              );
+              // A plan with no referral credit still consumed (a 100% discount,
+              // or credit already returned) has nothing for a human to return.
+              const review =
+                settlement?.review === true &&
+                (await creditStillUsedPaise(tx, payment.id)) > 0;
+              if (review) {
+                // The credits rail restores whole or not at all, so a plan
+                // that delivered some sessions returns the rest by hand; its
+                // tranches stay unheld until ops returns the credit or closes
+                // the return, either of which stamps them.
+                await recordSystemEvent({
+                  db: tx,
+                  strict: true,
+                  category: "BOOKING",
+                  severity: "WARN",
+                  message: `Credit seat ${payment.id} needs a partial credit return`,
+                  context: {
+                    paymentId: payment.id,
+                    subscriptionId: plan.id,
+                    sessionsTotal: total,
+                    sessionsUnused: unused,
+                  },
+                  correlationId: `partial-credit:${payment.id}`,
+                });
+                continue;
+              }
               await stampTranchesOnCancel(tx, { paymentId: payment.id, now });
-              const marker = planEndMarker(plan.id, payment, unused, total);
+              const marker =
+                settlement && !settlement.review ? settlement.marker : null;
               if (!marker) continue;
               if (!(await stampRefundOwed(tx, marker))) {
                 throw new PlanEndMarkerHeld(payment.id);
@@ -888,6 +999,33 @@ class PlanWaiting extends Error {
     super("plan has an undecided session");
     this.name = "PlanWaiting";
   }
+}
+
+/**
+ * What an ended plan owes one payment. A wholly credit-funded payment restores
+ * its credit in full (no amount: the credits rail's only shape) when nothing
+ * was delivered, and goes to a human when some was; money is pro-rata.
+ */
+export function planEndSettlement(
+  subscriptionId: string,
+  payment: Parameters<typeof planEndMarker>[1] & { paymentIntent: string },
+  unused: number,
+  total: number,
+): { marker: RefundOwedMarker; review?: never } | { review: true } | null {
+  if (unused <= 0 || total <= 0) return null;
+  if (payment.amount === 0 && isFreeCreditIntent(payment.paymentIntent)) {
+    if (unused < total) return { review: true };
+    return {
+      marker: {
+        paymentId: payment.id,
+        amountPaise: null,
+        key: planEndRefundKey(subscriptionId, payment.id),
+        reason: PLAN_END_REFUND_REASON,
+      },
+    };
+  }
+  const marker = planEndMarker(subscriptionId, payment, unused, total);
+  return marker ? { marker } : null;
 }
 
 /**

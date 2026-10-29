@@ -28,6 +28,7 @@ import {
   SeatHoldLapsedError,
   SeatOrderMintFailure,
 } from "@/lib/payments/checkout/seat-pre-mint";
+import { isZeroAmountOrder } from "@/lib/payments/checkout/zero-amount";
 import {
   DIRECT_CHECKOUT_HOLD_MS,
   SEAT_CHECKOUT_HOLD_MS,
@@ -342,10 +343,10 @@ export async function handleCheckout(
     const isOrgSponsoredPayment =
       isOrgWalletPayment || isOrgInvoicedPayment || isOrgLicensedPayment;
 
-    // FIX #520: Detect zero-amount payments (credits fully cover cost)
-    // Both Stripe and Razorpay reject amount <= 0, so we skip the gateway
-    // entirely and treat this like a "free" payment that succeeds immediately.
-    const isZeroAmountPayment = amount === 0 && creditsApplied > 0;
+    const isZeroAmountPayment = isZeroAmountOrder(
+      amount,
+      isOrgSponsoredPayment,
+    );
 
     // STEP 4: Create payment intent (INSIDE LOCK)
 
@@ -739,8 +740,7 @@ export async function handleCheckout(
       let message =
         "Payment intent created. Complete payment to book appointment.";
       if (isZeroAmountPayment) {
-        message =
-          "Payment completed via referral credits. Appointment booked successfully.";
+        message = "Nothing to pay — your booking is confirmed.";
       } else if (isMockPayment) {
         message = "Mock payment completed and appointment created successfully";
       } else if (isOrgSponsoredPayment) {

@@ -69,6 +69,8 @@ const txStub = {
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+  // No session of a subscription was refunded on its own.
+  refund: { findMany: jest.fn().mockResolvedValue([]) },
   // An expert-side cancel of a paid booking writes a reliability strike.
   systemEvent: { create: jest.fn().mockResolvedValue({}) },
   // #1851 decision 2 — an act-for-org cancel writes the org's audit row.
@@ -290,18 +292,26 @@ function bookingRows(opts: {
 }) {
   const live = (opts.liveSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
+    endsAt: new Date(Date.now() + (h + 1) * HOUR),
+    ordinal: 1,
     completionStatus: txCommitted ? "CANCELLED" : "SCHEDULED",
   }));
   const done = (opts.completedSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
+    endsAt: new Date(Date.now() + (h + 1) * HOUR),
+    ordinal: 1,
     completionStatus: "COMPLETED",
   }));
   const gone = (opts.cancelledSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
+    endsAt: new Date(Date.now() + (h + 1) * HOUR),
+    ordinal: 1,
     completionStatus: "CANCELLED",
   }));
   const unverified = (opts.unverifiedSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
+    endsAt: new Date(Date.now() + (h + 1) * HOUR),
+    ordinal: 1,
     completionStatus: "UNVERIFIED",
   }));
   return [

@@ -1,0 +1,131 @@
+/**
+ * @jest-environment node
+ */
+
+/**
+ * A class session under way is delivered when the attendee leaves (they chose
+ * to go after it started) and refundable when the host cancels the series.
+ */
+jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {} }));
+
+import type { Tx } from "@/lib/prisma";
+import {
+  seatLedgerFrom,
+  seriesCancelRefundPaise,
+  type LedgerOccurrence,
+} from "@/lib/booking/class-series";
+import { planSelfLeave } from "@/lib/booking/seat-leave";
+
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+const NOW = new Date("2026-11-02T10:00:00.000Z");
+const JOINED = new Date(NOW.getTime() - 30 * DAY);
+const SEAT_PAISE = 800_000;
+
+/** Eight weekly hour-long sessions; `firstStartMs` is session 1's offset from now. */
+function weekly(firstStartMs: number): LedgerOccurrence[] {
+  return Array.from({ length: 8 }, (_, i) => {
+    const startsAt = new Date(NOW.getTime() + firstStartMs + i * 7 * DAY);
+    return {
+      ordinal: i + 1,
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + HOUR),
+      completionStatus:
+        startsAt.getTime() + HOUR <= NOW.getTime() ? "COMPLETED" : "SCHEDULED",
+      movedAt: null,
+    };
+  });
+}
+
+function fakeTx(occurrences: LedgerOccurrence[]) {
+  return {
+    class: {
+      findUnique: jest.fn(async () => ({
+        classPlan: { refundWindowHours: 24 },
+      })),
+    },
+    payment: {
+      findFirst: jest.fn(async () => ({
+        id: "pay-seat",
+        amount: SEAT_PAISE,
+        currency: "INR",
+        createdAt: JOINED,
+        refunds: [],
+        disputes: [],
+        appointment: { cancellationPolicy: null },
+      })),
+    },
+    appointment: {
+      findUnique: jest.fn(async () => ({
+        class: { classPlan: { totalSessions: 8 } },
+      })),
+    },
+    appointmentOccurrence: { findMany: jest.fn(async () => occurrences) },
+    refund: { findMany: jest.fn(async () => []) },
+  } as unknown as Tx;
+}
+
+const seat = {
+  id: "part-1",
+  appointmentId: "appt-class",
+  createdAt: JOINED,
+  refundWindowHours: null,
+  sessionsPurchased: 8,
+};
+
+describe("leaving a class while a session is under way", () => {
+  it("forfeits the first session instead of refunding the whole seat", async () => {
+    // Session 1 started 55 minutes ago.
+    const plan = await planSelfLeave(
+      fakeTx(weekly(-55 * 60_000)),
+      "class",
+      "cls-1",
+      "user-learner",
+      seat,
+      NOW,
+    );
+    expect(plan).toEqual({ amountPaise: 700_000, sessions: 7 });
+  });
+
+  it("forfeits the session under way mid-series too", async () => {
+    // Sessions 1–4 held; session 5 started 20 minutes ago.
+    const plan = await planSelfLeave(
+      fakeTx(weekly(-4 * 7 * DAY - 20 * 60_000)),
+      "class",
+      "cls-1",
+      "user-learner",
+      seat,
+      NOW,
+    );
+    expect(plan).toEqual({ amountPaise: 300_000, sessions: 3 });
+  });
+});
+
+describe("the ledger names the session under way", () => {
+  it("keeps it out of both delivered and never-scheduled", () => {
+    const ledger = seatLedgerFrom({
+      N: 8,
+      amountPaise: SEAT_PAISE,
+      joinedAt: JOINED,
+      occurrences: weekly(-3 * 7 * DAY - 20 * 60_000),
+      now: NOW,
+      sessionsPurchased: 8,
+    });
+    expect(ledger.deliveredHeld).toBe(3);
+    expect(ledger.inProgressHeld).toBe(1);
+    expect(ledger.remaining).toHaveLength(4);
+    expect(ledger.neverScheduled).toBe(0);
+  });
+
+  it("a host cancelling the series mid-session refunds that session too", () => {
+    const ledger = seatLedgerFrom({
+      N: 8,
+      amountPaise: SEAT_PAISE,
+      joinedAt: JOINED,
+      occurrences: weekly(-3 * 7 * DAY - 20 * 60_000),
+      now: NOW,
+      sessionsPurchased: 8,
+    });
+    expect(seriesCancelRefundPaise(ledger, SEAT_PAISE)).toBe(BigInt(500_000));
+  });
+});

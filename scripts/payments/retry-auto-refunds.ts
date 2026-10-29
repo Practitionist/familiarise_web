@@ -35,6 +35,11 @@ import { PaymentStatus, RefundStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { parkedReceiptPaise } from "@/lib/payments/ledger/unapplied-receipts";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 import {
   RefundGatewayError,
   RefundValidationError,
@@ -345,6 +350,23 @@ async function reportAgedRefundsOwed(
   });
 }
 
+/**
+ * The parked capture still owed back, clamped to the refundable balance; null
+ * when nothing was parked (the full balance is then the right call).
+ */
+async function parkedRefundPaise(
+  paymentId: string,
+): Promise<number | undefined> {
+  const parked = await parkedReceiptPaise(prisma, paymentId);
+  if (parked === null) return undefined;
+  const row = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
+  });
+  const refundable = row ? refundableBalancePaise(Number(row.amount), row) : 0;
+  return Math.max(0, Math.min(parked, refundable));
+}
+
 async function retryOne(
   payment: {
     id: string;
@@ -382,13 +404,23 @@ async function retryOne(
 
   let settled = false;
   try {
-    const outcome = await refundBookingPayment({
-      paymentId: payment.id,
-      reason: "auto-refund retry: capture funds no booking",
-      initiatedByUserId: null,
-    });
-    result.refunded += 1;
-    settled = outcome?.status !== "PENDING";
+    const amountPaise = await parkedRefundPaise(payment.id);
+    if (amountPaise === 0) {
+      // Everything the gateway captured has already gone back.
+      result.settled += 1;
+      settled = true;
+    } else {
+      const outcome = await refundBookingPayment({
+        paymentId: payment.id,
+        // Only what the gateway actually captured can go back; a short
+        // capture is never retried for the ordered amount.
+        ...(amountPaise === undefined ? {} : { amountPaise }),
+        reason: "auto-refund retry: capture funds no booking",
+        initiatedByUserId: null,
+      });
+      result.refunded += 1;
+      settled = outcome?.status !== "PENDING";
+    }
   } catch (error) {
     if (
       error instanceof RefundValidationError &&

@@ -18,7 +18,9 @@ import type { SlotPreference } from "@/components/scheduling/time-picker-policy"
 import {
   applyRefundRequote,
   paymentLandedUnderClick,
+  cancelPreviewQueryKey,
   cancelPreviewUrl,
+  cancelRefusalFrom,
   readRefundQuoteChanged,
   shownQuoteBody,
   type ShownCancelQuote,
@@ -313,6 +315,21 @@ export function useConsultantEventActions({
             title: "The refund has changed",
             description:
               "Check the new amount in the dialog and confirm again.",
+          });
+          return false;
+        }
+        const refusal =
+          error instanceof ApiResponseError && error.status === 409
+            ? cancelRefusalFrom(error.body)
+            : null;
+        if (refusal) {
+          toast({
+            title: "This booking can't be cancelled right now",
+            description: refusal.message,
+            variant: "destructive",
+          });
+          void queryClient.invalidateQueries({
+            queryKey: cancelPreviewQueryKey(cancelPreviewUrl(appointmentId)),
           });
           return false;
         }

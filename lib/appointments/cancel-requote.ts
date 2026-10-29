@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 
 import {
   RefundQuoteChangedSchema,
@@ -73,4 +74,32 @@ export function applyRefundRequote(
           }
         : prior,
   );
+}
+
+/**
+ * A cancel door refusing with nothing committed: the session is about to
+ * start, under way or held, or another refund on the booking must finish first.
+ */
+const CancelRefusalSchema = z.object({
+  code: z.enum([
+    "SESSION_IN_PROGRESS",
+    "SESSION_ALREADY_DELIVERED",
+    "REFUND_IN_PROGRESS",
+    "REFUND_NEEDS_SUPPORT",
+  ]),
+  error: z.string(),
+});
+
+/** The dialog shows this refusal's sentence and offers no confirm. */
+export class CancelRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CancelRefusedError";
+  }
+}
+
+/** The refusal in a preview or cancel answer, or null for any other body. */
+export function cancelRefusalFrom(body: unknown): CancelRefusedError | null {
+  const parsed = CancelRefusalSchema.safeParse(body);
+  return parsed.success ? new CancelRefusedError(parsed.data.error) : null;
 }

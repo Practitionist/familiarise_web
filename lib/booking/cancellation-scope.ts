@@ -23,7 +23,7 @@
  * the next undelivered session starts, and how much has already been consumed.
  */
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
@@ -36,6 +36,12 @@ import {
   POLICY_TERMS_INCLUDE,
   termsFromPolicyRow,
 } from "@/lib/payments/operations/cancellation-policy-store";
+import { occurrenceRefundsPaise } from "@/lib/booking/class-series";
+import { ReleasedSessionsSchema } from "@/lib/booking/released-sessions";
+import {
+  cancelWindowState,
+  type SessionWindowState,
+} from "@/lib/booking/session-window";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -80,8 +86,8 @@ export type BookingRefundContext = {
   policy: CancellationPolicyTerms;
   /**
    * Hours until the earliest session that has not been delivered or cancelled,
-   * or null when the booking has no live session at all (an unallocated
-   * subscription, or one whose sessions have all been held).
+   * capped by the shortest notice the consultee gave when moving that session;
+   * null when the booking has no live session at all.
    */
   hoursUntilNextSession: number | null;
   /** Sessions delivered — COMPLETED or UNVERIFIED (#1006, #1766). */
@@ -96,6 +102,8 @@ export type BookingRefundContext = {
   sessionsTotal: number | null;
   /** #1766 — start instants (epoch ms, ascending) of the sessions still scheduled. */
   scheduledStarts: number[];
+  /** Subscriptions: what single sessions of the payment already got back (voids, incidents). */
+  alreadyRefundedPaise: number;
   /**
    * Slots of ANY status on the booking. Zero means no session was ever
    * scheduled, which is a different fact from "every session is terminal" —
@@ -103,6 +111,10 @@ export type BookingRefundContext = {
    * consultant never held time for this buyer.
    */
   slotsTotal: number;
+  /** Slots of any status that were ever confirmed (not an unpaid tentative hold). */
+  confirmedSlotsTotal: number;
+  /** Where the booking stands against the clock; the cancel doors refuse unless BEFORE. */
+  windowState: SessionWindowState;
 };
 
 /** Identifies a booking: the parent request/event, or a lone appointment. */
@@ -188,9 +200,10 @@ export async function resolveBookingRefundContext(
         where: { deletedAt: null },
         select: {
           startsAt: true,
+          endsAt: true,
+          ordinal: true,
           completionStatus: true,
           isTentative: true,
-          updatedAt: true,
         },
       },
     },
@@ -237,12 +250,11 @@ export async function resolveBookingRefundContext(
   const policy = termsFromPolicyRow(row?.cancellationPolicy ?? null);
 
   const slots = row?.occurrences ?? [];
-  const liveStarts = slots
+  const liveSlots = slots
     .filter((s) =>
       (LIVE_SLOT_STATUSES as readonly string[]).includes(s.completionStatus),
     )
-    .map((s) => s.startsAt.getTime())
-    .sort((a, b) => a - b);
+    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
 
   // A RESCHEDULED row is the tombstone of a moved session, so it is not on the
   // calendar twice; a tentative row is an unpaid hold, not an entitlement.
@@ -251,91 +263,137 @@ export async function resolveBookingRefundContext(
     .map((s) => s.startsAt.getTime())
     .sort((a, b) => a - b);
 
-  const rawHoursUntilNextSession =
-    liveStarts.length > 0 ? (liveStarts[0] - Date.now()) / 3_600_000 : null;
-  const noticeFloorHours = await computeRescheduleNoticeFloorHours(
-    db,
-    row?.id,
-    slots,
+  const nowMs = Date.now();
+  // A session that already ended but is not swept yet is not "next".
+  const nextLive = liveSlots.find(
+    (s) => s.completionStatus === "RESCHEDULED" || s.endsAt.getTime() > nowMs,
   );
-  let hoursUntilNextSession = rawHoursUntilNextSession;
-  if (rawHoursUntilNextSession !== null && noticeFloorHours !== null) {
-    hoursUntilNextSession = Math.min(
-      rawHoursUntilNextSession,
-      noticeFloorHours,
-    );
-  } else if (noticeFloorHours !== null) {
-    hoursUntilNextSession = noticeFloorHours;
+  // No live session left: nothing to give notice for, and the cancel door
+  // refuses through cancelWindowState before it ever quotes.
+  let hoursUntilNextSession: number | null = null;
+  if (nextLive) {
+    const raw = (nextLive.startsAt.getTime() - nowMs) / 3_600_000;
+    const floor = row
+      ? await consulteeRescheduleNoticeFloorHours(db, {
+          appointmentId: row.id,
+          ordinal: nextLive.ordinal,
+        })
+      : null;
+    hoursUntilNextSession = floor === null ? raw : Math.min(raw, floor);
   }
+
+  const sessionsCompleted = slots.filter(isCompletedOccurrence).length;
+  const alreadyRefundedPaise =
+    row?.subscription && payment
+      ? await occurrenceRefundsPaise(db, payment.id)
+      : 0;
+  const sessionsTotal = row?.subscription
+    ? sessionsTotalOf(row.subscription)
+    : null;
+  const windowState = cancelWindowState(slots, new Date(nowMs), {
+    hasUnscheduledEntitlement:
+      sessionsTotal !== null &&
+      sessionsTotal - sessionsCompleted - scheduledStarts.length > 0,
+  });
 
   return {
     paidPayment,
     policy,
     hoursUntilNextSession,
-    sessionsCompleted: slots.filter(isCompletedOccurrence).length,
-    sessionsRemaining: liveStarts.length,
+    sessionsCompleted,
+    sessionsRemaining: liveSlots.length,
     slotsTotal: slots.length,
-    sessionsTotal: row?.subscription ? sessionsTotalOf(row.subscription) : null,
+    confirmedSlotsTotal: slots.filter((s) => !s.isTentative).length,
+    sessionsTotal,
     scheduledStarts,
+    alreadyRefundedPaise,
+    windowState,
   };
 }
 
-function noticeHoursBetween(
-  startsAt: Date,
-  stampedAt: Date | null | undefined,
-): number | null {
-  if (!(stampedAt instanceof Date)) return null;
-  const hours = (startsAt.getTime() - stampedAt.getTime()) / 3_600_000;
-  return hours >= 0 ? hours : null;
+/**
+ * The clock state of a group event (or any booking with no refund context),
+ * read on the caller's client so the cancel transaction sees its own snapshot.
+ */
+export async function readCancelWindowState(
+  db: Db | Tx,
+  appointmentId: string,
+  now: Date = new Date(),
+): Promise<SessionWindowState> {
+  const occurrences = await db.appointmentOccurrence.findMany({
+    where: { appointmentId, deletedAt: null },
+    select: {
+      startsAt: true,
+      endsAt: true,
+      completionStatus: true,
+      isTentative: true,
+    },
+  });
+  return cancelWindowState(occurrences, now);
 }
 
-async function computeRescheduleNoticeFloorHours(
-  db: unknown,
-  appointmentId: string | undefined,
-  slots: Array<{
-    startsAt: Date;
-    updatedAt?: Date | null;
-    completionStatus: string;
-  }>,
+/** Proposal endings that put the released sessions back where they were. */
+const MAY_HAVE_RESTORED: ReadonlySet<string> = new Set(["DECLINED", "EXPIRED"]);
+
+/**
+ * The shortest notice the consultee side gave when it moved this session (its
+ * ordinal), read from the release records on its reschedule requests: the
+ * original start against the instant of the release. A withdrawn proposal, or
+ * a declined or expired one whose sessions were restored, gave no notice.
+ */
+async function consulteeRescheduleNoticeFloorHours(
+  db: Db | Tx,
+  args: { appointmentId: string; ordinal: number },
 ): Promise<number | null> {
-  const occurrenceDelegate = (
-    db as {
-      appointmentOccurrence?: {
-        findMany?: (args: unknown) => Promise<
-          Array<{
-            startsAt: Date;
-            deletedAt?: Date | null;
-            completionStatus: string;
-          }>
-        >;
-      };
-    }
-  ).appointmentOccurrence;
-
-  const tombstonedSlots = appointmentId
-    ? ((await occurrenceDelegate?.findMany?.({
-        where: {
-          appointmentId,
-          deletedAt: { not: null },
-          completionStatus: "RESCHEDULED",
-        },
-        select: {
-          startsAt: true,
-          deletedAt: true,
-          completionStatus: true,
-        },
-      })) ?? [])
-    : [];
-
-  const liveRescheduledNotices = slots
-    .filter((s) => s.completionStatus === "RESCHEDULED")
-    .map((s) => noticeHoursBetween(s.startsAt, s.updatedAt));
-  const tombstonedNotices = tombstonedSlots
-    .filter((t) => t.completionStatus === "RESCHEDULED")
-    .map((t) => noticeHoursBetween(t.startsAt, t.deletedAt));
-
-  const validNotices = [...liveRescheduledNotices, ...tombstonedNotices].filter(
-    (h): h is number => h !== null,
+  const requests = await db.rescheduleRequest.findMany({
+    where: {
+      appointmentId: args.appointmentId,
+      initiatorRole: "CONSULTEE",
+      status: { not: "WITHDRAWN" },
+      releasedSessions: { not: Prisma.DbNull },
+    },
+    select: {
+      status: true,
+      createdAt: true,
+      releasedSessions: true,
+      releasedOccurrenceIds: true,
+    },
+  });
+  if (requests.length === 0) return null;
+  const mayHaveRestored = requests
+    .filter((r) => MAY_HAVE_RESTORED.has(r.status))
+    .flatMap((r) => r.releasedOccurrenceIds);
+  const restoredIds = new Set(
+    mayHaveRestored.length === 0
+      ? []
+      : (
+          await db.appointmentOccurrence.findMany({
+            where: {
+              id: { in: mayHaveRestored },
+              deletedAt: null,
+              completionStatus: "SCHEDULED",
+            },
+            select: { id: true },
+          })
+        ).map((o) => o.id),
   );
-  return validNotices.length > 0 ? Math.min(...validNotices) : null;
+  const notices = requests.flatMap((request) => {
+    if (
+      MAY_HAVE_RESTORED.has(request.status) &&
+      request.releasedOccurrenceIds.some((id) => restoredIds.has(id))
+    ) {
+      return [];
+    }
+    const parsed = ReleasedSessionsSchema.safeParse(request.releasedSessions);
+    if (!parsed.success) return [];
+    return parsed.data
+      .filter((session) => session.ordinal === args.ordinal)
+      .map(
+        (session) =>
+          (new Date(session.startsAt).getTime() - request.createdAt.getTime()) /
+          3_600_000,
+      )
+      .filter((hours) => hours >= 0);
+  });
+  return notices.length > 0 ? Math.min(...notices) : null;
 }

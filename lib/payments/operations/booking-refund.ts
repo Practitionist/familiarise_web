@@ -58,7 +58,9 @@ import {
   reverseCreditsForPayment,
 } from "@/lib/referrals/service";
 import { seatLedger } from "@/lib/booking/class-series";
+import { sessionsTotalOf } from "@/lib/booking/entitlement";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
+import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { refundReversalBasis } from "@/lib/payments/ledger/refund-reversal-basis";
@@ -398,14 +400,14 @@ async function refundFreeCreditPayment(input: {
 }
 
 /**
- * #1771 K-5 — return N sessions of a credit-funded class seat. The credits
- * rail restores whole or not at all, so an ops partial return is its own door:
- * N × the seat's credit unit (capped at what is still consumed), a ₹0 Refund
- * row under the caller's key, and the booking journal reversed pro rata. The
- * seat stays live; a later whole restoration is refused (the row exists), so
- * further returns come back through this door.
+ * #1771 K-5 — return N sessions of a credit-funded class seat or subscription.
+ * The credits rail restores whole or not at all, so an ops partial return is
+ * its own door: N × the booking's credit unit (capped at what is still
+ * consumed), a ₹0 Refund row under the caller's key, and the booking journal
+ * reversed pro rata, so delivered sessions keep their earnings. A later whole
+ * restoration is refused (the row exists); further returns come back here.
  */
-export async function restoreClassSeatCredits(input: {
+export async function restoreSessionCredits(input: {
   paymentId: string;
   sessions: number;
   reason: string;
@@ -430,15 +432,19 @@ export async function restoreClassSeatCredits(input: {
       paymentIntent: true,
       createdAt: true,
       appointmentId: true,
-      appointment: { select: { classId: true } },
+      appointment: { select: { classId: true, subscriptionId: true } },
     },
   });
-  if (!payment?.appointmentId || !payment.appointment?.classId) {
+  if (
+    !payment?.appointmentId ||
+    (!payment.appointment?.classId && !payment.appointment?.subscriptionId)
+  ) {
     throw new RefundValidationError(
-      `Payment ${input.paymentId} is not a class seat`,
-      "NOT_A_CLASS_SEAT",
+      `Payment ${input.paymentId} is not a class seat or a subscription`,
+      "NOT_SESSION_CREDIT",
     );
   }
+  const isSubscription = !payment.appointment.classId;
   if (!isFreeCreditIntent(payment.paymentIntent)) {
     throw new RefundValidationError(
       `Payment ${input.paymentId} is not credit-funded; refund an amount instead`,
@@ -475,28 +481,14 @@ export async function restoreClassSeatCredits(input: {
               "ALREADY_FULLY_REFUNDED",
             );
           }
-          const seat = await tx.appointmentParticipant.findFirst({
-            where: { paymentId: payment.id },
-            select: { createdAt: true, status: true, sessionsPurchased: true },
-          });
-          const joinedAt =
-            seat && seat.createdAt > payment.createdAt
-              ? seat.createdAt
-              : payment.createdAt;
-          const ledger = await seatLedger(
-            tx,
-            {
-              appointmentId,
-              createdAt: joinedAt,
-              sessionsPurchased: seat?.sessionsPurchased,
-            },
-            creditValue,
-          );
-          const seatLive =
-            !!seat && !["CANCELLED", "REFUNDED"].includes(seat.status);
-          const eligible = seatLive
-            ? await missedUnmadeSessions(tx, appointmentId, joinedAt)
-            : Math.max(0, ledger.heldCount - ledger.deliveredHeld);
+          const { ledger, eligible, seatLive } = isSubscription
+            ? await subscriptionCreditBounds(tx, appointmentId, creditValue)
+            : await classSeatCreditBounds(
+                tx,
+                payment,
+                appointmentId,
+                creditValue,
+              );
           assertReturnable(payment.id, ledger, input.sessions, {
             creditValue,
             stillUsed,
@@ -554,6 +546,14 @@ export async function restoreClassSeatCredits(input: {
             share: { num: restoredPaise, den: creditValue },
             completes: restoredPaise >= stillUsed,
           });
+          // An ended plan's tranches waited unheld for this return; what the
+          // reversal left of them starts its hold in the same commit.
+          if (isSubscription && !seatLive) {
+            await stampTranchesOnCancel(tx, {
+              paymentId: payment.id,
+              now: new Date(),
+            });
+          }
           notice = await stageRefundNotice(tx, payment, restoredPaise);
           return {
             refundId: refundRow.id,
@@ -575,6 +575,75 @@ export async function restoreClassSeatCredits(input: {
   }
   await attemptRefundNotice(notice);
   return { ...result, restoredPaise };
+}
+
+/** A class seat: its own unit, and what it may get back live or released. */
+async function classSeatCreditBounds(
+  tx: Tx,
+  payment: { id: string; createdAt: Date },
+  appointmentId: string,
+  creditValue: number,
+) {
+  const seat = await tx.appointmentParticipant.findFirst({
+    where: { paymentId: payment.id },
+    select: { createdAt: true, status: true, sessionsPurchased: true },
+  });
+  const joinedAt =
+    seat && seat.createdAt > payment.createdAt
+      ? seat.createdAt
+      : payment.createdAt;
+  const ledger = await seatLedger(
+    tx,
+    {
+      appointmentId,
+      createdAt: joinedAt,
+      sessionsPurchased: seat?.sessionsPurchased,
+    },
+    creditValue,
+  );
+  const seatLive = !!seat && !["CANCELLED", "REFUNDED"].includes(seat.status);
+  const eligible = seatLive
+    ? await missedUnmadeSessions(tx, appointmentId, joinedAt)
+    : Math.max(0, ledger.heldCount - ledger.deliveredHeld);
+  return { ledger, eligible, seatLive };
+}
+
+/**
+ * A subscription: the unit is the credit over the plan's sessions, and only a
+ * plan that ended (cancelled or run out) gets its undelivered sessions back.
+ */
+async function subscriptionCreditBounds(
+  tx: Tx,
+  appointmentId: string,
+  creditValue: number,
+) {
+  const row = await tx.appointment.findUnique({
+    where: { id: appointmentId },
+    select: {
+      subscription: {
+        select: {
+          status: true,
+          sessionsTotal: true,
+          subscriptionPlan: { select: { totalSessions: true } },
+        },
+      },
+    },
+  });
+  const delivered = await tx.appointmentOccurrence.count({
+    where: {
+      appointmentId,
+      deletedAt: null,
+      completionStatus: { in: ["COMPLETED", "UNVERIFIED"] },
+    },
+  });
+  const total = row?.subscription ? sessionsTotalOf(row.subscription) : 0;
+  const status = row?.subscription?.status;
+  const seatLive = status !== "CANCELLED" && status !== "COMPLETED";
+  return {
+    ledger: { unitPaise: BigInt(creditValue) / BigInt(Math.max(total, 1)) },
+    eligible: seatLive ? 0 : Math.max(0, total - delivered),
+    seatLive,
+  };
 }
 
 async function restoredOn(refundId: string): Promise<number> {

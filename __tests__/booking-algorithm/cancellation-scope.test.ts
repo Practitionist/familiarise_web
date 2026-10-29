@@ -31,6 +31,10 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findFirst: (...a: unknown[]) => mockAppointmentFindFirst(...a),
     },
+    // No session was released by a reschedule or refunded on its own.
+    appointmentOccurrence: { findMany: async () => [] },
+    rescheduleRequest: { findMany: async () => [] },
+    refund: { findMany: async () => [] },
   },
 }));
 
@@ -78,9 +82,24 @@ function subscriptionRow() {
     cancellationPolicy: null,
     payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
     occurrences: [
-      { startsAt: hoursFromNow(-48), completionStatus: "COMPLETED" },
-      { startsAt: hoursFromNow(72), completionStatus: "SCHEDULED" },
-      { startsAt: hoursFromNow(96), completionStatus: "SCHEDULED" },
+      {
+        startsAt: hoursFromNow(-48),
+        endsAt: hoursFromNow(-48 + 1),
+        ordinal: 1,
+        completionStatus: "COMPLETED",
+      },
+      {
+        startsAt: hoursFromNow(72),
+        endsAt: hoursFromNow(72 + 1),
+        ordinal: 1,
+        completionStatus: "SCHEDULED",
+      },
+      {
+        startsAt: hoursFromNow(96),
+        endsAt: hoursFromNow(96 + 1),
+        ordinal: 1,
+        completionStatus: "SCHEDULED",
+      },
     ],
   };
 }
@@ -164,7 +183,12 @@ describe("resolveBookingRefundContext", () => {
       cancellationPolicy: null,
       payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
       occurrences: [
-        { startsAt: hoursFromNow(30), completionStatus: "RESCHEDULED" },
+        {
+          startsAt: hoursFromNow(30),
+          endsAt: hoursFromNow(30 + 1),
+          ordinal: 1,
+          completionStatus: "RESCHEDULED",
+        },
       ],
     });
 
@@ -336,7 +360,12 @@ describe("resolveBookingRefundContext", () => {
       cancellationPolicy: null,
       payment: [{ id: "pay-c", amount: 250_000, refunds: [], disputes: [] }],
       occurrences: [
-        { startsAt: hoursFromNow(5), completionStatus: "SCHEDULED" },
+        {
+          startsAt: hoursFromNow(5),
+          endsAt: hoursFromNow(5 + 1),
+          ordinal: 1,
+          completionStatus: "SCHEDULED",
+        },
       ],
     });
 
@@ -429,7 +458,12 @@ describe("resolveBookingRefundContext", () => {
       cancellationPolicy: null,
       payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
       occurrences: [
-        { startsAt: hoursFromNow(48), completionStatus: "CANCELLED" },
+        {
+          startsAt: hoursFromNow(48),
+          endsAt: hoursFromNow(48 + 1),
+          ordinal: 1,
+          completionStatus: "CANCELLED",
+        },
       ],
     });
     const cancelled = await resolveBookingRefundContext({

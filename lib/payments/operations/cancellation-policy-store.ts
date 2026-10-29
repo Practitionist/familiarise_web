@@ -18,7 +18,7 @@ import { Prisma } from "@prisma/client";
 
 import type { PrismaLike, Tx } from "@/lib/prisma";
 import {
-  isTwoDecimalPercent,
+  CONSULTANT_INITIATED_PCT,
   PLATFORM_DEFAULT_TERMS,
   tiersFromBps,
   validateTierLadder,
@@ -86,7 +86,8 @@ export function termsFromPolicyRow(
     source: row.organizationId ? "ORG" : "PLATFORM",
     version: row.version,
     tiers: tiersFromBps(row.tiers),
-    consultantInitiatedPct: row.consultantInitiatedBps / 100,
+    // An expert-side cancel always refunds in full, whatever an older row stored.
+    consultantInitiatedPct: CONSULTANT_INITIATED_PCT,
   };
 }
 
@@ -120,7 +121,7 @@ export async function ensurePlatformCancellationPolicy(
         organizationId: null,
         version: 1,
         status: "ACTIVE",
-        consultantInitiatedBps: 10_000,
+        consultantInitiatedBps: CONSULTANT_INITIATED_PCT * 100,
         tiers: { create: PLATFORM_DEFAULT_TIER_ROWS },
       },
       select: { id: true },
@@ -190,25 +191,12 @@ export async function publishOrgCancellationPolicy(
   params: {
     organizationId: string;
     tiers: RefundTier[];
-    consultantInitiatedPct: number;
     policyText?: string | null;
     publishedByUserId?: string | null;
   },
 ) {
   const invalid = validateTierLadder(params.tiers);
   if (invalid) throw Object.assign(new Error(invalid), { httpStatus: 400 });
-  if (
-    params.consultantInitiatedPct < 0 ||
-    params.consultantInitiatedPct > 100 ||
-    !isTwoDecimalPercent(params.consultantInitiatedPct)
-  ) {
-    throw Object.assign(
-      new Error(
-        "The consultant-initiated refund must be between 0 and 100 percent, with at most two decimal places",
-      ),
-      { httpStatus: 400 },
-    );
-  }
 
   const current = await tx.cancellationPolicy.findFirst({
     where: { organizationId: params.organizationId },
@@ -226,7 +214,7 @@ export async function publishOrgCancellationPolicy(
       organizationId: params.organizationId,
       version: (current?.version ?? 0) + 1,
       status: "ACTIVE",
-      consultantInitiatedBps: Math.round(params.consultantInitiatedPct * 100),
+      consultantInitiatedBps: CONSULTANT_INITIATED_PCT * 100,
       policyText: params.policyText ?? null,
       publishedByUserId: params.publishedByUserId ?? null,
       tiers: {

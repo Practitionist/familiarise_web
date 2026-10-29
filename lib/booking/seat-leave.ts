@@ -35,6 +35,7 @@ import {
 import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
 import {
   driveRefundOwed,
+  heldMarkerRefusal,
   stampRefundOwed,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
@@ -204,7 +205,9 @@ export async function planSelfLeave(
     now,
   );
   const sessions = ledger.remaining.length + ledger.neverScheduled;
-  if (ledger.deliveredHeld === 0) {
+  // A session under way when the attendee leaves is theirs to forfeit, so it
+  // counts as delivered and the ladder prices only what has not started.
+  if (ledger.deliveredHeld + ledger.inProgressHeld === 0) {
     assertOutsideWindow(ledger.remaining[0], joinedAt, windowHours, now);
     return { mode: "full", sessions };
   }
@@ -402,7 +405,16 @@ export async function leaveEventSeat(args: {
           const owed = payment
             ? seatRefundOwed(payment, plan, `${keyPrefix}:${seat.id}`)
             : null;
-          if (owed) await stampRefundOwed(tx, owed);
+          // Only the door that owns the marker drives it: another door's
+          // refund still owed refuses the leave with nothing committed.
+          if (owed && !(await stampRefundOwed(tx, owed))) {
+            throw await heldMarkerRefusal(
+              tx,
+              owed.paymentId,
+              { seatId: seat.id },
+              "seat",
+            );
+          }
           return { seat, plan, payment, owed };
         },
         {

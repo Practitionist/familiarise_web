@@ -5044,6 +5044,8 @@ enum CancellationPolicyStatus {
 /// move away from.
 model RescheduleRequest {
   id String @id @default(uuid())
+  /// Released sessions as [{ ordinal, startsAt }] written in the release tx; the durable notice source.
+  releasedSessions Json?
 
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   appointmentId String

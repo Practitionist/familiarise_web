@@ -119,7 +119,10 @@ jest.mock("../../../lib/booking/reschedule-decline", () => ({
 }));
 jest.mock("../../../lib/booking/cancellation-scope", () => ({
   __esModule: true,
+  readCancelWindowState: async () => "BEFORE",
   resolveBookingRefundContext: async () => ({
+    windowState: "BEFORE",
+    alreadyRefundedPaise: 0,
     policy: {},
     hoursUntilNextSession: 100,
     slotsTotal: 1,

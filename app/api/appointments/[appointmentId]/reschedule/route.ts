@@ -74,6 +74,7 @@ import {
   priorReschedules as priorRescheduleCount,
 } from "@/lib/booking/reschedule-caps";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
+import { releasedSessionsOf } from "@/lib/booking/released-sessions";
 
 const MINIMUM_HOURS_BEFORE_RESCHEDULE = 24;
 const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
@@ -798,6 +799,7 @@ export async function POST(
                 initiatedById: session.user.id,
                 reason,
                 releasedOccurrenceIds: slotsToReschedule.map((s) => s.id),
+                releasedSessions: releasedSessionsOf(slotsToReschedule),
                 expiresAt,
                 // Reserves the appointment: the nullable @unique makes a second
                 // live reschedule a DB-level conflict rather than a race. Claimed

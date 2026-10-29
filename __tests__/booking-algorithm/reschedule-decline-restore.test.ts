@@ -95,6 +95,8 @@ function matchSlots(where: SlotCas["where"]): SlotRow[] {
 
 function makeTx() {
   return {
+    // The restore re-anchors the payout hold; these bookings carry no earnings.
+    appointment: { findUnique: jest.fn(async () => null) },
     bookingStatusHistory: {
       create: jest.fn().mockResolvedValue({}),
       // #1589 R-P1-01 — the origin read: the row the reschedule route wrote.

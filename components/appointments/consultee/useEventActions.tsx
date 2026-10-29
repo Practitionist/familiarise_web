@@ -21,7 +21,9 @@ import type { SlotPreference } from "@/components/scheduling/time-picker-policy"
 import {
   applyRefundRequote,
   paymentLandedUnderClick,
+  cancelPreviewQueryKey,
   cancelPreviewUrl,
+  cancelRefusalFrom,
   readRefundQuoteChanged,
   shownQuoteBody,
   type ShownCancelQuote,
@@ -406,6 +408,25 @@ export function useEventActions({
           title: "The refund has changed",
           description: "Check the new amount in the dialog and confirm again.",
         });
+        return false;
+      }
+      // A refusal (the session froze, another refund must finish first) is
+      // the server's own sentence; the dialog stays open on a fresh quote.
+      const refusal =
+        error instanceof ApiResponseError && error.status === 409
+          ? cancelRefusalFrom(error.body)
+          : null;
+      if (refusal) {
+        toast({
+          title: "This booking can't be cancelled right now",
+          description: refusal.message,
+          variant: "destructive",
+        });
+        if (appointmentId) {
+          void queryClient.invalidateQueries({
+            queryKey: cancelPreviewQueryKey(cancelPreviewUrl(appointmentId)),
+          });
+        }
         return false;
       }
       // 409 = the CAS transition guard matched zero rows: the booking already

@@ -10,6 +10,8 @@ import {
   refundInFlightOr,
 } from "@/lib/backoffice/refund-doors";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { clearStuckRefundOwed } from "@/lib/payments/operations/refund-owed";
+import prisma from "@/lib/prisma";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 
 /** 400 copy for a missing/malformed `idempotencyKey` (via withOpsAction). */
@@ -90,11 +92,24 @@ export const POST = withOpsAction(
         // A partial ops refund is not a cancellation: the seat stays live.
         keepSeat: amountPaise !== undefined,
       }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
+      // A hand refund is what a marker that spent its attempts asked for: one
+      // that covers it settles the marker and unblocks the booking's cancel;
+      // a smaller one leaves it owed, and the audit and the operator see how much.
+      const marker =
+        result.status === "PENDING"
+          ? null
+          : await clearStuckRefundOwed(prisma, body.paymentId, {
+              full: amountPaise === undefined,
+            });
+      const clearedOwedKey =
+        marker && "cleared" in marker ? marker.cleared : null;
+      const markerStillOwed =
+        marker && "stillOwed" in marker ? marker.stillOwed : null;
       return {
         target: { kind: "Payment", id: body.paymentId },
         before: { tierOverridePct: body.tierOverridePct ?? null },
-        after: { ...result },
-        response: { result },
+        after: { ...result, clearedOwedKey, markerStillOwed },
+        response: { result, markerStillOwed },
       };
     },
   },

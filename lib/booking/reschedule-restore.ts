@@ -8,6 +8,7 @@ import {
 } from "@/lib/observability/report";
 
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { restoreEarningsHold } from "@/lib/payments/payouts/earnings-hold";
 import {
   HISTORY_FROM_UNKNOWN,
   transitionConsultationRequest,
@@ -53,13 +54,7 @@ export interface RestoreMeta {
   op: string;
 }
 
-type RestoreTx = Pick<
-  Tx,
-  | "appointmentOccurrence"
-  | "bookingStatusHistory"
-  | "consultation"
-  | "subscription"
->;
+type RestoreTx = Tx;
 
 /**
  * #1589 R-P1-01 / R-P1-04 — the status the request held BEFORE the reschedule
@@ -253,6 +248,8 @@ export async function restoreRescheduledBooking(
   });
 
   await settleParentAfterReschedule(tx, request, meta);
+  // The sessions are back where they were, so the payout wait is too.
+  if (restored > 0) await restoreEarningsHold(tx, request.appointmentId);
 
   return restored;
 }

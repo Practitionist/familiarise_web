@@ -58,6 +58,8 @@ const passThroughLock = (...args: unknown[]) =>
  */
 function makeTxStub() {
   return {
+    // A restore re-anchors the payout hold; these bookings carry no earnings.
+    appointment: { findUnique: jest.fn().mockResolvedValue(null) },
     rescheduleRequest: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),

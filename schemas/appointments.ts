@@ -92,6 +92,8 @@ export const OpenIncidentRemedySchema = z.object({
   dueAt: z.string(),
   title: z.string(),
   expertName: z.string().nullable(),
+  /** The rail the refund returns on, so the banner names where the money goes. */
+  fundingRail: z.enum(["GATEWAY", "INTERNAL", "CREDITS"]),
 });
 
 export const OpenIncidentRemediesResponseSchema = z.object({
@@ -118,6 +120,8 @@ const CancelRefundQuoteSchema = z.object({
   grossPaise: z.number().optional(),
   /** The credits rail restores whole; echoed back with the click. */
   creditRestoresInFull: z.boolean().optional(),
+  /** A credit-funded plan with sessions held: our team returns the rest by hand. */
+  creditReturnNeedsReview: z.boolean().optional(),
   /** Whether a captured payment funds the 1:1 booking; echoed back with the click. */
   expectedPaid: z.boolean().optional(),
 });

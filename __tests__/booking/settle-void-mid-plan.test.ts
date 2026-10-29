@@ -17,6 +17,9 @@ const refundBookingPayment = jest.fn(async () => ({
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...(a as [])),
 }));
+jest.mock("../../lib/payments/operations/credit-plan-return", () => ({
+  creditStillUsedPaise: async () => state.creditStillUsed,
+}));
 const stampRefundOwed = jest.fn(async (..._a: unknown[]) => true);
 const driveRefundOwed = jest.fn(async (..._a: unknown[]) => ({
   kind: "refunded",
@@ -38,6 +41,13 @@ jest.mock("../../lib/booking/subscription-cycle", () => ({
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_k: string, _o: unknown, fn: () => unknown) => fn(),
+  // The run trail: what the previous tick left for this one.
+  readJobCheckpoint: async () => state.checkpoint,
+}));
+// The deadline lands once the run has opened `budget` plans.
+jest.mock("../../lib/cron/run-deadline", () => ({
+  ...jest.requireActual("../../lib/cron/run-deadline"),
+  startDeadline: () => () => state.opened.length >= state.budget,
 }));
 jest.mock("../../lib/novu/outbox", () => ({ stageTrigger: jest.fn() }));
 const stageBell = jest.fn(async (_tx: unknown, args: unknown) => ({
@@ -114,7 +124,33 @@ const state = {
   rows: [] as { id: string; completionStatus: string; seatsSettledAt: null }[],
   undecided: 0,
   refunds: [] as { amountPaise: number; status: string }[],
+  payment: { amount: 120_000, paymentIntent: "order_1" },
+  /** Referral credit the plan's payment still holds consumed. */
+  creditStillUsed: 50_000,
+  /** When set, the stored-end cohort is this list, paged by its keyset. */
+  cohort: null as Plan[] | null,
+  waiting: new Set<string>(),
+  opened: [] as string[],
+  budget: Infinity,
+  checkpoint: null as string | null,
 };
+
+type KeysetWhere = {
+  planEndsAt: unknown;
+  OR?: [unknown, { planEndsAt: Date; id: { gt: string } }];
+};
+const key = (p: Plan) => `${p.planEndsAt?.toISOString()}|${p.id}`;
+/** The stored-end cohort as Postgres would page it. */
+const cohortPage = (where: KeysetWhere, take: number) => {
+  if (where.planEndsAt === null) return [];
+  const tie = where.OR?.[1];
+  const after = tie ? `${tie.planEndsAt.toISOString()}|${tie.id.gt}` : "";
+  return (state.cohort ?? [])
+    .filter((p) => key(p) > after)
+    .sort((a, b) => key(a).localeCompare(key(b)))
+    .slice(0, take);
+};
+const systemEventCreate = jest.fn(async (..._a: unknown[]) => ({}));
 const occurrenceUpdateMany = jest.fn(async (..._a: unknown[]) => ({
   count: 1,
 }));
@@ -149,11 +185,29 @@ jest.mock("../../lib/prisma", () => {
     },
     subscription: {
       // The stored-end arm asks for planEndsAt <= now, the derived arm for null.
-      findMany: async ({ where }: { where: { planEndsAt: unknown } }) =>
-        (where.planEndsAt === null) === (state.plan.planEndsAt === null)
-          ? [state.plan]
-          : [],
-      findUnique: async () => settleRead(state.reread ?? state.plan),
+      findMany: async ({
+        where,
+        take,
+      }: {
+        where: KeysetWhere;
+        take: number;
+      }) =>
+        state.cohort
+          ? cohortPage(where, take)
+          : (where.planEndsAt === null) === (state.plan.planEndsAt === null)
+            ? [state.plan]
+            : [],
+      findUnique: async ({ where }: { where: { id: string } }) => {
+        state.opened.push(where.id);
+        const found = state.cohort?.find((p) => p.id === where.id);
+        if (!found) return settleRead(state.reread ?? state.plan);
+        // A plan that must wait reads as no longer live.
+        return settleRead(
+          state.waiting.has(found.id)
+            ? { ...found, status: "COMPLETED" }
+            : found,
+        );
+      },
       updateMany: (...a: unknown[]) => subscriptionUpdateMany(...a),
     },
     rescheduleRequest: { findFirst: async () => null },
@@ -161,7 +215,7 @@ jest.mock("../../lib/prisma", () => {
       findMany: async () => [
         {
           id: "pay-1",
-          amount: 120_000,
+          ...state.payment,
           currency: "INR",
           userId: "u-1",
           refunds: state.refunds,
@@ -176,13 +230,19 @@ jest.mock("../../lib/prisma", () => {
       updateMany: async () => ({ count: 0 }),
     },
     organizationEarnings: { updateMany: async () => ({ count: 0 }) },
-    systemEvent: { findFirst: async () => null, create: async () => ({}) },
+    systemEvent: {
+      findFirst: async () => null,
+      create: (...a: unknown[]) => systemEventCreate(...a),
+    },
     $transaction: async (fn: (tx: unknown) => unknown) => fn(db),
   };
   return { __esModule: true, default: db };
 });
 
-import { settleCancelledSessions } from "@/scripts/appointments/settle-cancelled-sessions";
+import {
+  parsePlanCursor,
+  settleCancelledSessions,
+} from "@/scripts/appointments/settle-cancelled-sessions";
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -195,6 +255,13 @@ beforeEach(() => {
   ];
   state.undecided = 0;
   state.refunds = [];
+  state.payment = { amount: 120_000, paymentIntent: "order_1" };
+  state.creditStillUsed = 50_000;
+  state.cohort = null;
+  state.waiting = new Set();
+  state.opened = [];
+  state.budget = Infinity;
+  state.checkpoint = null;
 });
 afterEach(() => jest.useRealTimers());
 
@@ -325,4 +392,125 @@ it("a fully delivered plan completes with nothing owed", async () => {
   await settleCancelledSessions();
   expect(transitionSubscriptionRequest).toHaveBeenCalled();
   expect(stampRefundOwed).not.toHaveBeenCalled();
+});
+
+describe("a plan paid wholly in referral credit", () => {
+  beforeEach(() => {
+    state.plan = plan({ planEndsAt: new Date("2026-05-15T06:00:00Z") });
+    state.payment = { amount: 0, paymentIntent: "free_1730000000_abc" };
+  });
+
+  it("with nothing delivered, restores the whole credit under the plan-end key", async () => {
+    state.rows = [];
+    await settleCancelledSessions();
+    const marker = {
+      paymentId: "pay-1",
+      amountPaise: null,
+      key: "plan-end:sub-1:pay:pay-1",
+      reason: "PLAN_ENDED_UNUSED_SESSIONS",
+    };
+    expect(stampRefundOwed).toHaveBeenCalledWith(expect.anything(), marker);
+    expect(driveRefundOwed).toHaveBeenCalledWith(marker);
+  });
+
+  it("with some sessions delivered, queues the rest for a human and holds no tranche", async () => {
+    await settleCancelledSessions();
+    expect(stampRefundOwed).not.toHaveBeenCalled();
+    expect(driveRefundOwed).not.toHaveBeenCalled();
+    expect(stampTranchesOnCancel).not.toHaveBeenCalled();
+    expect(systemEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          correlationId: "partial-credit:pay-1",
+        }),
+      }),
+    );
+    expect(transitionSubscriptionRequest).toHaveBeenCalled();
+  });
+
+  it("a plan paid by a 100% discount has no credit to return: no review, tranches held", async () => {
+    state.creditStillUsed = 0;
+    await settleCancelledSessions();
+    expect(systemEventCreate).not.toHaveBeenCalled();
+    expect(stampRefundOwed).not.toHaveBeenCalled();
+    expect(stampTranchesOnCancel).toHaveBeenCalledWith(expect.anything(), {
+      paymentId: "pay-1",
+      now: NOW,
+    });
+    expect(transitionSubscriptionRequest).toHaveBeenCalled();
+  });
+});
+
+describe("the plan-end pass resumes where the last run stopped", () => {
+  // 51 ended plans, a minute apart, in plan-end order.
+  const ended = Array.from({ length: 51 }, (_, i) =>
+    plan({
+      id: `sub-${String(i + 1).padStart(2, "0")}`,
+      planEndsAt: new Date(Date.UTC(2026, 4, 15, 6, i)),
+    }),
+  );
+  const settled = () =>
+    transitionSubscriptionRequest.mock.calls.map(
+      (c) => (c[1] as { where: { id: string } }).where.id,
+    );
+  const tick = async () => {
+    const result = await settleCancelledSessions();
+    state.checkpoint = result.checkpoint;
+    return result;
+  };
+
+  beforeEach(() => {
+    state.cohort = ended;
+  });
+
+  it("reaches the plan behind fifty that must wait by the second run", async () => {
+    state.waiting = new Set(ended.slice(0, 50).map((p) => p.id));
+    const first = await tick();
+    expect(first.plansWaiting).toBe(50);
+    expect(state.opened).not.toContain("sub-51");
+    expect(settled()).toEqual([]);
+
+    state.opened = [];
+    const second = await tick();
+    expect(state.opened).toEqual(["sub-51"]);
+    expect(settled()).toEqual(["sub-51"]);
+    // The cohort ran out: the next run starts it over.
+    expect(second.checkpoint).toBeNull();
+
+    state.opened = [];
+    await tick();
+    expect(state.opened[0]).toBe("sub-01");
+  });
+
+  it("a run cut short by the deadline resumes after the last plan it handled", async () => {
+    state.cohort = ended.slice(0, 5);
+    state.budget = 2;
+    const first = await tick();
+    expect(state.opened).toEqual(["sub-01", "sub-02"]);
+    expect(parsePlanCursor(first.checkpoint)).toEqual({
+      stored: { at: ended[1].planEndsAt, id: "sub-02" },
+      derived: null,
+    });
+
+    state.opened = [];
+    state.budget = Infinity;
+    await tick();
+    expect(state.opened).toEqual(["sub-03", "sub-04", "sub-05"]);
+  });
+
+  it("starts over when nothing is left past the cursor", async () => {
+    state.cohort = ended.slice(0, 3);
+    state.checkpoint = JSON.stringify({
+      stored: { at: ended[2].planEndsAt, id: "sub-03" },
+      derived: null,
+    });
+    await tick();
+    expect(state.opened).toEqual(["sub-01", "sub-02", "sub-03"]);
+  });
+
+  it("an unreadable checkpoint starts both cohorts over", () => {
+    const start = { stored: null, derived: null };
+    expect(parsePlanCursor("not json")).toEqual(start);
+    expect(parsePlanCursor('{"stored":{"at":"soon","id":"x"}}')).toEqual(start);
+  });
 });

@@ -13,8 +13,12 @@
  *     capped at N, with zero falling back to N.
  *   - unit = floor(seat amount / heldCount), in BigInt; rounding favours the
  *     buyer on every series-level amount (amount − unit × delivered).
- *   - delivered = endsAt ≤ now and not CANCELLED/RESCHEDULED/VOIDED; remaining =
- *     live SCHEDULED rows starting after now; neverScheduled is the rest.
+ *   - delivered = endsAt ≤ now and not CANCELLED/RESCHEDULED/VOIDED; in progress =
+ *     a live SCHEDULED row with startsAt ≤ now < endsAt; remaining = live
+ *     SCHEDULED rows starting after now; neverScheduled is the rest.
+ *   - An in-progress session counts as delivered when the attendee leaves
+ *     (they chose to go after it started) and as refundable when the host
+ *     cancels the series (the host's act, not the buyer's).
  */
 
 import type {
@@ -52,6 +56,8 @@ export interface SeatLedger {
   heldCount: number;
   unitPaise: bigint;
   deliveredHeld: number;
+  /** Held sessions under way right now: delivered for a leave, refundable for a host cancel. */
+  inProgressHeld: number;
   /** Live sessions the seat holds that have not started, earliest first. */
   remaining: { startsAt: Date; movedAt: Date | null }[];
   neverScheduled: number;
@@ -69,6 +75,9 @@ const isDelivered = (o: LedgerOccurrence, now: Date) =>
 const isLiveAhead = (o: LedgerOccurrence, now: Date) =>
   o.completionStatus === "SCHEDULED" && o.startsAt > now;
 
+const isInProgress = (o: LedgerOccurrence, now: Date) =>
+  o.completionStatus === "SCHEDULED" && o.startsAt <= now && o.endsAt > now;
+
 /** The ledger for one seat, from its sessions. Pure. */
 export function seatLedgerFrom(args: {
   N: number;
@@ -82,6 +91,7 @@ export function seatLedgerFrom(args: {
   const { N, joinedAt, now } = args;
   const held = args.occurrences.filter((o) => o.startsAt > joinedAt);
   const delivered = held.filter((o) => isDelivered(o, now));
+  const inProgress = held.filter((o) => isInProgress(o, now));
   const remaining = held
     .filter((o) => isLiveAhead(o, now))
     .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
@@ -89,27 +99,37 @@ export function seatLedgerFrom(args: {
   // count (E-2): it is made up or refunded one unit, so the unit must not move.
   const missed = held.filter(isMissed);
   const ordinals = new Set(
-    [...delivered, ...remaining, ...missed].map((o) => o.ordinal),
+    [...delivered, ...inProgress, ...remaining, ...missed].map(
+      (o) => o.ordinal,
+    ),
   );
   const heldCount = args.sessionsPurchased || Math.min(N, ordinals.size) || N;
   const deliveredHeld = Math.min(delivered.length, heldCount);
+  const inProgressHeld = Math.min(inProgress.length, heldCount - deliveredHeld);
   return {
     N,
     heldCount,
     unitPaise: BigInt(args.amountPaise) / BigInt(Math.max(heldCount, 1)),
     deliveredHeld,
+    inProgressHeld,
     remaining: remaining.map((o) => ({
       startsAt: o.startsAt,
       movedAt: o.movedAt,
     })),
-    neverScheduled: Math.max(0, heldCount - deliveredHeld - remaining.length),
+    neverScheduled: Math.max(
+      0,
+      heldCount - deliveredHeld - inProgressHeld - remaining.length,
+    ),
   };
 }
 
 /** A seat's ledger plus what it already got back per session (D-5). */
 export type SeriesSeat = SeatLedger & { occRefundedPaise?: number };
 
-/** What a host cancelling the whole series refunds this seat (D-5). */
+/**
+ * What a host cancelling the whole series refunds this seat (D-5): everything
+ * not yet delivered, the session under way included.
+ */
 export function seriesCancelRefundPaise(
   ledger: SeatLedger,
   amountPaise: bigint | number,

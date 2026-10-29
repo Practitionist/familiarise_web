@@ -37,14 +37,20 @@ import {
   logSubscriptionCancelled,
 } from "@/lib/activity/log-activity";
 
-import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { platformCancelGrant } from "@/lib/booking/platform-cancel";
-import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import {
+  recordSystemErrorSafe,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
 import {
   driveRefundOwed,
+  heldMarkerRefusal,
+  recordRefundNeedsSupport,
   stampRefundOwed,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
+import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-return";
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
@@ -55,8 +61,8 @@ import {
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
 import { reportSentryError } from "@/lib/observability/report";
-import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { recordActForOrg, resolveOrgActor } from "@/lib/booking/org-actor";
+import { recordActForOrg } from "@/lib/booking/org-actor";
+import { resolveCancelActor } from "@/lib/booking/cancel-actor";
 import {
   isSuspendedInFundingOrg,
   membershipSuspendedResponse,
@@ -64,8 +70,11 @@ import {
 import {
   LIVE_SLOT_WHERE,
   LIVE_SUCCEEDED_PAYMENT_WHERE,
+  readCancelWindowState,
   resolveBookingRefundContext,
 } from "@/lib/booking/cancellation-scope";
+import { cancelWindowRefusal } from "@/lib/booking/session-window";
+import { isRefusal } from "@/lib/errors/refusal";
 import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import {
   classSeriesLedgers,
@@ -677,72 +686,9 @@ export async function POST(
       );
     }
 
-    const consultantProfileId = session.user.consultantProfileId;
-    const consulteeProfileId = session.user.consulteeProfileId;
-
-    const hostOrganizationId =
-      appointment.webinar?.webinarPlan?.organizationId ??
-      appointment.class?.classPlan?.organizationId ??
-      appointment.consultation?.consultationPlan?.organizationId ??
-      appointment.subscription?.subscriptionPlan?.organizationId ??
-      null;
-    const hostOrgMembership = hostOrganizationId
-      ? await prisma.membership.findUnique({
-          where: {
-            userId_organizationId: {
-              userId: session.user.id,
-              organizationId: hostOrganizationId,
-            },
-          },
-          select: {
-            status: true,
-            role: true,
-            organization: { select: { status: true } },
-          },
-        })
-      : null;
-    const isHostOrgOperator =
-      hostOrgMembership?.status === "ACTIVE" &&
-      hostOrgMembership.organization.status !== "DEACTIVATED" &&
-      hasOrgPermission(hostOrgMembership.role, "catalog.manage");
-
-    let isParticipant = false;
-
-    if (appointment.consultation) {
-      const planConsultantProfileId =
-        appointment.consultation.consultationPlan?.consultantProfileId;
-      isParticipant =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === planConsultantProfileId) ||
-        (Boolean(consulteeProfileId) &&
-          consulteeProfileId === appointment.consultation.requestedById) ||
-        isHostOrgOperator;
-    } else if (appointment.subscription) {
-      const planConsultantProfileId =
-        appointment.subscription.subscriptionPlan?.consultantProfileId;
-      isParticipant =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === planConsultantProfileId) ||
-        (Boolean(consulteeProfileId) &&
-          consulteeProfileId === appointment.subscription.requestedById) ||
-        isHostOrgOperator;
-    } else if (appointment.webinar) {
-      const webinarConsultantId =
-        appointment.webinar.webinarPlan?.consultantProfileId;
-      isParticipant =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === webinarConsultantId) ||
-        isHostOrgOperator;
-    } else if (appointment.class) {
-      const classConsultantId =
-        appointment.class.classPlan?.consultantProfileId;
-      isParticipant =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === classConsultantId) ||
-        isHostOrgOperator;
-    }
-
-    const isPrivilegedUser = isPrivileged(session.user.role);
+    const actor = await resolveCancelActor(appointment, session.user);
+    const { isParticipant, isPrivilegedUser, isHostOrgOperator, orgActor } =
+      actor;
 
     // A platform operator who is not a party cancels only through the audited,
     // money-bounded door, which grants this request.
@@ -757,13 +703,7 @@ export async function POST(
       );
     }
 
-    const orgActor =
-      !isParticipant && !isPrivilegedUser
-        ? await resolveOrgActor(session.user.id, appointment, "cancel")
-        : null;
-    const isOrgAdminActor = orgActor !== null;
-
-    if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
+    if (!actor.authorized) {
       return NextResponse.json(
         { error: "You are not authorized to cancel this appointment" },
         { status: 403 },
@@ -772,12 +712,8 @@ export async function POST(
 
     // #1527 decision 6 — a suspended learner keeps join, not cancel, on an
     // org-funded booking; refused before any refund logic.
-    const isLearner =
-      !!consulteeProfileId &&
-      (consulteeProfileId === appointment.consultation?.requestedById ||
-        consulteeProfileId === appointment.subscription?.requestedById);
     if (
-      isLearner &&
+      actor.isLearner &&
       !isPrivilegedUser &&
       (await isSuspendedInFundingOrg(
         session.user.id,
@@ -900,27 +836,7 @@ export async function POST(
       ? await classSeriesLedgers(appointment.class.id)
       : null;
 
-    // "Not the buyer's choice" is the real question the tier asks, and a
-    // platform-initiated cancellation is not the buyer's choice either, so an
-    // admin or host-org operator settles at the consultant-initiated tier.
-    const isConsultantInitiated =
-      (!!session.user.consultantProfileId &&
-        consultantUserId === session.user.id) ||
-      (isPrivilegedUser && session.user.id !== consulteeUserId) ||
-      (isHostOrgOperator && session.user.id !== consulteeUserId);
-    // D10 — the expert side (not a platform admin) cancelling a paid booking earns one strike.
-    const hostProfileId =
-      appointment.consultation?.consultationPlan?.consultantProfileId ??
-      appointment.subscription?.subscriptionPlan?.consultantProfileId ??
-      appointment.webinar?.webinarPlan?.consultantProfileId ??
-      appointment.class?.classPlan?.consultantProfileId ??
-      null;
-    const isExpertSideCancel =
-      (!!session.user.consultantProfileId &&
-        consultantUserId === session.user.id) ||
-      (isHostOrgOperator &&
-        !isPrivilegedUser &&
-        session.user.id !== consulteeUserId);
+    const { isConsultantInitiated, isExpertSideCancel, hostProfileId } = actor;
 
     let eventKind: "class" | "webinar" | null = null;
     if (appointment.class) eventKind = "class";
@@ -956,10 +872,19 @@ export async function POST(
               const bookingCtx = isExclusiveType
                 ? await resolveBookingRefundContext(bookingRef, undefined, tx)
                 : null;
+              // A session about to start, under way or already held is the
+              // outcome machinery's to settle, never a cancel's.
+              const windowRefusal = cancelWindowRefusal(
+                bookingCtx?.windowState ??
+                  (await readCancelWindowState(tx, appointmentId)),
+                { appointmentId },
+                isConsultantInitiated ? "host" : "buyer",
+              );
+              if (windowRefusal) throw windowRefusal;
               const paidPayment = bookingCtx?.paidPayment ?? null;
               // The quote is pure and runs before the CAS, so a click bound to a
               // stale figure is refused with nothing committed.
-              const quote =
+              const quoted =
                 bookingCtx && paidPayment
                   ? quoteBookingRefund({
                       policy: bookingCtx.policy,
@@ -969,6 +894,7 @@ export async function POST(
                       sessionsTotal: bookingCtx.sessionsTotal,
                       sessionsCompleted: bookingCtx.sessionsCompleted,
                       scheduledStarts: bookingCtx.scheduledStarts,
+                      alreadyRefundedPaise: bookingCtx.alreadyRefundedPaise,
                       isSubscription: !!appointment.subscription,
                       isConsultantInitiated,
                       // Both halves are load-bearing: `free_` with a
@@ -980,6 +906,14 @@ export async function POST(
                       refundablePaise: paidPayment.refundablePaise,
                     })
                   : null;
+              // A plan with no referral credit still consumed (a 100% discount,
+              // or credit already returned) has nothing for a human to return.
+              const quote =
+                quoted?.creditReturnNeedsReview &&
+                paidPayment &&
+                (await creditStillUsedPaise(tx, paidPayment.id)) <= 0
+                  ? { ...quoted, creditReturnNeedsReview: false }
+                  : quoted;
               if (quote)
                 assertQuoteMatchesClick(
                   quote,
@@ -1100,7 +1034,47 @@ export async function POST(
                       isConsultantInitiated,
                     )
                   : null;
-              if (owed) await stampRefundOwed(tx, owed);
+              // Only the door that owns the marker drives it; a payment already
+              // owing another door's refund refuses the cancel with nothing
+              // committed, so this cancel's debt is never left undurable.
+              if (owed && !(await stampRefundOwed(tx, owed))) {
+                throw await heldMarkerRefusal(tx, owed.paymentId, {
+                  appointmentId,
+                });
+              }
+              // The undelivered share of a credit-funded plan is returned by
+              // hand; the durable row commits with the cancel.
+              if (quote?.creditReturnNeedsReview && paidPayment) {
+                await recordSystemEvent({
+                  db: tx,
+                  strict: true,
+                  category: "BOOKING",
+                  severity: "WARN",
+                  message: `Credit seat ${paidPayment.id} needs a partial credit return`,
+                  context: {
+                    paymentId: paidPayment.id,
+                    appointmentId,
+                    sessionsTotal: bookingCtx?.sessionsTotal,
+                    sessionsCompleted: bookingCtx?.sessionsCompleted,
+                  },
+                  correlationId: `partial-credit:${paidPayment.id}`,
+                });
+              }
+              // With no refund to cascade, the subscription's kept tranches
+              // start their hold in this commit. A plan whose credit return is
+              // pending review keeps them unheld until ops returns the credit
+              // or closes the return; either stamps them.
+              if (
+                !owed &&
+                paidPayment &&
+                appointment.subscription &&
+                !quote?.creditReturnNeedsReview
+              ) {
+                await stampTranchesOnCancel(tx, {
+                  paymentId: paidPayment.id,
+                  now: cancellationData.cancelledAt,
+                });
+              }
               if (
                 isExpertSideCancel &&
                 hostProfileId &&
@@ -1225,26 +1199,33 @@ export async function POST(
             refundablePaise: paidPayment.refundablePaise,
             grossPaise: paidPayment.amountPaise,
           })
-        : {
-            // Two different facts, and the buyer is owed different words for
-            // each: the policy tier is genuinely zero, or the tier is positive
-            // but nothing is left to give back.
-            amountRefundedPaise: 0,
-            refundPct: quote.refundPct,
-            status:
-              quote.refundPct > 0 && paidPayment.refundablePaise <= 0
-                ? "NOTHING_REFUNDABLE"
-                : "POLICY_ZERO",
-          };
+        : quote.creditReturnNeedsReview
+          ? {
+              amountRefundedPaise: 0,
+              refundPct: quote.refundPct,
+              status: "PENDING",
+              requiresManualReview: true,
+              rail: "CREDITS",
+            }
+          : {
+              // Two different facts, and the buyer is owed different words for
+              // each: the policy tier is genuinely zero, or the tier is positive
+              // but nothing is left to give back.
+              amountRefundedPaise: 0,
+              refundPct: quote.refundPct,
+              status:
+                quote.refundPct > 0 && paidPayment.refundablePaise <= 0
+                  ? "NOTHING_REFUNDABLE"
+                  : "POLICY_ZERO",
+            };
 
-      // Stamp remaining subscription tranches AFTER the refund
+      // A refunded subscription stamps its remaining tranches AFTER the refund,
       // so allocateCycleClawback sees holdUntil: null (rank 0) on undelivered
-      // cycles, and a failed/pending refund does not release them for payout.
+      // cycles and a failed or pending refund does not release them for payout.
       if (
+        owed &&
         appointment.subscription &&
-        (refund.status === "REFUNDED" ||
-          refund.status === "POLICY_ZERO" ||
-          refund.status === "NOTHING_REFUNDABLE")
+        (refund.status === "REFUNDED" || refund.status === "NOTHING_REFUNDABLE")
       ) {
         try {
           await stampTranchesOnCancel(prisma, {
@@ -1440,7 +1421,7 @@ export async function POST(
 
     // Log cancellation activity for consultant dashboard (awaited — DB write
     // that should not be dropped in serverless; logActivity swallows errors)
-    const actor = {
+    const activityActor = {
       id: session.user.id,
       name: session.user.name || "User",
       image: session.user.image,
@@ -1462,7 +1443,7 @@ export async function POST(
         await logConsultationCancelled(
           cpId,
           appointment.consultation.id,
-          actor,
+          activityActor,
           planTitle || "Consultation",
           cancelledBy,
         );
@@ -1474,7 +1455,7 @@ export async function POST(
         await logSubscriptionCancelled(
           cpId,
           appointment.subscription.id,
-          actor,
+          activityActor,
           planTitle || "Subscription",
           cancelledBy,
         );
@@ -1483,6 +1464,13 @@ export async function POST(
 
     return NextResponse.json({ ...result, refund, eventRefund });
   } catch (error) {
+    if (isRefusal(error)) {
+      await recordRefundNeedsSupport(error);
+      return NextResponse.json(
+        { error: error.userMessage, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     if (error instanceof RefundQuoteChangedError) {
       return NextResponse.json(
         {

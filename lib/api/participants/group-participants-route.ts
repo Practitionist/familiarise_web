@@ -13,6 +13,8 @@ import {
 import { leaveEventSeat } from "@/lib/booking/seat-leave";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { isRefusal } from "@/lib/errors/refusal";
+import { recordRefundNeedsSupport } from "@/lib/payments/operations/refund-owed";
 import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import {
@@ -421,10 +423,18 @@ export async function handleGroupParticipantDelete(
       isSelfLeave,
       exitMode: searchParams.get("mode") === "exit",
     }).catch((error: unknown) => {
-      if (error instanceof BookingRuleError) return error;
+      if (error instanceof BookingRuleError || isRefusal(error)) return error;
       throw error;
     });
     if (left instanceof BookingRuleError) return bookingRuleResponse(left);
+    // Another door's refund still owed on the seat: nothing was released.
+    if (isRefusal(left)) {
+      await recordRefundNeedsSupport(left);
+      return NextResponse.json(
+        { error: left.userMessage, code: left.code },
+        { status: left.httpStatus },
+      );
+    }
 
     if (!left) {
       return NextResponse.json({ removed: false, refund: null });
