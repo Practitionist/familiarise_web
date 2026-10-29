@@ -29,6 +29,8 @@ export async function recordExpertStrike(
     cause: ExpertMissCause;
     appointmentId: string;
     organizationId?: string | null;
+    /** The judged session, when the strike is about one particular occurrence. */
+    occurrenceId?: string;
   },
 ): Promise<boolean> {
   if (args.cause === "PLATFORM_VOID") return false;
@@ -42,6 +44,7 @@ export async function recordExpertStrike(
         strike: args.cause,
         consultantProfileId: args.consultantProfileId,
         appointmentId: args.appointmentId,
+        ...(args.occurrenceId ? { occurrenceId: args.occurrenceId } : {}),
       },
       correlationId: expertReliabilityCorrelationId(args.consultantProfileId),
     },
@@ -57,26 +60,37 @@ type StrikeReader = Pick<
 /** Strike rows read per call; an expert past this many is flagged regardless. */
 const STRIKE_READ_CAP = 2_000;
 const INCIDENT_LOOKBACK_MS = 7 * 86_400_000;
-const strikeContextSchema = z.object({ appointmentId: z.string() });
+const strikeContextSchema = z.object({
+  appointmentId: z.string(),
+  occurrenceId: z.string().optional(),
+});
+type StrikeContext = z.infer<typeof strikeContextSchema>;
 
-const appointmentIdOf = (context: Prisma.JsonValue): string | null => {
+const strikeContextOf = (context: Prisma.JsonValue): StrikeContext | null => {
   const parsed = strikeContextSchema.safeParse(context);
-  return parsed.success ? parsed.data.appointmentId : null;
+  return parsed.success ? parsed.data : null;
 };
 
-/** Appointments with a session inside a declared incident: their strikes never count. */
-async function incidentAppointmentIds(
+type IncidentWindow = { startsAt: Date; endsAt: Date };
+
+async function incidentWindows(
   db: StrikeReader,
-  appointmentIds: string[],
   since: Date,
-): Promise<Set<string>> {
-  if (appointmentIds.length === 0) return new Set();
-  const incidents = await db.platformIncident.findMany({
+): Promise<IncidentWindow[]> {
+  return db.platformIncident.findMany({
     where: { endsAt: { gt: new Date(since.getTime() - INCIDENT_LOOKBACK_MS) } },
     select: { startsAt: true, endsAt: true },
     take: 200,
   });
-  if (incidents.length === 0) return new Set();
+}
+
+/** Appointments with a session inside a declared incident: their unscoped strikes never count. */
+async function incidentAppointmentIds(
+  db: StrikeReader,
+  appointmentIds: string[],
+  incidents: IncidentWindow[],
+): Promise<Set<string>> {
+  if (appointmentIds.length === 0 || incidents.length === 0) return new Set();
   const rows = await db.appointmentOccurrence.findMany({
     where: {
       appointmentId: { in: appointmentIds },
@@ -91,20 +105,57 @@ async function incidentAppointmentIds(
   return new Set(rows.map((r) => r.appointmentId));
 }
 
+/** Occurrences that themselves overlap a declared incident: their strikes never count. */
+async function incidentOccurrenceIds(
+  db: StrikeReader,
+  occurrenceIds: string[],
+  incidents: IncidentWindow[],
+): Promise<Set<string>> {
+  if (occurrenceIds.length === 0 || incidents.length === 0) return new Set();
+  const rows = await db.appointmentOccurrence.findMany({
+    where: {
+      id: { in: occurrenceIds },
+      OR: incidents.map((w) => ({
+        startsAt: { lt: w.endsAt },
+        endsAt: { gt: w.startsAt },
+      })),
+    },
+    select: { id: true },
+  });
+  return new Set(rows.map((r) => r.id));
+}
+
 /** The strikes in the window, less those on a session a declared incident voided. */
 async function countableStrikes<R extends { context: Prisma.JsonValue }>(
   db: StrikeReader,
   rows: R[],
   since: Date,
 ): Promise<R[]> {
-  const ids = [
-    ...new Set(rows.flatMap((r) => appointmentIdOf(r.context) ?? [])),
+  const contexts = rows.map((r) => strikeContextOf(r.context));
+  const appointmentIds = [
+    ...new Set(contexts.flatMap((c) => (c ? [c.appointmentId] : []))),
   ];
-  const covered = await incidentAppointmentIds(db, ids, since);
-  if (covered.size === 0) return rows;
-  return rows.filter((r) => {
-    const id = appointmentIdOf(r.context);
-    return !id || !covered.has(id);
+  const occurrenceIds = [
+    ...new Set(
+      contexts.flatMap((c) => (c?.occurrenceId ? [c.occurrenceId] : [])),
+    ),
+  ];
+  if (appointmentIds.length === 0 && occurrenceIds.length === 0) return rows;
+  const incidents = await incidentWindows(db, since);
+  if (incidents.length === 0) return rows;
+  const [coveredAppointments, coveredOccurrences] = await Promise.all([
+    incidentAppointmentIds(db, appointmentIds, incidents),
+    incidentOccurrenceIds(db, occurrenceIds, incidents),
+  ]);
+  if (coveredAppointments.size === 0 && coveredOccurrences.size === 0) {
+    return rows;
+  }
+  return rows.filter((_, i) => {
+    const context = contexts[i];
+    if (!context) return true;
+    return context.occurrenceId
+      ? !coveredOccurrences.has(context.occurrenceId)
+      : !coveredAppointments.has(context.appointmentId);
   });
 }
 

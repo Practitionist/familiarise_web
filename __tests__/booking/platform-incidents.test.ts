@@ -460,12 +460,59 @@ describe("readers that must count incident refunds and skip incident strikes", (
         findMany: jest.fn(async () => [{ startsAt: at(0), endsAt: at(60) }]),
       },
       appointmentOccurrence: {
-        findMany: jest.fn(async () => [{ appointmentId: "b" }]),
+        findMany: jest.fn(
+          async ({ where }: { where: Record<string, unknown> }) =>
+            "id" in where ? [] : [{ appointmentId: "b" }],
+        ),
       },
     };
     await expect(
       countExpertStrikes("cp-1", at(-60), { db: strikeDb as never }),
     ).resolves.toBe(2);
+  });
+
+  it("counts a rebooked-session strike when only the appointment's other occurrence overlapped", async () => {
+    const strikeDb = {
+      systemEvent: {
+        findMany: jest.fn(async () => [
+          { context: { appointmentId: "a", occurrenceId: "occ-new" } },
+        ]),
+      },
+      platformIncident: {
+        findMany: jest.fn(async () => [{ startsAt: at(0), endsAt: at(60) }]),
+      },
+      appointmentOccurrence: {
+        findMany: jest.fn(
+          async ({ where }: { where: Record<string, unknown> }) =>
+            "id" in where ? [] : [{ appointmentId: "a" }],
+        ),
+      },
+    };
+    await expect(
+      countExpertStrikes("cp-1", at(-60), { db: strikeDb as never }),
+    ).resolves.toBe(1);
+  });
+
+  it("drops a strike whose own rebooked occurrence overlapped the incident", async () => {
+    const strikeDb = {
+      systemEvent: {
+        findMany: jest.fn(async () => [
+          { context: { appointmentId: "a", occurrenceId: "occ-new" } },
+        ]),
+      },
+      platformIncident: {
+        findMany: jest.fn(async () => [{ startsAt: at(0), endsAt: at(60) }]),
+      },
+      appointmentOccurrence: {
+        findMany: jest.fn(
+          async ({ where }: { where: Record<string, unknown> }) =>
+            "id" in where ? [{ id: "occ-new" }] : [{ appointmentId: "a" }],
+        ),
+      },
+    };
+    await expect(
+      countExpertStrikes("cp-1", at(-60), { db: strikeDb as never }),
+    ).resolves.toBe(0);
   });
 
   it("suggests only an hour clearly above the weekly baseline", () => {

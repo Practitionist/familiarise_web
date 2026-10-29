@@ -152,9 +152,11 @@ function consultation(
       ],
       occurrences: [
         {
+          id: "occ-1",
           startsAt: minutesAgo(endedMinutesAgo + 60),
           endsAt: minutesAgo(endedMinutesAgo),
           completionStatus,
+          outcome: null,
           isTentative: false,
           deletedAt: null,
           presences: attendees.map((userId) => ({

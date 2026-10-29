@@ -296,6 +296,21 @@ describe("expert reliability strikes", () => {
     });
   });
 
+  it("records the judged occurrence on a no-show strike when one is supplied", async () => {
+    const create = jest.fn(async () => ({}));
+    await recordExpertStrike({ systemEvent: { create } } as never, {
+      consultantProfileId: "cp-1",
+      cause: "CONSULTANT_NO_SHOW",
+      appointmentId: "appt-1",
+      occurrenceId: "occ-new",
+    });
+    expect(create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        context: expect.objectContaining({ occurrenceId: "occ-new" }),
+      }),
+    });
+  });
+
   it("charges strikes, not consultee cancels, against the completion rate", () => {
     const counts = [
       { completionStatus: "COMPLETED", outcome: "HELD", _count: 8 },

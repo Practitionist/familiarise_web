@@ -53,7 +53,7 @@ import {
   type OutageWindow,
 } from "@/lib/booking/session-outcome";
 import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 
@@ -107,15 +107,33 @@ export async function detectConsultantNoShows(opts?: {
 // paid, whose slots have all ended past the grace window and where a
 // Meeting actually happened (the call took place — a precondition for
 // "the consultee showed up but the consultant didn't").
-// #1834 — a session the outcome sweep decided or parked for ops (D2) is no
-// longer this job's to cancel and refund; cohort and CAS both exclude it.
-const DECIDED_OR_PARKED = {
-  deletedAt: null,
-  OR: [
-    { outcome: { not: null } },
-    { completionStatus: OccurrenceCompletionStatus.UNVERIFIED },
-  ],
+// Only a live, undecided SCHEDULED slot is this job's to judge: a decided or
+// parked session is not, and neither is an incident-voided one.
+const JUDGEABLE_SLOT = {
+  ...LIVE_SLOT_WHERE,
+  completionStatus: "SCHEDULED",
+  outcome: null,
+  isTentative: false,
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+function isJudgeableOccurrence(
+  occurrence: {
+    deletedAt: Date | null;
+    completionStatus: OccurrenceCompletionStatus;
+    outcome: OccurrenceOutcome | null;
+    isTentative: boolean;
+    endsAt: Date;
+  },
+  graceCutoff: Date,
+): boolean {
+  return (
+    occurrence.deletedAt === null &&
+    occurrence.completionStatus === "SCHEDULED" &&
+    occurrence.outcome === null &&
+    !occurrence.isTentative &&
+    occurrence.endsAt.getTime() < graceCutoff.getTime()
+  );
+}
 
 function findNoShowCandidates(
   graceCutoff: Date,
@@ -143,10 +161,10 @@ function findNoShowCandidates(
         occurrences: {
           every: { endsAt: { lt: graceCutoff } },
           some: {
+            ...JUDGEABLE_SLOT,
             endsAt: { lt: graceCutoff },
             meeting: { isNot: null },
           },
-          none: DECIDED_OR_PARKED,
         },
       },
     },
@@ -195,6 +213,10 @@ type NoShowParty = {
   consultantUserId: string;
   consulteeUserId: string;
   appointmentId: string;
+  occurrenceIds: string[];
+  /** The judged session that was HOST_ABSENT; the strike is scoped to it. */
+  strikeOccurrenceId: string;
+  startsAt: Date;
 };
 type PaidPayment = NonNullable<
   NoShowCandidate["appointment"]
@@ -209,6 +231,7 @@ type PaidPayment = NonNullable<
 function evaluateConsultantNoShow(
   consultation: NoShowCandidate,
   outages: OutageWindow[],
+  graceCutoff: Date,
 ): NoShowParty | null {
   const consultantUserId =
     consultation.consultationPlan?.consultantProfile?.userId;
@@ -221,25 +244,39 @@ function evaluateConsultantNoShow(
     return null;
   }
 
-  const outcomes = (consultation.appointment?.occurrences ?? [])
-    .filter((o) => !isDeadOccurrence(o))
-    .map(
-      (o) =>
-        classifySessionOutcome({
-          startsAt: o.startsAt,
-          endsAt: o.endsAt,
-          hostUserIds: [consultantUserId],
-          intervals: o.presences,
-          meeting: o.meeting,
-          // Stream corroboration is its own refusal below.
-          report: null,
-          maintenanceWindows: outages,
-        }).outcome,
-    );
+  const judged = (consultation.appointment?.occurrences ?? []).filter((o) =>
+    isJudgeableOccurrence(o, graceCutoff),
+  );
+  if (judged.length === 0) return null;
+
+  const outcomes = judged.map(
+    (o) =>
+      classifySessionOutcome({
+        startsAt: o.startsAt,
+        endsAt: o.endsAt,
+        hostUserIds: [consultantUserId],
+        intervals: o.presences,
+        meeting: o.meeting,
+        // Stream corroboration is its own refusal below.
+        report: null,
+        maintenanceWindows: outages,
+      }).outcome,
+  );
   const hostNeverPresent = outcomes.every((o) => HOST_NEVER_PRESENT.has(o));
   if (!outcomes.includes("HOST_ABSENT") || !hostNeverPresent) return null;
+  const strikeOccurrenceId = judged.find(
+    (_, i) => outcomes[i] === "HOST_ABSENT",
+  )?.id;
+  if (!strikeOccurrenceId) return null;
 
-  return { consultantUserId, consulteeUserId, appointmentId };
+  return {
+    consultantUserId,
+    consulteeUserId,
+    appointmentId,
+    occurrenceIds: judged.map((o) => o.id),
+    strikeOccurrenceId,
+    startsAt: judged[0].startsAt,
+  };
 }
 
 const HOST_NEVER_PRESENT = new Set<OccurrenceOutcome>([
@@ -270,8 +307,10 @@ const HOST_NEVER_PRESENT = new Set<OccurrenceOutcome>([
 export async function refusalFromStreamEvidence(
   consultation: NoShowCandidate,
   lookup: PresenceLookup = makePresenceLookup(),
+  occurrenceIds?: readonly string[],
 ): Promise<string | null> {
   const callIds = (consultation.appointment?.occurrences ?? [])
+    .filter((slot) => !occurrenceIds || occurrenceIds.includes(slot.id))
     .map((slot) => slot.meeting?.streamCallId)
     .filter((id): id is string => !!id);
 
@@ -334,11 +373,13 @@ type PresenceLookup = ReturnType<typeof makePresenceLookup>;
 // query only reads APPROVED/SCHEDULED, so once flipped a later run (or the
 // auto-complete cron) cannot re-process it. A concurrent cancel landing here wins
 // and this returns false → skip. On a successful claim we also reflect the
-// no-show on the slots (no NO_SHOW slot status exists — schema frozen, #471 —
-// CANCELLED is the closest; only undecided SCHEDULED slots move, #1834).
+// no-show on the judged slots (no NO_SHOW slot status exists — schema frozen,
+// #471 — CANCELLED is the closest; only undecided SCHEDULED slots move).
 async function claimConsultantNoShow(
   consultationId: string,
   appointmentId: string,
+  occurrenceIds: string[],
+  strikeOccurrenceId: string,
   owed: RefundOwedMarker | null,
   strike: { consultantProfileId: string; organizationId: string | null },
   failures: RunFailureReporter,
@@ -351,7 +392,11 @@ async function claimConsultantNoShow(
       await transitionConsultationRequest(tx, {
         where: {
           id: consultationId,
-          appointment: { occurrences: { none: DECIDED_OR_PARKED } },
+          appointment: {
+            occurrences: {
+              some: { id: { in: occurrenceIds }, ...JUDGEABLE_SLOT },
+            },
+          },
         },
         to: AppointmentStatus.CANCELLED,
         fromIn: CANCELLABLE_FROM,
@@ -367,8 +412,8 @@ async function claimConsultantNoShow(
 
       // #1583 A-P0-05 — through the helper, tombstoned, with a history row;
       // the from-set is the one the raw updateMany carried.
-      await transitionOccurrenceCompletion(tx, {
-        where: { appointmentId, deletedAt: null, outcome: null },
+      const moved = await transitionOccurrenceCompletion(tx, {
+        where: { id: { in: occurrenceIds }, ...JUDGEABLE_SLOT },
         to: OccurrenceCompletionStatus.CANCELLED,
         fromIn: [OccurrenceCompletionStatus.SCHEDULED],
         data: { deletedAt: new Date() },
@@ -379,12 +424,21 @@ async function claimConsultantNoShow(
         actorUserId: null,
         reason: "consultant no-show",
       });
+      // Every judged session must move; a partial release is a lost race, so
+      // roll the whole claim back rather than cancel the booking halfway.
+      if (moved !== occurrenceIds.length) {
+        throw new IllegalTransitionError(
+          "AppointmentOccurrence",
+          OccurrenceCompletionStatus.CANCELLED,
+        );
+      }
       // The full refund the no-show owes commits with the claim.
       if (owed) await stampRefundOwed(tx, owed);
       await recordExpertStrike(tx, {
         ...strike,
         cause: "CONSULTANT_NO_SHOW",
         appointmentId,
+        occurrenceId: strikeOccurrenceId,
       });
     });
   } catch (error) {
@@ -521,7 +575,7 @@ async function notifyNoShowParties(
     {
       appointmentId: party.appointmentId,
       userIds: [party.consultantUserId, party.consulteeUserId],
-      startsAt: consultation.appointment?.occurrences?.[0]?.startsAt ?? null,
+      startsAt: party.startsAt,
       cancelledBy: "Familiarise",
       reason: "Consultant did not attend the scheduled session.",
       refundText:
@@ -571,17 +625,22 @@ interface NoShowTally {
 async function handleNoShowCandidate(
   consultation: NoShowCandidate,
   outages: OutageWindow[],
+  graceCutoff: Date,
   presence: PresenceLookup,
   tally: NoShowTally,
 ): Promise<void> {
   try {
-    const party = evaluateConsultantNoShow(consultation, outages);
+    const party = evaluateConsultantNoShow(consultation, outages, graceCutoff);
     if (!party) return;
 
     // Corroborate against Stream before moving money. Our attendance rows are
     // webhook-derived and each party's arrives separately, so the predicate
     // above can be satisfied by a LOST DELIVERY rather than a real absence.
-    const refusal = await refusalFromStreamEvidence(consultation, presence);
+    const refusal = await refusalFromStreamEvidence(
+      consultation,
+      presence,
+      party.occurrenceIds,
+    );
     if (refusal) {
       tally.contradicted++;
       console.log(
@@ -602,6 +661,8 @@ async function handleNoShowCandidate(
     const claimed = await claimConsultantNoShow(
       consultation.id,
       party.appointmentId,
+      party.occurrenceIds,
+      party.strikeOccurrenceId,
       paid ? noShowRefundOwed(paid.id) : null,
       {
         consultantProfileId: consultation.consultationPlan.consultantProfileId,
@@ -681,7 +742,13 @@ async function detectConsultantNoShowsUnlocked(
 
       for (const consultation of candidates) {
         if (pastDeadline()) break;
-        await handleNoShowCandidate(consultation, outages, presence, tally);
+        await handleNoShowCandidate(
+          consultation,
+          outages,
+          graceCutoff,
+          presence,
+          tally,
+        );
       }
 
       if (candidates.length < maxCandidates) break;
