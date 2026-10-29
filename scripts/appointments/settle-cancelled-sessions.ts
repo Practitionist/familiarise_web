@@ -120,7 +120,7 @@ const PLAN_LIVE_STATUSES: AppointmentStatus[] = [
 export async function settleCancelledSessions(
   opts: { limit?: number } = {},
 ): Promise<SettleCancelledSessionsResult> {
-  return withCronLock(JOB_NAME, { failMode: "closed" }, () =>
+  return withCronLock("settle-cancelled-sessions", { failMode: "closed" }, () =>
     settleUnlocked(opts.limit ?? DEFAULT_LIMIT),
   );
 }
@@ -268,33 +268,37 @@ async function settleAndStamp(
 export async function settleCancelledSessionForOne(
   occurrenceId: string,
 ): Promise<SettleCancelledSessionsResult> {
-  return withCronLock(JOB_NAME, { failMode: "closed" }, async () => {
-    const now = new Date();
-    // This run reads no plans, so it hands the scheduled run's cursor on.
-    const result: SettleCancelledSessionsResult = {
-      success: true,
-      scanned: 0,
-      plansScanned: 0,
-      plansWaiting: 0,
-      stamped: 0,
-      refunded: 0,
-      errors: 0,
-      timestamp: now.toISOString(),
-      checkpoint: await readJobCheckpoint(JOB_NAME),
-    };
-    const session = await prisma.appointmentOccurrence.findFirst({
-      where: { id: occurrenceId, ...dueWhere(now) },
-      select: DUE_SELECT,
-    });
-    if (!session) return result;
-    result.scanned = 1;
-    try {
-      await settleAndStamp(session, result);
-    } finally {
-      runFailures.flush();
-    }
-    return result;
-  });
+  return withCronLock(
+    "settle-cancelled-sessions",
+    { failMode: "closed" },
+    async () => {
+      const now = new Date();
+      // This run reads no plans, so it hands the scheduled run's cursor on.
+      const result: SettleCancelledSessionsResult = {
+        success: true,
+        scanned: 0,
+        plansScanned: 0,
+        plansWaiting: 0,
+        stamped: 0,
+        refunded: 0,
+        errors: 0,
+        timestamp: now.toISOString(),
+        checkpoint: await readJobCheckpoint(JOB_NAME),
+      };
+      const session = await prisma.appointmentOccurrence.findFirst({
+        where: { id: occurrenceId, ...dueWhere(now) },
+        select: DUE_SELECT,
+      });
+      if (!session) return result;
+      result.scanned = 1;
+      try {
+        await settleAndStamp(session, result);
+      } finally {
+        runFailures.flush();
+      }
+      return result;
+    },
+  );
 }
 
 /** True when the session is made up or every seat that held it is refunded. */
