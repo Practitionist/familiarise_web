@@ -4126,8 +4126,9 @@ enum OfferingPlanStatus {
 model Subscription {
   id                       String    @id @default(cuid())
   schedulingPeriodStartsAt DateTime  @db.Timestamptz
-  /// End of the first cycle at purchase (exclusive); informational only.
-  /// The plan end is `planEndsAt`, read through `subscriptionPlanEnd`.
+  /// First-cycle end at purchase (exclusive); informational. Never read for
+  /// expiry or the live cycle: use subscriptionPlanEnd() and
+  /// subscriptionEntitlement().cycle.
   schedulingPeriodEndsAt   DateTime  @db.Timestamptz
   /// Fixed plan end (exclusive): start + durationInMonths on the consultant's
   /// calendar, month-end clamped. Null rows derive it from the start.

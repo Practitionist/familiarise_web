@@ -141,7 +141,7 @@ export function lastInstantBefore(end: Date): Date {
  * clamped to the month's last day (Jan 31 + 1 → Feb 28/29), exclusive. */
 export function planEndOf(start: Date, months: number, tz: string): Date {
   // An unreadable start has no end; callers treat an invalid Date as "open".
-  if (!Number.isFinite(start.getTime())) return new Date(NaN);
+  if (!Number.isFinite(start.getTime())) return new Date(Number.NaN);
   const wall = formatInTimeZone(start, tz, "yyyy-MM-dd'T'HH:mm:ss.SSS");
   const [y, m, d] = wall.slice(0, 10).split("-").map(Number);
   const monthIndex = m - 1 + Math.max(1, Math.trunc(months));

@@ -79,6 +79,12 @@ interface RequestedSlotsDialogProps {
    */
   confirmation?: RequestedSlotsConfirmation | null;
   /**
+   * The server refused the last confirm but the request is still allocatable
+   * (a time taken, a busy lock, a co-host clash): its sentence shows here and
+   * each new `attempt` re-checks the times.
+   */
+  refusal?: { message: string; attempt: number } | null;
+  /**
    * A reschedule with no answerable consultee proposal cannot confirm its
    * stored times: those rows still carry the times being moved AWAY from
    * (the reschedule route never rewrites startsAt), so the server's
@@ -189,6 +195,7 @@ export function RequestedSlotsDialog({
   schedulingPeriod,
   confirming = false,
   confirmation = null,
+  refusal = null,
   rescheduleNeedsAllocator = false,
   allocateHref,
   appointmentHrefFor,
@@ -301,12 +308,20 @@ export function RequestedSlotsDialog({
     }
   }, [requestType, requestedSlots, requestId, schedulingPeriod]);
 
-  // Validate on open — not while the success state is showing.
+  // Validate on open and after a refused confirm — not while the success state is showing.
+  const refusalAttempt = refusal?.attempt ?? 0;
   useEffect(() => {
     if (open && !confirmation) {
       validateSlots();
     }
-  }, [open, confirmation, requestId, requestedSlots, validateSlots]);
+  }, [
+    open,
+    confirmation,
+    requestId,
+    requestedSlots,
+    validateSlots,
+    refusalAttempt,
+  ]);
 
   const verdicts = requestedSlots.map((slot) =>
     verdictFor(slot, validationResult),
@@ -436,6 +451,14 @@ export function RequestedSlotsDialog({
 
     return (
       <div className="flex flex-col gap-3">
+        {refusal && (
+          <p
+            role="alert"
+            className="rounded-md bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-100"
+          >
+            {refusal.message}
+          </p>
+        )}
         {/* One sentence, not a 2×2 of counters (#1703 F5). */}
         <p className="text-sm font-medium" aria-live="polite">
           {summarizeVerdicts(verdicts)}

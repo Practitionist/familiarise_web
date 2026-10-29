@@ -10,9 +10,10 @@
  * APPROVED_PENDING_PAYMENT (the needs-you predicates), subscriptions whose
  * live cycle is finished, trials in PENDING / AWAITING_PAYMENT, and unpaid
  * direct checkouts still inside their pay window (listed, never counted).
- * Chips narrow the sources server-side. Cursor sorts page in SQL by the
- * request clock; ranked sorts page a bounded window sorted here, because
- * bucket and money are derived, not stored.
+ * Chips narrow the sources server-side. A time sort over one source pages in
+ * SQL by the request clock; every other view pages a bounded window sorted
+ * here, because bucket and money are derived, not stored, and rows from
+ * several sources cannot be merged at the column's precision.
  *
  * Auth stays with the caller: the route checks the session against
  * `consultantProfileId`, the page runs `requirePersonalProfileAccess`.
@@ -70,6 +71,7 @@ import {
 } from "@/lib/data/needs-you";
 import { BUYER_PAYMENT_DISPLAY_SELECT } from "@/lib/data/payments-select";
 import { toPlain } from "@/lib/data/serialize";
+import { exactKeysetBand } from "@/lib/db/exact-keyset";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 
 export interface ReadRequestsInboxArgs {
@@ -210,58 +212,60 @@ interface ReadWindow {
 /** `(requestedAt, id)` in one direction: a total order, so paging is stable. */
 const orderOf = (dir: Prisma.SortOrder) => [{ requestedAt: dir }, { id: dir }];
 
-/**
- * Rows past the cursor in the window's direction. The cursor holds whole
- * milliseconds while the column holds microseconds, so the cursor's
- * millisecond is one tie band ordered by id.
- */
-function keysetWhere(dir: Prisma.SortOrder, after: InboxCursor | null) {
+/** Rows past the cursor row in the window's direction, at the column's microseconds. */
+async function keysetWhere(
+  table: "Consultation" | "Subscription" | "Trial",
+  dir: Prisma.SortOrder,
+  after: InboxCursor | null,
+) {
   if (!after) return {};
-  const { requestedAt, id } = after;
-  const nextMs = new Date(requestedAt.getTime() + 1);
-  const band = { gte: requestedAt, lt: nextMs };
-  return dir === "asc"
-    ? {
-        OR: [
-          { requestedAt: { gte: nextMs } },
-          { requestedAt: band, id: { gt: id } },
-        ],
-      }
-    : {
-        OR: [
-          { requestedAt: { lt: requestedAt } },
-          { requestedAt: band, id: { lt: id } },
-        ],
-      };
+  const band = await exactKeysetBand(table, dir, {
+    id: after.id,
+    at: after.requestedAt,
+  });
+  return {
+    OR: [
+      {
+        requestedAt:
+          dir === "asc" ? { gte: band.boundary } : { lt: band.boundary },
+      },
+      { id: { in: band.ids } },
+    ],
+  };
 }
 
 // Typed off the calls, not GetPayload: the read-path `$extends` hands money
 // back as `number`, which GetPayload still spells `bigint`.
-const findConsultations = (
+const findConsultations = async (
   where: Prisma.ConsultationWhereInput,
   w: ReadWindow,
 ) =>
   prisma.consultation.findMany({
     // No `deletedAt`: a request is retired by `status` + `cancelledAt`, both
     // written by the transition that closed it. See the Consultation model.
-    where: { AND: [where, keysetWhere(w.dir, w.after)] },
+    where: {
+      AND: [where, await keysetWhere("Consultation", w.dir, w.after)],
+    },
     select: CONSULTATION_SELECT,
     orderBy: orderOf(w.dir),
     take: w.take,
   });
-const findSubscriptions = (
+const findSubscriptions = async (
   where: Prisma.SubscriptionWhereInput,
   w: ReadWindow,
 ) =>
   prisma.subscription.findMany({
-    where: { AND: [where, keysetWhere(w.dir, w.after)], deletedAt: null },
+    where: {
+      AND: [where, await keysetWhere("Subscription", w.dir, w.after)],
+      deletedAt: null,
+    },
     select: SUBSCRIPTION_SELECT,
     orderBy: orderOf(w.dir),
     take: w.take,
   });
-const findTrials = (where: Prisma.TrialWhereInput, w: ReadWindow) =>
+const findTrials = async (where: Prisma.TrialWhereInput, w: ReadWindow) =>
   prisma.trial.findMany({
-    where: { AND: [where, keysetWhere(w.dir, w.after)] },
+    where: { AND: [where, await keysetWhere("Trial", w.dir, w.after)] },
     select: TRIAL_SELECT,
     orderBy: orderOf(w.dir),
     take: w.take,
@@ -835,7 +839,7 @@ function nextCycleSource(cp: string, scope: Scope, now: Date): InboxSource {
       ) {
         const batch: EntitlementRow[] = await prisma.subscription.findMany({
           where: {
-            AND: [where, keysetWhere("asc", after)],
+            AND: [where, await keysetWhere("Subscription", "asc", after)],
           },
           select: ENTITLEMENT_SELECT,
           orderBy: orderOf("asc"),
@@ -1005,16 +1009,6 @@ function planSources(
     : [];
 }
 
-/** Cursor order across sources: the same `(requestedAt, id)` the SQL used. */
-function byKey(dir: Prisma.SortOrder) {
-  const sign = dir === "asc" ? 1 : -1;
-  const idOrder = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-  return (a: InboxRowInput, b: InboxRowInput) =>
-    sign *
-    (toStampDate(a.requestedAt).getTime() -
-      toStampDate(b.requestedAt).getTime() || idOrder(a.id, b.id));
-}
-
 function bucketTotalsOf(rows: InboxRowInput[]): Record<InboxBucket, number> {
   const totals: Record<InboxBucket, number> = {
     "answer-today": 0,
@@ -1034,13 +1028,12 @@ export async function readRequestsInbox(
   const limit = args.limit ?? INBOX_DEFAULT_LIMIT;
   const cp = args.consultantProfileId;
   const sources = planSources(cp, scope, args.type, args.chip, now);
-  const window: ReadWindow = isCursorSort(args.sort)
-    ? {
-        dir: args.sort === "new" ? "desc" : "asc",
-        after: decodeInboxCursor(args.after),
-        take: limit + 1,
-      }
-    : { dir: "asc", after: null, take: INBOX_RANKED_WINDOW };
+  // One source pages in its own SQL order; several are merged in a window.
+  const cursorPaged = isCursorSort(args.sort) && sources.length === 1;
+  const dir: Prisma.SortOrder = args.sort === "new" ? "desc" : "asc";
+  const window: ReadWindow = cursorPaged
+    ? { dir, after: decodeInboxCursor(args.after), take: limit + 1 }
+    : { dir, after: null, take: INBOX_RANKED_WINDOW };
 
   // Tab labels count each type's default view with the sources it lists; the
   // default view's total adds the uncounted holds. Every count and read runs
@@ -1075,9 +1068,9 @@ export async function readRequestsInbox(
   await mapLimit(tasks, poolLimit(), (run) => run());
   const total = args.chip ? extra : counts[args.type] + extra;
 
-  if (isCursorSort(args.sort)) {
-    const merged = listed.sort(byKey(args.sort === "new" ? "desc" : "asc"));
-    const rows = merged.slice(0, limit);
+  if (cursorPaged) {
+    // Already in the source's SQL order; a JS re-sort would drop microseconds.
+    const rows = listed.slice(0, limit);
     const last = rows[rows.length - 1];
     return toPlain({
       rows,
@@ -1085,8 +1078,9 @@ export async function readRequestsInbox(
         total,
         limit,
         counts,
+        paging: "cursor",
         nextCursor:
-          merged.length > limit && last ? encodeInboxCursor(last) : null,
+          listed.length > limit && last ? encodeInboxCursor(last) : null,
         page: 1,
         windowSize: rows.length,
         bucketTotals: null,
@@ -1094,7 +1088,8 @@ export async function readRequestsInbox(
     });
   }
 
-  // Ranked: the oldest rows of each source are the nearest their clocks.
+  // Ranked: each source's window is its oldest rows (the nearest their
+  // clocks), or its newest for the newest-first sort.
   const ranked = sortInboxRows(listed, args.sort).slice(0, INBOX_RANKED_WINDOW);
   const pages = Math.max(1, Math.ceil(ranked.length / limit));
   const focusAt = args.focusId
@@ -1110,6 +1105,7 @@ export async function readRequestsInbox(
       total,
       limit,
       counts,
+      paging: "ranked",
       nextCursor: null,
       page,
       windowSize: ranked.length,

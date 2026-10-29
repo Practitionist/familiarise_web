@@ -967,7 +967,7 @@ export function UnifiedCalendar({
   // The visible week as local-noon calendar dates; the fetch window uses the same start.
   const weekDates = useMemo(() => {
     const start = startOfWeek(currentDate, { weekStartsOn });
-    return [...Array(7)].map((_, i) => {
+    return Array.from({ length: 7 }, (_, i) => {
       const day = addDays(start, i);
       return new Date(day.getFullYear(), day.getMonth(), day.getDate(), 12);
     });

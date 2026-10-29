@@ -56,24 +56,36 @@ export function hostBatchEntries(
   );
 }
 
+/** The held atoms could not be extended to cover the time a write is about to claim. */
+export class HostTimeNotRetainedError extends HostTimeHeldError {
+  constructor() {
+    super();
+    this.name = "HostTimeNotRetainedError";
+  }
+}
+
+const keepNothing = () => undefined;
+
 /**
  * Run `fn` holding every atom of `entries` (no wait: a held atom is a 409
  * schedule conflict). `renew` re-arms the batch at the top of each
- * Serializable attempt and throws when it was lost. `keepUntil` leaves the
- * batch held after `fn` until that instant, for time a write makes busy
- * without an occurrence row. Empty entries run `fn` unlocked.
+ * Serializable attempt and throws when it was lost. `retainUntil` extends the
+ * batch to `until` before the durable write it protects, throwing
+ * `HostTimeNotRetainedError` when it cannot; the returned `keep` leaves the
+ * batch held after `fn`. Without `keep` the batch unlocks, including when `fn`
+ * throws or its write loses. Empty entries run `fn` unlocked.
  */
 export async function withHostSlotBatch<T>(
   entries: readonly SlotBatchEntry[],
   fn: (
     renew: () => Promise<void>,
-    keepUntil: (until: Date) => Promise<void>,
+    retainUntil: (until: Date) => Promise<() => void>,
   ) => Promise<T>,
 ): Promise<T> {
   if (entries.length === 0)
     return fn(
-      async () => undefined,
-      async () => undefined,
+      () => Promise.resolve(),
+      () => Promise.resolve(keepNothing),
     );
   const outcome = await tryLockSlotBatch(entries, HOST_SLOT_BATCH_TTL_MS);
   if (!outcome.ok) throw new HostTimeHeldError();
@@ -88,7 +100,12 @@ export async function withHostSlotBatch<T>(
       },
       async (until) => {
         const ttl = until.getTime() - Date.now();
-        kept = ttl > 0 && (await extendSlotInterval(grant, ttl));
+        if (ttl <= 0 || !(await extendSlotInterval(grant, ttl))) {
+          throw new HostTimeNotRetainedError();
+        }
+        return () => {
+          kept = true;
+        };
       },
     );
   } finally {

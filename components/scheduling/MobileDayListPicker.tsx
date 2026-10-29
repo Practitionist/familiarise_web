@@ -12,8 +12,11 @@ import { X } from "lucide-react";
 import { useAvailabilityWindow } from "@/lib/scheduling/use-availability-window";
 import { useNowTick } from "@/hooks/use-now-tick";
 import {
+  DAY_LIST_DAYS,
   buildDayList,
+  dayListAnchor,
   dayListBounds,
+  dayListPageStart,
   pickConflict,
   pickLabel,
   stalePicks,
@@ -43,6 +46,8 @@ export interface MobileDayListPickerProps {
   allowedStart?: Date;
   /** Selectable window (inclusive end of the last session). */
   allowedEnd?: Date;
+  /** The session the picker opens on, when the surface has one. */
+  focusAt?: Date;
   /** Extra notice on top of the server's 15-min tooSoon. */
   minLeadHours?: number;
   /** Whole-session picks, ISO. */
@@ -58,10 +63,12 @@ function timesWord(count: number): string {
 }
 
 /**
- * The consultee's picker below `md`: a row of day chips over the next two
- * weeks and the session starts each day offers, read from the same grid
- * endpoint as the desktop heat map. The host's footer owns "Any time works"
- * and submit; this component only edits `value`.
+ * The consultee's picker below `md`: a row of day chips over two weeks and
+ * the session starts each day offers, read from the same grid endpoint as the
+ * desktop heat map. It opens on the latest of today, the allowed window's
+ * start and the focused session, and pages two weeks at a time up to the
+ * window's end. The host's footer owns "Any time works" and submit; this
+ * component only edits `value`, which survives paging.
  */
 export function MobileDayListPicker({
   consultantId,
@@ -74,6 +81,7 @@ export function MobileDayListPicker({
   timesNeeded,
   allowedStart,
   allowedEnd,
+  focusAt,
   minLeadHours,
   value,
   onChange,
@@ -81,7 +89,29 @@ export function MobileDayListPicker({
 }: Readonly<MobileDayListPickerProps>) {
   const now = useNowTick(60_000);
   const nowMs = now.getTime();
-  const bounds = dayListBounds(nowMs, zone);
+  const allowedStartMs = allowedStart?.getTime();
+  const allowedEndMs = allowedEnd?.getTime();
+  const anchorMs = dayListAnchor(
+    nowMs,
+    allowedStartMs,
+    allowedEndMs,
+    focusAt?.getTime(),
+  );
+  // Pages of two weeks from the anchor; never before today or the window's start.
+  const [page, setPage] = useState(0);
+  const floorStartMs = dayListPageStart(
+    Math.max(nowMs, allowedStartMs ?? nowMs),
+    zone,
+    0,
+  );
+  const fromMs = Math.max(
+    dayListPageStart(anchorMs, zone, page * DAY_LIST_DAYS),
+    floorStartMs,
+  );
+  const nextFromMs = dayListPageStart(fromMs, zone, DAY_LIST_DAYS);
+  const canPrev = fromMs > floorStartMs;
+  const canNext = allowedEndMs === undefined || nextFromMs < allowedEndMs;
+  const bounds = dayListBounds(fromMs, zone);
   const startIso = bounds.start.toISOString();
   const endIso = bounds.end.toISOString();
   const range = useMemo(
@@ -100,8 +130,6 @@ export function MobileDayListPicker({
     keepPrevious: true,
   });
 
-  const allowedStartMs = allowedStart?.getTime();
-  const allowedEndMs = allowedEnd?.getTime();
   const rules = useMemo<DayListRules>(
     () => ({
       zone,
@@ -116,13 +144,13 @@ export function MobileDayListPicker({
     [zone, sessionMinutes, nowMs, allowedStartMs, allowedEndMs, minLeadHours],
   );
   const days = useMemo(
-    () => (query.data ? buildDayList(query.data, rules) : []),
-    [query.data, rules],
+    () => (query.data ? buildDayList(query.data, rules, fromMs) : []),
+    [query.data, rules, fromMs],
   );
 
   // A poll that takes a pick paints it "Just taken" once, then drops it.
   const [announcement, setAnnouncement] = useState("");
-  const stale = query.data ? stalePicks(value, query.data, rules) : [];
+  const stale = query.data ? stalePicks(value, query.data, rules, fromMs) : [];
   const dropTaken = useCallback(
     (keys: string[]) => {
       const gone = value.filter((pick) => keys.includes(pick.startsAt));
@@ -226,6 +254,30 @@ export function MobileDayListPicker({
         </div>
       ) : (
         <>
+          <div className="flex items-center justify-between gap-2 text-sm">
+            <button
+              type="button"
+              disabled={!canPrev}
+              onClick={() => setPage((p) => p - 1)}
+              className="rounded-md border px-2.5 py-1.5 font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Previous 2 weeks
+            </button>
+            <span className="text-muted-foreground">
+              {days.length > 0
+                ? `${days[0].label} – ${days[days.length - 1].label}`
+                : null}
+            </span>
+            <button
+              type="button"
+              disabled={!canNext}
+              onClick={() => setPage((p) => p + 1)}
+              className="rounded-md border px-2.5 py-1.5 font-medium disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next 2 weeks
+            </button>
+          </div>
+
           <div
             role="radiogroup"
             aria-label="Day"
@@ -309,7 +361,9 @@ export function MobileDayListPicker({
             <p className="text-sm text-muted-foreground">
               {days.some((day) => day.starts.length > 0)
                 ? "No free times on this day. Pick another day."
-                : "No free times in the next two weeks."}
+                : canNext
+                  ? "No free times in these two weeks. Try the next two weeks."
+                  : "No free times in these two weeks."}
             </p>
           )}
 

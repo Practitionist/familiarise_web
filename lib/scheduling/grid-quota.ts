@@ -15,6 +15,7 @@ import type {
 } from "@/lib/booking/entitlement";
 import { formatDayLabel } from "@/lib/time/display";
 import { MAX_SUBSCRIPTION_SESSIONS_PER_DAY } from "@/utils/scheduling-engine/sessionCaps";
+import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 
 export interface GridQuota {
   unit: CycleUnit;
@@ -85,7 +86,7 @@ export function computeGridQuota(input: {
   const fullDays = [...perDay]
     .filter(([, count]) => count >= perDayCap)
     .map(([key]) => key)
-    .sort();
+    .sort(byCodeUnit);
 
   return {
     unit: cycle.unit,

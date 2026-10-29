@@ -40,11 +40,12 @@ export const INBOX_SORTS = [
 export type InboxSort = (typeof INBOX_SORTS)[number];
 
 /**
- * Sorts on the request clock page through SQL keyset cursors over every row;
- * the ranked sorts (priority, money) mix derived fields, so they page an
- * in-memory window of the most urgent rows instead.
+ * Sorts on the request clock page through SQL keyset cursors over every row
+ * when the view reads one source. The ranked sorts order by derived fields
+ * (bucket, money, the effective deadline), and several sources cannot be
+ * merged at the column's precision, so those page an in-memory window.
  */
-export const INBOX_CURSOR_SORTS = ["new", "old", "deadline"] as const;
+export const INBOX_CURSOR_SORTS = ["new", "old"] as const;
 export type InboxCursorSort = (typeof INBOX_CURSOR_SORTS)[number];
 export const isCursorSort = (sort: InboxSort): sort is InboxCursorSort =>
   (INBOX_CURSOR_SORTS as readonly string[]).includes(sort);
@@ -140,13 +141,15 @@ export interface InboxMeta {
   limit: number;
   /** Rows per type tab (the default cohort, no chip), for the tab labels. */
   counts: Record<InboxType, number>;
-  /** Cursor sorts: the cursor for the next page, null on the last one. */
+  /** "cursor": a time sort over one source, paged in SQL; otherwise a ranked window. */
+  paging: "cursor" | "ranked";
+  /** Cursor paging: the cursor for the next page, null on the last one. */
   nextCursor: string | null;
-  /** Ranked sorts: the page inside the window. Always 1 for cursor sorts. */
+  /** Ranked paging: the page inside the window. Always 1 for cursor paging. */
   page: number;
-  /** Ranked sorts: rows the window holds (≤ INBOX_RANKED_WINDOW). */
+  /** Ranked paging: rows the window holds (≤ INBOX_RANKED_WINDOW). */
   windowSize: number;
-  /** Ranked sorts: rows per bucket across the whole window, for the headers. */
+  /** Ranked paging: rows per bucket across the whole window, for the headers. */
   bucketTotals: Record<InboxBucket, number> | null;
 }
 

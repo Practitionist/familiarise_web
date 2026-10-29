@@ -964,7 +964,7 @@ export async function PATCH(request: NextRequest) {
                       // Optional: Add check for valid date parsing: !isNaN(classUpdateData.schedulingPeriodStartsAt?.getTime())
                       if (
                         classUpdateData.schedulingPeriodStartsAt &&
-                        isNaN(
+                        Number.isNaN(
                           classUpdateData.schedulingPeriodStartsAt.getTime(),
                         )
                       ) {

@@ -2,9 +2,10 @@
  * @jest-environment node
  */
 
-// Invariant: the time sorts page every request through a SQL keyset cursor
-// (no row lost or repeated past any scan size), totals are separate counts,
-// and the ranked sorts say when they show only the most urgent window.
+// Invariant: a time sort over one source pages every request through a SQL
+// keyset cursor (no row lost or repeated past any scan size), totals are
+// separate counts, and ranked windows (every multi-source view) say when
+// they show only part of the view.
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -12,6 +13,7 @@ jest.mock("../../lib/prisma", () => ({
     consultation: { findMany: jest.fn(), count: jest.fn() },
     subscription: { findMany: jest.fn(), count: jest.fn() },
     trial: { findMany: jest.fn(), count: jest.fn() },
+    $queryRaw: jest.fn(),
   },
 }));
 
@@ -34,35 +36,33 @@ const person = (id: string) => ({
 });
 
 /**
- * 205 PENDING requests, one a minute, the oldest 205 minutes ago; rows 40-60
- * share one millisecond (the column holds microseconds), so a page boundary
- * falls inside the tie.
+ * 205 PENDING and 205 REJECTED requests, one a minute, the oldest 205 minutes
+ * ago; rows 40-60 share one millisecond, so a page boundary falls inside it.
  */
-const ROWS = Array.from({ length: 205 }, (_, i) => ({
-  id: `c-${String(i).padStart(3, "0")}`,
-  status: "PENDING",
-  requestedAt: new Date(
-    NOW.getTime() - (205 - (i >= 40 && i <= 60 ? 40 : i)) * 60_000,
-  ),
-  bookingSource: "REQUEST_SUBMITTED",
-  requestNotes: null,
-  consultationPlan: {
-    id: "plan-c",
-    title: "Career call",
-    durationInHours: 1,
-    price: 100000,
-    priceCurrency: "INR",
-    consultantProfile: person(CP),
-  },
-  requestedBy: person(`ce-${i}`),
-  appointment: null,
-}));
+const cohort = (prefix: string, status: string) =>
+  Array.from({ length: 205 }, (_, i) => ({
+    id: `${prefix}-${String(i).padStart(3, "0")}`,
+    status,
+    requestedAt: new Date(
+      NOW.getTime() - (205 - (i >= 40 && i <= 60 ? 40 : i)) * 60_000,
+    ),
+    bookingSource: "REQUEST_SUBMITTED",
+    requestNotes: null,
+    consultationPlan: {
+      id: "plan-c",
+      title: "Career call",
+      durationInHours: 1,
+      price: 100000,
+      priceCurrency: "INR",
+      consultantProfile: person(CP),
+    },
+    requestedBy: person(`ce-${i}`),
+    appointment: null,
+  }));
+const ROWS = [...cohort("c", "PENDING"), ...cohort("r", "REJECTED")];
 
 type Keyset = {
-  OR?: [
-    { requestedAt: { gte?: Date; lt?: Date } },
-    { requestedAt: { gte: Date; lt: Date }; id: { gt?: string; lt?: string } },
-  ];
+  OR?: [{ requestedAt: { gte?: Date; lt?: Date } }, { id: { in: string[] } }];
 };
 type Args = {
   where: { AND?: [{ status?: unknown }, Keyset] };
@@ -89,11 +89,7 @@ function findMany({ where, orderBy, take }: Args) {
         const past = outer.requestedAt.gte
           ? t >= outer.requestedAt.gte.getTime()
           : t < outer.requestedAt.lt!.getTime();
-        if (past) return true;
-        const inBand =
-          t >= band.requestedAt.gte.getTime() &&
-          t < band.requestedAt.lt.getTime();
-        return inBand && (band.id.gt ? r.id > band.id.gt : r.id < band.id.lt!);
+        return past || band.id.in.includes(r.id);
       })
       .sort(
         (a, b) =>
@@ -105,14 +101,33 @@ function findMany({ where, orderBy, take }: Args) {
   );
 }
 
+/** The cursor row's millisecond and the rows in it on the far side of the row. */
+function queryRaw(sql: { sql: string; values: unknown[] }) {
+  const cursor = ROWS.find((r) => r.id === sql.values[0]);
+  if (!cursor) return Promise.resolve([]);
+  const ms = cursor.requestedAt.getTime();
+  const desc = sql.sql.includes(") < (");
+  return Promise.resolve([
+    {
+      start: new Date(ms),
+      ids: ROWS.filter(
+        (r) =>
+          r.requestedAt.getTime() === ms &&
+          (desc ? r.id < cursor.id : r.id > cursor.id),
+      ).map((r) => r.id),
+    },
+  ]);
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
+  (m.$queryRaw as unknown as jest.Mock).mockImplementation(queryRaw);
   m.consultation.findMany.mockImplementation(findMany);
   m.consultation.count.mockImplementation(({ where }: Args) =>
     Promise.resolve(
-      JSON.stringify(where).includes('"status":"PENDING"') &&
+      /"status":"(PENDING|REJECTED)"/.test(JSON.stringify(where)) &&
         !JSON.stringify(where).includes('"bookingSource":"DIRECT_CHECKOUT"')
-        ? ROWS.length
+        ? 205
         : 0,
     ),
   );
@@ -122,10 +137,15 @@ beforeEach(() => {
   }
 });
 
-const read = (sort: "old" | "new" | "priority", after: string | null = null) =>
+const read = (
+  sort: "old" | "new" | "priority",
+  after: string | null = null,
+  chip?: "declined",
+) =>
   readRequestsInbox({
     consultantProfileId: CP,
     type: "consultation",
+    chip,
     sort,
     page: 1,
     after,
@@ -134,29 +154,44 @@ const read = (sort: "old" | "new" | "priority", after: string | null = null) =>
   });
 
 describe("inbox keyset paging", () => {
-  it("sort=old starts at the oldest request and walks all 205 without repeats", async () => {
+  it("sort=old over one source starts at the oldest request and walks all 205 without repeats", async () => {
     const seen: string[] = [];
     let after: string | null = null;
     for (let guard = 0; guard < 10; guard++) {
-      const page = await read("old", after);
+      const page = await read("old", after, "declined");
+      expect(page.meta.paging).toBe("cursor");
       seen.push(...page.rows.map((r) => r.id));
       expect(page.meta.total).toBe(205);
       after = page.meta.nextCursor;
       if (!after) break;
     }
-    expect(seen[0]).toBe("c-000");
+    expect(seen[0]).toBe("r-000");
     expect(seen).toHaveLength(205);
     expect(new Set(seen).size).toBe(205);
   });
 
-  it("sort=new reads newest first and pages in SQL, never a 200-row window", async () => {
-    const first = await read("new");
-    expect(first.rows[0].id).toBe("c-204");
+  it("sort=new over one source reads newest first and pages in SQL, never a 200-row window", async () => {
+    const first = await read("new", null, "declined");
+    expect(first.rows[0].id).toBe("r-204");
     const call = m.consultation.findMany.mock.calls[0][0];
     expect(call.orderBy).toEqual([{ requestedAt: "desc" }, { id: "desc" }]);
     expect(call.take).toBe(51);
     const cursor = decodeInboxCursor(first.meta.nextCursor);
-    expect(cursor?.id).toBe("c-155");
+    expect(cursor?.id).toBe("r-155");
+  });
+
+  it("time sorts over several sources page a window: the newest or oldest of each source", async () => {
+    const newest = await read("new");
+    expect(newest.meta).toMatchObject({
+      paging: "ranked",
+      nextCursor: null,
+      windowSize: INBOX_RANKED_WINDOW,
+      total: 205,
+    });
+    expect(newest.rows[0].id).toBe("c-204");
+    const oldest = await read("old");
+    expect(oldest.meta.paging).toBe("ranked");
+    expect(oldest.rows[0].id).toBe("c-000");
   });
 
   it("ranked sorts hold the most urgent window and report the true total", async () => {

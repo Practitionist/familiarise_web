@@ -30,6 +30,7 @@ import { dayRangeBounds } from "@/lib/time/grid-zone";
 import { gridTimeZone } from "@/lib/scheduling/time-picker-focus";
 import type { BookableInterval } from "@/utils/scheduling-engine/types";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
+import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 
 /**
  * The dashboard grid's data: consultant details, the server-resolved
@@ -242,7 +243,7 @@ export function useCalendarData(
     releasingOccurrenceIds,
   } = options;
   const releasing = releasingOccurrenceIds?.length
-    ? [...releasingOccurrenceIds].sort().join(",")
+    ? [...releasingOccurrenceIds].sort(byCodeUnit).join(",")
     : undefined;
   const gridZone = options.gridZone ?? gridTimeZone();
 

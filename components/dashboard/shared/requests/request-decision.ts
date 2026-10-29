@@ -71,6 +71,35 @@ export function classifyRequestedConflict(result: {
   }
 }
 
+/**
+ * The proposal-answer twin of `classifyRequestedConflict`: a proposal that is
+ * gone, closed or frozen is stale; an allocator refusal of the proposed times
+ * (taken, lock busy, co-host clash) leaves the request answerable.
+ */
+export function classifyProposalConflict(
+  status: number,
+  code: string | undefined,
+): "stale" | "stay-open" | null {
+  if (status === 404) return "stale";
+  if (status !== 409) return null;
+  switch (code) {
+    case "PROPOSAL_NOT_FOUND":
+    case "PROPOSAL_NOT_OPEN":
+    case "PROPOSAL_EXPIRED":
+    case "RESCHEDULE_NO_LONGER_OPEN":
+    case "DISPUTE_ACTIVE":
+      return "stale";
+    default:
+      return classifyRequestedConflict({
+        success: false,
+        httpStatus: status,
+        errorCode: code,
+      }) === "stay-open"
+        ? "stay-open"
+        : "stale";
+  }
+}
+
 /** Approve by confirming the times the consultee asked for. */
 export async function approveRequestedTimes(
   request: DecidableRequest,

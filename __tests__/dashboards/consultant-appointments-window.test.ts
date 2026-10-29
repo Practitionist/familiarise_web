@@ -23,10 +23,11 @@ import {
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { appointment: { findMany: jest.fn() } },
+  default: { appointment: { findMany: jest.fn() }, $queryRaw: jest.fn() },
 }));
 
 const findMany = prisma.appointment.findMany as jest.Mock;
+const queryRaw = prisma.$queryRaw as unknown as jest.Mock;
 const NOW = new Date("2026-10-27T12:00:00Z");
 const base = {
   consultantProfileId: "cp-1",
@@ -44,8 +45,8 @@ type Where = {
   AND?: Where[];
   OR?: Where[];
   occurrences?: { some?: { endsAt?: unknown }; none?: { endsAt?: unknown } };
-  createdAt?: { lt?: Date; gte?: Date };
-  id?: { lt?: string };
+  createdAt?: { lt?: Date };
+  id?: { in?: string[] };
 };
 
 /**
@@ -82,12 +83,9 @@ function matches(row: Row, where: Where): boolean {
   if (where.occurrences?.none?.endsAt) return !row.live;
   if (first?.createdAt) {
     const [older, band] = where.OR as [Where, Where];
-    const t = row.createdAt.getTime();
-    if (t < older.createdAt!.lt!.getTime()) return true;
     return (
-      t >= band.createdAt!.gte!.getTime() &&
-      t < band.createdAt!.lt!.getTime() &&
-      row.id < band.id!.lt!
+      row.createdAt.getTime() < older.createdAt!.lt!.getTime() ||
+      band.id!.in!.includes(row.id)
     );
   }
   return true;
@@ -97,6 +95,20 @@ const newestFirst = (a: Row, b: Row) =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // The cursor row's millisecond, and the rows in it the row-value comparison puts after it.
+  queryRaw.mockImplementation(async (sql: { values: unknown[] }) => {
+    const cursor = ROWS.find((r) => r.id === sql.values[0]);
+    if (!cursor) return [];
+    const ms = cursor.createdAt.getTime();
+    return [
+      {
+        start: new Date(ms),
+        ids: ROWS.filter(
+          (r) => r.createdAt.getTime() === ms && r.id < cursor.id,
+        ).map((r) => r.id),
+      },
+    ];
+  });
   findMany.mockImplementation(
     async (args: { where: Where; take?: number; skip?: number }) =>
       ROWS.filter((r) => matches(r, args.where))

@@ -80,6 +80,7 @@ import {
 import {
   DecisionError,
   approveRequestedTimes,
+  classifyProposalConflict,
   classifyRequestedConflict,
   declineRequest,
 } from "./request-decision";
@@ -371,10 +372,16 @@ export function RequestsInbox({
   );
   const [confirmation, setConfirmation] =
     useState<RequestedSlotsConfirmation | null>(null);
+  // A retryable refusal shown inside the dialog; `attempt` re-checks the times.
+  const [refusal, setRefusal] = useState<{
+    message: string;
+    attempt: number;
+  } | null>(null);
   const attemptKeyRef = useRef<AllocationAttemptKey | null>(null);
   const closeApprove = () => {
     setApproveTarget(null);
     setConfirmation(null);
+    setRefusal(null);
     attemptKeyRef.current = null;
   };
   const approve = useMutation({
@@ -400,7 +407,17 @@ export function RequestsInbox({
           error?: string;
           code?: string;
         };
-        if (response.status === 409 || response.status === 404) {
+        const conflict = classifyProposalConflict(response.status, body.code);
+        if (conflict === "stay-open") {
+          return {
+            kind: "retry" as const,
+            message: errorSentence(
+              body.code,
+              body.error ?? "Those times can't be booked right now.",
+            ),
+          };
+        }
+        if (conflict === "stale") {
           return {
             kind: "stale" as const,
             message: errorSentence(body.code, TOAST.changedElsewhere),
@@ -426,8 +443,19 @@ export function RequestsInbox({
         attemptKeyRef,
         override,
       );
-      // Any 409 means the request moved on: close, refresh, say why plainly.
-      if (classifyRequestedConflict(result) !== null) {
+      // The request moved on: close, refresh, say why plainly. A slot taken,
+      // a busy lock or a co-host clash leaves it allocatable: stay and retry.
+      const conflict = classifyRequestedConflict(result);
+      if (conflict === "stay-open") {
+        return {
+          kind: "retry" as const,
+          message: errorSentence(
+            result.errorCode,
+            result.error ?? "Those times can't be booked right now.",
+          ),
+        };
+      }
+      if (conflict !== null) {
         return {
           kind: "stale" as const,
           message: errorSentence(result.errorCode, TOAST.changedElsewhere),
@@ -450,6 +478,17 @@ export function RequestsInbox({
         changedElsewhere(outcome.message);
         return;
       }
+      if (outcome.kind === "retry") {
+        // A refused attempt is spent: the next confirm is a new one.
+        attemptKeyRef.current = null;
+        setRefusal((prev) => ({
+          message: outcome.message,
+          attempt: (prev?.attempt ?? 0) + 1,
+        }));
+        invalidate();
+        return;
+      }
+      setRefusal(null);
       // No optimistic removal: the refetch moves an unpaid approval to the
       // "Awaiting payment" chip (the read includes APPROVED_PENDING_PAYMENT).
       toast({ title: approvedToast(outcome) });
@@ -646,7 +685,7 @@ export function RequestsInbox({
     if (data?.meta.counts) setLastCounts(data.meta.counts);
   }, [data]);
   const counts = data?.meta.counts ?? lastCounts;
-  const cursorMode = isCursorSort(params.sort);
+  const timeSort = isCursorSort(params.sort) || params.sort === "deadline";
   const totalPages = data
     ? Math.max(1, Math.ceil(data.meta.windowSize / data.meta.limit))
     : 1;
@@ -667,7 +706,7 @@ export function RequestsInbox({
   };
 
   const renderPager = (meta: RequestsInboxPayload["meta"]) => {
-    if (cursorMode) {
+    if (meta.paging === "cursor") {
       if (meta.nextCursor === null && params.after === null) return null;
       // A reload or deep link lands mid-list with no trail: no start offset.
       const from =
@@ -708,7 +747,7 @@ export function RequestsInbox({
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span aria-live="polite">
           {truncated
-            ? RANKED_WINDOW_NOTE(meta.windowSize, meta.total)
+            ? RANKED_WINDOW_NOTE(meta.windowSize, meta.total, params.sort)
             : `Showing ${(meta.page - 1) * meta.limit + 1}–${Math.min(
                 meta.windowSize,
                 meta.page * meta.limit,
@@ -791,7 +830,7 @@ export function RequestsInbox({
         <InboxBuckets
           rows={rows}
           // Time sorts read top to bottom in time order; buckets would reorder them.
-          flat={chip === "declined" || cursorMode}
+          flat={chip === "declined" || timeSort}
           totals={data?.meta.bucketTotals ?? null}
           renderRow={(row) => (
             <InboxRow
@@ -922,6 +961,7 @@ export function RequestsInbox({
           if (!open && !approve.isPending) closeApprove();
         }}
         confirmation={confirmation}
+        refusal={refusal}
         requestId={approveTarget?.id ?? ""}
         requestType={
           approveTarget

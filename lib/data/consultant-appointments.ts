@@ -26,6 +26,7 @@ import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { AppointmentsType, AppointmentStatus, Prisma } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
+import { exactKeysetBand } from "@/lib/db/exact-keyset";
 import {
   bookingAnomalies,
   scheduleAnomalyReport,
@@ -99,21 +100,16 @@ const pastRowWhere = (now: Date): Prisma.AppointmentWhereInput => ({
 
 const NEWEST_FIRST = [{ createdAt: "desc" as const }, { id: "desc" as const }];
 
-/**
- * Rows after the cursor, newest-created first. The cursor holds whole
- * milliseconds and the column microseconds, so the cursor's millisecond is
- * one tie band ordered by id.
- */
-function olderThan(cursor: AppointmentsCursor): Prisma.AppointmentWhereInput {
-  const nextMs = new Date(cursor.createdAt.getTime() + 1);
+/** Rows after the cursor row, newest-created first, at the column's microseconds. */
+async function olderThan(
+  cursor: AppointmentsCursor,
+): Promise<Prisma.AppointmentWhereInput> {
+  const band = await exactKeysetBand("Appointment", "desc", {
+    id: cursor.id,
+    at: cursor.createdAt,
+  });
   return {
-    OR: [
-      { createdAt: { lt: cursor.createdAt } },
-      {
-        createdAt: { gte: cursor.createdAt, lt: nextMs },
-        id: { lt: cursor.id },
-      },
-    ],
+    OR: [{ createdAt: { lt: band.boundary } }, { id: { in: band.ids } }],
   };
 }
 
@@ -491,7 +487,7 @@ export async function readConsultantAppointmentsPage(
         AND: [
           whereClause,
           pastRowWhere(now),
-          ...(cursor ? [olderThan(cursor)] : []),
+          ...(cursor ? [await olderThan(cursor)] : []),
         ],
       },
       { take },

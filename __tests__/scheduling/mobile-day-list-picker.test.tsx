@@ -57,6 +57,26 @@ function grid(overrides: Record<string, unknown>[] = []) {
   };
 }
 
+/** A grid answer holding only the days inside the request's range. */
+function rangedGrid(days: Record<string, string[]>) {
+  return async (url: string) => {
+    const params = new URL(url, "http://localhost").searchParams;
+    const from = params.get("startDateInUtc") ?? "";
+    const to = params.get("endDateInUtc") ?? "";
+    const data = Object.fromEntries(
+      Object.entries(days)
+        .filter(([key]) => key >= from.slice(0, 10) && key <= to.slice(0, 10))
+        .map(([key, starts]) => [key, starts.map((iso) => atom(iso))]),
+    );
+    return {
+      status: 200,
+      ok: true,
+      json: async () => ({ data }),
+      headers: { get: () => null },
+    };
+  };
+}
+
 function Harness({
   client,
   initial = [],
@@ -65,6 +85,9 @@ function Harness({
   subscriptionId,
   releasingIds,
   dayCap,
+  allowedStart,
+  allowedEnd,
+  focusAt,
 }: Readonly<{
   client: QueryClient;
   initial?: DayListPick[];
@@ -73,6 +96,9 @@ function Harness({
   subscriptionId?: string;
   releasingIds?: string[];
   dayCap?: { perDay: number; zone: string };
+  allowedStart?: Date;
+  allowedEnd?: Date;
+  focusAt?: Date;
 }>) {
   const [value, setValue] = React.useState<DayListPick[]>(initial);
   return (
@@ -86,6 +112,9 @@ function Harness({
         subscriptionId={subscriptionId}
         releasingIds={releasingIds}
         dayCap={dayCap}
+        allowedStart={allowedStart}
+        allowedEnd={allowedEnd}
+        focusAt={focusAt}
         value={value}
         onChange={(next) => {
           onChange?.(next);
@@ -308,5 +337,89 @@ describe("MobileDayListPicker", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(document.body.textContent).not.toMatch(/\bslots?\b/i);
     expect(document.body.textContent).not.toMatch(/Any time works/);
+  });
+
+  describe("windows past the first two weeks", () => {
+    const lastUrl = () =>
+      String(fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0]);
+    const chipNames = () =>
+      within(screen.getByRole("radiogroup", { name: "Day" }))
+        .getAllByRole("radio")
+        .map((chip) => chip.getAttribute("aria-label"));
+
+    it("opens a plan whose window starts a month out on that window, read and drawn alike", async () => {
+      fetchMock.mockImplementation(
+        rangedGrid({
+          "2026-12-03": ["2026-12-03T10:00:00Z", "2026-12-03T10:30:00Z"],
+        }),
+      );
+      await mount({
+        allowedStart: new Date("2026-12-02T00:00:00.000Z"),
+        allowedEnd: new Date("2027-01-31T00:00:00.000Z"),
+      });
+      expect(lastUrl()).toContain("startDateInUtc=2026-12-02T00:00:00.000Z");
+      expect(lastUrl()).toContain("endDateInUtc=2026-12-15T23:59:59.999Z");
+      expect(chipNames()[0]).toMatch(/^Wed, 2 Dec/);
+      expect(chipNames()).toHaveLength(14);
+      expect(times()).toEqual(["10:00 am – 11:00 am"]);
+      expect(
+        screen.getByRole("button", { name: "Previous 2 weeks" }),
+      ).toBeDisabled();
+    });
+
+    it("pages to a day past day 14 and keeps picks from every page", async () => {
+      fetchMock.mockImplementation(
+        rangedGrid({
+          "2026-11-04": ["2026-11-04T10:00:00Z", "2026-11-04T10:30:00Z"],
+          "2026-11-20": ["2026-11-20T09:00:00Z", "2026-11-20T09:30:00Z"],
+        }),
+      );
+      await mount({
+        timesNeeded: 2,
+        allowedEnd: new Date("2026-11-30T00:00:00.000Z"),
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: "10:00 am – 11:00 am" }),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Next 2 weeks" }));
+      await settle();
+      expect(lastUrl()).toContain("startDateInUtc=2026-11-16T00:00:00.000Z");
+      expect(lastUrl()).toContain("endDateInUtc=2026-11-29T23:59:59.999Z");
+      expect(chipNames()[0]).toMatch(/^Mon, 16 Nov/);
+      fireEvent.click(
+        screen.getByRole("button", { name: "9:00 am – 10:00 am" }),
+      );
+      expect(screen.getByText(/2 of 2 times picked/)).toBeInTheDocument();
+      // The window ends inside this page.
+      expect(
+        screen.getByRole("button", { name: "Next 2 weeks" }),
+      ).toBeDisabled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Previous 2 weeks" }));
+      await settle();
+      expect(chipNames()[0]).toMatch(/^Mon, 2 Nov/);
+      const yours = within(
+        screen.getByRole("heading", { name: "Your times" }).parentElement!,
+      );
+      expect(yours.getByText(/4 Nov/)).toBeInTheDocument();
+      expect(yours.getByText(/20 Nov/)).toBeInTheDocument();
+    });
+
+    it("opens on the focused session's two weeks and pages back no further than today", async () => {
+      fetchMock.mockImplementation(rangedGrid({}));
+      await mount({ focusAt: new Date("2026-11-25T09:00:00.000Z") });
+      expect(lastUrl()).toContain("startDateInUtc=2026-11-25T00:00:00.000Z");
+
+      fireEvent.click(screen.getByRole("button", { name: "Previous 2 weeks" }));
+      await settle();
+      expect(lastUrl()).toContain("startDateInUtc=2026-11-11T00:00:00.000Z");
+      fireEvent.click(screen.getByRole("button", { name: "Previous 2 weeks" }));
+      await settle();
+      expect(lastUrl()).toContain("startDateInUtc=2026-11-02T00:00:00.000Z");
+      expect(
+        screen.getByRole("button", { name: "Previous 2 weeks" }),
+      ).toBeDisabled();
+    });
   });
 });

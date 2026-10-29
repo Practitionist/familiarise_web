@@ -7,6 +7,7 @@ import {
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { OCCUPIED_REQUEST_STATUSES } from "@/utils/scheduling-engine/occupancyPolicy";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 
 interface SubscriptionValidationResult {
   isValid: boolean;
@@ -72,12 +73,16 @@ export class SubscriptionValidationService {
       ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
     const proposedSlotDates = proposedSlots.map((slot) => new Date(slot));
 
-    // The rows being replaced do not hold their cycle places.
+    // The rows being replaced do not hold their cycle places. A released
+    // reschedule row holds none anyway and stays: it is what tells the
+    // entitlement a reschedule is open, so the cycle anchors as the allocator's.
     const excludedOccurrences = new Set(excludeOccurrenceIds);
     const wrapper = subscription.appointment;
     const keptOccurrences =
       wrapper && !excludeAppointmentIds.includes(wrapper.id)
-        ? wrapper.occurrences.filter((o) => !excludedOccurrences.has(o.id))
+        ? wrapper.occurrences.filter(
+            (o) => !excludedOccurrences.has(o.id) || isReleasedForReschedule(o),
+          )
         : [];
     const entitlement = subscriptionEntitlement({
       sessionsTotal: sessionsTotalOf(subscription),

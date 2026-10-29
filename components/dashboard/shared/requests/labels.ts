@@ -84,8 +84,20 @@ export function nextCycleLine(entitlement: SubscriptionEntitlement): string {
 }
 
 /** A ranked sort pages a bounded window; say so when rows sit outside it. */
-export const RANKED_WINDOW_NOTE = (shown: number, total: number) =>
-  `Showing ${shown} of ${total} — sort by oldest to page through every request`;
+const RANKED_WINDOW_KIND: Record<InboxSort, string> = {
+  new: "newest",
+  old: "oldest",
+  priority: "most urgent",
+  deadline: "most urgent",
+  money: "most urgent",
+};
+
+export const RANKED_WINDOW_NOTE = (
+  shown: number,
+  total: number,
+  sort: InboxSort,
+) =>
+  `Showing the ${shown} ${RANKED_WINDOW_KIND[sort]} of ${total} — pick a filter to see the rest`;
 
 /** A direct checkout the buyer is paying for right now: never answerable. */
 export const CHECKOUT_HOLD_BADGE = toneBadge("info", "Checkout in progress");

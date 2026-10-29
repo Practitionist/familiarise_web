@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 
 /**
  * A pick the latest read proves gone is painted "Just taken" for exactly one
@@ -19,7 +20,7 @@ export function useJustTaken(
     onDropRef.current = onDrop;
   }, [onDrop]);
 
-  const signature = [...staleKeys].sort().join("|");
+  const signature = [...staleKeys].sort(byCodeUnit).join("|");
   useEffect(() => {
     if (signature === "") return;
     setPainted((current) =>

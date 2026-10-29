@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Db } from "@/lib/prisma";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 
 /**
  * #1319 PR 9 — the change marker behind the availability grid's conditional GET.
@@ -341,7 +342,7 @@ export function subscriptionQuotaFold(input: {
     String(input.occurrenceCount),
     String(input.occurrencesUpdatedAt?.getTime() ?? 0),
     input.todayKey,
-    [...(input.releasingIds ?? [])].sort().join(","),
+    [...(input.releasingIds ?? [])].sort(byCodeUnit).join(","),
   ].join("/");
 }
 

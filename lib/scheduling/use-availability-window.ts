@@ -9,6 +9,7 @@ import { useRef, useState, type MutableRefObject } from "react";
 import type { TIntervalTiming } from "@/types/slots";
 import { createGridPollInterval } from "@/lib/scheduling/availabilityPolling";
 import { calendarDateKey, dayRangeBounds } from "@/lib/time/grid-zone";
+import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 
 /**
  * One day of the availability-with-allocation grid answer.
@@ -222,7 +223,7 @@ export function useAvailabilityWindow({
   const etagCacheRef = useRef<EtagCacheEntry | null>(null);
   const pollOptions = useGridPollOptions();
   const releasing = releasingIds?.length
-    ? [...releasingIds].sort().join(",")
+    ? [...releasingIds].sort(byCodeUnit).join(",")
     : undefined;
   const ready =
     enabled && !!consultantId && !!startUtc && !!endUtc && !!timezone;

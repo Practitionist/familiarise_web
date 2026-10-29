@@ -25,6 +25,7 @@ import { reportSentryError } from "@/lib/observability/report";
 import { getPlatformVideoConfig } from "@/lib/stream/video-config";
 import {
   hostBatchEntries,
+  HostTimeNotRetainedError,
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
 import {
@@ -329,6 +330,18 @@ const nextTimeBookedResponse = () =>
     { status: 409 },
   );
 
+const timeNotRetainedResponse = () =>
+  NextResponse.json(
+    {
+      extended: false,
+      hasConflictingNextBooking: false,
+      code: "SESSION_NOT_EXTENDABLE",
+      error:
+        "The extra time couldn't be reserved just now. Please try again in a moment.",
+    },
+    { status: 409 },
+  );
+
 const notExtendableResponse = () =>
   NextResponse.json(
     {
@@ -516,7 +529,7 @@ export async function POST(
             : presenterProfileIds,
           [extensionWindow],
         ),
-        async (_renew, keepUntil) => {
+        async (_renew, retainUntil) => {
           const conflicted = await hasExtensionScheduleConflict(
             occurrence,
             consultantProfileId,
@@ -525,6 +538,10 @@ export async function POST(
             conflictHorizon,
           );
           if (conflicted) return nextTimeBookedResponse();
+
+          // No occurrence row carries the extra minutes, so their atoms must be
+          // held to the room's new end before the extension is saved.
+          const keep = await retainUntil(conflictHorizon);
 
           const claimed = await prisma.meeting.updateMany({
             where: extendableWhere(meetingRow.id, meetingRow.extensionsUsed),
@@ -545,13 +562,14 @@ export async function POST(
               : notExtendableResponse();
           }
 
-          // No occurrence row carries the extra minutes, so their atoms stay
-          // held until the extension ends: no booking lands in them meanwhile.
-          await keepUntil(conflictHorizon);
+          keep();
           return null;
         },
       );
     } catch (err) {
+      if (err instanceof HostTimeNotRetainedError) {
+        return timeNotRetainedResponse();
+      }
       if (err instanceof ConsultantScheduleConflictError) {
         return nextTimeBookedResponse();
       }

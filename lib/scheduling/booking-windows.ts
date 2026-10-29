@@ -77,7 +77,7 @@ export function windowsForDay(
   nowMs: number,
 ): SlotWithStatus[] {
   if (atoms.length === 0) return [];
-  const normalized = atoms.map(normalizeAtom);
+  const normalized = atoms.map((atom, index) => normalizeAtom(atom, index));
   const cutoff = nowMs + MINIMUM_BOOKING_LEAD_TIME_MS;
   return breakDownSlotsPreservingStatus(
     normalized,

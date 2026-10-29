@@ -80,6 +80,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // The unscheduled list holds runs with no sessions, which no date range can match.
+    if (unscheduled && (startDateStr || endDateStr)) {
+      return NextResponse.json(
+        {
+          error: "unscheduled cannot be combined with a date range",
+          code: "INVALID_QUERY",
+        },
+        { status: 400 },
+      );
+    }
+
     // Org-scope filter — Webinar rows don't carry organizationId directly;
     // attribution lives on the parent WebinarPlan (per
     // `docs/enterprise/30-programs-and-lifecycle/05-public-pages-and-discovery.md`

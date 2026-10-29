@@ -108,21 +108,47 @@ function addCalendarDays(day: Date, count: number): Date {
   return new Date(day.getFullYear(), day.getMonth(), day.getDate() + count, 12);
 }
 
-/** The calendar days the list shows, starting today in `zone`. */
-export function dayListDates(nowMs: number, zone: string): Date[] {
-  const today = calendarDayOf(new Date(nowMs), zone);
+/** The calendar days one page of the list shows, from the `zone` day holding `fromMs`. */
+export function dayListDates(fromMs: number, zone: string): Date[] {
+  const first = calendarDayOf(new Date(fromMs), zone);
   return Array.from({ length: DAY_LIST_DAYS }, (_, i) =>
-    addCalendarDays(today, i),
+    addCalendarDays(first, i),
   );
 }
 
-/** The instants the list's read covers: today's first instant to the last day's last. */
+/** The instants one page's read covers: its first day's first instant to its last day's last. */
 export function dayListBounds(
-  nowMs: number,
+  fromMs: number,
   zone: string,
 ): { start: Date; end: Date } {
-  const dates = dayListDates(nowMs, zone);
+  const dates = dayListDates(fromMs, zone);
   return dayRangeBounds(dates[0], dates[dates.length - 1], zone);
+}
+
+/**
+ * Where the list opens: the latest of now, the allowed window's start and the
+ * focused session, pulled back to the window's end (never before now).
+ */
+export function dayListAnchor(
+  nowMs: number,
+  allowedStartMs?: number,
+  allowedEndMs?: number,
+  focusMs?: number,
+): number {
+  const latest = Math.max(nowMs, allowedStartMs ?? nowMs, focusMs ?? nowMs);
+  return allowedEndMs === undefined
+    ? latest
+    : Math.max(nowMs, Math.min(latest, allowedEndMs));
+}
+
+/** The first instant of the `zone` day `days` after the one holding `fromMs`. */
+export function dayListPageStart(
+  fromMs: number,
+  zone: string,
+  days: number,
+): number {
+  const day = addCalendarDays(calendarDayOf(new Date(fromMs), zone), days);
+  return dayRangeBounds(day, day, zone).start.getTime();
 }
 
 /** Start instants (ms) of every atom that is free to book. */
@@ -183,13 +209,14 @@ export function pickLabel(pick: DayListPick, zone: string): string {
   return `${formatDayLabel(new Date(pick.startsAt), { zone })}, ${timeRangeLabel(pick, zone)}`;
 }
 
-/** The next days with the starts each offers, in time order. */
+/** One page of days from the day holding `fromMs`, with the starts each offers, in time order. */
 export function buildDayList(
   data: Readonly<Record<string, readonly DayListAtom[]>>,
   rules: DayListRules,
+  fromMs: number,
 ): DayListDay[] {
   const free = freeAtomStarts(data);
-  return dayListDates(rules.nowMs, rules.zone).map((date) => {
+  return dayListDates(fromMs, rules.zone).map((date) => {
     const key = calendarDateKey(date);
     const startsMs = [
       ...new Set(
@@ -225,8 +252,9 @@ export function stalePicks(
   picks: readonly DayListPick[],
   data: Readonly<Record<string, readonly DayListAtom[]>>,
   rules: DayListRules,
+  fromMs: number,
 ): string[] {
-  const { start, end } = dayListBounds(rules.nowMs, rules.zone);
+  const { start, end } = dayListBounds(fromMs, rules.zone);
   const free = freeAtomStarts(data);
   return picks
     .filter((pick) => {

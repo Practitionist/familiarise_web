@@ -162,6 +162,115 @@ describe("the rolling cycle cap", () => {
   });
 });
 
+describe("an open reschedule keeps the allocator's cycle anchor", () => {
+  const occurrence = (
+    id: string,
+    day: number,
+    status: "SCHEDULED" | "RESCHEDULED",
+  ) => ({
+    id,
+    startsAt: new Date(Date.UTC(2025, 0, day, 10)),
+    endsAt: new Date(Date.UTC(2025, 0, day, 11)),
+    completionStatus: status,
+    // A released row is a tentative hold awaiting its replacement.
+    isTentative: status === "RESCHEDULED",
+    deletedAt: null,
+  });
+  const serviceWith = (
+    occurrences: ReturnType<typeof occurrence>[],
+    overrides: Record<string, unknown> = {},
+  ) => {
+    const appointment = { id: "apt-1", occurrences };
+    return createService({ appointment, ...overrides }, [appointment]);
+  };
+
+  it("accepts Jan 8 for a released Jan 7 while Jan 9 stays booked", async () => {
+    const result = await serviceWith([
+      occurrence("occ-7", 7, "RESCHEDULED"),
+      occurrence("occ-9", 9, "SCHEDULED"),
+    ]).validateSubscriptionSlots(
+      "sub-1",
+      makeConsecutiveSlotISOs("2025-01-08T10:00:00.000Z", 2),
+      [],
+      // The validate route excludes the subscription's tentative rows.
+      ["occ-7"],
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.subscriptionPeriod.start.toISOString()).toBe(
+      "2025-01-06T00:00:00.000Z",
+    );
+    expect(result.cycleCap).toBe(1);
+  });
+
+  it("anchors the same way with several released sessions", async () => {
+    const result = await serviceWith(
+      [
+        occurrence("occ-7", 7, "RESCHEDULED"),
+        occurrence("occ-8", 8, "RESCHEDULED"),
+        occurrence("occ-10", 10, "SCHEDULED"),
+      ],
+      {
+        subscriptionPlan: makeSubscriptionPlan({
+          sessionsPerWeek: 3,
+          totalSessions: 12,
+        }),
+      },
+    ).validateSubscriptionSlots(
+      "sub-1",
+      [
+        ...makeConsecutiveSlotISOs("2025-01-08T14:00:00.000Z", 2),
+        ...makeConsecutiveSlotISOs("2025-01-09T10:00:00.000Z", 2),
+      ],
+      [],
+      ["occ-7", "occ-8"],
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.cycleCalls).toBe(2);
+    expect(result.cycleCap).toBe(2);
+  });
+
+  it("still stops at the plan end during a reschedule", async () => {
+    const service = serviceWith(
+      [
+        occurrence("occ-7", 7, "RESCHEDULED"),
+        occurrence("occ-9", 9, "SCHEDULED"),
+      ],
+      { planEndsAt: new Date("2025-01-10T00:00:00.000Z") },
+    );
+    const inside = await service.validateSubscriptionSlots(
+      "sub-1",
+      makeConsecutiveSlotISOs("2025-01-08T10:00:00.000Z", 2),
+      [],
+      ["occ-7"],
+    );
+    expect(inside.errors).toEqual([]);
+    expect(inside.subscriptionPeriod.end.toISOString()).toBe(
+      "2025-01-10T00:00:00.000Z",
+    );
+    const past = await service.validateSubscriptionSlots(
+      "sub-1",
+      makeConsecutiveSlotISOs("2025-01-10T10:00:00.000Z", 2),
+      [],
+      ["occ-7"],
+    );
+    expect(past.isValid).toBe(false);
+    expect(past.errors[0]).toContain("outside this cycle");
+  });
+
+  it("still frees the place of a replaced confirmed row", async () => {
+    const result = await serviceWith([
+      occurrence("occ-7", 7, "SCHEDULED"),
+      occurrence("occ-9", 9, "SCHEDULED"),
+    ]).validateSubscriptionSlots(
+      "sub-1",
+      makeConsecutiveSlotISOs("2025-01-10T10:00:00.000Z", 2),
+      [],
+      ["occ-7"],
+    );
+    expect(result.cycleCap).toBe(1);
+  });
+});
+
 describe("the plan total and call counting", () => {
   it("refuses a proposal that would pass the frozen total", async () => {
     const existing = [

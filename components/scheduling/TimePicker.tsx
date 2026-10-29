@@ -393,6 +393,7 @@ export function TimePicker({
           timesNeeded={sessionsBeingMoved}
           allowedStart={subject.allowedStart}
           allowedEnd={subject.allowedEnd}
+          focusAt={focus.precision === "session" ? focus.at : undefined}
           value={mobilePicks}
           onChange={setMobilePicks}
         />
