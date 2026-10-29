@@ -38,14 +38,9 @@ coderabbit review --committed --base dev --light --agent \
   -c .coderabbit.yaml CLAUDE.md > /tmp/cr-<pr>.log 2>&1
 ```
 
-For a large PR (#1842 opened at 626 files), a single full-branch review is slow and
-harder to read. Chunk the review by directory once the changed-file count passes
-about 150: run `coderabbit review --dir <path> --base dev --agent -c .coderabbit.yaml`
-once per top-level directory that changed (for example `app/dashboard`,
-`lib/dashboard`, `components/dashboard`), so each run stays fast enough to read
-in one sitting and a bad chunk can be re-run on its own.
+For a large PR (>150 changed files, where GitHub Cloud CodeRabbit skips the PR, CodeRabbit CLI rejects >300 files, `--dir` across many directories would burn the 5-review/hour rolling quota, and GitHub Check Runs cap Sonar annotations at 50), **do not use naive per-directory passes** — follow [large-pr-cli-review.md](large-pr-cli-review.md) to partition the PR into $\le 4$ batches of $\le 150$ files via synthetic `(C_base, C_head)` base-tree plumbing, run them in parallel `/tmp` worktrees, and export all Sonar issues and secret scans via the `sonar` CLI.
 
-After the first full or chunked pass, every further round should be a **delta
+After the first full or batched pass, every further round should be a **delta
 round** — review only the commits since the last reviewed commit, not the whole
 branch again:
 
