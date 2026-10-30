@@ -36,6 +36,7 @@ function fakeDb(
   opts: {
     own?: "PENDING" | "SUCCEEDED";
     owed?: number | null;
+    attempts?: number;
     casWins?: boolean;
   } = {},
 ) {
@@ -46,6 +47,7 @@ function fakeDb(
         refundOwedKey: "cancel:appt-1:pay-1",
         refundOwedPaise: opts.owed === undefined ? 500_000 : opts.owed,
         refundOwedReason: "cancellation",
+        refundOwedAttempts: opts.attempts ?? 1,
       })),
       updateMany: jest.fn(async (args: unknown) => {
         updates.push(args);
@@ -101,6 +103,13 @@ describe("settleOwedByHand", () => {
     ]);
   });
 
+  it("tells the operator a remainder whose retries are spent needs a hand refund", async () => {
+    const { db } = fakeDb({ attempts: MAX_REFUND_OWED_ATTEMPTS });
+    expect((await settleOwedByHand(db, "pay-1", hand(200_000)))?.note).toBe(
+      "Settled ₹2000.00 of the owed ₹5000.00; ₹3000.00 still owed, and its automatic retries are spent: refund it by hand.",
+    );
+  });
+
   it("reads a full-balance marker as the balance before the hand refund", async () => {
     const { db, updates } = fakeDb({ owed: null });
     await settleOwedByHand(db, "pay-1", hand(200_000, 500_000));
@@ -110,6 +119,14 @@ describe("settleOwedByHand", () => {
         data: { refundOwedPaise: 300_000 },
       },
     ]);
+  });
+
+  it("settles nothing for a zero or negative hand amount", async () => {
+    for (const handPaise of [0, -100]) {
+      const { db, updates } = fakeDb();
+      expect(await settleOwedByHand(db, "pay-1", hand(handPaise))).toBeNull();
+      expect(updates).toEqual([]);
+    }
   });
 
   it("answers nothing settled when the CAS loses a race", async () => {
@@ -139,6 +156,8 @@ function failedHandRefund(opts: {
   settledPaise: number;
   marker: { key: string; paise: number } | null;
   refundedElsewherePaise?: number;
+  /** Another hand refund moves the marker to this amount just before the first write. */
+  movedTo?: number;
 }) {
   const refund = {
     paymentId: "pay-1",
@@ -192,6 +211,10 @@ function failedHandRefund(opts: {
           where: { refundOwedKey: string | null; refundOwedPaise?: number };
           data: Record<string, unknown>;
         }) => {
+          if (opts.movedTo !== undefined) {
+            payment.refundOwedPaise = opts.movedTo;
+            opts.movedTo = undefined;
+          }
           if (
             a.where.refundOwedKey !== payment.refundOwedKey ||
             ("refundOwedPaise" in a.where &&
@@ -225,6 +248,19 @@ describe("restoreOwedOnFailedRefund", () => {
     });
   });
 
+  it("gives back against the debt as it stands after another hand refund", async () => {
+    // A settled 1,000 of 5,000 (to 4,000); B then settled 1,000 more (to 3,000); A failed.
+    const { tx, payment } = failedHandRefund({
+      settledPaise: 1_000,
+      marker: { key: "cancel:appt-1:pay-1", paise: 3_000 },
+      refundedElsewherePaise: 1_000,
+      movedTo: 2_000,
+    });
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    // B moved it again mid-restore; the re-read still adds back exactly A's 1,000.
+    expect(payment.refundOwedPaise).toBe(3_000);
+  });
+
   it("re-stamps a cleared marker under a new key, after the grace", async () => {
     const { tx, payment } = failedHandRefund({
       settledPaise: 5_000,
@@ -247,6 +283,17 @@ describe("restoreOwedOnFailedRefund", () => {
     await restoreOwedOnFailedRefund(tx, "rf-1");
     await restoreOwedOnFailedRefund(tx, "rf-1");
     expect(payment.refundOwedPaise).toBe(5_000);
+  });
+
+  it("caps a re-stamp at what is still refundable", async () => {
+    const { tx, payment, refund } = failedHandRefund({
+      settledPaise: 5_000,
+      marker: null,
+      refundedElsewherePaise: 7_500,
+    });
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    expect(payment.refundOwedPaise).toBe(2_500);
+    expect(refund.metadata).toMatchObject({ settledOwedRestoredPaise: 2_500 });
   });
 
   it("caps the give-back at the refundable balance", async () => {

@@ -34,8 +34,6 @@ export type RefundOwedMarker = {
   reason: string;
   /** Failed drives so far; the sweep retires the marker at the cap. */
   attempts?: number;
-  /** Read back from the payment row: it is driven only while the row still reads so. */
-  asRead?: boolean;
 };
 
 /** Failed drives after which an operator refunds by hand. */
@@ -103,6 +101,7 @@ export async function settleOwedByHand(
       refundOwedKey: true,
       refundOwedPaise: true,
       refundOwedReason: true,
+      refundOwedAttempts: true,
     },
   });
   const key = row?.refundOwedKey;
@@ -132,6 +131,8 @@ export async function settleOwedByHand(
       { paymentId, key },
     );
   }
+  // A hand refund of nothing settles nothing; never let a non-positive amount grow the debt.
+  if (cover.kind === "amount" && cover.handPaise <= 0) return null;
   const reason = row.refundOwedReason ?? "refund owed";
   const owedNow =
     stamped ?? (cover.kind === "amount" ? cover.refundableBeforePaise : null);
@@ -169,7 +170,10 @@ export async function settleOwedByHand(
     owedPaise: stamped,
     settledPaise: cover.handPaise,
     stillOwedPaise,
-    note: `Settled ${rupees(cover.handPaise)} of the owed ${rupees(owedNow)}; ${rupees(stillOwedPaise)} still owed and retrying.`,
+    note:
+      row.refundOwedAttempts >= MAX_REFUND_OWED_ATTEMPTS
+        ? `Settled ${rupees(cover.handPaise)} of the owed ${rupees(owedNow)}; ${rupees(stillOwedPaise)} still owed, and its automatic retries are spent: refund it by hand.`
+        : `Settled ${rupees(cover.handPaise)} of the owed ${rupees(owedNow)}; ${rupees(stillOwedPaise)} still owed and retrying.`,
   };
 }
 
@@ -235,6 +239,9 @@ const FAILED_HAND_REFUND = z
   })
   .passthrough();
 
+/** Re-reads a failed hand refund's restore takes against a marker other hand refunds keep moving. */
+const RESTORE_ATTEMPTS = 3;
+
 /** A re-stamped marker waits out the sweep's grace like a fresh one. */
 const RESTAMP_GRACE_MS = 15 * 60_000;
 
@@ -256,8 +263,74 @@ export async function restoreOwedOnFailedRefund(
   const meta = FAILED_HAND_REFUND.safeParse(refund.metadata);
   if (!meta.success || meta.data.settledOwedRestored) return;
   const settled = meta.data.settledOwed;
+  // A concurrent hand refund can move the marker between the read and the
+  // CAS, so the plan is re-read against the debt as it stands now.
+  for (let attempt = 0; attempt < RESTORE_ATTEMPTS; attempt += 1) {
+    const plan = await planOwedRestore(
+      tx,
+      refund.paymentId,
+      refundRowId,
+      settled,
+    );
+    if (plan.kind === "write" && (await plan.write()).count !== 1) continue;
+    if (plan.kind === "unrestorable") {
+      await recordSystemError({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `A failed hand refund on payment ${refund.paymentId} could not give back the ${rupees(settled.settledPaise)} it settled (${settled.key}): another refund is owed or the payment is no longer live — refund by hand`,
+        err: new Error("OWED_REFUND_NOT_RESTORED"),
+        context: { refundRowId, heldKey: plan.heldKey, ...settled },
+        db: tx,
+      });
+    }
+    const restoredPaise = plan.kind === "write" ? plan.paise : 0;
+    const claimed = await tx.refund.updateMany({
+      where: {
+        id: refundRowId,
+        status: RefundStatus.FAILED,
+        updatedAt: refund.updatedAt,
+      },
+      data: {
+        metadata: {
+          ...meta.data,
+          settledOwedRestored: true,
+          settledOwedRestoredPaise: restoredPaise,
+          ...(plan.kind === "write"
+            ? { settledOwedRestoredKey: plan.key }
+            : {}),
+        } as Prisma.InputJsonValue,
+      },
+    });
+    if (claimed.count === 1) return;
+    // Another writer restored it first; roll this restore back with the transaction.
+    throw new Error(
+      `Failed hand refund ${refundRowId} was restored concurrently`,
+    );
+  }
+  throw new Error(
+    `Owed refund on payment ${refund.paymentId} kept changing while failed hand refund ${refundRowId} gave it back`,
+  );
+}
+
+type RestorePlan =
+  | {
+      kind: "write";
+      paise: number;
+      key: string;
+      write: () => Promise<{ count: number }>;
+    }
+  | { kind: "nothing" }
+  | { kind: "unrestorable"; heldKey: string | null };
+
+/** How to give back `settled` against the payment's marker as it reads now, capped at the refundable balance. */
+async function planOwedRestore(
+  tx: Tx,
+  paymentId: string,
+  refundRowId: string,
+  settled: HandSettledOwed,
+): Promise<RestorePlan> {
   const payment = await tx.payment.findUnique({
-    where: { id: refund.paymentId },
+    where: { id: paymentId },
     select: {
       amount: true,
       paymentStatus: true,
@@ -267,89 +340,66 @@ export async function restoreOwedOnFailedRefund(
       ...REFUNDABLE_BALANCE_SELECT,
     },
   });
-  if (!payment) return;
+  if (!payment) return { kind: "nothing" };
+  const refundable = refundableBalancePaise(Number(payment.amount), payment);
+  const owedNow =
+    payment.refundOwedPaise === null ? null : Number(payment.refundOwedPaise);
+  if (payment.refundOwedKey === settled.key) {
+    // A full-balance marker (null) already owes everything that is left.
+    if (owedNow === null) return { kind: "nothing" };
+    const paise = Math.max(
+      0,
+      Math.min(owedNow + settled.settledPaise, refundable) - owedNow,
+    );
+    if (paise === 0) return { kind: "nothing" };
+    return {
+      kind: "write",
+      paise,
+      key: settled.key,
+      write: () =>
+        tx.payment.updateMany({
+          where: {
+            id: paymentId,
+            refundOwedKey: settled.key,
+            refundOwedPaise: owedNow,
+          },
+          data: { refundOwedPaise: owedNow + paise },
+        }),
+    };
+  }
   // A marker is only ever stamped on a live SUCCEEDED payment.
   const stampable =
     payment.paymentStatus === PaymentStatus.SUCCEEDED &&
     payment.deletedAt === null;
-  const refundable = refundableBalancePaise(Number(payment.amount), payment);
-  const owedNow =
-    payment.refundOwedPaise === null ? null : Number(payment.refundOwedPaise);
-
-  let restoredPaise = 0;
-  let restoredKey: string | null = null;
-  let write: (() => Promise<{ count: number }>) | null = null;
-  if (payment.refundOwedKey === settled.key && owedNow !== null) {
-    // A full-balance marker (null) already owes everything that is left.
-    restoredPaise = Math.max(
-      0,
-      Math.min(owedNow + settled.settledPaise, refundable) - owedNow,
-    );
-    restoredKey = settled.key;
-    write = () =>
+  if (payment.refundOwedKey !== null || !stampable) {
+    return { kind: "unrestorable", heldKey: payment.refundOwedKey };
+  }
+  const paise = Math.max(0, Math.min(settled.settledPaise, refundable));
+  if (paise === 0) return { kind: "nothing" };
+  const key = `${settled.key}:restored:${refundRowId}`;
+  const now = new Date();
+  return {
+    kind: "write",
+    paise,
+    key,
+    write: () =>
       tx.payment.updateMany({
         where: {
-          id: refund.paymentId,
-          refundOwedKey: settled.key,
-          refundOwedPaise: owedNow,
-        },
-        data: { refundOwedPaise: owedNow + restoredPaise },
-      });
-  } else if (payment.refundOwedKey === null && stampable) {
-    restoredPaise = Math.max(0, Math.min(settled.settledPaise, refundable));
-    restoredKey = `${settled.key}:restored:${refundRowId}`;
-    const now = new Date();
-    write = () =>
-      tx.payment.updateMany({
-        where: {
-          id: refund.paymentId,
+          id: paymentId,
           refundOwedKey: null,
           paymentStatus: PaymentStatus.SUCCEEDED,
           deletedAt: null,
         },
         data: {
-          refundOwedKey: restoredKey,
-          refundOwedPaise: restoredPaise,
+          refundOwedKey: key,
+          refundOwedPaise: paise,
           refundOwedReason: settled.reason,
           refundOwedAt: now,
           refundOwedAttempts: 0,
           refundOwedNextAt: new Date(now.getTime() + RESTAMP_GRACE_MS),
         },
-      });
-  } else if (payment.refundOwedKey !== settled.key) {
-    // Another door's marker holds the payment (one marker cannot carry two
-    // debts), or the payment can no longer carry one.
-    await recordSystemError({
-      organizationId: null,
-      category: "PAYMENT",
-      summary: `A failed hand refund on payment ${refund.paymentId} could not give back the ${rupees(settled.settledPaise)} it settled (${settled.key}): another refund is owed or the payment is no longer live — refund by hand`,
-      err: new Error("OWED_REFUND_NOT_RESTORED"),
-      context: { refundRowId, heldKey: payment.refundOwedKey, ...settled },
-      db: tx,
-    });
-  }
-
-  const claimed = await tx.refund.updateMany({
-    where: {
-      id: refundRowId,
-      status: RefundStatus.FAILED,
-      updatedAt: refund.updatedAt,
-    },
-    data: {
-      metadata: {
-        ...meta.data,
-        settledOwedRestored: true,
-        settledOwedRestoredPaise: restoredPaise,
-        ...(restoredKey ? { settledOwedRestoredKey: restoredKey } : {}),
-      } as Prisma.InputJsonValue,
-    },
-  });
-  if (claimed.count === 0) return;
-  if (write && restoredPaise > 0 && (await write()).count !== 1) {
-    throw new Error(
-      `Owed refund on payment ${refund.paymentId} changed while its failed hand refund ${refundRowId} was giving it back`,
-    );
-  }
+      }),
+  };
 }
 
 /**
@@ -448,7 +498,6 @@ export function markerFromRow(row: {
     key: row.refundOwedKey,
     reason: row.refundOwedReason ?? "refund owed",
     attempts: row.refundOwedAttempts,
-    asRead: true,
   };
 }
 
@@ -691,9 +740,7 @@ async function refundUpToBalance(
       // No amount is the front door's full-balance call, the credits rail's only shape.
       ...(amountPaise === null ? {} : { amountPaise }),
       dedupeKey: marker.key,
-      ...(marker.asRead
-        ? { owedMarker: { key: marker.key, amountPaise: marker.amountPaise } }
-        : {}),
+      owedMarker: { key: marker.key, amountPaise: marker.amountPaise },
       reason: marker.reason,
       initiatedByUserId: opts.initiatedByUserId ?? null,
     });

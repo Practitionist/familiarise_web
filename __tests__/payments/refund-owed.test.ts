@@ -734,9 +734,10 @@ describe("a hand refund during the backoff", () => {
     expect(mockRows.get("p1")!.refundOwedKey).toBeNull();
   });
 
-  it("stops a drive that read the marker before a hand refund changed it", async () => {
+  it("stops the door's own drive once a hand refund changed its marker", async () => {
     seat("p1", 10_000);
-    const owed = { ...marker("p1", 5_000), asRead: true };
+    // The marker as the cancel door stamped it and is about to drive it.
+    const owed = marker("p1", 5_000);
     await handRefund("p1", 2_000);
     expect((await driveRefundOwed(owed)).kind).toBe("blocked");
     await handRefund("p1", 3_000);

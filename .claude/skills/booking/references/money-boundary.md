@@ -385,9 +385,8 @@ only the remainder. The outcome is written to the Refund row's
 `stillOwedPaise`, `note`), returned as `settledOwed`, and the refund dialog shows
 its note: "The owed ₹Y is fully settled." or "Settled ₹X of the owed ₹Y; ₹Z
 still owed and retrying." A marker whose own refund is PENDING refuses the hand refund
-with 409 `OWED_REFUND_IN_FLIGHT`. A drive of a marker read back from the payment row (`markerFromRow`: the sweep,
-the whole-event re-entry, the incident and expiry re-drives) carries it as
-`owedMarker`, and each rail's
+with 409 `OWED_REFUND_IN_FLIGHT`. Every marker drive, the door's
+own first drive included, carries the marker as `owedMarker`, and each rail's
 transaction checks the marker still holds the payment at that amount
 (`assertOwedMarkerHeld`). A drive whose marker was cleared ends `settled`, and
 one whose marker was reduced ends `blocked`; neither moves money. A partial
