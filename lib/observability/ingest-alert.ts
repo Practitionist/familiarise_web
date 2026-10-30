@@ -24,12 +24,13 @@ function escapeHtml(s: string): string {
 
 /** Per verdict, so a throttle is never answered with a plan upgrade. */
 function remedyFor(r: IngestCheck): string[] {
+  // The read covers the last day, so a re-run stays unhealthy until old rejections age out.
   const recheck =
-    "Re-check by running sentry-ingest-canary from the System Jobs page; a healthy run answers 200.";
+    "To confirm recovery, read the same stats_v2 query with statsPeriod=1h: rejections already counted stay in the canary's one-day window, so a re-run can stay unhealthy for up to a day after the fix.";
   if (r.verdict === "stats-unreadable") {
     return [
       "Ingest health is unknown, not known bad. Check that SENTRY_STATS_TOKEN is a live org token with org:read, and that SENTRY_API_URL and SENTRY_ORG name the right organisation.",
-      recheck,
+      "After fixing it, re-run sentry-ingest-canary from the System Jobs page.",
     ];
   }
   if (isQuotaExhausted(r)) {

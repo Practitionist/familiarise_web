@@ -70,7 +70,7 @@ A healthy body is `{"healthy":true,"verdict":"accepted","accepted":<n>,"rejectio
 
 ## The remedy, and why you do not have to wait for the month
 
-The quota is measured against the plan's included volume. Upgrading raises the ceiling at once: the usage already spent sits under the new number, and `error_usage_exceeded` clears on the next event. Developer is 5,000 errors a month; Team is 50,000. So the sequence is: upgrade, then re-run the canary and confirm `healthy: true`.
+The quota is measured against the plan's included volume. Upgrading raises the ceiling at once: the usage already spent sits under the new number, and `error_usage_exceeded` clears on the next event. Developer is 5,000 errors a month; Team is 50,000. So the sequence is: upgrade, then confirm recovery with the same `stats_v2` read at `statsPeriod=1h`. Re-running the canary is not enough: its one-day window still holds the earlier rejections, so it can stay unhealthy for up to a day after the fix.
 
 ## Mass events: what each one costs
 
