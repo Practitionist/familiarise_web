@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cache } from "react";
-import type { DigitalProductCategory } from "@prisma/client";
+import type { DigitalProductCategory, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { digitalProductDiscoverableWhere } from "@/lib/api/plans/visibility";
 
@@ -67,52 +67,82 @@ export const getConsultantDigitalProducts = cache(
   },
 );
 
+const PRODUCT_PAGE_SELECT = {
+  id: true,
+  slug: true,
+  title: true,
+  subtitle: true,
+  description: true,
+  category: true,
+  pricePaise: true,
+  coverImagePath: true,
+  publishedAt: true,
+  consultantProfile: {
+    select: {
+      id: true,
+      headline: true,
+      user: { select: { name: true, image: true } },
+    },
+  },
+  assets: {
+    where: VERIFIED,
+    orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true,
+      originalName: true,
+      mimeType: true,
+      sizeBytes: true,
+    },
+  },
+} as const satisfies Prisma.DigitalProductSelect;
+
+function findProductPage(where: Prisma.DigitalProductWhereInput) {
+  return prisma.digitalProduct.findFirst({
+    where,
+    select: PRODUCT_PAGE_SELECT,
+  });
+}
+
+function toPublicProduct(
+  row: NonNullable<Awaited<ReturnType<typeof findProductPage>>>,
+): PublicProduct {
+  const { consultantProfile, assets, ...product } = row;
+  return {
+    ...product,
+    fileCount: assets.length,
+    files: assets,
+    creator: {
+      consultantProfileId: consultantProfile.id,
+      name: consultantProfile.user.name,
+      image: consultantProfile.user.image,
+      headline: consultantProfile.headline,
+    },
+  };
+}
+
 /** One product on sale by slug, with its creator and verified file list. */
 export const getPublicDigitalProductBySlug = cache(
   async (slug: string): Promise<PublicProduct | null> => {
-    const row = await prisma.digitalProduct.findFirst({
-      where: { slug, ...digitalProductDiscoverableWhere() },
-      select: {
-        id: true,
-        slug: true,
-        title: true,
-        subtitle: true,
-        description: true,
-        category: true,
-        pricePaise: true,
-        coverImagePath: true,
-        publishedAt: true,
-        consultantProfile: {
-          select: {
-            id: true,
-            headline: true,
-            user: { select: { name: true, image: true } },
-          },
-        },
-        assets: {
-          where: VERIFIED,
-          orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-          select: {
-            id: true,
-            originalName: true,
-            mimeType: true,
-            sizeBytes: true,
-          },
-        },
-      },
+    const row = await findProductPage({
+      slug,
+      ...digitalProductDiscoverableWhere(),
     });
-    if (!row) return null;
-    const { consultantProfile, assets, ...product } = row;
-    return {
-      ...product,
-      fileCount: assets.length,
-      files: assets,
-      creator: {
-        consultantProfileId: consultantProfile.id,
-        name: consultantProfile.user.name,
-        image: consultantProfile.user.image,
-        headline: consultantProfile.headline,
-      },
-    };
+    return row ? toPublicProduct(row) : null;
+  },
+);
+
+/**
+ * A product no longer on sale, for a buyer who holds it: archived products
+ * stay downloadable to their buyers. A taken-down product never loads.
+ */
+export const getEntitledDigitalProductBySlug = cache(
+  async (slug: string, buyerId: string): Promise<PublicProduct | null> => {
+    const row = await findProductPage({
+      slug,
+      status: { in: ["PUBLISHED", "ARCHIVED"] },
+      takenDownAt: null,
+      purchases: { some: { buyerId, status: "SUCCEEDED" } },
+    });
+    return row ? toPublicProduct(row) : null;
   },
 );

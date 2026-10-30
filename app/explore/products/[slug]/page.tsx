@@ -8,7 +8,11 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { goHref } from "@/lib/dashboard/go";
 import { formatFileSize } from "@/lib/documents/document-utils";
-import { getPublicDigitalProductBySlug } from "@/lib/data/digital-products-public";
+import {
+  getEntitledDigitalProductBySlug,
+  getPublicDigitalProductBySlug,
+} from "@/lib/data/digital-products-public";
+import { quoteDigitalProductForBuyer } from "@/lib/payments/pricing/digital-product-price";
 import { findDigitalProductEntitlement } from "@/lib/payments/digital-product-entitlement";
 import { DIGITAL_PRODUCT_CATEGORY_LABEL } from "@/lib/digital-products/constants";
 import {
@@ -39,11 +43,14 @@ export default async function DigitalProductPage({
   params,
 }: Readonly<{ params: Params }>) {
   const { slug } = await params;
-  const product = await getPublicDigitalProductBySlug(slug);
-  if (!product) notFound();
-
   const session = await getSession();
   const user = session?.user;
+  // A product off sale still opens for its buyers: not discoverable, no checkout.
+  const product =
+    (await getPublicDigitalProductBySlug(slug)) ??
+    (user?.id ? await getEntitledDigitalProductBySlug(slug, user.id) : null);
+  if (!product) notFound();
+
   let viewer: ProductViewer = { kind: "signed-out" };
   if (user?.id) {
     if (user.consultantProfileId === product.creator.consultantProfileId) {
@@ -65,6 +72,15 @@ export default async function DigitalProductPage({
       };
     }
   }
+
+  const quote =
+    viewer.kind === "owned" || product.pricePaise === 0
+      ? null
+      : await quoteDigitalProductForBuyer({
+          productId: product.id,
+          pricePaise: product.pricePaise,
+          buyerId: viewer.kind === "buyer" && user?.id ? user.id : null,
+        });
 
   return (
     <div className="container mx-auto grid max-w-5xl gap-8 px-4 py-10 lg:grid-cols-[1.6fr_1fr]">
@@ -136,7 +152,7 @@ export default async function DigitalProductPage({
           productId={product.id}
           slug={product.slug}
           title={product.title}
-          pricePaise={product.pricePaise}
+          quote={quote}
           viewer={viewer}
           files={product.files}
         />

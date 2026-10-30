@@ -15,6 +15,7 @@ import { fetchWithIdentity } from "@/lib/auth/identity-header";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import { formatFileSize } from "@/lib/documents/document-utils";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import type { DigitalProductQuote } from "@/lib/payments/pricing/digital-product-price";
 
 export type ProductViewer =
   | { kind: "signed-out" }
@@ -60,15 +61,38 @@ async function readStatus(
   return parsed.success ? parsed.data.data.status : null;
 }
 
-/** Poll the purchase the webhook settles, then ask the server to check Razorpay itself. */
+/**
+ * Poll the purchase the webhook settles, then ask the server to check Razorpay
+ * itself. FAILED is not final here: an earlier declined attempt on the same
+ * order marks it FAILED before the successful retry's capture lands.
+ */
 async function confirmPurchase(purchaseId: string): Promise<PurchaseStatus> {
   const path = `/api/digital-products/purchases/${encodeURIComponent(purchaseId)}`;
   for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
     const status = await readStatus(path);
-    if (status && status !== "PENDING") return status;
+    if (status === "SUCCEEDED" || status === "REFUNDED") return status;
     await sleep(POLL_INTERVAL_MS);
   }
   return (await readStatus(`${path}/verify`, { method: "POST" })) ?? "PENDING";
+}
+
+function PriceBreakdown({ quote }: Readonly<{ quote: DigitalProductQuote }>) {
+  if (quote.basePaise === null || quote.taxPaise === null) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Total of your unfinished checkout, taxes included
+      </p>
+    );
+  }
+  if (quote.taxPaise === 0) {
+    return <p className="text-xs text-muted-foreground">No GST applies</p>;
+  }
+  return (
+    <p className="text-xs text-muted-foreground">
+      {formatCurrencyAmount(quote.basePaise, "INR")} +{" "}
+      {formatCurrencyAmount(quote.taxPaise, "INR")} GST
+    </p>
+  );
 }
 
 /** Buy, claim or download a digital product; the page decides who the viewer is. */
@@ -76,14 +100,15 @@ export function ProductPurchasePanel({
   productId,
   slug,
   title,
-  pricePaise,
+  quote,
   viewer,
   files,
 }: Readonly<{
   productId: string;
   slug: string;
   title: string;
-  pricePaise: number;
+  /** Null for a free product; the server derives it as the purchase route would charge. */
+  quote: DigitalProductQuote | null;
   viewer: ProductViewer;
   files: PanelFile[];
 }>) {
@@ -92,8 +117,10 @@ export function ProductPurchasePanel({
   const { emiEnabled } = useCheckoutFlags();
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const isFree = pricePaise === 0;
-  const priceText = isFree ? "Free" : formatCurrencyAmount(pricePaise, "INR");
+  const isFree = quote === null;
+  const priceText = quote
+    ? formatCurrencyAmount(quote.totalPaise, "INR")
+    : "Free";
 
   const failed = (description: string) =>
     toast({
@@ -112,7 +139,8 @@ export function ProductPurchasePanel({
     if (status === "SUCCEEDED") {
       toast({ title: "It's yours", description: "Your files are ready." });
       router.refresh();
-    } else if (status === "PENDING") {
+    } else if (status === "PENDING" || status === "FAILED") {
+      // Checkout reported success, so the sweep settles a capture the webhook missed.
       toast({
         title: "Payment received, still confirming",
         description:
@@ -235,7 +263,10 @@ export function ProductPurchasePanel({
 
   return (
     <div className="space-y-3">
-      <p className="text-2xl font-semibold">{priceText}</p>
+      <div>
+        <p className="text-2xl font-semibold">{priceText}</p>
+        {quote && <PriceBreakdown quote={quote} />}
+      </div>
       {viewer.kind === "signed-out" && (
         <Button asChild className="w-full">
           <Link

@@ -13,8 +13,7 @@ import {
   createRazorpayOrder,
 } from "@/lib/payments/core/razorpay";
 import { savedCardCustomerId } from "@/lib/payments/core/saved-card-customer";
-import { deriveDigitalProductAmount } from "@/lib/payments/pricing/digital-product-price";
-import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
+import { deriveDigitalProductChargeForBuyer } from "@/lib/payments/pricing/digital-product-price";
 import type { digitalProductChargeNotesSchema } from "@/lib/payments/webhooks/digital-product-purchase";
 import {
   checkProductForSale,
@@ -55,18 +54,13 @@ export async function POST(_request: Request, { params }: RouteParams) {
     }
 
     // Resolved before the lock so a slow Customer call holds nothing.
-    const [customerId, buyer] = await Promise.all([
+    const [customerId, { buyerCountry, derived }] = await Promise.all([
       savedCardCustomerId(buyerId),
-      prisma.user.findUnique({
-        where: { id: buyerId },
-        select: { country: true },
+      deriveDigitalProductChargeForBuyer({
+        pricePaise: sale.product.pricePaise,
+        buyerId,
       }),
     ]);
-    const buyerCountry = detectBuyerCountry({ userCountry: buyer?.country });
-    const derived = await deriveDigitalProductAmount({
-      pricePaise: sale.product.pricePaise,
-      buyerCountry,
-    });
 
     // Read, mint and create under one lock so a second caller resumes, never re-mints.
     const outcome = await lockDigitalProductPurchase(

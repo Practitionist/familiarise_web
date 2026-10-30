@@ -4,8 +4,9 @@
 
 /**
  * The buyer doors: overlapping purchase POSTs mint one order (the second
- * resumes it), a second free claim is refused, and a download stamps the
- * refund-window end by CAS before redirecting to a 300 s attachment URL.
+ * resumes it) at the amount the page quotes, a free claim stages its receipt
+ * in its transaction and a second one is refused, and a download locks the
+ * live purchase in its transaction, refusing one a refund revoked first.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -49,9 +50,17 @@ jest.mock("../../lib/rate-limit", () => ({
   checkoutLimiter: {},
   digitalProductDownloadLimiter: {},
 }));
-const notifyPurchase = jest.fn();
+const stageReceipt = jest.fn(async (_tx: unknown, _receipt: unknown) => [
+  { staged: { id: "fe_1" } },
+]);
+const flushReceipt = jest.fn();
 jest.mock("../../lib/digital-products/purchase-email", () => ({
-  notifyDigitalProductPurchase: (...a: unknown[]) => notifyPurchase(...a),
+  prepareDigitalProductReceipt: async (input: { purchaseId: string }) => ({
+    purchaseId: input.purchaseId,
+  }),
+  stageDigitalProductReceipt: (tx: unknown, receipt: unknown) =>
+    stageReceipt(tx, receipt),
+  flushDigitalProductReceipt: (...a: unknown[]) => flushReceipt(...a),
 }));
 jest.mock("../../lib/payments/core/saved-card-customer", () => ({
   savedCardCustomerId: async () => undefined,
@@ -93,8 +102,24 @@ const product = {
   takenDownAt: null,
   pricePaise: 50_000,
 };
+const lockPurchase = jest.fn();
+const purchaseModel = {
+  findFirst: async ({ where }: { where: Partial<Row> }) =>
+    rows.find(
+      (r) =>
+        r.productId === where.productId &&
+        r.buyerId === where.buyerId &&
+        r.status === where.status,
+    ) ?? null,
+  create: async ({ data }: { data: Row | Omit<Row, "id"> }) => {
+    const row = { id: `dpp_${rows.length + 1}`, ...data };
+    rows.push(row);
+    return row;
+  },
+};
 const tx = {
-  digitalProductPurchase: { updateMany: stamp },
+  $queryRaw: (...a: unknown[]) => lockPurchase(...a),
+  digitalProductPurchase: { ...purchaseModel, updateMany: stamp },
   digitalProductDownload: { create: downloadCreate },
 };
 jest.mock("../../lib/prisma", () => ({
@@ -110,19 +135,8 @@ jest.mock("../../lib/prisma", () => ({
         product: { consultantProfileId: "cp_owner", takenDownAt: null },
       }),
     },
-    digitalProductPurchase: {
-      findFirst: async ({ where }: { where: Partial<Row> }) =>
-        rows.find(
-          (r) =>
-            r.productId === where.productId &&
-            r.buyerId === where.buyerId &&
-            r.status === where.status,
-        ) ?? null,
-      create: async ({ data }: { data: Omit<Row, "id"> }) => {
-        const row = { id: `dpp_${rows.length + 1}`, ...data };
-        rows.push(row);
-        return row;
-      },
+    get digitalProductPurchase() {
+      return purchaseModel;
     },
     $transaction: (cb: (t: typeof tx) => Promise<unknown>) => cb(tx),
   },
@@ -131,6 +145,7 @@ jest.mock("../../lib/prisma", () => ({
 import { POST as purchase } from "../../app/api/digital-products/[productId]/purchase/route";
 import { POST as claim } from "../../app/api/digital-products/[productId]/claim/route";
 import { GET as download } from "../../app/api/digital-products/[productId]/assets/[assetId]/download/route";
+import { quoteDigitalProductForBuyer } from "../../lib/payments/pricing/digital-product-price";
 
 const params = { params: Promise.resolve({ productId: "dp_1" }) };
 const req = () => new Request("http://localhost/x", { method: "POST" });
@@ -143,12 +158,34 @@ beforeEach(() => {
   process.env.R2_DIGITAL_PRODUCTS_BUCKET = "digital-products";
 });
 
-it("mints one order for overlapping purchases and refuses a second free claim", async () => {
+it("mints one order at the quoted amount for overlapping purchases and refuses a second free claim", async () => {
+  const quote = await quoteDigitalProductForBuyer({
+    productId: "dp_1",
+    pricePaise: 50_000,
+    buyerId: "buyer_1",
+  });
+  expect(quote).toEqual({
+    basePaise: 50_000,
+    taxPaise: 9_000,
+    totalPaise: 59_000,
+  });
   const [a, b] = await Promise.all([
     purchase(req(), params),
     purchase(req(), params),
   ]);
   expect(createRazorpayOrder).toHaveBeenCalledTimes(1);
+  expect(createRazorpayOrder.mock.calls[0]).toEqual([
+    expect.objectContaining({ amount: quote.totalPaise }),
+  ]);
+  // A resumed order is shown at its persisted amount.
+  rows[0].amountPaise = 61_000;
+  expect(
+    await quoteDigitalProductForBuyer({
+      productId: "dp_1",
+      pricePaise: 50_000,
+      buyerId: "buyer_1",
+    }),
+  ).toEqual({ basePaise: null, taxPaise: null, totalPaise: 61_000 });
   expect(rows).toHaveLength(1);
   expect([a.status, b.status].sort()).toEqual([200, 201]);
   expect(createRazorpayOrder.mock.calls[0]).toEqual([
@@ -170,32 +207,42 @@ it("mints one order for overlapping purchases and refuses a second free claim", 
   const again = await claim(req(), params);
   expect(again.status).toBe(400);
   expect((await again.json()).code).toBe("ALREADY_ENTITLED");
-  expect(notifyPurchase).toHaveBeenCalledTimes(1);
-  expect(notifyPurchase).toHaveBeenCalledWith(
-    { id: rows[0].id },
+  // The receipt is staged on the claim's own transaction, then flushed after commit.
+  expect(stageReceipt).toHaveBeenCalledTimes(1);
+  expect(stageReceipt).toHaveBeenCalledWith(tx, { purchaseId: rows[0].id });
+  expect(flushReceipt).toHaveBeenCalledWith(
+    [{ staged: { id: "fe_1" } }],
     expect.any(Number),
   );
 });
 
-it("stamps the first download by CAS and redirects to a 300 s attachment URL", async () => {
-  rows.push({
-    id: "dpp_9",
-    productId: "dp_1",
-    buyerId: "buyer_1",
-    amountPaise: 59_000,
-    status: "SUCCEEDED",
-  });
-  const res = await download(new Request("http://localhost/x"), {
+const downloadOnce = () =>
+  download(new Request("http://localhost/x"), {
     params: Promise.resolve({ productId: "dp_1", assetId: "as_1" }),
   });
+
+it("locks the live purchase in the download transaction: revoked first, download first, repeat", async () => {
+  // A refund committed first: no SUCCEEDED row to lock, no URL, no download row.
+  lockPurchase.mockResolvedValueOnce([]);
+  const revoked = await downloadOnce();
+  expect(revoked.status).toBe(403);
+  expect(downloadCreate).not.toHaveBeenCalled();
+  expect(presign).not.toHaveBeenCalled();
+  const [sql, ...values] = lockPurchase.mock.calls[0] as [
+    TemplateStringsArray,
+    ...unknown[],
+  ];
+  expect(sql.join("?")).toMatch(/status = 'SUCCEEDED'\s+FOR UPDATE/);
+  expect(values).toEqual(["dp_1", "buyer_1"]);
+
+  // The download commits first; a later refund waits on the lock.
+  lockPurchase.mockResolvedValue([{ id: "dpp_9" }]);
+  const res = await downloadOnce();
   expect(res.status).toBe(302);
   expect(res.headers.get("location")).toBe("https://r2/signed");
   expect(stamp).toHaveBeenCalledWith({
     where: { id: "dpp_9", status: "SUCCEEDED", firstDownloadedAt: null },
     data: { firstDownloadedAt: expect.any(Date) },
-  });
-  expect(downloadCreate).toHaveBeenCalledWith({
-    data: { purchaseId: "dpp_9", assetId: "as_1" },
   });
   expect(presign).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -204,4 +251,12 @@ it("stamps the first download by CAS and redirects to a 300 s attachment URL", a
       responseContentDisposition: expect.stringMatching(/^attachment;/),
     }),
   );
+
+  // A repeat download is served and recorded; the stamp CAS changes nothing.
+  stamp.mockResolvedValueOnce({ count: 0 });
+  expect((await downloadOnce()).status).toBe(302);
+  expect(downloadCreate).toHaveBeenCalledTimes(2);
+  expect(downloadCreate).toHaveBeenLastCalledWith({
+    data: { purchaseId: "dpp_9", assetId: "as_1" },
+  });
 });
