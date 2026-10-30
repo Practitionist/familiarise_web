@@ -35,7 +35,9 @@ coderabbit review --uncommitted --light --agent \
   -c .coderabbit.yaml AGENTS.md > /tmp/cr-local.log 2>&1
 ```
 
-Verify the expected organization, review access and assigned seat in auth status.
+Verify the organization/workspace and review-access information reported by
+auth status. SSO workspace logins omit Plan and Seat; verify seat assignment
+in the dashboard (see [SSO workspace logins](https://docs.coderabbit.ai/cli#sso-workspace-logins)).
 Add `--include-untracked` when new files should be reviewed. For an already
 committed branch, use `--committed --base origin/dev` instead of `--uncommitted`,
 or the actual parent branch for a stacked PR. Keep both AGENTS.md and the YAML
@@ -98,9 +100,9 @@ A rate-limited PR review may leave a passing check while no review ran.
 Verify completed processing for the intended revision and reviewed file scope
 using the bot's review/walkthrough and command result, and check for explicit
 skipped/rate-limited notices. Neither a green check nor a thread count proves
-completion: a real clean review may create no inline comments. For effective
-settings, `@coderabbitai configuration` shows configuration sources, including
-organization overrides. Validate YAML edits against the official schema.
+completion: a completed review with no findings may create no inline comments.
+For effective settings, `@coderabbitai configuration` shows configuration sources,
+including organization overrides. Validate YAML edits against the official schema.
 
 References: [automatic review controls](https://docs.coderabbit.ai/configuration/auto-review),
 [review commands](https://docs.coderabbit.ai/reference/review-commands),
