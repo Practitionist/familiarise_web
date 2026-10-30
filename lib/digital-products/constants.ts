@@ -94,3 +94,8 @@ export function digitalProductAssetKey(params: {
 }
 
 export const DIGITAL_PRODUCT_KEY_PREFIX = "products/";
+
+/** The folder a version lineage shares: everything before `v<version>.<ext>`. */
+export function lineageFolder(storageKey: string): string {
+  return storageKey.slice(0, storageKey.lastIndexOf("/") + 1);
+}

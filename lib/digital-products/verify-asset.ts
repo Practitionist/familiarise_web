@@ -7,6 +7,7 @@ import {
 import {
   DIGITAL_PRODUCT_MAX_FILE_BYTES,
   isDigitalProductMime,
+  lineageFolder,
   mimePolicy,
 } from "@/lib/digital-products/constants";
 import { checkFileSignature } from "@/lib/digital-products/file-signature";
@@ -25,6 +26,8 @@ export type AssetVerification =
 
 interface PendingAsset {
   id: string;
+  productId: string;
+  version: number;
   storageKey: string;
   mimeType: string;
   sizeBytes: number;
@@ -82,8 +85,9 @@ export async function inspectUploadedObject(
 }
 
 /**
- * Verify a PENDING asset and settle it by CAS: VERIFIED, or REJECTED with its
- * object deleted. A missing object leaves it PENDING for a retried commit.
+ * Verify a PENDING asset and settle it by CAS: VERIFIED (superseding older
+ * versions of its lineage), or REJECTED with its object deleted. A missing
+ * object leaves it PENDING for a retried commit.
  */
 export async function verifyDigitalProductAsset(
   asset: PendingAsset,
@@ -91,11 +95,26 @@ export async function verifyDigitalProductAsset(
   const verdict = await inspectUploadedObject(asset);
   if ("missing" in verdict) return { status: "MISSING" };
   if (verdict.ok) {
-    const settled = await prisma.digitalProductAsset.updateMany({
-      where: { id: asset.id, status: "PENDING" },
-      data: { status: "VERIFIED", verifiedAt: new Date() },
+    const verified = await prisma.$transaction(async (tx) => {
+      const now = new Date();
+      const settled = await tx.digitalProductAsset.updateMany({
+        where: { id: asset.id, status: "PENDING" },
+        data: { status: "VERIFIED", verifiedAt: now },
+      });
+      if (settled.count === 0) return false;
+      // A replacement retires the older versions of its lineage in the same commit.
+      await tx.digitalProductAsset.updateMany({
+        where: {
+          productId: asset.productId,
+          status: "VERIFIED",
+          storageKey: { startsWith: lineageFolder(asset.storageKey) },
+          version: { lt: asset.version },
+        },
+        data: { status: "SUPERSEDED", supersededAt: now },
+      });
+      return true;
     });
-    return settled.count === 1 ? { status: "VERIFIED" } : { status: "SETTLED" };
+    return verified ? { status: "VERIFIED" } : { status: "SETTLED" };
   }
   await deleteR2Object({
     key: asset.storageKey,
