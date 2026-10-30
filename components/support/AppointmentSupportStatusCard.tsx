@@ -40,7 +40,7 @@ const STATUS_LABELS: Record<string, string> = {
 function LastMessageIcon({
   sender,
   actorKind,
-}: Pick<ThreadMessage, "sender" | "actorKind">) {
+}: Readonly<Pick<ThreadMessage, "sender" | "actorKind">>) {
   if (sender === "USER") {
     return <UserRound className="h-3.5 w-3.5 shrink-0" />;
   }

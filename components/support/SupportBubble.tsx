@@ -73,7 +73,9 @@ function senderNameFor(
   internal: boolean,
   presenter: boolean,
 ) {
-  if (internal) return `Private note${authorName ? ` · ${authorName}` : ""}`;
+  if (internal) {
+    return authorName ? `Private note · ${authorName}` : "Private note";
+  }
   if (!presenter) return authorName ?? DEFAULT_NAME[author];
   return authorName ? `${authorName} · Presenter` : "Presenter";
 }
