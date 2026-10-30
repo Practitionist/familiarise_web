@@ -339,7 +339,9 @@ async function refundFreeCreditPayment(
             "ALREADY_FULLY_REFUNDED",
           );
         }
-        const settledOwed = await claimOwedMarker(tx, payment.id, input);
+        const settledOwed = await claimOwedMarker(tx, payment.id, input, {
+          kind: "whole",
+        });
 
         const refundRow = await tx.refund.create({
           data: {
@@ -516,8 +518,6 @@ export async function restoreSessionCredits(input: {
             seatLive,
           });
           const asked = Number(ledger.unitPaise) * input.sessions;
-          // Only operators return session credits, so this settles the owed refund by hand.
-          const settledOwed = await settleOwedByHand(tx, payment.id);
           const refundRow = await tx.refund.create({
             data: {
               paymentId: payment.id,
@@ -532,7 +532,6 @@ export async function restoreSessionCredits(input: {
                 initiatedByUserId: input.initiatedByUserId,
                 source: "free-credit-partial",
                 sessions: input.sessions,
-                ...(settledOwed ? { settledOwed } : {}),
               } as Prisma.InputJsonValue,
             },
           });
@@ -548,6 +547,10 @@ export async function restoreSessionCredits(input: {
               "CREDIT_EXPIRED",
             );
           }
+          // Only operators return session credits, so this settles the owed refund by hand.
+          const settledOwed = await settleOwedByHand(tx, payment.id, {
+            kind: restoredPaise >= stillUsed ? "whole" : "credits-part",
+          });
           // Kept on the row, so a keyed replay answers the real amount.
           await tx.refund.update({
             where: { id: refundRow.id },
@@ -1182,7 +1185,11 @@ async function refundInternalFundedPayment(
             "AMOUNT_EXCEEDS_REFUNDABLE",
           );
         }
-        const settledOwed = await claimOwedMarker(tx, payment.id, input);
+        const settledOwed = await claimOwedMarker(tx, payment.id, input, {
+          kind: "amount",
+          handPaise: requested,
+          refundableBeforePaise: refundable,
+        });
 
         const refundRow = await tx.refund.create({
           data: {

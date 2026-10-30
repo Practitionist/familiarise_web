@@ -30,8 +30,11 @@ jest.mock("../../lib/prisma", () => ({
         metadata: {
           settledOwed: {
             key: "cancel:appt_1:pay_1",
-            owedPaise: 5_000,
             reason: "cancellation",
+            owedPaise: 5_000,
+            settledPaise: 100,
+            stillOwedPaise: 4_900,
+            note: "Settled ₹1.00 of the owed ₹50.00; ₹49.00 still owed and retrying.",
           },
         },
       }),
@@ -89,7 +92,7 @@ it("answers the reserved PENDING refund when the gateway call throws", async () 
   expect((await res.json()).result).toMatchObject({
     refundId: "ref_1",
     status: "PENDING",
-    settledOwed: { key: "cancel:appt_1:pay_1", owedPaise: 5_000 },
+    settledOwed: { key: "cancel:appt_1:pay_1", stillOwedPaise: 4_900 },
   });
   expect(refundBookingPayment.mock.calls[0][0]).toMatchObject({
     keepSeat: true,

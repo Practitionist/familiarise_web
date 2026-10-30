@@ -521,7 +521,11 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             throw err;
           }
 
-          settledOwed = await claimOwedMarker(tx, input.paymentId, input);
+          settledOwed = await claimOwedMarker(tx, input.paymentId, input, {
+            kind: "amount",
+            handPaise: requested,
+            refundableBeforePaise: remainingNow,
+          });
 
           return tx.refund.create({
             data: {
@@ -654,6 +658,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     const metadata = {
       initiatedByUserId: input.initiatedByUserId ?? null,
       source: "app",
+      ...(settledOwed ? { settledOwed } : {}),
       gateway_error: gatewayError,
     } as Prisma.InputJsonValue;
     // A definitive refusal created no gateway refund, so the reservation is

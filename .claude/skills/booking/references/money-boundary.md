@@ -375,17 +375,25 @@ override door (`app/api/admin/refunds/issue/route.ts`), the admin single-payment
 refund (`app/api/admin/refunds/route.ts`) and the approved support remedy
 (`executeApprovedRefund` in `lib/support/case-actions.ts`); the credit-return
 door (`restoreSessionCredits`) always does. Inside the transaction that creates
-the operator's `Refund` row, `settleOwedByHand` clears the payment's marker,
-`refundOwedNextAt` included, by CAS on its key, whatever the hand refund's
-amount. The cleared marker is written to the Refund row's
-`metadata.settledOwed` (`{ key, owedPaise, reason }`), returned as
-`settledOwed`, and the refund dialog tells the operator the owed amount was
-settled by hand. A marker whose own refund is PENDING refuses the hand refund
-with 409 `OWED_REFUND_IN_FLIGHT`. Every drive carries `owedKey`, and each rail's
-transaction checks the marker still holds the payment (`assertOwedMarkerHeld`);
-a drive that lost to a hand refund ends `settled` and moves no money. If the
-gateway refuses the hand refund outright, `restoreHandSettledOwed` stamps the
-marker back for the sweep. A hand refund that stays PENDING and later fails is
+the operator's `Refund` row, `settleOwedByHand` compares the hand refund with
+what the marker owes (a null amount reads as the refundable balance before it),
+by CAS on the key and the owed amount. A hand refund that covers it clears the
+marker, `refundOwedNextAt` included. A smaller one lowers `refundOwedPaise` by
+its amount and leaves the attempts and backoff alone, so the next drive pays
+only the remainder. The outcome is written to the Refund row's
+`metadata.settledOwed` (`key`, `reason`, `owedPaise`, `settledPaise`,
+`stillOwedPaise`, `note`), returned as `settledOwed`, and the refund dialog shows
+its note: "The owed ₹Y is fully settled." or "Settled ₹X of the owed ₹Y; ₹Z
+still owed and retrying." A marker whose own refund is PENDING refuses the hand refund
+with 409 `OWED_REFUND_IN_FLIGHT`. A drive of a marker read back from the payment row (`markerFromRow`: the sweep,
+the whole-event re-entry, the incident and expiry re-drives) carries it as
+`owedMarker`, and each rail's
+transaction checks the marker still holds the payment at that amount
+(`assertOwedMarkerHeld`). A drive whose marker was cleared ends `settled`, and
+one whose marker was reduced ends `blocked`; neither moves money. A partial
+credit return against a whole-restoration marker is refused with
+`OWED_RESTORATION_WHOLE`. If the gateway refuses the hand refund outright,
+`restoreHandSettledOwed` puts the marker back as it was. A hand refund that stays PENDING and later fails is
 a FAILED refund in the ops queue. A seat leave or removal stamps its marker in
 the commit that releases the seat.
 

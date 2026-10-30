@@ -321,14 +321,18 @@ function settles() {
       paymentId: string;
       amountPaise?: number;
       dedupeKey: string;
-      owedKey?: string;
+      owedMarker?: { key: string; amountPaise: number | null };
     }) => {
       const row = mockRows.get(input.paymentId)!;
-      if (input.owedKey && row.refundOwedKey !== input.owedKey) {
+      const held = input.owedMarker;
+      if (held) {
         const { RefundValidationError } = jest.requireMock<{
           RefundValidationError: new (message: string, code: string) => Error;
         }>("../../lib/payments/operations/refund");
-        throw new RefundValidationError("settled", "OWED_MARKER_SETTLED");
+        if (row.refundOwedKey !== held.key)
+          throw new RefundValidationError("gone", "OWED_MARKER_SETTLED");
+        if (row.refundOwedPaise !== held.amountPaise)
+          throw new RefundValidationError("changed", "OWED_MARKER_CHANGED");
       }
       const amountPaise = input.amountPaise ?? row.amount;
       const refund = {
@@ -681,36 +685,61 @@ describe("owed-refund backoff", () => {
 });
 
 describe("a hand refund during the backoff", () => {
-  /** The operator's refund transaction, as the front door runs it. */
-  const handRefund = (id: string) =>
-    mockDb.$transaction((tx) => settleOwedByHand(tx as never, id));
-
-  it("clears the marker in its own transaction, and the sweep then does nothing", async () => {
-    seat("p1", 10_000);
-    marker("p1", 5_000);
-    gatewayFails("SERVER_ERROR");
-    await retryAutoRefunds();
-    expect(mockRows.get("p1")!.refundOwedNextAt).not.toBeNull();
-
-    expect(await handRefund("p1")).toEqual({
-      key: "cancel:appt:p1",
-      owedPaise: 5_000,
-      reason: "cancellation",
+  /** The marker side of the operator's refund transaction, as the front door runs it. */
+  const handRefund = (id: string, handPaise: number) =>
+    settleOwedByHand(mockDb as never, id, {
+      kind: "amount",
+      handPaise,
+      refundableBeforePaise: 10_000,
     });
+
+  /** One failed sweep drive: attempt 1, next drive an hour out. */
+  async function failedOnce() {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    mockRefundBookingPayment.mockRejectedValueOnce(new Error("gateway 503"));
+    await retryAutoRefunds();
+    return owed;
+  }
+
+  it("clears a fully covered marker in its own transaction, and the sweep then does nothing", async () => {
+    await failedOnce();
+    expect((await handRefund("p1", 5_000))?.stillOwedPaise).toBe(0);
     expect(mockRows.get("p1")).toMatchObject({
       refundOwedKey: null,
       refundOwedAttempts: 0,
       refundOwedNextAt: null,
     });
+    elapse("p1");
     expect((await retryAutoRefunds()).owed.scanned).toBe(0);
-    expect(mockRefundBookingPayment).toHaveBeenCalledTimes(1);
+    expect(mockRefunds).toHaveLength(0);
   });
 
-  it("stops a drive that read the marker before the hand refund", async () => {
-    seat("p1", 10_000);
-    const owed = marker("p1", 5_000);
-    await handRefund("p1");
+  it("reduces a partly covered marker, and the sweep later pays only the remainder", async () => {
+    await failedOnce();
+    const backoff = mockRows.get("p1")!.refundOwedNextAt;
+    expect((await handRefund("p1", 2_000))?.note).toBe(
+      "Settled ₹20.00 of the owed ₹50.00; ₹30.00 still owed and retrying.",
+    );
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: "cancel:appt:p1",
+      refundOwedPaise: 3_000,
+      refundOwedAttempts: 1,
+      refundOwedNextAt: backoff,
+    });
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+    elapse("p1");
+    expect((await retryAutoRefunds()).owed.refunded).toBe(1);
+    expect(mockRefunds.map((r) => r.amountPaise)).toEqual([3_000]);
+    expect(mockRows.get("p1")!.refundOwedKey).toBeNull();
+  });
 
+  it("stops a drive that read the marker before a hand refund changed it", async () => {
+    seat("p1", 10_000);
+    const owed = { ...marker("p1", 5_000), asRead: true };
+    await handRefund("p1", 2_000);
+    expect((await driveRefundOwed(owed)).kind).toBe("blocked");
+    await handRefund("p1", 3_000);
     expect((await driveRefundOwed(owed)).kind).toBe("settled");
     expect(mockRefunds).toHaveLength(0);
   });

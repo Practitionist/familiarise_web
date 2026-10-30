@@ -18,11 +18,9 @@ import { callOpsDoor, isProposed, PROPOSED_TOAST } from "./ops-door";
 
 export type RefundDoor = "issue" | "override" | "credits";
 
-/** The owed refund this hand refund settled; the retry sweep no longer sends it. */
+/** What this hand refund did to the payment's owed refund: fully settled, or reduced and still retrying. */
 const settledOwedAnswer = z.object({
-  result: z.object({
-    settledOwed: z.object({ owedPaise: z.number().nullable() }),
-  }),
+  result: z.object({ settledOwed: z.object({ note: z.string() }) }),
 });
 
 const COPY: Record<
@@ -207,10 +205,7 @@ export function RefundDoorDialog({
             ? PROPOSED_TOAST
             : "Done — the refund is on its way",
           ...(settled.success && {
-            description:
-              settled.data.result.settledOwed.owedPaise === null
-                ? "This payment was still owed its full balance back. Your refund settles that by hand, so it will not be sent again."
-                : `This payment was still owed ${money(settled.data.result.settledOwed.owedPaise)} back. Your refund settles that by hand, so it will not be sent again.`,
+            description: settled.data.result.settledOwed.note,
           }),
         });
         for (const key of INVALIDATE)
