@@ -194,9 +194,35 @@ function resolveWallClock(
 }
 
 /**
- * One local `[wallStart, wallEnd)` window as UTC instants, or null when either
- * end falls in a spring-forward gap. Equal offsets 36 h either side mean no
- * transition can sit between them, since no zone changes offset twice in 4 days.
+ * The first instant after the spring-forward gap that swallows `wallMs`. Under
+ * the larger offset the wall time names an instant after the transition, under
+ * the smaller one an instant before it; the transition lies between and sits
+ * on a whole minute.
+ */
+function gapTransitionInstant(
+  zone: string,
+  wallMs: number,
+  offsets: readonly number[],
+): number {
+  let before = wallMs - Math.max(...offsets) * MS_PER_MINUTE;
+  let after = wallMs - Math.min(...offsets) * MS_PER_MINUTE;
+  const offsetBefore = zoneOffsetMinutesAt(zone, before);
+  while (after - before > MS_PER_MINUTE) {
+    const mid =
+      before + Math.floor((after - before) / 2 / MS_PER_MINUTE) * MS_PER_MINUTE;
+    if (zoneOffsetMinutesAt(zone, mid) === offsetBefore) before = mid;
+    else after = mid;
+  }
+  return after;
+}
+
+/**
+ * One local `[wallStart, wallEnd)` window as UTC instants, or null when it
+ * lies wholly in a spring-forward gap. An end inside the gap snaps to the
+ * transition, so only the skipped hour is lost (02:00–05:00 on a US
+ * spring-forward night yields 03:00–05:00). Equal offsets 36 h either side
+ * mean no transition can sit between them, since no zone changes offset
+ * twice in 4 days.
  */
 function resolveWallWindow(
   zone: string,
@@ -212,9 +238,13 @@ function resolveWallWindow(
     };
   }
   const offsets = [before, after];
-  const startMs = resolveWallClock(zone, wallStartMs, offsets);
-  const endMs = resolveWallClock(zone, wallEndMs, offsets);
-  if (startMs === null || endMs === null || endMs <= startMs) return null;
+  const startMs =
+    resolveWallClock(zone, wallStartMs, offsets) ??
+    gapTransitionInstant(zone, wallStartMs, offsets);
+  const endMs =
+    resolveWallClock(zone, wallEndMs, offsets) ??
+    gapTransitionInstant(zone, wallEndMs, offsets);
+  if (endMs <= startMs) return null;
   return { startMs, endMs };
 }
 

@@ -9,14 +9,17 @@
  * here, because choosing a session's times is still the delivering expert's
  * call.
  *
- * Two kinds of row, both under the org pin: PENDING requests still awaiting the
- * expert's approval, and APPROVED ones with no confirmed live session, which a
- * sponsor org may allocate. The payer sees every expert's queue in their org.
+ * Two kinds of row, both on bookings the org owns (`orgOwnedAppointmentWhere`):
+ * PENDING requests still awaiting the expert's approval, and APPROVED ones with
+ * no confirmed live session that the org's own money paid for, which it may
+ * allocate. The payer sees every expert's queue in their org.
  */
 
 import prisma from "@/lib/prisma";
 import { AppointmentStatus } from "@prisma/client";
-import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
+import { orgOwnedAppointmentWhere } from "@/lib/api/scope/list-appointments";
+import { ORG_FUNDING_PAYMENT_STATUSES } from "@/lib/booking/org-actor";
+import { orgFundedPaymentWhere } from "@/lib/data/org-sponsored-seats";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 
 export interface OrgPendingRequest {
@@ -38,15 +41,23 @@ const PENDING_TAKE = 50;
 export async function readOrgPendingRequests(
   orgId: string,
 ): Promise<OrgPendingRequest[]> {
-  const orgPin = scopeToWhereOrgId({ kind: "org", orgId });
+  const orgPin = orgOwnedAppointmentWhere(orgId);
   const waitingWhere = {
     OR: [
       { status: AppointmentStatus.PENDING, appointment: orgPin },
+      // Only an org-funded approved booking is one the org may allocate.
       {
         status: AppointmentStatus.APPROVED,
         appointment: {
           ...orgPin,
           occurrences: { none: { ...liveOccurrenceWhere, isTentative: false } },
+          payment: {
+            some: {
+              ...orgFundedPaymentWhere(orgId),
+              paymentStatus: { in: ORG_FUNDING_PAYMENT_STATUSES },
+              deletedAt: null,
+            },
+          },
         },
       },
     ],

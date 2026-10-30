@@ -18,6 +18,7 @@ import {
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { postLedgerTxn } from "../../lib/payments/ledger/post";
+import { atGridTime } from "./host-calendar";
 
 interface SeedCompletedOrgConsultationArgs {
   planId: string;
@@ -293,6 +294,8 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
   }
 
   const now = new Date();
+  // Sessions sit on the 30-minute grid: hour offsets from UTC midnight.
+  const today = atGridTime(now, 0);
   const dayMs = 24 * 60 * 60 * 1000;
   const hourMs = 60 * 60 * 1000;
 
@@ -336,7 +339,7 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
     );
 
     const startsAt = new Date(
-      now.getTime() - (135 - i * 2) * dayMs + 10 * hourMs,
+      today.getTime() - (135 - i * 2) * dayMs + 10 * hourMs,
     );
     const endsAt = new Date(startsAt.getTime() + hourMs);
     const platformFeePaise = Math.round(totalPricePaise * 0.1);
@@ -448,8 +451,7 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
   if (wiproLearners.length > 0 && learnProExperts.length > 0) {
     const learnerUser = wiproLearners[0].user;
     const consulteeProfile = learnerUser.consulteeProfile!;
-    const hostExpert =
-      learnProExperts[Math.min(2, learnProExperts.length - 1)];
+    const hostExpert = learnProExperts[Math.min(2, learnProExperts.length - 1)];
     const consultantProfile = hostExpert.consultantProfile!;
     const pricePaise = 6_000 * 100;
 
@@ -460,7 +462,7 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
       learnPro.id,
     );
 
-    const startsAt = new Date(now.getTime() - 128 * dayMs + 14 * hourMs);
+    const startsAt = new Date(today.getTime() - 128 * dayMs + 14 * hourMs);
     const endsAt = new Date(startsAt.getTime() + hourMs);
 
     await seedCompletedOrgConsultation({
@@ -522,7 +524,7 @@ export async function createOrgAppointmentsAndFeedback(): Promise<void> {
       iitMadras.id,
     );
 
-    const startsAt = new Date(now.getTime() - 124 * dayMs + 11 * hourMs);
+    const startsAt = new Date(today.getTime() - 124 * dayMs + 11 * hourMs);
     const endsAt = new Date(startsAt.getTime() + hourMs);
     const platformFeePaise = Math.round(pricePaise * 0.15);
     const orgSharePaise = Math.round(pricePaise * 0.85);

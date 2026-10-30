@@ -6,10 +6,11 @@
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import {
   FOCUS_LEAD_ROWS,
-  earliestAvailabilityRow,
+  earliestAvailabilityMinute,
   focusGridPosition,
   focusScrollRow,
-  focusTargetRow,
+  focusTargetMinute,
+  rowIndexForMinute,
   resolveFocusTarget,
 } from "@/lib/scheduling/time-picker-focus";
 
@@ -269,40 +270,50 @@ describe("resolveFocusTarget", () => {
   });
 });
 
-describe("focusTargetRow", () => {
+describe("focusTargetMinute", () => {
   const availability = [
     { startTime: new Date("2026-08-03T10:00:00Z") },
     { startTime: new Date("2026-08-04T08:30:00Z") },
   ];
 
   it("uses the session's own row, availability notwithstanding", () => {
-    const row = focusTargetRow(
+    const row = focusTargetMinute(
       { at: new Date("2026-08-03T14:30:00Z"), precision: "session" },
       availability,
       "UTC",
     );
 
-    expect(row).toBe(29); // 14:30
+    expect(row).toBe(14 * 60 + 30);
   });
 
   it("routes a window bound through first availability instead of 00:00", () => {
-    const row = focusTargetRow(
+    const row = focusTargetMinute(
       { at: new Date("2026-08-03T00:00:00Z"), precision: "period" },
       availability,
       "UTC",
     );
 
-    expect(row).toBe(17); // 08:30, not row 0
+    expect(row).toBe(8 * 60 + 30); // not midnight
   });
 
   it("falls back to the bound's own row when nothing is published", () => {
-    const row = focusTargetRow(
+    const row = focusTargetMinute(
       { at: new Date("2026-08-03T06:00:00Z"), precision: "period" },
       [],
       "UTC",
     );
 
-    expect(row).toBe(12);
+    expect(row).toBe(6 * 60);
+  });
+});
+
+describe("rowIndexForMinute", () => {
+  const rows = [{ minuteOfDay: 15 }, { minuteOfDay: 45 }, { minuteOfDay: 75 }];
+
+  it("finds the row holding a minute, on a :15/:45 axis too", () => {
+    expect(rowIndexForMinute(rows, 50)).toBe(1);
+    expect(rowIndexForMinute(rows, 75)).toBe(2);
+    expect(rowIndexForMinute(rows, 0)).toBe(0);
   });
 });
 
@@ -331,7 +342,7 @@ describe("focusGridPosition", () => {
       day: 1,
       hour: 2,
       minute: 30,
-      rowIndex: 5,
+      minuteOfDay: 150,
     });
 
     expect(focusGridPosition(at, "Asia/Kolkata")).toEqual({
@@ -340,7 +351,7 @@ describe("focusGridPosition", () => {
       day: 1,
       hour: 8,
       minute: 0,
-      rowIndex: 16,
+      minuteOfDay: 480,
     });
   });
 
@@ -353,7 +364,7 @@ describe("focusGridPosition", () => {
       day: 31,
       hour: 22,
       minute: 30,
-      rowIndex: 45,
+      minuteOfDay: 1350,
     });
   });
 
@@ -366,14 +377,14 @@ describe("focusGridPosition", () => {
       day: 1,
       hour: 0,
       minute: 0,
-      rowIndex: 0,
+      minuteOfDay: 0,
     });
   });
 });
 
-describe("earliestAvailabilityRow", () => {
+describe("earliestAvailabilityMinute", () => {
   it("returns the earliest published time of day across the week", () => {
-    const row = earliestAvailabilityRow(
+    const row = earliestAvailabilityMinute(
       [
         { startTime: new Date("2026-08-03T14:00:00Z") },
         { startTime: new Date("2026-08-04T09:30:00Z") },
@@ -382,10 +393,10 @@ describe("earliestAvailabilityRow", () => {
       "UTC",
     );
 
-    expect(row).toBe(19); // 09:30
+    expect(row).toBe(9 * 60 + 30);
   });
 
   it("returns null when the consultant has published nothing", () => {
-    expect(earliestAvailabilityRow([], "UTC")).toBeNull();
+    expect(earliestAvailabilityMinute([], "UTC")).toBeNull();
   });
 });

@@ -253,6 +253,7 @@ function mapSingle(
 ): AppointmentVM {
   const occurrences = sortOccurrences(occurrencesOfAppointment(appointment));
   const { title, counterpart, status } = eventFacts(appointment, consultantId);
+  const kind = appointment.appointmentType;
   return {
     id: `appointment-${appointment.id}`,
     // Always the viewing consultant: this is their own list.
@@ -262,7 +263,7 @@ function mapSingle(
     title,
     counterpart,
     status,
-    ...deriveBucket({ status, occurrences, now }, "consultant"),
+    ...deriveBucket({ status, occurrences, kind, now }, "consultant"),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
     group: null,

@@ -1,8 +1,48 @@
-// Which prior subscription a renewal may anchor to, and when its cycle ends.
+// Which prior subscription a renewal may anchor to, and when a plan starts.
 
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
 import { PaymentError } from "@/lib/payments/core/types";
 import type { Tx } from "@/lib/prisma";
-import { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, type Prisma } from "@prisma/client";
+
+const DAY_MS = 86_400_000;
+/** How far ahead a buyer may start a plan. */
+export const PLAN_START_HORIZON_DAYS = 90;
+
+const PLAN_END_SELECT = {
+  planEndsAt: true,
+  schedulingPeriodStartsAt: true,
+  schedulingTimezone: true,
+  subscriptionPlan: { select: { durationInMonths: true } },
+} satisfies Prisma.SubscriptionSelect;
+
+/**
+ * The plan's start: the buyer's pick (any time today up to the horizon),
+ * never before now, and for a renewal never before the prior plan's end.
+ * A pick more than a day old or past the horizon is refused.
+ */
+export function resolvePlanStart(
+  requestedStart: string | undefined,
+  priorPlanEnd: Date | null,
+  now: Date,
+): Date {
+  const requested = requestedStart ? new Date(requestedStart) : now;
+  if (
+    Number.isNaN(requested.getTime()) ||
+    requested.getTime() < now.getTime() - DAY_MS ||
+    requested.getTime() > now.getTime() + PLAN_START_HORIZON_DAYS * DAY_MS
+  ) {
+    throw new BookingRuleError(
+      "INVALID_PLAN_START",
+      `Pick a start date between today and ${PLAN_START_HORIZON_DAYS} days from now.`,
+      400,
+    );
+  }
+  return new Date(
+    Math.max(requested.getTime(), now.getTime(), priorPlanEnd?.getTime() ?? 0),
+  );
+}
 
 /**
  * #1743 — only an active or completed subscription may be renewed; a PENDING /
@@ -12,7 +52,8 @@ import { AppointmentStatus } from "@prisma/client";
 export const RENEWABLE_SUBSCRIPTION_STATUSES: ReadonlySet<AppointmentStatus> =
   new Set([AppointmentStatus.APPROVED, AppointmentStatus.COMPLETED]);
 
-export async function resolvePriorRenewalEndsAt(
+/** The renewable prior plan's end, or null when there is none to anchor to. */
+export async function resolvePriorPlanEnd(
   tx: Tx,
   renewsSubscriptionId: string | undefined,
   consulteeProfileId: string,
@@ -27,7 +68,7 @@ export async function resolvePriorRenewalEndsAt(
   const priorSub = await tx.subscription.findUnique({
     where: { id: renewsSubscriptionId },
     select: {
-      schedulingPeriodEndsAt: true,
+      ...PLAN_END_SELECT,
       status: true,
       deletedAt: true,
       requestedById: true,
@@ -43,7 +84,7 @@ export async function resolvePriorRenewalEndsAt(
   ) {
     return null;
   }
-  return priorSub.schedulingPeriodEndsAt;
+  return subscriptionPlanEnd(priorSub);
 }
 
 export async function resolvePriorSubscriptionForRenewal(
@@ -61,7 +102,7 @@ export async function resolvePriorSubscriptionForRenewal(
       subscriptionPlanId: true,
       requestedById: true,
       status: true,
-      schedulingPeriodEndsAt: true,
+      ...PLAN_END_SELECT,
       deletedAt: true,
       renewal: {
         select: { id: true, status: true, deletedAt: true },

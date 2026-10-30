@@ -1,34 +1,9 @@
 /**
- * #1863 — how old the availability heatmap on screen is, said out loud.
- *
- * The grid polls every ~60 s with jitter and refetches on focus (ADR 16:
- * polling, not push). Two things follow from that and neither was visible:
- *
- *   1. A consultant who leaves the allocate page open for forty minutes and
- *      then hits Auto Allocate gets a refusal with no indication the cells they
- *      were reading were forty minutes old. The refusal is CORRECT — the
- *      allocator re-validates server-side, which is exactly why ADR 16 chose
- *      polling — but it reads as the grid having lied to them.
- *   2. Background poll failures are deliberately silent (a flaky minute must
- *      not toast every 60 s), so a persistently failing endpoint shows a frozen
- *      grid indefinitely with no signal that it is frozen. Silent-by-design is
- *      right for a transient blip and wrong for a grid that has not updated in
- *      an hour.
- *
- * This module is the pure half — the same shape as
- * `lib/scheduling/requestsFreshness.ts`, which is the pattern the Requests inbox
- * already established for exactly this problem. It decides WHAT to say; the
- * hook decides when to re-ask and the component renders it.
- *
- * DO NOT "FIX" THE CADENCE. A socket is not the missing piece here: bounded
- * staleness is acceptable by design because the booking mutation re-validates
- * server-side, so the worst a stale grid can do is cost a wasted click, never a
- * double-booking. What was missing was not freshness but HONESTY about
- * freshness. If you are here to replace the 60 s poll with SSE or WebSocket,
- * read `docs/booking/00-architecture-decisions.md` (ADR 16) first — the poll
- * costs one indexed read per viewer per minute and buys the absence of a
- * long-lived connection in a serverless function, which is the trade the
- * platform made on purpose.
+ * How old the availability grid on screen is, said out loud. The grid polls
+ * about once a minute and the booking write re-validates server-side, so a
+ * stale grid can cost a click but never double-book; this only makes the age
+ * and a persistently failing poll visible. Pure: the hook decides when to
+ * re-ask, the component renders the label.
  */
 
 import { AVAILABILITY_POLL_INTERVAL_MS } from "@/lib/scheduling/availabilityPolling";
@@ -76,8 +51,8 @@ export function ageText(msSinceFetch: number): string {
 /**
  * What the grid should say about itself.
  *
- * @param fetchedAtMs when the last availability response settled, or NaN when
- *   none has (the first paint, or every fetch has failed).
+ * @param fetchedAtMs when the last SUCCESSFUL availability response landed
+ *   (a 304 counts), or NaN when none has. Failures never move it.
  * @param nowMs current time.
  * @param consecutiveFailures background polls that have failed in a row. Zero
  *   means healthy. A single failure is deliberately not enough to say anything:
@@ -127,4 +102,14 @@ export function availabilityFreshness(
     };
   }
   return { freshness: "fresh", label: null, failed: false };
+}
+
+/** Field-wise equality, so a ticking clock that changes nothing re-renders nothing. */
+export function sameFreshness(
+  a: AvailabilityFreshnessState,
+  b: AvailabilityFreshnessState,
+): boolean {
+  return (
+    a.freshness === b.freshness && a.label === b.label && a.failed === b.failed
+  );
 }

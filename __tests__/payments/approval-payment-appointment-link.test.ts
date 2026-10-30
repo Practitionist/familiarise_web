@@ -98,8 +98,12 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: jest.fn(async () => state.remintFreshRow),
       // #1775 P-1 — the trial arm reads through the appointment first; none here.
       findFirst: jest.fn(async () => null),
+      // No succeeded payment behind a lapsed request.
+      count: jest.fn(async () => 0),
     },
     paymentLeg: { updateMany: jest.fn(async () => ({ count: 1 })) },
+    // No placed session: the pay window is the plain 24 hours.
+    appointmentOccurrence: { findFirst: jest.fn(async () => null) },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
       fn({
         payment: {
@@ -417,11 +421,13 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
 
     // Same intent handed back — Razorpay's checkout url IS the order id, so
     // this reconstructs the original pay-link without a gateway round-trip.
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       paymentIntentId: "order_existing",
       checkoutUrl: "order_existing",
       amount: TAXED_PLAN_PAISE,
       currency: Currency.INR,
+      // The row's own window end: what the client is told it has to pay.
+      expiresAt: expect.any(Date),
     });
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
     expect(mockedPaymentCreate).not.toHaveBeenCalled();
@@ -570,11 +576,13 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
 
     const result = await createApprovalPaymentIntent(mintParams());
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       paymentIntentId: "order_theirs",
       checkoutUrl: "order_theirs",
       amount: TAXED_PLAN_PAISE,
       currency: Currency.INR,
+      // The row's own window end: what the client is told it has to pay.
+      expiresAt: expect.any(Date),
     });
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
     expect(mockTombstone).not.toHaveBeenCalled();

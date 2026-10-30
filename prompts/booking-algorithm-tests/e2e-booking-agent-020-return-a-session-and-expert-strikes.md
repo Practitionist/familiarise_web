@@ -37,8 +37,9 @@ four sessions at `D+7`, `D+8`, `D+9` and `D+10` 05:00Z, and record
 `<SUB_APPT>`, the four occurrence ids `<OCC_1..4>` and:
 
 ```sql
-SELECT "sessionsReturned", "schedulingPeriodEndsAt" FROM "Subscription" WHERE id = '<SUB_ID>';
--- Record <ENDS_0>; sessionsReturned = 0
+SELECT "sessionsReturned", "planEndsAt" FROM "Subscription" WHERE id = '<SUB_ID>';
+-- Record <ENDS_0>; sessionsReturned = 0. planEndsAt is the fixed plan end written at
+-- purchase; a NULL means the fixture was inserted by SQL, so set it to the plan's end first.
 ```
 
 Make one occurrence start **less than 24 hours from now** by moving it with SQL
@@ -59,11 +60,11 @@ async () => {
 };
 ```
 
-**Expected:** `200` with `{ occurrenceId, sessionsReturned: 1, schedulingPeriodEndsAt }`
+**Expected:** `200` with `{ occurrenceId, sessionsReturned: 1, planEndsAt }`
 where the end is exactly `<ENDS_0>` plus 7 days.
 
 ```sql
-SELECT o."completionStatus", s."sessionsReturned", s."schedulingPeriodEndsAt",
+SELECT o."completionStatus", s."sessionsReturned", s."planEndsAt",
        (SELECT COUNT(*) FROM "BookingStatusHistory" h
         WHERE h."appointmentId" = '<SUB_APPT>' AND h.reason = 'RETURNED_TO_PLAN') AS history
 FROM "AppointmentOccurrence" o

@@ -24,6 +24,12 @@ import type {
 } from "@/types/planner-events";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 
+/** One "Load older" page and the cursor of the next, null on the last. */
+export interface OlderAppointmentsPage {
+  rows: TAppointment[];
+  nextCursor: string | null;
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -62,19 +68,33 @@ export const consultantFetchers = {
       "Dashboard fetch failed",
     ),
 
-  appointments: (
-    consultantId: string,
-    orgScope?: string | null,
-    window: "recent" | "all" = "recent",
-  ) => {
+  appointments: (consultantId: string, orgScope?: string | null) => {
     const params = new URLSearchParams({ consultantProfileId: consultantId });
     if (orgScope && orgScope !== "personal") params.set("orgScope", orgScope);
-    // #1703 B12 — the default read is the last 12 months + future.
-    if (window === "all") params.set("window", "all");
     return fetchWithErrorHandling<TAppointment[]>(
       `/api/scheduling/appointments?${params}`,
       "Appointments fetch failed",
     );
+  },
+
+  /** One "Load older" page; a null cursor starts right after the recent read. */
+  olderAppointments: async (
+    consultantId: string,
+    orgScope: string | null | undefined,
+    before: string | null,
+  ): Promise<OlderAppointmentsPage> => {
+    const params = new URLSearchParams({
+      consultantProfileId: consultantId,
+      window: "older",
+    });
+    if (orgScope && orgScope !== "personal") params.set("orgScope", orgScope);
+    if (before) params.set("before", before);
+    const response = await fetch(`/api/scheduling/appointments?${params}`);
+    const body = (await requireJsonResponse(
+      response,
+      "Appointments fetch failed",
+    )) as { data?: TAppointment[]; meta?: { nextCursor?: string | null } };
+    return { rows: body.data ?? [], nextCursor: body.meta?.nextCursor ?? null };
   },
 
   details: (consultantId: string) =>
@@ -170,16 +190,19 @@ export function createConsultantQueries(
       retry: 2,
     },
 
-    // The unbounded read behind "Load older"; its own cache entry.
-    appointmentsAll: {
+    // "Load older": keyset pages of past rows; the server says where the next starts.
+    appointmentsOlder: {
       queryKey: [
         "consultant-appointments",
         consultantId,
         scopeKey,
-        "all",
+        "older",
       ] as const,
-      queryFn: () =>
-        consultantFetchers.appointments(consultantId, orgScope, "all"),
+      queryFn: ({ pageParam }: { pageParam: string | null }) =>
+        consultantFetchers.olderAppointments(consultantId, orgScope, pageParam),
+      initialPageParam: null as string | null,
+      getNextPageParam: (lastPage: OlderAppointmentsPage): string | null =>
+        lastPage.nextCursor,
       staleTime: STALE_TIMES.SHORT,
       gcTime: GC_TIME,
       retry: 2,

@@ -1,16 +1,14 @@
 /**
- * #1706 decision B — the Requests tab's count poll: 45 s cadence through the
- * shared availability poller, hidden-tab pause, and a badge that only ever
- * says "N new" / "List changed" against the totals the rows were read at.
+ * The Requests freshness badge, and the shared poller honouring a custom
+ * interval with a hidden-tab pause.
  */
 
 import "./setup";
 
 import { createAvailabilityPoller } from "@/lib/scheduling/availabilityPolling";
-import {
-  REQUESTS_COUNT_POLL_INTERVAL_MS,
-  requestsFreshnessBadge,
-} from "@/lib/scheduling/requestsFreshness";
+import { requestsFreshnessBadge } from "@/lib/scheduling/requestsFreshness";
+
+const CUSTOM_INTERVAL_MS = 45_000;
 
 describe("requestsFreshnessBadge", () => {
   it("is silent when the polled total matches, names new rows, and flags a drop", () => {
@@ -23,7 +21,7 @@ describe("requestsFreshnessBadge", () => {
   });
 });
 
-describe("count poll cadence", () => {
+describe("poller with a custom interval", () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => {
     jest.clearAllTimers();
@@ -39,13 +37,13 @@ describe("count poll cadence", () => {
       msSinceLastFetch: () => 0,
       inFlight: () => null,
       fetch,
-      intervalMs: REQUESTS_COUNT_POLL_INTERVAL_MS,
+      intervalMs: CUSTOM_INTERVAL_MS,
     });
 
     // Async advances flush the fetch continuation that re-arms the next
     // tick, so the hidden branch below cancels a real pending poll.
     poller.arm();
-    await jest.advanceTimersByTimeAsync(REQUESTS_COUNT_POLL_INTERVAL_MS - 1);
+    await jest.advanceTimersByTimeAsync(CUSTOM_INTERVAL_MS - 1);
     expect(fetch).not.toHaveBeenCalled();
     await jest.advanceTimersByTimeAsync(1);
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -54,7 +52,7 @@ describe("count poll cadence", () => {
     visibility = "hidden";
     poller.onVisibilityChange();
     expect(jest.getTimerCount()).toBe(0);
-    await jest.advanceTimersByTimeAsync(REQUESTS_COUNT_POLL_INTERVAL_MS * 3);
+    await jest.advanceTimersByTimeAsync(CUSTOM_INTERVAL_MS * 3);
     expect(fetch).toHaveBeenCalledTimes(1);
 
     poller.dispose();

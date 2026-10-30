@@ -14,7 +14,7 @@
  *   - MAINTAINER + canSponsor gate, SUSPENDED/DEACTIVATED org → 409
  *   - body validation: ≤200 ids, dedupe, period sanity, periodEnd future
  *   - program tenancy + ACTIVE status
- *   - per-row: membership-in-org + ACTIVE-only
+ *   - per-row: membership-in-org + ACTIVE-only + LEARNER-only + never the actor
  *   - created===true ⇒ seat bump + configLockedAt stamp + audit
  *   - created===false (idempotent re-run) ⇒ NO seat bump, still audited
  *   - ProgramAssignmentOverlapError ⇒ honest per-row failure, batch continues
@@ -140,7 +140,9 @@ function seedHappyPath(opts?: { licenseSeat?: boolean }) {
   });
   mockedPrisma.membership.findFirst.mockImplementation(
     async ({ where }: { where: { id: string } }) =>
-      where.id === "m-ghost" ? null : { id: where.id, status: "ACTIVE" },
+      where.id === "m-ghost"
+        ? null
+        : { id: where.id, status: "ACTIVE", role: "LEARNER", userId: "u-x" },
   );
   mockedPrisma.programAssignment.findUniqueOrThrow.mockImplementation(
     async () => ({ id: "pa-x", consumedPaise: BigInt(0) }),
@@ -396,6 +398,7 @@ describe("auto-enroll enrollment loop", () => {
     mockedPrisma.membership.findFirst.mockResolvedValueOnce({
       id: "m-pending",
       status: "PENDING",
+      role: "LEARNER",
     });
     const res = await autoEnrollPOST(
       makeRequest({ membershipIds: ["m-pending"], ...PERIOD }),
@@ -404,6 +407,44 @@ describe("auto-enroll enrollment loop", () => {
     const body = await res.json();
     expect(body.failed).toBe(1);
     expect(body.results[0].error).toMatch(/not ACTIVE/i);
+    expect(mockedPrisma.programAssignment.createMany).not.toHaveBeenCalled();
+  });
+
+  it.each(["EXPERT", "MANAGER", "OWNER"])(
+    "refuses a %s membership a sponsored seat, per row, with no seat bump",
+    async (role) => {
+      seedHappyPath({ licenseSeat: true });
+      mockedPrisma.membership.findFirst.mockResolvedValueOnce({
+        id: "m-op",
+        status: "ACTIVE",
+        role,
+        userId: "u-op",
+      });
+      const res = await autoEnrollPOST(
+        makeRequest({ membershipIds: ["m-op"], ...PERIOD }),
+        routeArgs(),
+      );
+      const body = await res.json();
+      expect(body.failed).toBe(1);
+      expect(body.results[0].error).toBe(
+        "Sponsored seats are for learners in your organisation",
+      );
+      expect(mockedPrisma.programAssignment.createMany).not.toHaveBeenCalled();
+      expect(
+        mockedPrisma.billingSubscription.updateMany,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses the acting operator's own membership", async () => {
+    seedHappyPath();
+    const res = await autoEnrollPOST(
+      makeRequest({ membershipIds: ["m-owner-actor"], ...PERIOD }),
+      routeArgs(),
+    );
+    const body = await res.json();
+    expect(body.failed).toBe(1);
+    expect(body.results[0].error).toBe("You can't sponsor your own booking");
     expect(mockedPrisma.programAssignment.createMany).not.toHaveBeenCalled();
   });
 

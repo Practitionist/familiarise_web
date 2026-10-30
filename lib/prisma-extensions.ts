@@ -209,6 +209,7 @@ export const moneyResultExtensions = {
     restoredAmount: f("restoredAmount"),
   },
   orgDataExportJob: { fileSizeBytes: fn("fileSizeBytes") },
+  orgDataExportArtifact: { fileSizeBytes: fn("fileSizeBytes") },
   overageEvent: {
     marginalPaise: f("marginalPaise"),
     basePaise: f("basePaise"),

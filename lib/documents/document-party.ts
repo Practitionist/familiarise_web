@@ -2,6 +2,7 @@ import "server-only";
 
 import type { AppointmentStatus, Prisma, TrialStatus } from "@prisma/client";
 
+import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
 import type { PrismaLike } from "@/lib/prisma";
 import { documentDates, type DocumentDates } from "./document-dates";
 
@@ -91,10 +92,16 @@ export const documentBookingSelect = {
       status: true,
       cancelledAt: true,
       updatedAt: true,
-      schedulingPeriodEndsAt: true,
+      planEndsAt: true,
+      schedulingPeriodStartsAt: true,
+      schedulingTimezone: true,
       requestedBy: personSelect,
       subscriptionPlan: {
-        select: { title: true, consultantProfile: personSelect },
+        select: {
+          title: true,
+          durationInMonths: true,
+          consultantProfile: personSelect,
+        },
       },
     },
   },
@@ -176,7 +183,7 @@ export function toDocumentBooking(
       confirmed: CONFIRMED_REQUEST_STATUSES.includes(s.status),
       learner,
       expert,
-      activeUntil: s.schedulingPeriodEndsAt,
+      activeUntil: subscriptionPlanEnd(s),
     };
   } else if (row.trial) {
     const t = row.trial;

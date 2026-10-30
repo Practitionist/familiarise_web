@@ -37,6 +37,9 @@ jest.mock("../../lib/prisma", () => ({
     classPlan: { findUnique: jest.fn() },
     class: { findFirst: jest.fn() },
     payment: { count: jest.fn() },
+    // The PATCH's slot batch reads the live sessions and the accepted co-hosts.
+    appointmentOccurrence: { findMany: jest.fn().mockResolvedValue([]) },
+    collaborator: { findMany: jest.fn().mockResolvedValue([]) },
   },
 }));
 

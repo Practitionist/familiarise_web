@@ -53,7 +53,8 @@ describe("org appointment detail binds both ids", () => {
     const checks = [
       "if (access.error)",
       "if (!detail) notFound()",
-      "if (appointment.organizationId !== orgId) notFound()",
+      "if (appointment.organizationId !== orgId && !ownedByOrg) notFound()",
+      "if (suspended || !ownedByOrg) notFound()",
     ];
     for (const c of checks) expect(src).toContain(c);
     // #1527 — no act-for-org grant and no operations.read → 404.

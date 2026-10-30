@@ -42,7 +42,6 @@ export async function voidRefundExists(
       status: { notIn: ["FAILED", "CANCELLED"] },
       OR: [
         { dedupeKey: { startsWith: `occ:${occurrenceId}:` } },
-        { dedupeKey: { startsWith: `void-unused:${occurrenceId}:` } },
         {
           dedupeKey: {
             startsWith: INCIDENT_REFUND_KEY_PREFIX,
@@ -67,7 +66,9 @@ const OVERTURN_SELECT = {
   seatsSettledAt: true,
   deletedAt: true,
   isTentative: true,
-  appointment: { select: { classId: true } },
+  appointment: {
+    select: { classId: true, subscription: { select: { status: true } } },
+  },
 } satisfies Prisma.AppointmentOccurrenceSelect;
 
 type OverturnRow = Prisma.AppointmentOccurrenceGetPayload<{
@@ -214,6 +215,21 @@ export async function setSessionOutcome(tx: Tx, args: OverturnArgs) {
   }
   if (occ.completionStatus === "VOIDED" && to !== "VOIDED") {
     await assertUnvoidable(tx, occ);
+  }
+  // A subscription's voids are settled with its plan; once the plan has ended
+  // or been cancelled nothing would ever refund a new one.
+  const plan = occ.appointment.subscription;
+  if (
+    to === "VOIDED" &&
+    occ.completionStatus !== "VOIDED" &&
+    plan &&
+    plan.status !== "APPROVED" &&
+    plan.status !== "SCHEDULED"
+  ) {
+    throw new OpsRefusal(
+      "PLAN_SETTLED",
+      "This plan has already ended or been cancelled, so its sessions can no longer be voided.",
+    );
   }
   if (to === occ.completionStatus) await relabel(tx, occ, args, now);
   else await moveStatus(tx, occ, args, to, now);

@@ -28,6 +28,8 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 
 // Typed instead of cast: the old `status as AppointmentStatus` let any string
 // reach the transition helper (#1704).
@@ -291,6 +293,7 @@ export async function PATCH(request: NextRequest) {
     // so re-read for the heavy include.
     const { holdNotices, rejectionPlan } = await prisma.$transaction(
       async (tx) => {
+        await assertNoLiveCheckoutHold(tx, "consultation", id);
         await transitionConsultationRequest(tx, {
           where: { id },
           to: status,
@@ -373,7 +376,10 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ data: consultation, rejectionRefund });
   } catch (error) {
-    if (error instanceof IllegalTransitionError) {
+    if (
+      error instanceof IllegalTransitionError ||
+      error instanceof BookingRuleError
+    ) {
       return NextResponse.json(
         { error: error.message, code: error.code },
         { status: error.httpStatus },

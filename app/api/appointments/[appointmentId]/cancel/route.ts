@@ -9,7 +9,12 @@ import {
   AppointmentBusyError,
   BookingLockUnavailableError,
   withAppointmentLock,
+  withEventCheckoutLock,
 } from "@/utils/appointmentlock";
+import {
+  cancelGatewayOrders,
+  expirePendingPaymentsInTx,
+} from "@/lib/booking/pending-payment-expiry";
 import {
   liveParticipant,
   transitionParticipant,
@@ -18,7 +23,7 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
 import type { z } from "zod";
-import { CancellationReason } from "@prisma/client";
+import { type AppointmentStatus, CancellationReason } from "@prisma/client";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { refundOnItsWay } from "@/lib/email";
@@ -32,14 +37,20 @@ import {
   logSubscriptionCancelled,
 } from "@/lib/activity/log-activity";
 
-import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { platformCancelGrant } from "@/lib/booking/platform-cancel";
-import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import {
+  recordSystemErrorSafe,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
 import {
   driveRefundOwed,
+  heldMarkerRefusal,
+  recordRefundNeedsSupport,
   stampRefundOwed,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
+import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-return";
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
@@ -50,16 +61,20 @@ import {
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
 import { reportSentryError } from "@/lib/observability/report";
-import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { recordActForOrg, resolveOrgActor } from "@/lib/booking/org-actor";
+import { recordActForOrg } from "@/lib/booking/org-actor";
+import { resolveCancelActor } from "@/lib/booking/cancel-actor";
 import {
   isSuspendedInFundingOrg,
   membershipSuspendedResponse,
 } from "@/lib/enterprise/suspended-member-sessions";
 import {
   LIVE_SLOT_WHERE,
+  LIVE_SUCCEEDED_PAYMENT_WHERE,
+  readCancelWindowState,
   resolveBookingRefundContext,
 } from "@/lib/booking/cancellation-scope";
+import { cancelWindowRefusal } from "@/lib/booking/session-window";
+import { isRefusal } from "@/lib/errors/refusal";
 import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import {
   classSeriesLedgers,
@@ -166,16 +181,45 @@ type CancelRefund = {
 class RefundQuoteChangedError extends Error {
   readonly httpStatus = 409 as const;
   readonly code = "REFUND_QUOTE_CHANGED" as const;
-  constructor(readonly quote: BookingRefundQuote) {
+  constructor(
+    readonly quote: BookingRefundQuote,
+    paymentLanded = false,
+  ) {
     super(
-      "The refund for this booking has changed since you saw it. Check the new amount and confirm again.",
+      paymentLanded
+        ? "Your payment just went through. Review the refund before you cancel."
+        : "The refund for this booking has changed since you saw it. Check the new amount and confirm again.",
     );
     this.name = "RefundQuoteChangedError";
   }
 }
 
-/** The refund charged is the refund the dialog showed; an absent figure is an N-1 client. */
-function assertQuoteMatchesClick(quote: BookingRefundQuote, body: CancelBody) {
+/**
+ * A capture committed under the cancel's read. The first run reruns and
+ * re-quotes; a second one answers this 409 rather than a 500.
+ */
+class CaptureLandedError extends Error {
+  readonly httpStatus = 409 as const;
+  readonly code = "BOOKING_CHANGED" as const;
+  constructor() {
+    super(
+      "This booking changed while you were cancelling it. Refresh to see where it stands, then try again.",
+    );
+    this.name = "CaptureLandedError";
+  }
+}
+
+/**
+ * The refund charged is the refund the dialog showed. A click made on an
+ * unpaid screen (or under a capture that landed mid-cancel) never cancels a
+ * paid booking; an absent figure is an N-1 client and stays unbound.
+ */
+function assertQuoteMatchesClick(
+  quote: BookingRefundQuote,
+  body: CancelBody,
+  clickSawUnpaid: boolean,
+) {
+  if (clickSawUnpaid) throw new RefundQuoteChangedError(quote, true);
   if (body.expectedRefundPaise === undefined) {
     console.info("[cancel] no expectedRefundPaise on the click; quote unbound");
     return;
@@ -186,6 +230,31 @@ function assertQuoteMatchesClick(quote: BookingRefundQuote, body: CancelBody) {
   if (body.expectedRefundPaise !== quote.refundPaise || creditMismatch) {
     throw new RefundQuoteChangedError(quote);
   }
+}
+
+/** The 1:1 request's status as this transaction reads it now; null for events. */
+async function readRequestStatus(
+  tx: Tx,
+  appointment: {
+    consultation: { id: string } | null;
+    subscription: { id: string } | null;
+  },
+): Promise<AppointmentStatus | null> {
+  if (appointment.consultation) {
+    const row = await tx.consultation.findUnique({
+      where: { id: appointment.consultation.id },
+      select: { status: true },
+    });
+    return row?.status ?? null;
+  }
+  if (appointment.subscription) {
+    const row = await tx.subscription.findUnique({
+      where: { id: appointment.subscription.id },
+      select: { status: true },
+    });
+    return row?.status ?? null;
+  }
+  return null;
 }
 
 function isNotCancellable(err: unknown): boolean {
@@ -232,11 +301,7 @@ async function replayCommittedCancel(
     return null;
   }
   const payments = await prisma.payment.findMany({
-    where: {
-      appointmentId: appointment.id,
-      paymentStatus: "SUCCEEDED",
-      deletedAt: null,
-    },
+    where: { appointmentId: appointment.id, ...LIVE_SUCCEEDED_PAYMENT_WHERE },
     select: {
       id: true,
       refundOwedKey: true,
@@ -419,8 +484,7 @@ async function hasPaidLiveSeat(
   const paid = await tx.payment.count({
     where: {
       appointmentId,
-      paymentStatus: "SUCCEEDED",
-      deletedAt: null,
+      ...LIVE_SUCCEEDED_PAYMENT_WHERE,
       userId: { in: seats.map((seat) => seat.userId) },
     },
   });
@@ -432,7 +496,7 @@ async function eventAttendeesByRail(
 ): Promise<AttendeesByRail> {
   const [payments, seats] = await Promise.all([
     prisma.payment.findMany({
-      where: { appointmentId, paymentStatus: "SUCCEEDED", deletedAt: null },
+      where: { appointmentId, ...LIVE_SUCCEEDED_PAYMENT_WHERE },
       select: { id: true, userId: true, paymentIntent: true },
     }),
     prisma.appointmentParticipant.findMany({
@@ -529,7 +593,7 @@ export async function POST(
 ) {
   try {
     // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
-    const authResult = await requireApiAuth();
+    const authResult = await requireApiAuth({ expectUser: true });
     if (authResult.error) return authResult.error;
     const { session } = authResult;
     // #1319 — this route triggers refunds/reallocation and had no limiter.
@@ -622,72 +686,9 @@ export async function POST(
       );
     }
 
-    const consultantProfileId = session.user.consultantProfileId;
-    const consulteeProfileId = session.user.consulteeProfileId;
-
-    const hostOrganizationId =
-      appointment.webinar?.webinarPlan?.organizationId ??
-      appointment.class?.classPlan?.organizationId ??
-      appointment.consultation?.consultationPlan?.organizationId ??
-      appointment.subscription?.subscriptionPlan?.organizationId ??
-      null;
-    const hostOrgMembership = hostOrganizationId
-      ? await prisma.membership.findUnique({
-          where: {
-            userId_organizationId: {
-              userId: session.user.id,
-              organizationId: hostOrganizationId,
-            },
-          },
-          select: {
-            status: true,
-            role: true,
-            organization: { select: { status: true } },
-          },
-        })
-      : null;
-    const isHostOrgOperator =
-      hostOrgMembership?.status === "ACTIVE" &&
-      hostOrgMembership.organization.status !== "DEACTIVATED" &&
-      hasOrgPermission(hostOrgMembership.role, "catalog.manage");
-
-    let isParticipant = false;
-
-    if (appointment.consultation) {
-      const planConsultantProfileId =
-        appointment.consultation.consultationPlan?.consultantProfileId;
-      isParticipant =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === planConsultantProfileId) ||
-        (Boolean(consulteeProfileId) &&
-          consulteeProfileId === appointment.consultation.requestedById) ||
-        isHostOrgOperator;
-    } else if (appointment.subscription) {
-      const planConsultantProfileId =
-        appointment.subscription.subscriptionPlan?.consultantProfileId;
-      isParticipant =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === planConsultantProfileId) ||
-        (Boolean(consulteeProfileId) &&
-          consulteeProfileId === appointment.subscription.requestedById) ||
-        isHostOrgOperator;
-    } else if (appointment.webinar) {
-      const webinarConsultantId =
-        appointment.webinar.webinarPlan?.consultantProfileId;
-      isParticipant =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === webinarConsultantId) ||
-        isHostOrgOperator;
-    } else if (appointment.class) {
-      const classConsultantId =
-        appointment.class.classPlan?.consultantProfileId;
-      isParticipant =
-        (Boolean(consultantProfileId) &&
-          consultantProfileId === classConsultantId) ||
-        isHostOrgOperator;
-    }
-
-    const isPrivilegedUser = isPrivileged(session.user.role);
+    const actor = await resolveCancelActor(appointment, session.user);
+    const { isParticipant, isPrivilegedUser, isHostOrgOperator, orgActor } =
+      actor;
 
     // A platform operator who is not a party cancels only through the audited,
     // money-bounded door, which grants this request.
@@ -702,13 +703,7 @@ export async function POST(
       );
     }
 
-    const orgActor =
-      !isParticipant && !isPrivilegedUser
-        ? await resolveOrgActor(session.user.id, appointment, "cancel")
-        : null;
-    const isOrgAdminActor = orgActor !== null;
-
-    if (!isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
+    if (!actor.authorized) {
       return NextResponse.json(
         { error: "You are not authorized to cancel this appointment" },
         { status: 403 },
@@ -717,12 +712,8 @@ export async function POST(
 
     // #1527 decision 6 — a suspended learner keeps join, not cancel, on an
     // org-funded booking; refused before any refund logic.
-    const isLearner =
-      !!consulteeProfileId &&
-      (consulteeProfileId === appointment.consultation?.requestedById ||
-        consulteeProfileId === appointment.subscription?.requestedById);
     if (
-      isLearner &&
+      actor.isLearner &&
       !isPrivilegedUser &&
       (await isSuspendedInFundingOrg(
         session.user.id,
@@ -845,27 +836,7 @@ export async function POST(
       ? await classSeriesLedgers(appointment.class.id)
       : null;
 
-    // "Not the buyer's choice" is the real question the tier asks, and a
-    // platform-initiated cancellation is not the buyer's choice either, so an
-    // admin or host-org operator settles at the consultant-initiated tier.
-    const isConsultantInitiated =
-      (!!session.user.consultantProfileId &&
-        consultantUserId === session.user.id) ||
-      (isPrivilegedUser && session.user.id !== consulteeUserId) ||
-      (isHostOrgOperator && session.user.id !== consulteeUserId);
-    // D10 — the expert side (not a platform admin) cancelling a paid booking earns one strike.
-    const hostProfileId =
-      appointment.consultation?.consultationPlan?.consultantProfileId ??
-      appointment.subscription?.subscriptionPlan?.consultantProfileId ??
-      appointment.webinar?.webinarPlan?.consultantProfileId ??
-      appointment.class?.classPlan?.consultantProfileId ??
-      null;
-    const isExpertSideCancel =
-      (!!session.user.consultantProfileId &&
-        consultantUserId === session.user.id) ||
-      (isHostOrgOperator &&
-        !isPrivilegedUser &&
-        session.user.id !== consulteeUserId);
+    const { isConsultantInitiated, isExpertSideCancel, hostProfileId } = actor;
 
     let eventKind: "class" | "webinar" | null = null;
     if (appointment.class) eventKind = "class";
@@ -876,220 +847,360 @@ export async function POST(
     // Transaction for critical database operations only (with increased timeout)
     // #1319 — serialize lifecycle mutations per appointment (lock order:
     // appointment first, before any consultee/slot key a future change adds).
-    const committed = await withAppointmentLock(appointmentId, () =>
-      prisma.$transaction(
-        async (tx) => {
-          // #1695 — the quote's inputs (the next live session, the SUCCEEDED
-          // payment and its refundable balance, the frozen policy) are read
-          // under the lock, before the CAS terminalises the slots, on the
-          // transaction's own client (#1435).
-          const bookingCtx = isExclusiveType
-            ? await resolveBookingRefundContext(bookingRef, undefined, tx)
-            : null;
-          const paidPayment = bookingCtx?.paidPayment ?? null;
-          // The quote is pure and runs before the CAS, so a click bound to a
-          // stale figure is refused with nothing committed.
-          const quote =
-            bookingCtx && paidPayment
-              ? quoteBookingRefund({
-                  policy: bookingCtx.policy,
-                  hoursUntilNextSession: bookingCtx.hoursUntilNextSession,
-                  slotsTotal: bookingCtx.slotsTotal,
-                  sessionsRemaining: bookingCtx.sessionsRemaining,
-                  sessionsTotal: bookingCtx.sessionsTotal,
-                  sessionsCompleted: bookingCtx.sessionsCompleted,
-                  scheduledStarts: bookingCtx.scheduledStarts,
-                  isSubscription: !!appointment.subscription,
-                  isConsultantInitiated,
-                  // Both halves are load-bearing: `free_` with a
-                  // non-zero amount is a mixed payment on the money arm.
-                  isFreeCreditFunded:
-                    paidPayment.amountPaise === 0 &&
-                    paidPayment.paymentIntent.startsWith("free_"),
-                  grossPaise: paidPayment.amountPaise,
-                  refundablePaise: paidPayment.refundablePaise,
-                })
-              : null;
-          if (quote) assertQuoteMatchesClick(quote, validatedData);
-
-          // Update appointment status based on type — through the CAS helpers,
-          // which bake the same allowed-from set into the WHERE and append the
-          // BookingStatusHistory row this route used to skip entirely.
-          let moved = false;
-          try {
-            if (appointment.consultation) {
-              await transitionConsultationRequest(tx, {
-                ...auditMeta,
-                appointmentId,
-                where: { id: appointment.consultation.id },
-                to: "CANCELLED",
-                data: cancellationData,
-                fromIn: [...CANCELLABLE_FROM],
-              });
-              moved = true;
-            } else if (appointment.subscription) {
-              await transitionSubscriptionRequest(tx, {
-                ...auditMeta,
-                appointmentId,
-                where: { id: appointment.subscription.id },
-                to: "CANCELLED",
-                data: cancellationData,
-                fromIn: [...CANCELLABLE_FROM],
-              });
-              moved = true;
-            } else if (appointment.webinar) {
-              // Explicit allowed-from (was notIn) — robust against future enum
-              // additions (#837).
-              await transitionWebinarEvent(tx, {
-                ...auditMeta,
-                appointmentId,
-                where: { id: appointment.webinar.id },
-                to: "CANCELLED",
-                fromIn: EVENT_ALLOWED_FROM.CANCELLED,
-              });
-              moved = true;
-            } else if (appointment.class) {
-              await transitionClassEvent(tx, {
-                ...auditMeta,
-                appointmentId,
-                where: { id: appointment.class.id },
-                to: "CANCELLED",
-                fromIn: CLASS_EVENT_ALLOWED_FROM.CANCELLED,
-              });
-              moved = true;
-            }
-          } catch (err) {
-            // The helper's zero-row throw IS the old `moved === 0`; the client
-            // contract stays NOT_CANCELLABLE rather than ILLEGAL_TRANSITION.
-            if (!(err instanceof IllegalTransitionError)) throw err;
+    // Whole-event cancel takes the event's checkout key first (event → appointment),
+    // so no seat checkout commits a HELD seat under a cancel's participant sweep.
+    const eventCheckoutKey =
+      eventKind && eventId
+        ? {
+            appointmentType: eventKind === "class" ? "CLASS" : "WEBINAR",
+            eventId,
           }
-          if (!moved) {
-            throw Object.assign(
-              new Error(
-                "This appointment can no longer be cancelled (already cancelled, completed, or expired).",
-              ),
-              { httpStatus: 409, code: NOT_CANCELLABLE },
-            );
-          }
-          // #1851 decision 2 — the org's own trail, beside the booking's.
-          if (orgActor) {
-            await recordActForOrg(tx, {
-              actor: orgActor,
-              action: "cancel",
-              appointmentId,
-              reason: validatedData.reason,
-            });
-          }
-
-          // The refund this cancel owes commits with the cancel, so a death
-          // before the refund leaves a marker the retry sweep drives.
-          const owed =
-            quote && paidPayment
-              ? cancelRefundOwed(
-                  appointmentId,
-                  paidPayment.id,
+        : null;
+    const runCancel = (captureLanded: boolean) =>
+      withEventCheckoutLock(eventCheckoutKey, () =>
+        withAppointmentLock(appointmentId, () =>
+          prisma.$transaction(
+            async (tx) => {
+              // The CAS below is pinned to this read, so a capture committing
+              // after it makes the cancel match zero rows instead of cancelling
+              // a paid booking with no refund.
+              const observedStatus = await readRequestStatus(tx, appointment);
+              // #1695 — the quote's inputs (the next live session, the SUCCEEDED
+              // payment and its refundable balance, the frozen policy) are read
+              // under the lock, before the CAS terminalises the slots, on the
+              // transaction's own client (#1435).
+              const bookingCtx = isExclusiveType
+                ? await resolveBookingRefundContext(bookingRef, undefined, tx)
+                : null;
+              // A session about to start, under way or already held is the
+              // outcome machinery's to settle, never a cancel's.
+              const windowRefusal = cancelWindowRefusal(
+                bookingCtx?.windowState ??
+                  (await readCancelWindowState(tx, appointmentId)),
+                { appointmentId },
+                isConsultantInitiated ? "host" : "buyer",
+              );
+              if (windowRefusal) throw windowRefusal;
+              const paidPayment = bookingCtx?.paidPayment ?? null;
+              // The quote is pure and runs before the CAS, so a click bound to a
+              // stale figure is refused with nothing committed.
+              const quoted =
+                bookingCtx && paidPayment
+                  ? quoteBookingRefund({
+                      policy: bookingCtx.policy,
+                      hoursUntilNextSession: bookingCtx.hoursUntilNextSession,
+                      slotsTotal: bookingCtx.slotsTotal,
+                      sessionsRemaining: bookingCtx.sessionsRemaining,
+                      sessionsTotal: bookingCtx.sessionsTotal,
+                      sessionsCompleted: bookingCtx.sessionsCompleted,
+                      scheduledStarts: bookingCtx.scheduledStarts,
+                      alreadyRefundedPaise: bookingCtx.alreadyRefundedPaise,
+                      isSubscription: !!appointment.subscription,
+                      isConsultantInitiated,
+                      // Both halves are load-bearing: `free_` with a
+                      // non-zero amount is a mixed payment on the money arm.
+                      isFreeCreditFunded:
+                        paidPayment.amountPaise === 0 &&
+                        paidPayment.paymentIntent.startsWith("free_"),
+                      grossPaise: paidPayment.amountPaise,
+                      refundablePaise: paidPayment.refundablePaise,
+                    })
+                  : null;
+              // A plan with no referral credit still consumed (a 100% discount,
+              // or credit already returned) has nothing for a human to return.
+              const quote =
+                quoted?.creditReturnNeedsReview &&
+                paidPayment &&
+                (await creditStillUsedPaise(tx, paidPayment.id)) <= 0
+                  ? { ...quoted, creditReturnNeedsReview: false }
+                  : quoted;
+              if (quote)
+                assertQuoteMatchesClick(
                   quote,
-                  isConsultantInitiated,
-                )
-              : null;
-          if (owed) await stampRefundOwed(tx, owed);
-          if (
-            isExpertSideCancel &&
-            hostProfileId &&
-            (paidPayment !== null ||
-              (eventKind !== null &&
-                (await hasPaidLiveSeat(tx, appointmentId))))
-          ) {
-            await recordExpertStrike(tx, {
-              consultantProfileId: hostProfileId,
-              cause: "EXPERT_CANCEL",
-              appointmentId,
-              organizationId: appointment.organizationId,
-            });
-          }
-          if (eventKind && eventId) {
-            await stampWholeEventRefundsOwed(tx, {
-              kind: eventKind,
-              eventId,
-              reason: eventRefundReason,
-              ledgers: seriesLedgers ?? undefined,
-            });
-          }
+                  validatedData,
+                  captureLanded || validatedData.expectedPaid === false,
+                );
 
-          // Soft-cancel: mark slots as CANCELLED instead of deleting.
-          // CRITICAL: Do NOT delete appointments — Payment records have onDelete: Cascade
-          // and deleting appointments would permanently destroy payment/refund/dispute audit trail.
-          //
-          // RESCHEDULED counts too. A slot released by a pending reschedule is not
-          // SCHEDULED, so filtering on SCHEDULED alone left those rows in a
-          // non-terminal state on a booking that no longer exists — and proposals
-          // hang off exactly those rows.
-          //
-          // The from-set rides in `fromIn`, never in `where`: the helper
-          // overwrites `completionStatus` in the caller's WHERE with its own
-          // from-set, so a status left there is silently discarded.
-          // #1778 — a cancelled 1:1 frees its times: tell anyone waiting.
-          const holdNotices =
-            appointment.consultation || appointment.subscription
-              ? await stageNoticesForAppointmentHolds(tx, appointmentId, {
-                  includeConfirmed: true,
-                })
-              : null;
-          const slotsCancelled = await transitionOccurrenceCompletion(tx, {
-            ...auditMeta,
-            where: sweepScope,
-            to: "CANCELLED",
-            // The tombstone is half of the soft-cancel: without it the row
-            // still occupies the consultant's calendar for every reader that
-            // filters on `deletedAt: null` (#676 A10, the shape
-            // cleanup-abandoned-payments already writes).
-            data: { deletedAt: new Date() },
-            // Cancel must also sweep UNVERIFIED slots: auto-complete stamps
-            // past-no-meeting sessions UNVERIFIED, and leaving them live keeps
-            // a non-tombstoned row occupying the calendar on a dead booking.
-            fromIn: [...SLOT_RESCHEDULABLE_FROM, "UNVERIFIED"],
-            // A booking whose sessions are all delivered or already terminal
-            // is still cancellable; matching no live slot is not a conflict.
-            allowZero: true,
-          });
-          // #1319 A9 — every participant of the cancelled engagement.
-          await transitionParticipant(tx, sweepScope, "CANCELLED");
+              // An unpaid booking's live payment dies with it: a capture landing
+              // later finds EXPIRED and is parked + refunded. Expired before the
+              // request CAS, in the capture's own lock order (payment → request).
+              const pendingExpiry = isExclusiveType
+                ? await expirePendingPaymentsInTx(tx, {
+                    appointmentId,
+                    reason: "booking cancelled before payment",
+                  })
+                : null;
+              if (
+                isExclusiveType &&
+                !paidPayment &&
+                (await tx.payment.count({
+                  where: { appointmentId, ...LIVE_SUCCEEDED_PAYMENT_WHERE },
+                })) > 0
+              ) {
+                throw new CaptureLandedError();
+              }
+              const cancellableFrom =
+                observedStatus && CANCELLABLE_FROM.includes(observedStatus)
+                  ? [observedStatus]
+                  : [...CANCELLABLE_FROM];
 
-          await declineOpenReschedules(tx, appointmentId, auditMeta);
+              // Update appointment status based on type — through the CAS helpers,
+              // which bake the same allowed-from set into the WHERE and append the
+              // BookingStatusHistory row this route used to skip entirely.
+              let moved = false;
+              try {
+                if (appointment.consultation) {
+                  await transitionConsultationRequest(tx, {
+                    ...auditMeta,
+                    appointmentId,
+                    where: { id: appointment.consultation.id },
+                    to: "CANCELLED",
+                    data: cancellationData,
+                    fromIn: cancellableFrom,
+                  });
+                  moved = true;
+                } else if (appointment.subscription) {
+                  await transitionSubscriptionRequest(tx, {
+                    ...auditMeta,
+                    appointmentId,
+                    where: { id: appointment.subscription.id },
+                    to: "CANCELLED",
+                    data: cancellationData,
+                    fromIn: cancellableFrom,
+                  });
+                  moved = true;
+                } else if (appointment.webinar) {
+                  // Explicit allowed-from (was notIn) — robust against future enum
+                  // additions (#837).
+                  await transitionWebinarEvent(tx, {
+                    ...auditMeta,
+                    appointmentId,
+                    where: { id: appointment.webinar.id },
+                    to: "CANCELLED",
+                    fromIn: EVENT_ALLOWED_FROM.CANCELLED,
+                  });
+                  moved = true;
+                } else if (appointment.class) {
+                  await transitionClassEvent(tx, {
+                    ...auditMeta,
+                    appointmentId,
+                    where: { id: appointment.class.id },
+                    to: "CANCELLED",
+                    fromIn: CLASS_EVENT_ALLOWED_FROM.CANCELLED,
+                  });
+                  moved = true;
+                }
+              } catch (err) {
+                // The helper's zero-row throw IS the old `moved === 0`; the client
+                // contract stays NOT_CANCELLABLE rather than ILLEGAL_TRANSITION.
+                if (!(err instanceof IllegalTransitionError)) throw err;
+              }
+              if (!moved && observedStatus) {
+                const nowStatus = await readRequestStatus(tx, appointment);
+                if (
+                  nowStatus !== observedStatus &&
+                  nowStatus &&
+                  CANCELLABLE_FROM.includes(nowStatus)
+                ) {
+                  throw new CaptureLandedError();
+                }
+              }
+              if (!moved) {
+                throw Object.assign(
+                  new Error(
+                    "This appointment can no longer be cancelled (already cancelled, completed, or expired).",
+                  ),
+                  { httpStatus: 409, code: NOT_CANCELLABLE },
+                );
+              }
+              // #1851 decision 2 — the org's own trail, beside the booking's.
+              if (orgActor) {
+                await recordActForOrg(tx, {
+                  actor: orgActor,
+                  action: "cancel",
+                  appointmentId,
+                  reason: validatedData.reason,
+                });
+              }
 
-          return {
-            success: true,
-            cancellationReason: validatedData.reason,
-            cancelledAt: cancellationData.cancelledAt,
-            // Slots actually cancelled; terminal history stays live by contract.
-            slotsCancelled,
-            webinarId: appointment.webinar?.id,
-            classId: appointment.class?.id,
-            paidPayment,
-            quote,
-            owed,
-            holdNotices,
-          };
-        },
-        {
-          maxWait: 10000, // Max time to wait for connection
-          timeout: 30000, // 30 second transaction timeout (was 5s default)
-        },
-      ),
-    ).catch(async (err: unknown) => {
-      // A retry after a 504 finds the booking already cancelled by this
-      // caller (its requote differs once the first click refunded): answer
-      // with what that click committed. Otherwise the original 409 stands.
-      const replay =
-        isNotCancellable(err) || err instanceof RefundQuoteChangedError
-          ? await safeReplayCommittedCancel(appointment, session.user.id)
-          : null;
-      if (replay) return { replay };
-      throw err;
-    });
+              // The refund this cancel owes commits with the cancel, so a death
+              // before the refund leaves a marker the retry sweep drives.
+              const owed =
+                quote && paidPayment
+                  ? cancelRefundOwed(
+                      appointmentId,
+                      paidPayment.id,
+                      quote,
+                      isConsultantInitiated,
+                    )
+                  : null;
+              // Only the door that owns the marker drives it; a payment already
+              // owing another door's refund refuses the cancel with nothing
+              // committed, so this cancel's debt is never left undurable.
+              if (owed && !(await stampRefundOwed(tx, owed))) {
+                throw await heldMarkerRefusal(tx, owed.paymentId, {
+                  appointmentId,
+                });
+              }
+              // The undelivered share of a credit-funded plan is returned by
+              // hand; the durable row commits with the cancel.
+              if (quote?.creditReturnNeedsReview && paidPayment) {
+                await recordSystemEvent({
+                  db: tx,
+                  strict: true,
+                  category: "BOOKING",
+                  severity: "WARN",
+                  message: `Credit seat ${paidPayment.id} needs a partial credit return`,
+                  context: {
+                    paymentId: paidPayment.id,
+                    appointmentId,
+                    sessionsTotal: bookingCtx?.sessionsTotal,
+                    sessionsCompleted: bookingCtx?.sessionsCompleted,
+                  },
+                  correlationId: `partial-credit:${paidPayment.id}`,
+                });
+              }
+              // With no refund to cascade, the subscription's kept tranches
+              // start their hold in this commit. A plan whose credit return is
+              // pending review keeps them unheld until ops returns the credit
+              // or closes the return; either stamps them.
+              if (
+                !owed &&
+                paidPayment &&
+                appointment.subscription &&
+                !quote?.creditReturnNeedsReview
+              ) {
+                await stampTranchesOnCancel(tx, {
+                  paymentId: paidPayment.id,
+                  now: cancellationData.cancelledAt,
+                });
+              }
+              if (
+                isExpertSideCancel &&
+                hostProfileId &&
+                (paidPayment !== null ||
+                  (eventKind !== null &&
+                    (await hasPaidLiveSeat(tx, appointmentId))))
+              ) {
+                const cancelledSessions =
+                  await tx.appointmentOccurrence.findMany({
+                    where: { appointmentId, ...LIVE_SLOT_WHERE },
+                    select: { id: true },
+                  });
+                await recordExpertStrike(tx, {
+                  consultantProfileId: hostProfileId,
+                  cause: "EXPERT_CANCEL",
+                  appointmentId,
+                  occurrenceIds: cancelledSessions.map((o) => o.id),
+                  organizationId: appointment.organizationId,
+                });
+              }
+              const eventPlans =
+                eventKind && eventId
+                  ? await stampWholeEventRefundsOwed(tx, {
+                      kind: eventKind,
+                      eventId,
+                      reason: eventRefundReason,
+                      ledgers: seriesLedgers ?? undefined,
+                    })
+                  : null;
+
+              // Soft-cancel: mark slots as CANCELLED instead of deleting.
+              // CRITICAL: Do NOT delete appointments — Payment records have onDelete: Cascade
+              // and deleting appointments would permanently destroy payment/refund/dispute audit trail.
+              //
+              // RESCHEDULED counts too. A slot released by a pending reschedule is not
+              // SCHEDULED, so filtering on SCHEDULED alone left those rows in a
+              // non-terminal state on a booking that no longer exists — and proposals
+              // hang off exactly those rows.
+              //
+              // The from-set rides in `fromIn`, never in `where`: the helper
+              // overwrites `completionStatus` in the caller's WHERE with its own
+              // from-set, so a status left there is silently discarded.
+              // #1778 — a cancelled 1:1 frees its times: tell anyone waiting.
+              const holdNotices =
+                appointment.consultation || appointment.subscription
+                  ? await stageNoticesForAppointmentHolds(tx, appointmentId, {
+                      includeConfirmed: true,
+                    })
+                  : null;
+              const slotsCancelled = await transitionOccurrenceCompletion(tx, {
+                ...auditMeta,
+                where: sweepScope,
+                to: "CANCELLED",
+                // The tombstone is half of the soft-cancel: without it the row
+                // still occupies the consultant's calendar for every reader that
+                // filters on `deletedAt: null` (#676 A10, the shape
+                // cleanup-abandoned-payments already writes).
+                data: { deletedAt: new Date() },
+                // Cancel must also sweep UNVERIFIED slots: auto-complete stamps
+                // past-no-meeting sessions UNVERIFIED, and leaving them live keeps
+                // a non-tombstoned row occupying the calendar on a dead booking.
+                fromIn: [...SLOT_RESCHEDULABLE_FROM, "UNVERIFIED"],
+                // A booking whose sessions are all delivered or already terminal
+                // is still cancellable; matching no live slot is not a conflict.
+                allowZero: true,
+              });
+              // #1319 A9 — every participant of the cancelled engagement.
+              await transitionParticipant(tx, sweepScope, "CANCELLED");
+
+              await declineOpenReschedules(tx, appointmentId, auditMeta);
+
+              return {
+                success: true,
+                cancellationReason: validatedData.reason,
+                cancelledAt: cancellationData.cancelledAt,
+                // Slots actually cancelled; terminal history stays live by contract.
+                slotsCancelled,
+                webinarId: appointment.webinar?.id,
+                classId: appointment.class?.id,
+                paidPayment,
+                quote,
+                owed,
+                holdNotices,
+                eventPlans,
+                gatewayCancels: pendingExpiry?.gatewayCancels ?? [],
+              };
+            },
+            {
+              maxWait: 10000, // Max time to wait for connection
+              timeout: 30000, // 30 second transaction timeout (was 5s default)
+            },
+          ),
+        ),
+      );
+    const committed = await runCancel(false)
+      .catch((err: unknown) =>
+        err instanceof CaptureLandedError
+          ? runCancel(true)
+          : Promise.reject(err),
+      )
+      .catch(async (err: unknown) => {
+        // A retry after a 504 finds the booking already cancelled by this
+        // caller (its requote differs once the first click refunded): answer
+        // with what that click committed. Otherwise the original 409 stands.
+        const replay =
+          isNotCancellable(err) || err instanceof RefundQuoteChangedError
+            ? await safeReplayCommittedCancel(appointment, session.user.id)
+            : null;
+        if (replay) return { replay };
+        throw err;
+      });
     if ("replay" in committed) return NextResponse.json(committed.replay);
-    const { holdNotices, paidPayment, quote, owed, ...result } = committed;
+    const {
+      holdNotices,
+      paidPayment,
+      quote,
+      owed,
+      gatewayCancels,
+      eventPlans,
+      ...result
+    } = committed;
     await flushBackupInterestNotices(holdNotices);
+    await cancelGatewayOrders(gatewayCancels, {
+      op: "cancel.gateway-cancel",
+      appointmentId,
+    });
 
     // B1 — policy-driven refund, AFTER the cancel tx commits, under the key the
     // owed marker carries; the CAS above runs this block at most once per click.
@@ -1103,26 +1214,33 @@ export async function POST(
             refundablePaise: paidPayment.refundablePaise,
             grossPaise: paidPayment.amountPaise,
           })
-        : {
-            // Two different facts, and the buyer is owed different words for
-            // each: the policy tier is genuinely zero, or the tier is positive
-            // but nothing is left to give back.
-            amountRefundedPaise: 0,
-            refundPct: quote.refundPct,
-            status:
-              quote.refundPct > 0 && paidPayment.refundablePaise <= 0
-                ? "NOTHING_REFUNDABLE"
-                : "POLICY_ZERO",
-          };
+        : quote.creditReturnNeedsReview
+          ? {
+              amountRefundedPaise: 0,
+              refundPct: quote.refundPct,
+              status: "PENDING",
+              requiresManualReview: true,
+              rail: "CREDITS",
+            }
+          : {
+              // Two different facts, and the buyer is owed different words for
+              // each: the policy tier is genuinely zero, or the tier is positive
+              // but nothing is left to give back.
+              amountRefundedPaise: 0,
+              refundPct: quote.refundPct,
+              status:
+                quote.refundPct > 0 && paidPayment.refundablePaise <= 0
+                  ? "NOTHING_REFUNDABLE"
+                  : "POLICY_ZERO",
+            };
 
-      // Stamp remaining subscription tranches AFTER the refund
+      // A refunded subscription stamps its remaining tranches AFTER the refund,
       // so allocateCycleClawback sees holdUntil: null (rank 0) on undelivered
-      // cycles, and a failed/pending refund does not release them for payout.
+      // cycles and a failed or pending refund does not release them for payout.
       if (
+        owed &&
         appointment.subscription &&
-        (refund.status === "REFUNDED" ||
-          refund.status === "POLICY_ZERO" ||
-          refund.status === "NOTHING_REFUNDABLE")
+        (refund.status === "REFUNDED" || refund.status === "NOTHING_REFUNDABLE")
       ) {
         try {
           await stampTranchesOnCancel(prisma, {
@@ -1152,7 +1270,10 @@ export async function POST(
         eventId,
         eventRefundReason,
         session.user.id,
-        { ledgers: seriesLedgers ?? undefined },
+        {
+          ledgers: seriesLedgers ?? undefined,
+          plans: eventPlans ?? undefined,
+        },
       );
     }
 
@@ -1318,7 +1439,7 @@ export async function POST(
 
     // Log cancellation activity for consultant dashboard (awaited — DB write
     // that should not be dropped in serverless; logActivity swallows errors)
-    const actor = {
+    const activityActor = {
       id: session.user.id,
       name: session.user.name || "User",
       image: session.user.image,
@@ -1340,7 +1461,7 @@ export async function POST(
         await logConsultationCancelled(
           cpId,
           appointment.consultation.id,
-          actor,
+          activityActor,
           planTitle || "Consultation",
           cancelledBy,
         );
@@ -1352,7 +1473,7 @@ export async function POST(
         await logSubscriptionCancelled(
           cpId,
           appointment.subscription.id,
-          actor,
+          activityActor,
           planTitle || "Subscription",
           cancelledBy,
         );
@@ -1361,6 +1482,13 @@ export async function POST(
 
     return NextResponse.json({ ...result, refund, eventRefund });
   } catch (error) {
+    if (isRefusal(error)) {
+      await recordRefundNeedsSupport(error);
+      return NextResponse.json(
+        { error: error.userMessage, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     if (error instanceof RefundQuoteChangedError) {
       return NextResponse.json(
         {

@@ -3,7 +3,10 @@ import { NextResponse } from "next/server";
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
-import { quoteTrialRefund } from "@/lib/trials/cancellation";
+import {
+  quoteTrialRefund,
+  trialCancelWindowRefusal,
+} from "@/lib/trials/cancellation";
 
 // A money read: never cached (repo rule for money GETs).
 const NO_STORE = { headers: { "Cache-Control": "no-store" } };
@@ -57,6 +60,14 @@ export async function GET(
       return NextResponse.json(
         { error: "Trial session not found" },
         { status: 404 },
+      );
+    }
+
+    const windowRefusal = await trialCancelWindowRefusal(trial.appointmentId);
+    if (windowRefusal) {
+      return NextResponse.json(
+        { error: windowRefusal.userMessage, code: windowRefusal.code },
+        { status: windowRefusal.httpStatus, ...NO_STORE },
       );
     }
 

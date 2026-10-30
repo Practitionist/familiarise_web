@@ -41,7 +41,7 @@ describe("requested-slot verdicts", () => {
     );
     expect(verdictFor(requested[0], result)).toEqual({
       kind: "conflict",
-      existing: "Consultation with another user",
+      existing: "an existing booking",
     });
     expect(verdictFor(requested[1], result)).toEqual({
       kind: "outsideAvailability",
@@ -50,7 +50,7 @@ describe("requested-slot verdicts", () => {
     expect(verdictFor(requested[2], null)).toEqual({ kind: "checking" });
   });
 
-  it("names and links the consultant's own conflicting booking, and only that (#1703 C8)", () => {
+  it("links the consultant's own conflicting booking and never names a party", () => {
     const own = {
       ...result,
       conflicts: [
@@ -58,7 +58,7 @@ describe("requested-slot verdicts", () => {
           slot: "2026-09-24T08:30:00",
           existingAppointment: {
             type: "Consultation",
-            with: "Olivia Anderson",
+            with: "you",
             time: "",
             appointmentId: "apt_9",
           },
@@ -67,8 +67,25 @@ describe("requested-slot verdicts", () => {
     };
     expect(verdictFor(requested[0], own)).toEqual({
       kind: "conflict",
-      existing: "your Consultation with Olivia Anderson",
+      existing: "your consultation at this time",
       appointmentId: "apt_9",
+    });
+    const clientBusy = {
+      ...result,
+      conflicts: [
+        {
+          slot: "2026-09-24T08:30:00",
+          existingAppointment: {
+            type: "Booking",
+            with: "your client",
+            time: "",
+          },
+        },
+      ],
+    };
+    expect(verdictFor(requested[0], clientBusy)).toEqual({
+      kind: "conflict",
+      existing: "your client's other session",
     });
     // No id (another viewer): no name, no link.
     expect(verdictFor(requested[0], result)).not.toHaveProperty(

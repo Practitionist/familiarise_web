@@ -30,6 +30,10 @@ const mockAssertEarningTransition = jest.fn();
 const mockRecordTdsReversal = jest.fn();
 const mockPaymentFindUnique = jest.fn();
 const mockFindDeduped = jest.fn(async (..._a: unknown[]) => null as unknown);
+const mockStampTranches = jest.fn(async (..._a: unknown[]) => 0);
+jest.mock("../../lib/booking/subscription-cycle", () => ({
+  stampTranchesOnCancel: (...a: unknown[]) => mockStampTranches(...a),
+}));
 
 const tx = {
   appointmentParticipant: {
@@ -38,7 +42,7 @@ const tx = {
   },
   referralCreditUsage: { findMany: jest.fn() },
   appointment: { findUnique: jest.fn() },
-  appointmentOccurrence: { findMany: jest.fn() },
+  appointmentOccurrence: { findMany: jest.fn(), count: jest.fn() },
   refund: {
     findFirst: jest.fn(),
     create: jest.fn(),
@@ -174,7 +178,7 @@ jest.mock("../../lib/payments/ledger/post", () => ({
 
 import {
   refundBookingPayment,
-  restoreClassSeatCredits,
+  restoreSessionCredits,
 } from "../../lib/payments/operations/booking-refund";
 
 const PAYMENT_ID = "pay-free-1";
@@ -673,7 +677,7 @@ it("returns only missed, unmade sessions to a live credit seat", async () => {
     })),
   );
 
-  const r = await restoreClassSeatCredits({
+  const r = await restoreSessionCredits({
     paymentId: PAYMENT_ID,
     sessions: 2,
     reason: "host missed two sessions",
@@ -707,14 +711,78 @@ it("returns only missed, unmade sessions to a live credit seat", async () => {
   expect(sum(posting.postings, "CREDIT")).toBe(59_000);
   expect(sum(posting.postings, "DEBIT")).toBe(59_000);
   expect(tx.appointmentParticipant.updateMany).not.toHaveBeenCalled();
+  // A class seat's earnings hold on their own sessions, not plan tranches.
+  expect(mockStampTranches).not.toHaveBeenCalled();
 
   await expect(
-    restoreClassSeatCredits({
+    restoreSessionCredits({
       paymentId: PAYMENT_ID,
       sessions: 3,
       reason: "and one still ahead",
       initiatedByUserId: "admin-1",
       dedupeKey: "ops:def",
+    }),
+  ).rejects.toMatchObject({ code: "AMOUNT_EXCEEDS_REFUNDABLE" });
+});
+
+// A cancelled credit-funded subscription gets back only its undelivered
+// sessions, at the credit over the plan's sessions; a live plan gets nothing.
+it("returns the undelivered sessions of a cancelled credit-funded subscription", async () => {
+  const subPayment = {
+    id: PAYMENT_ID,
+    userId: "user-1",
+    organizationId: null,
+    currency: "INR",
+    paymentStatus: "SUCCEEDED",
+    paymentGateway: "RAZORPAY",
+    paymentIntent: "free_1730000000_sub",
+    createdAt: new Date(Date.now() - 60 * 86_400_000),
+    appointmentId: "appt-sub",
+    appointment: { classId: null, subscriptionId: "sub-1" },
+  };
+  mockPaymentFindUnique
+    .mockResolvedValueOnce(subPayment)
+    .mockResolvedValueOnce(subPayment);
+  tx.referralCreditUsage.findMany.mockResolvedValue([
+    { amount: 120_000, originalAmount: 120_000 },
+  ]);
+  tx.appointment.findUnique.mockResolvedValue({
+    subscription: {
+      status: "CANCELLED",
+      sessionsTotal: 12,
+      subscriptionPlan: { totalSessions: 12 },
+    },
+  });
+  tx.appointmentOccurrence.count.mockResolvedValue(10);
+
+  const r = await restoreSessionCredits({
+    paymentId: PAYMENT_ID,
+    sessions: 2,
+    reason: "cancelled after ten sessions",
+    initiatedByUserId: "admin-1",
+    dedupeKey: "ops:sub",
+  });
+
+  expect(r).toMatchObject({ rail: "CREDITS", restoredPaise: 20_000 });
+  expect(mockRestoreUpTo).toHaveBeenCalledWith(
+    PAYMENT_ID,
+    tx,
+    20_000,
+    "refund-row-1",
+  );
+  // The ended plan's tranches waited unheld for this return; they hold now.
+  expect(mockStampTranches).toHaveBeenCalledWith(tx, {
+    paymentId: PAYMENT_ID,
+    now: expect.any(Date),
+  });
+
+  await expect(
+    restoreSessionCredits({
+      paymentId: PAYMENT_ID,
+      sessions: 3,
+      reason: "one more than undelivered",
+      initiatedByUserId: "admin-1",
+      dedupeKey: "ops:sub-2",
     }),
   ).rejects.toMatchObject({ code: "AMOUNT_EXCEEDS_REFUNDABLE" });
 });
@@ -733,7 +801,7 @@ it("replays a credit return without restoring twice", async () => {
     refundId: "refund-first",
     amountRefundedPaise: 0,
   });
-  const r = await restoreClassSeatCredits({
+  const r = await restoreSessionCredits({
     paymentId: PAYMENT_ID,
     sessions: 2,
     reason: "host missed two sessions",

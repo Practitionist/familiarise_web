@@ -124,7 +124,9 @@ export function confirmedIntervalsOf(
     (count, appointment) =>
       count +
       appointment.occurrences
-        .filter((slot) => !slot.isTentative && also(slot))
+        .filter(
+          (slot) => !slot.isTentative && !isDeadOccurrence(slot) && also(slot),
+        )
         .reduce((n, slot) => n + intervalCountOf(slot), 0),
     0,
   );
@@ -248,4 +250,15 @@ export function releasedOccurrenceIdsOf(
       .filter(isReleasedForReschedule)
       .map((slot) => slot.id),
   );
+}
+
+/**
+ * A request row that holds no time and asks for none: tombstoned, or
+ * cancelled. Requested mode neither re-validates nor counts it.
+ */
+export function isVoidRequestRow(occurrence: {
+  deletedAt?: Date | string | null;
+  completionStatus?: string | null;
+}): boolean {
+  return !!occurrence.deletedAt || occurrence.completionStatus === "CANCELLED";
 }

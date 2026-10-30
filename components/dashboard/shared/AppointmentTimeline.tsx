@@ -81,7 +81,6 @@ function TimelineRow({ entry }: { entry: BookingTimelineEntry }) {
             {entry.proposedSlotCount === 1
               ? "1 proposed time"
               : `${entry.proposedSlotCount ?? 0} proposed times`}
-            {entry.round ? ` • round ${entry.round}` : ""}
           </>
         )}
       </p>

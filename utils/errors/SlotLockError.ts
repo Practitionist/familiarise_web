@@ -15,8 +15,9 @@ export class SlotLockError extends Error {
     public readonly slotTime: string,
     public readonly retryAfterSeconds: number = 15,
   ) {
+    // Party-neutral: the held profile may be the buyer's own; it rides the fields, never the copy.
     super(
-      `Slot ${slotTime} for consultant ${consultantId} is currently being booked by another user. Please try again in ${retryAfterSeconds} seconds.`,
+      `This time is currently being booked by someone else. Please try again in ${retryAfterSeconds} seconds.`,
     );
     this.name = "SlotLockError";
 

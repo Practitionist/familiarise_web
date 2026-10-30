@@ -28,6 +28,8 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
+import { assertNoLiveCheckoutHold } from "@/lib/booking/request-cohort";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 
 export async function GET(request: NextRequest) {
   // Require authentication
@@ -320,6 +322,7 @@ export async function PATCH(request: NextRequest) {
       // row, so re-read for the heavy include.
       const { holdNotices, rejectionPlan } = await prisma.$transaction(
         async (tx) => {
+          await assertNoLiveCheckoutHold(tx, "subscription", id);
           await transitionSubscriptionRequest(tx, {
             where: { id },
             to: status,
@@ -398,6 +401,7 @@ export async function PATCH(request: NextRequest) {
 
       return NextResponse.json({ data: subscription, rejectionRefund });
     } catch (error) {
+      if (error instanceof BookingRuleError) throw error;
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
         { tags: { subsystem: "bookings" } },
@@ -409,7 +413,10 @@ export async function PATCH(request: NextRequest) {
       throw error;
     }
   } catch (error) {
-    if (error instanceof IllegalTransitionError) {
+    if (
+      error instanceof IllegalTransitionError ||
+      error instanceof BookingRuleError
+    ) {
       return NextResponse.json(
         { error: error.message, code: error.code },
         { status: error.httpStatus },

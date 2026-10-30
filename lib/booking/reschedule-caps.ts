@@ -1,46 +1,52 @@
 /**
- * Per-side reschedule caps, counted from the release history: every reschedule
- * releases its sessions to RESCHEDULED in one act stamped with one instant, so
- * the distinct instants on a side are its reschedules, proposal or not. A
- * withdrawal restores the original time, so withdrawn proposals cost nothing.
+ * Per-side reschedule caps, counted from the reschedule requests: every party
+ * release opens one and records the sessions it released. A request that
+ * moved nothing (withdrawn, or declined or expired with its sessions restored)
+ * costs nothing.
  */
 import type { RescheduleInitiatorRole } from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
+import { countedReleases } from "@/lib/booking/released-sessions";
 
-/** Consultee reschedules per baseline session. */
+/** Consultee reschedules per session (occurrence ordinal). */
 export const MAX_CONSULTEE_RESCHEDULES = 2;
 /** Expert-initiated reschedules one booking allows; the next answers 409. */
 export const MAX_EXPERT_RESCHEDULES = 2;
 
-type CapTx = Pick<Tx, "bookingStatusHistory" | "rescheduleRequest">;
+type CapTx = Pick<Tx, "rescheduleRequest">;
+
+export type PriorReschedules = {
+  /** Requests on this side that moved sessions. */
+  total: number;
+  /** How many of them moved each session, by ordinal. */
+  byOrdinal: ReadonlyMap<number, number>;
+};
 
 export async function priorReschedules(
   tx: CapTx,
-  args: {
-    appointmentId: string;
-    role: RescheduleInitiatorRole;
-    /** The side's known people: its party and the current actor. */
-    sideUserIds: string[];
-  },
-): Promise<number> {
-  const initiators = await tx.rescheduleRequest.findMany({
-    where: { appointmentId: args.appointmentId, initiatorRole: args.role },
-    select: { initiatedById: true, status: true },
+  args: { appointmentId: string; role: RescheduleInitiatorRole },
+): Promise<PriorReschedules> {
+  const releases = await countedReleases(tx, {
+    appointmentId: args.appointmentId,
+    initiatorRole: args.role,
   });
-  const side = new Set([
-    ...args.sideUserIds,
-    ...initiators.map((r) => r.initiatedById),
-  ]);
-  const releases = await tx.bookingStatusHistory.groupBy({
-    by: ["createdAt"],
-    where: {
-      appointmentId: args.appointmentId,
-      entity: "OCCURRENCE",
-      toStatus: "RESCHEDULED",
-      actorUserId: { in: [...side] },
-    },
-  });
-  const withdrawn = initiators.filter((r) => r.status === "WITHDRAWN").length;
-  return Math.max(0, releases.length - withdrawn);
+  const byOrdinal = new Map<number, number>();
+  for (const release of releases) {
+    for (const ordinal of new Set(release.sessions.map((s) => s.ordinal))) {
+      byOrdinal.set(ordinal, (byOrdinal.get(ordinal) ?? 0) + 1);
+    }
+  }
+  return { total: releases.length, byOrdinal };
+}
+
+/** Whether the consultee side has already moved any of these sessions to the cap. */
+export function consulteeCapReached(
+  prior: PriorReschedules,
+  ordinals: readonly number[],
+): boolean {
+  return ordinals.some(
+    (ordinal) =>
+      (prior.byOrdinal.get(ordinal) ?? 0) >= MAX_CONSULTEE_RESCHEDULES,
+  );
 }

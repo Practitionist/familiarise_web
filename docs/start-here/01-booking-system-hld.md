@@ -4,7 +4,7 @@ type: explanation
 band: index
 audience: sde2
 status: live
-last-reviewed: 2026-10-17
+last-reviewed: 2026-10-30
 ---
 
 # Booking System — High-Level Design
@@ -21,7 +21,7 @@ This document describes the booking system as it is on `dev` today, then marks w
   └ Custom rows (absolute timestamptz)               ▼
         │                                   ┌──────────────────────┐
         ▼                                   │ Availability grid    │  GET /api/... (ETag, max-age 30s)
- ┌──────────────────┐   recurrence expand   │ (heatmap cells)      │◄── poll 60s (allocator only today)
+ ┌──────────────────┐   recurrence expand   │ (heatmap cells)      │◄── poll 60s (both grids)
  │ Candidate slots  │──────────────────────►│ available/partial/   │
  │ 30-min atoms     │                       │ full/past/selected   │
  └──────────────────┘                       └──────────┬───────────┘
@@ -74,8 +74,11 @@ Several checks run before any gateway call or any row is written. The table list
 | A meeting extension never moves the booked `endsAt`; one compare-and-set adds 15 minutes to `Meeting.extendedSeconds` (once), then Stream is mirrored from Postgres  | 409 `SESSION_NOT_EXTENDABLE`, 409 `alreadyExtended`, 409 on a schedule conflict, 503 `EXTEND_SYNC_PENDING` (saved, retry) | `app/api/meetings/[meetingId]/extend/route.ts`, `lib/meetings/duration-cap.ts`                  | Current |
 | Booking and money writes fail closed with 503 and `Retry-After` when the maintenance state cannot be read, and four more routes are on the degraded write-block list | 503                                                                                                                       | `lib/maintenance-edge.ts`                                                                       | Current |
 | The booked window must match the plan duration on request-for-approval, direct consultation checkout and trial scheduling                                            | 400 `WINDOW_DURATION_MISMATCH`                                                                                            | `lib/booking/slot-validation.ts`                                                                | Current |
-| A paused expert (`acceptingRequests = false`) refuses every new booking, including direct checkout and trials                                                        | 409 `NOT_ACCEPTING_BOOKINGS`                                                                                              | the purchasability gate in `lib/payments/checkout/pricing.ts`                                   | Current |
+| A paused expert (`acceptingRequests = false`) refuses new 1:1 bookings and trials; webinars and classes keep selling                                                 | 409 `NOT_ACCEPTING_BOOKINGS`                                                                                              | the purchasability gate in `lib/payments/checkout/pricing.ts`                                   | Current |
 | Request-for-approval accepts an `Idempotency-Key` stored on the request row                                                                                          | A replay returns the original 201; another user's key answers 422 `IDEMPOTENCY_KEY_REUSED`                                | `app/api/scheduling/request-for-approval/route.ts`                                              | Current |
+| An expert's open-request cap is counted under one lock per expert, across the count and the insert                                                                   | 409 `CONSULTANT_AT_CAPACITY`; a consultee's own cap of three answers 429 `REQUEST_CAP_REACHED`                            | `lib/booking/request-caps.ts`, `lockRequestCap` in `utils/appointmentlock.ts`                   | Current |
+| No booking is cancelled from 15 minutes before a confirmed session starts until it ends, or after it was delivered                                                   | 409 `SESSION_IN_PROGRESS`, 409 `SESSION_ALREADY_DELIVERED`                                                                | `lib/booking/session-window.ts`                                                                 | Current |
+| A server-placed session needs 15 minutes' notice once paid and 2 hours while unpaid, and a pay window always closes 15 minutes before the first session              | 409 `TOO_CLOSE_TO_START`                                                                                                  | `lib/booking/lead-time.ts`, `lib/payments/operations/approval-payment.ts`                       | Current |
 
 ## 2. The 30-minute atom and coverage
 
@@ -88,7 +91,7 @@ Union coverage: a booking is valid if EVERY atom it spans is covered
 by ANY availability row (findUncoveredAtom), so adjacent rows can combine.
 ```
 
-Each heatmap cell's status is the share of the cell covered by occupancy, computed on the server. Holds, tentative rows and confirmed rows all render as "fully booked", because there is no separate "held" colour.
+Each heatmap cell's status is the share of the cell covered by occupancy, computed on the server. Holds, tentative rows and confirmed rows all render as "Booked", because there is no separate "held" state. The server also flags cells that start inside the buyer's 15-minute lead time ("Too soon") and, for a subscription, cells beyond the plan's weekly or per-day quota or its fixed plan end ("Limit reached"). Every state has a colour and a pattern or icon, drawn from one table in `lib/scheduling/interval-status-tokens.ts`, and the grid draws each day's rows in the viewer's profile time zone, with a switch to the device's zone. On a phone a consultee picks from a day list instead of the grid.
 
 ## 3. Allocation modes (`lib/booking/allocation/`)
 
@@ -103,9 +106,15 @@ Each heatmap cell's status is the share of the cell covered by occupancy, comput
    requested ──┤ use consultee's stored tentative slots                 │
                └────────────────────────────┬───────────────────────────┘
                                             ▼
-   OUTSIDE TX (under Redis auto-allocate:<cp> + consultee lock):
-     validate(): availability containment, caps (sessionsPerWeek,
-     per-day), scheduling period, lead time, conflicts
+   OUTSIDE TX (under Redis auto-allocate:<cp>):
+     search + validate(): availability containment, caps (sessionsPerWeek,
+     per-day), scheduling period, lead time (15m paid / 2h unpaid), conflicts
+                                            ▼
+   consultee lock → ONE ATOMIC SLOT BATCH (host + ACCEPTED co-hosts +
+     an expert consultee's own calendar); never waits:
+       auto: held time → exclude it, re-search (≤2, one 10s budget)
+             → else 409 ALLOCATION_RACE
+       manual / requested: held time → 409 TIMES_TAKEN (names the times)
                                             ▼
    INSIDE TX (Read Committed):
      pg_advisory_xact_lock(event) → idempotency replay check →
@@ -119,20 +128,22 @@ The allocation route is the only place that decides who may allocate, and it doe
 - An operator of the plan's host organisation may allocate, but only inside the published availability, so `override`, `allowPartial` and `topUp` are ignored for them.
 - The sponsoring organisation uses a separate route that fixes those flags to false and narrows the status compare-and-swap to `APPROVED`, so a sponsor can place times on a booking the expert approved but can never approve a pending request on the expert's behalf.
 
-Three gaps remain in the allocator after Wave 0 PR 1:
+The allocator now takes the same 30-minute slot atoms as checkout, after its search and before its write, as one all-or-nothing batch over every calendar the placement makes busy. An allocation and a checkout for the same time therefore serialize: exactly one commits, and the other gets a typed answer. It also refuses a placement inside the lead time (15 minutes for a paid booking, 2 hours for an unpaid one, so the client has time to pay). Two gaps remain:
 
-- Allocation takes no slot atoms, so it does not serialize against checkout. Closing this is part of the busy-time ledger in Wave 3.
-- It hard-deletes occurrences when it re-plans, which cascades to meetings, attendance and feedback. Wave 3 replaces the delete with a status change.
-- It does not model buffers, minimum notice, a booking horizon or blackout dates. Wave 3 adds them as scheduling rules.
+- It hard-deletes occurrences when it re-plans, which cascades to meetings, attendance and feedback. Until **Wave 3** replaces the delete with a status change, it refuses (409 `SESSION_HAS_REMEDY`) rather than delete a session that carries an incident remedy.
+- It does not model buffers, a booking horizon or blackout dates. **Wave 3** adds them as scheduling rules.
 
 ## 4. Concurrency layers
 
 ```text
  Layer 1  Redis locks (fail-CLOSED → 503)
-          global order: appointment/event/consultant → consultee → slot atoms
-          slot-booking:<cp>:<atom>   (checkout)
-          auto-allocate:<cp>         (allocator)   ← disjoint families!
-          event-checkout:<type>:<id> (webinar/class/subscription)
+          global order: event-checkout → appointment → approval →
+            auto-allocate:<cp> | request-cap:<cp> → consultee →
+            ONE ATOMIC BATCH of slot-booking:<cp>:<atom>
+          every writer that makes host time busy takes the batch:
+            checkout, request, trial, allocator (all modes), event
+            create/publish/re-time, make-up, co-host accept, extension
+          Lua all-or-nothing, 1.5s Redis timeout → 503 when slow
  Layer 2  Postgres isolation
           checkout + capture = SERIALIZABLE (+ retry P2034/40P01)
           allocation / cancel / reschedule = READ COMMITTED
@@ -143,7 +154,7 @@ Three gaps remain in the allocator after Wave 0 PR 1:
           wallet ≥ 0 CHECK, uniques (idempotency key, one open reschedule)
 ```
 
-The one database constraint that protects time is `occurrence_no_confirmed_overlap`, defined in `prisma/sql/check-constraints.sql`. It is a `btree_gist` exclusion on `AppointmentOccurrence` keyed on the host's `consultantProfileId` and `tstzrange("startsAt", "endsAt")`, and it applies only to rows that are not tentative, not tombstoned (`deletedAt IS NULL`) and not `CANCELLED` or `RESCHEDULED`. Because every occurrence of every offering type carries its host's `consultantProfileId`, the constraint covers consultations, subscription sessions, webinars, classes and trials alike, but only for the host side. Tentative holds, co-host overlaps, consultant-as-client overlaps, consultee overlaps and seat capacity are enforced by application code alone today, and Wave 3 moves them into the database.
+The one database constraint that protects time is `occurrence_no_confirmed_overlap`, defined in `prisma/sql/check-constraints.sql`. It is a `btree_gist` exclusion on `AppointmentOccurrence` keyed on the host's `consultantProfileId` and `tstzrange("startsAt", "endsAt")`, and it applies only to rows that are not tentative, not tombstoned (`deletedAt IS NULL`) and not `CANCELLED` or `RESCHEDULED`. Because every occurrence of every offering type carries its host's `consultantProfileId`, the constraint covers consultations, subscription sessions, webinars, classes and trials alike, but only for the host side. Tentative holds, co-host overlaps, consultant-as-client overlaps, consultee overlaps and seat capacity are enforced by application code alone today, and Wave 3 moves them into the database. In application code the slot batch covers more than the host: it includes each ACCEPTED co-host and, when the buyer is an expert too, the buyer's own calendar, so those overlaps are serialized by Redis and re-checked inside the transaction.
 
 ```mermaid
 flowchart LR
@@ -160,7 +171,7 @@ flowchart LR
   end
 
   subgraph L4["Layer 4: Redis Locks (Coordination Only)"]
-    RL["lockConsulteeBooking -> lockSlotBooking (30-min atoms) & withCronLock (fail-closed for money jobs)"]
+    RL["lockConsulteeBooking -> tryLockSlotBatch (one atomic batch of 30-min atoms) & withCronLock (fail-closed for money jobs)"]
   end
 
   subgraph Reconciler["Nightly Control Loop (reconcile-ledgers.ts)"]
@@ -193,7 +204,7 @@ Writer A (Learner 1 Checkout)             Writer B (Learner 2 Checkout)
                                             (Now sees Slot Taken -> Rejects 409)
 ```
 
-The engine retries serialization failures and deadlocks (`40P01`) only. Validation errors, foreign-key violations (`P2003`) and `IllegalTransitionError` are business refusals and fail on the first attempt. Everything inside the closure must be a pure database mutation with no uncommitted external side effect, because the closure may run up to four times.
+The engine retries serialization failures and deadlocks (`40P01`) only. A serialization failure raised at `COMMIT` arrives as an unmapped driver-adapter error rather than `P2034`, and `isWriteConflict` in `lib/db/pg-errors.ts` recognises both shapes, so a commit-time conflict is retried like any other. Validation errors, foreign-key violations (`P2003`) and `IllegalTransitionError` are business refusals and fail on the first attempt. Everything inside the closure must be a pure database mutation with no uncommitted external side effect, because the closure may run up to four times.
 
 ## 5. Booking modes and contention
 
@@ -204,7 +215,7 @@ flowchart TD
     REQ["Mode B: Request-for-Approval - Consultee submits requested times or flexible window"]
   end
 
-  DC --> LOCK["Acquire Redis Locks: lockConsulteeBooking -> lockSlotBooking (30-min atoms, 60s TTL)"]
+  DC --> LOCK["Acquire Redis Locks: lockConsulteeBooking -> lockSlotBatch (one atomic batch of 30-min atoms)"]
   LOCK --> LOCK_FAIL{"Lock Contention or Slot Taken?"}
   LOCK_FAIL -->|"Yes (423 / 409)"| BACKUP["Consultee can register WindowBackupInterest (max 3 active WAITING windows) - Notified when any hold releases"]
   LOCK_FAIL -->|"No"| TX_HOLD["Create Consultation(PENDING) + Occurrence(isTentative=true) + Payment(PENDING)"]
@@ -226,11 +237,13 @@ flowchart TD
   MINT_LINK --> WAIT_OUTCOME{"What happens next?"}
   WAIT_OUTCOME -->|"Consultee Pays"| CAPTURE["Single Writer handlePaymentSuccess() -> CAS to APPROVED, isTentative = false"]
   WAIT_OUTCOME -->|"Consultant clicks Remind"| REMIND["POST /remind (max 1/24h) -> PAYMENT_LINK_MANUAL_REMINDER"]
-  WAIT_OUTCOME -->|"24h Sweep / 7d Fallback / Consultant Withdraw"| LAPSE["lapseApprovedRequest() -> CAS to EXPIRED, tombstones Payment(EXPIRED), releases slot holds, fires WindowBackupInterest notices"]
+  WAIT_OUTCOME -->|"Pay window lapses / too close to pay / Consultant Withdraw"| LAPSE["lapseApprovedRequest() -> CAS to EXPIRED (a lapse) or CANCELLED (a withdraw), tombstones Payment(EXPIRED), releases slot holds, fires WindowBackupInterest notices"]
   LAPSE -.->|"Late Capture Race (captured_after_release)"| AUTO_REFUND["Webhook sees EXPIRED Payment -> claims SUCCEEDED & immediately triggers 100% auto-refund"]
 ```
 
-Instant mode locks the consultee and then each 30-minute atom of the interval, creates the tentative occurrence and a pending payment in one Serializable transaction, and waits for the capture. Request mode takes the same consultee and slot locks and writes a `PENDING` consultation with a tentative occurrence, and that occurrence does block the expert's calendar: `OCCUPIED_REQUEST_STATUSES` in `utils/scheduling-engine/occupancyPolicy.ts` counts `PENDING` as occupied, so no other checkout or request can take the time. What request mode defers is the money, and a consultee may hold at most three such pending requests at once (`MAX_ACTIVE_REQUESTS_PER_USER` in `lib/booking/request-caps.ts`). A request that is already settled (a free plan or an existing `SUCCEEDED` payment) lands directly in `APPROVED`; an unpaid one lands in `APPROVED_PENDING_PAYMENT` and mints its pay order after the commit.
+Instant mode locks the consultee and then every 30-minute atom of the interval as one atomic batch, creates the tentative occurrence and a pending payment in one Serializable transaction, and waits for the capture. Request mode first takes the expert's `request-cap:` lock, so the expert's open-request cap is counted and enforced in one step, then the same consultee lock and slot batch, and writes a `PENDING` consultation with a tentative occurrence, and that occurrence does block the expert's calendar: `OCCUPIED_REQUEST_STATUSES` in `utils/scheduling-engine/occupancyPolicy.ts` counts `PENDING` as occupied, so no other checkout or request can take the time. What request mode defers is the money, and a consultee may hold at most three such pending requests at once (`MAX_ACTIVE_REQUESTS_PER_USER` in `lib/booking/request-caps.ts`). A request that is already settled (a free plan or an existing `SUCCEEDED` payment) lands directly in `APPROVED`; an unpaid one lands in `APPROVED_PENDING_PAYMENT` and mints its pay order after the commit. The pay window is 24 hours but always closes 15 minutes before the first session; if less than 30 minutes would be left, no link is minted and the approval lapses to `EXPIRED`. A capture that arrives after the first session started closes the request as `EXPIRED` and refunds in full.
+
+When the allocator and a checkout want the same time, they meet at the slot batch. Neither waits on the other's held time for long: the checkout retries briefly inside its request budget, and the allocator either searches around the held time (auto mode) or answers 409 `TIMES_TAKEN` naming the times (manual and requested modes). A webinar or class seat checkout holds the event's lock only around its database commit and mints the gateway order afterwards, so one buyer's gateway round trip never queues the next buyer. The seat holds for 12 minutes plus a 3-minute capture grace, and a seat whose payment lapsed stops counting at once.
 
 ## 6. Lifecycle and state machines
 
@@ -262,22 +275,19 @@ stateDiagram-v2
     PENDING --> REJECTED : Consultant declines
     APPROVED_PENDING_PAYMENT --> REJECTED : Consultant declines
     PENDING --> CANCELLED : Cancelled by actor
-    APPROVED_PENDING_PAYMENT --> CANCELLED : Cancelled by actor
+    APPROVED_PENDING_PAYMENT --> CANCELLED : Cancelled by actor, or consultant withdraws the approval
     APPROVED --> CANCELLED : Cancelled by actor (triggers policy refund)
     PENDING --> EXPIRED : 48h unpaid consultation / 48h unallocated paid subscription (100% refund) / 30d unpaid sub
-    APPROVED_PENDING_PAYMENT --> EXPIRED : 24h pay-link lapse / 7d fallback / Consultant Withdraw
+    APPROVED_PENDING_PAYMENT --> EXPIRED : Pay window lapses, too close to pay, or first session started before capture
     APPROVED --> COMPLETED : Auto-complete sweep (all sessions ended > 1h ago and remaining == 0)
   }
 
   state "Webinar & Class (EventStatus)" as Ev {
     [*] --> DRAFT : Created in studio (stays DRAFT across allocations)
     DRAFT --> SCHEDULED : Published by host
-    SCHEDULED --> SCHEDULED : Re-allocation re-stamp
-    SCHEDULED --> IN_PROGRESS : Host sets it through the event PATCH
-    IN_PROGRESS --> COMPLETED : All occurrences ended > 1h ago
+    SCHEDULED --> SCHEDULED : Re-allocation re-stamp or webinar re-time
     SCHEDULED --> COMPLETED : All occurrences ended > 1h ago
     SCHEDULED --> CANCELLED : Host cancels whole event (100% refund to undelivered seats)
-    IN_PROGRESS --> CANCELLED : Host cancels mid-series
   }
 ```
 
@@ -299,7 +309,7 @@ stateDiagram-v2
   }
 
   state "RescheduleRequest" as Res {
-    [*] --> PENDING_REVIEW : Actor requests reschedule (max 1 open per Appointment)
+    [*] --> PENDING_REVIEW : Party releases sessions, with times or preference-only (max 1 open per Appointment)
     PENDING_REVIEW --> ACCEPTED : Counterparty approves & new slots allocated
     PENDING_REVIEW --> AUTO_ACCEPTED : Window lapses without reply -> auto-confirmed
     PENDING_REVIEW --> DECLINED : Counterparty declines -> restore origin slots (or park APPROVED if taken)
@@ -318,6 +328,12 @@ stateDiagram-v2
     VOIDED --> COMPLETED : Ops overturns before settlement
   }
 ```
+
+The approved-but-unpaid request has two honest endings. When the window runs out (the pay-link lapses, the window is too short to open, or the session starts before the money lands) the request is `EXPIRED`. When the consultant withdraws the approval, a party with standing ended it, so it is `CANCELLED` (`lapseApprovedRequest` in `lib/booking/lapse-approved-request.ts`). A webinar or class `IN_PROGRESS` status exists in the enum and the transition map, but no code path writes it: an event goes from `SCHEDULED` straight to `COMPLETED` or `CANCELLED`, and "under way" is read from the clock.
+
+Cancelling is refused from 15 minutes before a confirmed session starts until it ends, and after a session was delivered with nothing still owed (409 `SESSION_IN_PROGRESS` or `SESSION_ALREADY_DELIVERED`, `lib/booking/session-window.ts`); the outcome sweep settles those sessions instead. A cancel's compare-and-swap is pinned to the status it read, and its own commit expires the live payment, so a capture that lands mid-cancel makes the cancel re-quote instead of ending a paid booking for free.
+
+Every party release opens a `RescheduleRequest`. With proposed times it is a proposal; with none ("any time works") it is preference-only, and the expert places the new time. Either way it holds the one-open reservation, can be withdrawn, and expires back to the original time. The release records the parent's prior status (`originStatus`) and the sessions it released (`releasedSessions`), so a restore is exact, and a restored request is stamped `restoredAt` and costs no reschedule. A consultee may move each session twice; an expert may reschedule a booking twice. A published webinar is never rescheduled: its host re-times it in one step, attendees busy at the new time are flagged rather than blocking it, and anyone who bought before the move may leave with a full refund until `retimeBy` (at most seven days, never past the new start).
 
 A reschedule confirmation is one transaction: the allocator commits the new times and, through its `inTx` hook, flips the proposal from `PENDING_REVIEW` to `ACCEPTED` or `AUTO_ACCEPTED` in the same commit. If the proposal is no longer open, the whole move rolls back with 409 `RESCHEDULE_NO_LONGER_OPEN`.
 
@@ -410,7 +426,7 @@ In the target state Postgres is the only arbiter of time and capacity, and Redis
 - **Wave 1** flips the availability readers to per-date daylight-saving offsets computed from the IANA zone, and adds platform-incident voiding (landed: ops declare an incident, every eligible overlapping session is voided and each learner gets the remedy for their product; the free-rebook offer is landing next). Seat transfer is deferred until after launch, and it would cover webinars only if it is ever built (#2140).
 - **Wave 2** (landed) split the allocator and checkout along their module seams without changing behaviour: the allocator is now `lib/booking/allocation/` and checkout is `lib/payments/checkout/`.
 - **Wave 3** lands inside the owner's database reset window: the schema batch, the busy-time ledger that makes the database the arbiter of every person's time, and the scheduling rules.
-- **Wave 4** proves it with a concurrency harness on real Postgres, which is the launch gate.
+- **Wave 4** proves it with a concurrency harness on real Postgres, which is the launch gate. The first real-Postgres race suites already run in CI (`__tests__/db/booking/`), pinning each writer pair on today's schema.
 
 The end-state invariants and what enforces each of them:
 
@@ -423,7 +439,7 @@ The end-state invariants and what enforces each of them:
 | A refund owed is never lost                                                     | An owed marker written in the cancel transaction and a keyed re-drive (Wave 0)                                                                                    |
 | One live payment per buyer per event                                            | Partial unique index (Wave 3)                                                                                                                                     |
 | Only the host side approves or allocates                                        | Route authorization and tests (current)                                                                                                                           |
-| Buffer, notice and horizon                                                      | Padded `busyRange` exclusion and shared validation (Wave 3)                                                                                                       |
+| Buffer, notice and horizon                                                      | Minimum notice is the lead time in shared validation (current); buffer and horizon through a padded `busyRange` exclusion (Wave 3)                                |
 | An outage never forfeits a learner's money                                      | A declared incident window classifies as `PLATFORM_OUTAGE` first (`classifySessionOutcome`) and the `settle-platform-incidents` sweep refunds each seat (current) |
 
 ## 10. Glossary
@@ -449,4 +465,6 @@ These patterns existed earlier and are gone or going. Recognising them lets an e
 4. **A gateway call before any durable payment row on the approval path.** The pay-link mint now writes a pre-mint row first.
 5. **A reschedule accept that committed the move and then closed the proposal in a second transaction.** The proposal is now closed inside the move.
 6. **Restoring an unknown origin status to `APPROVED`.** A booking whose origin cannot be read is now left alone and reported once.
-7. **Reading a platform-wide outage as a learner or host absence.** A session with no presence evidence during an outage used to be classified `LEARNER_ABSENT` (a forfeit) or `NOBODY_JOINED` before any outage rule ran. A declared incident window now classifies it `PLATFORM_OUTAGE` first.
+7. **An allocator with no slot atoms.** Allocation once took only its own consultant lock, a family disjoint from checkout's slot atoms, so it could place a session over a live checkout hold. It now takes the shared atomic slot batch.
+8. **"Unschedule" for a group event.** A host could pull a webinar's or class's date and leave attendees with no time. Re-time moves the session in one step and opens a free-refund leave.
+9. **Reading a platform-wide outage as a learner or host absence.** A session with no presence evidence during an outage used to be classified `LEARNER_ABSENT` (a forfeit) or `NOBODY_JOINED` before any outage rule ran. A declared incident window now classifies it `PLATFORM_OUTAGE` first.

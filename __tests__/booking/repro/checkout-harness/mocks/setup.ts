@@ -140,7 +140,7 @@ export function orgMember(
     }),
     "membership.findUnique": () => ({
       id: "m-1",
-      role: "MEMBER",
+      role: "LEARNER",
       status: membershipStatus,
     }),
     "programAssignment.findFirst": () => ({ id: "pa-1", programId: "prog-1" }),

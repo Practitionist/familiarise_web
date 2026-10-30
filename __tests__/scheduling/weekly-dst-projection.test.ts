@@ -24,6 +24,7 @@ import {
   isInstantWithinWeeklyRow,
   sameTimeZone,
   weeklyRowIntervalsInRange,
+  zoneOffsetMinutesAt,
   type WeeklyRowLocalColumns,
 } from "../../utils/schedule/weekly-projection";
 import { loadPublishedCoverage } from "../../utils/scheduling-engine/availabilityCoverage";
@@ -109,14 +110,57 @@ describe("a Monday 09:00–12:00 row keeps its local clock across each transitio
 });
 
 describe("transition-night wall clocks", () => {
-  it("skips a date whose local start does not exist (spring forward)", () => {
+  it("starts a window whose local start does not exist at the jump (spring forward)", () => {
     const sunday = row("America/New_York", "SUNDAY", 150, 210); // 02:30–03:30
     expect(
       isoPairs(sunday, "2026-03-01T00:00:00Z", "2026-03-16T00:00:00Z"),
     ).toEqual([
       ["2026-03-01T07:30:00.000Z", "2026-03-01T08:30:00.000Z"],
+      // 02:30 does not exist on 8 Mar: the window runs 03:00–03:30 EDT.
+      ["2026-03-08T07:00:00.000Z", "2026-03-08T07:30:00.000Z"],
       ["2026-03-15T06:30:00.000Z", "2026-03-15T07:30:00.000Z"],
     ]);
+  });
+
+  it("drops only the skipped hour from 02:00–05:00 (spring forward)", () => {
+    const sunday = row("America/New_York", "SUNDAY", 120, 300);
+    const [interval] = weeklyRowIntervalsInRange(
+      sunday,
+      new Date("2026-03-08T00:00:00Z"),
+      new Date("2026-03-09T00:00:00Z"),
+    );
+    expect([
+      formatInTimeZone(interval.start, "America/New_York", "HH:mm"),
+      formatInTimeZone(interval.end, "America/New_York", "HH:mm"),
+    ]).toEqual(["03:00", "05:00"]);
+    expect(interval.end.getTime() - interval.start.getTime()).toBe(
+      2 * 3_600_000,
+    );
+  });
+
+  it("ends a window whose local end does not exist at the jump", () => {
+    const sunday = row("America/New_York", "SUNDAY", 60, 150); // 01:00–02:30
+    expect(
+      isoPairs(sunday, "2026-03-08T00:00:00Z", "2026-03-09T00:00:00Z"),
+    ).toEqual([["2026-03-08T06:00:00.000Z", "2026-03-08T07:00:00.000Z"]]);
+  });
+
+  it("skips a window that lies wholly inside the gap", () => {
+    const sunday = row("America/New_York", "SUNDAY", 120, 150); // 02:00–02:30
+    expect(
+      isoPairs(sunday, "2026-03-08T00:00:00Z", "2026-03-09T00:00:00Z"),
+    ).toEqual([]);
+  });
+
+  it("snaps to London's 01:00 jump", () => {
+    const sunday = row("Europe/London", "SUNDAY", 30, 180); // 00:30–03:00
+    expect(
+      isoPairs(sunday, "2026-03-29T00:00:00Z", "2026-03-30T00:00:00Z"),
+    ).toEqual([["2026-03-29T00:30:00.000Z", "2026-03-29T02:00:00.000Z"]]);
+    const inGap = row("Europe/London", "SUNDAY", 90, 180); // 01:30–03:00
+    expect(
+      isoPairs(inGap, "2026-03-29T00:00:00Z", "2026-03-30T00:00:00Z"),
+    ).toEqual([["2026-03-29T01:00:00.000Z", "2026-03-29T02:00:00.000Z"]]);
   });
 
   it("resolves a repeated local time to its first occurrence (fall back)", () => {
@@ -298,13 +342,16 @@ describe("property: every occurrence lands on the row's own wall clock", () => {
           );
           const clock = (m: number) =>
             `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+          // A wall time swallowed by a spring-forward gap snaps to the jump.
+          const isJump = (instant: Date) =>
+            zoneOffsetMinutesAt(zone, instant.getTime() - 1) !==
+            zoneOffsetMinutesAt(zone, instant.getTime());
+          const wallOrJump = (instant: Date, minutes: number) =>
+            isJump(instant) ||
+            formatInTimeZone(instant, zone, "HH:mm") === clock(minutes);
           for (const interval of intervals) {
-            expect(formatInTimeZone(interval.start, zone, "HH:mm")).toBe(
-              clock(start),
-            );
-            expect(formatInTimeZone(interval.end, zone, "HH:mm")).toBe(
-              clock(end),
-            );
+            expect(wallOrJump(interval.start, start)).toBe(true);
+            expect(wallOrJump(interval.end, end)).toBe(true);
             expect(
               Number(formatInTimeZone(interval.start, zone, "i")) % 7,
             ).toBe(dayIndex);

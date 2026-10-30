@@ -16,23 +16,30 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import * as Sentry from "@sentry/nextjs";
 import { motion } from "framer-motion";
 import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
+import {
+  isExpectedRefusal,
+  userMessageFrom,
+} from "@/lib/errors/client-refusal";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PricingOption } from "../defaults";
 import { TIntervalTiming } from "@/types/slots";
-import { breakDownSlotsPreservingStatus } from "@/utils/scheduling-engine/intervals";
-import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import { useNowTick } from "@/hooks/use-now-tick";
+import { useJustTaken } from "@/lib/scheduling/use-just-taken";
+import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
+import type { DisplayZone } from "@/lib/time/use-display-zone";
+import { calendarDayOf } from "@/lib/time/grid-zone";
 import {
   consumePurchaseIntent,
   stashPurchaseIntent,
 } from "@/utils/purchase-intent";
 import { useToast } from "@/hooks/use-toast";
-import { SLOT_JUST_TAKEN_MESSAGE } from "@/lib/errors/mapping/payment-error-toast-map";
 import { useCurrency } from "@/hooks/useCurrency";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { BookingMode } from "@prisma/client";
@@ -41,11 +48,20 @@ import {
   consultationCtaFor,
 } from "@/lib/booking/booking-mode";
 import { SlotList } from "./SlotList";
-import type { SlotWithStatus } from "./slot-list-policy";
+import { durationPhrase } from "./slot-list-policy";
+import {
+  isBookableWindow,
+  sameWindow,
+  windowsForDay,
+  type SlotWithStatus,
+} from "@/lib/scheduling/booking-windows";
+
+/** What the dialog says when a poll or the server shows the pick is gone. */
+export const TIME_JUST_TAKEN_MESSAGE =
+  "That time was just taken — pick another.";
 
 interface ConsultantDetailsForBooking {
   id: string;
-  scheduleType?: string;
   /** #1703 D1 — absent on older payloads; INSTANT is the pre-#1703 behaviour. */
   bookingMode?: BookingMode;
   /** False while the expert has paused new bookings of every kind. */
@@ -66,9 +82,12 @@ interface ConsultationPricingToggleProps {
   setCurrentDate: (date: Date) => void;
   renderCalendar: () => JSX.Element[];
   slotTimings: TIntervalTiming[];
+  /** True once the selected day's read has answered, so an absent pick means gone. */
+  slotsReady: boolean;
   selectedSlot: TIntervalTiming | null;
   setSelectedSlot: (slot: TIntervalTiming | null) => void;
-  timezone: string;
+  /** The zone every time in the dialog is drawn in, with its device-zone switch. */
+  displayZone: DisplayZone;
   onRefreshSlots?: () => void;
   onDurationChange?: (durationInHours: number) => void;
 }
@@ -82,9 +101,10 @@ export default function ConsultationPricingToggle({
   setCurrentDate,
   renderCalendar,
   slotTimings,
+  slotsReady,
   selectedSlot,
   setSelectedSlot,
-  timezone,
+  displayZone,
   consultantDetails,
   onRefreshSlots,
   onDurationChange,
@@ -93,6 +113,11 @@ export default function ConsultationPricingToggle({
   const router = useRouter();
   const { toast } = useToast();
   const { formatPrice } = useCurrency();
+  const timezone = displayZone.zone;
+  // The lead-time cut moves with the clock, not only with new data: a 304
+  // poll keeps the data's identity, and a time crossing the 15-minute lead
+  // must still leave the list.
+  const now = useNowTick(60_000);
   // Track the active plan by id so plans that share a duration (e.g. two
   // 1-hour consultations) remain independently selectable and bookable.
   const [activeConsultationOption, setActiveConsultationOption] =
@@ -116,47 +141,50 @@ export default function ConsultationPricingToggle({
     onDurationChange?.(selectedDuration);
   }, [selectedDuration, onDurationChange]);
 
+  const paused = consultantDetails.acceptingRequests === false;
+
+  const availableSlots = useMemo((): SlotWithStatus[] => {
+    if (!slotTimings || slotTimings.length === 0 || !selectedDate) return [];
+    return windowsForDay(
+      slotTimings,
+      selectedDuration,
+      timezone,
+      now.getTime(),
+    );
+  }, [slotTimings, selectedDuration, timezone, selectedDate, now]);
+
+  // The pick is re-read from the latest windows every render; the CTA only
+  // ever acts on this live copy, never on the object the buyer clicked.
+  const liveSelection = useMemo(() => {
+    if (!selectedSlot) return null;
+    const live = availableSlots.find((slot) => sameWindow(slot, selectedSlot));
+    return live && isBookableWindow(live) ? live : null;
+  }, [availableSlots, selectedSlot]);
+  const staleSelection =
+    selectedSlot !== null && slotsReady && liveSelection === null
+      ? [selectedSlot.startsAt]
+      : [];
+  const dropTakenSelection = useCallback(() => {
+    setSelectedSlot(null);
+    toast({ title: TIME_JUST_TAKEN_MESSAGE, variant: "destructive" });
+  }, [setSelectedSlot, toast]);
+  const justTakenKeys = useJustTaken(staleSelection, dropTakenSelection);
+  const justTakenSlot: SlotWithStatus | null =
+    selectedSlot && justTakenKeys.has(selectedSlot.startsAt)
+      ? {
+          ...selectedSlot,
+          isAllocated: selectedSlot.isAllocated ?? false,
+          bookingStatus: selectedSlot.bookingStatus ?? "available",
+          _isPast: false,
+        }
+      : null;
+
   // #1703 D1 — REQUEST routes every slot through approval; INSTANT keeps the
   // contended-slot-only arm. Decided once here so the button and its hint agree.
   const cta = consultationCtaFor(
     consultantDetails.bookingMode ?? "INSTANT",
-    selectedSlot?.isAllocated ?? false,
+    liveSelection?.isAllocated ?? false,
   );
-  const paused = consultantDetails.acceptingRequests === false;
-
-  const availableSlots = useMemo((): SlotWithStatus[] => {
-    if (
-      !slotTimings ||
-      slotTimings.length === 0 ||
-      !timezone ||
-      !selectedDate
-    ) {
-      return [];
-    }
-
-    const slotsWithAllocation = slotTimings.map((slot) => ({
-      ...slot,
-      isAllocated: slot.isAllocated || false,
-      bookingStatus: (slot.bookingStatus || "available") as
-        "available" | "partially-booked" | "fully-booked",
-    }));
-
-    // Use breakDownSlotsPreservingStatus to create duration windows
-    // WITHOUT discarding the API-computed bookingStatus
-    const brokenDownSlots = breakDownSlotsPreservingStatus(
-      slotsWithAllocation,
-      selectedDuration,
-      timezone,
-    );
-
-    // Add client-side past-slot detection
-    const now = Date.now();
-    return brokenDownSlots.map((slot) => ({
-      ...slot,
-      _isPast:
-        new Date(slot.startsAt).getTime() < now + MINIMUM_BOOKING_LEAD_TIME_MS,
-    }));
-  }, [slotTimings, selectedDuration, timezone, selectedDate]);
 
   // #booking-journey — restore a slot stashed before the auth bounce. Runs
   // once per mount, and only once slots have actually loaded: the stashed
@@ -175,28 +203,31 @@ export default function ConsultationPricingToggle({
     const intent = consumePurchaseIntent(consultantDetails.id);
     if (!intent) return;
 
-    if (
-      consultationOptions.some((opt) => opt.id === intent.consultationPlanId)
-    ) {
-      setActiveConsultationOption(intent.consultationPlanId);
-    }
-
-    const match = availableSlots.find(
-      (slot) =>
-        slot.startsAt === intent.slot.startsAt &&
-        slot.endsAt === intent.slot.endsAt &&
-        !slot._isPast &&
-        slot.bookingStatus !== "fully-booked",
+    const intentPlan = consultationOptions.find(
+      (opt) => opt.id === intent.consultationPlanId,
     );
+    if (intentPlan) setActiveConsultationOption(intentPlan.id);
+
+    // Matched against the intent plan's own windows, so the restored pick is
+    // still live once the plan tab switches to it.
+    const match = windowsForDay(
+      slotTimings,
+      intentPlan?.durationInHours ?? selectedDuration,
+      timezone,
+      Date.now(),
+    ).find((slot) => sameWindow(slot, intent.slot) && isBookableWindow(slot));
     if (match) {
       setSelectedSlot(match);
       toast({
         title: "Welcome back",
-        description: "Your previously selected time slot was restored.",
+        description: "The time you picked before signing in is still free.",
       });
     }
   }, [
     availableSlots,
+    slotTimings,
+    selectedDuration,
+    timezone,
     consultationOptions,
     consultantDetails.id,
     session?.user?.id,
@@ -206,8 +237,9 @@ export default function ConsultationPricingToggle({
   ]);
 
   const handleRequestForApproval = async () => {
-    if (!selectedSlot || !consultantDetails) {
-      toast({ title: "Please select a time slot", variant: "destructive" });
+    const pick = liveSelection;
+    if (!pick || !consultantDetails) {
+      toast({ title: "Pick a time first", variant: "destructive" });
       return;
     }
 
@@ -226,14 +258,10 @@ export default function ConsultationPricingToggle({
         consultantId: consultantDetails.id,
         consultationPlanId: activeConsultationOption,
         slot: {
-          startsAt: selectedSlot.startsAt,
-          endsAt: selectedSlot.endsAt,
-          type: (
-            selectedSlot as TIntervalTiming & { type?: "WEEKLY" | "CUSTOM" }
-          ).type,
-          availabilityWindowId: (
-            selectedSlot as TIntervalTiming & { availabilityWindowId?: string }
-          ).availabilityWindowId,
+          startsAt: pick.startsAt,
+          endsAt: pick.endsAt,
+          type: pick.type,
+          availabilityWindowId: pick.availabilityWindowId,
         },
       });
       const callbackUrl = `${window.location.pathname}${window.location.search}`;
@@ -251,7 +279,10 @@ export default function ConsultationPricingToggle({
     );
 
     if (!activePlan) {
-      toast({ title: "Invalid consultation plan", variant: "destructive" });
+      toast({
+        title: "This consultation isn't available right now",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -267,20 +298,18 @@ export default function ConsultationPricingToggle({
         availabilityWindowCustomId?: string;
       } = {
         consultantProfileId: consultantDetails.id,
-        startsAt: selectedSlot.startsAt,
-        endsAt: selectedSlot.endsAt,
+        startsAt: pick.startsAt,
+        endsAt: pick.endsAt,
         consultationPlanId: activePlan.id,
       };
 
-      if (selectedSlot.type === "WEEKLY") {
-        requestBody.availabilityWindowWeeklyId =
-          selectedSlot.availabilityWindowId;
+      if (pick.type === "WEEKLY") {
+        requestBody.availabilityWindowWeeklyId = pick.availabilityWindowId;
       } else {
-        requestBody.availabilityWindowCustomId =
-          selectedSlot.availabilityWindowId;
+        requestBody.availabilityWindowCustomId = pick.availabilityWindowId;
       }
 
-      const selection = `${activePlan.id}|${selectedSlot.startsAt}|${selectedSlot.endsAt}`;
+      const selection = `${activePlan.id}|${pick.startsAt}|${pick.endsAt}`;
       if (requestAttemptRef.current?.selection !== selection) {
         requestAttemptRef.current = {
           selection,
@@ -307,15 +336,15 @@ export default function ConsultationPricingToggle({
       requestAttemptRef.current = null;
 
       toast({
-        title: "Request Submitted",
+        title: "Request sent",
         description:
-          "Your request for approval has been submitted successfully. The consultant will review and respond soon.",
+          "The expert will confirm or decline soon. You pay only once they confirm.",
         variant: "default",
       });
 
       setSelectedSlot(null);
     } catch (error) {
-      console.error("Error requesting approval:", error);
+      console.warn("Request for approval failed", error);
       if (
         error instanceof ApiResponseError &&
         error.code &&
@@ -323,8 +352,8 @@ export default function ConsultationPricingToggle({
       ) {
         setHeldWindow({
           consultantProfileId: consultantDetails.id,
-          windowStart: selectedSlot.startsAt,
-          windowEnd: selectedSlot.endsAt,
+          windowStart: pick.startsAt,
+          windowEnd: pick.endsAt,
           planKind: "CONSULTATION",
           planId: activePlan.id,
         });
@@ -332,19 +361,25 @@ export default function ConsultationPricingToggle({
       if (error instanceof ApiResponseError && error.code === "SLOT_TAKEN") {
         setSelectedSlot(null);
         onRefreshSlots?.();
-        toast({
-          title: SLOT_JUST_TAKEN_MESSAGE,
-          description: error.message,
-          variant: "destructive",
-        });
+        toast({ title: TIME_JUST_TAKEN_MESSAGE, variant: "destructive" });
         return;
       }
+      // A modelled refusal carries a sentence written for the buyer; anything
+      // else (a crash, an edge page, no network) gets fixed copy and Sentry.
+      const refused =
+        isExpectedRefusal(error) &&
+        error instanceof ApiResponseError &&
+        error.code !== undefined;
+      if (!isExpectedRefusal(error)) {
+        Sentry.captureException(error, {
+          tags: { subsystem: "client", flow: "request-for-approval" },
+        });
+      }
       toast({
-        title: "Couldn't submit approval request",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to submit request for approval",
+        title: "Couldn't send your request",
+        description: refused
+          ? userMessageFrom(error)
+          : "Please try again in a moment.",
         variant: "destructive",
       });
     } finally {
@@ -353,7 +388,7 @@ export default function ConsultationPricingToggle({
   };
 
   const handleBookNowClick = () => {
-    const today = new Date();
+    const today = calendarDayOf(new Date(), timezone);
     setSelectedDate(today);
     setCurrentDate(new Date(today.getFullYear(), today.getMonth(), 1));
   };
@@ -385,7 +420,11 @@ export default function ConsultationPricingToggle({
   return (
     <Tabs
       value={activeConsultationOption}
-      onValueChange={setActiveConsultationOption}
+      onValueChange={(value) => {
+        setActiveConsultationOption(value);
+        // A pick belongs to one session length; another plan has other windows.
+        setSelectedSlot(null);
+      }}
       className="w-full space-y-5"
     >
       {/* Segmented pill duration toggle */}
@@ -495,6 +534,14 @@ export default function ConsultationPricingToggle({
                       Select a date and time for your {option.duration}{" "}
                       consultation
                     </DialogDescription>
+                    <ZoneSwitch
+                      zone={displayZone.zone}
+                      usingDeviceZone={displayZone.usingDeviceZone}
+                      canSwitch={displayZone.canSwitch}
+                      onToggle={displayZone.toggle}
+                      now={now}
+                      className="pt-1 text-zinc-400 [&_button]:text-zinc-100"
+                    />
                   </DialogHeader>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-10 p-6 lg:p-8">
                     {/* Calendar Section */}
@@ -580,13 +627,14 @@ export default function ConsultationPricingToggle({
                       <div className="flex items-center justify-between mb-5">
                         <h3 className="text-lg font-semibold flex items-center text-white">
                           <ClockIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
-                          Available {selectedDuration} hour Slots
+                          Available {durationPhrase(selectedDuration)} times
                         </h3>
                         {onRefreshSlots && (
                           <button
                             type="button"
                             className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-colors"
-                            title="Refresh slot availability"
+                            title="Refresh the available times"
+                            aria-label="Refresh the available times"
                             onClick={async () => {
                               setIsRefreshing(true);
                               try {
@@ -603,29 +651,11 @@ export default function ConsultationPricingToggle({
                           </button>
                         )}
                       </div>
-                      {consultantDetails?.scheduleType && (
-                        <div className="mb-4 p-3 bg-zinc-800/40 rounded-xl border border-zinc-700/50">
-                          <p className="text-sm text-zinc-400">
-                            This consultant prefers{" "}
-                            <span
-                              className={`px-2 py-1 rounded text-xs font-medium ${
-                                consultantDetails.scheduleType === "WEEKLY"
-                                  ? "bg-zinc-700 text-zinc-300"
-                                  : "bg-zinc-700 text-zinc-300"
-                              }`}
-                            >
-                              {consultantDetails.scheduleType === "WEEKLY"
-                                ? "📅 Weekly"
-                                : "🎯 Custom"}
-                            </span>{" "}
-                            scheduling
-                          </p>
-                        </div>
-                      )}
                       <div className="grid grid-cols-1 gap-3 max-h-[350px] overflow-y-auto pr-2">
                         <SlotList
                           slots={availableSlots}
-                          selectedSlot={selectedSlot as SlotWithStatus | null}
+                          selectedSlot={liveSelection}
+                          justTaken={justTakenSlot}
                           onSelect={setSelectedSlot}
                           bookingMode={
                             consultantDetails.bookingMode ?? "INSTANT"
@@ -648,17 +678,13 @@ export default function ConsultationPricingToggle({
                           : () => handleConsultationBooking(option.id)
                       }
                       disabled={
-                        !selectedSlot ||
-                        paused ||
-                        isRequestingApproval ||
-                        (selectedSlot as SlotWithStatus)?._isPast ||
-                        selectedSlot?.bookingStatus === "fully-booked"
+                        !liveSelection || paused || isRequestingApproval
                       }
                     >
                       {isRequestingApproval ? "Submitting..." : cta.label}
                     </Button>
                     {heldWindow &&
-                      heldWindow.windowStart === selectedSlot?.startsAt && (
+                      heldWindow.windowStart === liveSelection?.startsAt && (
                         <NotifyWhenFreeButton window={heldWindow} />
                       )}
                   </div>

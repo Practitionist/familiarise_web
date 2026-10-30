@@ -44,13 +44,6 @@ export function weeklyLocalColumnsForSave(
 export const LAUNCH_UTC_OFFSET_MINUTES = 330;
 export const LAUNCH_TIMEZONE = "Asia/Kolkata";
 
-/**
- * The single switch that turns the rule into "hard-pin every row to IST".
- * Flip it to true if a consultant's profile zone ever has to stop deciding
- * their availability offset; nothing else changes.
- */
-const PIN_TO_LAUNCH_OFFSET: boolean = false;
-
 export const WEEKLY_OFFSET_CONFLICT_CODE = "UTC_OFFSET_CONFLICT";
 
 /** A caller sent a `utcOffsetMinutes` that contradicts the profile zone. */
@@ -117,11 +110,7 @@ export function resolveWeeklyUtcOffsetMinutes({
   callerSupplied,
 }: ResolveWeeklyOffsetInput): number {
   const zone = normaliseZone(profileTimezone);
-  const derived = derivedOffsetMinutes(zone);
-  const resolved =
-    PIN_TO_LAUNCH_OFFSET || derived === null
-      ? LAUNCH_UTC_OFFSET_MINUTES
-      : derived;
+  const resolved = derivedOffsetMinutes(zone) ?? LAUNCH_UTC_OFFSET_MINUTES;
 
   if (
     callerSupplied !== undefined &&

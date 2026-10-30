@@ -209,7 +209,6 @@ type FreezeEffects = {
   /** Refunds stamped owed in the freeze commit, driven after it. */
   refunds: RefundOwedMarker[];
   trialsToTombstone: string[];
-  subscriptionIds: string[];
 };
 
 /** `null` means the row was already terminal — the whole appointment skips. */
@@ -220,7 +219,6 @@ function noEffects(): FreezeEffects {
     notifications: [],
     refunds: [],
     trialsToTombstone: [],
-    subscriptionIds: [],
   };
 }
 
@@ -234,7 +232,6 @@ function mergeEffects(into: FreezeEffects, from: FreezeEffects): void {
   into.notifications.push(...from.notifications);
   into.refunds.push(...from.refunds);
   into.trialsToTombstone.push(...from.trialsToTombstone);
-  into.subscriptionIds.push(...from.subscriptionIds);
 }
 
 /** A CAS transition that lost its race is a skip, never an error. */
@@ -321,7 +318,6 @@ async function freezeSubscription(
       consulteeName: subscription.requestedBy?.user?.name || "User",
     }),
   );
-  effects.subscriptionIds.push(subscription.id);
   return effects;
 }
 
@@ -490,11 +486,7 @@ async function closeFrozenSlots(tx: Tx, ctx: FreezeContext): Promise<void> {
 }
 
 /** All booking effects use the graph read by the cancellation transaction. */
-async function freezeOneAppointment(
-  tx: Tx,
-  ctx: FreezeContext,
-  durationMs: number,
-) {
+async function freezeOneAppointment(tx: Tx, ctx: FreezeContext) {
   const effects = noEffects();
 
   for (const step of FREEZE_STEPS) {
@@ -532,21 +524,6 @@ async function freezeOneAppointment(
       reason: data.reason,
       dashboardUrl: data.dashboardUrl ?? notificationHref(null, "appointments"),
     });
-  }
-  for (const subscriptionId of effects.subscriptionIds) {
-    const subscription = await tx.subscription.findUnique({
-      where: { id: subscriptionId },
-      select: { schedulingPeriodEndsAt: true },
-    });
-    if (subscription?.schedulingPeriodEndsAt)
-      await tx.subscription.update({
-        where: { id: subscriptionId },
-        data: {
-          schedulingPeriodEndsAt: new Date(
-            subscription.schedulingPeriodEndsAt.getTime() + durationMs,
-          ),
-        },
-      });
   }
   // Leaving a proposal open reserves openForAppointmentId forever and lets
   // the expiry sweep act on a cancelled booking. #1846 — the shared helper
@@ -595,15 +572,11 @@ export async function freezeAppointments(
         occurrences: slots.length,
         payments: appointment.payment.length,
       });
-      return freezeOneAppointment(
-        tx,
-        {
-          appointment,
-          slots,
-          earliestSlot: earliestSlotOf(slots),
-        },
-        maintenanceEnd.getTime() - maintenanceStart.getTime(),
-      );
+      return freezeOneAppointment(tx, {
+        appointment,
+        slots,
+        earliestSlot: earliestSlotOf(slots),
+      });
     },
     {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -622,7 +595,6 @@ export async function freezeAppointments(
         0,
       ) ?? 0,
     refundsQueued: effects?.refunds.length ?? 0,
-    subscriptionsExtended: effects?.subscriptionIds.length ?? 0,
   };
   console.log(
     JSON.stringify({

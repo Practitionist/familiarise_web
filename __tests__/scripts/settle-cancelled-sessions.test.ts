@@ -19,6 +19,7 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_k: string, _o: unknown, fn: () => unknown) => fn(),
+  readJobCheckpoint: async () => null,
 }));
 jest.mock("../../lib/novu/outbox", () => ({ stageTrigger: jest.fn() }));
 jest.mock("../../utils/appointmentlock", () => ({
@@ -39,28 +40,21 @@ const CLASS_SESSION = {
 const state = {
   madeUp: null as { id: string } | null,
   due: [CLASS_SESSION] as unknown[],
-  wrapperRows: [] as unknown[],
   seatStatus: undefined as string | undefined,
   spent: new Set<string>(),
   seatPaymentId: null as string | null,
   events: [] as { correlationId: string; context: unknown }[],
-  undecided: 0,
 };
 const stamp = jest.fn(async () => ({ count: 1 }));
-const consultantHoldStamp = jest.fn(async () => ({ count: 1 }));
-const orgHoldStamp = jest.fn(async () => ({ count: 0 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointmentOccurrence: {
-      // The due cohort first; a subscription arm then reads its wrapper's rows.
-      findMany: async ({ where }: { where: { appointmentId?: string } }) =>
-        where.appointmentId ? state.wrapperRows : state.due,
+      findMany: async () => state.due,
       findFirst: async () => state.madeUp,
-      // Tentative rows are excluded by the query itself (where.isTentative).
-      count: async ({ where }: { where: { isTentative?: boolean } }) =>
-        where.isTentative === false ? state.undecided : 99,
-      updateMany: (...a: unknown[]) => stamp(...(a as [])),
+      // Subscription voids of ended plans are a separate, money-free stamp.
+      updateMany: async (args: { where: { appointment?: unknown } }) =>
+        args.where.appointment ? { count: 0 } : stamp(),
     },
     payment: {
       findMany: async () =>
@@ -90,6 +84,8 @@ jest.mock("../../lib/prisma", () => ({
               createdAt: new Date("2026-08-01T00:00:00Z"),
             },
     },
+    // No plan has ended in these scenarios; plan-end settlement has its own suite.
+    subscription: { findMany: async () => [] },
     systemEvent: {
       findFirst: async ({ where }: { where: { correlationId: string } }) =>
         state.events.find((e) => e.correlationId === where.correlationId) ??
@@ -99,21 +95,6 @@ jest.mock("../../lib/prisma", () => ({
       }: {
         data: { correlationId: string; context: unknown };
       }) => state.events.push(data),
-    },
-    // The plan-end hold on the subscription's earnings, one payee.
-    consultantEarnings: {
-      findMany: async () => [{ consultantProfileId: "cp-1" }],
-      findFirst: async () => ({ createdAt: new Date("2020-01-01T00:00:00Z") }),
-      aggregate: async () => ({
-        _sum: {
-          consultantSharePaise: BigInt(1_000_000_000),
-          refundedShareAmount: BigInt(0),
-        },
-      }),
-      updateMany: (...a: unknown[]) => consultantHoldStamp(...(a as [])),
-    },
-    organizationEarnings: {
-      updateMany: (...a: unknown[]) => orgHoldStamp(...(a as [])),
     },
     refund: {
       // pay-a skipped the make-up already: its key is spent.
@@ -133,7 +114,6 @@ beforeEach(() => {
   state.seatPaymentId = null;
   state.spent = new Set(["occ:occ-5:pay:pay-a"]);
   state.events = [];
-  state.undecided = 0;
 });
 
 it("#1834 — a paid seat still HELD goes to the ops queue once, never refunded", async () => {
@@ -185,134 +165,4 @@ it("#1569 — a voided class session: the skipped seat is not paid twice", async
       reason: "SESSION_VOIDED_NOT_MADE_UP",
     }),
   );
-});
-
-it("#1569 D4 — an unused subscription void is refunded at plan end, per session", async () => {
-  const sub = {
-    status: "APPROVED",
-    sessionsTotal: 8,
-    subscriptionPlan: { title: "Mentoring", totalSessions: 8 },
-  };
-  state.due = [
-    {
-      ...CLASS_SESSION,
-      completionStatus: "VOIDED",
-      appointment: { subscription: sub },
-    },
-  ];
-  // 7 delivered + this void: one session of 8 was never had.
-  state.wrapperRows = [
-    ...Array.from({ length: 7 }, (_, i) => ({
-      id: `d${i}`,
-      completionStatus: "COMPLETED",
-      seatsSettledAt: null,
-    })),
-    { id: "occ-5", completionStatus: "VOIDED", seatsSettledAt: null },
-  ];
-  await settleCancelledSessions();
-  expect(refundBookingPayment).toHaveBeenCalledWith(
-    expect.objectContaining({
-      paymentId: "pay-b",
-      amountPaise: 10_000,
-      dedupeKey: "void-unused:occ-5:pay:pay-b",
-    }),
-  );
-});
-
-it("#1834 — a replayed plan-end void refund pays nothing twice and still settles", async () => {
-  const sub = {
-    status: "APPROVED",
-    sessionsTotal: 8,
-    subscriptionPlan: { title: "Mentoring", totalSessions: 8 },
-  };
-  state.due = [
-    {
-      ...CLASS_SESSION,
-      completionStatus: "VOIDED",
-      appointment: { subscription: sub },
-    },
-  ];
-  state.wrapperRows = [
-    ...Array.from({ length: 7 }, (_, i) => ({
-      id: `d${i}`,
-      completionStatus: "COMPLETED",
-      seatsSettledAt: null,
-    })),
-    { id: "occ-5", completionStatus: "VOIDED", seatsSettledAt: null },
-  ];
-  state.spent = new Set([
-    "void-unused:occ-5:pay:pay-a",
-    "void-unused:occ-5:pay:pay-b",
-  ]);
-  const result = await settleCancelledSessions();
-  expect(refundBookingPayment).not.toHaveBeenCalled();
-  expect(result.stamped).toBe(1);
-  // Settling the plan's last owed void defers its earnings under the subscription hold.
-  expect(consultantHoldStamp).toHaveBeenCalledWith({
-    where: {
-      paymentId: { in: ["pay-a", "pay-b"] },
-      holdUntil: null,
-      status: { in: ["PENDING", "PENDING_TRUST"] },
-      consultantProfileId: "cp-1",
-    },
-    data: { holdUntil: expect.any(Date) },
-  });
-  expect(orgHoldStamp).toHaveBeenCalledWith(
-    expect.objectContaining({ data: { holdUntil: expect.any(Date) } }),
-  );
-});
-
-it("#1569 D4 — the refundable voids are the latest ones, whatever order the sweep takes them in", async () => {
-  const sub = {
-    status: "APPROVED",
-    sessionsTotal: 8,
-    subscriptionPlan: { title: "Mentoring", totalSessions: 8 },
-  };
-  const voided = (id: string) => ({
-    ...CLASS_SESSION,
-    id,
-    completionStatus: "VOIDED",
-    appointment: { subscription: sub },
-  });
-  // 6 delivered + 3 voids of 8: two sessions are owed, the earliest void was made up.
-  state.wrapperRows = [
-    ...Array.from({ length: 6 }, (_, i) => ({
-      id: `d${i}`,
-      completionStatus: "COMPLETED",
-      seatsSettledAt: null,
-    })),
-    ...["v1", "v2", "v3"].map((id) => ({
-      id,
-      completionStatus: "VOIDED",
-      seatsSettledAt: null,
-    })),
-  ];
-  state.due = [voided("v3"), voided("v1"), voided("v2")];
-  await settleCancelledSessions();
-  const keys = refundBookingPayment.mock.calls.map(
-    (c) => (c as unknown as [{ dedupeKey: string }])[0].dedupeKey,
-  );
-  expect(keys.filter((k) => k.endsWith(":pay:pay-b"))).toEqual([
-    "void-unused:v3:pay:pay-b",
-    "void-unused:v2:pay:pay-b",
-  ]);
-});
-
-it("#1569 D4 — plan-end void refunds wait while any session is undecided", async () => {
-  const sub = {
-    status: "APPROVED",
-    sessionsTotal: 8,
-    subscriptionPlan: { title: "M", totalSessions: 8 },
-  };
-  state.due = [
-    {
-      ...CLASS_SESSION,
-      completionStatus: "VOIDED",
-      appointment: { subscription: sub },
-    },
-  ];
-  state.undecided = 1;
-  const result = await settleCancelledSessions();
-  expect(refundBookingPayment).not.toHaveBeenCalled();
-  expect(result.stamped).toBe(0);
 });

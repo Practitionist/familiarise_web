@@ -1,3 +1,4 @@
+import type { SlotStatusKey } from "@/lib/scheduling/interval-status-tokens";
 import type { PickerInterval } from "../types";
 
 /**
@@ -54,10 +55,20 @@ export function mergeConsecutiveSlotsForDisplay(
   return merged;
 }
 
-/** Derive a single status key that accounts for isAllocated + bookingStatus */
+/** One key per painted state, so a merged run never spans two paints. */
 function getEffectiveStatus(slot: PickerInterval): string {
-  if (slot.bookingStatus === "fully-booked") return "fully-booked";
-  if (slot.bookingStatus === "partially-booked") return "partially-booked";
-  if (slot.isAllocated) return "allocated";
+  return `${overviewStatusKey(slot)}:${slot.isAllocated ? "contended" : ""}`;
+}
+
+/**
+ * The token an overview cell paints from: taken states first, then the
+ * not-bookable-yet reasons. A contended time stays "Free" (it is offered as
+ * a request) and carries its own "Request" label.
+ */
+export function overviewStatusKey(slot: PickerInterval): SlotStatusKey {
+  if (slot.bookingStatus === "fully-booked") return "fullyBooked";
+  if (slot.bookingStatus === "partially-booked") return "partiallyBooked";
+  if (slot.tooSoon) return "tooSoon";
+  if (slot.limitReached) return "limitReached";
   return "available";
 }

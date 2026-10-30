@@ -1,9 +1,18 @@
-import { PaymentStatus, Prisma } from "@prisma/client";
+import { PaymentStatus, Prisma, RefundStatus } from "@prisma/client";
 
-import prisma, { type Tx } from "@/lib/prisma";
-import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
+import {
+  recordSystemErrorSafe,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
+import { Refusal } from "@/lib/errors/refusal";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import type { FundingRail } from "@/lib/payments/funding-rail";
 import { GATEWAY_NOT_FOUND } from "@/lib/payments/core/types";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 import { refundBookingPayment } from "./booking-refund";
 import {
   findDedupedRefund,
@@ -27,6 +36,81 @@ export type RefundOwedMarker = {
 
 /** Failed drives after which an operator refunds by hand. */
 export const MAX_REFUND_OWED_ATTEMPTS = 3;
+
+/** The standing ops finding for a payment whose stuck marker blocks a cancel. */
+export const REFUND_NEEDS_SUPPORT_PREFIX = "refund-needs-support:";
+
+/** What an ops hand refund did to a stuck marker on the same payment. */
+export type StuckMarkerClear =
+  | { cleared: string }
+  | { stillOwed: { key: string; paise: number | null } }
+  | null;
+
+/**
+ * Clears a marker that spent its attempts once an operator's hand refunds
+ * cover it: a full-balance refund, or refunds since the marker was stamped
+ * adding up to what it owes (a marker owing the full balance clears only on
+ * a full refund). A smaller refund leaves it standing and answers what is
+ * still owed; a marker still retrying is never touched.
+ */
+export async function clearStuckRefundOwed(
+  db: Pick<PrismaLike, "payment" | "refund">,
+  paymentId: string,
+  handRefund: { full: boolean },
+): Promise<StuckMarkerClear> {
+  const row = await db.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      refundOwedKey: true,
+      refundOwedAttempts: true,
+      refundOwedPaise: true,
+      refundOwedAt: true,
+    },
+  });
+  if (!row?.refundOwedKey || row.refundOwedAttempts < MAX_REFUND_OWED_ATTEMPTS)
+    return null;
+  const owedPaise =
+    row.refundOwedPaise === null ? null : Number(row.refundOwedPaise);
+  const covered =
+    handRefund.full ||
+    (owedPaise !== null &&
+      row.refundOwedAt !== null &&
+      (await refundedSincePaise(db, paymentId, row.refundOwedAt)) >= owedPaise);
+  if (!covered) {
+    return { stillOwed: { key: row.refundOwedKey, paise: owedPaise } };
+  }
+  const { count } = await db.payment.updateMany({
+    where: {
+      id: paymentId,
+      refundOwedKey: row.refundOwedKey,
+      refundOwedAttempts: { gte: MAX_REFUND_OWED_ATTEMPTS },
+    },
+    data: {
+      refundOwedKey: null,
+      refundOwedPaise: null,
+      refundOwedReason: null,
+      refundOwedAt: null,
+      refundOwedAttempts: 0,
+    },
+  });
+  return count === 1 ? { cleared: row.refundOwedKey } : null;
+}
+
+async function refundedSincePaise(
+  db: Pick<PrismaLike, "refund">,
+  paymentId: string,
+  since: Date,
+): Promise<number> {
+  const sum = await db.refund.aggregate({
+    where: {
+      paymentId,
+      status: RefundStatus.SUCCEEDED,
+      createdAt: { gte: since },
+    },
+    _sum: { amountPaise: true },
+  });
+  return Number(sum._sum.amountPaise ?? 0);
+}
 
 export const REFUND_OWED_SELECT = {
   id: true,
@@ -59,6 +143,99 @@ const STAMPABLE = {
   deletedAt: null,
   refundOwedKey: null,
 } as const;
+
+export const REFUND_NEEDS_SUPPORT = "REFUND_NEEDS_SUPPORT";
+
+/** What the refused door was changing: a whole booking, or one seat in it. */
+export type HeldMarkerSubject = "booking" | "seat";
+
+const HELD_MARKER_COPY: Record<
+  HeldMarkerSubject,
+  { needsSupport: string; inProgress: string }
+> = {
+  booking: {
+    needsSupport:
+      "A refund on this booking needs our support team before it can be cancelled. We've been notified and will be in touch.",
+    inProgress:
+      "A refund on this booking is still being processed. Try again in a few minutes.",
+  },
+  seat: {
+    needsSupport:
+      "This seat couldn't be released yet: a refund on it needs our support team. We've been notified and will be in touch.",
+    inProgress:
+      "This seat couldn't be released yet: a refund on it is still being processed. Try again in a few minutes.",
+  },
+};
+
+/**
+ * The answer a door gives when another door's refund marker already holds the
+ * payment, with nothing committed: a marker still retrying clears itself
+ * shortly; one that spent its attempts, or that a live dispute holds, waits
+ * for support, who settle it through the ops refund door.
+ */
+export async function heldMarkerRefusal(
+  tx: Pick<Tx, "payment">,
+  paymentId: string,
+  context: Record<string, unknown> = {},
+  subject: HeldMarkerSubject = "booking",
+): Promise<Refusal> {
+  const held = await tx.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      refundOwedKey: true,
+      refundOwedAttempts: true,
+      disputes: {
+        where: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+        select: { id: true },
+      },
+    },
+  });
+  const stuck =
+    (held?.refundOwedAttempts ?? 0) >= MAX_REFUND_OWED_ATTEMPTS ||
+    (held?.disputes.length ?? 0) > 0;
+  if (stuck) {
+    return new Refusal({
+      code: REFUND_NEEDS_SUPPORT,
+      httpStatus: 409,
+      userMessage: HELD_MARKER_COPY[subject].needsSupport,
+      devMessage: `Payment ${paymentId} holds a stuck refund marker; refused`,
+      context: { ...context, paymentId, heldKey: held?.refundOwedKey },
+    });
+  }
+  return new Refusal({
+    code: "REFUND_IN_PROGRESS",
+    httpStatus: 409,
+    userMessage: HELD_MARKER_COPY[subject].inProgress,
+    devMessage: `Payment ${paymentId} already owes another door's refund; refused`,
+    context: { ...context, paymentId },
+  });
+}
+
+/**
+ * The audit trail of a door a stuck marker refused, one row per payment and
+ * marker, written after the refused transaction rolled back; a repeat finds
+ * it. The ops queue reads stuck markers from the payment itself.
+ */
+export async function recordRefundNeedsSupport(
+  refusal: Refusal,
+): Promise<void> {
+  if (refusal.code !== REFUND_NEEDS_SUPPORT) return;
+  const paymentId = refusal.context?.paymentId;
+  if (typeof paymentId !== "string") return;
+  const heldKey = refusal.context?.heldKey;
+  const correlationId = `${REFUND_NEEDS_SUPPORT_PREFIX}${paymentId}:${typeof heldKey === "string" ? heldKey : "unknown"}`;
+  const standing = await prisma.systemEvent
+    .findFirst({ where: { correlationId }, select: { id: true } })
+    .catch(() => null);
+  if (standing) return;
+  await recordSystemEvent({
+    category: "PAYMENT",
+    severity: "WARN",
+    message: `Payment ${paymentId} has a stuck refund owed; a booking change is waiting on support`,
+    context: refusal.context,
+    correlationId,
+  });
+}
 
 /**
  * Stamps one marker on the caller's transaction. The first writer wins: a
@@ -155,16 +332,11 @@ export async function driveRefundOwed(
         },
       };
     }
-    const refund = await refundBookingPayment({
-      paymentId: marker.paymentId,
-      // No amount is the front door's full-balance call, the credits rail's only shape.
-      ...(marker.amountPaise === null
-        ? {}
-        : { amountPaise: marker.amountPaise }),
-      dedupeKey: marker.key,
-      reason: marker.reason,
-      initiatedByUserId: opts.initiatedByUserId ?? null,
-    });
+    const refund = await refundUpToBalance(marker, opts);
+    if (refund === null) {
+      await clearRefundOwed(marker);
+      return { kind: "settled" };
+    }
     if (refund.status !== "PENDING") await clearRefundOwed(marker);
     return { kind: "refunded", refund };
   } catch (error) {
@@ -183,6 +355,49 @@ export async function driveRefundOwed(
     const stuck = await countFailedAttempt(marker, error, permanent);
     return { kind: "failed", error, stuck, permanent };
   }
+}
+
+/**
+ * Refunds the marker through the front door. A fixed amount that a later
+ * refund pushed past the balance is retried once at what is still refundable;
+ * null when nothing is left.
+ */
+async function refundUpToBalance(
+  marker: RefundOwedMarker,
+  opts: { initiatedByUserId?: string | null },
+): Promise<DrivenRefund | null> {
+  const refundOnce = (amountPaise: number | null) =>
+    refundBookingPayment({
+      paymentId: marker.paymentId,
+      // No amount is the front door's full-balance call, the credits rail's only shape.
+      ...(amountPaise === null ? {} : { amountPaise }),
+      dedupeKey: marker.key,
+      reason: marker.reason,
+      initiatedByUserId: opts.initiatedByUserId ?? null,
+    });
+  try {
+    return await refundOnce(marker.amountPaise);
+  } catch (error) {
+    if (
+      marker.amountPaise === null ||
+      !(error instanceof RefundValidationError) ||
+      error.code !== "AMOUNT_EXCEEDS_REFUNDABLE"
+    ) {
+      throw error;
+    }
+    const refundable = await refundablePaiseOf(marker.paymentId);
+    if (refundable <= 0) return null;
+    return refundOnce(Math.min(marker.amountPaise, refundable));
+  }
+}
+
+/** The payment's refundable balance as it stands now. */
+async function refundablePaiseOf(paymentId: string): Promise<number> {
+  const row = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
+  });
+  return row ? refundableBalancePaise(Number(row.amount), row) : 0;
 }
 
 /** Clears the marker by CAS on its key; a lost clear is re-settled by the sweep's replay. */

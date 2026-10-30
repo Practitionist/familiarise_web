@@ -116,14 +116,14 @@ const rfaRoute = readFileSync(
 );
 
 describe("RFA route lock order", () => {
-  it("takes the consultee lock before the slot atoms", () => {
+  it("takes the request cap, then the consultee lock, then the slot atoms", () => {
+    const capAt = rfaRoute.indexOf("lockRequestCap(consultantProfileId)");
     const consulteeAt = rfaRoute.indexOf(
       "lockConsulteeBooking(session.user.id)",
     );
-    const atomsAt = rfaRoute.indexOf(
-      "lockSlotBooking(consultantProfileId, startsAt, endsAt)",
-    );
-    expect(consulteeAt).toBeGreaterThan(-1);
+    const atomsAt = rfaRoute.indexOf("lockSlotBatch([");
+    expect(capAt).toBeGreaterThan(-1);
+    expect(consulteeAt).toBeGreaterThan(capAt);
     expect(atomsAt).toBeGreaterThan(consulteeAt);
   });
 
@@ -138,7 +138,7 @@ describe("RFA active-request cap", () => {
     expect(MAX_ACTIVE_REQUESTS_PER_USER).toBe(3);
   });
 
-  it("counts only PENDING consultations of this consultee", async () => {
+  it("counts only PENDING submitted requests of this consultee", async () => {
     (prisma.consultation.count as jest.Mock).mockResolvedValue(2);
     const n = await countActiveConsultationRequests(
       prisma as never,
@@ -149,6 +149,8 @@ describe("RFA active-request cap", () => {
       where: {
         requestedById: "consultee-profile-1",
         status: "PENDING",
+        bookingSource: "REQUEST_SUBMITTED",
+        requestedAt: { gte: expect.any(Date) },
       },
     });
   });

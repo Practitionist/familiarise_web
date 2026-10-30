@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Db } from "@/lib/prisma";
+import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 
 /**
  * #1319 PR 9 — the change marker behind the availability grid's conditional GET.
@@ -24,11 +26,13 @@ import type { Db } from "@/lib/prisma";
  * Bump when the response SHAPE changes (new field, different bucketing). Every
  * previously issued ETag then misses and the next poll repaints.
  */
-const MARKER_VERSION = "av3";
+const MARKER_VERSION = "av4";
 
 export interface AvailabilityGridMarker {
   /** Null when no such consultant — the caller must fall through to its 404. */
   profileUpdatedAt: Date | null;
+  /** Set when the consultant is soft-deleted: the caller answers 404, never 304. */
+  consultantDeletedAt: Date | null;
   /** Weekly + custom availability rows for this consultant. */
   availabilityUpdatedAt: Date | null;
   /**
@@ -227,6 +231,7 @@ export async function readAvailabilityGridMarker(
         THEN (SELECT max(c."updatedAt") FROM consultant c)
         ELSE NULL
       END AS "profileUpdatedAt",
+      (SELECT cp."deletedAt" FROM "ConsultantProfile" cp WHERE cp.id = ${consultantId}) AS "consultantDeletedAt",
       (SELECT cp."scheduleType"::text FROM "ConsultantProfile" cp WHERE cp.id = ${consultantId}) AS "scheduleType",
       (SELECT cp."userId" FROM "ConsultantProfile" cp WHERE cp.id = ${consultantId}) AS "consultantUserId",
       (SELECT max(t) FROM (
@@ -301,6 +306,44 @@ export interface AvailabilityGridEtagKey {
   consulteeUserId: string | null;
   webinarId?: string | null;
   classId?: string | null;
+  /** {@link leadTimeBucket} at request time: moves when a cell enters the lead time. */
+  leadBucket: number;
+  /** {@link subscriptionQuotaFold} when the quota overlay was asked for. */
+  quotaFold?: string | null;
+}
+
+const THIRTY_MIN_MS = 30 * 60 * 1000;
+
+/**
+ * The 30-minute bucket `now + lead time` falls in. A grid cell flips to "too
+ * soon" when that instant crosses its start, so the tag has to move with it.
+ */
+export function leadTimeBucket(nowMs: number): number {
+  return Math.ceil((nowMs + MINIMUM_BOOKING_LEAD_TIME_MS) / THIRTY_MIN_MS);
+}
+
+/**
+ * The quota overlay depends on every occurrence of the subscription, not only
+ * the window's, on the scheduling-zone day its cycle window ends on, and on
+ * the sessions a reschedule is releasing. Those inputs, folded into one tag
+ * component from an aggregate so a 304 never loads the occurrence list.
+ */
+export function subscriptionQuotaFold(input: {
+  subscriptionId: string;
+  subscriptionUpdatedAt: Date;
+  occurrenceCount: number;
+  occurrencesUpdatedAt: Date | null;
+  todayKey: string;
+  releasingIds?: readonly string[];
+}): string {
+  return [
+    input.subscriptionId,
+    input.subscriptionUpdatedAt.toISOString(),
+    String(input.occurrenceCount),
+    String(input.occurrencesUpdatedAt?.getTime() ?? 0),
+    input.todayKey,
+    [...(input.releasingIds ?? [])].sort(byCodeUnit).join(","),
+  ].join("/");
 }
 
 /**
@@ -324,7 +367,10 @@ export function availabilityGridEtag(
     key.consulteeUserId ?? "",
     key.webinarId ?? "",
     key.classId ?? "",
+    String(key.leadBucket),
+    key.quotaFold ?? "",
     iso(marker.profileUpdatedAt),
+    iso(marker.consultantDeletedAt ?? null),
     iso(marker.availabilityUpdatedAt),
     String(marker.availabilityRowCount ?? 0),
     iso(marker.slotsUpdatedAt),
@@ -338,10 +384,7 @@ export function availabilityGridEtag(
 }
 
 function stripWeakAndQuotes(token: string): string {
-  return token
-    .trim()
-    .replace(/^W\//i, "")
-    .replace(/^"|"$/g, "");
+  return token.trim().replace(/^W\//i, "").replace(/^"|"$/g, "");
 }
 
 function stripWeakAndCdnSuffix(token: string): string {

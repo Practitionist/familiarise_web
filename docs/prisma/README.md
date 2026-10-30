@@ -133,6 +133,29 @@ The reconcile push is therefore sequenced behind the `dev` → `prod` promotion:
 move the 20 entries from `knownDivergences` to `destructiveStatementsAllowed`,
 preflight, push, sidecars, assert, then empty both lists again.
 
+### Additive columns waiting for the next push
+
+The booking and scheduling hardening added seven nullable columns and no
+sidecar change. They are purely additive, so `npm run db:preflight -- --print`
+should list seven `ADD COLUMN` statements for them and nothing destructive, and
+they can be pushed before the deploy that reads them. No backfill is written
+(doctrine: no backfill migrations); every reader treats `NULL` as a row written
+before the column existed:
+
+| Column                               | Type          | Written by                                          | Reader fallback when `NULL`                                                                                                                      |
+| ------------------------------------ | ------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Subscription.planEndsAt`            | `timestamptz` | Subscription creation (the fixed plan end)          | `subscriptionPlanEnd` (`lib/booking/entitlement.ts`) derives it from `schedulingPeriodStartsAt` plus `durationInMonths` in `schedulingTimezone`. |
+| `Payment.requestFingerprint`         | `varchar(64)` | Checkout's payment row (the priced inputs' hash)    | An idempotent replay skips the fingerprint comparison and replays as before (`lib/payments/operations/checkout-replay.ts`).                      |
+| `RescheduleRequest.releasedSessions` | `jsonb`       | The reschedule release (ordinal and start per slot) | `countedReleases` (`lib/booking/released-sessions.ts`) skips the row, so it neither costs a reschedule nor floors a refund notice.               |
+| `RescheduleRequest.originStatus`     | `varchar(32)` | The reschedule release (the parent's prior status)  | The restore reads the release's `PENDING` history row instead (`lib/booking/reschedule-restore.ts`).                                             |
+| `RescheduleRequest.restoredAt`       | `timestamptz` | A withdraw, decline or expiry that restored         | Read as "not restored"; a legacy row has no release record, so it is not counted anyway.                                                         |
+| `Webinar.retimeBy`                   | `timestamptz` | A webinar re-time (the end of the free leave)       | No free leave is open; seat leave applies its normal refund window (`lib/booking/retime-leave.ts`, `lib/booking/seat-leave.ts`).                 |
+| `Class.retimeBy`                     | `timestamptz` | A class make-up (the end of the free leave)         | The same as `Webinar.retimeBy`.                                                                                                                  |
+
+After the push, smoke-test one full-row reader of each of the five models
+(lesson 6 above): a subscription detail, a checkout replay, a reschedule
+withdraw, and a webinar and a class detail page.
+
 ## Related material
 
 The portable doctrine behind all of this — the change catalog with lock classes,
