@@ -186,9 +186,9 @@ The paid 48-hour family shares one 16-second start budget across current expiry 
 - Tentative flag mismatches: Automatically corrected.
 - Double bookings: Logged and returned in the response. The API returns HTTP `207` when double bookings are detected (vs `200` for clean results).
 
-**Ownership of the 207 response**: A `207` is a degraded-but-not-broken signal, not a page. The GitHub Actions workflow posts it to the ops Slack channel configured via `SLACK_OPS_WEBHOOK_URL`, and the on-call engineer owns the follow-up. That engineer is responsible for triaging the reported overlaps, manually resolving the affected bookings (the job never auto-resolves them), and confirming the next hourly run returns `200`. Treat a `207` that persists across more than one run as the trigger to escalate.
+**Ownership of the 207 response**: A `207` is a degraded-but-not-broken signal, not a page. Each overlapping occurrence pair is recorded once as a durable `SystemEvent` keyed on the pair, and the run sends one Sentry warning when it finds a pair not already reported in the last 24 hours (`reportStandingFinding`). The on-call engineer owns the follow-up: triage the reported overlaps, resolve the affected bookings by hand (the job never auto-resolves them), and confirm the next hourly run returns `200`. Treat a `207` that persists across more than one run as the trigger to escalate.
 
-**Safety**: Two independent `try/catch` blocks. The double booking detection is read-only and does not modify data. The GitHub Actions workflow is configured to trigger a failure notification specifically for double booking scenarios, routed to the ops Slack channel (`SLACK_OPS_WEBHOOK_URL`) described above.
+**Safety**: Two independent `try/catch` blocks. The double booking detection is read-only on bookings; it writes only the `SystemEvent` findings described above.
 
 ---
 
@@ -306,12 +306,11 @@ lib/cron/cleanup-registry.ts     -- Central cleanup job registry
 app/api/cleanup/[job]/route.ts   -- Dynamic HTTP dispatcher (CRON_SECRET + assertNotInMaintenance)
 ```
 
-The core script has no HTTP or framework dependencies. `app/api/cleanup/[job]/route.ts` dispatches to `lib/cron/cleanup-registry.ts`, which adds authentication and maintenance guards and returns JSON. `netlify/functions/cron-tick.mts` and `.github/workflows/<job>.yml` invoke the registered jobs on schedule.
+The core script has no HTTP or framework dependencies. `app/api/cleanup/[job]/route.ts` dispatches to `lib/cron/cleanup-registry.ts`, which adds authentication and maintenance guards and returns JSON. `netlify/functions/cron-tick.mts` invokes the registered jobs on schedule, and a manual run goes through the same HTTP route.
 
 ```mermaid
 flowchart TD
     subgraph Triggers
-        GHA["GitHub Actions<br/>(schedule cron)"]
         TICK["Netlify ticker<br/>(cron-tick.mts, every 5 min)"]
         MANUAL["Manual curl<br/>(POST/GET)"]
     end
@@ -324,7 +323,6 @@ flowchart TD
         SCRIPT["scripts/appointments/*.ts<br/>- Query database<br/>- Apply business rules<br/>- Update records"]
     end
 
-    GHA --> SCRIPT
     TICK --> ROUTE
     MANUAL --> ROUTE
     ROUTE --> SCRIPT
@@ -356,8 +354,6 @@ if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
 ```
 
 The `invalid-appointments` endpoint uses a stronger `crypto.timingSafeEqual` comparison to prevent timing attacks.
-
-**GitHub Actions** workflows do not use the HTTP endpoints. They execute the core script directly, authenticating to the database via `DATABASE_URL` and `DIRECT_URL` repository secrets.
 
 ---
 

@@ -4,6 +4,11 @@ const mockRecover = jest.fn();
 const mockWindDown = jest.fn();
 const mockSync = jest.fn();
 const mockChannels = jest.fn();
+const mockRunCreate = jest.fn();
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: { systemJobExecution: { create: mockRunCreate } },
+}));
 jest.mock("../../lib/stream/recording-retention", () => ({
   expireRecordings: mockExpire,
 }));
@@ -43,6 +48,7 @@ import streamMaintenance, {
 import { STREAM_LIFECYCLE_JOBS } from "../../lib/cron/schedule";
 import { assertNotInMaintenance } from "../../lib/maintenance-cron";
 import { flushJobSentry } from "../../lib/observability/job-sentry";
+import { CronLockUnavailableError } from "../../lib/cron/cron-lock-errors";
 const mocks = new Map([
   ["expire-recordings", mockExpire],
   ["reconcile-orphaned-recordings", mockRecover],
@@ -91,6 +97,23 @@ it.each(STREAM_LIFECYCLE_JOBS)(
     error.mockRestore();
   },
 );
+it("records a refused lease, which leaves no run row of its own", async () => {
+  jest.spyOn(console, "error").mockImplementation(() => {});
+  mockSync.mockRejectedValueOnce(new CronLockUnavailableError("stream-sync"));
+  await worker.run(request("stream-sync"));
+  expect(mockRunCreate).toHaveBeenCalledWith(
+    expect.objectContaining({
+      data: expect.objectContaining({
+        jobName: "stream-sync",
+        status: "FAILED",
+      }),
+    }),
+  );
+  mockRunCreate.mockClear();
+  mockSync.mockResolvedValueOnce({ success: false });
+  await worker.run(request("stream-sync"));
+  expect(mockRunCreate).not.toHaveBeenCalled();
+});
 it("refuses off production before any work, whatever the bearer", async () => {
   const log = jest.spyOn(console, "log").mockImplementation(() => {});
   await worker.run(request("stream-sync"), {

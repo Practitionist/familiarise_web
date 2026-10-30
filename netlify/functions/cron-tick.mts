@@ -237,7 +237,9 @@ async function hitTargetOnceMore(
       status: first.status,
     }),
   );
-  return hitTarget(...args);
+  const retried = await hitTarget(...args);
+  // A 409 here is likely the lease the crashed first call took; keep its failure.
+  return retried.status === 409 ? first : retried;
 }
 
 /** Targets whose 207 means some rows failed; every other target's 207 is a successful run that flagged rows. */

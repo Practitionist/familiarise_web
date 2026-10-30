@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
-import { dueTargets } from "../../lib/cron/schedule";
+import { dueTargets, isFirstDueTickOfHour } from "../../lib/cron/schedule";
 
 type Ticker = typeof import("../../netlify/functions/cron-tick.mjs");
 
@@ -156,6 +156,38 @@ describe("ticker execution outcomes", () => {
     ).json();
     expect(body.ok).toContain(target);
     expect(body.failed).toEqual([]);
+  });
+
+  it("keeps the first failure when the retry meets the crashed call's lease", async () => {
+    // A repeat tick of the hour, so the failure skips the Sentry alert path.
+    jest.setSystemTime(new Date("2026-10-22T06:30:00Z"));
+    const now = new Date();
+    const target = dueTargets(now).find(
+      (name) =>
+        name !== "transfer-recordings" && !isFirstDueTickOfHour(name, now),
+    );
+    expect(target).toBeDefined();
+    let calls = 0;
+    const crashed = jest.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes(`/api/cleanup/${target}`)) {
+        calls += 1;
+        if (calls === 1) throw new TypeError("fetch failed");
+        return new Response("{}", { status: 409 });
+      }
+      return new Response("{}", {
+        status: url.includes("-background") ? 202 : 200,
+      });
+    });
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    const body = await (
+      await load(crashed).default(new Request("https://tick.test"))
+    ).json();
+    expect(calls).toBe(2);
+    expect(body.failed).toEqual([{ name: target, status: 0 }]);
+    expect(body.lockHeld).toEqual([]);
   });
 
   describe("Better Stack summary line", () => {

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/core";
 import { NextRequest } from "next/server.js";
+import { z } from "zod";
 import {
   bearerMatches,
   type CleanupRouteHandlers,
@@ -9,6 +10,11 @@ import { jobEnvironment } from "@/lib/cron/run-outcome";
 import { flushJobSentry, initJobSentry } from "@/lib/observability/job-sentry";
 
 const ERROR_LOG_MAX_CHARS = 8_000;
+
+const lockUnavailableBody = z.object({
+  code: z.literal("CRON_LOCK_UNAVAILABLE"),
+  error: z.string(),
+});
 
 /** A failure the cleanup route could not record itself; best effort, never throws. */
 async function recordAdapterFailure(
@@ -101,6 +107,13 @@ export async function runBackgroundWorker(
           status: response.status,
         }),
       );
+      // A refused lease leaves no run row, so the ticker would never see this failure.
+      const refused = lockUnavailableBody.safeParse(
+        await response.json().catch(() => null),
+      );
+      if (refused.success) {
+        await recordAdapterFailure(job, startedAt, refused.data.error);
+      }
     }
   } catch (error) {
     console.error(

@@ -46,7 +46,21 @@ const delegate = (
 
 const mockRedisSet = (redis as unknown as { set: jest.Mock }).set;
 
+// Either host marker caps the lease, so every test starts off Netlify.
+const priorHost = {
+  NETLIFY: process.env.NETLIFY,
+  SITE_ID: process.env.SITE_ID,
+};
+afterAll(() => {
+  for (const [key, value] of Object.entries(priorHost)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
+
 beforeEach(() => {
+  delete process.env.NETLIFY;
+  delete process.env.SITE_ID;
   jest.clearAllMocks();
   delegate.findFirst.mockResolvedValue(null);
   delegate.create.mockResolvedValue({ id: "exec-1" });
@@ -187,17 +201,14 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
   });
 
   it("caps the lease to 90 s on Netlify and leaves other hosts alone", () => {
-    const prev = process.env.NETLIFY;
-    try {
-      process.env.NETLIFY = "true";
-      expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
-      expect(effectiveLeaseTtlMs(30_000)).toBe(30_000);
-      delete process.env.NETLIFY;
-      expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(LONG_JOB_TTL_MS);
-    } finally {
-      if (prev === undefined) delete process.env.NETLIFY;
-      else process.env.NETLIFY = prev;
-    }
+    process.env.NETLIFY = "true";
+    expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
+    expect(effectiveLeaseTtlMs(30_000)).toBe(30_000);
+    delete process.env.NETLIFY;
+    process.env.SITE_ID = "site";
+    expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
+    delete process.env.SITE_ID;
+    expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(LONG_JOB_TTL_MS);
   });
 
   it("re-arms the lease every third of the TTL while the job runs and computes durationMs from initial acquisition", async () => {
