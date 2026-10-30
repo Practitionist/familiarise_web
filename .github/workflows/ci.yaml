@@ -1,8 +1,9 @@
 # Cost rule: Actions minutes are capped, so a PR pays only for what it can break.
 # Docs-only changes and draft PRs skip every job, non-release runs (PRs into dev or
 # feat/**, pushes to dev) pay setup once in one job and lint and test changed files
-# only, and the cold tsc, full sharded suite and build run on PRs into prod and on
-# pushes to staging or prod. New jobs must state which of these they follow.
+# only (changed-file jest runs on pull requests only, never on pushes to dev), and
+# the cold tsc, full sharded suite and build run on PRs into prod and on pushes to
+# staging or prod. New jobs must state which of these they follow.
 
 # Bot review rounds: two, then stop.
 #
