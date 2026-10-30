@@ -15,14 +15,14 @@ There is no second scheduler, no Redis lock and no `jobs/` wrapper (AGENTS.md §
 
 ## Scheduling and the lock
 
-| Fact        | Value                                                                                                                                                    | Where                                                                  |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Trigger     | The 5-minute ticker posts `/api/cleanup/support-sla-sweep?limit=20` every 30 minutes at offset 10 (UTC :10 and :40), on the active platform only.        | `netlify/functions/cron-tick.mts`                                      |
-| Entry       | `CLEANUP_JOB_BUILDERS["support-sla-sweep"]`, bearer `CRON_SECRET`; 401 without it, 400 `INVALID_LIMIT`, limit capped at 500.                             | `lib/cron/cleanup-registry.ts`, `lib/cron/cleanup-route.ts`            |
-| Lock        | `withCronLock("support-sla-sweep", { failMode: "open" })`: a `SystemJobExecution` RUNNING row, unique per job name, lease 15 minutes, renewed every 5.   | `lib/cron/with-cron-lock.ts`, `SystemJobExecution_running_jobName_key` |
-| Maintenance | Blocked only in OFFLINE maintenance (503). It is not a financial job, so DEGRADED does not stop it; the money-moving parts check money doors themselves. | `lib/maintenance-cron.ts`, `lib/cron/financial-jobs.ts`                |
-| Result      | HTTP 200 when every row succeeded, 500 if any row errored (the body lists `errors`), 409 if a run is in flight.                                          | `lib/cron/cleanup-route.ts`                                            |
-| Errors      | Collected as strings and reported to Sentry once per run (`support-sla-sweep completed with N error(s)`).                                                | `runSupportSlaSweep()`                                                 |
+| Fact        | Value                                                                                                                                                                                                      | Where                                                                  |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Trigger     | The 5-minute ticker posts `/api/cleanup/support-sla-sweep?limit=20` every 30 minutes at offset 10 (UTC :10 and :40), on the active platform only.                                                          | `netlify/functions/cron-tick.mts`                                      |
+| Entry       | `CLEANUP_JOB_BUILDERS["support-sla-sweep"]`, bearer `CRON_SECRET`; 401 without it, 400 `INVALID_LIMIT`, limit capped at 500.                                                                               | `lib/cron/cleanup-registry.ts`, `lib/cron/cleanup-route.ts`            |
+| Lock        | `withCronLock("support-sla-sweep", { failMode: "open" })`: a `SystemJobExecution` RUNNING row, unique per job name, default lease 15 minutes; Netlify caps it at 90 seconds with renewal every 30 seconds. | `lib/cron/with-cron-lock.ts`, `SystemJobExecution_running_jobName_key` |
+| Maintenance | Blocked only in OFFLINE maintenance (503). It is not a financial job, so DEGRADED does not stop it; the money-moving parts check money doors themselves.                                                   | `lib/maintenance-cron.ts`, `lib/cron/financial-jobs.ts`                |
+| Result      | HTTP 200 when every row succeeded, 500 if any row errored (the body lists `errors`), 409 if a run is in flight.                                                                                            | `lib/cron/cleanup-route.ts`                                            |
+| Errors      | Collected as strings and reported to Sentry once per run (`support-sla-sweep completed with N error(s)`).                                                                                                  | `runSupportSlaSweep()`                                                 |
 
 The job is not in the admin "run now" list (`app/api/admin/system-jobs/run/route.ts` answers 400 `Unknown job ID`). To re-run by hand, see the [runbook](12-runbooks.md#re-running-the-support-sweep).
 
@@ -54,7 +54,49 @@ Candidates are open cases with an acknowledgement or resolution target breached 
 
 ### 2. Auto-close
 
-RESOLVED cases with `resolvedAt` at least 28 days old move to CLOSED with `closedAt = now`, each by its own compare-and-set, with an AUTO_CLOSED event and no actor (`autoCloseResolvedRows()`). In the same transaction, `releaseAutoClosedCaseTx()` releases any payout holds the case still has (HOLD_RELEASED events, one `support.case.release-holds` ops-log row with actor role SYSTEM) and ends live chat-access grants as `CASE_RESOLVED`; no step-up applies because no person acts. A case that still holds a payment is skipped, and stays RESOLVED for a later run, while a refund recommendation on it is open or the money doors are closed (`autoCloseRefusalTx()`); the skip is recorded as `auto-close case <id>: left RESOLVED (<code>)` in the run's errors. The arm scans twice the cap and stops after `limit` closes, so skipped cases never crowd out closable ones. No customer notice is sent. `closedAt` starts the 180-day purge clock, so an untouched resolved case is purged no earlier than 208 days after resolution.
+RESOLVED cases with `resolvedAt` at least 28 days old move to CLOSED with `closedAt = now`, each through its own compare-and-set and AUTO_CLOSED event. In the same transaction, `releaseAutoClosedCaseTx()` releases permitted payout holds and ends live chat-access grants. A case with an open recommendation or closed money doors stays RESOLVED. No customer notice is sent. The closed timestamp starts the existing 180-day evidence-purge clock; polling progress does not shorten it.
+
+The auto-close arm examines at most `limit * HELD_OPEN_SCAN_FACTOR` candidates and
+closes at most `limit` cases. It selects never-attempted cases first, then the
+oldest `autoCloseLastAttemptAt`, with `resolvedAt` and ID as stable tie breakers.
+A conditional Prisma `updateMany` stamp commits before each closing transaction,
+checking the selected attempt time, fetched `updatedAt`, RESOLVED status, cutoff
+and tombstone. A held case or failed transaction rotates across later runs and
+process restarts. A stale claim, reopened case or tombstone cannot take that attempt. The stamp changes
+only polling metadata; `resolvedAt` and `updatedAt` retain their business meaning.
+
+The existing payout-hold and recommendation checks still decide whether closing
+is allowed. An open recommendation or intentional maintenance leaves the case
+resolved and appears in
+`autoCloseHeldOpen` with at most ten `{ caseId, reason }` samples in
+`autoCloseHolds`; these holds do not make the run fail or send a Sentry error.
+Unreadable maintenance (`MAINTENANCE_UNKNOWN`), unexpected refusal codes and genuine
+exceptions still enter `errors` and the single aggregated error report.
+`autoClosedCount` remains the number closed. `autoCloseHasMore` conservatively
+reports holds, failures, unstarted selected rows or a cap-sized sample, so a
+successful sweep does not mean the resolved backlog is drained.
+
+Auto-close admits no new attempt after 16 seconds from the invocation's start.
+It checks before reading candidates and before each progress stamp; reaching the
+close limit also leaves later candidates unstamped. This is a start budget for
+this arm, not cancellation of in-flight work or a deadline for the complete SLA
+sweep. Other arms retain their existing bounds.
+
+### Auto-close schema rollout
+
+Before deploying these readers, an operator must apply
+`prisma/sql/support-auto-close-progress.sql` to add the nullable polling column
+and its compound index. No backfill is needed: existing rows start unattempted.
+Run it with `psql -v ON_ERROR_STOP=1 -f prisma/sql/support-auto-close-progress.sql`
+using the operator's configured direct/session connection. The script sets a
+five-second lock timeout, commits the column addition, then builds the index
+concurrently outside a transaction. A final catalog gate rejects an invalid or
+unready index, including an invalid prior build skipped by `IF NOT EXISTS`.
+If a build or gate fails, inspect `pg_index.indisvalid`; use `DROP INDEX CONCURRENTLY`
+on that invalid index outside a transaction, rerun the file, and verify the gate
+passes before deploying. Do not wrap the complete script in a transaction. Treat rollout as held until the owner confirms the column and valid index exist;
+check the live catalog read-only before every handoff.
+The reviewed B-tree uses default ascending nulls-last ordering, while the polling query asks for ascending nulls-first. PostgreSQL may sort eligible candidates before applying the returned-row cap; the cap is not a bound on physical scans or sort work. This is a known capacity limitation, not a cursor-correctness guarantee. Benchmark the actual cohort before choosing a null/non-null query split or a dedicated nulls-first sidecar index, keeping the cursor semantics and Prisma/sidecar ownership consistent. See [PostgreSQL index ordering](https://www.postgresql.org/docs/17/indexes-ordering.html).
 
 ### 3. Problem-to-incident cascade
 
@@ -104,15 +146,15 @@ Unanswered, uncancelled evidence requests past `dueAt` (within the last 30 days)
 
 ## Invariants
 
-| Rule                                                                 | Enforcer                                                                                             | Test                                                 |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| One sweep runs at a time.                                            | The database: `SystemJobExecution_running_jobName_key`; `withCronLock()`.                            | `__tests__/maintenance/with-cron-lock.test.ts`       |
-| Each arm is bounded per run.                                         | App: `PROBLEM_CASCADE_CAP` (10), `EVIDENCE_PURGE_CAP` (5), `CHAT_ACCESS_CAP` (10), the limit.        | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
-| Each threshold notifies once.                                        | App: outbox `entityRef` identities and the preloaded exclusion lists; outbox `transactionId` unique. | `__tests__/support/dispute-deadline-alerts.test.ts`  |
-| A cascade never resolves an incident of a problem that was reopened. | App: compare-and-set includes the problem's status.                                                  | `__tests__/db/support/problem-cascade.db.test.ts`    |
-| One failing row never stops the run, and Sentry hears about it once. | App: per-row transactions, collected `errors`, one `reportSentryError()`.                            | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
+| Rule                                                                                                | Enforcer                                                                                             | Test                                                 |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| One owned RUNNING lease per sweep; unavailable fail-open admission or lease loss can overlap cores. | The database: `SystemJobExecution_running_jobName_key`; `withCronLock()`.                            | `__tests__/maintenance/with-cron-lock.test.ts`       |
+| Each arm is bounded per run.                                                                        | App: `PROBLEM_CASCADE_CAP` (10), `EVIDENCE_PURGE_CAP` (5), `CHAT_ACCESS_CAP` (10), the limit.        | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
+| Each threshold notifies once.                                                                       | App: outbox `entityRef` identities and the preloaded exclusion lists; outbox `transactionId` unique. | `__tests__/support/dispute-deadline-alerts.test.ts`  |
+| A cascade never resolves an incident of a problem that was reopened.                                | App: compare-and-set includes the problem's status.                                                  | `__tests__/db/support/problem-cascade.db.test.ts`    |
+| One failing row never stops the run, and Sentry hears about it once.                                | App: per-row transactions, collected `errors`, one `reportSentryError()`.                            | `__tests__/support/sla-sweep-lifecycle-arms.test.ts` |
 
-The auto-close, moderation-deadline and overdue-evidence arms have no dedicated tests yet.
+The auto-close regressions are in `__tests__/support/sla-sweep-auto-close.test.ts`; they cover held-prefix progress, refusal classification, stamp races, unchanged business clocks and admission bounds. Moderation-deadline and overdue-evidence coverage remains separate work.
 
 ## Failure modes
 
@@ -137,3 +179,5 @@ The auto-close, moderation-deadline and overdue-evidence arms have no dedicated 
 - **Storage-reconcile purge.** The design first put the 180-day purge in the storage reconciliation job. It runs as a sweep arm instead, and reconciliation only removes objects whose rows are tombstoned.
 - The ticker's comment for this target still lists only three arms; the list above is current.
 - **Counters only in the response.** The sweep's per-arm counters live in the HTTP body and the run log; `withCronLock()` does not store them in `SystemJobExecution`, so history has only COMPLETED or FAILED.
+
+The former fixed oldest-resolution sample could revisit held cases forever. Durable last-attempt ordering now rotates admitted cases across invocations; an in-memory cursor cannot preserve that progress after a crash.

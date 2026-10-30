@@ -102,7 +102,7 @@ On the **Settings** tab:
 - **Company name**: `Familiarise`
 - **Subdomain**: `familiarise` → this creates `familiarise.betteruptime.com`
 - **What URL should your logo point to?**: `https://familiarisenow.com`
-- **Get in touch URL**: `mailto:support@familiarisenow.com`
+- **Get in touch URL**: `mailto:connect@practitionist.com` (`SUPPORT_EMAIL`)
 - **Status page design**: `Modern look` (default)
 - **Color theme**: `Light version` (default)
 
@@ -381,10 +381,10 @@ The required capabilities and completion SLOs live in
 `lib/cron/operational-health.ts`. These are monitoring budgets, not a second
 scheduler. Fifteen-minute recovery/delivery loops have 45 minutes to accommodate a
 missed tick and lease recovery; thirty-minute session-outcome loops have 90 minutes;
-support SLA scanning has 1 hour. Only ticker targets are required. Recording
-transfer, breach-deadline alerts and execution-history pruning run only from
-GitHub Actions workflows, which are budget-blocked, so they join the list when they
-move to the ticker.
+support SLA scanning has 1 hour. The required set follows the current entries in
+`lib/cron/operational-health.ts`, including longer budgets for daily jobs. Check
+the schedule catalog before enabling a capability's absence monitor; remaining
+Actions-only jobs need an observed replacement before becoming required here.
 
 The probe queries recent COMPLETED executions by their actual core job names,
 including `reconcile-pending-refunds` and `send-appointment-reminders`, whose HTTP
@@ -440,8 +440,9 @@ are observed.
 
 A tick's HTTP200 is not a health assertion. Workers return `X-Job-Outcome`, and
 execution history distinguishes successful completion, partial failure, failure
-and hold. Only an owned successful finish advances the shared heartbeat. Monitor
-individual capabilities and oldest outstanding work so a healthy email drain
+and hold. Owned successful finishes advance the shared heartbeat, which the daily
+Actions watchdog also writes. Treat it as an activity hint. Monitor individual
+capabilities and oldest outstanding work so a healthy email drain
 cannot mask stopped recording copies or compliance alerts.
 
 Sentry's `cron-tick` monitor must be active and accept check-ins. Rejected check-ins
@@ -455,3 +456,166 @@ in addition to the per-job lease race. Never acknowledge all outstanding work as
 healthy merely because another invocation holds the lease.
 
 Execution history records the existing Sentry deployment environment in each completed result. Preview completions in the shared database must not establish production freshness; verify environment configuration as well as completion status.
+
+## Ticker missed-run alerts
+
+The ticker sends a Sentry HTTP check-in after dispatch. Its normal monitor config
+is a five-minute schedule, three-minute check-in margin, three consecutive
+failures before creating an issue and one success to recover. The HTTP integration
+defaults an omitted environment to `production`; inspect accepted check-ins to
+confirm the deployed behavior. The monitor detects ticker absence and reported
+tick failures. `/api/health/jobs` separately detects missing successful worker
+completions; neither establishes that vendor effects or all backlogs are complete.
+
+### Configure the monitor and its notification route
+
+1. Locate the existing `cron-tick` monitor in the project identified by the
+   configured Sentry coordinates. Inspect its status, muted state, schedule,
+   environments and recent check-ins. A disabled monitor rejects check-ins;
+   an unmuted monitor with no alert route cannot establish notification delivery.
+2. Check the organization's active-monitor allowance before enabling it. An
+   active monitor in another project may already consume the included slot.
+   Preserve that project's monitoring; do not create an extra monitor for a drill
+   or change the subscription as part of this procedure.
+3. Enable and unmute the existing monitor through an authenticated operator
+   session or the documented cron-monitor API. A source `monitor_config` upsert
+   configures the schedule; it does not prove the monitor is enabled. A generic
+   metric-monitor API is not a substitute for the cron API.
+4. Connect an enabled alert to this specific cron monitor's source. Filter it to
+   `production`, trigger on its incident events, and route email directly to a
+   verified operator account. Use a 30-minute repeat-notification interval to
+   bound incident noise. The general high-priority issue alert is separate and
+   must not be assumed to cover every missed check-in.
+5. Read the configuration back: verify the connected source is the intended cron
+   monitor, the source and alert are enabled, the environment matches, and the
+   notification action is active with the correct recipient. Keep credentials in
+   protected configuration. Never put tokens, DSNs or signed URLs in evidence.
+
+For connector setup, obtain the numeric source ID with
+`get_alert_options(section: "sources")`, matching the project's `cron-tick` source
+of type `monitor_check_in_failure`. Pass that ID in `detectorIds`; the native alert
+API calls this field `detector_ids`. Read back the connected source and its nested
+cron-monitor slug/project. The cron monitor's UUID from the older cron endpoint is
+a different identifier and must not be passed as a detector ID.
+
+The Sentry connector may expose alert writes without exposing cron-monitor
+updates. If that operation is unavailable, use the documented API with a valid
+scoped credential or an authenticated operator session. Record an access failure
+as pending work; a saved alert cannot compensate for a disabled monitor.
+
+### Email delivery timing
+
+Familiarise's approved project policy is `digestsMinDelay: 60` and
+`digestsMaxDelay: 60` seconds. Read these fields from the project settings API
+before a drill. They apply to all issue-alert email in this Sentry project;
+changing them requires the project owner's decision. The alert's 30-minute
+repeat throttle is a separate setting and remains in force.
+
+A short incident can recover before a delayed email digest is built. Sentry's
+published digest implementation excludes resolved issues; an accepted check-in,
+created issue or workflow trigger therefore does not establish email delivery.
+This is a diagnostic possibility, not access to Sentry's internal delivery logs.
+Verify the actual received message and its issue identity, including a digest's
+body, rather than substituting a separate test notification or application error.
+
+Before repeating a drill, inspect the alert's `lastTriggered` time and repeat
+interval. A regression of the same issue inside that interval may be throttled.
+Wait for an ordinary check-in after the interval before starting another bounded
+drill; do not silently remove the production throttle. Keep the exclusive
+configuration window long enough to include the watchdog's restoration deadline.
+
+### Prove a missed-run alert reaches a human
+
+1. Observe an ordinary production check-in accepted by Sentry. Record its time,
+   environment and configured cadence without invoking the production job.
+2. Use an authenticated cron-monitor API session for a controlled expectation
+   drill. Save the normal monitor and alert configuration in a protected local
+   artifact and prepare restoration before changing it. Include monitor status,
+   mute state, project, name, slug and scheduling fields, plus alert status, connected
+   source IDs, environment, recipient action and repeat interval. Keep the existing
+   monitor and route. Do not stop jobs or change the active cron host.
+   Arrange an exclusive configuration window with the other operators: the
+   documented cron update API does not specify compare-and-set support, and a
+   pre-write read alone cannot prevent a concurrent operator write. Do not start
+   without that window or verified conditional-update support in the chosen API.
+3. Immediately after a fresh ordinary check-in, temporarily set only the monitor's
+   expectation to `* * * * *`, `checkin_margin: 1` and
+   `failure_issue_threshold: 1`, preserving its other settings. The actual ticker
+   continues every five minutes. Read the temporary configuration back. Start an
+   independent 180-second restoration watchdog before applying it, and restore
+   in the controlling operation's `finally` path as well. Both must call one
+   restoration routine with a shared cross-process lock so only one restorer
+   writes at a time. Do not start without functioning restoration access.
+4. Allow the one-minute expectation to miss its check-in and margin. This
+   exercises Sentry's real missing-check-in detection and the **production**
+   notification route; it does not mean an ordinary five-minute ticker run was
+   missed. Do not fabricate an application exception or an `error` check-in.
+   The ticker resubmits normal settings on every check-in. If it restores them
+   before an incident appears, or the watchdog deadline arrives first, record
+   the drill as inconclusive and restore rather than extending it silently.
+5. Verify Sentry creates the missed-check-in incident and that the configured
+   operator actually receives its notification. Save sanitized incident/alert
+   links, UTC timestamps and the recipient's confirmation. An incident visible
+   only in Sentry or an alert's `lastTriggered` timestamp is not a delivery receipt.
+6. On success, failure or timeout, the restoration owner first reads both current
+   configurations. If they already match the saved normal settings, make no
+   write. If they match the drill state with all other saved fields unchanged,
+   send a writable monitor payload containing its current project identifier,
+   name and complete `config`, replacing only the changed schedule, margin and
+   thresholds with their saved values. Preserve other writable fields from the
+   verified read-back and omit read-only response metadata. Use a conditional
+   write if the API supports one or the exclusive configuration window otherwise.
+   Any other drift must stop automatic restoration and be escalated to the
+   operator; never replay the full saved snapshot over an unexpected state.
+   Read back both configurations and compare every saved configuration
+   field, including the unchanged monitor identity/status/mute state and alert
+   connection/recipient, before declaring restoration complete. Runtime timestamps
+   and check-in counters naturally change. Resolve any mismatch with the operator;
+   do not overwrite another operator's concurrent configuration change. Then
+   observe the next ordinary check-in and recovery. If restoration fails, alert
+   the operator immediately and keep the task open. This drill creates no
+   temporary environment; a separate environment would not prove the
+   production-filtered route and would keep missing after its sender stopped.
+
+An API config edit sets Sentry's `isUpserting` marker to false; a later SDK/HTTP
+configuration upsert sets it true again. This is vendor-managed runtime metadata,
+not a writable restoration field. Verify normal scheduling/identity/mute settings
+immediately, then observe the next ordinary check-in and its configuration upsert.
+Restore only the drill's temporary fields; retain an owner-approved permanent
+email-delivery policy rather than reverting it to a previously superseded value.
+
+This evidence closes the ticker missed-run gate only. Keep the ingest canary's
+independent email path and the per-capability completion probe: a Sentry outage
+and an individual stopped worker have different detection requirements.
+
+### Recorded end-to-end verification
+
+On 26 October 2026, the bounded drill produced missed-check-in issue
+`FAMILIARISE_WEB-7Q` at 12:18 UTC. Its production workflow triggered at 12:19 UTC
+and its matching email reached the operator's inbox at 12:20:08 UTC. Normal
+monitor settings were restored at 12:18:15 UTC; the independent watchdog verified
+them, and the ordinary 12:20 production check-in recovered the monitor. The
+approved project email delay was 60/60 seconds and the alert repeat throttle
+remained 30 minutes. This is receipt evidence for the ticker path; the broader
+independent-monitor and worker-completion scope remains open in the
+[operating record](https://github.com/Practitionist/familiarise_web/issues/2156#issuecomment-6401498922).
+
+References: [Sentry HTTP check-ins and alert routing](https://docs.sentry.io/product/monitors-and-alerts/monitors/crons/getting-started/http/),
+[cron-monitor update API](https://docs.sentry.io/api/crons/update-a-monitor/),
+and [the independent ingest canary](../observability/sentry/06-ingest-canary.md).
+Email behavior and supported delay bounds:
+[digest construction](https://github.com/getsentry/sentry/blob/master/src/sentry/digests/notifications.py),
+[project settings validation](https://github.com/getsentry/sentry/blob/master/src/sentry/core/endpoints/project_details.py),
+and [monitor update semantics](https://github.com/getsentry/sentry/blob/master/src/sentry/monitors/validators.py).
+
+### Per-tick summary line and lease ceiling
+
+When `ENABLE_BETTERSTACK_TELEMETRY` is `true` and the Better Stack source token and ingest URL are set, each tick posts one `cron-tick summary` log line (category `CRON`, level `error` when any target failed, else `info`) carrying the duration, the ok and accepted counts, the held target names and the failed targets with their statuses. It is a second sink that does not depend on Sentry, it is sent once per tick rather than per target, and a send failure never affects the tick. The ticker reads `SENTRY_DSN` and falls back to `NEXT_PUBLIC_SENTRY_DSN`.
+
+On Netlify (`NETLIFY=true`) `withCronLock` caps every lease at 90 seconds. A synchronous Netlify function stops at 60 seconds, but a background function (such as the recording transfer) may run for 15 minutes, so the cap is safe only because `startLeaseRenewal` refreshes a live run's lease every third of the TTL (30 seconds). The cap therefore never expires a run that is still alive; it only bounds how long a killed run's `RUNNING` row blocks the next ticks, so a killed run recovers within one 90-second lease window. Other hosts keep the per-job TTL. The ticker still files a 409 under `lockHeld`, a distinct field in the tick body and summary line, never under `ok`.
+
+### Failure escalation
+
+Every failing target appears in the per-tick summary line. In Sentry, a target's first failure is one grouped warning (fingerprint `cron-tick` / `target-failed-once`, the target in its `target` tag, and `class: platform` when the body is Netlify's own `Internal Server Error - Request ID` page). It becomes an error issue fingerprinted per target only after it has gone three of its own cadences without a `COMPLETED` run. The ticker reads that history from `GET /api/health/jobs/streaks?targets=a,b` (bearer `CRON_SECRET`, read-only), which resolves each target to the `jobName` its core writes (`jobNameFor` in `lib/cron/schedule.ts`; most match the target name, eight differ, for example `abandoned-payments` writes `cleanup-abandoned-payments`) and returns that job's last `COMPLETED` start time from `SystemJobExecution`; it asks only for targets that are about to be reported, and an unreachable endpoint or a job with no recent rows counts as a one-off. The history comes from Postgres because the ticker keeps no state and a Redis failure counter is outside the allowed Redis uses. A platform 5xx leaves no execution row, which is why the test is the absence of a recent `COMPLETED` run rather than a run of `FAILED` rows. Reports remain limited to one per target per hour, and the `cron-tick` monitor check-in is unchanged: it reports `error` on any tick with a failed target and the monitor's threshold of three consecutive failed check-ins does the escalation.
+
+`sentry-ingest-canary` and `stream-control-plane-drift` write no execution row, so their `jobNameFor` is `null` and their failures never escalate to an error issue; they rely on the cron monitor and the health jobs probe. A jest test scans the sources and fails if a target resolves to a name no `withCronLock` call uses.

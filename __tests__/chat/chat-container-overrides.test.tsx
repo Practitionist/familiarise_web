@@ -8,6 +8,8 @@ import { render, screen } from "@testing-library/react";
 
 let mockPhase: string | null = "NORMAL";
 let mockOverrides: Record<string, React.ComponentType> | undefined;
+let mockMessages: { id: string; user?: { id: string } }[] = [];
+let mockListed: unknown;
 
 const mockChannel = {
   type: "messaging",
@@ -27,8 +29,10 @@ jest.mock("stream-chat-react", () => {
   return {
     Channel: passthrough,
     Window: passthrough,
-    MessageList: () =>
-      react.createElement("div", { "data-testid": "message-list" }),
+    MessageList: ({ messages }: { messages?: unknown }) => {
+      mockListed = messages;
+      return react.createElement("div", { "data-testid": "message-list" });
+    },
     VirtualizedMessageList: () =>
       react.createElement("div", { "data-testid": "message-list" }),
     MessageComposer: () =>
@@ -44,6 +48,7 @@ jest.mock("stream-chat-react", () => {
       return react.createElement("div", null, children);
     },
     useChatContext: () => ({ channel: mockChannel }),
+    useChannelStateContext: () => ({ messages: mockMessages }),
   };
 });
 
@@ -54,6 +59,14 @@ jest.mock("../../components/chat/AppointmentDocumentsHint", () => {
       react.createElement("div", {
         "data-testid": "appointment-documents-hint",
       }),
+  };
+});
+
+jest.mock("../../components/chat/BookingTag", () => {
+  const react = jest.requireActual<typeof import("react")>("react");
+  return {
+    BookingTagComposer: () =>
+      react.createElement("div", { "data-testid": "message-composer" }),
   };
 });
 
@@ -96,6 +109,8 @@ import { ChatContainer } from "@/components/chat/ChatContainer";
 beforeEach(() => {
   mockPhase = "NORMAL";
   mockOverrides = undefined;
+  mockMessages = [];
+  mockListed = undefined;
 });
 
 describe("ChatContainer", () => {
@@ -131,6 +146,17 @@ describe("ChatContainer", () => {
     mockPhase = "OFFLINE";
     render(<ChatContainer />);
     expect(screen.queryByTestId("composer-draft")).not.toBeInTheDocument();
+  });
+
+  it("leaves the retired booking cards out of the list, so a DM of only those is empty", () => {
+    mockMessages = [{ id: "card", user: { id: "system-booking-context" } }];
+    render(<ChatContainer />);
+    expect(mockListed).toEqual([]);
+
+    const hello = { id: "m1", user: { id: "them" } };
+    mockMessages = [mockMessages[0], hello];
+    render(<ChatContainer />);
+    expect(mockListed).toEqual([hello]);
   });
 
   it("hides the composer and hint while chat is read-only", () => {

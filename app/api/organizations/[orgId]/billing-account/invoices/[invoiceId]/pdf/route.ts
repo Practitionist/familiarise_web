@@ -36,7 +36,10 @@ import {
   uploadInvoicePdf,
   createInvoicePdfSignedUrl,
 } from "@/lib/pdf/storage";
-import { getPlatformSupplier } from "@/lib/pdf/supplier";
+import {
+  SUPPLIER_UNAVAILABLE_MESSAGE,
+  getPlatformSupplier,
+} from "@/lib/pdf/supplier";
 
 const PDF_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h — matches signed-URL TTL
 
@@ -76,8 +79,7 @@ export async function GET(
   if (!supplier) {
     return NextResponse.json(
       {
-        error:
-          "PLATFORM_GSTIN is not configured; the platform cannot issue statutory documents.",
+        error: SUPPLIER_UNAVAILABLE_MESSAGE,
         code: "SUPPLIER_GSTIN_UNCONFIGURED",
       },
       { status: 503 },

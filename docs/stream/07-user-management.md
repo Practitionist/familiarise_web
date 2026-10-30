@@ -150,7 +150,7 @@ membership, so there is no channel extra data to keep in sync.
 
 ### Server-only system users
 
-`system-booking-context` (`BOOKING_CONTEXT_STREAM_USER` in `lib/stream/system-users.ts`) is a second Stream user with no `User` row. It holds `user` and never gets a token, so only the server can author its messages. `POST /api/stream/channels/open` posts the booking-context receipt card as this user, and `components/chat/CustomMessage.tsx` renders the card layout only for that author (`isBookingContextAuthor`). The `system-` prefix is load-bearing: the `stream-sync` user deletion and the daily membership reconciler (`lib/stream/membership-reconciler.ts`) both leave `system-` users and the Familiarise Support user alone.
+`system-booking-context` (`LEGACY_BOOKING_CONTEXT_USER_ID` in `lib/stream/system-users.ts`) is a Stream user with no `User` row that never gets a token. Nothing posts as it any more; it authored the retired booking cards, which `components/chat/CustomMessage.tsx` now hides, and `GET /api/stream/booking-tag` ignores it when counting a DM's members. The `system-` prefix is load-bearing: the `stream-sync` user deletion and the daily membership reconciler (`lib/stream/membership-reconciler.ts`) both leave `system-` users and the Familiarise Support user alone.
 
 ### Revoking a removed member's access
 

@@ -3,6 +3,7 @@
  * Core business logic for processing payment capture and failure events.
  */
 
+import { casMiss } from "@/lib/cron/run-counters";
 import {
   reportSentryError,
   reportSentryMessage,
@@ -96,6 +97,7 @@ import {
   isFreeCreditIntent,
   isInternalFundedIntent,
 } from "@/lib/payments/funding-rail";
+import { isPrismaConnectionOrPoolError } from "@/lib/cron/with-cron-lock";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
 import { getAppUrl } from "@/lib/url";
@@ -434,6 +436,7 @@ export async function handlePaymentSuccess(
               },
             });
             if (claimed.count === 0) {
+              casMiss();
               await reportTerminalCaptureRace({
                 db: tx,
                 paymentId: payment.id,
@@ -657,6 +660,7 @@ export async function handlePaymentSuccess(
                 },
               });
           if (confirmed.count === 0) {
+            casMiss();
             await reportTerminalCaptureRace({
               db: tx,
               paymentId: payment.id,
@@ -1392,6 +1396,14 @@ export async function handlePaymentSuccess(
         );
       }
     } catch (channelError) {
+      // A pool/connection timeout leaves the stamp NULL; the orphan sweep heals it.
+      if (isPrismaConnectionOrPoolError(channelError)) {
+        streamLogger.warn(
+          "Stream channel step hit a database timeout — left for the reconcile sweep",
+          { appointmentId, userId },
+        );
+        return;
+      }
       reportSentryError(channelError, {
         subsystem: "stream",
         op: "handlePaymentSuccess.createChannels",

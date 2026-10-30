@@ -29,14 +29,23 @@ export async function GET(request: NextRequest) {
   try {
     const { default: prisma } = await import("@/lib/prisma");
     const now = new Date();
+    // A partial run ran to the end, so it is fresh; watched SLOs belong to the console, not this probe.
     const rows = await prisma.systemJobExecution.groupBy({
       by: ["jobName"],
       where: {
         jobName: {
-          in: OPERATIONAL_COMPLETION_REQUIREMENTS.map((job) => job.jobName),
+          in: OPERATIONAL_COMPLETION_REQUIREMENTS.filter(
+            (job) => job.tier === "paging",
+          ).map((job) => job.jobName),
         },
-        status: "COMPLETED",
         result: { path: ["environment"], equals: environment },
+        OR: [
+          { status: "COMPLETED" },
+          {
+            status: "FAILED",
+            result: { path: ["outcome"], equals: "partial" },
+          },
+        ],
         startedAt: { gte: new Date(now.getTime() - 48 * 60 * 60 * 1000) },
       },
       _max: { endedAt: true },
@@ -44,6 +53,7 @@ export async function GET(request: NextRequest) {
     const report = assessOperationalCompletions(
       rows.map((row) => ({ jobName: row.jobName, endedAt: row._max.endedAt })),
       now,
+      "paging",
     );
     return NextResponse.json(report, {
       status: report.healthy ? 200 : 503,

@@ -14,8 +14,7 @@ interface EmailFooterProps {
   requiredNotice?: boolean;
 }
 
-// #1298 — one footer for every template; the fake postal address is gone and
-// the real one is rendered only when NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS is set.
+// One footer for every template; it prints the registered office as the postal line.
 export const EmailFooter = ({
   unsubscribeLink,
   showSupport = false,
@@ -30,7 +29,7 @@ export const EmailFooter = ({
       <Text style={footerText}>
         © {new Date().getFullYear()} Familiarise, All Rights Reserved
       </Text>
-      {postalAddress && <Text style={footerText}>{postalAddress}</Text>}
+      <Text style={footerText}>{postalAddress}</Text>
       {showSupport && (
         <Text style={footerText}>
           Questions?{" "}

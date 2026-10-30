@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { cn } from "@/utils/tailwind";
 import { ChatSidebar } from "./ChatSidebar";
 import { ChatContainer } from "./ChatContainer";
@@ -18,6 +19,8 @@ import { ChatPaneProvider } from "./ChatPaneContext";
  */
 export const ChatLayout = () => {
   const [conversationOpen, setConversationOpen] = useState(false);
+  const contextAppointmentId =
+    useSearchParams()?.get("contextAppointmentId")?.trim() || null;
 
   const openConversation = useCallback(() => setConversationOpen(true), []);
   const backToList = useCallback(() => setConversationOpen(false), []);
@@ -46,7 +49,7 @@ export const ChatLayout = () => {
             conversationOpen ? "flex" : "hidden",
           )}
         >
-          <ChatContainer />
+          <ChatContainer contextAppointmentId={contextAppointmentId} />
         </div>
       </div>
     </ChatPaneProvider>

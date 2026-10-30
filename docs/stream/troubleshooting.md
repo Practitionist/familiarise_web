@@ -1341,7 +1341,7 @@ if (error && error.includes("Maximum retry")) {
 
 ### Stream Debug API
 
-Use the built-in debug endpoint to inspect user channels and data.
+Use the built-in debug endpoint to inspect user channels and data. It works only under `next dev` and needs a staff or admin session.
 
 ```bash
 # Get user debug info

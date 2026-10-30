@@ -270,208 +270,198 @@ export function orderByForSort(
 
 /** Raw function — importable by API routes (no React.cache). */
 export async function fetchExpertsMetadata() {
-  const [
-    domainsWithSubs,
-    tags,
-    consultantMetadata,
-    availableLanguages,
-    availableCompanies,
-  ] = await Promise.all([
-    // Domains + subdomains
-    prisma.domain.findMany({
-      include: {
-        subDomains: {
-          select: { id: true, name: true, domainId: true },
+  // Domains with subdomains, tags and verified-consultant counts in one join read.
+  const domainsWithSubs = await prisma.domain.findMany({
+    relationLoadStrategy: "join",
+    select: {
+      id: true,
+      name: true,
+      subDomains: { select: { id: true, name: true, domainId: true } },
+      tags: { select: { id: true, name: true, domainId: true } },
+      _count: {
+        select: {
+          consultantProfiles: {
+            where: { verificationStatus: "VERIFIED", deletedAt: null },
+          },
         },
       },
-    }),
-    // Tags
-    prisma.tag.findMany({
-      select: { id: true, name: true, domainId: true },
-    }),
-    // Consultant metadata (counts, domain breakdown, avg rating, sessions)
-    // #781 §B — soft-deleted profiles leave public surfaces
-    (async () => {
-      const [
-        totalConsultants,
-        independentCount,
-        agencyCount,
-        orgKindCounts,
-        consultantsByDomain,
-        ratedProfiles,
-        completedSessions,
-      ] = await Promise.all([
-        prisma.consultantProfile.count({
-          where: { verificationStatus: "VERIFIED", deletedAt: null },
-        }),
-        prisma.consultantProfile.count({
-          where: {
-            verificationStatus: "VERIFIED",
-            deletedAt: null,
-            isIndependent: true,
-          },
-        }),
-        prisma.consultantProfile.count({
-          where: {
-            verificationStatus: "VERIFIED",
-            deletedAt: null,
-            isIndependent: false,
-          },
-        }),
-        // Experts hosted by each org kind (verified, non-deleted). An expert
-        // with memberships in two kinds counts once per kind — the tabs use
-        // the independent/agency counts above; this powers the org-kind
-        // sub-filter inside Agency/Org.
-        //
-        // Fail-soft to zeros: this metadata runs at BUILD time (prerender of
-        // /explore/experts) where the `kind` column may not exist yet (P2022)
-        // because the column lands via db push after merge. A zeroed breakdown
-        // only hides the sub-filter counts — never the experts themselves.
-        (async () => {
-          try {
-            const rows = await prisma.membership.groupBy({
-              by: ["organizationId"],
-              where: {
-                role: "EXPERT",
-                status: "ACTIVE",
-                consultantProfile: {
-                  verificationStatus: "VERIFIED",
-                  deletedAt: null,
-                  isIndependent: false,
-                },
-                organization: {
-                  canHost: true,
-                  status: "ACTIVE",
-                  isPublic: true,
-                  deletedAt: null,
-                  kind: { not: null },
-                },
-              },
-              _count: { organizationId: true },
-            });
-            if (rows.length === 0)
-              return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
-            const orgIds = rows.map((r) => r.organizationId);
-            const orgs = await prisma.organization.findMany({
-              where: { id: { in: orgIds } },
-              select: { id: true, kind: true },
-            });
-            const kindOf = new Map(orgs.map((o) => [o.id, o.kind]));
-            const out = { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
-            for (const row of rows) {
-              const kind = kindOf.get(row.organizationId);
-              if (kind && kind in out) {
-                // _count.organizationId = experts hosted by this org.
-                out[kind as keyof typeof out] += row._count.organizationId;
-              }
-            }
-            return out;
-          } catch (error) {
-            // Fail-soft ONLY on the missing-column case (P2022): the column
-            // lands via db push after merge. Anything else (notably transient
-            // pooler failures) must throw so the build retry and error
-            // paths run — and a swallowed transient must never become a
-            // "successful" zero-count cached for 300s.
-            if (
-              error instanceof Prisma.PrismaClientKnownRequestError &&
-              error.code === "P2022"
-            ) {
-              return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
-            }
-            throw error;
-          }
-        })(),
-        prisma.domain.findMany({
-          select: {
-            id: true,
-            name: true,
-            _count: {
-              select: {
-                consultantProfiles: {
-                  where: { verificationStatus: "VERIFIED", deletedAt: null },
-                },
-              },
-            },
-          },
-        }),
-        // #1485 / #1300 — the PUBLISHED 1:1 score, never the raw `rating`
-        // mean (which defaults to 0 on every unreviewed profile). NULL below the
-        // publication gate, so filtering it out leaves publishable scores only;
-        // `deriveDirectoryRating` weights them by rated clients.
-        prisma.consultantProfile.findMany({
-          where: {
-            verificationStatus: "VERIFIED",
-            deletedAt: null,
-            publishedRatingOneToOne: { not: null },
-          },
-          select: { publishedRatingOneToOne: true, ratedClientsOneToOne: true },
-        }),
-        // #1485 — the real "sessions completed" figure, replacing a hardcoded
-        // "50K+". The unit is the SLOT, not the appointment: a slot is one
-        // meeting, and COMPLETED means it was actually held (a Meeting
-        // ended, or a consultant marked it). `Appointment` carries no status
-        // of its own, and a subscription appointment spans many meetings.
-        // UNVERIFIED (past, no meeting record) is deliberately excluded — it
-        // may well have happened offline, but "may have" is not a claim.
-        prisma.appointmentOccurrence.count({
-          where: { completionStatus: "COMPLETED", deletedAt: null },
-        }),
-      ]);
+    },
+  });
 
-      return {
-        totalConsultants,
-        affiliationCounts: {
-          all: totalConsultants,
-          independent: independentCount,
-          agency: agencyCount,
-        },
-        orgKindCounts,
-        consultantsByDomain: consultantsByDomain.map((d) => ({
-          id: d.id,
-          name: d.name,
-          consultantCount: d._count.consultantProfiles,
-        })),
-        ...deriveDirectoryRating(
-          ratedProfiles.map((p) => ({
-            publishedRating: p.publishedRatingOneToOne,
-            reviewCount: p.ratedClientsOneToOne,
-          })),
-        ),
-        completedSessions,
-      };
-    })(),
-    // Available languages — distinct across verified consultants. ORM read + JS
-    // dedupe (no raw SQL): pull the verified profiles' `languages` arrays and
-    // flatten/unique/sort in app code. The verified-consultant set is small enough
-    // that this is cheaper than it looks and avoids a Postgres `unnest`.
-    prisma.consultantProfile
-      .findMany({
-        where: { verificationStatus: "VERIFIED", deletedAt: null },
-        select: { languages: true },
-      })
-      .then((rows) =>
-        Array.from(new Set(rows.flatMap((r) => r.languages)))
-          .filter(Boolean)
-          .sort((a, b) => a.localeCompare(b)),
-      ),
-    // Available companies (from verified consultants' work experiences)
-    prisma.workExperience
-      .findMany({
-        where: {
-          company: { not: "" },
-          user: {
-            consultantProfile: {
+  const [consultantMetadata, availableLanguages, availableCompanies] =
+    await Promise.all([
+      // Consultant metadata (counts, domain breakdown, avg rating, sessions)
+      // #781 §B — soft-deleted profiles leave public surfaces
+      (async () => {
+        const [
+          totalConsultants,
+          independentCount,
+          agencyCount,
+          orgKindCounts,
+          ratedProfiles,
+          completedSessions,
+        ] = await Promise.all([
+          prisma.consultantProfile.count({
+            where: { verificationStatus: "VERIFIED", deletedAt: null },
+          }),
+          prisma.consultantProfile.count({
+            where: {
               verificationStatus: "VERIFIED",
               deletedAt: null,
+              isIndependent: true,
+            },
+          }),
+          prisma.consultantProfile.count({
+            where: {
+              verificationStatus: "VERIFIED",
+              deletedAt: null,
+              isIndependent: false,
+            },
+          }),
+          // Experts hosted by each org kind (verified, non-deleted). An expert
+          // with memberships in two kinds counts once per kind — the tabs use
+          // the independent/agency counts above; this powers the org-kind
+          // sub-filter inside Agency/Org.
+          //
+          // Fail-soft to zeros: this metadata runs at BUILD time (prerender of
+          // /explore/experts) where the `kind` column may not exist yet (P2022)
+          // because the column lands via db push after merge. A zeroed breakdown
+          // only hides the sub-filter counts — never the experts themselves.
+          (async () => {
+            try {
+              const rows = await prisma.membership.groupBy({
+                by: ["organizationId"],
+                where: {
+                  role: "EXPERT",
+                  status: "ACTIVE",
+                  consultantProfile: {
+                    verificationStatus: "VERIFIED",
+                    deletedAt: null,
+                    isIndependent: false,
+                  },
+                  organization: {
+                    canHost: true,
+                    status: "ACTIVE",
+                    isPublic: true,
+                    deletedAt: null,
+                    kind: { not: null },
+                  },
+                },
+                _count: { organizationId: true },
+              });
+              if (rows.length === 0)
+                return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
+              const orgIds = rows.map((r) => r.organizationId);
+              const orgs = await prisma.organization.findMany({
+                where: { id: { in: orgIds } },
+                select: { id: true, kind: true },
+              });
+              const kindOf = new Map(orgs.map((o) => [o.id, o.kind]));
+              const out = { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
+              for (const row of rows) {
+                const kind = kindOf.get(row.organizationId);
+                if (kind && kind in out) {
+                  // _count.organizationId = experts hosted by this org.
+                  out[kind as keyof typeof out] += row._count.organizationId;
+                }
+              }
+              return out;
+            } catch (error) {
+              // Fail-soft ONLY on the missing-column case (P2022): the column
+              // lands via db push after merge. Anything else (notably transient
+              // pooler failures) must throw so the build retry and error
+              // paths run — and a swallowed transient must never become a
+              // "successful" zero-count cached for 300s.
+              if (
+                error instanceof Prisma.PrismaClientKnownRequestError &&
+                error.code === "P2022"
+              ) {
+                return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
+              }
+              throw error;
+            }
+          })(),
+          // #1485 / #1300 — the PUBLISHED 1:1 score, never the raw `rating`
+          // mean (which defaults to 0 on every unreviewed profile). NULL below the
+          // publication gate, so filtering it out leaves publishable scores only;
+          // `deriveDirectoryRating` weights them by rated clients.
+          prisma.consultantProfile.findMany({
+            where: {
+              verificationStatus: "VERIFIED",
+              deletedAt: null,
+              publishedRatingOneToOne: { not: null },
+            },
+            select: {
+              publishedRatingOneToOne: true,
+              ratedClientsOneToOne: true,
+            },
+          }),
+          // #1485 — the real "sessions completed" figure, replacing a hardcoded
+          // "50K+". The unit is the SLOT, not the appointment: a slot is one
+          // meeting, and COMPLETED means it was actually held (a Meeting
+          // ended, or a consultant marked it). `Appointment` carries no status
+          // of its own, and a subscription appointment spans many meetings.
+          // UNVERIFIED (past, no meeting record) is deliberately excluded — it
+          // may well have happened offline, but "may have" is not a claim.
+          prisma.appointmentOccurrence.count({
+            where: { completionStatus: "COMPLETED", deletedAt: null },
+          }),
+        ]);
+
+        return {
+          totalConsultants,
+          affiliationCounts: {
+            all: totalConsultants,
+            independent: independentCount,
+            agency: agencyCount,
+          },
+          orgKindCounts,
+          consultantsByDomain: domainsWithSubs.map((d) => ({
+            id: d.id,
+            name: d.name,
+            consultantCount: d._count.consultantProfiles,
+          })),
+          ...deriveDirectoryRating(
+            ratedProfiles.map((p) => ({
+              publishedRating: p.publishedRatingOneToOne,
+              reviewCount: p.ratedClientsOneToOne,
+            })),
+          ),
+          completedSessions,
+        };
+      })(),
+      // Available languages — distinct across verified consultants. ORM read + JS
+      // dedupe (no raw SQL): pull the verified profiles' `languages` arrays and
+      // flatten/unique/sort in app code. The verified-consultant set is small enough
+      // that this is cheaper than it looks and avoids a Postgres `unnest`.
+      prisma.consultantProfile
+        .findMany({
+          where: { verificationStatus: "VERIFIED", deletedAt: null },
+          select: { languages: true },
+        })
+        .then((rows) =>
+          Array.from(new Set(rows.flatMap((r) => r.languages)))
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b)),
+        ),
+      // Available companies (from verified consultants' work experiences)
+      prisma.workExperience
+        .findMany({
+          where: {
+            company: { not: "" },
+            user: {
+              consultantProfile: {
+                verificationStatus: "VERIFIED",
+                deletedAt: null,
+              },
             },
           },
-        },
-        select: { company: true },
-        distinct: ["company"],
-        orderBy: { company: "asc" },
-      })
-      .then((result) => result.map((r) => r.company)),
-  ]);
+          select: { company: true },
+          distinct: ["company"],
+          orderBy: { company: "asc" },
+        })
+        .then((result) => result.map((r) => r.company)),
+    ]);
 
   return {
     domains: domainsWithSubs.map((d) => ({ id: d.id, name: d.name })),
@@ -482,7 +472,7 @@ export async function fetchExpertsMetadata() {
         domainId: sd.domainId,
       })),
     ),
-    tags,
+    tags: domainsWithSubs.flatMap((d) => d.tags),
     consultantMetadata,
     availableLanguages,
     availableCompanies,
@@ -603,6 +593,7 @@ export const getCuratedExperts = unstable_cache(
           affiliationWhere(affiliationType, orgKind),
         ],
       },
+      relationLoadStrategy: "join",
       orderBy: orderByForSort(sort),
       take: limit,
       include: consultantCardInclude,
@@ -638,6 +629,7 @@ export const getDefaultConsultantsPage = unstable_cache(
     };
     const [rows, total] = await Promise.all([
       prisma.consultantProfile.findMany({
+        relationLoadStrategy: "join",
         where,
         orderBy: orderByForSort(sort),
         take: limit,

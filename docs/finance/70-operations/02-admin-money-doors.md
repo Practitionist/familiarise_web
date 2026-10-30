@@ -29,6 +29,8 @@ Every back-office action that moves money, holds money or runs a money job goes 
 | Support spend | `opsLog.read`         | Operators | Refunds and holds per operator against the staff limits. A staff viewer sees only their own row.                                                    |
 | Audit log     | `opsLog.read`         | Operators | Every console action: who, what, on which row, and why. It sits at the end of the sidebar outside the Money group but keeps the `/money/audit` URL. |
 
+Every payment row in the Payments and Refunds sections, the payment detail page and the Payments and Bookings sections of User 360 carry a **Trace** action. It opens `/dashboard/<tree>/trace`, a read-only timeline of one payment's or booking's life across payments, legs, refunds, disputes, the ledger, earnings and holds, payouts, invoices and credit notes, booking history, support cases and console actions, gated by `payments.read`. The System Jobs page (`systemJobs.manage`, admin) shows seven-day run metrics per job above the job list. Both are described in [the three observability layers](../../observability/three-layers.md).
+
 The four pages the console replaced (`/dashboard/admin/payments`, `refunds`, `disputes`, `payouts`) answer a 308 to their section with the query string carried over (`moneyHubHref`). The old `/money/class-series` URL answers a 308 to Appointments filtered to classes (`retiredMoneyTabHref`).
 
 ## What every door checks
@@ -180,15 +182,16 @@ An exact repeat of an earlier window returns the first incident with 200 instead
 
 ## Where in code
 
-| Concern                      | File                                                                         |
-| ---------------------------- | ---------------------------------------------------------------------------- |
-| Door shell, proposals, audit | `lib/backoffice/ops-action-log.ts`, `lib/backoffice/ops-proposals.ts`        |
-| Approve and reject           | `app/api/admin/ops-proposals/[id]/approve/route.ts`, `.../reject/route.ts`   |
-| Console sections             | `lib/backoffice/money-tabs.ts`, `lib/dashboard/backoffice-nav.ts`            |
-| Permissions                  | `lib/auth/backoffice-permissions.ts`                                         |
-| Step-up                      | `lib/auth/step-up.ts`                                                        |
-| Staff caps                   | `lib/support/money-policy.ts`                                                |
-| Reconcile from the console   | `app/api/admin/reconcile/[job]/route.ts`, `lib/backoffice/reconcile-jobs.ts` |
+| Concern                      | File                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------------ |
+| Door shell, proposals, audit | `lib/backoffice/ops-action-log.ts`, `lib/backoffice/ops-proposals.ts`                |
+| Approve and reject           | `app/api/admin/ops-proposals/[id]/approve/route.ts`, `.../reject/route.ts`           |
+| Console sections             | `lib/backoffice/money-tabs.ts`, `lib/dashboard/backoffice-nav.ts`                    |
+| Permissions                  | `lib/auth/backoffice-permissions.ts`                                                 |
+| Step-up                      | `lib/auth/step-up.ts`                                                                |
+| Staff caps                   | `lib/support/money-policy.ts`                                                        |
+| Reconcile from the console   | `app/api/admin/reconcile/[job]/route.ts`, `lib/backoffice/reconcile-jobs.ts`         |
+| Entity trace                 | `lib/backoffice/entity-trace.ts`, `app/dashboard/(backoffice)/[tree]/trace/page.tsx` |
 
 ## Related
 

@@ -24,24 +24,36 @@
  * The tick always answers 200; see {@link statusFor} for why.
  */
 
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   dueTargets,
+  scheduleFor,
   targetRequest,
   isFirstDueTickOfHour,
   TARGET_WINDOWS,
   TARGET_BACKGROUND_FUNCTIONS,
   type Target,
 } from "../../lib/cron/schedule";
+import {
+  isPlatformErrorBody,
+  isRepeatedFailure,
+  streakReportSchema,
+  type StreakReport,
+} from "../../lib/cron/failure-streak";
 import { jobOutcomeSchema, type JobOutcome } from "../../lib/cron/job-outcome";
 
 export const config = { schedule: "*/5 * * * *" };
 
 interface TickBody {
   event: "cron-tick";
+  /** Sent to every target as `x-tick-id`, so each run row names the tick that dispatched it. */
+  tickId: string;
   ok: string[];
   accepted: string[];
   lockHeld: string[];
+  /** Failed targets whose fail-closed lease the database could not grant; they write no run row. */
+  lockUnavailable: string[];
   failed: { name: string; status: number }[];
   durationMs: number;
 }
@@ -79,25 +91,29 @@ async function readResponseText(res: Response): Promise<string> {
   return typeof res.text === "function" ? await res.text().catch(() => "") : "";
 }
 
-async function parse503Response(
-  res: Response,
-): Promise<{ maintenance: boolean; errorBody?: string }> {
+async function parse503Response(res: Response): Promise<{
+  maintenance: boolean;
+  lockUnavailable: boolean;
+  errorBody?: string;
+}> {
   const rawText = await readResponseText(res);
-  let body: { phase?: unknown } | null = null;
+  let body: { phase?: unknown; code?: unknown } | null = null;
   if (rawText) {
     try {
-      body = JSON.parse(rawText) as { phase?: unknown };
+      body = JSON.parse(rawText) as { phase?: unknown; code?: unknown };
     } catch {
       body = null;
     }
   } else if (typeof res.json === "function") {
     body = (await res.json().catch(() => null)) as {
       phase?: unknown;
+      code?: unknown;
     } | null;
   }
   const maintenance = typeof body?.phase === "string";
   return {
     maintenance,
+    lockUnavailable: body?.code === "CRON_LOCK_UNAVAILABLE",
     ...(!maintenance && rawText ? { errorBody: rawText.slice(0, 500) } : {}),
   };
 }
@@ -108,10 +124,12 @@ async function hitTarget(
   name: Target,
   now: Date,
   deadline: number,
+  tickId: string,
 ): Promise<{
   name: string;
   status: number;
   maintenance?: boolean;
+  lockUnavailable?: boolean;
   errorBody?: string;
   outcome?: JobOutcome;
 }> {
@@ -127,6 +145,7 @@ async function hitTarget(
       headers: {
         Authorization: `Bearer ${secret}`,
         "sentry-propagate-traces": "false",
+        "x-tick-id": tickId,
       },
       signal: controller.signal,
     });
@@ -137,10 +156,12 @@ async function hitTarget(
     // Only the twin's own maintenance refusal carries `phase`; a platform or
     // dependency 503 does not, and must stay visible as a failure (#1598 P1-W03).
     let maintenance = false;
+    let lockUnavailable = false;
     let errorBody: string | undefined;
     if (res.status === 503) {
       const parsed = await parse503Response(res);
       maintenance = parsed.maintenance;
+      lockUnavailable = parsed.lockUnavailable;
       errorBody = parsed.errorBody;
     } else if (bucketFor(res.status, false, name, outcome) === "failed") {
       const rawText = await readResponseText(res);
@@ -164,6 +185,7 @@ async function hitTarget(
       status: res.status,
       outcome,
       maintenance,
+      lockUnavailable,
       ...(errorBody ? { errorBody } : {}),
     };
   } catch {
@@ -230,6 +252,11 @@ export function reportableToSentry(name: string): boolean {
   return name !== "sentry-ingest-canary";
 }
 
+/** The ticker shares the app's single public DSN. */
+function tickerSentryDsn(): string | undefined {
+  return process.env.NEXT_PUBLIC_SENTRY_DSN;
+}
+
 /** A missing secret is a silent fleet outage; page Sentry, not just the log. */
 async function alertMissingSecret(error: string): Promise<void> {
   try {
@@ -238,7 +265,7 @@ async function alertMissingSecret(error: string): Promise<void> {
     const { scrubSentryEvent } =
       await import("../../lib/observability/sentry-scrubber");
     Sentry.init({
-      dsn: process.env.SENTRY_DSN,
+      dsn: tickerSentryDsn(),
       tracesSampleRate: 0,
       tracePropagationTargets: [],
       registerEsmLoaderHooks: false,
@@ -255,19 +282,25 @@ async function alertMissingSecret(error: string): Promise<void> {
 }
 
 /**
- * The Sentry event for one failing target. The target name is in the message
- * and fingerprint so the shared repeat filter and Sentry grouping are per target.
+ * The Sentry event for one failing target. A repeat failure is an error issue
+ * per target; a one-off is a warning on one shared fingerprint, target in tags.
  */
-export function buildFailedTargetEvent(failed: {
-  name: string;
-  status: number;
-  errorBody?: string;
-}) {
+export function buildFailedTargetEvent(
+  failed: { name: string; status: number; errorBody?: string },
+  repeated = true,
+) {
   return {
     message: `cron-tick: target ${failed.name} failed`,
-    level: "error" as const,
-    fingerprint: ["cron-tick", failed.name],
-    tags: { subsystem: "cron", op: "cron-tick", target: failed.name },
+    level: repeated ? ("error" as const) : ("warning" as const),
+    fingerprint: repeated
+      ? ["cron-tick", failed.name]
+      : ["cron-tick", "target-failed-once"],
+    tags: {
+      subsystem: "cron",
+      op: "cron-tick",
+      target: failed.name,
+      ...(isPlatformErrorBody(failed.errorBody) ? { class: "platform" } : {}),
+    },
     contexts: {
       tick: {
         target: failed.name,
@@ -285,20 +318,52 @@ export function buildFailedTargetEvent(failed: {
  * answers 200 regardless, so without this a broken sweep only shows in the log;
  * a total outage is bounded by the shared 10/hour breaker.
  */
+/** Bounded read of each failing target's last COMPLETED run; null means history unknown. */
+async function fetchStreaks(
+  baseUrl: string,
+  secret: string,
+  names: string[],
+): Promise<StreakReport | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const res = await fetch(
+      `${baseUrl}/api/health/jobs/streaks?targets=${names.map(encodeURIComponent).join(",")}`,
+      {
+        headers: { Authorization: `Bearer ${secret}` },
+        signal: controller.signal,
+      },
+    );
+    if (!res.ok) return null;
+    const parsed = streakReportSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function alertFailedTargets(
   failed: { name: string; status: number; errorBody?: string }[],
   tickStart: Date,
+  history: { baseUrl: string; secret: string },
 ): Promise<void> {
   // Judge against the tick's start: targets can run 20 s past a minute boundary.
   const due = failed.filter((f) => isFirstDueTickOfHour(f.name, tickStart));
   if (due.length === 0) return;
+  const streaks = await fetchStreaks(
+    history.baseUrl,
+    history.secret,
+    due.map((f) => f.name),
+  );
   try {
     const Sentry = await import("@sentry/node");
     const { applyErrorBudget } = await import("../../sentry.shared.config");
     const { scrubSentryEvent } =
       await import("../../lib/observability/sentry-scrubber");
     Sentry.init({
-      dsn: process.env.SENTRY_DSN,
+      dsn: tickerSentryDsn(),
       tracesSampleRate: 0,
       tracePropagationTargets: [],
       registerEsmLoaderHooks: false,
@@ -318,7 +383,13 @@ async function alertFailedTargets(
       },
     });
     for (const f of due) {
-      const event = buildFailedTargetEvent(f);
+      const everyMinutes = scheduleFor(f.name)?.everyMinutes ?? 5;
+      const repeated = isRepeatedFailure(
+        everyMinutes,
+        streaks?.[f.name],
+        tickStart,
+      );
+      const event = buildFailedTargetEvent(f, repeated);
       Sentry.captureMessage(event.message, event);
     }
     await Sentry.flush(2_000);
@@ -335,7 +406,7 @@ async function alertFailedTargets(
  * Sentry's HTTP check-in (https://docs.sentry.io/product/crons/getting-started/http/)
  * is a plain POST, so no `@sentry/node` import is needed on the happy path.
  *
- * The endpoint is built by parsing SENTRY_DSN as Sentry's own DSN shape
+ * The endpoint is built by parsing NEXT_PUBLIC_SENTRY_DSN as Sentry's own DSN shape
  * (`https://<publicKey>@<host>/<projectId>`) into
  * `https://<host>/api/<projectId>/cron/<monitorSlug>/<publicKey>/`, which is
  * exactly the template that doc page gives. A POST body carrying
@@ -347,7 +418,7 @@ const CRON_MONITOR_SLUG = "cron-tick";
 const CRON_CHECKIN_TIMEOUT_MS = 2_000;
 
 function cronCheckInUrl(): string | null {
-  const dsn = process.env.SENTRY_DSN;
+  const dsn = tickerSentryDsn();
   if (!dsn) return null;
   try {
     const parsed = new URL(dsn);
@@ -457,6 +528,7 @@ export async function otherActivePlatform(
 
 export default async function cronTick(_req: Request): Promise<Response> {
   const started = Date.now();
+  const tickId = randomUUID();
   const otherPlatform = await otherActivePlatform();
   if (otherPlatform !== null) {
     console.log(
@@ -470,7 +542,22 @@ export default async function cronTick(_req: Request): Promise<Response> {
     const error =
       "CRON_SECRET is not set — the ticker cannot authenticate to /api/cleanup/*";
     console.error(JSON.stringify({ event: "cron-tick", error }));
-    await alertMissingSecret(error);
+    await Promise.all([
+      alertMissingSecret(error),
+      emitTickSummary(
+        {
+          event: "cron-tick",
+          tickId,
+          ok: [],
+          accepted: [],
+          lockHeld: [],
+          lockUnavailable: [],
+          failed: [],
+          durationMs: Date.now() - started,
+        },
+        error,
+      ),
+    ]);
     // #1686 — a 5xx would only be re-invoked three times against the same
     // missing secret; the log line and the Sentry message are the signal.
     return jsonResponse({ error }, 200);
@@ -488,13 +575,14 @@ export default async function cronTick(_req: Request): Promise<Response> {
 
   const settled = await Promise.allSettled(
     targets.map((name) =>
-      hitTarget(baseUrl, secret, name, tickDate, started + 24_000),
+      hitTarget(baseUrl, secret, name, tickDate, started + 24_000, tickId),
     ),
   );
 
   const ok: string[] = [];
   const accepted: string[] = [];
   const lockHeld: string[] = [];
+  const lockUnavailable: string[] = [];
   const failed: { name: string; status: number }[] = [];
   const failedForAlert: { name: string; status: number; errorBody?: string }[] =
     [];
@@ -515,6 +603,8 @@ export default async function cronTick(_req: Request): Promise<Response> {
     else if (bucket === "accepted") accepted.push(name);
     else if (bucket === "held") lockHeld.push(name);
     else {
+      if (result.status === "fulfilled" && result.value.lockUnavailable)
+        lockUnavailable.push(name);
       failed.push({ name, status });
       failedForAlert.push({
         name,
@@ -527,9 +617,11 @@ export default async function cronTick(_req: Request): Promise<Response> {
   const durationMs = Date.now() - started;
   const body: TickBody = {
     event: "cron-tick",
+    tickId,
     ok,
     accepted,
     lockHeld,
+    lockUnavailable,
     failed,
     durationMs,
   };
@@ -537,10 +629,12 @@ export default async function cronTick(_req: Request): Promise<Response> {
   // Check-in and alert waiting share the remaining ticker budget; aborts do not cancel target work.
   await Promise.all([
     sendCheckIn(failed.length > 0 ? "error" : "ok", durationMs),
+    emitTickSummary(body),
     boundedAlert(
       failedForAlert.filter((f) => reportableToSentry(f.name)),
       tickDate,
       started + 27_000,
+      { baseUrl, secret },
     ),
   ]);
 
@@ -548,15 +642,68 @@ export default async function cronTick(_req: Request): Promise<Response> {
   return jsonResponse(body, statusFor(failed));
 }
 
+/**
+ * One Better Stack Telemetry line per tick, independent of Sentry. Inline
+ * because `lib/observability/betterstack-telemetry` pulls `@sentry/nextjs`
+ * into the function bundle; same env contract, never throws.
+ */
+async function emitTickSummary(body: TickBody, error?: string): Promise<void> {
+  const token = process.env.BETTERSTACK_SOURCE_TOKEN;
+  const url = process.env.BETTERSTACK_INGEST_URL;
+  if (process.env.ENABLE_BETTERSTACK_TELEMETRY !== "true" || !token || !url) {
+    return;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        dt: new Date().toISOString(),
+        level: error || body.failed.length > 0 ? "error" : "info",
+        message: "cron-tick summary",
+        category: "CRON",
+        tickId: body.tickId,
+        durationMs: body.durationMs,
+        okCount: body.ok.length,
+        acceptedCount: body.accepted.length,
+        lockHeld: body.lockHeld,
+        lockUnavailableCount: body.lockUnavailable.length,
+        lockUnavailable: body.lockUnavailable,
+        failed: body.failed,
+        ...(error ? { error } : {}),
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      console.error(
+        JSON.stringify({
+          event: "betterstack-summary-rejected",
+          status: res.status,
+        }),
+      );
+    }
+  } catch {
+    // Telemetry is best effort.
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function boundedAlert(
   failed: Parameters<typeof alertFailedTargets>[0],
   tickDate: Date,
   deadline: number,
+  history: { baseUrl: string; secret: string },
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      alertFailedTargets(failed, tickDate),
+      alertFailedTargets(failed, tickDate, history),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, Math.max(1, deadline - Date.now()));
       }),

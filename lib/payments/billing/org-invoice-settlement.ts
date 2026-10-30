@@ -23,7 +23,10 @@ import { notifyOrgInvoicePaid } from "@/lib/novu/org-workflows";
 import type { PrismaLike, Tx } from "@/lib/prisma";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
-import { postUnappliedInvoiceReceipt } from "@/lib/payments/ledger/unapplied-receipts";
+import {
+  hasUnappliedReceipt,
+  postUnappliedInvoiceReceipt,
+} from "@/lib/payments/ledger/unapplied-receipts";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { getAppUrl } from "@/lib/url";
 
@@ -84,8 +87,8 @@ export async function lockPayableInvoice(
 ): Promise<boolean> {
   const locked = await tx.organizationInvoice.updateMany({
     where: { id: invoiceId, status: { in: [...PAYABLE_STATUSES] } },
-    // A stale order was minted for the old outstanding; the next /pay mints afresh.
-    data: { providerPaymentOrderId: null },
+    // A row lock must not erase the only reference to an unobserved capture.
+    data: { updatedAt: new Date() },
   });
   return locked.count === 1;
 }
@@ -120,9 +123,11 @@ export async function settleOrgInvoicePaid(
     data: {
       status: "PAID",
       paidAt,
-      providerPaymentOrderId: null,
       ...(args.providerPaymentId
-        ? { providerPaymentId: args.providerPaymentId }
+        ? {
+            providerPaymentId: args.providerPaymentId,
+            providerPaymentOrderId: null,
+          }
         : {}),
     },
   });
@@ -247,7 +252,11 @@ export type InvoiceCaptureOutcome =
   | { kind: "ALREADY_APPLIED" }
   | {
       kind: "UNAPPLIED";
-      reason: "INVOICE_NOT_FOUND" | "INVOICE_NOT_PAYABLE" | "AMOUNT_MISMATCH";
+      reason:
+        | "INVOICE_NOT_FOUND"
+        | "INVOICE_NOT_PAYABLE"
+        | "AMOUNT_MISMATCH"
+        | "ALREADY_UNAPPLIED";
     };
 
 /**
@@ -322,7 +331,16 @@ export async function applyOrgInvoiceCapture(
     return receipt !== null || current.providerPaymentId === gatewayPaymentId;
   };
   if (await alreadyApplied()) return { kind: "ALREADY_APPLIED" };
-  if (!(await lockPayableInvoice(tx, invoiceId))) {
+  // A parked capture belongs to operator recovery until its liability is released.
+  if (await hasUnappliedReceipt(tx, gatewayPaymentId)) {
+    return { kind: "UNAPPLIED", reason: "ALREADY_UNAPPLIED" };
+  }
+  // Lock without invalidating a current checkout when this capture cannot settle.
+  const locked = await tx.organizationInvoice.updateMany({
+    where: { id: invoiceId, status: { in: [...PAYABLE_STATUSES] } },
+    data: { updatedAt: new Date() },
+  });
+  if (locked.count !== 1) {
     // A concurrent delivery of this capture may have settled it while we waited on the lock.
     if (await alreadyApplied()) return { kind: "ALREADY_APPLIED" };
     return park("INVOICE_NOT_PAYABLE", { status: invoice.status });

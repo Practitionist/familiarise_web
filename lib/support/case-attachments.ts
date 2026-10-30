@@ -82,16 +82,22 @@ export async function readAttachmentHead(
   return head.subarray(0, SUPPORT_ATTACHMENT_SNIFF_BYTES);
 }
 
-/** Removes a rejected upload's object and tombstones its pending row. */
+/** Claims a rejected pending upload before removing its object. */
 export async function discardPendingAttachment(attachment: {
   id: string;
   storagePath: string;
 }): Promise<void> {
-  await removeObjects(SUPPORT_EVIDENCE_BUCKET, [attachment.storagePath]);
-  await prisma.supportCaseAttachment.updateMany({
-    where: { id: attachment.id, completedAt: null, deletedAt: null },
+  const claimed = await prisma.supportCaseAttachment.updateMany({
+    where: {
+      id: attachment.id,
+      storagePath: attachment.storagePath,
+      completedAt: null,
+      deletedAt: null,
+    },
     data: { deletedAt: new Date() },
   });
+  if (claimed.count === 0) return;
+  await removeObjects(SUPPORT_EVIDENCE_BUCKET, [attachment.storagePath]);
 }
 
 export const AttachmentUploadSchema = z

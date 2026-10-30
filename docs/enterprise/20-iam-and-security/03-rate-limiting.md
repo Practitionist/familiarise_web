@@ -245,7 +245,7 @@ match, limiter, key?, scope?, skipLocalhost }`. Omit `key` to
   inside BetterAuth, which matches its own routes.
 - **Don't put a plaintext address in a Redis key.** Upstash keys are
   plaintext at rest and visible in `MONITOR`. Hash it first, as the
-  existing-account notice does (`lib/auth/account-lifecycle.ts`).
+  per-recipient mail cap does (`lib/email/recipient-cap.ts`).
 - **Don't throttle a provider's webhook endpoint.** A 429 on a Stream
   delivery is not a deferral — Stream retries inside a fifteen-second
   budget and then drops the event permanently.

@@ -2,6 +2,7 @@ import type { Channel, ChannelState } from "stream-chat";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeOrgId } from "@/lib/api/scope/parse";
 import { isSupportStreamUser } from "@/lib/stream/support-user";
+import { withoutLegacyBookingCards } from "@/lib/stream/system-users";
 
 export interface ChannelDisplayInfo {
   displayName: string;
@@ -227,4 +228,31 @@ export function buildOrgChannelFilter(scope: Scope): Record<string, unknown> {
   if (scope.kind === "personal") return { organization_id: { $exists: false } };
   const pinnedOrgId = scopeOrgId(scope);
   return pinnedOrgId ? { organization_id: { $eq: pinnedOrgId } } : {};
+}
+
+/** The class or webinar channel subtitle: who hosts it, how many others, and who can read it. */
+export function eventChannelSubtitle({
+  eventType,
+  hostName,
+  memberCount,
+}: {
+  eventType: "webinar" | "class";
+  hostName: string | null;
+  memberCount: number;
+}): string {
+  const noun = eventType === "class" ? "classmate" : "attendee";
+  const count = hostName ? Math.max(0, memberCount - 1) : memberCount;
+  const people = `${count} ${noun}${count === 1 ? "" : "s"}`;
+  return [
+    "group chat",
+    hostName ? `${hostName} (host) + ${people}` : people,
+    `Everyone in this ${eventType} can read this`,
+  ].join(" · ");
+}
+
+/** The latest message a channel row previews; retired booking cards never count. */
+export function lastVisibleMessage<T extends { user?: { id?: string } | null }>(
+  messages: T[],
+): T | null {
+  return withoutLegacyBookingCards(messages).at(-1) ?? null;
 }

@@ -18,6 +18,7 @@
  * server handler. Unknown codes fall through `humanizeOrgError` to the
  * raw message so genuine free-form errors still render.
  */
+import { SUPPORT_EMAIL } from "@/lib/company";
 
 export const ORG_ERROR_COPY: Record<string, string> = {
   ORG_NOT_VERIFIED:
@@ -66,7 +67,7 @@ export const ORG_ERROR_COPY: Record<string, string> = {
   // copy points operators at the recovery path (talk to ops) rather
   // than leaving them stranded with a generic 400.
   // #1298 — static NEXT_PUBLIC read: this table ships to client components.
-  HOST_ORGS_GATED: `Host-capable organizations are not yet enabled on this tenant. Contact ops at ${process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com"} to flip ENABLE_HOST_ORGS for your account.`,
+  HOST_ORGS_GATED: `Host-capable organizations are not yet enabled on this tenant. Contact ops at ${SUPPORT_EMAIL} to flip ENABLE_HOST_ORGS for your account.`,
 };
 
 /**

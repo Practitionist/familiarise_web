@@ -110,14 +110,21 @@ export async function GET(
     ] = await Promise.all([
       // Source 1: Consultations with APPROVED_PENDING_PAYMENT status
       prisma.consultation.findMany({
+        relationLoadStrategy: "join",
         where: {
           requestedById: consulteeId,
           status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
           appointment: { is: personalOrgPin },
         },
-        include: {
+        select: {
+          id: true,
+          updatedAt: true,
+          pendingPaymentUrl: true,
           consultationPlan: {
-            include: {
+            select: {
+              title: true,
+              price: true,
+              priceCurrency: true,
               consultantProfile: PROFILE_WITH_USER_SELECT,
             },
           },
@@ -131,14 +138,21 @@ export async function GET(
 
       // Source 2: Subscriptions with APPROVED_PENDING_PAYMENT status
       prisma.subscription.findMany({
+        relationLoadStrategy: "join",
         where: {
           requestedById: consulteeId,
           status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
           appointment: personalOrgPin,
         },
-        include: {
+        select: {
+          id: true,
+          updatedAt: true,
+          pendingPaymentUrl: true,
           subscriptionPlan: {
-            include: {
+            select: {
+              title: true,
+              price: true,
+              priceCurrency: true,
               consultantProfile: PROFILE_WITH_USER_SELECT,
             },
           },
@@ -158,6 +172,7 @@ export async function GET(
 
       // Source 3: Payment records with PENDING gateway status (non-expired only)
       prisma.payment.findMany({
+        relationLoadStrategy: "join",
         where: {
           userId: consulteeProfile.userId,
           paymentStatus: "PENDING",
@@ -172,7 +187,14 @@ export async function GET(
             },
           ],
         },
-        include: {
+        // Explicit select: Payment.exchangeRateAtCheckout is a Decimal, which
+        // must not travel through a join-loaded read.
+        select: {
+          id: true,
+          amount: true,
+          currency: true,
+          expiresAt: true,
+          createdAt: true,
           appointment: {
             select: {
               appointmentType: true,
@@ -198,13 +220,21 @@ export async function GET(
       // paid for yet. Unlike the sources above these carry a real deadline
       // (paymentDueAt) rather than an assumed pay-link window.
       prisma.trial.findMany({
+        relationLoadStrategy: "join",
         where: {
           consulteeProfileId: consulteeId,
           status: TrialStatus.AWAITING_PAYMENT,
         },
-        include: {
+        select: {
+          id: true,
+          updatedAt: true,
+          paymentDueAt: true,
+          pendingPaymentUrl: true,
           subscriptionPlan: {
-            include: {
+            select: {
+              title: true,
+              trialPriceInPaise: true,
+              priceCurrency: true,
               consultantProfile: PROFILE_WITH_USER_SELECT,
             },
           },
@@ -361,10 +391,8 @@ export async function GET(
         "Consultant";
       const type =
         (apt?.appointmentType?.toLowerCase() as
-          | "consultation"
-          | "subscription"
-          | "webinar"
-          | "class") || "consultation";
+          "consultation" | "subscription" | "webinar" | "class") ||
+        "consultation";
 
       // Gateway-pending payments expire based on expiresAt or default to 30 min from creation
       const expiresAt =

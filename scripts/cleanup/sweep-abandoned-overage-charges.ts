@@ -13,6 +13,7 @@ import prisma from "@/lib/prisma";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface OverageSweepResult {
@@ -39,6 +40,7 @@ export async function sweepAbandonedOverageCharges(
 async function sweepAbandonedOverageChargesUnlocked(
   opts: { ageDays?: number; limit?: number } = {},
 ): Promise<OverageSweepResult> {
+  const failures = createRunFailureReporter("jobs");
   const ageDays = opts.ageDays ?? 7;
   const limit = opts.limit ?? 500;
   const cutoff = new Date(Date.now() - ageDays * 86_400_000);
@@ -136,13 +138,20 @@ async function sweepAbandonedOverageChargesUnlocked(
       // than WRITE_BATCH open at once. `*Safe` never rejects, so this cannot
       // throw; it is awaited so a batch is durable before the next starts, and
       // so nothing is lost to the process exiting on an empty event loop.
+      const invoicedErr = new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE");
+      failures.add(
+        "sweep-abandoned-overage-charges.invoiced-skip",
+        invoicedErr,
+        { overageEventId: a.id },
+      );
       pendingRecords.push(
         recordSystemErrorSafe({
           organizationId: null,
           category: "OVERAGE",
           summary: `Abandoned overage ${a.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,
-          err: new Error("OVERAGE_BASE_RESTORE_AFTER_INVOICE"),
+          err: invoicedErr,
           context: { overageEventId: a.id },
+          skipSentry: true,
         }),
       );
       if (pendingRecords.length >= WRITE_BATCH) {
@@ -167,6 +176,7 @@ async function sweepAbandonedOverageChargesUnlocked(
     });
   }
 
+  failures.flush();
   console.log(
     `🧹 Failed ${failed} abandoned CHARGE_MEMBER overage charge(s) — circuit-breaker ceiling freed` +
       (invoicedSkips > 0

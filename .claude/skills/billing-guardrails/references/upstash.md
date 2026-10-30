@@ -15,7 +15,7 @@ One database, `Familiarise`, region `ap-south-1`, on pay-as-you-go since 2026-09
 
 - The 2026-09-21 incident: with cron locks in Redis, the 18-target ticker spent about 430,000 of 500,000 monthly commands (derived from code; Upstash keeps five days of history). Locks moved to a Postgres lease on `SystemJobExecution` (`lib/cron/with-cron-lock.ts`, `withCronLock`), so cron mutual exclusion no longer spends commands; only the heartbeat write (`cron:heartbeat:last`) remains.
 - `lib/redis.ts` wraps the client in a per-service circuit breaker (failure threshold 5, 30 s reset) and exposes lock helpers used for short interactive mutexes (`utils/appointmentlock.ts`).
-- `lib/rate-limit.ts` `makeLimiter` builds sliding-window limiters with a `LIMITER_TIMEOUT_MS` of 500 ms (fail-open on timeout) and does not enable `analytics`, saving one command per request. Keep it that way.
+- `lib/rate-limit.ts` `makeLimiter` builds sliding-window limiters with a `LIMITER_TIMEOUT_MS` constant of 500 ms (fail-open on timeout) and does not enable `analytics`, saving one command per request. Keep it that way.
 - Do not run rate-limit Redis calls on static assets (`/_next/static/*`, `/_next/image/*`, `/favicon.ico`) or CDN-cached health and announcements endpoints.
 - `lib/maintenance-edge.ts` reads `maintenance:phase` with a 200 ms timeout; failed reads cache OFF for 30 s, so slowness multiplies reads.
 - The cron platform switch `ops:active_cron_platform` lives here; the standby design reads it on every tick.

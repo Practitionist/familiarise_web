@@ -1,25 +1,6 @@
 /**
- * #779 §A — DUNNING cron. Two stages over OrganizationInvoice:
- *
- *   Stage 1 (first notice): ISSUED + dueDate passed + markedOverdueAt:null
- *     → claim ISSUED→OVERDUE (stamp markedOverdueAt), notify the finance
- *       roster, emit an INVOICE_OVERDUE audit row.
- *   Stage 2 (escalation): OVERDUE rows whose last reminder (or the overdue
- *     stamp) is >7d old AND dunningReminderCount < 3 → claim via the
- *     lastDunningReminderAt gate, bump the count, re-notify with the next
- *     escalation stage.
- *
- * No booking-suspend stage yet — dunningSuspendedAt stays unwritten.
- * TODO(#1319): config-gated booking-suspend cascade once OVERDUE drags past
- * the grace window.
- *
- * Schedule: the ticker's daily window from 23:30 UTC. Every stage measures
- * its cutoffs from the window start, so all slices of one window see one
- * cohort, and the suspension cap is per window, not per slice.
- *
- * Idempotent: every stamp (markedOverdueAt / lastDunningReminderAt) is an
- * idempotency gate baked into the claim updateMany, so two cron replicas or
- * a same-day re-run can't double-notify.
+ * Bounded invoice dunning claims and notices, with gateway read-back before
+ * config-enabled suspension. Every claim repeats its expected prior state.
  */
 
 import prisma from "@/lib/prisma";
@@ -34,6 +15,12 @@ import { sendOrgInvoiceOverdueEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
+import { readRazorpayOrderHolding } from "@/lib/payments/core/razorpay";
+import {
+  applyOrgInvoiceCapture,
+  invoiceOutstandingPaise,
+} from "@/lib/payments/billing/org-invoice-settlement";
 
 // #779 — 7-day cadence between escalations, capped at 3 reminders.
 const REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -128,6 +115,63 @@ async function claimInvoiceGuarded(
     );
     return "failed";
   }
+}
+
+/** Recover retained captured orders before treating an invoice as unpaid. */
+async function recoverBeforeSuspension(
+  inv: {
+    id: string;
+    organizationId: string;
+    providerPaymentOrderId: string | null;
+  },
+  deadline: number,
+): Promise<boolean> {
+  if (!inv.providerPaymentOrderId) return false;
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) throw new Error("Dunning gateway read budget elapsed");
+  const holding = await readRazorpayOrderHolding(
+    inv.providerPaymentOrderId,
+    Math.min(5_000, remainingMs),
+  );
+  if (holding.kind === "empty") return false;
+  if (holding.kind === "live") {
+    throw new Error("Dunning held for an unsettled gateway payment");
+  }
+  const outcome = await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const captured = await applyOrgInvoiceCapture(tx, {
+          invoiceId: inv.id,
+          gatewayPaymentId: holding.paymentId,
+          capturedPaise: holding.amountPaise,
+          notesOrganizationId: inv.organizationId,
+        });
+        if (captured.kind === "PAID") {
+          await tx.orgAuditLog.create({
+            data: {
+              organizationId: captured.settled.organizationId,
+              actorMembershipId: null,
+              category: "INVOICE",
+              action: AUDIT_ACTIONS.INVOICE.INVOICE_PAID,
+              description: `Invoice ${captured.settled.invoiceNumber} paid by dunning gateway recovery`,
+              details: {
+                invoiceId: inv.id,
+                providerPaymentId: holding.paymentId,
+              },
+            },
+          });
+        }
+        return captured;
+      },
+      { isolationLevel: "Serializable" },
+    ),
+  );
+  if (outcome.kind === "UNAPPLIED") {
+    throw new Error(
+      "Dunning held for a captured payment needing operator review",
+    );
+  }
+  return true;
 }
 
 export async function runDunning(opts: {
@@ -327,6 +371,7 @@ async function dunning(opts: {
   // (both sides gated on the same ENABLE_DUNNING_SUSPEND flag). Paying the invoice (status leaves OVERDUE)
   // lifts the suspension naturally — nothing un-stamps a paid invoice.
   if (SUSPEND_ENABLED) {
+    const suspensionDeadline = Date.now() + 10_000;
     const suspendCutoff = new Date(asOf.getTime() - SUSPEND_GRACE_MS);
     const suspendedThisWindow = opts.windowStart
       ? await prisma.organizationInvoice.count({
@@ -359,6 +404,7 @@ async function dunning(opts: {
             select: {
               id: true,
               organizationId: true,
+              providerPaymentOrderId: true,
               invoiceNumber: true,
               totalPaise: true,
               displayCurrency: true,
@@ -369,6 +415,23 @@ async function dunning(opts: {
             take: suspendTake,
           });
     for (const inv of toSuspend) {
+      if (Date.now() >= suspensionDeadline) {
+        stats.failed += 1;
+        break;
+      }
+      try {
+        if (await recoverBeforeSuspension(inv, suspensionDeadline)) continue;
+      } catch (error) {
+        stats.failed += 1;
+        console.error(
+          "[dunning] suspension payment check held:",
+          inv.id,
+          scrubStringValue(
+            error instanceof Error ? error.message : String(error),
+          ),
+        );
+        continue;
+      }
       // #812 — claim + audit in one Serializable tx, mirroring Stage 1, so two
       // replicas can't both stamp + log. Idempotent claim: only stamp a row
       // still un-suspended + OVERDUE; loser sees count 0 and skips.
@@ -378,11 +441,13 @@ async function dunning(opts: {
       const claimed = await claim(inv, "stage-3 suspend", () =>
         prisma.$transaction(
           async (tx) => {
+            if ((await invoiceOutstandingPaise(tx, inv.id)) <= 0) return false;
             const claim = await tx.organizationInvoice.updateMany({
               where: {
                 id: inv.id,
                 dunningSuspendedAt: null,
                 status: "OVERDUE",
+                providerPaymentOrderId: inv.providerPaymentOrderId,
               },
               data: { dunningSuspendedAt: now },
             });

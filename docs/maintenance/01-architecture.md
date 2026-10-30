@@ -36,6 +36,14 @@ Larger bookings remain unsupported by this maintenance action and require a sepa
 
 Tests that mock `@sentry/nextjs` and assert captures also mock `@sentry/core` with `jest.requireMock("@sentry/nextjs")`. Native workers and framework handlers then use the same asserted telemetry functions.
 
+## Job history and messaging retention
+
+The existing retention core scrubs SENT payloads after seven days, deletes SENT
+outbox rows after thirty days and DEAD_LETTER rows after ninety days. Active
+PENDING/RETRY obligations survive. Each phase is bounded and rechecks eligibility
+at its final mutation; see [job history and messaging retention](messaging-retention.md)
+for deadlines, replay races, continuation and the configured scheduler owner.
+
 ## Deprecated & Superseded Approaches
 
 OFFLINE previously cancelled overlapping bookings implicitly and guessed a four-hour horizon when no ETA was supplied. Explicit preview and durable confirmation replace that coupling. ETA-based Redis expiry previously reopened an unattended maintenance window; active state now requires explicit recovery. Recovery previously launched six reconciliation jobs in parallel inside the request; scheduled bounded jobs own those obligations instead.

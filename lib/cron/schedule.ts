@@ -14,6 +14,7 @@ export const TARGETS = [
   "reconcile-refunds",
   "abandoned-payments",
   "reconcile-payment-status",
+  "reconcile-org-invoice-payments",
   "reconcile-orphaned-confirmations",
   "sweep-orphaned-topup-captures",
   "dispatch-outbound-webhooks",
@@ -54,6 +55,7 @@ export const TARGETS = [
   "advance-program-cycles",
   "auto-renew-contracts",
   "irp-uploader",
+  "heal-consumer-invoices",
   "sweep-abandoned-overage-charges",
   "expire-contracts",
   "msme-payment-alerts",
@@ -66,10 +68,35 @@ export const TARGETS = [
   "stream-control-plane-drift",
   "transfer-recordings",
   "reconcile-sessions",
+  "prune-system-job-executions",
+  "prune-system-events",
   ...STREAM_LIFECYCLE_JOBS,
 ] as const;
 
 export type Target = (typeof TARGETS)[number];
+
+/**
+ * The `SystemJobExecution.jobName` a target's core writes when it differs from the
+ * target name; `null` means the core writes no execution row.
+ */
+const JOB_NAME_OVERRIDES: Partial<Record<Target, string | null>> = {
+  "reconcile-refunds": "reconcile-pending-refunds",
+  "abandoned-payments": "cleanup-abandoned-payments",
+  "reschedule-proposals": "expire-reschedule-proposals",
+  "appointment-reminders": "send-appointment-reminders",
+  "tentative-occurrences": "cleanup-tentative-occurrences",
+  "abandoned-org-top-ups": "cleanup-abandoned-org-top-ups",
+  "tds-return-draft": "tds-26q-draft-export",
+  "reconcile-sessions": "reconcile-orphaned-sessions",
+  "sentry-ingest-canary": null,
+  "stream-control-plane-drift": null,
+};
+
+export function jobNameFor(target: Target): string | null {
+  return target in JOB_NAME_OVERRIDES
+    ? (JOB_NAME_OVERRIDES[target] ?? null)
+    : target;
+}
 
 /** Background targets acknowledge admission; their cores record eventual completion. */
 export const TARGET_BACKGROUND_FUNCTIONS: Partial<Record<Target, string>> = {
@@ -106,6 +133,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "alert-orphaned-payments": 10,
   "reconcile-orphaned-payments": 10,
   "reconcile-refunds": 10,
+  "reconcile-org-invoice-payments": 5,
   "support-sla-sweep": 20,
   "purge-deleted-documents": 100,
   "process-payouts": 5,
@@ -120,6 +148,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "advance-program-cycles": 25,
   "auto-renew-contracts": 10,
   "irp-uploader": 10,
+  "heal-consumer-invoices": 25,
   "sweep-abandoned-overage-charges": 25,
   "expire-contracts": 10,
   "msme-payment-alerts": null,
@@ -134,6 +163,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "stream-control-plane-drift": null,
   "transfer-recordings": null,
   "reconcile-sessions": 5,
+  "prune-system-job-executions": 500,
+  "prune-system-events": 500,
   "expire-recordings": null,
   "reconcile-orphaned-recordings": null,
   "wind-down-deactivated-orgs": null,
@@ -159,6 +190,7 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-refunds": 15,
   "abandoned-payments": 15,
   "reconcile-payment-status": 15,
+  "reconcile-org-invoice-payments": 240,
   "reconcile-orphaned-confirmations": 15,
   "expire-unpaid-trials": 15,
   "reschedule-proposals": 15,
@@ -190,6 +222,7 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "advance-program-cycles": 60,
   "auto-renew-contracts": 60,
   "irp-uploader": 60,
+  "heal-consumer-invoices": 360,
   "sweep-abandoned-overage-charges": 60,
   "expire-contracts": 60,
   "msme-payment-alerts": 60,
@@ -204,6 +237,8 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "stream-control-plane-drift": 60,
   "transfer-recordings": 15,
   "reconcile-sessions": 30,
+  "prune-system-job-executions": 30,
+  "prune-system-events": 60,
   "expire-recordings": 60,
   "reconcile-orphaned-recordings": 60,
   "wind-down-deactivated-orgs": 60,
@@ -229,6 +264,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-refunds": 5,
   "abandoned-payments": 5,
   "reconcile-payment-status": 5,
+  "reconcile-org-invoice-payments": 235,
   "reconcile-orphaned-confirmations": 5,
   "expire-unpaid-trials": 5,
   "drain-notification-outbox": 5,
@@ -256,6 +292,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "advance-program-cycles": 15,
   "auto-renew-contracts": 20,
   "irp-uploader": 25,
+  "heal-consumer-invoices": 110,
   "sweep-abandoned-overage-charges": 30,
   "expire-contracts": 35,
   "msme-payment-alerts": 45,
@@ -274,6 +311,8 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "stream-control-plane-drift": 15,
   "transfer-recordings": 0,
   "reconcile-sessions": 10,
+  "prune-system-job-executions": 25,
+  "prune-system-events": 10,
   "expire-recordings": 5,
   "reconcile-orphaned-recordings": 25,
   "wind-down-deactivated-orgs": 55,
@@ -299,6 +338,11 @@ export interface CalendarWindow {
 }
 const DAILY_0300: CalendarWindow = { startMinuteUtc: 180, windowMinutes: 1020 };
 const DAILY_2330: CalendarWindow = { startMinuteUtc: 1410, windowMinutes: 180 };
+/** Retention band between the daytime money window and the 23:30 one. */
+const DAILY_RETENTION: CalendarWindow = {
+  startMinuteUtc: 1200,
+  windowMinutes: 210,
+};
 
 /** Every windowed target re-runs on its slots until the window closes; each run is a bounded, claim-based slice. */
 export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
@@ -332,6 +376,8 @@ export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   "advance-program-cycles": DAILY_0300,
   "auto-renew-contracts": DAILY_0300,
   "irp-uploader": DAILY_0300,
+  // All day; the window starts on the first slot so a missing GSTIN warns once a day.
+  "heal-consumer-invoices": { startMinuteUtc: 110, windowMinutes: 1440 },
   "sweep-abandoned-overage-charges": DAILY_0300,
   "expire-contracts": DAILY_0300,
   "msme-payment-alerts": { startMinuteUtc: 180, windowMinutes: 60 },
@@ -347,6 +393,8 @@ export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   },
   "reconcile-stream-memberships": { startMinuteUtc: 0, windowMinutes: 180 },
   "stream-control-plane-drift": { startMinuteUtc: 75, windowMinutes: 60 },
+  "prune-system-job-executions": DAILY_RETENTION,
+  "prune-system-events": DAILY_RETENTION,
 };
 
 /**
@@ -378,6 +426,32 @@ export function windowStartFor(name: Target, now: Date): Date | null {
     return null;
   }
   return start;
+}
+
+/** How far back a calendar window (weekly, monthly, quarterly) is searched. */
+const WINDOW_SEARCH_DAYS = 400;
+const DAY_MS = 24 * 60 * 60_000;
+const WINDOWED_TARGETS: ReadonlySet<string> = new Set(
+  Object.keys(TARGET_WINDOWS),
+);
+
+export function isWindowedTarget(name: string): name is Target {
+  return WINDOWED_TARGETS.has(name);
+}
+
+/** The start of the newest window that opened at or before `at`, or null when none has in the search range. */
+export function latestWindowStart(name: Target, at: Date): Date | null {
+  const w = TARGET_WINDOWS[name];
+  if (!w) return null;
+  const day = Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate());
+  for (let d = 0; d <= WINDOW_SEARCH_DAYS; d++) {
+    const start = new Date(day - d * DAY_MS + w.startMinuteUtc * 60_000);
+    if (start.getTime() > at.getTime()) continue;
+    if (windowStartFor(name, start)?.getTime() === start.getTime()) {
+      return start;
+    }
+  }
+  return null;
 }
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
@@ -415,6 +489,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "retry-auto-refunds": 20_000,
   "vest-referral-credits": 20_000,
   "reconcile-refunds": 20_000,
+  "reconcile-org-invoice-payments": 24_000,
   "auto-complete-appointments": 24_000,
   "detect-consultant-no-shows": 24_000,
   "alert-orphaned-payments": 20_000,
@@ -433,6 +508,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "advance-program-cycles": 20_000,
   "auto-renew-contracts": 20_000,
   "irp-uploader": 20_000,
+  "heal-consumer-invoices": 20_000,
   "sweep-abandoned-overage-charges": 20_000,
   "expire-contracts": 20_000,
   "msme-payment-alerts": 20_000,
@@ -445,6 +521,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "tds-return-draft": 20_000,
   "reconcile-stream-memberships": 24_000,
   "reconcile-sessions": 24_000,
+  "prune-system-job-executions": 24_000,
+  "prune-system-events": 20_000,
 };
 
 /**
