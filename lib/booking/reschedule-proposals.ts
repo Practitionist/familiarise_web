@@ -20,6 +20,41 @@
 import type { AppointmentsType, RescheduleInitiatorRole } from "@prisma/client";
 import type { RescheduleOutcomeFields } from "@/lib/novu/workflows";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
+import type { AppointmentKind } from "@/lib/appointments/view-model";
+
+/** No session moves, from or to, closer than this to its start. */
+export const RESCHEDULE_MIN_LEAD_HOURS = 24;
+
+type ReleasableRow = {
+  startsAt: Date | string;
+  completionStatus?: string | null;
+  isTentative?: boolean | null;
+  deletedAt?: Date | string | null;
+};
+
+/** A party may release only a confirmed SCHEDULED session at least the lead time out. */
+export function rescheduleReleasable(
+  rows: ReadonlyArray<ReleasableRow>,
+  now: Date = new Date(),
+): boolean {
+  const earliest = now.getTime() + RESCHEDULE_MIN_LEAD_HOURS * 3_600_000;
+  return rows.some(
+    (row) =>
+      row.completionStatus === "SCHEDULED" &&
+      !row.isTentative &&
+      !row.deletedAt &&
+      new Date(row.startsAt).getTime() >= earliest,
+  );
+}
+
+/** A published webinar moves to a new date only while its session is confirmed and the lead time out. */
+export function allowsRetime(
+  kind: AppointmentKind,
+  rows: ReadonlyArray<ReleasableRow>,
+  now: Date = new Date(),
+): boolean {
+  return kind === "WEBINAR" && rescheduleReleasable(rows, now);
+}
 
 /** Ceiling on how long an unanswered proposal may sit. */
 export const PROPOSAL_MAX_LIFETIME_HOURS = 72;
@@ -239,9 +274,8 @@ export type RescheduleProposeCode =
   /** A proposal is open and the counterparty has it to answer. */
   | "AWAITING_ANSWER"
   /**
-   * A proposal is open, but auto-confirmation detected a reason it would not
-   * place the times — the free calendar is not enough, and a human has to place
-   * them.
+   * Auto-confirmation refused the times themselves, so the request dropped them
+   * and the session is released for the consultant to place.
    */
   | "NOT_PLACEABLE"
   /** The proposal is no longer answerable: it was answered, expired or lost. */
@@ -266,27 +300,38 @@ const CLOSED_AUTO_CONFIRM_REFUSALS = new Set([
 ]);
 
 /**
- * Refusals that leave the proposal open AND leave a human as the next actor:
- * the times were never ours to place (`CONSULTANT_INITIATED`), or the attempt
- * never reached a decision (`APPOINTMENT_BUSY`, `BOOKING_LOCK_UNAVAILABLE`,
- * `ERROR`).
- *
- * Membership is the CLASSIFICATION — the proposal is still answerable, so the
- * code is AWAITING_ANSWER. The sentence is per-reason: `CONSULTANT_INITIATED`
- * is the one member whose next actor is the other side (see the arm below), so
- * it carries its own wording.
- *
- * Anything unrecognised — a typed `AllocationErrorCode`, or one added after this
- * was written — falls to NOT_PLACEABLE, whose sentence asserts only that the
- * time was not confirmed automatically. An unrecognised reason must not be
- * dressed up as a specific cause, and the raw reason is on the wire beside it.
+ * Auto-confirm refusals about the proposed times themselves, which the
+ * counterparty's Accept would repeat. Only these drop the proposal's times;
+ * anything else (a lock, a timeout, a stale read) leaves the proposal intact.
  */
-const AWAITING_AUTO_CONFIRM_REFUSALS = new Set([
-  "CONSULTANT_INITIATED",
-  "APPOINTMENT_BUSY",
-  "BOOKING_LOCK_UNAVAILABLE",
-  "ERROR",
+const FINAL_AUTO_CONFIRM_REFUSALS: ReadonlySet<string> = new Set([
+  "VALIDATION_ERROR",
+  "VALIDATION_FAILED",
+  "AVAILABILITY_CHANGED",
+  "NO_AVAILABILITY",
+  "SLOT_SHORTAGE",
+  "COLLABORATOR_UNAVAILABLE",
+  "PERIOD_ENDED",
+  "TOO_CLOSE_TO_START",
+  "SESSION_HAS_REMEDY",
+  "PROGRAM_CAP_EXHAUSTED",
 ]);
+
+/** Another writer holds the picked times: the consultee picks again. */
+const TAKEN_AUTO_CONFIRM_REFUSALS: ReadonlySet<string> = new Set([
+  "TIMES_TAKEN",
+  "SLOT_TAKEN",
+]);
+
+/** A refusal Accept would repeat: the proposal drops its times. */
+export function autoConfirmRefusalIsFinal(reason: string | null): boolean {
+  return reason !== null && FINAL_AUTO_CONFIRM_REFUSALS.has(reason);
+}
+
+/** Someone else took the picked times: the request is withdrawn and the consultee picks again. */
+export function autoConfirmTimesTaken(reason: string | null): boolean {
+  return reason !== null && TAKEN_AUTO_CONFIRM_REFUSALS.has(reason);
+}
 
 /**
  * The propose route's terminal sentence and its branchable code.
@@ -341,10 +386,7 @@ export function rescheduleProposeOutcome(args: {
       message: "Your new time has been sent to the attendee to confirm.",
     };
   }
-  if (
-    autoConfirmReason === null ||
-    AWAITING_AUTO_CONFIRM_REFUSALS.has(autoConfirmReason)
-  ) {
+  if (!autoConfirmRefusalIsFinal(autoConfirmReason)) {
     return {
       code: "AWAITING_ANSWER",
       message: "Your requested time has been sent to the consultant.",
@@ -353,7 +395,7 @@ export function rescheduleProposeOutcome(args: {
   return {
     code: "NOT_PLACEABLE",
     message:
-      "We could not confirm that time automatically, so it is with the consultant to place. Nothing has been charged or moved yet.",
+      "We couldn't confirm that time, so your session is released and waiting for the consultant to place it. Withdraw the request to keep your original time.",
   };
 }
 

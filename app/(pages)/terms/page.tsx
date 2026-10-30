@@ -397,8 +397,10 @@ export default function TermsPage() {
               <ul>
                 <li>Cancellation rules vary by service type</li>
                 <li>Refunds are processed based on timing of cancellation</li>
-                <li>Platform may charge cancellation fees in certain cases</li>
-                <li>Refunds are processed within 5-7 business days</li>
+                <li>
+                  Card and UPI refunds take 5–7 working days to arrive; credit
+                  and organisation-funded refunds are returned straight away
+                </li>
               </ul>
 
               <Separator className="my-6" />

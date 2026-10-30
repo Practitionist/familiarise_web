@@ -35,6 +35,11 @@ import { PaymentStatus, RefundStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { parkedReceiptPaise } from "@/lib/payments/ledger/unapplied-receipts";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 import {
   RefundGatewayError,
   RefundValidationError,
@@ -64,6 +69,7 @@ import {
 } from "@/lib/payments/operations/refund-owed";
 import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { reportSentryError } from "@/lib/observability/report";
+import { startDeadline, startDeadlineShare } from "@/lib/cron/run-deadline";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 
 export interface RetryAutoRefundsResult {
@@ -91,6 +97,8 @@ export interface RetryAutoRefundsResult {
     /** Markers older than two hours, stuck ones included. */
     aged: number;
   };
+  /** The run hit its start deadline with rows left for the next one. */
+  hasMore: boolean;
   timestamp: string;
 }
 
@@ -130,8 +138,14 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
       stuck: [],
       aged: 0,
     },
+    hasMore: false,
     timestamp: now.toISOString(),
   };
+  // One deadline for the run: a slow gateway cuts it between rows, never mid-row.
+  // Auto-refunds stop at half of it, so they never starve the owed markers.
+  const startedAt = Date.now();
+  const outOfTime = startDeadline(startedAt);
+  const autoRefundsOutOfTime = startDeadlineShare(0.5, startedAt);
 
   const due = await prisma.payment.findMany({
     where: {
@@ -162,6 +176,10 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
   const failedIds: string[] = [];
   let firstError: unknown;
   for (const payment of due) {
+    if (autoRefundsOutOfTime()) {
+      result.hasMore = true;
+      break;
+    }
     try {
       await retryOne(payment, result);
     } catch (error) {
@@ -185,7 +203,7 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
       extra: { failed: failedIds.length, sample: failedIds.slice(0, 10) },
     });
   }
-  await retryRefundsOwed(limit, now, result);
+  await retryRefundsOwed(limit, now, result, outOfTime);
   await reportAgedRefundsOwed(now, result);
   result.success = result.errors === 0;
   return result;
@@ -201,6 +219,7 @@ async function retryRefundsOwed(
   limit: number,
   now: Date,
   result: RetryAutoRefundsResult,
+  outOfTime: () => boolean,
 ): Promise<void> {
   const rows = await prisma.payment.findMany({
     where: {
@@ -224,6 +243,10 @@ async function retryRefundsOwed(
   let firstError: unknown;
   const failedIds: string[] = [];
   for (const marker of rows.flatMap((row) => markerFromRow(row) ?? [])) {
+    if (outOfTime()) {
+      result.hasMore = true;
+      break;
+    }
     const outcome = await driveRefundOwed(marker, { initiatedByUserId: null });
     const holdError = await startTrialHoldIfSettled(marker, outcome);
     if (holdError !== undefined) {
@@ -345,6 +368,23 @@ async function reportAgedRefundsOwed(
   });
 }
 
+/**
+ * The parked capture still owed back, clamped to the refundable balance; null
+ * when nothing was parked (the full balance is then the right call).
+ */
+async function parkedRefundPaise(
+  paymentId: string,
+): Promise<number | undefined> {
+  const parked = await parkedReceiptPaise(prisma, paymentId);
+  if (parked === null) return undefined;
+  const row = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: { amount: true, ...REFUNDABLE_BALANCE_SELECT },
+  });
+  const refundable = row ? refundableBalancePaise(Number(row.amount), row) : 0;
+  return Math.max(0, Math.min(parked, refundable));
+}
+
 async function retryOne(
   payment: {
     id: string;
@@ -382,13 +422,23 @@ async function retryOne(
 
   let settled = false;
   try {
-    const outcome = await refundBookingPayment({
-      paymentId: payment.id,
-      reason: "auto-refund retry: capture funds no booking",
-      initiatedByUserId: null,
-    });
-    result.refunded += 1;
-    settled = outcome?.status !== "PENDING";
+    const amountPaise = await parkedRefundPaise(payment.id);
+    if (amountPaise === 0) {
+      // Everything the gateway captured has already gone back.
+      result.settled += 1;
+      settled = true;
+    } else {
+      const outcome = await refundBookingPayment({
+        paymentId: payment.id,
+        // Only what the gateway actually captured can go back; a short
+        // capture is never retried for the ordered amount.
+        ...(amountPaise === undefined ? {} : { amountPaise }),
+        reason: "auto-refund retry: capture funds no booking",
+        initiatedByUserId: null,
+      });
+      result.refunded += 1;
+      settled = outcome?.status !== "PENDING";
+    }
   } catch (error) {
     if (
       error instanceof RefundValidationError &&

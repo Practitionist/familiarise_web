@@ -5,6 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import {
   cancelPreviewQueryKey,
   cancelPreviewUrl,
+  cancelRefusalFrom,
+  CancelRefusedError,
   shownQuoteBody,
 } from "@/lib/appointments/cancel-requote";
 import {
@@ -29,12 +31,14 @@ export const PLATFORM_CANCEL_REFUSAL_COPY: Readonly<Record<string, string>> = {
 function RefundLine({
   preview,
 }: Readonly<{
-  preview: { isPending: boolean; data?: CancelRefundPreview };
+  preview: { isPending: boolean; data?: CancelRefundPreview; error: unknown };
 }>) {
   if (preview.isPending)
     return (
       <p className="text-sm text-muted-foreground">Estimating the refund…</p>
     );
+  if (preview.error instanceof CancelRefusedError)
+    return <p className="text-sm text-destructive">{preview.error.message}</p>;
   const quote = preview.data;
   if (!quote)
     return (
@@ -83,7 +87,10 @@ export function PlatformCancelDoor({
       const res = await fetch(previewUrl, {
         signal: AbortSignal.timeout(8_000),
       });
-      if (!res.ok) throw new Error("Could not estimate the refund");
+      if (!res.ok) {
+        const refusal = cancelRefusalFrom(await res.json().catch(() => null));
+        throw refusal ?? new Error("Could not estimate the refund");
+      }
       const parsed = CancelRefundPreviewSchema.safeParse(await res.json());
       if (!parsed.success) throw new Error("Could not estimate the refund");
       return parsed.data;

@@ -3,12 +3,13 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import { PERSONAL_PLAN_HOST } from "@/lib/api/scope/parse";
 import {
   MAKEUP_WINDOW_DAYS,
   UNSETTLED_MISS,
   missedAt,
 } from "@/lib/booking/misses";
-import { readRequestsToAnswerCount } from "@/lib/data/requests-inbox";
+import { countRequestsToAnswer } from "@/lib/data/needs-you";
 
 /**
  * #1527 §7.2 — the consultant Home's "Needs you" strip: only what is blocked
@@ -37,14 +38,21 @@ export interface ConsultantNeedsYou {
 const DAY_MS = 86_400_000;
 const LIST_TAKE = 5;
 
-/** Personal (non-org) 1:1 and subscription bookings this consultant delivers. */
+/** 1:1 and subscription bookings on this consultant's plans no org hosts (sponsor-tagged included). */
 const personalOneToOne = (
   consultantProfileId: string,
 ): Prisma.AppointmentWhereInput => ({
-  organizationId: null,
   OR: [
-    { consultation: { consultationPlan: { consultantProfileId } } },
-    { subscription: { subscriptionPlan: { consultantProfileId } } },
+    {
+      consultation: {
+        consultationPlan: { consultantProfileId, ...PERSONAL_PLAN_HOST },
+      },
+    },
+    {
+      subscription: {
+        subscriptionPlan: { consultantProfileId, ...PERSONAL_PLAN_HOST },
+      },
+    },
   ],
 });
 
@@ -77,8 +85,7 @@ async function readOwedMakeUps(consultantProfileId: string, now: Date) {
     where: {
       ...UNSETTLED_MISS,
       appointment: {
-        organizationId: null,
-        class: { classPlan: { consultantProfileId } },
+        class: { classPlan: { consultantProfileId, ...PERSONAL_PLAN_HOST } },
       },
     },
     orderBy: { startsAt: "asc" },
@@ -133,9 +140,7 @@ export async function readConsultantNeedsYou(
   consultantProfileId: string,
   now: Date = new Date(),
 ): Promise<ConsultantNeedsYou> {
-  const requestsToAnswer = await readRequestsToAnswerCount({
-    consultantProfileId,
-  });
+  const requestsToAnswer = await countRequestsToAnswer({ consultantProfileId });
   const rescheduleReplies = await readRescheduleReplies(consultantProfileId);
   const owedMakeUps = await readOwedMakeUps(consultantProfileId, now);
   const documentsAwaitingReview = await prisma.appointmentDocument.count({

@@ -23,7 +23,10 @@ const makeTx = () => ({
   payment: {
     update: tracked("payment", "update"),
     updateMany: tracked("payment", "updateMany"),
+    findMany: async () => [],
+    count: async () => 0,
   },
+  consultation: { findUnique: async () => ({ status: "SCHEDULED" }) },
 });
 
 const appointmentRow = {
@@ -85,6 +88,8 @@ jest.mock("../../../utils/appointmentlock", () => ({
   AppointmentBusyError: class extends Error {},
   BookingLockUnavailableError: class extends Error {},
   withAppointmentLock: async (_id: string, fn: () => Promise<unknown>) => fn(),
+  withEventCheckoutLock: async (_key: unknown, fn: () => Promise<unknown>) =>
+    fn(),
 }));
 jest.mock("../../../lib/booking/participants", () => ({
   __esModule: true,
@@ -114,7 +119,10 @@ jest.mock("../../../lib/booking/reschedule-decline", () => ({
 }));
 jest.mock("../../../lib/booking/cancellation-scope", () => ({
   __esModule: true,
+  readCancelWindowState: async () => "BEFORE",
   resolveBookingRefundContext: async () => ({
+    windowState: "BEFORE",
+    alreadyRefundedPaise: 0,
     policy: {},
     hoursUntilNextSession: 100,
     slotsTotal: 1,

@@ -20,6 +20,12 @@ import {
   claimProgramAssignment,
   ProgramAssignmentOverlapError,
 } from "@/lib/api/organizations/program-helpers";
+import {
+  ASSIGNEE_SELECT,
+  checkAssignee,
+  SPONSOR_SEAT_MESSAGES,
+  type AssigneeRefusal,
+} from "@/lib/api/organizations/sponsor-seat";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -130,25 +136,16 @@ async function assignSingleMembershipInTx(
 ) {
   const { orgId, orgName, programId, programName, singleMembershipId, body } =
     args;
-  const membership = await tx.membership.findFirst({
-    where: { id: singleMembershipId, organizationId: orgId },
-    select: { id: true, status: true, userId: true },
-  });
-  if (!membership) {
-    return {
-      ok: false as const,
-      code: "FOREIGN" as const,
-      membershipId: singleMembershipId,
-    };
-  }
-  if (membership.status !== "ACTIVE") {
-    return {
-      ok: false as const,
-      code: "INACTIVE" as const,
-      status: membership.status,
-      membershipId: singleMembershipId,
-    };
-  }
+  const checked = checkAssignee(
+    await tx.membership.findFirst({
+      where: { id: singleMembershipId, organizationId: orgId },
+      select: ASSIGNEE_SELECT,
+    }),
+    singleMembershipId,
+    args.actorMembershipId,
+  );
+  if (!checked.ok) return checked;
+  const { membership } = checked;
 
   const { assignment, created } = await claimProgramAssignment(tx, {
     programId,
@@ -237,26 +234,16 @@ async function assignBulkMembershipsInTx(
   const { orgId, programId, targetMembershipIds, body } = args;
   const foundMemberships = await tx.membership.findMany({
     where: { id: { in: targetMembershipIds }, organizationId: orgId },
-    select: { id: true, status: true, userId: true },
+    select: ASSIGNEE_SELECT,
   });
   const membershipById = new Map(foundMemberships.map((m) => [m.id, m]));
   for (const targetMembershipId of targetMembershipIds) {
-    const membership = membershipById.get(targetMembershipId);
-    if (!membership) {
-      return {
-        ok: false as const,
-        code: "FOREIGN" as const,
-        membershipId: targetMembershipId,
-      };
-    }
-    if (membership.status !== "ACTIVE") {
-      return {
-        ok: false as const,
-        code: "INACTIVE" as const,
-        status: membership.status,
-        membershipId: targetMembershipId,
-      };
-    }
+    const checked = checkAssignee(
+      membershipById.get(targetMembershipId) ?? null,
+      targetMembershipId,
+      args.actorMembershipId,
+    );
+    if (!checked.ok) return checked;
   }
 
   const overlapping = await tx.programAssignment.findFirst({
@@ -376,14 +363,32 @@ async function assignBulkMembershipsInTx(
 }
 
 function buildAssignmentErrorResponse(
-  outcome:
-    | { ok: false; code: "FOREIGN"; membershipId: string }
-    | { ok: false; code: "INACTIVE"; status: string; membershipId: string },
+  outcome: AssigneeRefusal,
   includeMembershipId: boolean,
 ): NextResponse {
   const extraMember = includeMembershipId
     ? { membershipId: outcome.membershipId }
     : {};
+  if (outcome.code === "SELF") {
+    return NextResponse.json(
+      {
+        error: SPONSOR_SEAT_MESSAGES.SELF,
+        code: "SPONSOR_SELF",
+        ...extraMember,
+      },
+      { status: 409 },
+    );
+  }
+  if (outcome.code === "ROLE") {
+    return NextResponse.json(
+      {
+        error: SPONSOR_SEAT_MESSAGES.ROLE,
+        code: "SPONSOR_SEAT_ROLE",
+        ...extraMember,
+      },
+      { status: 409 },
+    );
+  }
   if (outcome.code === "FOREIGN") {
     return NextResponse.json(
       {

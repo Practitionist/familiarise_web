@@ -13,6 +13,7 @@ import type {
 import type { TAppointment } from "@/types/appointment";
 import { detailEntitlement } from "./presentation-input";
 import { deriveBucket } from "./bucket";
+import { normalizeOccurrences } from "./normalize";
 import {
   REJOIN_GRACE_MS,
   getAnchorTime,
@@ -169,7 +170,9 @@ export function mapAppointmentDetail(
 
   const rawOccurrences: OccurrenceLike[] = all
     .flatMap((a) =>
-      a.occurrences.map((slot) => ({ ...slot }) as OccurrenceLike),
+      normalizeOccurrences(a.occurrences).map(
+        (slot) => ({ ...slot }) as OccurrenceLike,
+      ),
     )
     .filter((slot) => {
       if (isDeadOccurrence(slot)) return false;

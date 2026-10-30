@@ -15,7 +15,7 @@ jest.mock("../../app/checkout/plans/utils", () => ({
   busyRetryToast: jest.fn(),
   checkoutNeedsGateway: () => true,
   fetchCheckoutWithBusyRetry: (call: () => Promise<unknown>) => call(),
-  mintClientIdempotencyKey: () => "idem_1",
+  useCheckoutAttemptKey: () => () => "idem_1",
   reportPaymentsError: jest.fn(),
 }));
 jest.mock("../../lib/auth-client", () => ({

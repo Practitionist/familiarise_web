@@ -68,7 +68,8 @@ describe("the org-funded rail tuple", () => {
     const fromPredicate = ["WALLET", "INVOICE", "LICENSE"].filter(
       isOrgFundedPaymentMethod,
     );
-    expect(listWhereClause()).toMatchObject({
+    const where = listWhereClause() as { OR: unknown[] };
+    expect(where.OR[0]).toMatchObject({
       OR: expect.arrayContaining([
         {
           payment: {

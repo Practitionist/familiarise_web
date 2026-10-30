@@ -2,12 +2,16 @@
 
 import type { BookingMode } from "@prisma/client";
 import { ClockIcon } from "lucide-react";
+import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/interval-status-tokens";
 import { cn } from "@/utils/tailwind";
+import {
+  sameWindow,
+  type SlotWithStatus,
+} from "@/lib/scheduling/booking-windows";
 import {
   partitionSlotsForList,
   slotNeedsRequest,
   takenTimesLine,
-  type SlotWithStatus,
 } from "./slot-list-policy";
 
 interface SlotListProps {
@@ -15,39 +19,75 @@ interface SlotListProps {
   selectedSlot: SlotWithStatus | null;
   onSelect: (slot: SlotWithStatus) => void;
   bookingMode: BookingMode;
+  /** The pick the latest read took away, shown struck through for one render. */
+  justTaken?: SlotWithStatus | null;
 }
+
+const JUST_TAKEN = SLOT_STATUS_TOKENS.justTaken;
 
 /**
  * The booking dialog's list of times (#1785 L-3), in the quiet-monochrome
  * system: every bookable time is the same neutral pill, the selected one is
  * filled white, and a time the expert must confirm carries a "Request" tag
- * instead of a colour. Taken and past times are not rendered.
+ * instead of a colour. Taken and past times are not rendered, except the
+ * buyer's own pick in the one render it is shown "Just taken".
  */
 export function SlotList({
   slots,
   selectedSlot,
   onSelect,
   bookingMode,
+  justTaken = null,
 }: Readonly<SlotListProps>) {
   const { bookable, takenCount } = partitionSlotsForList(slots);
   const takenLine = takenTimesLine(takenCount);
+  const rows = justTaken
+    ? [...bookable.filter((slot) => !sameWindow(slot, justTaken)), justTaken]
+        .slice()
+        .sort(
+          (a, b) =>
+            new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+        )
+    : bookable;
 
-  if (bookable.length === 0) {
+  if (rows.length === 0) {
     return (
       <p className="py-4 text-center text-sm text-zinc-500">
         {takenLine
           ? `${takenLine}. Pick another day.`
-          : "No available slots for the selected date."}
+          : "No times are free on this day. Pick another day."}
       </p>
     );
   }
 
   return (
     <>
-      {bookable.map((slot) => {
+      {rows.map((slot) => {
+        if (justTaken && slot === justTaken) {
+          return (
+            <div
+              key={`just-taken-${slot.startsAt}`}
+              aria-label={`${slot.localStartTime} to ${slot.localEndTime}, just taken`}
+              data-just-taken="true"
+              className={cn(
+                "w-full rounded-xl border p-4 text-left text-base font-medium",
+                JUST_TAKEN.className,
+              )}
+            >
+              <span className="flex items-center gap-3">
+                <ClockIcon className="h-5 w-5 opacity-70" aria-hidden="true" />
+                <span className="flex-1">
+                  {slot.localStartTime} - {slot.localEndTime}
+                </span>
+                <span className="text-[11px] font-medium uppercase tracking-wide no-underline">
+                  {JUST_TAKEN.label}
+                </span>
+              </span>
+            </div>
+          );
+        }
         const isSelected =
-          selectedSlot?.slotId === slot.slotId &&
-          selectedSlot?.localStartTime === slot.localStartTime;
+          selectedSlot !== null && sameWindow(selectedSlot, slot);
         const needsRequest = slotNeedsRequest(bookingMode, slot);
         return (
           <button

@@ -126,9 +126,11 @@ describe("buildRescheduleSubject event context", () => {
   it("returns null when there is no consultant to draw a grid for", () => {
     const detail = consultationDetail({ consultantProfileId: "" });
     // Empty consultant id → falsy → null
-    (detail.appointment.consultation!.consultationPlan!.consultantProfile as {
-      id: string;
-    }).id = "";
+    (
+      detail.appointment.consultation!.consultationPlan!.consultantProfile as {
+        id: string;
+      }
+    ).id = "";
     expect(buildRescheduleSubject(detail)).toBeNull();
   });
 });

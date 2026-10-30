@@ -7,7 +7,9 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
-  withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) => fn()),
+  withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) =>
+    fn(),
+  ),
   CronLockHeldError: class CronLockHeldError extends Error {},
   CronLockUnavailableError: class CronLockUnavailableError extends Error {},
   LONG_JOB_TTL_MS: 35 * 60 * 1000,
@@ -48,9 +50,7 @@ jest.mock("../../lib/prisma", () => ({
     systemEvent: {
       findFirst: (...a: unknown[]) => mockSystemEventFindFirst(...a),
     },
-    $transaction: jest.fn((fn: (tx: unknown) => unknown) =>
-      fn({}),
-    ),
+    $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn({})),
   },
 }));
 jest.mock("../../lib/payments/webhooks/handlers", () => ({
@@ -98,16 +98,16 @@ beforeEach(() => {
 
 describe("orphan auto-heal", () => {
   it("collapses a double-fire to a single link win", async () => {
-    mockPaymentFindMany.mockImplementation((args: {
-      where?: { createdAt?: { lt?: Date } };
-    }) => {
-      // Main cohort only; escrow cohort is empty.
-      if (args.where?.createdAt && "lt" in (args.where.createdAt ?? {})) {
-        const lt = (args.where.createdAt as { lt?: Date }).lt;
-        if (lt && Date.now() - lt.getTime() > 24 * 3_600_000) return [];
-      }
-      return [orphan()];
-    });
+    mockPaymentFindMany.mockImplementation(
+      (args: { where?: { createdAt?: { lt?: Date } } }) => {
+        // Main cohort only; escrow cohort is empty.
+        if (args.where?.createdAt && "lt" in (args.where.createdAt ?? {})) {
+          const lt = (args.where.createdAt as { lt?: Date }).lt;
+          if (lt && Date.now() - lt.getTime() > 24 * 3_600_000) return [];
+        }
+        return [orphan()];
+      },
+    );
     mockAppointmentFindMany.mockResolvedValue([{ id: "appt_1" }]);
     let claims = 0;
     mockPaymentUpdateMany.mockImplementation(async () => {
@@ -126,15 +126,14 @@ describe("orphan auto-heal", () => {
   });
 
   it("refunds an unlinkable orphan once under a deterministic key", async () => {
-    mockPaymentFindMany.mockImplementation((args: {
-      where?: { createdAt?: unknown };
-    }) =>
-      args.where?.createdAt &&
-      typeof args.where.createdAt === "object" &&
-      "lt" in (args.where.createdAt as object) &&
-      !("gte" in (args.where.createdAt as object))
-        ? []
-        : [orphan()],
+    mockPaymentFindMany.mockImplementation(
+      (args: { where?: { createdAt?: unknown } }) =>
+        args.where?.createdAt &&
+        typeof args.where.createdAt === "object" &&
+        "lt" in (args.where.createdAt as object) &&
+        !("gte" in (args.where.createdAt as object))
+          ? []
+          : [orphan()],
     );
     mockAppointmentFindMany.mockResolvedValue([]);
 
@@ -173,15 +172,14 @@ describe("orphan auto-heal", () => {
   it.each([["free_abc123"], ["org_wallet_abc123"]])(
     "never calls the gateway for %s intents",
     async (intent) => {
-      mockPaymentFindMany.mockImplementation((args: {
-        where?: { createdAt?: unknown };
-      }) =>
-        args.where?.createdAt &&
-        typeof args.where.createdAt === "object" &&
-        "lt" in (args.where.createdAt as object) &&
-        !("gte" in (args.where.createdAt as object))
-          ? []
-          : [orphan({ paymentIntent: intent })],
+      mockPaymentFindMany.mockImplementation(
+        (args: { where?: { createdAt?: unknown } }) =>
+          args.where?.createdAt &&
+          typeof args.where.createdAt === "object" &&
+          "lt" in (args.where.createdAt as object) &&
+          !("gte" in (args.where.createdAt as object))
+            ? []
+            : [orphan({ paymentIntent: intent })],
       );
       mockAppointmentFindMany.mockResolvedValue([]);
 
@@ -194,15 +192,14 @@ describe("orphan auto-heal", () => {
   );
 
   it("skips rows owned by the top-up reconciler", async () => {
-    mockPaymentFindMany.mockImplementation((args: {
-      where?: { createdAt?: unknown };
-    }) =>
-      args.where?.createdAt &&
-      typeof args.where.createdAt === "object" &&
-      "lt" in (args.where.createdAt as object) &&
-      !("gte" in (args.where.createdAt as object))
-        ? []
-        : [orphan()],
+    mockPaymentFindMany.mockImplementation(
+      (args: { where?: { createdAt?: unknown } }) =>
+        args.where?.createdAt &&
+        typeof args.where.createdAt === "object" &&
+        "lt" in (args.where.createdAt as object) &&
+        !("gte" in (args.where.createdAt as object))
+          ? []
+          : [orphan()],
     );
     mockWalletTopUpFindUnique.mockResolvedValue({ id: "topup_1" });
     mockAppointmentFindMany.mockResolvedValue([{ id: "appt_1" }]);
@@ -219,13 +216,13 @@ describe("orphan auto-heal", () => {
       id: "pay_stale_1",
       createdAt: new Date(Date.now() - 10 * 24 * 3_600_000),
     });
-    mockPaymentFindMany.mockImplementation((args: {
-      where?: { createdAt?: { gte?: Date; lt?: Date } };
-    }) => {
-      const range = args.where?.createdAt;
-      if (range && "gte" in range) return [];
-      return [stale];
-    });
+    mockPaymentFindMany.mockImplementation(
+      (args: { where?: { createdAt?: { gte?: Date; lt?: Date } } }) => {
+        const range = args.where?.createdAt;
+        if (range && "gte" in range) return [];
+        return [stale];
+      },
+    );
 
     const first = await reconcileOrphanedPayments({ limit: 10 });
     expect(first.escrowed).toBe(1);

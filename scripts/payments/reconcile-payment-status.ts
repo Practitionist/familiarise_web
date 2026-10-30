@@ -33,6 +33,7 @@ import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { retireOrphanPendingPayment } from "./cleanup-abandoned-payments";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 import {
   recordSystemErrorSafe,
   recordSystemEvent,
@@ -604,6 +605,9 @@ async function reconcilePaymentStatusUnlocked(
               mappedStatus === PaymentStatus.EXPIRED)
           ) {
             await reverseCreditsForPayment(payment.id, tx);
+            if (payment.paymentStatus === PaymentStatus.PENDING) {
+              await returnDiscountUse(tx, payment.id);
+            }
           }
           return res;
         });

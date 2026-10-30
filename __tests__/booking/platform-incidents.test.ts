@@ -46,6 +46,20 @@ jest.mock("../../lib/booking/class-sessions", () => ({
 const stampRefundOwed = jest.fn();
 const driveRefundOwed = jest.fn();
 jest.mock("../../lib/payments/operations/refund-owed", () => ({
+  REFUND_OWED_SELECT: { id: true, refundOwedKey: true, refundOwedPaise: true },
+  markerFromRow: (row: {
+    id: string;
+    refundOwedKey: string | null;
+    refundOwedPaise: number | null;
+  }) =>
+    row.refundOwedKey
+      ? {
+          paymentId: row.id,
+          amountPaise: row.refundOwedPaise,
+          key: row.refundOwedKey,
+          reason: "refund owed",
+        }
+      : null,
   stampRefundOwed: (...a: unknown[]) => stampRefundOwed(...a),
   driveRefundOwed: (...a: unknown[]) => driveRefundOwed(...a),
 }));
@@ -229,6 +243,8 @@ function occ(
       classId: null,
       webinarId: null,
       trial: null,
+      subscription: null,
+      class: null,
       participants: [{ userId: "u1", paymentId: "pay-1", createdAt: at(-60) }],
       payment: [{ id: "pay-1", userId: "u1" }],
       ...appointment,

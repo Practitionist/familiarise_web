@@ -7,7 +7,7 @@
 type MaybePgError = {
   code?: unknown;
   name?: unknown;
-  cause?: { originalCode?: unknown };
+  cause?: { originalCode?: unknown; kind?: unknown };
   meta?: {
     code?: unknown;
     driverAdapterError?: { cause?: { originalCode?: unknown } };
@@ -59,6 +59,25 @@ export function isExclusionViolation(error: unknown): boolean {
 export function isDeadlock(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   return sqlState(error) === "40P01" || message(error).includes("40P01");
+}
+
+/**
+ * Postgres rolled the transaction back on a write conflict (40001, or 40P01
+ * once adapter-pg maps it), so replaying it is safe. A statement inside the
+ * transaction surfaces it as P2034; a conflict raised at COMMIT escapes as
+ * the raw DriverAdapterError of kind `TransactionWriteConflict`, unmapped.
+ */
+export function isWriteConflict(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as MaybePgError;
+  if (e.code === "P2034") return true;
+  if (
+    e.name === "DriverAdapterError" &&
+    e.cause?.kind === "TransactionWriteConflict"
+  ) {
+    return true;
+  }
+  return sqlState(error) === "40001";
 }
 
 /**

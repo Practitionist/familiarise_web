@@ -7,19 +7,13 @@ import { OpsRefusal } from "./ops-refusal-error";
  * The host-only check lives in the HTTP shell (class-session-route.ts), so the
  * console calls the lib functions directly, with the operator as the actor.
  */
-export async function hostedForClass(classId: string, operatorUserId: string) {
+export async function hostedForClass(classId: string) {
   const cls = await prisma.class.findUnique({
     where: { id: classId },
     select: { appointment: { select: { id: true } } },
   });
   const appointmentId = cls?.appointment?.id;
-  const hosted = appointmentId
-    ? await readHostedClass(appointmentId, {
-        userId: operatorUserId,
-        consultantProfileId: null,
-        isPrivileged: true,
-      })
-    : null;
+  const hosted = appointmentId ? await readHostedClass(appointmentId) : null;
   if (!hosted?.found) {
     throw new OpsRefusal("CLASS_NOT_FOUND", "Class not found.", 404);
   }

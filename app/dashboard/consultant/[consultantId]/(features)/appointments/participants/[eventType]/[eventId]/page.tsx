@@ -26,6 +26,7 @@ import * as Sentry from "@sentry/nextjs";
 import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { useState } from "react";
+import { z } from "zod";
 import { ArrowLeft } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { TableSkeleton } from "@/components/dashboard/DashboardSkeletons";
@@ -123,6 +124,16 @@ const fetchParticipants = async (
   return response.json();
 };
 
+/** A removal the server refused with nothing changed; its sentence is for the host. */
+class RemovalRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RemovalRefusedError";
+  }
+}
+
+const refusalBody = z.object({ error: z.string().min(1) });
+
 const removeParticipant = async ({
   apiSegment,
   eventId,
@@ -136,6 +147,11 @@ const removeParticipant = async ({
     `/api/participants/${apiSegment}/${eventId}?userId=${userId}`,
     { method: "DELETE" },
   );
+  // A 4xx with a sentence is a refusal: the server changed nothing.
+  if (response.status >= 400 && response.status < 500) {
+    const body = refusalBody.safeParse(await response.json().catch(() => null));
+    if (body.success) throw new RemovalRefusedError(body.data.error);
+  }
   if (!response.ok) throw new Error("Failed to remove participant");
   // Only the class and webinar handlers are reachable (EVENT_KINDS admits no
   // others) and both answer JSON — a refund summary since #1003. Both also
@@ -205,6 +221,15 @@ export default function EventParticipantsPage() {
       toast({ title: "Participant removed", description });
     },
     onError: (err, variables) => {
+      // A refusal committed nothing: say why, and keep them listed.
+      if (err instanceof RemovalRefusedError) {
+        toast({
+          title: "Couldn't remove them yet",
+          description: err.message,
+          variant: "destructive",
+        });
+        return;
+      }
       Sentry.captureException(
         err instanceof Error ? err : new Error(String(err)),
         { tags: { subsystem: "client" } },

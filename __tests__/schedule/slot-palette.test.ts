@@ -44,32 +44,32 @@ const colourUtilities = (value: string, prefix: string) =>
 describe("slot palette — cells and legend render the same colours", () => {
   it.each(KEYS)("%s: the cell and its legend swatch share one fill", (key) => {
     const token = SLOT_STATUS_TOKENS[key];
+    const swatch = colourUtilities(token.swatchClassName, "bg-");
 
-    expect(colourUtilities(slotCellClassName(key), "bg-")).toEqual([
-      token.fill,
-    ]);
-    expect(colourUtilities(token.swatchClassName, "bg-")).toEqual([token.fill]);
+    expect(swatch).toContain(token.fill);
+    expect(colourUtilities(slotCellClassName(key), "bg-")).toEqual(swatch);
   });
 
   it.each(KEYS)(
     "%s: the cell and its legend swatch share one border",
     (key) => {
       const token = SLOT_STATUS_TOKENS[key];
+      const borderColour = (value: string) =>
+        colourUtilities(value, "border-").filter(
+          (name) => !/^border-\d$/.test(name),
+        );
 
-      expect(colourUtilities(slotCellClassName(key), "border-")).toEqual([
-        token.border,
-      ]);
-      expect(colourUtilities(token.swatchClassName, "border-")).toEqual([
-        token.border,
-      ]);
+      expect(borderColour(slotCellClassName(key))).toEqual([token.border]);
+      expect(borderColour(token.swatchClassName)).toEqual([token.border]);
     },
   );
 
-  it("no two states are painted the same colour", () => {
-    const fills = CONSULTANT_LEGEND_KEYS.map(
-      (key) => SLOT_STATUS_TOKENS[key].fill,
-    );
-    expect(new Set(fills).size).toBe(fills.length);
+  it("no two states are painted the same way", () => {
+    const paints = CONSULTANT_LEGEND_KEYS.map((key) => {
+      const token = SLOT_STATUS_TOKENS[key];
+      return `${token.fill}|${token.pattern ?? ""}|${token.icon ?? ""}`;
+    });
+    expect(new Set(paints).size).toBe(paints.length);
   });
 });
 
@@ -179,13 +179,12 @@ describe("slot palette — the two amber states are told apart without a hue", (
     );
   });
 
-  it("past and outside-period are hatched at different angles, no new hue", () => {
-    expect(SLOT_STATUS_TOKENS.past.fill).toMatch(
-      /repeating-linear-gradient\(135deg/,
-    );
-    expect(SLOT_STATUS_TOKENS.outsidePeriod.fill).toMatch(
+  it("outside-period is hatched and past is faded, so the two never read alike", () => {
+    expect(SLOT_STATUS_TOKENS.outsidePeriod.pattern).toMatch(
       /repeating-linear-gradient\(45deg/,
     );
+    expect(classesOf(slotCellClassName("past"))).toContain("opacity-50");
+    expect(SLOT_STATUS_TOKENS.past.pattern).not.toMatch(/gradient/);
   });
 
   /**
@@ -236,6 +235,14 @@ describe("slot palette — the grid resolves states through the tokens", () => {
     ],
     ["unavailable" as const, { isOutsidePeriod: true }],
     ["unavailable" as const, {}],
+    ["justTaken" as const, { isSelected: true, isJustTaken: true }],
+    ["tooSoon" as const, { isAvailable: true, isTooSoon: true }],
+    ["limitReached" as const, { isAvailable: true, isLimitReached: true }],
+    [
+      "outsidePeriod" as const,
+      { isAvailable: true, isOutsidePeriod: true, isLimitReached: true },
+    ],
+    ["past" as const, { isAvailable: true, isInPast: true, isTooSoon: true }],
   ])("resolves to %s", (expected, overrides) => {
     expect(resolveSlotStatusKey({ ...flags, ...overrides })).toBe(expected);
   });

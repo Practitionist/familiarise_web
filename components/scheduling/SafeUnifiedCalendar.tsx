@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { UnifiedCalendarProps } from "./UnifiedCalendar";
 import CalendarErrorBoundary from "./CalendarErrorBoundary";
 import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
@@ -24,39 +24,31 @@ const UnifiedCalendar = dynamic(
 );
 
 /**
- * Mounts the legend alongside the calendar.
- *
- * The grid has always coloured cells in seven distinct states and never said
- * what any of them meant, so a consultant seeing a yellow cell had to guess
- * whether it was bookable. Putting the legend here rather than inside
- * UnifiedCalendar means every caller gets it and none can forget it.
- *
- * UnifiedCalendar itself is code-split here so TimePicker / allocate /
- * reschedule routes do not pay the calendar module on first paint of the
- * surrounding page chrome.
+ * Mounts the legend beside the calendar so no caller can forget it, keeps a
+ * crash inside an error boundary whose retry remounts the grid, and
+ * code-splits the calendar out of the surrounding page.
  */
 export function SafeUnifiedCalendar({
   className,
   legendPosition = "top",
   ...props
 }: UnifiedCalendarProps & {
-  /**
-   * Where the legend renders. Above the grid by default: a key you can only
-   * reach by scrolling past the thing it explains is backwards, and on a
-   * laptop it sat below the fold entirely (#1064). "bottom" renders it
-   * between the grid and the action footer instead — still on screen, since
-   * the footer is always visible — for surfaces that need the top space for
-   * the heatmap itself (allocate page).
-   */
+  /** "top" (default) above the grid; "bottom" between grid and footer. */
   legendPosition?: "top" | "bottom";
 }) {
-  // The states the grid painted this render; null until the first report so
-  // the legend shows the full set rather than nothing while loading. Counts
-  // ride the same report, so the legend annotates live per-state totals.
+  // Null until the first report, so the legend shows the full set while loading.
   const [painted, setPainted] = useState<{
     keys: ReadonlySet<SlotStatusKey> | null;
     counts?: ReadonlyMap<SlotStatusKey, number>;
   }>({ keys: null });
+  const [mountKey, setMountKey] = useState(0);
+  const handlePainted = useCallback(
+    (
+      keys: ReadonlySet<SlotStatusKey>,
+      counts?: ReadonlyMap<SlotStatusKey, number>,
+    ) => setPainted({ keys, counts }),
+    [],
+  );
   const order =
     (props.showConsultantLegend ?? props.mode === "allocate")
       ? CONSULTANT_LEGEND_KEYS
@@ -65,26 +57,19 @@ export function SafeUnifiedCalendar({
     <SlotStatusLegend
       keys={legendKeysFor(order, painted.keys)}
       counts={painted.counts}
+      showRequested={Boolean(props.requestedSlots?.length)}
       className="shrink-0"
     />
   );
   return (
-    <CalendarErrorBoundary>
-      {/* The caller's layout classes go on the WRAPPER, not the calendar: this
-          div is what their flex parent measures now, so leaving `min-h-0
-          flex-1` on the inner element sized a child of a plain block box and
-          the calendar stopped filling its dialog. */}
+    <CalendarErrorBoundary onRetry={() => setMountKey((key) => key + 1)}>
+      {/* Layout classes go on the wrapper: it is what the flex parent measures. */}
       <div className={cn("flex min-h-0 flex-col gap-3", className)}>
-        {/* Above the grid, not below: a key you can only reach by scrolling
-            past the thing it explains is backwards, and on a laptop it sat
-            below the fold entirely (#1064). Buyers have no use for "This
-            booking" / "Being moved"; consultants do on allocate AND on
-            reschedule-propose (select mode with event context). Prefer the
-            explicit prop; fall back to mode === "allocate". */}
         {legendPosition === "top" && legend}
         <UnifiedCalendar
+          key={mountKey}
           {...props}
-          onPaintedKeysChange={(keys, counts) => setPainted({ keys, counts })}
+          onPaintedKeysChange={handlePainted}
           className="min-h-0 flex-1"
           aboveActionsSlot={legendPosition === "bottom" ? legend : undefined}
         />

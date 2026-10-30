@@ -242,7 +242,7 @@ describe("an unsatisfiable preference still allocates", () => {
         { durationInHours: 5, schedulingTimezone: IST },
         { preferredTimeOfDay: "MORNING" },
       ),
-    ).rejects.toThrow(/No 10 consecutive slots available/);
+    ).rejects.toThrow(/No free time in the coming weeks/);
   });
 });
 
@@ -440,11 +440,13 @@ describe("a partly satisfiable day preference tops itself up", () => {
       ...weekdayRuns(UTC_MONDAY, 4), // weekdays exist throughout
     ]);
 
+    // A class: its calendar-week cap is what the two sweeps must both honour
+    // (a subscription's weekly limit is its rolling cycle window instead).
     const slots = await findAvailableSlots(
       consultant,
       4,
       1,
-      "subscription",
+      "class",
       recurringConfig(5),
       { preferredDays: "WEEKENDS" },
     );

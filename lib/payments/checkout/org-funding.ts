@@ -1,6 +1,10 @@
 // The org-funded gate ahead of the lock (org status, membership, consent, rail,
 // credit ceiling, programme assignment) and the invoice credit-limit check.
 
+import {
+  checkAssignee,
+  SPONSOR_SEAT_MESSAGES,
+} from "@/lib/api/organizations/sponsor-seat";
 import prisma, { type Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
@@ -245,6 +249,16 @@ export async function resolveOrgFunding(
     callerMembershipId = callerMembership.id;
     billingAccountId = org.billingAccount?.id ?? null;
     fundingSource = org.billingAccount?.fundingSource ?? "PERSONAL";
+    // Org money funds LEARNER memberships only, never an operator's own booking.
+    if (
+      fundingSource !== "PERSONAL" &&
+      !checkAssignee(callerMembership, callerMembership.id, null).ok
+    ) {
+      throw Object.assign(new Error(SPONSOR_SEAT_MESSAGES.ROLE), {
+        httpStatus: 409,
+        code: "SPONSOR_SEAT_ROLE",
+      });
+    }
 
     // Block personal referral credits on org-funded bookings.
     if (validatedData.useReferralCredits && fundingSource !== "PERSONAL") {

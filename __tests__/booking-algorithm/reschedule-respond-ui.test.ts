@@ -116,7 +116,7 @@ describe("#1163 — the consultant inbox answers proposals", () => {
   it("only a PENDING_REVIEW consultee-initiated proposal with times is answerable", () => {
     expect(inboxRow).toContain('p?.status !== "PENDING_REVIEW"');
     expect(inboxRow).toContain('p.initiatorRole !== "CONSULTEE"');
-    expect(inboxRow).toContain("t.round === p.round).length === 0");
+    expect(inboxRow).toContain("p.proposedTimes.length === 0");
   });
 
   it("decline is confirmed, covers subscriptions, and disables in flight", () => {
@@ -163,6 +163,8 @@ describe("#1766 — the Requests list row reads entitlement words", () => {
       occurrences: [],
       schedulingPeriodStartsAt: new Date("2026-03-02T00:00:00Z"),
       schedulingTimezone: "UTC",
+      // A plan end well ahead of the real clock: these rows are mid-plan.
+      planEndsAt: new Date("2099-01-01T00:00:00.000Z"),
     });
     expect(requestCountLine({ entitlement })).toBe("0 of 12 booked · pick 4");
     // The row renders through the helper, not an inline slot count.

@@ -25,6 +25,7 @@
  */
 
 import { useMemo, useState } from "react";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
@@ -82,6 +83,8 @@ interface AppointmentRow {
     id: string;
     user: { id: string; name: string | null; email: string } | null;
   }[];
+  /** Delivered by one of this org's owners (shown so finance can review it). */
+  relatedParty?: boolean;
 }
 
 interface AppointmentsResponse {
@@ -206,12 +209,19 @@ function columns(orgId: string): Column<AppointmentRow>[] {
       // full page for a participant, actions for the funding org's admins).
       header: "Plan / Title",
       accessor: (r) => (
-        <Link
-          href={`/dashboard/organization/${orgId}/appointments/${r.id}`}
-          className="font-medium underline-offset-2 hover:underline"
-        >
-          {getPlanTitle(r)}
-        </Link>
+        <>
+          <Link
+            href={`/dashboard/organization/${orgId}/appointments/${r.id}`}
+            className="font-medium underline-offset-2 hover:underline"
+          >
+            {getPlanTitle(r)}
+          </Link>
+          {r.relatedParty ? (
+            <span className="ml-2">
+              <StatusBadge label="Owner is the expert" tone="neutral" />
+            </span>
+          ) : null}
+        </>
       ),
     },
     { header: "Member", accessor: (r) => getMember(r) },
@@ -283,8 +293,11 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
       const res = await fetch(
         `/api/organizations/${orgId}/appointments?${sp.toString()}`,
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+      // A refusal carries the server's sentence; the table shows its own copy.
+      return (await requireJsonResponse(
+        res,
+        "Couldn't load appointments",
+      )) as AppointmentsResponse;
     },
   });
 

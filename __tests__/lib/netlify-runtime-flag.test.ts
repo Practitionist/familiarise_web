@@ -1,7 +1,7 @@
 /**
  * Netlify sets `NETLIFY=true` on the build machine only; functions see just
  * URL, SITE_NAME and SITE_ID at runtime. The runtime checks keyed on it (the
- * trusted client-IP header, the cron lease cap, the pool guard) therefore work
+ * cron lease cap, the pool guard) therefore work
  * only because next.config.mjs inlines it and each check reads it as a literal
  * `process.env.NETLIFY`, which is what the build replaces. Read as source: the
  * config wraps its export in withSentryConfig and cannot be imported here.
@@ -22,15 +22,9 @@ it("inlines NETLIFY into the server build when the build runs on Netlify", () =>
   );
 });
 
-it.each(["lib/request-ip.ts", "lib/cron/with-cron-lock.ts", "lib/prisma.ts"])(
+it.each(["lib/cron/with-cron-lock.ts", "lib/prisma.ts"])(
   "%s reads NETLIFY as a literal the build can replace",
   (file) => {
     expect(read(file)).toMatch(/process\.env\.NETLIFY\b/);
   },
 );
-
-it("request-ip defaults to the literal host markers, not the whole process.env", () => {
-  expect(read("lib/request-ip.ts")).not.toMatch(
-    /env:\s*RuntimeEnv\s*=\s*process\.env\b/,
-  );
-});

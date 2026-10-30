@@ -39,6 +39,7 @@ import {
   classSeriesLedgers,
   refundWholeEventPayments,
   stampWholeEventRefundsOwed,
+  type EventSeatPlan,
 } from "@/lib/payments/operations/event-refunds";
 import {
   CANCELLABLE_FROM,
@@ -53,7 +54,10 @@ import {
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { declineOpenReschedules } from "@/lib/booking/reschedule-decline";
-import { withAppointmentLock } from "@/utils/appointmentlock";
+import {
+  withAppointmentLock,
+  withEventCheckoutLock,
+} from "@/utils/appointmentlock";
 
 export interface BulkCancelSummary {
   engagementsCancelled: number;
@@ -621,15 +625,16 @@ async function cancelExclusiveEngagement(
 
 /**
  * The event's guarded status move plus the slot release, under the event
- * wrapper's appointment lock (#1846 SM-B14). Returns 0 when the CAS found
- * nothing to move — the event was already terminal.
+ * wrapper's appointment lock (#1846 SM-B14). Returns the seat plans the commit
+ * stamped, or null when the CAS found nothing to move — the event was already
+ * terminal.
  */
 async function casCancelGroupEvent(
   isWebinar: boolean,
   eventId: string,
   initiatedByUserId: string,
   ledgers: Awaited<ReturnType<typeof classSeriesLedgers>> | null,
-): Promise<number> {
+): Promise<ReadonlyMap<string, EventSeatPlan> | null> {
   const audit = { actorUserId: initiatedByUserId, reason: MODERATION_REASON };
   const eventScope = isWebinar ? { webinarId: eventId } : { classId: eventId };
   const eventWrapper = await prisma.appointment.findFirst({
@@ -656,11 +661,11 @@ async function casCancelGroupEvent(
           });
         }
       } catch (err) {
-        if (err instanceof IllegalTransitionError) return 0;
+        if (err instanceof IllegalTransitionError) return null;
         throw err;
       }
       // Every seat the ban refunds is stamped owed in the cancel commit.
-      await stampWholeEventRefundsOwed(tx, {
+      const plans = await stampWholeEventRefundsOwed(tx, {
         kind: isWebinar ? "webinar" : "class",
         eventId,
         reason: GROUP_EVENT_REFUND_REASON,
@@ -672,9 +677,15 @@ async function casCancelGroupEvent(
         new Date(),
         audit,
       );
-      return 1;
+      return plans;
     });
-  return eventWrapper ? withAppointmentLock(eventWrapper.id, cancel) : cancel();
+  // Event key first (event → appointment), so no seat checkout commits a HELD
+  // seat under the cancel's participant sweep.
+  return withEventCheckoutLock(
+    { appointmentType: isWebinar ? "WEBINAR" : "CLASS", eventId },
+    () =>
+      eventWrapper ? withAppointmentLock(eventWrapper.id, cancel) : cancel(),
+  );
 }
 
 /**
@@ -772,13 +783,13 @@ async function cancelGroupEvent(
     ? null
     : await readClassSeriesLedgers(eventId, ctx);
 
-  const moved = await casCancelGroupEvent(
+  const plans = await casCancelGroupEvent(
     isWebinar,
     eventId,
     ctx.initiatedByUserId,
     seriesLedgers,
   );
-  if (moved === 0) return;
+  if (!plans) return;
 
   ctx.summary.engagementsCancelled += 1;
 
@@ -797,7 +808,7 @@ async function cancelGroupEvent(
     eventId,
     GROUP_EVENT_REFUND_REASON,
     ctx.initiatedByUserId,
-    { ledgers: seriesLedgers ?? undefined },
+    { ledgers: seriesLedgers ?? undefined, plans },
   );
   ctx.summary.refundsIssued += eventRefund.refundsIssued;
   ctx.summary.refundedPaise += eventRefund.refundedPaise;

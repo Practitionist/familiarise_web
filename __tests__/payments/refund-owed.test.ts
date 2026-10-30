@@ -168,6 +168,12 @@ const mockDb = {
   },
   organizationEarnings: { updateMany: jest.fn(async () => ({ count: 0 })) },
   referralCreditUsage: { findMany: jest.fn(async () => []) },
+  // Every seated payment still holds a live seat.
+  appointmentParticipant: {
+    findMany: jest.fn(async () =>
+      [...mockRows.values()].map((r) => ({ userId: "u", paymentId: r.id })),
+    ),
+  },
   systemEvent: { findFirst: jest.fn(async () => null) },
   // The batched stamp: one statement whose values are [ids, keys, owed, reasons].
   $executeRaw: jest.fn(async (sql: { values: unknown[] }) => {

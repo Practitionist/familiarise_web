@@ -29,7 +29,10 @@ import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
 import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-replay";
 import { reconcileOrphanedConfirmations } from "@/scripts/payments/reconcile-orphaned-confirmations";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
-import { buildDeadHoldFilter } from "@/utils/scheduling-engine/occupancyPolicy";
+import {
+  buildDeadHoldFilter,
+  OCCUPYING_OCCURRENCE_WHERE,
+} from "@/utils/scheduling-engine/occupancyPolicy";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -144,8 +147,8 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
     const slotFindMany = jest.fn().mockResolvedValue([
       {
         id: "slot-1",
-        startsAt: new Date("2026-06-26T15:00:00Z"),
-        endsAt: new Date("2026-06-26T16:00:00Z"),
+        startsAt: new Date("2036-06-26T15:00:00Z"),
+        endsAt: new Date("2036-06-26T16:00:00Z"),
       },
     ]);
     const conflictFindFirst = jest
@@ -158,6 +161,7 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
       slotFindMany,
       conflictFindFirst,
       tx: {
+        consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
         appointmentParticipant: {
           createMany: jest.fn().mockResolvedValue({ count: 1 }),
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -182,6 +186,8 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
           findMany: slotFindMany,
           findFirst: conflictFindFirst,
           updateMany: slotUpdateMany,
+          // The hold release on a capture after the session started.
+          updateManyAndReturn: jest.fn().mockResolvedValue([]),
         },
         systemEvent: {
           findFirst: jest
@@ -201,6 +207,30 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
       } as never,
     };
   }
+
+  it("refuses to confirm a capture that lands after the first session started (late-capture refund)", async () => {
+    const m = mockTx({ conflict: false });
+    m.slotFindMany.mockResolvedValue([
+      {
+        id: "slot-1",
+        startsAt: new Date(Date.now() - 5 * 60_000),
+        endsAt: new Date(Date.now() + 55 * 60_000),
+      },
+    ]);
+    const result = await confirmExistingAppointment(m.tx, "appt-1", "booker");
+    expect(result).toEqual({
+      capturedAfterTerminal: true,
+      sessionStarted: true,
+    });
+    // Closing the request and releasing its hold is pinned on real
+    // Postgres (approval-pay-window.db.test.ts); here: nothing confirms.
+    expect(m.slotUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { isTentative: false } }),
+    );
+    expect(mockSystemError).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "PAYMENT" }),
+    );
+  });
 
   it("blocks confirmation (occurrences stay tentative) when an overlapping confirmed occurrence exists", async () => {
     const m = mockTx({ conflict: true });
@@ -310,7 +340,7 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
   // #1861 L1 — a capture on a lapsed hold also yields to a live foreign hold
   // (checkout step 1's predicate); only the widened query can see Bob's hold.
   it("blocks an expired-hold capture against a live foreign hold, and confirms it when the slot is free (#1861)", async () => {
-    const now = new Date("2026-06-26T14:40:00Z");
+    const now = new Date("2036-06-26T14:40:00Z");
     const bobsHold = async (args: { where: { OR?: unknown } }) =>
       args.where.OR ? { id: "slot-bob", appointmentId: "appt-bob" } : null;
 
@@ -327,10 +357,10 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
     });
     expect(lost.slotUpdateMany).not.toHaveBeenCalled();
     expect(lost.conflictFindFirst.mock.calls[0][0].where.OR).toEqual([
-      { isTentative: false },
+      { isTentative: false, ...OCCUPYING_OCCURRENCE_WHERE },
       {
         isTentative: true,
-        ...liveOccurrenceWhere,
+        ...OCCUPYING_OCCURRENCE_WHERE,
         appointmentId: { not: "appt-1" },
         appointment: { NOT: buildDeadHoldFilter(now) },
       },
@@ -353,6 +383,7 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
 describe("#855 — capturedAfterTerminal signal on a cancelled booking", () => {
   function mockTx(consultationStatus: string, casCount: number) {
     return {
+      consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
       // #1846 SM-B13 — the capture's consultation CAS now appends history.
       bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
       appointmentParticipant: {
@@ -375,8 +406,8 @@ describe("#855 — capturedAfterTerminal signal on a cancelled booking", () => {
         findMany: jest.fn().mockResolvedValue([
           {
             id: "slot-1",
-            startsAt: new Date("2026-06-26T15:00:00Z"),
-            endsAt: new Date("2026-06-26T16:00:00Z"),
+            startsAt: new Date("2036-06-26T15:00:00Z"),
+            endsAt: new Date("2036-06-26T16:00:00Z"),
           },
         ]),
         findFirst: jest.fn().mockResolvedValue(null), // no #827 overlap
@@ -428,8 +459,8 @@ describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
       appointmentId: "appt-1",
       isMockPayment: false,
     });
-    const res = await replayByIdempotencyKey("user-1", "ck_abc12345");
-    const body = await res!.json();
+    const res = await replayByIdempotencyKey("user-1", "ck_abc12345", "fp");
+    const body = await (res as Response).json();
     expect(body.reused).toBe(true);
     expect(body.orderId).toBe("order_original");
     // scoped to the caller — a guessed key can't read another user's payment
@@ -450,8 +481,8 @@ describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
       appointmentId: "appt-1",
       isMockPayment: false,
     });
-    const res = await replayByIdempotencyKey("user-1", "ck_abc12345");
-    const body = await res!.json();
+    const res = await replayByIdempotencyKey("user-1", "ck_abc12345", "fp");
+    const body = await (res as Response).json();
     expect(body.reused).toBe(true);
     expect(body.skipPayment).toBe(true);
   });
@@ -466,8 +497,8 @@ describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
       appointmentId: null,
       isMockPayment: false,
     });
-    const res = await replayByIdempotencyKey("user-1", "ck_abc12345");
-    expect(res!.status).toBe(409);
+    const res = await replayByIdempotencyKey("user-1", "ck_abc12345", "fp");
+    expect((res as Response).status).toBe(409);
   });
 
   it("409s a PENDING attempt on a gateway with no implementation", async () => {
@@ -480,14 +511,14 @@ describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
       appointmentId: null,
       isMockPayment: false,
     });
-    const res = await replayByIdempotencyKey("user-1", "ck_abc12345");
-    expect(res!.status).toBe(409);
+    const res = await replayByIdempotencyKey("user-1", "ck_abc12345", "fp");
+    expect((res as Response).status).toBe(409);
   });
 
   it("returns null for an unknown key (fresh attempt proceeds)", async () => {
     mockPaymentFindFirst.mockResolvedValue(null);
     await expect(
-      replayByIdempotencyKey("user-1", "ck_unknown"),
+      replayByIdempotencyKey("user-1", "ck_unknown", "fp"),
     ).resolves.toBeNull();
   });
 });

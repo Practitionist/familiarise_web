@@ -4,6 +4,7 @@
  * No React here so the copy can be pinned without mounting Radix.
  */
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
+import { CONFLICT_WITH } from "@/lib/booking/validate-conflict-view";
 
 export interface ValidationVerdictSource extends SlotConflictResult {
   outsidePeriod?: Array<{ slot: string }>;
@@ -13,9 +14,10 @@ export interface ValidationVerdictSource extends SlotConflictResult {
 export type SlotVerdict =
   | { kind: "checking" }
   | { kind: "free" }
-  /** `appointmentId` is set only when the viewer is the event's consultant (#1721). */
+  /** `appointmentId` is set only for the viewing consultant's own booking. */
   | { kind: "conflict"; existing: string; appointmentId?: string }
   | { kind: "outsideAvailability" }
+  | { kind: "tooSoon" }
   | { kind: "outsidePeriod" };
 
 /**
@@ -44,17 +46,23 @@ export function verdictFor(
       with: withWhom,
       appointmentId,
     } = conflict.existingAppointment;
-    // #1703 C8 — the event's own consultant is a party to the conflicting
-    // booking, so the server names it (#1721) and the dialog links it. Anyone
-    // else keeps the privacy-preserving label (ADR 20).
+    // A time, never a party: the event's consultant gets a link to their own
+    // booking, or hears that their client is busy; anyone else hears only
+    // that the time is booked.
     if (appointmentId) {
       return {
         kind: "conflict",
-        existing: `your ${type} with ${withWhom}`,
+        existing: `your ${type.toLowerCase()} at this time`,
         appointmentId,
       };
     }
-    return { kind: "conflict", existing: `${type} with another user` };
+    if (withWhom === CONFLICT_WITH.client) {
+      return { kind: "conflict", existing: "your client's other session" };
+    }
+    return { kind: "conflict", existing: "an existing booking" };
+  }
+  if ((result.tooSoon ?? []).some((o) => sameInstant(o.slot, slot))) {
+    return { kind: "tooSoon" };
   }
   if ((result.outsidePeriod ?? []).some((o) => sameInstant(o.slot, slot))) {
     return { kind: "outsidePeriod" };
@@ -82,6 +90,7 @@ export function summarizeVerdicts(verdicts: readonly SlotVerdict[]): string {
   const conflicts = count("conflict");
   const outsideHours = count("outsideAvailability");
   const outsidePeriod = count("outsidePeriod");
+  const tooSoon = count("tooSoon");
   if (conflicts > 0) {
     // "conflicts" is the verb: "1 conflicts with…" / "2 conflict with…".
     parts.push(
@@ -89,6 +98,7 @@ export function summarizeVerdicts(verdicts: readonly SlotVerdict[]): string {
     );
   }
   if (outsideHours > 0) parts.push(`${outsideHours} outside availability`);
+  if (tooSoon > 0) parts.push(`${tooSoon} too soon to book`);
   if (outsidePeriod > 0) {
     parts.push(`${outsidePeriod} outside the scheduling period`);
   }

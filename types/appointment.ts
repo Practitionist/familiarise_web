@@ -163,8 +163,6 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
             user: true;
           };
         };
-        // #997 Phase 3 — weekly-confirmed-call-count aggregate buckets by this
-        // column (ADR B9), read in app/api/scheduling/appointments/route.ts.
         schedulingTimezone: true;
       };
     };

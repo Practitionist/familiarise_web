@@ -1689,6 +1689,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         summarize: (r) => ({
           proposalsExpired: r.proposalsExpired,
           proposalsExpiredUnrestored: r.proposalsExpiredUnrestored,
+          hasMore: r.hasMore,
         }),
         items: (r) => ({ processed: r.proposalsExpired }),
         failureMessage: "Failed to expire reschedule proposals",
@@ -1721,6 +1722,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           stuck: r.stuck,
           errors: r.errors,
           owed: r.owed,
+          hasMore: r.hasMore,
         }),
         // A failed owed attempt answers 207 too; the summary's `failed` keeps it partial, not attention.
         needsAttention: (r) =>
@@ -1981,9 +1983,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         },
         summarize: (r) => ({
           scanned: r.scanned,
+          plansScanned: r.plansScanned,
+          plansWaiting: r.plansWaiting,
           stamped: r.stamped,
           refunded: r.refunded,
           errors: r.errors,
+          hasMore: r.hasMore,
+          checkpoint: r.checkpoint,
         }),
         failureMessage: "Failed to settle cancelled class sessions",
       }),
