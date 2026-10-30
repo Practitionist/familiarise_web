@@ -156,7 +156,7 @@ describe("dispute deadline alerts", () => {
     expect(stagedDisputeKeys()).toEqual(["dispute-due:soon:24"]);
   });
 
-  it("records one console finding per run with every dispute due within 12 h or past due, not a Sentry page", async () => {
+  it("pages one Sentry warning per run with every dispute due within 12 h or past due, each dispute once", async () => {
     seedDisputes([
       dispute("due-10h", 10),
       dispute("past-2h", -2),
@@ -169,11 +169,15 @@ describe("dispute deadline alerts", () => {
     expect(mockReportStandingFinding).toHaveBeenCalledTimes(1);
     const [args] = mockReportStandingFinding.mock.calls[0] as [
       { key: string; ids: string[] },
-      () => void,
+      (() => void) | undefined,
     ];
     expect(args.key).toBe("dispute-deadline:critical");
     expect([...args.ids].sort()).toEqual(["due-10h", "past-2h"]);
-    expect(mockReportSentryMessage).not.toHaveBeenCalled();
+    expect(args).toMatchObject({ windowMs: 7 * 24 * 60 * 60 * 1000 });
+    expect(mockReportSentryMessage).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ level: "warning" }),
+    );
     expect(stagedDisputeKeys()).toHaveLength(4);
   });
 

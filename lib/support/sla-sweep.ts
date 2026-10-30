@@ -10,7 +10,10 @@ import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
 import { DEFAULT_FROM_ADDRESS, deliver, EMAIL_BUDGET_MS } from "@/lib/email";
-import { reportSentryError } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { slaStateOf } from "./sla";
 import {
@@ -36,6 +39,7 @@ const AUTO_CLOSE_START_BUDGET_MS = 16_000;
 const AUTO_CLOSE_HOLD_SAMPLE_LIMIT = 10;
 const DISPUTE_HORIZON_MS = 72 * HOUR_MS;
 const DISPUTE_CRITICAL_MS = 12 * HOUR_MS;
+const DISPUTE_PAGE_WINDOW_MS = 7 * 24 * HOUR_MS;
 // Past due by more than a day, earlier sweeps already fired both windows; the bound keeps those rows from filling the batch.
 const DISPUTE_LOOKBACK_MS = DAY_MS;
 // Open disputes due within the four-day window; far above any real backlog, it only bounds the read.
@@ -704,7 +708,10 @@ async function autoCloseResolvedRows(
   return result;
 }
 
-/** One console finding per run for disputes due within 12 h or past due; the bells and emails above reach the admins. */
+/**
+ * A money exception: one Sentry warning per run that holds a dispute not paged
+ * before. The window outlives the sweep's 36 h critical span, so each dispute pages once.
+ */
 async function pageCriticalDisputeDeadlines(
   now: Date,
   disputes: { id: string; disputeId: string; dueBy: Date | null }[],
@@ -714,12 +721,30 @@ async function pageCriticalDisputeDeadlines(
     (d) => d.dueBy && d.dueBy.getTime() - now.getTime() <= DISPUTE_CRITICAL_MS,
   );
   if (critical.length === 0) return;
+  const message = `${critical.length} dispute(s) due within 12 h or past due with no response`;
   try {
-    await reportStandingFinding({
-      key: "dispute-deadline:critical",
-      ids: critical.map((d) => d.id),
-      message: `${critical.length} dispute(s) due within 12 h or past due with no response`,
-    });
+    await reportStandingFinding(
+      {
+        key: "dispute-deadline:critical",
+        ids: critical.map((d) => d.id),
+        message,
+        windowMs: DISPUTE_PAGE_WINDOW_MS,
+      },
+      () =>
+        reportSentryMessage(message, {
+          subsystem: "payments",
+          op: "dispute-deadline-critical",
+          level: "warning",
+          fingerprint: ["payments", "dispute-deadline-critical"],
+          extra: {
+            disputes: critical.map((d) => ({
+              id: d.id,
+              disputeId: d.disputeId,
+              dueBy: d.dueBy?.toISOString(),
+            })),
+          },
+        }),
+    );
   } catch (err) {
     errors.push(
       `dispute-deadline critical page: ${err instanceof Error ? err.message : String(err)}`,
