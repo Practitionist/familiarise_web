@@ -37,7 +37,7 @@ The full reasoning for each rule is in `references/sentry.md` and `references/jo
 - **Unset token is off; empty token is broken on.** Gate token paths on presence, not truthiness.
 - **The SDK is not on `window`.** Attach a listener from a `<script>` in the page's main world, because a DevTools evaluation runs in an isolated world and looks identical to "Sentry is not initialised".
 - **A 2xx is not acceptance, and acceptance is not queryability.** Read `x-sentry-rate-limits`; a working session or transaction stream is no evidence that errors are taken.
-- **The canary spends no error quota.** It reads `stats_v2` once a day with `SENTRY_STATS_TOKEN` (an Internal Integration token (Organization: Read)) and pages by email and an error-level Better Stack line on a `rate_limited` outcome, a `usage_exceeded` / `error_usage_exceeded` reason, or a failed read. An unset token is a config skip.
+- **The canary spends no error quota.** It reads `stats_v2` once a day with `SENTRY_STATS_TOKEN` (an Internal Integration token (Organization: Read)) and pages by email, plus an error-level Better Stack line when `ENABLE_BETTERSTACK_TELEMETRY=true` and the source token and ingest URL are set, on a `rate_limited` outcome, a `usage_exceeded` / `error_usage_exceeded` reason, or a failed read. An unset token is a config skip.
 - **A check that reports its own failure through the failing system is not a check.**
 - **Modelled refusals are warnings.** A `BUSINESS_ERROR_CODES` code is `expected: true`, re-levelled by `beforeSend`, and never an error event.
 - **A repetition is throttled; a set is aggregated.** Never aggregate a repetition, and remember that a shared `fingerprint` groups events without saving any.

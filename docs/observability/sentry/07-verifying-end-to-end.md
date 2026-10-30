@@ -22,6 +22,8 @@ The trap in rung 3 is that it is genuinely good evidence and feels final. Readin
 
 Verify against a **Netlify deploy preview**, not `next dev`. A local dev server is not a representative environment for this: dev builds skip the Sentry upload path, the release is a dirty working tree rather than a commit SHA, and the traffic would land in the production project where a real person might see a synthetic test error attributed to nobody in particular. The preview is a real build of a real commit, so `release` and `branch` are meaningful and the events are separable from production by the `environment` tag.
 
+**A deploy preview sends no error events.** `beforeSend` drops every event when `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is `preview` (`isPreviewDeploy`), before transport, so on a preview no error envelope leaves the browser or the function and only the drop itself can be shown. Run the rungs that need an event on a deploy whose environment is not `preview`, which today means production after release.
+
 The trade-off is that a preview cannot see a local `.env`, so anything the test needs must be on the Netlify context. In practice the seeded test accounts are the hard part — see the recipe below.
 
 ## The procedure
