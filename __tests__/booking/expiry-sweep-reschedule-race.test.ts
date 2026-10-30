@@ -31,7 +31,7 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 
 jest.mock("../../lib/prisma", () => {
   const { bookingExpiryPrismaModels } = jest.requireActual(
-    "../helpers/booking-expiry-test-doubles",
+    "../fixtures/booking-expiry-test-doubles",
   );
   const db: Record<string, unknown> = {
     ...bookingExpiryPrismaModels(),
