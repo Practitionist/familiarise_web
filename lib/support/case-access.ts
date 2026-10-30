@@ -1,12 +1,17 @@
 import type {
+  Prisma,
   SupportCaseOwnership,
   SupportCaseStatus,
+  SupportIssueType,
   UserRole,
 } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
-import { SubjectResolver } from "./evidence-parties";
+import {
+  deliveringPartiesByAppointment,
+  presenterAppointmentWhere,
+} from "./evidence-parties";
 
 /**
  * Personal-case categories that complain about an organization or its people,
@@ -23,6 +28,78 @@ export const ORG_SENSITIVE_PERSONAL_CATEGORIES = [
   "SESSION_QUALITY_POOR",
   "WRONG_CONSULTANT",
 ] as const;
+
+/** The SupportIssueType half of the same sensitive set. */
+export const ORG_SENSITIVE_PERSONAL_ISSUE_TYPES = [
+  "CONSULTANT_NO_SHOW",
+  "CONSULTANT_LATE",
+  "SESSION_ENDED_EARLY",
+  "SESSION_QUALITY_POOR",
+  "WRONG_CONSULTANT",
+] as const satisfies readonly SupportIssueType[];
+
+const SENSITIVE_CATEGORIES = new Set<string>(ORG_SENSITIVE_PERSONAL_CATEGORIES);
+const SENSITIVE_ISSUE_TYPES = new Set<string>(
+  ORG_SENSITIVE_PERSONAL_ISSUE_TYPES,
+);
+
+/** A complaint about delivery, or a safety risk, must never reach its presenter. */
+export function isSensitivePresenterCase(supportCase: {
+  category?: string | null;
+  issueType?: SupportIssueType | null;
+}): boolean {
+  return (
+    (typeof supportCase.category === "string" &&
+      SENSITIVE_CATEGORIES.has(supportCase.category)) ||
+    (typeof supportCase.issueType === "string" &&
+      SENSITIVE_ISSUE_TYPES.has(supportCase.issueType))
+  );
+}
+
+interface PresenterCaseFields {
+  externalRequesterEmail: string | null;
+  category: string | null;
+  issueType: SupportIssueType | null;
+  appointmentId: string | null;
+}
+
+/** Presenters read ordinary thread content only, never anonymous complaints. */
+export function presenterSeesCaseThread(supportCase: {
+  externalRequesterEmail: string | null;
+  category: string | null;
+  issueType: SupportIssueType | null;
+}): boolean {
+  return (
+    !supportCase.externalRequesterEmail &&
+    !isSensitivePresenterCase(supportCase)
+  );
+}
+
+/** The list predicate for a presenter's ordinary cases, without materialising IDs. */
+function presenterVisibleCaseWhere(
+  userId: string,
+): Prisma.SupportCaseWhereInput {
+  return {
+    externalRequesterEmail: null,
+    AND: [
+      { appointment: { is: presenterAppointmentWhere(userId) } },
+      {
+        OR: [
+          { category: null },
+          { category: { notIn: [...ORG_SENSITIVE_PERSONAL_CATEGORIES] } },
+        ],
+      },
+      {
+        OR: [
+          { issueType: null },
+          {
+            issueType: { notIn: [...ORG_SENSITIVE_PERSONAL_ISSUE_TYPES] },
+          },
+        ],
+      },
+    ],
+  };
+}
 
 export function caseOwnershipPermission(
   scope: SupportCaseOwnership,
@@ -86,18 +163,19 @@ export async function caseCorrespondentIds(
 
 /** Accepted PRESENTER collaborators on the case's appointment; crew never. */
 export async function casePresenterIds(
-  supportCase: { appointmentId?: string | null },
+  supportCase: PresenterCaseFields,
   db: Pick<Tx, "appointment" | "consultantProfile"> = prisma,
 ): Promise<string[]> {
-  if (!supportCase.appointmentId) return [];
-  const parties = await SubjectResolver.evidenceParties(db, [
+  if (!supportCase.appointmentId || !presenterSeesCaseThread(supportCase))
+    return [];
+  const parties = await deliveringPartiesByAppointment(db, [
     supportCase.appointmentId,
   ]);
   return [...(parties.get(supportCase.appointmentId)?.presenterIds ?? [])];
 }
 
 export async function isPresenterOnCase(
-  supportCase: { appointmentId?: string | null },
+  supportCase: PresenterCaseFields,
   userId: string,
   db: Pick<Tx, "appointment" | "consultantProfile"> = prisma,
 ): Promise<boolean> {
@@ -113,9 +191,7 @@ export async function caseThreadPartyIds(
     ownershipScope: SupportCaseOwnership;
     organizationId: string | null;
     submitterUserId: string;
-    externalRequesterEmail?: string | null;
-    appointmentId?: string | null;
-  },
+  } & PresenterCaseFields,
   db: Pick<Tx, "appointment" | "consultantProfile" | "membership"> = prisma,
 ): Promise<string[]> {
   if (supportCase.externalRequesterEmail) return [];
@@ -138,14 +214,10 @@ export async function visibleCaseAccess(viewer: {
       canCorrespond: (_row: CorrespondenceRow) => true,
       isPresenter: (_row: CorrespondenceRow) => false,
     };
-  const [memberships, presenterAppointmentIds] = await Promise.all([
-    prisma.membership.findMany({
-      where: { userId: viewer.userId, status: "ACTIVE" },
-      select: { organizationId: true, role: true },
-    }),
-    SubjectResolver.presenterAppointmentIds(prisma, viewer.userId),
-  ]);
-  const presenterSet = new Set(presenterAppointmentIds);
+  const memberships = await prisma.membership.findMany({
+    where: { userId: viewer.userId, status: "ACTIVE" },
+    select: { organizationId: true, role: true },
+  });
   const holds = (surface: OrgSurface, organizationId: string | null) =>
     organizationId !== null &&
     memberships.some(
@@ -153,6 +225,13 @@ export async function visibleCaseAccess(viewer: {
         m.organizationId === organizationId &&
         hasOrgPermission(m.role, surface),
     );
+  const isPresenter = (
+    row: CorrespondenceRow,
+    presenterAppointmentIds: ReadonlySet<string>,
+  ) =>
+    typeof row.appointmentId === "string" &&
+    presenterAppointmentIds.has(row.appointmentId) &&
+    presenterSeesCaseThread(row);
   return {
     where: {
       deletedAt: null,
@@ -169,9 +248,7 @@ export async function visibleCaseAccess(viewer: {
           requesterUserId: viewer.userId,
           NOT: { submitterUserId: viewer.userId },
         },
-        ...(presenterAppointmentIds.length
-          ? [{ appointmentId: { in: presenterAppointmentIds } }]
-          : []),
+        presenterVisibleCaseWhere(viewer.userId),
         ...memberships.flatMap((m) => [
           ...(hasOrgPermission(m.role, "supportCases.operations.manage")
             ? [
@@ -192,16 +269,17 @@ export async function visibleCaseAccess(viewer: {
         ]),
       ],
     },
-    canCorrespond: (row: CorrespondenceRow) => {
-      if (row.appointmentId != null && presenterSet.has(row.appointmentId))
-        return true;
+    canCorrespond: (
+      row: CorrespondenceRow,
+      presenterAppointmentIds: ReadonlySet<string> = new Set(),
+    ) => {
+      if (isPresenter(row, presenterAppointmentIds)) return true;
       const permission = caseOwnershipPermission(row.ownershipScope);
       return permission
         ? holds(permission, row.organizationId)
         : row.submitterUserId === viewer.userId;
     },
-    isPresenter: (row: CorrespondenceRow) =>
-      row.appointmentId != null && presenterSet.has(row.appointmentId),
+    isPresenter,
   };
 }
 
@@ -210,6 +288,9 @@ interface CorrespondenceRow {
   organizationId: string | null;
   submitterUserId: string;
   appointmentId?: string | null;
+  externalRequesterEmail: string | null;
+  category: string | null;
+  issueType: SupportIssueType | null;
 }
 
 export async function visibleCaseWhere(viewer: {

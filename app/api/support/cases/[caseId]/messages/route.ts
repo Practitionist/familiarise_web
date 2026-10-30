@@ -14,6 +14,7 @@ import {
   appendSupportCaseTurn,
   readSupportCaseForViewer,
 } from "@/lib/support/case-service";
+import { isPresenterAuthoredMessage } from "@/lib/support/case-message-actor";
 import { sessionRole } from "@/lib/auth/session-role";
 
 const CaseIdParamsSchema = z.object({
@@ -191,10 +192,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       sender: true,
       body: true,
       isInternal: true,
+      metadata: true,
       createdAt: true,
     },
   });
-  const data = rows.slice(-input.data.limit);
+  const data = rows.slice(-input.data.limit).map(({ metadata, ...row }) => ({
+    ...row,
+    actorKind: isPresenterAuthoredMessage(metadata)
+      ? ("PRESENTER" as const)
+      : undefined,
+  }));
   return NextResponse.json(
     {
       data,

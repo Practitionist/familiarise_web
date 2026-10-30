@@ -5,6 +5,8 @@ jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
 import {
   CAPTURED_PAYMENT_WHERE,
   deliveringPartiesByAppointment,
+  presenterAppointmentIdsIn,
+  presenterAppointmentWhere,
 } from "../../lib/support/evidence-parties";
 import { bookingPartyWhere } from "../../lib/moderation/report-case";
 
@@ -49,7 +51,7 @@ const payments: PaymentRow[] = [
 type AppointmentArgs = {
   select: {
     payment: { where: Partial<PaymentRow>; select: unknown };
-    webinar?: {
+    webinar: {
       select: {
         webinarPlan: {
           select: {
@@ -182,5 +184,39 @@ describe("deliveringPartiesByAppointment", () => {
     expect(
       select.webinar.select.webinarPlan.select.collaborators.where,
     ).toEqual({ status: "ACCEPTED", tier: "PRESENTER" });
+  });
+});
+
+describe("presenterAppointmentIdsIn", () => {
+  it("looks up only the page's distinct appointment IDs", async () => {
+    const findMany = jest.fn(async () => [{ id: "appt-2" }]);
+    const db = { appointment: { findMany } };
+    const ids = await presenterAppointmentIdsIn(
+      db as unknown as Parameters<typeof presenterAppointmentIdsIn>[0],
+      "presenter",
+      ["appt-1", "appt-2", null, "appt-1", undefined],
+    );
+    expect([...ids]).toEqual(["appt-2"]);
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        AND: [
+          { id: { in: ["appt-1", "appt-2"] } },
+          presenterAppointmentWhere("presenter"),
+        ],
+      },
+      select: { id: true },
+    });
+  });
+
+  it("skips the query when the page has no appointments", async () => {
+    const findMany = jest.fn();
+    const db = { appointment: { findMany } };
+    const ids = await presenterAppointmentIdsIn(
+      db as unknown as Parameters<typeof presenterAppointmentIdsIn>[0],
+      "presenter",
+      [null, undefined],
+    );
+    expect(ids.size).toBe(0);
+    expect(findMany).not.toHaveBeenCalled();
   });
 });

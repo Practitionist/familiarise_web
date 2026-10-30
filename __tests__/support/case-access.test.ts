@@ -8,11 +8,15 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 import {
+  ORG_SENSITIVE_PERSONAL_CATEGORIES,
+  ORG_SENSITIVE_PERSONAL_ISSUE_TYPES,
   canCorrespondOnCase,
   caseCorrespondentIds,
+  casePresenterIds,
   visibleCaseAccess,
   visibleCaseWhere,
 } from "../../lib/support/case-access";
+import { presenterAppointmentWhere } from "../../lib/support/evidence-parties";
 const prismaMock = jest.requireMock<{
   default: {
     membership: { findUnique: jest.Mock; findMany: jest.Mock };
@@ -109,36 +113,149 @@ it("external complainants cannot be mistaken for the queue custodian's personal 
     await visibleCaseWhere({ userId: "filer", role: "CONSULTEE" }),
   ).toMatchObject({ externalRequesterEmail: null });
 });
-it("lists a case linked to an appointment the viewer presents and marks it presenter", async () => {
-  appointment.findMany.mockResolvedValue([{ id: "appt-presenter" }]);
+it("lists a presenter's ordinary cases through a relational predicate, not an ID list", async () => {
   const access = await visibleCaseAccess({
     userId: "presenter",
     role: "CONSULTEE",
   });
   expect(access.where.OR).toContainEqual({
-    appointmentId: { in: ["appt-presenter"] },
+    externalRequesterEmail: null,
+    AND: [
+      { appointment: { is: presenterAppointmentWhere("presenter") } },
+      {
+        OR: [
+          { category: null },
+          { category: { notIn: [...ORG_SENSITIVE_PERSONAL_CATEGORIES] } },
+        ],
+      },
+      {
+        OR: [
+          { issueType: null },
+          {
+            issueType: { notIn: [...ORG_SENSITIVE_PERSONAL_ISSUE_TYPES] },
+          },
+        ],
+      },
+    ],
+  });
+  expect(JSON.stringify(access.where)).not.toContain("appointmentId");
+  expect(appointment.findMany).not.toHaveBeenCalled();
+});
+
+it("marks a row presenter only when the page lookup proves it and the case is safe", async () => {
+  const access = await visibleCaseAccess({
+    userId: "presenter",
+    role: "CONSULTEE",
   });
   const row = {
     ownershipScope: "PERSONAL" as const,
     organizationId: null,
     submitterUserId: "learner",
     appointmentId: "appt-presenter",
+    externalRequesterEmail: null,
+    category: null,
+    issueType: null,
   };
-  expect(access.canCorrespond(row)).toBe(true);
-  expect(access.isPresenter(row)).toBe(true);
-  expect(access.isPresenter({ ...row, appointmentId: "appt-other" })).toBe(
-    false,
-  );
+  const page = new Set(["appt-presenter"]);
+  expect(access.canCorrespond(row, page)).toBe(true);
+  expect(access.isPresenter(row, page)).toBe(true);
+  expect(
+    access.isPresenter({ ...row, appointmentId: "appt-other" }, page),
+  ).toBe(false);
+  expect(access.isPresenter(row, new Set())).toBe(false);
 });
-it("adds no presenter clause when the viewer presents no appointment", async () => {
-  appointment.findMany.mockResolvedValue([]);
+
+it.each(ORG_SENSITIVE_PERSONAL_CATEGORIES)(
+  "hides a %s complaint from the presenter it is about",
+  async (category) => {
+    const access = await visibleCaseAccess({
+      userId: "presenter",
+      role: "CONSULTEE",
+    });
+    const row = {
+      ownershipScope: "PERSONAL" as const,
+      organizationId: null,
+      submitterUserId: "learner",
+      appointmentId: "appt-presenter",
+      externalRequesterEmail: null,
+      category,
+      issueType: null,
+    };
+    const page = new Set(["appt-presenter"]);
+    expect(access.canCorrespond(row, page)).toBe(false);
+    expect(access.isPresenter(row, page)).toBe(false);
+  },
+);
+
+it("hides a sensitive issue type even when the category is null", async () => {
   const access = await visibleCaseAccess({
-    userId: "learner",
+    userId: "presenter",
     role: "CONSULTEE",
   });
+  const row = {
+    ownershipScope: "PERSONAL" as const,
+    organizationId: null,
+    submitterUserId: "learner",
+    appointmentId: "appt-presenter",
+    externalRequesterEmail: null,
+    category: null,
+    issueType: "WRONG_CONSULTANT" as const,
+  };
+  const page = new Set(["appt-presenter"]);
+  expect(access.canCorrespond(row, page)).toBe(false);
+  expect(access.isPresenter(row, page)).toBe(false);
+});
+
+it("never grants presenter access to an anonymous external requester's case", async () => {
+  const access = await visibleCaseAccess({
+    userId: "presenter",
+    role: "CONSULTEE",
+  });
+  const row = {
+    ownershipScope: "PERSONAL" as const,
+    organizationId: null,
+    submitterUserId: "learner",
+    appointmentId: "appt-presenter",
+    externalRequesterEmail: "outside@example.invalid",
+    category: null,
+    issueType: null,
+  };
+  const page = new Set(["appt-presenter"]);
+  expect(access.canCorrespond(row, page)).toBe(false);
+  expect(access.isPresenter(row, page)).toBe(false);
+});
+
+it("resolves presenters from the booking's accepted collaborators only", async () => {
+  appointment.findMany.mockResolvedValue([
+    {
+      id: "appt-presenter",
+      participants: [],
+      consultation: null,
+      subscription: null,
+      webinar: {
+        webinarPlan: {
+          consultantProfileId: "host-profile",
+          collaborators: [{ consultantProfileId: "presenter-profile" }],
+        },
+      },
+      class: null,
+      payment: [],
+    },
+  ]);
+  consultantProfile.findMany.mockResolvedValue([
+    { id: "host-profile", user: { id: "host" } },
+    { id: "presenter-profile", user: { id: "presenter" } },
+  ]);
+  const supportCase = {
+    appointmentId: "appt-presenter",
+    externalRequesterEmail: null,
+    category: null,
+    issueType: null,
+  };
+  expect(await casePresenterIds(supportCase)).toEqual(["presenter"]);
+  appointment.findMany.mockClear();
   expect(
-    access.where.OR?.some(
-      (clause) => typeof clause === "object" && "appointmentId" in clause,
-    ),
-  ).toBe(false);
+    await casePresenterIds({ ...supportCase, category: "SAFETY_CONCERN" }),
+  ).toEqual([]);
+  expect(appointment.findMany).not.toHaveBeenCalled();
 });

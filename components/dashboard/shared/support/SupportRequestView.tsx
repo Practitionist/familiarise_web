@@ -494,6 +494,7 @@ function TicketRequest({
                     author={m.author}
                     authorName={m.author === "USER" ? null : m.authorName}
                     body={m.body}
+                    actorKind={m.actorKind}
                     at={m.at}
                   />
                 ))}

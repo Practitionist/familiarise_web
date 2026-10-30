@@ -36,6 +36,7 @@ export const OwnTicketCaseSchema: z.ZodType<OwnTicketCase> = z.object({
       authorName: z.string().nullable(),
       body: z.string(),
       internal: z.boolean(),
+      actorKind: z.literal("PRESENTER").optional(),
       at: z.string(),
     }),
   ),

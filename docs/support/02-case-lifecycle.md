@@ -82,7 +82,7 @@ No caller passes SYSTEM today. The two system writers, the sweep's 28-day auto-c
 3. runs the reopen checks if the customer asked to reopen;
 4. updates the case with a compare-and-set that increments `messageSeq`, sets `lastMessageAt`, and banks customer-wait time;
 5. reads the new `messageSeq` and inserts the message at that sequence number;
-6. stages a bell (`case-message:<messageId>`) and, for a staff or presenter reply, response emails, in the same transaction.
+6. stages a bell (`case-message:<messageId>`) and, for a staff or presenter reply, response emails, in the same transaction; a presenter's emails go to the case correspondents only, never the staff assignee.
 
 A unique violation on a `clientTurnId` (two tabs sending the same draft) is retried as a replay. The guided path uses its own allocator (`allocateMessageSeq()` in `lib/support/service.ts`) that reserves several sequence numbers at once for a bot turn.
 
@@ -90,7 +90,7 @@ A unique violation on a `clientTurnId` (two tabs sending the same draft) is retr
 
 **Staff public reply.** The compare-and-set also matches `updatedAt` and `lastMessageAt <= expectedLastMessageAt`, the newest message the agent saw. If the customer wrote since, the reply fails with 409 `NEW_CUSTOMER_MESSAGE` ("Customer replied since you opened this case."). On success it sets `acknowledgedAt` and `firstAgentReplyAt` if empty, starts a customer wait (`awaitingUserSince = now`), moves OPEN to IN_PROGRESS, and assigns the author if the case is unassigned.
 
-**Presenter reply.** An ACCEPTED PRESENTER on the linked booking replies through the same route, but is stored as `sender: AGENT` with the internal `actorKind: PRESENTER`; the database has no presenter sender value. Its state update only increments `messageSeq` and sets `lastMessageAt`. It does not reopen a resolved case, assign the presenter, set `firstAgentReplyAt` or `acknowledgedAt`, start a customer wait, or count as the first staff response. A presenter cannot write an internal note and cannot reply on a CLOSED case.
+**Presenter reply.** An ACCEPTED PRESENTER on the linked booking replies through the same route and is stored as `sender: AGENT` with `metadata: { actorKind: "PRESENTER" }`; the database has no presenter sender value. Reads expose that marker as `actorKind`, so the UI labels the bubble Presenter rather than Familiarise support, and the external-requester digest skips it. Its state update only increments `messageSeq` and sets `lastMessageAt`. It does not reopen a resolved case, assign the presenter, set `firstAgentReplyAt` or `acknowledgedAt`, start a customer wait, or count as the first staff response. A presenter cannot write an internal note and cannot reply on a CLOSED case, an anonymous grievance, or a sensitive complaint about delivery or safety (`isSensitivePresenterCase()`).
 
 **Internal notes, bot and system turns** only increment the sequence. Notes never change `lastMessageAt`.
 

@@ -8,6 +8,7 @@ import {
 import prisma from "@/lib/prisma";
 import type { OwnTicketCase } from "@/types/support-case";
 import { caseKeyOf } from "./case-key";
+import { isPresenterAuthoredMessage } from "./case-message-actor";
 import { ticketTopic } from "./case-topic";
 import { TIMELINE_LIMIT, readPayment } from "./case-workspace";
 
@@ -69,6 +70,9 @@ export async function readOwnSupportCase(
       authorName: m.authorUser?.name ?? null,
       body: m.body,
       internal: false,
+      actorKind: isPresenterAuthoredMessage(m.metadata)
+        ? ("PRESENTER" as const)
+        : undefined,
       at: m.createdAt.toISOString(),
     })),
     hasMore: rows.length > TIMELINE_LIMIT,

@@ -9,6 +9,7 @@ import {
   visibleCaseAccess,
 } from "@/lib/support/case-access";
 import { PLAN_TITLE_SELECT, planTitle } from "@/lib/support/case-read";
+import { presenterAppointmentIdsIn } from "@/lib/support/evidence-parties";
 import { SupportCaseStatus, type Prisma } from "@prisma/client";
 
 const Query = z.object({
@@ -68,6 +69,7 @@ export async function GET(req: NextRequest) {
         title: true,
         referenceNumber: true,
         category: true,
+        issueType: true,
         status: true,
         activeChannel: true,
         appointmentId: true,
@@ -75,6 +77,7 @@ export async function GET(req: NextRequest) {
         organizationId: true,
         requesterUserId: true,
         submitterUserId: true,
+        externalRequesterEmail: true,
         createdAt: true,
         updatedAt: true,
         lastMessageAt: true,
@@ -101,6 +104,11 @@ export async function GET(req: NextRequest) {
     }),
     prisma.supportCase.count({ where }),
   ]);
+  const presenterAppointmentIds = await presenterAppointmentIdsIn(
+    prisma,
+    auth.session.user.id,
+    cases.map((c) => c.appointmentId),
+  );
   return NextResponse.json(
     {
       pagination: { page: query.data.page, pageSize, total },
@@ -108,7 +116,7 @@ export async function GET(req: NextRequest) {
         const redacted = projectCaseForViewer(
           c,
           auth.session.user.id,
-          access.canCorrespond(c),
+          access.canCorrespond(c, presenterAppointmentIds),
         ).summaryOnly;
         const lastMessage = redacted ? undefined : c.messages[0];
         return {

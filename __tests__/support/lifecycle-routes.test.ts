@@ -58,6 +58,19 @@ jest.mock("../../lib/support/case-access", () => ({
   __esModule: true,
   canCorrespondOnCase: jest.fn(async () => true),
   caseCorrespondentIds: jest.fn(async () => []),
+  caseThreadPartyIds: jest.fn(async () => []),
+}));
+jest.mock("../../lib/novu", () => ({
+  __esModule: true,
+  notifySupportTicketUpdate: jest.fn(async () => ({ staged: { id: "bell" } })),
+}));
+jest.mock("../../lib/novu/stage-then-attempt", () => ({
+  __esModule: true,
+  flushNotificationsAfter: jest.fn(async () => undefined),
+}));
+jest.mock("../../lib/email/senders/people", () => ({
+  __esModule: true,
+  stageSupportTicketUpdateEmail: jest.fn(async () => []),
 }));
 jest.mock("../../lib/prisma", () => {
   const db = {
@@ -87,6 +100,9 @@ import {
   readSupportCaseForViewer,
 } from "../../lib/support/case-service";
 import { CaseConflictError } from "../../lib/support/case-transitions";
+import { caseThreadPartyIds } from "../../lib/support/case-access";
+import { notifySupportTicketUpdate } from "../../lib/novu";
+import { stageSupportTicketUpdateEmail } from "../../lib/email/senders/people";
 import { POST as postMessage } from "../../app/api/support/cases/[caseId]/messages/route";
 import { PATCH as patchCase } from "../../app/api/support/cases/[caseId]/route";
 import { POST as postTurn } from "../../app/api/appointments/[appointmentId]/support/route";
@@ -236,6 +252,79 @@ describe("PATCH /api/support/cases/[caseId]", () => {
       existingCase: { caseKey: "c_newer" },
     });
     expect(mockCaptureMessage).not.toHaveBeenCalled();
+  });
+
+  it("notifies presenters of a status change without leaking resolution or refund text", async () => {
+    jest
+      .mocked(caseThreadPartyIds)
+      .mockResolvedValue(["customer", "presenter"]);
+    db.supportCase.findUnique.mockResolvedValue({
+      id: "case-1",
+      referenceNumber: "FAM-1",
+      title: "Help",
+      ownershipScope: "PERSONAL",
+      externalRequesterEmail: null,
+    } as never);
+    jest.mocked(patchSupportCaseLifecycle).mockResolvedValue({
+      ok: true,
+      previousStatus: "OPEN",
+      supportCase: {
+        id: "case-1",
+        referenceNumber: "FAM-1",
+        title: "Help",
+        status: "RESOLVED",
+        submitterUserId: "customer",
+        organizationId: null,
+        updatedAt: new Date("2026-10-20T00:00:00.000Z"),
+        resolutionNotes: "Refund of 5000 paise approved",
+        refundAmount: 5000,
+      },
+    } as never);
+
+    const res = await patch({ status: "RESOLVED" });
+    expect(res.status).toBe(200);
+    expect(caseThreadPartyIds).toHaveBeenCalled();
+    expect(notifySupportTicketUpdate).toHaveBeenCalledTimes(2);
+    expect(stageSupportTicketUpdateEmail).toHaveBeenCalledTimes(2);
+    const recipientIds = jest
+      .mocked(notifySupportTicketUpdate)
+      .mock.calls.map((call) => call[0]);
+    expect(recipientIds).toEqual(["customer", "presenter"]);
+    for (const [, payload] of jest.mocked(notifySupportTicketUpdate).mock
+      .calls) {
+      expect(Object.keys(payload).sort()).toEqual([
+        "dashboardUrl",
+        "organizationId",
+        "reference",
+        "scope",
+        "status",
+        "statusCode",
+        "ticketId",
+        "ticketTitle",
+      ]);
+      expect(payload).toMatchObject({
+        ticketId: "case-1",
+        reference: "FAM-1",
+        ticketTitle: "Help",
+        status: "resolved",
+        statusCode: "RESOLVED",
+      });
+      expect(JSON.stringify(payload)).not.toContain("Refund");
+      expect(JSON.stringify(payload)).not.toContain("5000");
+      expect(JSON.stringify(payload)).not.toContain("Refund of");
+    }
+    for (const [, email] of jest.mocked(stageSupportTicketUpdateEmail).mock
+      .calls) {
+      expect(email).toMatchObject({
+        ticketId: "case-1",
+        reference: "FAM-1",
+        statusLabel: "resolved",
+        statusCode: "RESOLVED",
+        ticketUrl: expect.any(String),
+      });
+      expect(email).not.toHaveProperty("resolutionNotes");
+      expect(email).not.toHaveProperty("refundAmount");
+    }
   });
 });
 

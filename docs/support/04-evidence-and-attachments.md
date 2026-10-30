@@ -24,7 +24,7 @@ When a customer complains about a session, staff usually need the other side's a
 
 Banned users are excluded. A case with no booking has no eligible recipients. The delivering-party part is `deliveringPartiesByAppointment()` in `lib/support/evidence-parties.ts`, which chat access also uses.
 
-Thread access is separate from evidence access. An ACCEPTED PRESENTER collaborator on the linked booking may read and reply to the case thread ([organization scopes and visibility](09-org-scopes-and-visibility.md)), but being an evidence recipient never grants the thread. A host-organization operator who is only asked for evidence still sees only their own prompt and answer, and the evidence page never returns the case messages.
+Thread access is separate from evidence access. An ACCEPTED PRESENTER collaborator on the linked booking may read and reply to an ordinary case thread ([organization scopes and visibility](09-org-scopes-and-visibility.md)), but being an evidence recipient never grants the thread. Anonymous grievances and sensitive delivery or safety complaints never open to a presenter. A host-organization operator who is only asked for evidence still sees only their own prompt and answer, and the evidence page never returns the case messages.
 
 ### Lifecycle
 

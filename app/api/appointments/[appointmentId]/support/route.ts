@@ -27,6 +27,7 @@ import {
   authorizeAppointment,
   appointmentAuthzError,
 } from "@/lib/api/appointment-access";
+import { isPresenterAuthoredMessage } from "@/lib/support/case-message-actor";
 
 const SUPPORT_ROUTE = "appointments.support";
 
@@ -156,13 +157,19 @@ export async function GET(
       });
     }
 
+    const page = thread?.messages.slice(-200) ?? [];
     return NextResponse.json({
       data: thread
         ? {
             ...thread,
-            messages: thread.messages.slice(-200),
+            messages: page.map(({ metadata, ...message }) => ({
+              ...message,
+              actorKind: isPresenterAuthoredMessage(metadata)
+                ? ("PRESENTER" as const)
+                : undefined,
+            })),
             hasMore: thread.messages.length > 200,
-            nextBeforeSeq: thread.messages.slice(-200)[0]?.seq ?? null,
+            nextBeforeSeq: page[0]?.seq ?? null,
             userId: thread.requesterUserId,
             supportTicketId:
               thread.activeChannel === "HUMAN" ? thread.id : null,

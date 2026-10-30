@@ -137,7 +137,17 @@ it("gives an accepted presenter the public thread without payment, CSAT or reope
       sender: "USER",
       body: "hello",
       createdAt: now,
+      metadata: null,
       authorUser: null,
+    },
+    {
+      id: "m2",
+      seq: 2,
+      sender: "AGENT",
+      body: "Presenter here",
+      createdAt: now,
+      metadata: { actorKind: "PRESENTER" },
+      authorUser: { name: "Dr Rao" },
     },
   ]);
   const view = await readOwnSupportCase("case-1", "presenter");
@@ -148,6 +158,12 @@ it("gives an accepted presenter the public thread without payment, CSAT or reope
     csatRating: null,
     filedByOrganizationNotice: false,
   });
-  expect(view?.timeline).toHaveLength(1);
+  expect(view?.timeline).toHaveLength(2);
+  expect(view?.timeline[1]).toMatchObject({
+    author: "AGENT",
+    authorName: "Dr Rao",
+    actorKind: "PRESENTER",
+  });
+  expect(view?.timeline[0].actorKind).toBeUndefined();
   expect(payment).not.toHaveBeenCalled();
 });

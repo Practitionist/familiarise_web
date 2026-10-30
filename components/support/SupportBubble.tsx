@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Headset, Lock, UserRound } from "lucide-react";
+import { Bot, Headset, Lock, Presentation, UserRound } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { toneClass } from "@/lib/ui/tone";
@@ -9,10 +9,15 @@ import { cn } from "@/utils/tailwind";
 export type BubbleAuthor = "USER" | "BOT" | "AGENT" | "SYSTEM";
 
 /** Announced to assistive tech; side and colour carry it visually. */
-function speakerLabel(author: BubbleAuthor, perspective: "staff" | "user") {
+function speakerLabel(
+  author: BubbleAuthor,
+  perspective: "staff" | "user",
+  presenter: boolean,
+) {
   if (author === "USER") {
     return perspective === "user" ? "You said" : "Customer said";
   }
+  if (presenter) return "Presenter said";
   return author === "AGENT" ? "Support said" : "Assistant said";
 }
 
@@ -54,6 +59,7 @@ export function SupportBubble({
   body,
   at,
   internal = false,
+  actorKind,
   perspective,
   pending = false,
   footer,
@@ -63,6 +69,8 @@ export function SupportBubble({
   body: string;
   at?: string;
   internal?: boolean;
+  /** A presenter reply is provider content, never Familiarise support. */
+  actorKind?: "PRESENTER";
   perspective: "staff" | "user";
   pending?: boolean;
   footer?: ReactNode;
@@ -75,8 +83,12 @@ export function SupportBubble({
       </p>
     );
   }
-  const own = perspective === "user" ? author === "USER" : author === "AGENT";
-  const Icon = ICON[author];
+  const presenter = actorKind === "PRESENTER";
+  const own =
+    perspective === "user"
+      ? author === "USER"
+      : author === "AGENT" && !presenter;
+  const Icon = presenter ? Presentation : ICON[author];
   const time = at
     ? new Date(at).toLocaleString(undefined, {
         day: "numeric",
@@ -87,7 +99,11 @@ export function SupportBubble({
     : null;
   const senderName = internal
     ? `Private note${authorName ? ` · ${authorName}` : ""}`
-    : (authorName ?? DEFAULT_NAME[author]);
+    : presenter
+      ? authorName
+        ? `${authorName} · Presenter`
+        : "Presenter"
+      : (authorName ?? DEFAULT_NAME[author]);
   return (
     <div className={cn("flex", own ? "justify-end" : "justify-start")}>
       <div className="max-w-[85%] space-y-1">
@@ -117,7 +133,7 @@ export function SupportBubble({
           <span className="sr-only">
             {internal
               ? "Private note: "
-              : `${speakerLabel(author, perspective)}: `}
+              : `${speakerLabel(author, perspective, presenter)}: `}
           </span>
           {body}
         </div>

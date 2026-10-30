@@ -31,6 +31,8 @@ export interface ThreadMessage {
   sender: Sender;
   body: string;
   metadata?: MessageMetadata | null;
+  /** A provider reply that is not Familiarise support. */
+  actorKind?: "PRESENTER";
   createdAt: string;
   /** Client-only: shown before the server has confirmed the write. */
   pending?: boolean;
@@ -187,6 +189,18 @@ export function describeAction(a: SupportAction): string | null {
     return "Invoices and GST receipts live on your Billing page.";
   }
   return null;
+}
+
+/** The hand-off divider belongs before the first reply that is actually support. */
+export function supportHandoffIndex(
+  messages: Pick<ThreadMessage, "sender" | "actorKind">[],
+  isHuman: boolean,
+): number {
+  const firstAgent = messages.findIndex(
+    (m) => m.sender === "AGENT" && m.actorKind !== "PRESENTER",
+  );
+  if (firstAgent >= 0) return firstAgent;
+  return isHuman ? messages.length : -1;
 }
 
 export function useSupportThread(
@@ -413,6 +427,7 @@ export function useSupportThread(
       authorName: null,
       body: message.body,
       internal: false,
+      actorKind: message.actorKind,
       at: message.createdAt,
     })),
     thread?.nextBeforeSeq,
@@ -428,6 +443,7 @@ export function useSupportThread(
         seq: message.seq,
         sender: message.author,
         body: message.body,
+        actorKind: message.actorKind,
         createdAt: message.at,
       },
   );
@@ -484,12 +500,10 @@ export function useSupportThread(
     }
   }, [seedCategory, data, submitTurn]);
 
-  // The hand-off sits immediately before the first AGENT message; an
-  // escalated thread with no staff reply yet gets it at the end.
-  const firstAgent = messages.findIndex((m) => m.sender === "AGENT");
-  let handoffIndex = -1;
-  if (firstAgent >= 0) handoffIndex = firstAgent;
-  else if (isHuman) handoffIndex = messages.length;
+  // The hand-off sits immediately before the first staff AGENT message; a
+  // presenter reply is not support, and an escalated thread with no staff reply
+  // yet gets it at the end.
+  const handoffIndex = supportHandoffIndex(messages, isHuman);
 
   return {
     query,

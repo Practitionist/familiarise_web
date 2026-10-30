@@ -10,7 +10,7 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, Headset, UserRound } from "lucide-react";
+import { Bot, Headset, Presentation, UserRound } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -72,6 +72,8 @@ export function AppointmentSupportStatusCard({
             <p className="mt-1 flex items-center gap-1.5 truncate text-sm text-muted-foreground">
               {last.sender === "USER" ? (
                 <UserRound className="h-3.5 w-3.5 shrink-0" />
+              ) : last.actorKind === "PRESENTER" ? (
+                <Presentation className="h-3.5 w-3.5 shrink-0" />
               ) : last.sender === "AGENT" ? (
                 <Headset className="h-3.5 w-3.5 shrink-0" />
               ) : (

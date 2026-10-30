@@ -60,6 +60,7 @@ import {
 import { supportDeadline } from "../../lib/support/deadline-policy";
 import { slaStateOf } from "../../lib/support/sla";
 import { stageBell } from "../../lib/novu/stage-bell";
+import { stage as stageEmail } from "../../lib/email/deliver";
 const cases = prisma.supportCase;
 const now = new Date("2026-10-20T00:00:00Z");
 const record = (overrides: Record<string, unknown> = {}) => ({
@@ -102,6 +103,13 @@ beforeEach(() => {
     seq: 2,
   });
   (prisma.membership.findMany as jest.Mock).mockResolvedValue([]);
+  (prisma.appointment.findMany as jest.Mock).mockReset().mockResolvedValue([]);
+  (prisma.consultantProfile.findMany as jest.Mock)
+    .mockReset()
+    .mockResolvedValue([]);
+  (prisma.user.findMany as jest.Mock)
+    .mockReset()
+    .mockResolvedValue([{ id: "staff" }]);
 });
 it("replays an intake only within its submitting party", async () => {
   (cases.findFirst as jest.Mock).mockResolvedValueOnce(record());
@@ -206,8 +214,32 @@ it("rejects a stale public reply instead of overwriting a concurrent resolution"
   );
 });
 it("stores a presenter reply as a provider message without reopening or claiming the case", async () => {
+  (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce([
+    {
+      id: "appt-1",
+      participants: [],
+      consultation: null,
+      subscription: null,
+      webinar: {
+        webinarPlan: {
+          consultantProfileId: null,
+          collaborators: [{ consultantProfileId: "presenter-profile" }],
+        },
+      },
+      class: null,
+      payment: [],
+    },
+  ]);
+  (prisma.consultantProfile.findMany as jest.Mock).mockResolvedValueOnce([
+    { id: "presenter-profile", user: { id: "presenter" } },
+  ]);
   (cases.findUnique as jest.Mock).mockResolvedValueOnce(
-    record({ status: "RESOLVED", resolvedAt: now, assignedToId: "staff" }),
+    record({
+      status: "RESOLVED",
+      resolvedAt: now,
+      assignedToId: "staff",
+      appointmentId: "appt-1",
+    }),
   );
   const result = await appendSupportCaseTurn(
     {
@@ -231,6 +263,95 @@ it("stores a presenter reply as a provider message without reopening or claiming
   expect(update.data).not.toHaveProperty("awaitingUserSince");
   expect(update.data).not.toHaveProperty("status");
   expect(prisma.supportCaseEvent.create).not.toHaveBeenCalled();
+  expect(prisma.supportCaseMessage.create).toHaveBeenCalledWith(
+    expect.objectContaining({
+      data: expect.objectContaining({
+        sender: "AGENT",
+        metadata: { actorKind: "PRESENTER" },
+      }),
+    }),
+  );
+});
+it.each([
+  [
+    "an anonymous external requester's case",
+    { externalRequesterEmail: "x@y.invalid" },
+  ],
+  ["a safety concern", { category: "SAFETY_CONCERN" }],
+  ["a quality complaint", { category: "QUALITY_COMPLAINT" }],
+  ["a sensitive issue type", { issueType: "WRONG_CONSULTANT" }],
+])("refuses a presenter reply on %s", async (_label, overrides) => {
+  (cases.findUnique as jest.Mock).mockResolvedValueOnce(
+    record({ appointmentId: "appt-1", ...overrides }),
+  );
+  const result = await appendSupportCaseTurn(
+    {
+      caseId: "case",
+      authorUserId: "presenter",
+      sender: "AGENT",
+      actorKind: "PRESENTER",
+      body: "Reply",
+      isInternal: false,
+    },
+    now,
+  );
+  expect(result).toMatchObject({ ok: false, status: 403, code: "FORBIDDEN" });
+  expect(prisma.supportCaseMessage.create).not.toHaveBeenCalled();
+});
+it("refuses a presenter reply from someone who does not present the booking", async () => {
+  (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce([
+    {
+      id: "appt-1",
+      participants: [],
+      consultation: null,
+      subscription: null,
+      webinar: {
+        webinarPlan: {
+          consultantProfileId: null,
+          collaborators: [{ consultantProfileId: "presenter-profile" }],
+        },
+      },
+      class: null,
+      payment: [],
+    },
+  ]);
+  (prisma.consultantProfile.findMany as jest.Mock).mockResolvedValueOnce([
+    { id: "presenter-profile", user: { id: "presenter" } },
+  ]);
+  (cases.findUnique as jest.Mock).mockResolvedValueOnce(
+    record({ appointmentId: "appt-1" }),
+  );
+  const result = await appendSupportCaseTurn(
+    {
+      caseId: "case",
+      authorUserId: "impostor",
+      sender: "AGENT",
+      actorKind: "PRESENTER",
+      body: "Reply",
+      isInternal: false,
+    },
+    now,
+  );
+  expect(result).toMatchObject({ ok: false, status: 403, code: "FORBIDDEN" });
+  expect(prisma.supportCaseMessage.create).not.toHaveBeenCalled();
+});
+it("refuses a presenter's private note", async () => {
+  (cases.findUnique as jest.Mock).mockResolvedValueOnce(
+    record({ appointmentId: "appt-1" }),
+  );
+  const result = await appendSupportCaseTurn(
+    {
+      caseId: "case",
+      authorUserId: "presenter",
+      sender: "AGENT",
+      actorKind: "PRESENTER",
+      body: "Private",
+      isInternal: true,
+    },
+    now,
+  );
+  expect(result).toMatchObject({ ok: false, status: 403, code: "FORBIDDEN" });
+  expect(prisma.supportCaseMessage.create).not.toHaveBeenCalled();
 });
 it("notifies accepted presenters on staff replies", async () => {
   (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce([
@@ -267,6 +388,144 @@ it("notifies accepted presenters on staff replies", async () => {
   );
   const recipients = (stageBell as jest.Mock).mock.calls[0][1].recipients;
   expect(recipients).toEqual(expect.arrayContaining(["customer", "presenter"]));
+});
+
+const presenterBooking = () => ({
+  id: "appt-1",
+  participants: [],
+  consultation: null,
+  subscription: null,
+  webinar: {
+    webinarPlan: {
+      consultantProfileId: null,
+      collaborators: [{ consultantProfileId: "presenter-profile" }],
+    },
+  },
+  class: null,
+  payment: [],
+});
+
+const mockPresenter = () => {
+  (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce([
+    presenterBooking(),
+  ]);
+  (prisma.consultantProfile.findMany as jest.Mock).mockResolvedValueOnce([
+    { id: "presenter-profile", user: { id: "presenter" } },
+  ]);
+};
+
+const mockRecipientEmails = () => {
+  (prisma.user.findMany as jest.Mock).mockImplementation(
+    async ({ where }: { where: { id: { in: string[] } } }) =>
+      where.id.in.map((id) => ({ id, email: `${id}@example.com` })),
+  );
+};
+
+const emailed = () =>
+  (stageEmail as jest.Mock).mock.calls.map((call) => call[0].to);
+
+describe("case turn notification routing", () => {
+  it("bells the assignee on a staff reply but never emails them", async () => {
+    mockPresenter();
+    mockRecipientEmails();
+    (cases.findUnique as jest.Mock).mockResolvedValueOnce(
+      record({ appointmentId: "appt-1", assignedToId: "staff" }),
+    );
+    await appendSupportCaseTurn(
+      {
+        caseId: "case",
+        authorUserId: "staff",
+        sender: "AGENT",
+        body: "Reply",
+        isInternal: false,
+      },
+      now,
+    );
+    const recipients = (stageBell as jest.Mock).mock.calls[0][1].recipients;
+    expect(recipients).toEqual(
+      expect.arrayContaining(["customer", "presenter"]),
+    );
+    expect(recipients).not.toContain("staff");
+    expect(emailed()).toEqual(
+      expect.arrayContaining(["customer@example.com", "presenter@example.com"]),
+    );
+    expect(emailed()).not.toContain("staff@example.com");
+  });
+
+  it("emails correspondents, not the assignee, when a presenter replies", async () => {
+    mockPresenter();
+    mockRecipientEmails();
+    (cases.findUnique as jest.Mock).mockResolvedValueOnce(
+      record({ appointmentId: "appt-1", assignedToId: "staff" }),
+    );
+    await appendSupportCaseTurn(
+      {
+        caseId: "case",
+        authorUserId: "presenter",
+        sender: "AGENT",
+        actorKind: "PRESENTER",
+        body: "Reply",
+        isInternal: false,
+      },
+      now,
+    );
+    const bell = stageBell as jest.Mock;
+    expect(bell.mock.calls[0][1].recipients).toEqual(
+      expect.arrayContaining(["customer", "staff"]),
+    );
+    expect(bell.mock.calls[0][1].recipients).not.toContain("presenter");
+    expect(emailed()).toEqual(["customer@example.com"]);
+    const [email] = (stageEmail as jest.Mock).mock.calls[0];
+    expect(email.subject).toBe("New presenter reply — FAM-2026-000001");
+    expect(email.text).toContain("Reply");
+  });
+
+  it("bells the assignee but emails only presenters on a customer reply", async () => {
+    mockPresenter();
+    mockRecipientEmails();
+    (cases.findUnique as jest.Mock).mockResolvedValueOnce(
+      record({ appointmentId: "appt-1", assignedToId: "staff" }),
+    );
+    await appendSupportCaseTurn(
+      {
+        caseId: "case",
+        authorUserId: "customer",
+        sender: "USER",
+        body: "Following up",
+        isInternal: false,
+      },
+      now,
+    );
+    const recipients = (stageBell as jest.Mock).mock.calls[0][1].recipients;
+    expect(recipients).toEqual(expect.arrayContaining(["staff", "presenter"]));
+    expect(recipients).not.toContain("customer");
+    expect(emailed()).toEqual(["presenter@example.com"]);
+  });
+
+  it("keeps presenters out of a sensitive case's notifications", async () => {
+    mockPresenter();
+    mockRecipientEmails();
+    (cases.findUnique as jest.Mock).mockResolvedValueOnce(
+      record({
+        appointmentId: "appt-1",
+        assignedToId: "staff",
+        category: "SAFETY_CONCERN",
+      }),
+    );
+    await appendSupportCaseTurn(
+      {
+        caseId: "case",
+        authorUserId: "customer",
+        sender: "USER",
+        body: "Following up",
+        isInternal: false,
+      },
+      now,
+    );
+    const recipients = (stageBell as jest.Mock).mock.calls[0][1].recipients;
+    expect(recipients).toEqual(["staff"]);
+    expect(emailed()).toEqual([]);
+  });
 });
 it("never exposes internal notes or assignment details to the customer", async () => {
   (cases.findUnique as jest.Mock).mockResolvedValueOnce(
@@ -315,6 +574,80 @@ it("does not reveal external complainants through a personal case read", async (
   expect(
     await readSupportCaseForViewer("case", {
       userId: "customer",
+      role: "CONSULTEE",
+      isStaff: false,
+    }),
+  ).toBeNull();
+});
+it("gives a presenter the ordinary thread with the presenter marker and redactions", async () => {
+  mockPresenter();
+  (cases.findUnique as jest.Mock).mockResolvedValueOnce(
+    record({
+      appointmentId: "appt-1",
+      callbackWindow: "09:00-12:00 IST",
+      csatRating: 5,
+      subjects: [
+        {
+          id: "s1",
+          subjectType: "APPOINTMENT",
+          subjectId: "appt-1",
+          isPrimary: true,
+        },
+        {
+          id: "s2",
+          subjectType: "PAYMENT",
+          subjectId: "pay-1",
+          isPrimary: false,
+        },
+      ],
+      messages: [
+        {
+          id: "m1",
+          seq: 1,
+          sender: "USER",
+          body: "Hello",
+          isInternal: false,
+          metadata: null,
+          createdAt: now,
+        },
+        {
+          id: "m2",
+          seq: 2,
+          sender: "AGENT",
+          body: "Presenter here",
+          isInternal: false,
+          metadata: { actorKind: "PRESENTER" },
+          createdAt: now,
+        },
+      ],
+    }),
+  );
+  const view = await readSupportCaseForViewer("case", {
+    userId: "presenter",
+    role: "CONSULTEE",
+    isStaff: false,
+  });
+  expect(view).toMatchObject({
+    viewerIsPresenter: true,
+    callbackWindow: null,
+    csatRating: null,
+  });
+  expect(view?.subjects.map((subject) => subject.subjectType)).toEqual([
+    "APPOINTMENT",
+  ]);
+  expect(view?.messages).toEqual([
+    expect.objectContaining({ id: "m1", actorKind: undefined }),
+    expect.objectContaining({ id: "m2", actorKind: "PRESENTER" }),
+  ]);
+});
+it("hides a sensitive presenter case from a direct read", async () => {
+  mockPresenter();
+  (cases.findUnique as jest.Mock).mockResolvedValueOnce(
+    record({ appointmentId: "appt-1", category: "SAFETY_CONCERN" }),
+  );
+  expect(
+    await readSupportCaseForViewer("case", {
+      userId: "presenter",
       role: "CONSULTEE",
       isStaff: false,
     }),

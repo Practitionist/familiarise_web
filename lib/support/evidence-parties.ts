@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 
 type DeliveringDb = Pick<Tx, "appointment" | "consultantProfile">;
@@ -112,49 +113,44 @@ export async function deliveringPartiesByAppointment(
   return result;
 }
 
-/** Appointments where the user is an ACCEPTED PRESENTER collaborator on the plan. */
-export async function presenterAppointmentIds(
-  db: Pick<Tx, "appointment">,
+/** Accepted PRESENTER collaborator seats for a consultant profile. */
+export function presenterCollaboratorWhere(
   userId: string,
-): Promise<string[]> {
-  const rows = await db.appointment.findMany({
-    where: {
-      OR: [
-        {
-          webinar: {
-            webinarPlan: {
-              collaborators: {
-                some: {
-                  status: "ACCEPTED",
-                  tier: "PRESENTER",
-                  consultantProfile: { userId, deletedAt: null },
-                },
-              },
-            },
-          },
-        },
-        {
-          class: {
-            classPlan: {
-              collaborators: {
-                some: {
-                  status: "ACCEPTED",
-                  tier: "PRESENTER",
-                  consultantProfile: { userId, deletedAt: null },
-                },
-              },
-            },
-          },
-        },
-      ],
-    },
-    select: { id: true },
-  });
-  return rows.map((row) => row.id);
+): Prisma.CollaboratorWhereInput {
+  return {
+    status: "ACCEPTED",
+    tier: "PRESENTER",
+    consultantProfile: { userId, deletedAt: null },
+  };
 }
 
-/** The single party resolver access code reads; pass `tx` inside a transaction. */
-export const SubjectResolver = {
-  evidenceParties: deliveringPartiesByAppointment,
-  presenterAppointmentIds,
-} as const;
+/** Appointments the user presents: accepted PRESENTER on the webinar/class plan. */
+export function presenterAppointmentWhere(
+  userId: string,
+): Prisma.AppointmentWhereInput {
+  const collaborators = { some: presenterCollaboratorWhere(userId) };
+  return {
+    OR: [
+      { webinar: { webinarPlan: { collaborators } } },
+      { class: { classPlan: { collaborators } } },
+    ],
+  };
+}
+
+/**
+ * The subset of the given appointments the user presents. Callers pass the page
+ * they are about to render, so the lookup never grows with a recurring series.
+ */
+export async function presenterAppointmentIdsIn(
+  db: Pick<Tx, "appointment">,
+  userId: string,
+  appointmentIds: readonly (string | null | undefined)[],
+): Promise<Set<string>> {
+  const ids = [...new Set(appointmentIds.filter((id): id is string => !!id))];
+  if (ids.length === 0) return new Set();
+  const rows = await db.appointment.findMany({
+    where: { AND: [{ id: { in: ids } }, presenterAppointmentWhere(userId)] },
+    select: { id: true },
+  });
+  return new Set(rows.map((row) => row.id));
+}

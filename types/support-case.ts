@@ -59,6 +59,8 @@ export interface TimelineItem {
   body: string;
   /** A private note: staff-only, never sent to the user. */
   internal: boolean;
+  /** A provider reply that is not Familiarise support. */
+  actorKind?: "PRESENTER";
   at: string;
 }
 

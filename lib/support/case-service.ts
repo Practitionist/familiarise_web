@@ -27,6 +27,10 @@ import {
   isPresenterOnCase,
   projectCaseForViewer,
 } from "./case-access";
+import {
+  PRESENTER_MESSAGE_METADATA,
+  isPresenterAuthoredMessage,
+} from "./case-message-actor";
 import { REOPEN_WINDOW_MS, supportDeadline } from "./deadline-policy";
 import { stageExternalRequesterEmail } from "./external-requester";
 import { allocateTicketReference } from "./reference";
@@ -624,6 +628,8 @@ export async function stageSupportCaseIntakeTx(
     | "ownershipScope"
     | "externalRequesterEmail"
     | "appointmentId"
+    | "category"
+    | "issueType"
   >,
   initialSender?: "USER" | "AGENT" | "SYSTEM",
 ) {
@@ -936,21 +942,35 @@ async function applyTurnStateUpdate(
   return true;
 }
 
-async function caseTurnRecipientIdsTx(
+interface CaseTurnFanout {
+  bell: string[];
+  email: string[];
+  emailSubject: string;
+}
+
+async function caseTurnFanoutTx(
   tx: Tx,
   existingCase: SupportCase,
-  sender: AppendSupportCaseTurnInput["sender"],
-): Promise<string[]> {
+  input: AppendSupportCaseTurnInput,
+): Promise<CaseTurnFanout> {
   const presenters = await casePresenterIds(existingCase, tx);
-  if (sender === "AGENT") {
+  const assignee = existingCase.assignedToId ? [existingCase.assignedToId] : [];
+  if (input.actorKind === "PRESENTER") {
     const correspondents = await caseCorrespondentIds(existingCase, tx);
-    return [
-      ...new Set([
-        ...correspondents,
-        ...presenters,
-        ...(existingCase.assignedToId ? [existingCase.assignedToId] : []),
-      ]),
-    ];
+    return {
+      bell: [...new Set([...correspondents, ...presenters, ...assignee])],
+      // The assignee watches the queue but is not a customer correspondent.
+      email: correspondents,
+      emailSubject: `New presenter reply — ${existingCase.referenceNumber}`,
+    };
+  }
+  if (input.sender === "AGENT") {
+    const correspondents = await caseCorrespondentIds(existingCase, tx);
+    return {
+      bell: [...new Set([...correspondents, ...presenters, ...assignee])],
+      email: [...new Set([...correspondents, ...presenters])],
+      emailSubject: `Support response — ${existingCase.referenceNumber}`,
+    };
   }
   const staffIds = existingCase.assignedToId
     ? [existingCase.assignedToId]
@@ -960,7 +980,11 @@ async function caseTurnRecipientIdsTx(
           select: { id: true },
         })
       ).map((operator) => operator.id);
-  return [...new Set([...staffIds, ...presenters])];
+  return {
+    bell: [...new Set([...staffIds, ...presenters])],
+    email: presenters,
+    emailSubject: `Support response — ${existingCase.referenceNumber}`,
+  };
 }
 
 async function stageCaseResponseEmailsTx(
@@ -969,6 +993,7 @@ async function stageCaseResponseEmailsTx(
   body: string,
   recipients: string[],
   messageId: string,
+  subject: string,
 ): Promise<void> {
   const customers = await tx.user.findMany({
     where: { id: { in: recipients } },
@@ -995,7 +1020,7 @@ async function stageCaseResponseEmailsTx(
       {
         from: DEFAULT_FROM_ADDRESS,
         to: customer.email,
-        subject: `Support response — ${existingCase.referenceNumber}`,
+        subject,
         html,
         text,
       },
@@ -1012,7 +1037,11 @@ async function stageCaseTurnNotificationsTx(
 ): Promise<void> {
   if (input.isInternal || (input.sender !== "USER" && input.sender !== "AGENT"))
     return;
-  if (input.sender === "AGENT" && existingCase.externalRequesterEmail) {
+  if (
+    input.sender === "AGENT" &&
+    input.actorKind !== "PRESENTER" &&
+    existingCase.externalRequesterEmail
+  ) {
     await stageExternalRequesterEmail(
       {
         caseId: existingCase.id,
@@ -1027,9 +1056,10 @@ async function stageCaseTurnNotificationsTx(
     );
     return;
   }
-  const recipients = (
-    await caseTurnRecipientIdsTx(tx, existingCase, input.sender)
-  ).filter((recipientId) => recipientId !== input.authorUserId);
+  const fanout = await caseTurnFanoutTx(tx, existingCase, input);
+  const recipients = fanout.bell.filter(
+    (recipientId) => recipientId !== input.authorUserId,
+  );
   await stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
     recipients,
@@ -1047,26 +1077,17 @@ async function stageCaseTurnNotificationsTx(
       ...notificationScope(existingCase.organizationId),
     },
   });
-  if (input.sender === "AGENT") {
-    await stageCaseResponseEmailsTx(
-      tx,
-      existingCase,
-      input.body,
-      recipients,
-      messageId,
-    );
-    return;
-  }
-  const presenterRecipients = (await casePresenterIds(existingCase, tx)).filter(
+  const emailRecipients = fanout.email.filter(
     (recipientId) => recipientId !== input.authorUserId,
   );
-  if (presenterRecipients.length)
+  if (emailRecipients.length)
     await stageCaseResponseEmailsTx(
       tx,
       existingCase,
       input.body,
-      presenterRecipients,
+      emailRecipients,
       messageId,
+      fanout.emailSubject,
     );
 }
 
@@ -1151,6 +1172,27 @@ async function reopenRefusalTx(
   return null;
 }
 
+async function presenterTurnRefusalTx(
+  tx: Tx,
+  existingCase: SupportCase,
+  input: AppendSupportCaseTurnInput,
+) {
+  if (input.actorKind !== "PRESENTER") return null;
+  if (
+    input.sender !== "AGENT" ||
+    input.isInternal ||
+    !input.authorUserId ||
+    !(await isPresenterOnCase(existingCase, input.authorUserId, tx))
+  )
+    return {
+      ok: false as const,
+      status: 403 as const,
+      code: "FORBIDDEN" as const,
+      error: "Only an accepted presenter on this booking may reply.",
+    };
+  return null;
+}
+
 async function executeAppendTurnTx(
   tx: Tx,
   input: AppendSupportCaseTurnInput,
@@ -1179,6 +1221,13 @@ async function executeAppendTurnTx(
       error: "Cannot send a public message on a closed case.",
     };
   }
+
+  const presenterRefused = await presenterTurnRefusalTx(
+    tx,
+    existingCase,
+    input,
+  );
+  if (presenterRefused) return presenterRefused;
 
   const reopening =
     input.sender === "USER" &&
@@ -1212,6 +1261,10 @@ async function executeAppendTurnTx(
       isInternal: input.isInternal,
       clientTurnId: input.clientTurnId ?? null,
       authorUserId: input.authorUserId ?? null,
+      metadata:
+        input.actorKind === "PRESENTER"
+          ? PRESENTER_MESSAGE_METADATA
+          : undefined,
       createdAt: now,
     },
   });
@@ -1930,6 +1983,21 @@ export async function readSupportCaseForViewer(
     };
   }
 
+  const publicMessages = supportCase.messages
+    .filter((m) => !m.isInternal)
+    .map((m) => ({
+      id: m.id,
+      seq: m.seq,
+      sender: m.sender,
+      body: m.body,
+      isInternal: false as const,
+      clientTurnId: m.clientTurnId,
+      actorKind: isPresenterAuthoredMessage(m.metadata)
+        ? ("PRESENTER" as const)
+        : undefined,
+      createdAt: m.createdAt,
+    }));
+
   return {
     id: supportCase.id,
     referenceNumber: supportCase.referenceNumber,
@@ -1978,17 +2046,7 @@ export async function readSupportCaseForViewer(
         subjectId: subject.subjectId,
         isPrimary: subject.isPrimary,
       })),
-    messages: supportCase.messages
-      .filter((m) => !m.isInternal)
-      .map((m) => ({
-        id: m.id,
-        seq: m.seq,
-        sender: m.sender,
-        body: m.body,
-        isInternal: false as const,
-        clientTurnId: m.clientTurnId,
-        createdAt: m.createdAt,
-      })),
+    messages: publicMessages,
     events: supportCase.events
       .filter((e) =>
         ["CREATED", "STATUS_CHANGED", "REOPENED", "AUTO_CLOSED"].includes(

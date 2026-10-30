@@ -488,6 +488,7 @@ export function SessionConversation({
                 perspective="user"
                 author={m.sender}
                 body={m.body}
+                actorKind={m.actorKind}
                 at={m.pending ? undefined : m.createdAt}
                 pending={m.pending}
               />
