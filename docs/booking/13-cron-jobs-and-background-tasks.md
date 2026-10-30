@@ -12,12 +12,11 @@ The booking system relies on several cron jobs to maintain data integrity, expir
 
 ### Invocation Model
 
-Each job follows a unified HTTP-first or GitHub Actions invocation pattern:
+Every job follows one HTTP invocation pattern:
 
 1. **Dynamic HTTP cleanup dispatcher (`app/api/cleanup/[job]/route.ts`)** -- Every cleanup job is registered in `lib/cron/cleanup-registry.ts` and exposed at `/api/cleanup/<job>`. `netlify/functions/cron-tick.mts` runs every five minutes and POSTs latency-sensitive targets (`auto-complete-appointments`, `detect-consultant-no-shows`, `expire-unpaid-trials`, `reschedule-proposals`, `appointment-reminders`, `tentative-occurrences`, `expire-stale-requests`, `settle-cancelled-sessions`, and financial/outbox sweeps) on their configured cadence (`TARGET_EVERY_MINUTES`).
-2. **GitHub Actions** (daily, weekly and intra-day batch fleets only) -- `cron-daily.yml`, `cron-weekly.yml` and `cron-intra-day.yml` execute core scripts directly via `tsx`. They are not a backstop for ticker targets.
 
-Both paths call the same core function exported from `scripts/appointments/` (or `scripts/payments/`, `scripts/trials/`), wrapped in `withCronLock` and `assertNotInMaintenance` / `abortIfMaintenance`.
+No GitHub Actions workflow schedules a job: the former daily, weekly and intra-day fleet workflows are deleted, and a job is run by hand through the admin Run door or `POST /api/cleanup/<job>` with the `CRON_SECRET` bearer. Every path calls the same core function exported from `scripts/appointments/` (or `scripts/payments/`, `scripts/trials/`), wrapped in `withCronLock` and `assertNotInMaintenance` / `abortIfMaintenance`.
 
 ---
 
@@ -29,12 +28,12 @@ Both paths call the same core function exported from `scripts/appointments/` (or
 | Cleanup tentative slots     | Netlify ticker every 15 min, 200 rows                                 | `scripts/appointments/cleanup-tentative-occurrences.ts`     | `/api/cleanup/tentative-occurrences`             |
 | Expire stale requests       | Netlify ticker every 15 min, 20 rows per arm                          | `scripts/appointments/expire-stale-requests.ts`             | `/api/cleanup/expire-stale-requests`             |
 | Cleanup abandoned payments  | Netlify ticker every 15 min, 10 payments                              | `scripts/payments/cleanup-abandoned-payments.ts`            | `/api/cleanup/abandoned-payments`                |
-| Reconcile slot availability | `cron-intra-day.yml` hourly (`17 * * * *`); detects only              | `scripts/appointments/reconcile-occurrence-availability.ts` | `/api/cleanup/reconcile-occurrence-availability` |
+| Reconcile slot availability | Netlify ticker hourly at :30; detects only                            | `scripts/appointments/reconcile-occurrence-availability.ts` | `/api/cleanup/reconcile-occurrence-availability` |
 | Detect consultant no-shows  | Netlify ticker every 30 min, 10-row bites until 16 s; no Actions twin | `scripts/appointments/detect-consultant-no-shows.ts`        | `/api/cleanup/detect-consultant-no-shows`        |
 | Settle cancelled sessions   | Netlify ticker every 30 min, 10 sessions                              | `scripts/appointments/settle-cancelled-sessions.ts`         | `/api/cleanup/settle-cancelled-sessions`         |
 | Settle platform incidents   | Netlify ticker hourly at :30, 10 remedies per bite; no Actions twin   | `scripts/appointments/settle-platform-incidents.ts`         | `/api/cleanup/settle-platform-incidents`         |
 
-The repository has four scheduled workflows only (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`, `cron-heartbeat.yml`), and of the jobs in this document only `reconcile-occurrence-availability` runs from one of them. Everything else runs on the ticker, and a ticker target that is missing from `TARGETS` in `netlify/functions/cron-tick.mts` runs nowhere.
+Every job in this document runs on the ticker, and a ticker target that is missing from `TARGETS` in `netlify/functions/cron-tick.mts` runs nowhere.
 
 ## Throughput of the session-outcome sweeps
 
@@ -168,13 +167,13 @@ The paid 48-hour family shares one 16-second start budget across current expiry 
 
 ### f. Reconcile Slot Availability
 
-| Field              | Value                                                                                             |
-| ------------------ | ------------------------------------------------------------------------------------------------- |
-| **Schedule**       | `cron-intra-day.yml`, hourly at :17 (`17 * * * *`)                                                |
-| **Source**         | `scripts/appointments/reconcile-occurrence-availability.ts`                                       |
-| **API**            | `/api/cleanup/reconcile-occurrence-availability` (via `app/api/cleanup/[job]/route.ts`)           |
-| **GitHub Actions** | `.github/workflows/cron-intra-day.yml` (`jobs/appointments/reconcile-occurrence-availability.ts`) |
-| **HTTP Methods**   | `GET`, `POST`                                                                                     |
+| Field            | Value                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| **Schedule**     | Netlify ticker, hourly at :30 UTC, no `limit` sent, 24 s abort                           |
+| **Source**       | `scripts/appointments/reconcile-occurrence-availability.ts`                              |
+| **API**          | `/api/cleanup/reconcile-occurrence-availability` (via `app/api/cleanup/[job]/route.ts`)  |
+| **Manual run**   | Admin Run door, or `POST /api/cleanup/reconcile-occurrence-availability` with the bearer |
+| **HTTP Methods** | `GET`, `POST`                                                                            |
 
 **Purpose**: Fixes slot availability inconsistencies and detects booking conflicts. Performs two operations:
 
@@ -187,9 +186,9 @@ The paid 48-hour family shares one 16-second start budget across current expiry 
 - Tentative flag mismatches: Automatically corrected.
 - Double bookings: Logged and returned in the response. The API returns HTTP `207` when double bookings are detected (vs `200` for clean results).
 
-**Ownership of the 207 response**: A `207` is a degraded-but-not-broken signal, not a page. The GitHub Actions workflow posts it to the ops Slack channel configured via `SLACK_OPS_WEBHOOK_URL`, and the on-call engineer owns the follow-up. That engineer is responsible for triaging the reported overlaps, manually resolving the affected bookings (the job never auto-resolves them), and confirming the next hourly run returns `200`. Treat a `207` that persists across more than one run as the trigger to escalate.
+**Ownership of the 207 response**: A `207` is a degraded-but-not-broken signal, not a page. Each overlapping occurrence pair is recorded once as a durable `SystemEvent` keyed on the pair, and the run sends one Sentry warning when it finds a pair not already reported in the last 24 hours (`reportStandingFinding`). The on-call engineer owns the follow-up: triage the reported overlaps, resolve the affected bookings by hand (the job never auto-resolves them), and confirm the next hourly run returns `200`. Treat a `207` that persists across more than one run as the trigger to escalate.
 
-**Safety**: Two independent `try/catch` blocks. The double booking detection is read-only and does not modify data. The GitHub Actions workflow is configured to trigger a failure notification specifically for double booking scenarios, routed to the ops Slack channel (`SLACK_OPS_WEBHOOK_URL`) described above.
+**Safety**: Two independent `try/catch` blocks. The double booking detection is read-only on bookings; it writes only the `SystemEvent` findings described above.
 
 ---
 
@@ -307,12 +306,11 @@ lib/cron/cleanup-registry.ts     -- Central cleanup job registry
 app/api/cleanup/[job]/route.ts   -- Dynamic HTTP dispatcher (CRON_SECRET + assertNotInMaintenance)
 ```
 
-The core script has no HTTP or framework dependencies. `app/api/cleanup/[job]/route.ts` dispatches to `lib/cron/cleanup-registry.ts`, which adds authentication and maintenance guards and returns JSON. `netlify/functions/cron-tick.mts` and `.github/workflows/<job>.yml` invoke the registered jobs on schedule.
+The core script has no HTTP or framework dependencies. `app/api/cleanup/[job]/route.ts` dispatches to `lib/cron/cleanup-registry.ts`, which adds authentication and maintenance guards and returns JSON. `netlify/functions/cron-tick.mts` invokes the registered jobs on schedule, and a manual run goes through the same HTTP route.
 
 ```mermaid
 flowchart TD
     subgraph Triggers
-        GHA["GitHub Actions<br/>(schedule cron)"]
         TICK["Netlify ticker<br/>(cron-tick.mts, every 5 min)"]
         MANUAL["Manual curl<br/>(POST/GET)"]
     end
@@ -325,7 +323,6 @@ flowchart TD
         SCRIPT["scripts/appointments/*.ts<br/>- Query database<br/>- Apply business rules<br/>- Update records"]
     end
 
-    GHA --> SCRIPT
     TICK --> ROUTE
     MANUAL --> ROUTE
     ROUTE --> SCRIPT
@@ -357,8 +354,6 @@ if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
 ```
 
 The `invalid-appointments` endpoint uses a stronger `crypto.timingSafeEqual` comparison to prevent timing attacks.
-
-**GitHub Actions** workflows do not use the HTTP endpoints. They execute the core script directly, authenticating to the database via `DATABASE_URL` and `DIRECT_URL` repository secrets.
 
 ---
 

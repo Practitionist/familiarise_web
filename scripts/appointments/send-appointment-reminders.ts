@@ -781,11 +781,40 @@ export async function sendAppointmentReminders(opts?: {
   );
 }
 
+/** One indexed read: is any live session inside either reminder window? */
+async function anySessionInReminderWindows(now: number): Promise<boolean> {
+  const inWindow = (window: { minMs: number; maxMs: number }) => ({
+    startsAt: {
+      gte: new Date(now + window.minMs),
+      lte: new Date(now + window.maxMs),
+    },
+  });
+  const found = await prisma.appointmentOccurrence.findFirst({
+    where: {
+      OR: [inWindow(REMINDER_24H), inWindow(REMINDER_1H)],
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+    },
+    select: { id: true },
+  });
+  return found !== null;
+}
+
 async function sendAppointmentRemindersUnlocked(
   maxPerWindow: number,
 ): Promise<ReminderResult> {
   console.log("🔔 Starting appointment reminders scan...");
   console.log(`   Per-window cap: ${maxPerWindow} slot(s)`);
+
+  if (!(await anySessionInReminderWindows(Date.now()))) {
+    return {
+      success: true,
+      reminders24h: 0,
+      reminders1h: 0,
+      errors: [],
+      timestamp: new Date().toISOString(),
+    };
+  }
 
   const [result24h, result1h] = await Promise.all([
     sendRemindersForWindow(REMINDER_24H, maxPerWindow),

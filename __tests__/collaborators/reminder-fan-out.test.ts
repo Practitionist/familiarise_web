@@ -40,6 +40,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     appointmentOccurrence: {
       findMany: (...a: unknown[]) => slotFindMany(...a),
+      findFirst: jest.fn(async () => ({ id: "slot-1" })),
     },
     collaborator: {
       findMany: jest.fn(async () => [

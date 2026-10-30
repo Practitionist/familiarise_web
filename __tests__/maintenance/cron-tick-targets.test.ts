@@ -260,8 +260,8 @@ describe("cron-tick dueTargets cadence", () => {
     });
   });
 
-  it("never fires more than MAX_TARGETS_PER_TICK on any tick of 400 days, windows included", () => {
-    expect(MAX_TARGETS_PER_TICK).toBe(10);
+  it("keeps a free slot under MAX_TARGETS_PER_TICK on every tick of 400 days, windows included", () => {
+    expect(MAX_TARGETS_PER_TICK).toBe(12);
     // 400 days from 2026-11-01 cover every month start, every weekday and every quarter start.
     const start = Date.UTC(2026, 10, 1);
     let min = Infinity;
@@ -272,7 +272,7 @@ describe("cron-tick dueTargets cadence", () => {
       max = Math.max(max, n);
     }
     expect(min).toBeGreaterThanOrEqual(5);
-    expect(max).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
+    expect(max).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK - 1);
   });
 
   it("fires the orphaned-payments healer only at :10/:40", () => {
@@ -517,11 +517,11 @@ describe("cron-tick calendar windows", () => {
     expect(ledgers.length).toBeGreaterThan(12);
     expect(ledgers.every((t) => t.getUTCMinutes() === 55)).toBe(true);
     expect(ledgers.some((t) => t.getUTCHours() === 23)).toBe(true);
-    // A tick exactly at the cap keeps the ledger slice.
-    const full = dueTargets(utc(4, 6, 55));
-    expect(full).toContain("reconcile-gateway-settlements");
-    expect(full).toContain("reconcile-ledgers");
-    expect(full).toHaveLength(MAX_TARGETS_PER_TICK);
+    // A busy settlement tick still keeps the ledger slice.
+    const busy = dueTargets(utc(4, 6, 55));
+    expect(busy).toContain("reconcile-gateway-settlements");
+    expect(busy).toContain("reconcile-ledgers");
+    expect(busy.length).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
   });
 
   it("runs the TDS draft only on the 5th of January, April, July and October", () => {

@@ -8,6 +8,7 @@ import prisma from "@/lib/prisma";
 import { SystemJobStatus, Prisma } from "@prisma/client";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { TICK_CLAIM_JOB } from "@/lib/cron/schedule";
 import * as Sentry from "@sentry/nextjs";
 /**
  * GET /api/staff/system-jobs/executions
@@ -29,6 +30,9 @@ export async function GET(req: NextRequest) {
 
     if (jobId) {
       where.jobId = jobId;
+    } else {
+      // The ticker's slot claims are bookkeeping; they are listed only when asked for by name.
+      where.jobName = { not: TICK_CLAIM_JOB };
     }
     if (status) {
       where.status = status;

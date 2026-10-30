@@ -4,10 +4,9 @@
 
 `lib/cron/cleanup-registry.ts` supplies the single implementation dispatch for
 `/api/cleanup/[job]`. Its bearer check uses `CRON_SECRET`. The Netlify scheduled
-adapter runs every five minutes; current daily/intra-day/weekly Actions workflows
-still own the non-money jobs that have not yet migrated. An Actions workflow is
-not a backstop for a ticker target. Check executable target metadata and workflow
-steps rather than assuming a registered job is scheduled.
+adapter runs every five minutes and schedules every registered job (76 targets);
+no Actions workflow schedules a registry job. Check executable target metadata
+rather than assuming a registered job is scheduled.
 
 Production operational work belongs on the active platform scheduler: captures,
 refunds, payouts, billing, notification delivery, recording copies, retention and
@@ -19,9 +18,9 @@ on a production schedule.
 
 ## Shared schedule catalog
 
-`lib/cron/schedule.ts` owns target names, cadence, offsets, calendar windows, row limits and request timeouts. `JOB_SCHEDULES` exposes their effective values and `scheduleFor(name)` supports lookup. Dispatchers and generated schedule metadata consume this catalog instead of copying maps or scraping the Netlify adapter. Completion SLOs remain separate from configured cadence. Recording transfer runs every 15 minutes through the catalog background destination, with 202 recorded in `accepted` rather than `ok`; its Actions step is removed. Cleanup and staff recovery queue the same adapter. Preserve the core's fail-closed 15-minute lease and one-copy limit. The 45-minute operational-health budget requires actual successful core completion. The catalog has no database, vendor client or environment reads. `npm run cron:reference` generates `docs/maintenance/04-cron-jobs-reference.md` from this catalog, executable registry AST properties, worker lease declarations and operational workflow steps. `npm run cron:reference:check` detects stale output; it does not verify deployed execution. Import schedule helpers directly from the catalog; the Netlify adapter contains platform dispatch and failure reporting.
+`lib/cron/schedule.ts` owns target names, cadence, offsets, calendar windows, row limits and request timeouts. `JOB_SCHEDULES` exposes their effective values and `scheduleFor(name)` supports lookup. Dispatchers and generated schedule metadata consume this catalog instead of copying maps or scraping the Netlify adapter. Completion SLOs remain separate from configured cadence. Recording transfer runs every 15 minutes through the catalog background destination, with 202 recorded in `accepted` rather than `ok`; its Actions step is removed. Cleanup and staff recovery queue the same adapter. Preserve the core's fail-closed 15-minute lease and one-copy limit. The 45-minute operational-health budget requires actual successful core completion. The catalog has no database, vendor client or environment reads. `npm run cron:reference` generates `docs/maintenance/04-cron-jobs-reference.md` from this catalog, executable registry AST properties and worker lease declarations. `npm run cron:reference:check` detects stale output; it does not verify deployed execution. Import schedule helpers directly from the catalog; the Netlify adapter contains platform dispatch and failure reporting.
 
-Document retention (`purge-deleted-documents`) runs hourly at `:25`, with a 100-row request limit and 20-second HTTP timeout. Keep these values in the shared catalog when merging worker changes. The ten-target bound and ledger yielding must match the current cadence/collision test.
+Document retention (`purge-deleted-documents`) runs hourly at `:25`, with a 100-row request limit and 20-second HTTP timeout. Keep these values in the shared catalog when merging worker changes. The twelve-target bound (the busiest tick holds 11) and ledger yielding must match the current cadence/collision test.
 
 ## Lease, replay and failure
 
@@ -63,7 +62,7 @@ admitted slices resume the report. It answers 200 with summary status RUNNING wh
 remains and 207 once a completed audit has discrepancies; it is listed in
 `PARTIAL_FAILURE_TARGETS`, so that 207 counts as failed.
 
-GitHub Actions is retained only for non-money batch crons, plus manual `workflow_dispatch` runs; GitHub Actions is currently budget-blocked, so those jobs are not running. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. A 503 carrying an explicit `DEGRADED`/`OFFLINE` phase is a planned maintenance hold; an unreadable-state 503 remains `failed`.
+No GitHub Actions workflow schedules a registry job: every registered job, including the former daily, weekly and hourly housekeeping batch, runs on the ticker (76 targets, at most 12 per tick). The three fleet workflows `cron-daily.yml`, `cron-intra-day.yml` and `cron-weekly.yml` and their `tsx` wrappers are deleted; run a job by hand through the admin Run door or `POST /api/cleanup/<slug>` with the `CRON_SECRET` bearer. The weekly `consent-retention-sweeper` is count-only from the ticker, which never sends the delete flag. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. A 503 carrying an explicit `DEGRADED`/`OFFLINE` phase is a planned maintenance hold; an unreadable-state 503 remains `failed`.
 
 A per-job lease does not serialize different jobs touching the same payment or
 payout. Conditional state transitions, transactionally staged obligations and
@@ -129,7 +128,7 @@ Never create 3-layer wrappers. A job has one implementation, registered in
 5. Test same-job overlap, cross-job races, sequential replay and missed schedules.
 6. Update the generated job reference and operational recovery instructions.
 7. Put a ticker job in `lib/cron/schedule.ts` (`TARGETS` with an offset or a `TARGET_WINDOWS` slot) so
-   the cadence/collision tests preserve the ten-target design bound.
+   the cadence/collision tests preserve the twelve-target design bound (the busiest tick holds 11).
    Only the resumable ledger target yields when the due roster exceeds this bound;
    the dispatcher does not truncate other due work.
 8. If the job moves money or payouts, add its slug to `FINANCIAL_JOB_NAMES`
@@ -142,17 +141,17 @@ Calendar-window schedules also require explicit missed-window recovery.
 
 ## Compliance and retention slices
 
-Consent, breach-deadline alerts and SystemEvent retention have registered bounded cores under lib/compliance and lib/observability. The consent and breach steps retain Actions ownership until a verified single cutover, but non-money Actions jobs are currently budget-blocked; SystemEvent retention (`prune-system-events`) is a ticker target (hourly at offset 10, window 20:00 to 23:30 UTC). Carry the original caller start time through maintenance, lease admission and repeated slices; a slow read must not admit a post-deadline write. Consent deletion remains DPDP_SWEEPER_DELETE-gated and uses the stored retention deadline; event retention remains 400 days. Breach mail/Novu obligations stage transactionally and resume the oldest unfinished hourly digest, including across hour rollover. Staged or held mail is not delivered-mail evidence. See docs/maintenance/compliance-retention-workers.md; never run a real retention or alerting job to test it against the shared database.
+Consent, breach-deadline alerts and SystemEvent retention have registered bounded cores under lib/compliance and lib/observability. All three run on the ticker: `consent-retention-sweeper` weekly on Sunday at 00:25 UTC (count only, the ticker never sends the delete flag), `databreach-deadline-alerts` hourly at :15 (limit 50) and `prune-system-events` hourly at offset 10 in the 20:00 to 23:30 UTC window. Carry the original caller start time through maintenance, lease admission and repeated slices; a slow read must not admit a post-deadline write. Consent deletion remains DPDP_SWEEPER_DELETE-gated and uses the stored retention deadline; event retention remains 400 days. Breach mail/Novu obligations stage transactionally and resume the oldest unfinished hourly digest, including across hour rollover. Staged or held mail is not delivered-mail evidence. See docs/maintenance/compliance-retention-workers.md; never run a real retention or alerting job to test it against the shared database.
 
 An invalid officer mailbox reports a configuration error while admin alerts still stage; the digest remains active until repaired. Do not complete or abandon an unfinished digest solely because it is old. Persistent staging failures require operator repair and an explicit progression/capacity gate before schedule cutover.
 
 ## Source-only verification
 
-Generator changes must preserve output for unchanged executable inputs, including blank workflow-name fallback, Markdown pipe escaping and unresolved lease labels. Run `cron:reference:check` and the inventory/catalog/ticker Jest suites through the repository configuration. These checks parse source and mock runtime dependencies; they require no live database or vendor calls. The canonical `node_modules` symlink supplies tools in worktrees, but generated Prisma types must match the worktree schema for checks that include workers. Use an isolated matching client for focused typechecks rather than replacing the shared generated client.
+Generator changes must preserve output for unchanged executable inputs, including Markdown pipe escaping and unresolved lease labels. Run `cron:reference:check` and the inventory/catalog/ticker Jest suites through the repository configuration. These checks parse source and mock runtime dependencies; they require no live database or vendor calls. The canonical `node_modules` symlink supplies tools in worktrees, but generated Prisma types must match the worktree schema for checks that include workers. Use an isolated matching client for focused typechecks rather than replacing the shared generated client.
 
 ## Recording background packaging
 
-The recording background entry is `netlify/functions/recording-transfer-background.mts`. Preserve the supported filename suffix as well as its background config when packaging with the CLI. A dependency-free CLI 26.0.2 branch probe completed after 75 seconds on this account; the temporary drafts were removed. This proves the isolated runtime path, while the application bundle and actual copy handoff still require verification. HTTP 202 is admission only. For unpublished alias logs, use the deployment branch and ID when function metadata omits its branch. See `docs/stream/recording-background-worker.md` and [Netlify background functions](https://docs.netlify.com/build/functions/background-functions/).
+The recording background entry is `netlify/functions/recording-transfer-background.mts`. Preserve the supported filename suffix as well as its background config when packaging with the CLI. A dependency-free CLI 26.0.2 branch probe completed after 75 seconds on this account; the temporary drafts were removed. This proves the isolated runtime path, while the application bundle and actual copy handoff still require verification. HTTP 202 is admission only: Netlify answers 202 to any call, so `runBackgroundWorker` (`lib/cron/background-worker.ts`) refuses off production, non-POST and a missing or wrong `CRON_SECRET` bearer before any work and logs `background-worker-refused` with the reason. A dispatch from a non-production deploy refuses with the typed 409 `BACKGROUND_DISPATCH_PRODUCTION_ONLY` and a `CANCELLED` refused run row. For unpublished alias logs, use the deployment branch and ID when function metadata omits its branch. See `docs/stream/recording-background-worker.md` and [Netlify background functions](https://docs.netlify.com/build/functions/background-functions/).
 
 The native entry and shared cleanup factory need the explicit `next/server.js` package subpath. A network-denied compiled-module check catches the extensionless ESM import failure that CommonJS Jest loading misses. The worktree's default NFT archive can retain the external dependency symlink without its target; inspect dependency contents before treating a local archive as deployable. Keep the required canonical worktree dependency symlink.
 

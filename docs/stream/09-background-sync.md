@@ -26,9 +26,10 @@ flowchart LR
 
 Background responses acknowledge admission before authentication and execution.
 The ticker accepts only 202 for background targets, records `accepted` separately
-from `ok`, and never treats that admission as completed work. The adapters validate
-the bearer and maintenance state before invoking a core, and throw on server
-failures because Netlify discards background response bodies. The cleanup route
+from `ok`, and never treats that admission as completed work. The adapters run only on
+the production deploy and validate the method and bearer before any work, then
+the maintenance state before invoking a core. They never throw: a failed run is
+logged and recorded, because a throw would buy Netlify's two automatic retries. The cleanup route
 and staff dispatch use configured HTTPS origins, refuse embedded credentials and
 redirects, and keep the bearer server-side.
 
@@ -50,7 +51,7 @@ for wind-down, and 08:00–11:00 for principal/channel lifecycle. Each daily job
 three bounded slices. These are dispatch cadences, not a guarantee that a backlog
 has drained. The catalog is shared with documentation and tested over every tick
 of a week and 400 days, including monthly/quarterly collisions; no tick exceeds
-ten targets. Existing Stream membership and control-plane checks remain scheduled.
+eleven targets (the cap is twelve). Existing Stream membership and control-plane checks remain scheduled.
 
 | Core / entry                                      | UTC slots           | Work bound and continuation                                                                                                                                                                                                                                     |
 | ------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

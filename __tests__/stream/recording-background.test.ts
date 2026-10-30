@@ -108,7 +108,8 @@ it("never starts work for an invalid bearer or a non-POST invocation", async () 
   expect(guard).not.toHaveBeenCalled();
 });
 
-it("surfaces failed execution to Netlify instead of treating admission as completion", async () => {
+it("records a failed run without throwing into Netlify's retries", async () => {
+  jest.spyOn(console, "error").mockImplementation(() => {});
   runTransfer.mockResolvedValueOnce({
     success: false,
     reclaimedStale: 0,
@@ -118,12 +119,13 @@ it("surfaces failed execution to Netlify instead of treating admission as comple
     exhaustedReported: 0,
     errors: ["copy failed"],
   });
-  await expect(worker.run(request())).rejects.toThrow("HTTP 500");
+  await expect(worker.run(request())).resolves.toBeUndefined();
   expect(flushJobSentry).toHaveBeenCalledTimes(1);
 });
 
 it("does not run the copy when the maintenance guard rejects admission", async () => {
+  jest.spyOn(console, "error").mockImplementation(() => {});
   guard.mockRejectedValueOnce(new Error("maintenance state unavailable"));
-  await expect(worker.run(request())).rejects.toThrow("HTTP 500");
+  await expect(worker.run(request())).resolves.toBeUndefined();
   expect(runTransfer).not.toHaveBeenCalled();
 });

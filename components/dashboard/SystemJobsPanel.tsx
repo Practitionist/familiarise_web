@@ -28,6 +28,7 @@ import {
 import type { Tone } from "@/lib/ui/tone";
 import {
   formatDuration,
+  isStandDownOutcome,
   outcomeLabel,
   scalarFields,
   summaryFields,
@@ -240,6 +241,16 @@ export function SystemJobsPanel({
       });
 
       const result = await response.json();
+      const runOutcome = response.headers.get("x-run-outcome");
+
+      if (!response.ok && isStandDownOutcome(runOutcome)) {
+        toast({
+          title: `${job.title} ${outcomeLabel(runOutcome)?.toLowerCase() ?? "skipped"}`,
+          description: result.error ?? "The job did not run.",
+          variant: "default",
+        });
+        return;
+      }
 
       if (!response.ok) {
         // Shown inside the dialog, which stays open.
@@ -256,7 +267,7 @@ export function SystemJobsPanel({
         return;
       }
 
-      const outcome = outcomeLabel(response.headers.get("x-run-outcome"));
+      const outcome = outcomeLabel(runOutcome);
       const counts = scalarFields(result, 5);
       const failed = outcome === "Failed" || outcome === "Partial";
 

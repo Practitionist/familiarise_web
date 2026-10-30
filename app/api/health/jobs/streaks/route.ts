@@ -12,7 +12,7 @@ function isTarget(name: string): name is Target {
   return KNOWN_TARGETS.has(name);
 }
 
-/** Read-only: when each requested target's job last COMPLETED, for the ticker's repeat-failure escalation. */
+/** Read-only: when each requested target's job last COMPLETED and last FAILED, for the ticker's escalation and background outcomes. */
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
   if (!secret || !bearerMatches(request.headers.get("authorization"), secret)) {
@@ -57,14 +57,15 @@ export async function GET(request: NextRequest) {
     for (const [target, jobName] of jobByTarget) {
       const entry: StreakReport[string] = {
         lastCompletedAt: null,
+        lastFailedAt: null,
         seenRecently: false,
       };
       for (const row of rows) {
         if (row.jobName !== jobName) continue;
         entry.seenRecently = true;
-        if (row.status === "COMPLETED" && row._max.startedAt) {
-          entry.lastCompletedAt = row._max.startedAt.toISOString();
-        }
+        const at = row._max.startedAt?.toISOString() ?? null;
+        if (row.status === "COMPLETED") entry.lastCompletedAt = at;
+        else entry.lastFailedAt = at;
       }
       report[target] = entry;
     }

@@ -22,9 +22,10 @@ Use one registered implementation per job and keep the required Netlify standby.
 `lib/cron/schedule.ts` owns configured cadence, windows and HTTP request bounds;
 the registry does not define phase or timeout fields. Regenerate the AST-derived
 inventory with `npm run cron:reference` and verify `npm run cron:reference:check`.
-The catalog has no worker, database or environment imports. Its ten-target figure
-is a tested design bound, not a runtime dispatch cap. Configured Actions ownership
-remains migration work until bounded replacements have actually run.
+The catalog has no worker, database or environment imports. Its twelve-target figure
+(`MAX_TARGETS_PER_TICK`) is a tested design bound, not a runtime dispatch cap; the
+busiest tick holds 11. No Actions workflow schedules a registry job, so a job with
+no ticker target runs nowhere.
 
 Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion. Its requested fail-closed 15-minute lease is capped on Netlify at 90 seconds, renewed every 30 seconds; renewal loss does not cancel the core, so preserve domain claim and publication fencing. The recording's stale-claim threshold remains 15 minutes. Session recovery runs via HTTP at :10/:40. The five daily lifecycle targets queue the narrow `stream-maintenance-background` worker in staggered daily windows; their Actions steps are removed. All six migrated cores fail closed, and daily completion health has a 27-hour budget. See `docs/stream/09-background-sync.md` for slice bounds and continuation.
 
@@ -165,7 +166,7 @@ For plan-material commits, check session, rate limit, current plan-management ac
 
 ## Ticker capacity, state ownership and the scale path
 
-- **Capacity.** The ticker has 288 ticks a day × `MAX_TARGETS_PER_TICK` slots, and on 2026-10-30 it was nearly full (about 2,900 starts a day). Eleven registered jobs are scheduled nowhere. Before adding a job, check that a slot exists in its window, or bundle it. The growth limit is database connections (one per function instance), not the tick's 30 seconds.
+- **Capacity.** The ticker has 288 ticks a day × `MAX_TARGETS_PER_TICK` (12) = 3,456 slots. All 76 registered jobs now run on it and use about 2,876 starts a day (about 83 %); the busiest tick has 11 targets and the cadence test pins that at 11 or fewer, so every tick keeps one free slot. Before adding a job, check that a slot exists in its window, or bundle it. The growth limit is database connections (one per function instance), not the tick's 30 seconds. The trigger for leaving the Netlify ticker is a tick that would need a 13th slot, p99 ticks above 24 s, or pooler pressure; the decided path is the Vercel `bom1` trial below.
 - **Jobs are slices, not long runs.** Each run takes a `?limit=`, a 16-second deadline, a saved cursor and a 90-second lease. Long work goes to a background function. A crashed run's lease expires and the next run takes over.
 - **State ownership.** Jobs may touch the same rows. Correctness comes from the database, not from job order: CAS status writes, Serializable retry, constraints and triggers, and gateway idempotency keys. A new writer of a status column must appear in the state ownership matrix (#2466), and `result.counters.casMiss` is the live signal for contention.
-- **The scale path** is in `docs/decisions/2026-10-30-architecture-at-scale-review.md` (Proposed): co-locate compute with the database in Mumbai, then a Postgres-backed queue in one worker replaces the HTTP ticker. Never add a second scheduler beside the ticker.
+- **The scale path** is decided in `docs/decisions/2026-10-31-ticker-scale-path-and-queue.md`: the Netlify ticker stays through launch; before about 300 concurrent users the web tier is trialled on Vercel Pro in `bom1` with Vercel Cron as the ticker and Netlify as hot standby (the fleet switch picks one); no hosted job service (none runs compute in India, so none removes the ~95 ms per statement); phase 2 is a hand-written Prisma `Job` table claimed with `SKIP LOCKED`. Never add a second scheduler beside the ticker, and no QStash unless a job needs per-message delivery.

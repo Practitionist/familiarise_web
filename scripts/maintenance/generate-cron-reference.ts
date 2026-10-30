@@ -9,11 +9,6 @@ import { MANUAL_ONLY } from "../../lib/cron/manual-only";
 const ROOT = path.resolve(__dirname, "../..");
 const OUTPUT = "docs/maintenance/04-cron-jobs-reference.md";
 const REGISTRY = "lib/cron/cleanup-registry.ts";
-const FLEET_WORKFLOWS = [
-  "cron-daily.yml",
-  "cron-intra-day.yml",
-  "cron-weekly.yml",
-];
 
 type Core = { file: string; calls: string[] };
 type RegistryJob = {
@@ -22,15 +17,6 @@ type RegistryJob = {
   line: number;
   cores: Core[];
   node: ts.Node;
-};
-type WorkflowJob = {
-  id: string;
-  name: string;
-  file: string;
-  core?: string;
-  slug?: string;
-  crons: string[];
-  timeout?: string;
 };
 type Lease = { name: string; mode: string; ttl: string; file: string };
 
@@ -173,41 +159,6 @@ export function registryJobs(source: string, root: string): RegistryJob[] {
   });
 }
 
-/** Fleet steps currently use literal schedule comparisons and tsx or cleanup-route commands. */
-export function workflowJobs(source: string, file: string): WorkflowJob[] {
-  return source.split(/(?=^ {6}- name:)/m).flatMap((block) => {
-    const id = /^ {8}id:\s*([a-z0-9-]+)\s*$/m.exec(block)?.[1];
-    if (!id) return [];
-    const name = /^ {6}- name:([^\r\n]*)/m.exec(block)?.[1]?.trim() || id;
-    const core =
-      /(?:node_modules\/\.bin\/tsx|npx(?: --no-install)? tsx)\s+((?:jobs|scripts)\/[^\s"']+\.ts)/.exec(
-        block,
-      )?.[1];
-    const slug = /\/api\/cleanup\/([a-z0-9-]+)/.exec(block)?.[1];
-    if (!core && !slug)
-      throw new Error(`Unsupported operational step ${file}:${id}`);
-    const crons = [
-      ...new Set(
-        Array.from(
-          block.matchAll(/github\.event\.schedule\s*==\s*'([^']+)'/g),
-          (hit) => hit[1],
-        ),
-      ),
-    ];
-    return [
-      {
-        id,
-        name,
-        file,
-        core,
-        slug,
-        crons,
-        timeout: /^ {8}timeout-minutes:\s*(\d+)\s*$/m.exec(block)?.[1],
-      },
-    ];
-  });
-}
-
 function numeric(
   node: ts.Expression,
   constants: Map<string, ts.Expression>,
@@ -293,14 +244,6 @@ function table(headers: string[], rows: string[][]): string {
     .join("\n");
 }
 
-function matched(step: WorkflowJob, job: RegistryJob) {
-  return (
-    step.slug === job.slug ||
-    step.id === job.slug ||
-    step.id === job.job ||
-    !!(step.core && job.cores.some((core) => core.file === step.core))
-  );
-}
 function leaseLabel(found: Lease[]): string {
   return found.length
     ? found
@@ -308,10 +251,6 @@ function leaseLabel(found: Lease[]): string {
         .join("<br>")
     : "No matching lease statically resolved; inspect core";
 }
-function cronLabel(step: WorkflowJob): string {
-  return `${link(step.file)} (${code(step.id)}): ${step.crons.length ? step.crons.map(code).join(", ") + " UTC" : "manual / condition requires inspection"}`;
-}
-
 function importedWorkerFiles(
   parsed: ts.SourceFile,
   file: string,
@@ -354,10 +293,6 @@ export async function generateCronReference(root = ROOT): Promise<string> {
     fs.readFileSync(path.join(root, REGISTRY), "utf8"),
     root,
   ).sort((a, b) => (a.slug < b.slug ? -1 : Number(a.slug > b.slug)));
-  const workflows = FLEET_WORKFLOWS.flatMap((name) => {
-    const file = `.github/workflows/${name}`;
-    return workflowJobs(fs.readFileSync(path.join(root, file), "utf8"), file);
-  });
   function leases(
     files: string[],
     name: string,
@@ -401,9 +336,7 @@ export async function generateCronReference(root = ROOT): Promise<string> {
   }
   function scheduleLabel(job: RegistryJob): string {
     const schedule = JOB_SCHEDULES.find((item) => item.name === job.slug);
-    const owners = workflows
-      .filter((step) => matched(step, job))
-      .map(cronLabel);
+    const owners: string[] = [];
     if (schedule) {
       const window = schedule.window
         ? "<br>UTC window " + code(JSON.stringify(schedule.window))
@@ -440,13 +373,9 @@ export async function generateCronReference(root = ROOT): Promise<string> {
     if (backgroundFile)
       cores.push(...selectedBackgroundCores(backgroundFile, job.job));
     const calls = [...new Set(cores.flatMap((core) => core.calls))];
-    const workflowBounds = workflows
-      .filter((step) => matched(step, job) && step.timeout)
-      .map((step) => `${step.timeout} min Actions step timeout`);
     const coreFiles = cores.map((core) => core.file);
     if (backgroundFile) coreFiles.push(backgroundFile);
-    let requestBounds =
-      workflowBounds.join("; ") || "Core bounds not statically resolved";
+    let requestBounds = "Core bounds not statically resolved";
     if (schedule) {
       const execution = schedule.backgroundFunction
         ? "; background admission only; 15 min worker ceiling"
@@ -469,35 +398,19 @@ export async function generateCronReference(root = ROOT): Promise<string> {
       requestBounds,
     ];
   });
-  const missing = workflows.filter(
-    (step) => !jobs.some((job) => matched(step, job)),
-  );
   const outsideTicker = jobs.filter(
     (job) => !JOB_SCHEDULES.some((schedule) => schedule.name === job.slug),
   );
-  const missingRows = missing.map((step) => [
-    code(step.id),
-    step.name,
-    step.core
-      ? link(step.core)
-      : `Missing cleanup route ${code(step.slug ?? "unknown")}`,
-    cronLabel(step),
-    step.core ? leaseLabel(leases([step.core], step.id)) : "Not resolved",
-    step.timeout
-      ? `${step.timeout} min Actions step timeout`
-      : "Inspect workflow",
-  ]);
   const output = `# Configured cron jobs reference
 
 <!-- Generated by scripts/maintenance/generate-cron-reference.ts. Edit the executable sources, then regenerate. -->
 
-Run \`npm run cron:reference\` to regenerate; \`npm run cron:reference:check\` fails when this file is stale. The generator reads executable registry keys and worker lease calls through the TypeScript AST, reads the three operational fleet workflows as source, and imports only the pure schedule, financial-name and manual-only catalogs. It never imports worker modules or contacts a database or vendor.
+Run \`npm run cron:reference\` to regenerate; \`npm run cron:reference:check\` fails when this file is stale. The generator reads executable registry keys and worker lease calls through the TypeScript AST, and imports only the pure schedule, financial-name and manual-only catalogs. It never imports worker modules or contacts a database or vendor.
 
 ## Inventory and evidence
 
 - **${jobs.length} registered cleanup jobs:** ${JOB_SCHEDULES.length} configured ticker targets and ${outsideTicker.length} registered jobs outside the ticker.
-- **${missing.length} operational Actions steps without a registered cleanup builder**, listed separately below. Monitor/security/CI workflows are outside this operational fleet inventory.
-- **Configured is not live-verified.** Every row describes repository configuration. This generation did not check deployment state, Actions enablement/budget, accepted Sentry check-ins or completed obligations. The fleet switch selects the active platform; a configured ticker target is not proof that it executed.
+- **Configured is not live-verified.** Every row describes repository configuration. This generation did not check deployment state, accepted Sentry check-ins or completed obligations. The fleet switch selects the active platform; a configured ticker target is not proof that it executed.
 - **${MAX_TARGETS_PER_TICK} targets per tick is a tested wave design bound.** The resumable ledger target yields on crowded slots; other due work is not truncated. The cadence/collision tests guard the planned roster. An HTTP abort does not cancel the worker, and a lease does not deduplicate sequential external effects.
 
 ## Registered jobs
@@ -506,16 +419,10 @@ The purpose column expands imported entry function names, not a second hand-main
 
 ${table(["Cleanup slug", "Purpose / entry function", "Core source", "Configured schedule", "Postgres lease: name; mode; TTL", "Maintenance admission", "Configured request bounds"], rows)}
 
-## Actions steps missing registry coverage
-
-These are configured workflow steps, not automatically available cleanup/admin jobs. Do not infer an HTTP twin or migrate a schedule from this table alone. A replacement must be bounded and verified with a controlled single-job deployment check before switching the active schedule; leases alone do not justify dual scheduling.
-
-${table(["Workflow step", "Purpose / step name", "Core source", "Configured schedule", "Lease", "Workflow bound"], missingRows)}
-
 ## Changing a job
 
 1. Keep one implementation and register its cleanup builder; do not add wrapper layers.
-2. Update ${link("lib/cron/schedule.ts")} for ticker timing and request limits, or the owning workflow for remaining Actions jobs. Preserve one active schedule.
+2. Update ${link("lib/cron/schedule.ts")} for ticker timing and request limits. Preserve one active schedule.
 3. Regenerate this reference and run the schedule/collision, inventory and documentation drift tests.
 4. Verify completed work and error/hold behavior in the deployed environment before treating the configuration as healthy. Record deployment evidence separately from this generated file.
 

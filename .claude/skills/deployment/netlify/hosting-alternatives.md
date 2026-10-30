@@ -74,6 +74,8 @@ With `experimental: { preloadEntriesOnStart: false, appDocumentPreloading: false
 
 ## A reading of the evidence, updated 2026-10-11 (ADR 36 & Issues #2095–#2097)
 
+> **Superseded on 2026-10-31.** The decided path is a Vercel Pro `bom1` trial for the web tier with Vercel Cron, Netlify as hot standby; the container ranking below was rejected on cost. See `docs/decisions/2026-10-31-ticker-scale-path-and-queue.md`.
+
 The monolith, Next.js, and the no-broker posture remain supported by every measurement. Post-PR `#1972` (`preloadEntriesOnStart: false` & `appDocumentPreloading: false`), Netlify Pro (`sin`, `$20/mo` unlimited seats) serves 12-way cold bursts in **`0.97–1.90 s`** (`33 MB` V8 heap), making it stable today and ideal as our permanent **Hot-Standby / `< 90s` Emergency Failback Host** (`docs/deployment/emergency-failback-runbook.md`).
 
 When migrating primary compute into **Mumbai (`< 4 ms` RTT to Supabase `ap-south-1` vs `55–70 ms` from Singapore)** and moving off `PG_POOL_MAX=1` single-request Lambdas, our full 10-platform audit (`docs/deployment/multi-platform-evaluation.md`, Issue #2096) establishes this exact order:
