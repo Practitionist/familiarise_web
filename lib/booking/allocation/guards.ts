@@ -181,7 +181,7 @@ export function mergeContiguousIntervals(
   const intervals: Array<{ start: number; end: number }> = [];
   for (const start of starts) {
     const last = intervals[intervals.length - 1];
-    if (last && last.end === start) last.end = start + SCHEDULING_INTERVAL_MS;
+    if (last?.end === start) last.end = start + SCHEDULING_INTERVAL_MS;
     else intervals.push({ start, end: start + SCHEDULING_INTERVAL_MS });
   }
   return intervals.map((i) => ({

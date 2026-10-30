@@ -513,7 +513,7 @@ export async function getConsultantDashboard(
   );
 
   // Sort appointments by slot start time (matching original API behavior)
-  const sortedAppointments = appointmentsRaw.sort((a, b) => {
+  const sortedAppointments = appointmentsRaw.toSorted((a, b) => {
     const aTime = a.occurrences?.[0]?.startsAt;
     const bTime = b.occurrences?.[0]?.startsAt;
 

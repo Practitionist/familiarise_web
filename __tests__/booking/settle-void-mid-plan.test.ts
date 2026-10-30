@@ -184,19 +184,22 @@ jest.mock("../../lib/prisma", () => {
       updateMany: (...a: unknown[]) => occurrenceUpdateMany(...a),
     },
     subscription: {
-      // The stored-end arm asks for planEndsAt <= now, the derived arm for null.
+      // The stored-end arm asks for planEndsAt <= now, the derived arm for null;
+      // the completed-plan voids arm (no COMPLETED plan here) finds nothing.
       findMany: async ({
         where,
         take,
       }: {
-        where: KeysetWhere;
+        where: KeysetWhere & { status?: unknown };
         take: number;
       }) =>
-        state.cohort
-          ? cohortPage(where, take)
-          : (where.planEndsAt === null) === (state.plan.planEndsAt === null)
-            ? [state.plan]
-            : [],
+        where.status === "COMPLETED"
+          ? []
+          : state.cohort
+            ? cohortPage(where, take)
+            : (where.planEndsAt === null) === (state.plan.planEndsAt === null)
+              ? [state.plan]
+              : [],
       findUnique: async ({ where }: { where: { id: string } }) => {
         state.opened.push(where.id);
         const found = state.cohort?.find((p) => p.id === where.id);
@@ -360,8 +363,9 @@ it("re-reads the plan under the lock: an extension that landed first wins", asyn
   expect(stampRefundOwed).not.toHaveBeenCalled();
 });
 
-it("settles, without money, the voids of plans that ended another way", async () => {
+it("settles, without money, the voids of plans their own refund path paid", async () => {
   await settleCancelledSessions();
+  // A COMPLETED plan is not here: its unsettled void goes through the money.
   expect(occurrenceUpdateMany).toHaveBeenCalledWith({
     where: {
       completionStatus: "VOIDED",
@@ -369,7 +373,7 @@ it("settles, without money, the voids of plans that ended another way", async ()
       deletedAt: null,
       appointment: {
         subscription: {
-          status: { in: ["CANCELLED", "EXPIRED", "REJECTED", "COMPLETED"] },
+          status: { in: ["CANCELLED", "EXPIRED", "REJECTED"] },
         },
       },
     },

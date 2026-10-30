@@ -3,11 +3,12 @@
  */
 
 /**
- * A subscription's voids never hold its earnings or its completion: the plan's
- * earnings release per delivered tranche, and the money a void is owed is
- * settled at plan end or by the cancel quote. Consultation, class and webinar
- * misses still hold theirs. And once a plan has ended, ops cannot void one of
- * its sessions, because nothing would ever settle it.
+ * A subscription's voids never hold its earnings: the plan's earnings release
+ * per delivered tranche, and the money a void is owed is settled at plan end
+ * or by the cancel quote, so an unsettled void holds the plan's completion
+ * instead. Consultation, class and webinar misses still hold their earnings.
+ * And once a plan has ended, ops cannot void one of its sessions, because
+ * nothing would ever settle it.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -39,7 +40,7 @@ describe("subscription misses do not hold earnings", () => {
     );
   });
 
-  it("subscription auto-complete is not gated on unsettled misses; the other arms still are", () => {
+  it("subscription auto-complete waits for unsettled misses and undecided sessions, like the event arms", () => {
     const source = fs.readFileSync(
       path.join(
         process.cwd(),
@@ -54,8 +55,7 @@ describe("subscription misses do not hold earnings", () => {
         source.indexOf("const subscriptionsToComplete"),
       ),
     );
-    expect(subscriptionArm).not.toContain("UNSETTLED_MISS");
-    expect(source.match(/none: UNSETTLED_MISS/g)?.length).toBe(2);
+    expect(subscriptionArm).toContain("endedAndSettled(bufferTime)");
   });
 });
 

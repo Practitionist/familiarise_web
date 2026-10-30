@@ -53,8 +53,6 @@ export function SlotStatusLegend({
             key={key}
             className="flex items-center gap-1.5 text-xs text-muted-foreground"
             title={token.hint}
-            role="img"
-            aria-label={`${token.label}: ${token.hint}${count === undefined ? "" : `, ${halfHours(count)}`}`}
           >
             <span
               aria-hidden="true"
@@ -70,6 +68,9 @@ export function SlotStatusLegend({
             <span aria-hidden>
               {count === undefined ? token.label : `${token.label} · ${count}`}
             </span>
+            <span className="sr-only">
+              {`${token.label}: ${token.hint}${count === undefined ? "" : `, ${halfHours(count)}`}`}
+            </span>
           </li>
         );
       })}
@@ -77,8 +78,6 @@ export function SlotStatusLegend({
         <li
           className="flex items-center gap-1.5 text-xs text-muted-foreground"
           title={REQUESTED_OUTLINE.hint}
-          role="img"
-          aria-label={`${REQUESTED_OUTLINE.label}: ${REQUESTED_OUTLINE.hint}`}
         >
           <span
             aria-hidden="true"
@@ -88,6 +87,9 @@ export function SlotStatusLegend({
             )}
           />
           <span aria-hidden>{REQUESTED_OUTLINE.label}</span>
+          <span className="sr-only">
+            {`${REQUESTED_OUTLINE.label}: ${REQUESTED_OUTLINE.hint}`}
+          </span>
         </li>
       )}
     </ul>

@@ -85,6 +85,20 @@ it("offers to cancel a fresh checkout and releases its own payment's hold", asyn
   });
 });
 
+it("tells the buyer when the cancel request itself fails", async () => {
+  const { dismissToast, fetchMock } = await openAndDismiss({
+    checkoutData: {} as CheckoutInput,
+  });
+  fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+  await act(async () => dismissToast.action?.props.onClick());
+
+  expect(mockToast.mock.calls.at(-1)?.[0]).toMatchObject({
+    title: "Couldn't cancel the checkout",
+    variant: "destructive",
+  });
+});
+
 it("never offers to cancel a pay-link order minted elsewhere", async () => {
   const { dismissToast } = await openAndDismiss({
     existingOrder: {

@@ -89,6 +89,8 @@ export interface ApprovalPaymentResult {
   /** What the buyer is charged: list price plus GST (#1583 C-P0-01). */
   amount: number;
   currency: Currency;
+  /** When the pay-link stops being payable; what the client is told. */
+  expiresAt: Date;
 }
 
 // ============================================================================
@@ -421,6 +423,9 @@ export async function createApprovalPaymentIntent(
           checkoutUrl: existingPayment.paymentIntent,
           amount: existingPayment.amount,
           currency: existingPayment.currency,
+          expiresAt:
+            existingPayment.expiresAt ??
+            payWindowEnd(new Date(), await firstSessionStartOf(params)),
         };
       }
     }
@@ -553,6 +558,7 @@ export async function createApprovalPaymentIntent(
       checkoutUrl: paymentResponse.client_secret,
       amount,
       currency,
+      expiresAt: holdExpiresAt,
     };
   } finally {
     await unlockApproval(lock);
@@ -713,6 +719,7 @@ async function claimRowForRemint(
       paymentIntent: true,
       amount: true,
       currency: true,
+      expiresAt: true,
     },
   });
   if (fresh?.paymentStatus === PaymentStatus.SUCCEEDED) {
@@ -730,6 +737,7 @@ async function claimRowForRemint(
         checkoutUrl: fresh.paymentIntent,
         amount: fresh.amount,
         currency: fresh.currency,
+        expiresAt: fresh.expiresAt ?? fields.holdExpiresAt,
       },
     };
   }

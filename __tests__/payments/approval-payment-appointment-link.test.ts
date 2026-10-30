@@ -421,11 +421,13 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
 
     // Same intent handed back — Razorpay's checkout url IS the order id, so
     // this reconstructs the original pay-link without a gateway round-trip.
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       paymentIntentId: "order_existing",
       checkoutUrl: "order_existing",
       amount: TAXED_PLAN_PAISE,
       currency: Currency.INR,
+      // The row's own window end: what the client is told it has to pay.
+      expiresAt: expect.any(Date),
     });
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
     expect(mockedPaymentCreate).not.toHaveBeenCalled();
@@ -574,11 +576,13 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
 
     const result = await createApprovalPaymentIntent(mintParams());
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       paymentIntentId: "order_theirs",
       checkoutUrl: "order_theirs",
       amount: TAXED_PLAN_PAISE,
       currency: Currency.INR,
+      // The row's own window end: what the client is told it has to pay.
+      expiresAt: expect.any(Date),
     });
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
     expect(mockTombstone).not.toHaveBeenCalled();

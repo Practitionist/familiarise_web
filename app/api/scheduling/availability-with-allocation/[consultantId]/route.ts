@@ -1035,7 +1035,9 @@ export async function GET(
     if (orphanCells.length > 0) {
       const loc = makeLocalizer(timezone);
       for (const cell of orphanCells) {
-        (slotsByDate[loc.dateKey(new Date(cell.startsAt))] ||= []).push(cell);
+        const dateKey = loc.dateKey(new Date(cell.startsAt));
+        slotsByDate[dateKey] ??= [];
+        slotsByDate[dateKey].push(cell);
       }
       for (const dateKey of Object.keys(slotsByDate)) {
         slotsByDate[dateKey].sort(

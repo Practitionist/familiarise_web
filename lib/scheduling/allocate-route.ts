@@ -190,6 +190,7 @@ export async function handleAllocate(
       // same state the detail PATCH leaves — recorded as a system error;
       // re-approving reuses the same PENDING intent (#1181).
       const awaitingPayment = result.outcome === "awaiting_payment";
+      let payExpiresAt: Date | null = null;
       if (
         awaitingPayment &&
         (eventType === "consultation" || eventType === "subscription")
@@ -235,14 +236,18 @@ export async function handleAllocate(
             { status: 502 },
           );
         }
+        if (mint.status === "minted") payExpiresAt = mint.payExpiresAt;
       }
 
       return NextResponse.json({
         data: result.appointments,
         warnings: result.warnings,
-        // #1775 B-9 — the client says "the client has 24 h to pay", not
-        // "Confirmed", when the approval is waiting on the pay order.
+        // The client says how long the payer has, not "Confirmed", when the
+        // approval is waiting on the pay order.
         awaitingPayment,
+        // The pay window's end, clamped before the first session; null when
+        // no link was minted by this call.
+        payExpiresAt: payExpiresAt?.toISOString() ?? null,
         // #1206 — derived, never stored: how much of the plan now has times.
         partial: result.partial,
         placedSessions: result.placedSessions,

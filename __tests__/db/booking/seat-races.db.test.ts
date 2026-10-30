@@ -20,7 +20,13 @@ import {
 } from "./harness-seats";
 
 /** The mock gateway: a fixed delay, and how many mints were in flight at once. */
-const gateway = { delayMs: 0, inFlight: 0, maxInFlight: 0 };
+const gateway = {
+  delayMs: 0,
+  inFlight: 0,
+  maxInFlight: 0,
+  /** The id the next mint returns, when a test needs to know it. */
+  nextOrderId: null as string | null,
+};
 jest.mock("../../../lib/payments/index", () => ({
   __esModule: true,
   createPaymentIntent: jest.fn(async () => {
@@ -28,10 +34,26 @@ jest.mock("../../../lib/payments/index", () => ({
     gateway.maxInFlight = Math.max(gateway.maxInFlight, gateway.inFlight);
     await new Promise((resolve) => setTimeout(resolve, gateway.delayMs));
     gateway.inFlight -= 1;
-    return { id: `order_${randomUUID()}`, client_secret: null };
+    const id = gateway.nextOrderId ?? `order_${randomUUID()}`;
+    gateway.nextOrderId = null;
+    return { id, client_secret: null };
   }),
   cancelPaymentIntent: jest.fn(async () => undefined),
 }));
+// Every gateway order cancel is recorded, then runs as it would.
+const gatewayCancels = jest.fn();
+jest.mock("../../../lib/booking/pending-payment-expiry", () => {
+  const actual = jest.requireActual(
+    "../../../lib/booking/pending-payment-expiry",
+  );
+  return {
+    ...actual,
+    cancelGatewayOrders: async (...args: unknown[]) => {
+      gatewayCancels(...args);
+      return actual.cancelGatewayOrders(...args);
+    },
+  };
+});
 jest.mock("../../../lib/compliance/dpdp", () => ({
   __esModule: true,
   checkConsent: jest.fn(async () => true),
@@ -79,12 +101,17 @@ jest.mock("../../../lib/payments/operations/event-refunds", () => {
 
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { isPoolExhaustion } from "../../../lib/db/pg-errors";
+import {
+  classifyError as classifyCheckoutError,
+  ErrorTypes,
+} from "../../../lib/errors/classification/payment-error-classification";
 import { POST as cancel } from "../../../app/api/appointments/[appointmentId]/cancel/route";
 
 beforeEach(() => {
   gateway.delayMs = 0;
   gateway.inFlight = 0;
   gateway.maxInFlight = 0;
+  gateway.nextOrderId = null;
 });
 
 type Outcome =
@@ -283,15 +310,79 @@ describe("whole-event cancel × seat checkout", () => {
     const buyer = await seedSeatBuyer();
 
     expect((await cancelEvent(webinar.appointmentId)).status).toBe(200);
-    const checkout = await handleCheckout(
+    const outcome: unknown = await handleCheckout(
       seatCheckoutInput(webinar, `seat-${randomUUID()}`),
       buyer.userId,
     ).then(
-      () => ({ kind: "sold" }) as Outcome,
-      (error: unknown) => ({ kind: "refused", code: String(error) }) as Outcome,
+      () => "sold",
+      (error: unknown) => error,
     );
 
-    expect(checkout.kind).toBe("refused");
+    // A typed business refusal the route answers 4xx, never a fault.
+    expect(outcome).toBeInstanceOf(Error);
+    const classified = classifyCheckoutError(outcome);
+    expect(classified).toMatchObject({
+      isBusinessError: true,
+      errorType: ErrorTypes.EVENT_EXPIRED,
+    });
+    const { httpStatus } = classified;
+    expect(httpStatus).toBeGreaterThanOrEqual(400);
+    expect(httpStatus).toBeLessThan(500);
     expect(await liveSeatCount(webinar.appointmentId)).toBe(0);
+    expect(
+      await prisma.payment.count({
+        where: { userId: buyer.userId, paymentStatus: "PENDING" },
+      }),
+    ).toBe(0);
+  });
+});
+
+describe("a seat whose order fill throws", () => {
+  // Makes the post-mint fill transaction fail on the CARD leg's update, the way
+  // a pool timeout or a dropped connection would, for one marked order id.
+  beforeAll(async () => {
+    await prisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION db_tier_fail_fill() RETURNS trigger AS $$
+      BEGIN
+        IF NEW."sourceRef" LIKE 'order_fillfail_%' THEN
+          RAISE EXCEPTION 'fill failed for the test';
+        END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql`);
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER db_tier_fail_fill BEFORE UPDATE ON "PaymentLeg"
+      FOR EACH ROW EXECUTE FUNCTION db_tier_fail_fill()`);
+  });
+  afterAll(async () => {
+    await prisma.$executeRawUnsafe(
+      `DROP TRIGGER IF EXISTS db_tier_fail_fill ON "PaymentLeg"`,
+    );
+    await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS db_tier_fail_fill`);
+  });
+
+  it("cancels the fresh order and releases the seat instead of holding it", async () => {
+    const webinar = await seedWebinar({ capacity: 5 });
+    const buyer = await seedSeatBuyer();
+    const orderId = `order_fillfail_${randomUUID()}`;
+    gateway.nextOrderId = orderId;
+    gatewayCancels.mockClear();
+
+    await expect(
+      handleCheckout(
+        seatCheckoutInput(webinar, `seat-${randomUUID()}`),
+        buyer.userId,
+      ),
+    ).rejects.toBeDefined();
+
+    expect(gatewayCancels).toHaveBeenCalledWith(
+      [{ paymentIntent: orderId, gateway: "RAZORPAY" }],
+      expect.anything(),
+    );
+    expect(await liveSeatCount(webinar.appointmentId)).toBe(0);
+    expect(
+      await prisma.payment.count({
+        where: { userId: buyer.userId, paymentStatus: "PENDING" },
+      }),
+    ).toBe(0);
   });
 });

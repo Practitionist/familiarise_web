@@ -6,7 +6,6 @@ import {
   type Prisma,
 } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 
 /**
  * #1775 B-9 — approving a REQUEST-mode booking is one decision with two
@@ -72,6 +71,8 @@ export type MintApprovalOutcome =
       paymentUrl: string;
       paymentAmount: number;
       paymentCurrency: string;
+      /** When the link stops being payable; never later than the first session allows. */
+      payExpiresAt: Date;
     }
   /** The row already carries a live link: nothing minted, nothing mailed. */
   | { status: "already_live"; paymentUrl: string }
@@ -327,7 +328,7 @@ export async function mintApprovalPaymentAfterCommit(args: {
   );
   if (!paymentUrl) return { status: "not_delivered" };
 
-  const expiresAt = new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS);
+  const { expiresAt } = paymentResult;
   const consultantName = plan.consultantProfile.user.name || "Consultant";
   await Promise.all([
     notifyPaymentLink(
@@ -386,5 +387,6 @@ export async function mintApprovalPaymentAfterCommit(args: {
     paymentUrl,
     paymentAmount: paymentResult.amount,
     paymentCurrency: paymentResult.currency,
+    payExpiresAt: expiresAt,
   };
 }

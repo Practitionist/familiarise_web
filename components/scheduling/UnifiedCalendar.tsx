@@ -1188,7 +1188,11 @@ export function UnifiedCalendar({
 
       if (forward.length > 1 || backward.length > 1) {
         const mixed: CalendarInterval[] = [...forward];
-        for (let step = 1; mixed.length < targetSize; step++) {
+        for (
+          let step = 1;
+          step < targetSize && mixed.length < targetSize;
+          step++
+        ) {
           const previous = eligible(-step);
           if (!previous) break;
           mixed.unshift(previous);

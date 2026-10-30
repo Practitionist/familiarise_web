@@ -221,8 +221,7 @@ export async function findReusablePendingOrderPayment(
       const run = slotRunWindow(appt?.occurrences);
       if (
         !params.slotWindow ||
-        !run ||
-        run.startsAt.getTime() !== params.slotWindow.startsAt.getTime() ||
+        run?.startsAt.getTime() !== params.slotWindow.startsAt.getTime() ||
         run.endsAt.getTime() !== params.slotWindow.endsAt.getTime()
       ) {
         continue;

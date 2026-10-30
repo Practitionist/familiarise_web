@@ -43,6 +43,12 @@ export function takenSlotStartsOf(body: unknown): string[] | undefined {
   return parsed.data.takenSlotStarts ?? parsed.data.details?.takenSlotStarts;
 }
 
+/** The pay window's end from the allocate response; null when absent or unreadable. */
+function payExpiresAtOf(value: unknown): Date | null {
+  const parsed = z.string().datetime().safeParse(value);
+  return parsed.success ? new Date(parsed.data) : null;
+}
+
 /** Event context for the availability grid read. */
 export interface AvailabilityContext {
   webinarId?: string;
@@ -117,8 +123,10 @@ export interface AllocationResponse {
   requiredSessions?: number;
   unplacedSessions?: number;
   placeableSessions?: number;
-  /** #1775 — the approval minted a pay order; the client has 24 h to pay. */
+  /** The approval is waiting on a pay order. */
   awaitingPayment?: boolean;
+  /** When the pay-link minted by this call stops being payable. */
+  payExpiresAt?: Date | null;
 }
 
 export interface AllocationCallOptions {
@@ -263,6 +271,7 @@ export class AllocationService {
         unplacedSessions?: number;
         placeableSessions?: number;
         awaitingPayment?: boolean;
+        payExpiresAt?: string | null;
       } = {};
       let parseFailed = false;
       try {
@@ -308,6 +317,7 @@ export class AllocationService {
         requiredSessions: data.requiredSessions,
         unplacedSessions: data.unplacedSessions,
         awaitingPayment: data.awaitingPayment === true,
+        payExpiresAt: payExpiresAtOf(data.payExpiresAt),
       };
     } catch (error) {
       console.error(`Allocation request failed (${url}):`, error);

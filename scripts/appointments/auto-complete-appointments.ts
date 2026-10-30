@@ -528,15 +528,9 @@ async function completeSubscriptions(
     where: {
       ...unseen(seen),
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      // #1554 — one wrapper: at least one occurrence, and every live one ended.
-      // A subscription's voids are settled at plan end, so they never hold
-      // completion of a plan whose entitlement is spent.
-      appointment: {
-        AND: [
-          { occurrences: allLiveOccurrencesEnded(bufferTime) },
-          { occurrences: { none: AWAITING_HUMAN } },
-        ],
-      },
+      // Every live session ended and decided, and no void left unsettled:
+      // otherwise plan-end settlement owns completion and pays the void.
+      appointment: { AND: endedAndSettled(bufferTime) },
     },
     include: {
       subscriptionPlan: {

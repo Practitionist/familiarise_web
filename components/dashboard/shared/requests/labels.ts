@@ -15,6 +15,7 @@ import type {
   InboxType,
 } from "@/lib/dashboard/requests-inbox-state";
 import { toneBadge } from "@/lib/dashboard/money-state";
+import { formatDateTimeLabel, type DisplayOpts } from "@/lib/time/display";
 
 export const TYPE_LABEL: Record<InboxType, string> = {
   consultation: "Consultations",
@@ -111,7 +112,7 @@ export const REQUESTED_TIME_PASSED =
 /** One verb per toast. */
 export const TOAST = {
   approved: "Approved",
-  approvedAwaitingPayment: "Approved — the learner has 24 h to pay",
+  approvedAwaitingPayment: "Approved — waiting for the learner to pay",
   declined: "Declined",
   reminderSent: "Reminder sent",
   approvalWithdrawn: "Approval withdrawn",
@@ -174,14 +175,19 @@ export function errorSentence(
 }
 
 /**
- * The approve toast follows the allocate response's `awaitingPayment` flag
- * (PR-B #1782): a pay order was minted, so the row moves to "Awaiting
- * payment" rather than leaving the inbox. Absent → today's plain "Approved".
+ * The approve toast follows the allocate response's `awaitingPayment` flag: a
+ * pay order was minted, so the row moves to "Awaiting payment" rather than
+ * leaving the inbox, and the toast names the pay window's real end when the
+ * response carries it. Absent → the plain "Approved".
  */
-export function approvedToast(result: { awaitingPayment?: boolean }): string {
-  return result.awaitingPayment === true
-    ? TOAST.approvedAwaitingPayment
-    : TOAST.approved;
+export function approvedToast(
+  result: { awaitingPayment?: boolean; payExpiresAt?: Date | null },
+  opts: DisplayOpts = {},
+): string {
+  if (result.awaitingPayment !== true) return TOAST.approved;
+  return result.payExpiresAt
+    ? `Approved — the learner has until ${formatDateTimeLabel(result.payExpiresAt, opts)} to pay`
+    : TOAST.approvedAwaitingPayment;
 }
 
 /** "Remind sent · next in 3 h" from the route's `nextAllowedAt`. */

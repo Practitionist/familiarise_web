@@ -47,6 +47,9 @@ describe("checkout request fingerprint", () => {
     ).not.toBe(fp);
     // Notes and display currency do not change what is charged.
     expect(checkoutRequestFingerprint({ ...base, notes: "hi" })).toBe(fp);
+    expect(
+      checkoutRequestFingerprint({ ...base, displayCurrency: "USD" }),
+    ).toBe(fp);
     expect(fp).toHaveLength(64);
   });
 
@@ -96,6 +99,23 @@ describe("replayByIdempotencyKey × fingerprint", () => {
     ).toMatchObject({
       reused: true,
       orderId: "order_1",
+    });
+  });
+
+  it("hands a lapsed hold back with its past deadline, which the client refuses to open", async () => {
+    const fp = checkoutRequestFingerprint(base);
+    const lapsedAt = new Date(Date.now() - 60_000);
+    findFirst.mockResolvedValueOnce({
+      ...stored,
+      expiresAt: lapsedAt,
+      requestFingerprint: fp,
+    });
+    const result = await replayByIdempotencyKey("user-1", "key-1", fp);
+    expect(
+      result && result !== "fingerprint-mismatch" && (await result.json()),
+    ).toMatchObject({
+      reused: true,
+      holdExpiresAt: lapsedAt.toISOString(),
     });
   });
 });

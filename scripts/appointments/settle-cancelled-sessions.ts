@@ -15,6 +15,9 @@
  * A subscription whose plan end has passed settles once: every session not
  * delivered (voided, returned or never placed) is refunded pro rata through a
  * durable `plan-end:` owed marker stamped in the commit that completes the plan.
+ * A plan already COMPLETED with a void still unsettled settles it through the
+ * same marker; only a cancelled, expired or rejected plan's void is stamped
+ * without money, because its own refund path paid it.
  * The plan-end pass resumes each tick where the last one stopped, so plans
  * that must wait never starve the ones behind them.
  *
@@ -30,7 +33,7 @@ import {
 
 import { z } from "zod";
 
-import prisma from "../../lib/prisma";
+import prisma, { type Tx } from "../../lib/prisma";
 import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -186,6 +189,7 @@ async function settleUnlocked(
     });
   }
   result.stamped += await settleVoidsOfEndedPlans(now);
+  if (!outOfTime()) await settleVoidsOfCompletedPlans(now, limit, result);
   await settleEndedPlans(now, limit, result, outOfTime);
   runFailures.flush();
   result.success = result.errors === 0;
@@ -614,18 +618,17 @@ const PLAN_SETTLE_SELECT = {
   appointment: { select: { organizationId: true } },
 } satisfies Prisma.SubscriptionSelect;
 
-/** Statuses after which a plan's voids are owed nothing more. */
-const PLAN_DONE_STATUSES: AppointmentStatus[] = [
+/** Statuses whose own refund path already paid a void back. */
+const PLAN_REFUNDED_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.CANCELLED,
   AppointmentStatus.EXPIRED,
   AppointmentStatus.REJECTED,
-  AppointmentStatus.COMPLETED,
 ];
 
 /**
- * A void on a plan that is no longer live is settled without money: the cancel
- * or expiry quote already paid it back, and plan-end settlement folds it into
- * its own refund. The stamp keeps it from holding the plan's earnings.
+ * A void on a cancelled, expired or rejected plan is settled without money:
+ * that plan's cancel or expiry quote already paid it back. The stamp keeps it
+ * from holding the plan's earnings.
  */
 async function settleVoidsOfEndedPlans(now: Date): Promise<number> {
   const { count } = await prisma.appointmentOccurrence.updateMany({
@@ -634,13 +637,134 @@ async function settleVoidsOfEndedPlans(now: Date): Promise<number> {
       seatsSettledAt: null,
       deletedAt: null,
       appointment: {
-        subscription: { status: { in: PLAN_DONE_STATUSES } },
+        subscription: { status: { in: PLAN_REFUNDED_STATUSES } },
       },
     },
     data: { seatsSettledAt: now },
   });
   return count;
 }
+
+/**
+ * A COMPLETED plan still holding an unsettled void was completed before plan
+ * end could pay it: each settles once, refunding the undelivered share the
+ * voids account for through the plan-end owed marker, then stamps them.
+ */
+async function settleVoidsOfCompletedPlans(
+  now: Date,
+  limit: number,
+  result: SettleCancelledSessionsResult,
+): Promise<void> {
+  const plans = await prisma.subscription.findMany({
+    where: {
+      status: AppointmentStatus.COMPLETED,
+      appointment: { occurrences: { some: UNSETTLED_VOID } },
+    },
+    orderBy: { id: "asc" },
+    take: limit,
+    select: { id: true, appointment: { select: { id: true } } },
+  });
+  const failedIds: string[] = [];
+  let firstError: unknown;
+  for (const plan of plans) {
+    const appointmentId = plan.appointment?.id;
+    if (!appointmentId) continue;
+    try {
+      await settleCompletedPlanVoids(plan.id, appointmentId, now, result);
+    } catch (error) {
+      result.errors += 1;
+      firstError ??= error;
+      failedIds.push(plan.id);
+      console.error(
+        `settle-cancelled-sessions: completed plan ${plan.id} failed:`,
+        scrubStringValue(
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
+    }
+  }
+  if (failedIds.length > 0) {
+    reportSentryError(firstError, {
+      subsystem: "bookings",
+      op: "settle-cancelled-sessions.completed-plan-voids",
+      fingerprint: ["settle-cancelled-sessions", "completed-plan-voids"],
+      extra: { failed: failedIds.length, sample: failedIds.slice(0, 10) },
+    });
+  }
+}
+
+async function settleCompletedPlanVoids(
+  planId: string,
+  appointmentId: string,
+  now: Date,
+  result: SettleCancelledSessionsResult,
+): Promise<void> {
+  await withAppointmentLock(appointmentId, async () => {
+    let committed: { markers: RefundOwedMarker[]; stamped: number };
+    try {
+      committed = await withSerializableRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            const sub = await tx.subscription.findUnique({
+              where: { id: planId },
+              select: {
+                status: true,
+                sessionsTotal: true,
+                subscriptionPlan: { select: { totalSessions: true } },
+              },
+            });
+            if (sub?.status !== AppointmentStatus.COMPLETED) {
+              throw new PlanWaiting();
+            }
+            const rows = await tx.appointmentOccurrence.findMany({
+              where: { appointmentId, isTentative: false, deletedAt: null },
+              select: { completionStatus: true, seatsSettledAt: true },
+            });
+            const voids = rows.filter(
+              (row) =>
+                row.completionStatus === OccurrenceCompletionStatus.VOIDED &&
+                row.seatsSettledAt === null,
+            ).length;
+            if (voids === 0) throw new PlanWaiting();
+            const total = sessionsTotalOf(sub);
+            const delivered = rows.filter(isCompletedOccurrence).length;
+            // A void a delivered replacement already covered is owed nothing.
+            const unused = Math.min(Math.max(0, total - delivered), voids);
+
+            const { count: stamped } =
+              await tx.appointmentOccurrence.updateMany({
+                where: { appointmentId, ...UNSETTLED_VOID },
+                data: { seatsSettledAt: now },
+              });
+            const markers = await settlePlanPayments(tx, {
+              planId,
+              appointmentId,
+              unused,
+              total,
+              now,
+            });
+            return { markers, stamped };
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        ),
+      );
+    } catch (error) {
+      if (error instanceof PlanWaiting || error instanceof PlanEndMarkerHeld) {
+        return;
+      }
+      throw error;
+    }
+    result.stamped += committed.stamped;
+    await driveMarkers(committed.markers, planId, result);
+  });
+}
+
+/** An unsettled void on a live row. */
+const UNSETTLED_VOID = {
+  completionStatus: OccurrenceCompletionStatus.VOIDED,
+  seatsSettledAt: null,
+  deletedAt: null,
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
 
 /** A payment already owes another door's refund; the plan waits behind it. */
 class PlanEndMarkerHeld extends Error {
@@ -895,64 +1019,13 @@ async function settleEndedPlan(
               data: { seatsSettledAt: now },
             });
 
-            // A wholly credit-funded plan (amount 0) settles too: its value
-            // is the referral credit the buyer spent.
-            const payments = await tx.payment.findMany({
-              where: {
-                appointmentId,
-                paymentStatus: "SUCCEEDED",
-                deletedAt: null,
-              },
-              select: {
-                id: true,
-                amount: true,
-                paymentIntent: true,
-                ...REFUNDABLE_BALANCE_SELECT,
-              },
+            const markers = await settlePlanPayments(tx, {
+              planId: plan.id,
+              appointmentId,
+              unused,
+              total,
+              now,
             });
-            const markers: RefundOwedMarker[] = [];
-            for (const payment of payments) {
-              const settlement = planEndSettlement(
-                plan.id,
-                payment,
-                unused,
-                total,
-              );
-              // A plan with no referral credit still consumed (a 100% discount,
-              // or credit already returned) has nothing for a human to return.
-              const review =
-                settlement?.review === true &&
-                (await creditStillUsedPaise(tx, payment.id)) > 0;
-              if (review) {
-                // The credits rail restores whole or not at all, so a plan
-                // that delivered some sessions returns the rest by hand; its
-                // tranches stay unheld until ops returns the credit or closes
-                // the return, either of which stamps them.
-                await recordSystemEvent({
-                  db: tx,
-                  strict: true,
-                  category: "BOOKING",
-                  severity: "WARN",
-                  message: `Credit seat ${payment.id} needs a partial credit return`,
-                  context: {
-                    paymentId: payment.id,
-                    subscriptionId: plan.id,
-                    sessionsTotal: total,
-                    sessionsUnused: unused,
-                  },
-                  correlationId: `partial-credit:${payment.id}`,
-                });
-                continue;
-              }
-              await stampTranchesOnCancel(tx, { paymentId: payment.id, now });
-              const marker =
-                settlement && !settlement.review ? settlement.marker : null;
-              if (!marker) continue;
-              if (!(await stampRefundOwed(tx, marker))) {
-                throw new PlanEndMarkerHeld(payment.id);
-              }
-              markers.push(marker);
-            }
             const bell = await stagePlanEndedBell(tx, plan.id, sub);
             return { markers, bell };
           },
@@ -974,20 +1047,106 @@ async function settleEndedPlan(
       { bells: [committed.bell] },
       "settle-cancelled-sessions.plan-end",
     );
-    for (const marker of committed.markers) {
-      const outcome = await driveRefundOwed(marker);
-      if (outcome.kind === "refunded" || outcome.kind === "replayed") {
-        result.refunded += 1;
-      } else if (outcome.kind === "failed") {
-        // The marker stays; the retry-auto-refunds sweep re-drives it.
-        runFailures.add("settle-cancelled-sessions-plan-end", outcome.error, {
-          subscriptionId: plan.id,
-          paymentId: marker.paymentId,
-        });
-      }
-    }
+    await driveMarkers(committed.markers, plan.id, result);
     return true;
   });
+}
+
+/**
+ * On the settling commit: what each SUCCEEDED payment of the plan owes for
+ * `unused` of `total` sessions, stamped as its owed marker, with its earnings
+ * holds stamped. A credit seat that delivered some sessions goes to a human.
+ * Throws `PlanEndMarkerHeld` when another door's marker owns a payment, so the
+ * whole commit waits.
+ */
+async function settlePlanPayments(
+  tx: Tx,
+  args: {
+    planId: string;
+    appointmentId: string;
+    unused: number;
+    total: number;
+    now: Date;
+  },
+): Promise<RefundOwedMarker[]> {
+  // A wholly credit-funded plan (amount 0) settles too: its value is the
+  // referral credit the buyer spent.
+  const payments = await tx.payment.findMany({
+    where: {
+      appointmentId: args.appointmentId,
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      amount: true,
+      paymentIntent: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
+  });
+  const markers: RefundOwedMarker[] = [];
+  for (const payment of payments) {
+    const settlement = planEndSettlement(
+      args.planId,
+      payment,
+      args.unused,
+      args.total,
+    );
+    // A plan with no referral credit still consumed (a 100% discount, or
+    // credit already returned) has nothing for a human to return.
+    const review =
+      settlement?.review === true &&
+      (await creditStillUsedPaise(tx, payment.id)) > 0;
+    if (review) {
+      // The credits rail restores whole or not at all, so a plan that
+      // delivered some sessions returns the rest by hand; its tranches stay
+      // unheld until ops returns the credit or closes the return, either of
+      // which stamps them.
+      await recordSystemEvent({
+        db: tx,
+        strict: true,
+        category: "BOOKING",
+        severity: "WARN",
+        message: `Credit seat ${payment.id} needs a partial credit return`,
+        context: {
+          paymentId: payment.id,
+          subscriptionId: args.planId,
+          sessionsTotal: args.total,
+          sessionsUnused: args.unused,
+        },
+        correlationId: `partial-credit:${payment.id}`,
+      });
+      continue;
+    }
+    await stampTranchesOnCancel(tx, { paymentId: payment.id, now: args.now });
+    const marker = settlement && !settlement.review ? settlement.marker : null;
+    if (!marker) continue;
+    if (!(await stampRefundOwed(tx, marker))) {
+      throw new PlanEndMarkerHeld(payment.id);
+    }
+    markers.push(marker);
+  }
+  return markers;
+}
+
+/** Drives each committed marker; a failure stays for the retry sweep. */
+async function driveMarkers(
+  markers: RefundOwedMarker[],
+  subscriptionId: string,
+  result: SettleCancelledSessionsResult,
+): Promise<void> {
+  for (const marker of markers) {
+    const outcome = await driveRefundOwed(marker);
+    if (outcome.kind === "refunded" || outcome.kind === "replayed") {
+      result.refunded += 1;
+    } else if (outcome.kind === "failed") {
+      // The marker stays; the retry-auto-refunds sweep re-drives it.
+      runFailures.add("settle-cancelled-sessions-plan-end", outcome.error, {
+        subscriptionId,
+        paymentId: marker.paymentId,
+      });
+    }
+  }
 }
 
 /** Both parties hear that the plan ended, once per plan. */

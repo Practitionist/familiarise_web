@@ -433,6 +433,7 @@ export function RequestsInbox({
           kind: "done" as const,
           appointmentId: row.appointmentId,
           awaitingPayment: false,
+          payExpiresAt: null,
         };
       }
       const result = await approveRequestedTimes(
@@ -471,6 +472,7 @@ export function RequestsInbox({
         kind: "done" as const,
         appointmentId: result.data?.[0]?.id ?? null,
         awaitingPayment: result.awaitingPayment === true,
+        payExpiresAt: result.payExpiresAt ?? null,
       };
     },
     onSuccess: (outcome) => {
@@ -492,7 +494,7 @@ export function RequestsInbox({
       setRefusal(null);
       // No optimistic removal: the refetch moves an unpaid approval to the
       // "Awaiting payment" chip (the read includes APPROVED_PENDING_PAYMENT).
-      toast({ title: approvedToast(outcome) });
+      toast({ title: approvedToast(outcome, { zone: viewer.zone }) });
       setConfirmation({
         appointmentHref: outcome.appointmentId
           ? `/dashboard/consultant/${consultantProfileId}/appointments/${outcome.appointmentId}`

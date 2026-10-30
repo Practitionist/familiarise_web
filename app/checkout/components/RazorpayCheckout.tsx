@@ -248,6 +248,12 @@ export default function RazorpayCheckout({
 
   /** Releases this checkout's hold (payment, seat or time) at the buyer's request. */
   const cancelHeldCheckout = async (paymentId: string) => {
+    const couldNotCancel = {
+      title: "Couldn't cancel the checkout",
+      description:
+        "Your hold ends on its own in a few minutes; nothing is charged unless you pay.",
+      variant: "destructive" as const,
+    };
     try {
       const response = await fetch(
         `/api/checkout/pending/${encodeURIComponent(paymentId)}`,
@@ -259,15 +265,11 @@ export default function RazorpayCheckout({
               title: "Checkout cancelled",
               description: "Nothing was charged, and the hold is released.",
             }
-          : {
-              title: "Couldn't cancel the checkout",
-              description:
-                "Your hold ends on its own in a few minutes; nothing is charged unless you pay.",
-              variant: "destructive",
-            },
+          : couldNotCancel,
       );
     } catch (error) {
       reportPaymentsError(error);
+      toast(couldNotCancel);
     }
   };
 

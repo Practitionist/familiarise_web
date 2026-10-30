@@ -178,6 +178,57 @@ describe("unpaid approval pay window", () => {
     ).toBe(0);
   }, 30_000);
 
+  it("a window clamped by the first session is the deadline the client is told, not 24 h", async () => {
+    const host = await seedHost();
+    const consultee = await seedConsultee();
+    const startsAt = inMinutes(180);
+    const request = await seedOneToOne(
+      "consultation",
+      host,
+      consultee,
+      { startsAt, endsAt: new Date(startsAt.getTime() + 60 * MIN) },
+      {
+        status: "APPROVED_PENDING_PAYMENT",
+        bookingSource: "REQUEST_SUBMITTED",
+        isTentative: true,
+      },
+    );
+    const email = jest.requireMock("../../../lib/email") as {
+      sendPaymentLinkEmail: jest.Mock;
+    };
+    const novu = jest.requireMock("../../../lib/novu") as {
+      notifyPaymentLink: jest.Mock;
+    };
+    email.sendPaymentLinkEmail.mockClear();
+    novu.notifyPaymentLink.mockClear();
+
+    const outcome = await mintApprovalPaymentAfterCommit({
+      kind: "consultation",
+      id: request.consultationId!,
+    });
+
+    const closesAt = new Date(startsAt.getTime() - 15 * MIN);
+    expect(outcome).toMatchObject({ status: "minted", payExpiresAt: closesAt });
+    const row = await prisma.payment.findFirstOrThrow({
+      where: { appointmentId: request.appointmentId, paymentStatus: "PENDING" },
+      select: { expiresAt: true },
+    });
+    expect(row.expiresAt).toEqual(closesAt);
+    // Each proxy answers every export with one mock, so keep the calls that
+    // carried a deadline: the bell and the email.
+    const told = [
+      ...email.sendPaymentLinkEmail.mock.calls,
+      ...novu.notifyPaymentLink.mock.calls,
+    ]
+      .map((args: unknown[]) =>
+        args
+          .map((arg) => (arg as { expiresAt?: unknown } | null)?.expiresAt)
+          .find((value) => value instanceof Date),
+      )
+      .filter((value) => value !== undefined);
+    expect(told).toEqual([closesAt, closesAt]);
+  }, 30_000);
+
   it("a capture after the first session started closes the request, releases its hold and refunds in full", async () => {
     const host = await seedHost();
     const consultee = await seedConsultee();

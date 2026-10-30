@@ -102,8 +102,12 @@ describe("SlotStatusLegend ARIA", () => {
         ]}
       />,
     );
-    const items = screen.getAllByRole("img");
-    expect(items.map((item) => item.getAttribute("aria-label"))).toEqual([
+    // Each key stays a list item; its words ride a screen-reader-only span.
+    expect(screen.queryAllByRole("img")).toEqual([]);
+    const items = screen.getAllByRole("listitem");
+    expect(
+      items.map((item) => item.querySelector(".sr-only")?.textContent),
+    ).toEqual([
       "Free: Free to book.",
       "Selected: You have chosen this time.",
       "Being moved: Released by a reschedule and waiting for a new time.",

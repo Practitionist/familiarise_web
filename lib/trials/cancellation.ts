@@ -274,7 +274,7 @@ export async function quoteTrialRefund(
     // waiting for its answer, so it has infinite notice. Once a session was
     // confirmed, its absence means held or settled, never full notice.
     slotsTotal:
-      ctx && ctx.hoursUntilNextSession === null
+      ctx?.hoursUntilNextSession === null
         ? ctx.confirmedSlotsTotal
         : (ctx?.slotsTotal ?? 0),
     sessionsRemaining: ctx?.sessionsRemaining ?? 0,

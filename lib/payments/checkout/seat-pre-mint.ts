@@ -44,7 +44,8 @@ export class SeatOrderMintFailure extends Error {
 /**
  * Mint the gateway order for a committed seat and fill it into the PENDING
  * row (and its CARD leg). A failed mint releases the seat and expires the
- * row; a row that lapsed meanwhile cancels the fresh order and refuses.
+ * row; a fill that throws cancels the fresh order and does the same; a row
+ * that lapsed meanwhile cancels the fresh order and refuses.
  */
 export async function mintPreMintedSeatOrder(args: {
   preMintIntent: string;
@@ -56,24 +57,39 @@ export async function mintPreMintedSeatOrder(args: {
   try {
     order = await args.mint();
   } catch (error) {
-    await releasePreMintedSeat(args.preMintIntent, args.userId);
+    await releasePreMintedSeat([args.preMintIntent], args.userId);
     throw error;
   }
-  const filled = await prisma.$transaction(async (tx) => {
-    const moved = await tx.payment.updateMany({
-      where: {
-        paymentIntent: args.preMintIntent,
-        paymentStatus: PaymentStatus.PENDING,
+  let filled: boolean;
+  try {
+    filled = await prisma.$transaction(async (tx) => {
+      const moved = await tx.payment.updateMany({
+        where: {
+          paymentIntent: args.preMintIntent,
+          paymentStatus: PaymentStatus.PENDING,
+        },
+        data: { paymentIntent: order.id },
+      });
+      if (moved.count === 0) return false;
+      await tx.paymentLeg.updateMany({
+        where: { sourceRef: args.preMintIntent },
+        data: { sourceRef: order.id },
+      });
+      return true;
+    });
+  } catch (fillError) {
+    // Nobody can pay an order whose row may not carry it; the row is released
+    // under whichever intent it holds, in case the fill committed after all.
+    await cancelGatewayOrders(
+      [{ paymentIntent: order.id, gateway: args.gateway }],
+      {
+        op: "checkout.seat-pre-mint-fill-failed",
+        appointmentId: args.preMintIntent,
       },
-      data: { paymentIntent: order.id },
-    });
-    if (moved.count === 0) return false;
-    await tx.paymentLeg.updateMany({
-      where: { sourceRef: args.preMintIntent },
-      data: { sourceRef: order.id },
-    });
-    return true;
-  });
+    );
+    await releasePreMintedSeat([args.preMintIntent, order.id], args.userId);
+    throw fillError;
+  }
   if (!filled) {
     await cancelGatewayOrders(
       [{ paymentIntent: order.id, gateway: args.gateway }],
@@ -88,12 +104,17 @@ export async function mintPreMintedSeatOrder(args: {
 }
 
 async function releasePreMintedSeat(
-  preMintIntent: string,
+  intents: string[],
   userId: string,
 ): Promise<void> {
-  const row = await prisma.payment.findUnique({
-    where: { paymentIntent: preMintIntent },
+  const rows = await prisma.payment.findMany({
+    where: { paymentIntent: { in: intents } },
     select: { id: true },
   });
-  if (row) await releaseSupersededHolds({ userId, paymentIds: [row.id] });
+  if (rows.length > 0) {
+    await releaseSupersededHolds({
+      userId,
+      paymentIds: rows.map((row) => row.id),
+    });
+  }
 }
