@@ -37,3 +37,7 @@ A cross-region cold-connect timeout, a Netlify instance-boot stall, a pooler `Co
 ## What an issue's status means here
 
 An issue is resolved when the fix is on production and the reason is written in a comment on the issue (the PR number, the commit, or the seed row that was retired). It is ignored until escalating when the cause is known, tracked on a GitHub issue and outside the code's control for now; the comment names the tracking issue. It is left unresolved only while someone owns it. A green Sentry list is not the goal; a list where every unresolved issue has an owner is.
+
+## Per-row failures in sweeps
+
+A sweep never captures to Sentry per row. It collects failures through `createRunFailureReporter` (`lib/observability/run-failures.ts`) and flushes once at the end of the run, so a systemic fault costs one event per failing operation, with the count and a ten-row sample in `extra`. Where a row also needs a durable audit record, the call passes `skipSentry: true` to `recordSystemError` / `recordSystemErrorSafe`: the `SystemEvent` row is still written per row, and only the Sentry capture moves to the run-level reporter. `advance-program-cycles`, `auto-renew-contracts`, `generate-subscription-invoices`, `timeout-member-overages`, `sweep-abandoned-overage-charges`, `detect-consultant-no-shows` and `handle-stuck-payouts` follow this, and a jest test pins it.

@@ -26,6 +26,8 @@ and `GET /get-session` answers 503 instead of `200 null` when the lookup failed
 `/api/auth/clear-stale-session`, because only a route handler can delete
 cookies.
 
+Expired sessions and verification tokens are rejected by their runtime expiry checks. Housekeeping is separate: `cleanupAuthTokens` removes at most 100 expired verification, session and idempotency rows per arm by default, and examines at most 100 lapsed invitations. The maximum explicit limit is 500 per arm. Deletion repeats expiry after selection, so a refreshed row survives. Invitation expiry still conditionally claims PENDING and commits its audit row in the same transaction. A shared 16-second start budget and `hasMore` describe continuation; neither cleanup nor a successful batch establishes that the entire backlog is drained. See [housekeeping bounds](../maintenance/housekeeping-bounds.md).
+
 ## 2. Server composition (`lib/auth.ts`)
 
 ```mermaid
@@ -79,7 +81,7 @@ Key settings, all stated explicitly in `lib/auth.ts`:
 | Auth mail         | Sent after the response through `advanced.backgroundTasks` → `scheduleAfter` (Netlify `waitUntil`), so timing does not reveal accounts                                                                                                                                                                                                                                                                              |
 | Social            | Google and GitHub, each only when its client id and secret are set (`lib/auth/social-providers.ts`). Account linking on, **no `trustedProviders`**; OAuth tokens encrypted at rest                                                                                                                                                                                                                                  |
 | Cookies           | `__Secure-` prefix, `httpOnly`, `SameSite=Lax` (the OAuth and SSO callbacks are top-level GETs)                                                                                                                                                                                                                                                                                                                     |
-| Client IP         | `x-nf-client-connection-ip` first (set by Netlify, unforgeable); IPv6 keyed on the /64                                                                                                                                                                                                                                                                                                                              |
+| Client IP         | `x-familiarise-client-ip` only, which edge middleware resolves per runtime and overwrites on every request; IPv6 keyed on the /64                                                                                                                                                                                                                                                                                   |
 | Session           | 30-day expiry, refreshed at most once a day (`updateAge`), `cookieCache` **off**, extra field `reauthenticatedAt`; operator and SSO caps in §3.1                                                                                                                                                                                                                                                                    |
 | `disabledPaths`   | `/list-sessions`, `/revoke-session(s)`, `/revoke-other-sessions`; `/get-access-token`, `/account-info`, `/refresh-token`, `/update-session`; the OTP 2FA pair and `/two-factor/get-totp-uri`; every `/admin/*` endpoint; `/verify-email`, `/send-verification-email` and every emailOTP path except send and verify; `/sso/register`, provider CRUD, domain verification, SAML metadata, the shared `/sso/callback` |
 
@@ -224,6 +226,11 @@ Routes that call the app's `getSession()` (`lib/auth-server.ts`) and check the
 role inline fail closed: an operator session without 2FA comes back as `null`,
 so they answer 401. The sign-in page sends such an operator straight to
 `/auth/two-factor/setup`.
+
+Each of these gates asks `needsOperatorTwoFactor` (`lib/auth/qa-accounts.ts`),
+which lets designated QA operators through on previews and local development
+only; production enforces 2FA for every operator
+([staff-onboarding.md §9](./staff-onboarding.md#9-two-factor-policy-seeds-and-qa-operators)).
 
 ## 5. Flows
 

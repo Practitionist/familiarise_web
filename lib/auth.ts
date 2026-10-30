@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
@@ -10,7 +9,7 @@ import { passkey } from "@better-auth/passkey";
 import bcrypt from "bcrypt";
 import prisma from "@/lib/prisma";
 import { scheduleAfter } from "@/lib/api/after-safe";
-import { trustedClientIpHeaders } from "@/lib/request-ip";
+import { CLIENT_IP_HEADER } from "@/lib/request-ip";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { assertSsoSessionAllowed } from "@/lib/sso/enforce-session";
 import {
@@ -43,6 +42,10 @@ import {
   refusesOperatorSession,
 } from "@/lib/auth/operator-session-policy";
 import {
+  deployEnvironment,
+  isQaOperatorExemptFrom2fa,
+} from "@/lib/auth/qa-accounts";
+import {
   authenticationStart,
   cappedSessionFields,
   refreshSessionLifetime,
@@ -50,6 +53,8 @@ import {
 } from "@/lib/auth/session-lifetime";
 import { supersededSessionRevocation } from "@/lib/auth/supersede-session";
 import { breachedPasswordCheck } from "@/lib/auth/password-policy";
+import { networkPrefix, signInThrottle } from "@/lib/auth/account-throttle";
+import { turnstileCaptcha, turnstileHostnames } from "@/lib/auth/captcha";
 import {
   PASSWORD_MAX_BYTES,
   PASSWORD_MIN_LENGTH,
@@ -85,46 +90,6 @@ import {
 const staffAc = defaultAc.newRole({
   user: ["list", "get"],
 });
-
-const AUTH_MAIL_MAX_PER_HOUR = 3;
-const AUTH_MAIL_WINDOW_SECONDS = 3600;
-const AUTH_MAIL_CONSUME_SCRIPT = `
-local count = redis.call("INCR", KEYS[1])
-if count == 1 then
-redis.call("PEXPIRE", KEYS[1], ARGV[1])
-end
-return count
-`;
-
-// Per-recipient hourly cap (`rl:mail:{reset|verify}:<sha256_email>`); fails open if Redis is unavailable.
-async function allowAuthMailSend(
-  kind: "reset" | "verify",
-  email: string,
-): Promise<boolean> {
-  const emailHash = createHash("sha256")
-    .update(email.trim().toLowerCase())
-    .digest("hex");
-  const key = `rl:mail:${kind}:${emailHash}`;
-  try {
-    const redis = (await import("@/lib/redis")).default;
-    const count = Number(
-      await redis.eval(
-        AUTH_MAIL_CONSUME_SCRIPT,
-        [key],
-        [String(AUTH_MAIL_WINDOW_SECONDS * 1000)],
-      ),
-    );
-    if (count > AUTH_MAIL_MAX_PER_HOUR) {
-      console.warn(
-        `[auth] skipping ${kind} email: rate limit exceeded (${count}/${AUTH_MAIL_MAX_PER_HOUR} per ${AUTH_MAIL_WINDOW_SECONDS}s) for ${key}`,
-      );
-      return false;
-    }
-    return true;
-  } catch {
-    return true;
-  }
-}
 
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
@@ -268,7 +233,6 @@ export const auth = betterAuth({
       },
     },
     sendResetPassword: async ({ user, token }) => {
-      if (!(await allowAuthMailSend("reset", user.email))) return;
       // A new operator's first "reset" is their invitation: the account was
       // created with a random password (lib/auth/operators.ts), so the email
       // says "set your password" until they have enrolled 2FA.
@@ -289,7 +253,8 @@ export const auth = betterAuth({
     // holds no session, so nothing needs preserving. (changePassword keeps
     // the current session via `revokeOtherSessions: true` instead.)
     revokeSessionsOnPasswordReset: true,
-    onPasswordReset: async ({ user }) => {
+    onPasswordReset: async ({ user }, request) => {
+      await signInThrottle.clear(user.email, networkPrefix(request?.headers));
       await onPasswordReset(user);
     },
   },
@@ -351,10 +316,9 @@ export const auth = betterAuth({
       httpOnly: true,
     },
     ipAddress: {
-      // The rate-limit key and the session's recorded IP, read only from the
-      // header this runtime's edge sets. BetterAuth ignores a multi-hop
-      // `x-forwarded-for` (no trustedProxies), so a client cannot pick its key.
-      ipAddressHeaders: trustedClientIpHeaders(),
+      // The rate-limit key and the session's recorded IP: only the single IP
+      // middleware stamps, which overwrites anything the client sent.
+      ipAddressHeaders: [CLIENT_IP_HEADER],
       // Key IPv6 on the /64. One host usually owns a whole /64, so per-address
       // keys would let it rotate through 2^64 buckets.
       ipv6Subnet: 64,
@@ -506,6 +470,17 @@ export const auth = betterAuth({
               code: "STAFF_PASSWORD_SIGN_IN_ONLY",
             });
           }
+          if (
+            user &&
+            ctx?.path === "/sign-in/email" &&
+            user.twoFactorEnabled !== true &&
+            isQaOperatorExemptFrom2fa(user, deployEnvironment())
+          ) {
+            console.info("[auth] QA operator signed in without 2FA", {
+              userId: session.userId,
+              environment: deployEnvironment().sentryEnvironment,
+            });
+          }
 
           const enforcedOrg = await assertSsoSessionAllowed(prisma, {
             email: user?.email,
@@ -595,6 +570,19 @@ export const auth = betterAuth({
   },
 
   plugins: [
+    // Turnstile on sign-up, reset request and code resend (lib/auth/captcha.ts).
+    ...turnstileCaptcha({
+      secretKey: process.env.TURNSTILE_SECRET_KEY,
+      siteKey: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
+      allowedHostnames: turnstileHostnames({
+        sentryEnvironment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
+        authUrl: process.env.BETTER_AUTH_URL,
+      }),
+    }),
+
+    // Growing Retry-After on repeated wrong passwords for one address.
+    signInThrottle.plugin,
+
     // Rejects breached and over-72-byte passwords on sign-up, reset and change.
     breachedPasswordCheck,
 
@@ -616,7 +604,6 @@ export const auth = betterAuth({
       disableSignUp: true,
       sendVerificationOTP: async ({ email, otp, type }) => {
         if (type === "email-verification") {
-          if (!(await allowAuthMailSend("verify", email))) return;
           await sendVerificationCode(email, otp);
         }
       },
@@ -627,7 +614,8 @@ export const auth = betterAuth({
     // limits them to credential + TOTP sessions, the API/page guards in
     // lib/auth-helpers.ts and lib/auth-guard.ts confine an unenrolled
     // operator to /auth/two-factor/setup, and lib/auth-server.ts's
-    // getSession() reads their session as signed out everywhere else.
+    // getSession() reads their session as signed out everywhere else. Off
+    // production, designated QA operators skip that (lib/auth/qa-accounts.ts).
     //
     // `allowPasswordless` stays off, so enrolling needs the account password.
     // Every operator account is created with a credential account, so nobody

@@ -60,7 +60,7 @@ flowchart LR
   TICK["netlify/functions/cron-tick.mts<br/>every 5 min → POST /api/cleanup/[job]"]
   DB[("Supabase Postgres — ONE project serves dev AND prod<br/>DATABASE_URL, PG_POOL_MAX=1")]
   REDIS[("Upstash Redis<br/>UPSTASH_REDIS_REST_URL — locks, circuit breaker")]
-  RZP[("Razorpay<br/>RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET")]
+  RZP[("Razorpay<br/>RAZORPAY_KEY_ID / RAZORPAY_SECRET")]
   STREAM[("Stream — chat + video<br/>STREAM_API_KEY / STREAM_API_SECRET")]
   NOVU[("Novu — in-app bell<br/>NOVU_DEVELOPMENT_KEY or NOVU_PRODUCTION_KEY,<br/>resolved from NEXT_PUBLIC_SENTRY_ENVIRONMENT<br/>NEXT_PUBLIC_NOVU_APP_ID (client)")]
   RESEND[("Resend — transactional email<br/>RESEND_API_KEY")]
@@ -138,7 +138,7 @@ The production branch is named `prod` (not `main` or `master`). This is intentio
 
 All env vars live in the Netlify dashboard and are injected at build time.
 They are **not committed to the repo** (`.env` is gitignored).
-The `.env.sample` file is the canonical reference for what vars are needed.
+The `.env.sample` file is the canonical reference for what vars are needed. It is grouped into eight sections (core runtime, vendors, compliance and encryption, ops and observability, pre-launch guards and feature flags, seed only, build only, platform-provided), and `__tests__/maintenance/env-sample-coverage.test.ts` fails when code reads a key that is missing from it.
 
 ### Critical auth variables
 
@@ -355,10 +355,11 @@ netlify api updateSite --data '{
 
 ## DNS Architecture on Netlify
 
-The domain `familiarisenow.com` is managed entirely by **Netlify DNS**
-(DNS zone ID: `$NETLIFY_DNS_ZONE_ID`). This means Netlify is the
-authoritative nameserver — you do NOT manage DNS at a separate registrar
-(GoDaddy, Namecheap, etc.) for this domain.
+The domain `familiarisenow.com` is registered at GoDaddy but delegated to **Netlify DNS**
+(DNS zone ID: `$NETLIFY_DNS_ZONE_ID`, nameservers `dns1.p06.nsone.net` and `dns2.p06.nsone.net`).
+Netlify is the authoritative nameserver, so you edit records in the Netlify zone and never in GoDaddy.
+The full record inventory, including mail records, lives in
+[Domains and DNS records](./README.md#domains-and-dns-records).
 
 ### Record types you'll see
 
@@ -368,16 +369,18 @@ authoritative nameserver — you do NOT manage DNS at a separate registrar
 | `CNAME`     | Standard alias record. Can point to any hostname. Netlify accepts CNAMEs to `*.netlify.app` domains but SSL provisioning requires extra steps.                |
 | `NETLIFYv6` | Same as `NETLIFY` but for IPv6                                                                                                                                |
 | `TXT`       | Text records — used for domain verification (Google Search Console, etc.)                                                                                     |
-| `MX`        | Mail exchange records — not relevant for the app                                                                                                              |
+| `MX`        | Mail exchange records. The apex carries a null MX (`0 .`), and `send.mail` and `send.news` carry Resend's bounce MX.                                          |
 
-### Current DNS records
+### Current site records
 
-| Type      | Hostname                   | Target                    | Purpose                   |
-| --------- | -------------------------- | ------------------------- | ------------------------- |
-| `NETLIFY` | `familiarisenow.com`       | `familiarise.netlify.app` | Production site           |
-| `NETLIFY` | `www.familiarisenow.com`   | `familiarise.netlify.app` | www redirect to prod      |
-| `NETLIFY` | `dev.familiarisenow.com`   | `familiarise.netlify.app` | Dev branch deploy         |
-| `NETLIFY` | `*.dev.familiarisenow.com` | `familiarise.netlify.app` | Wildcard for dev subpaths |
+| Type      | Hostname                 | Target                    | Purpose              |
+| --------- | ------------------------ | ------------------------- | -------------------- |
+| `NETLIFY` | `familiarisenow.com`     | `familiarise.netlify.app` | Production site      |
+| `NETLIFY` | `www.familiarisenow.com` | `familiarise.netlify.app` | www redirect to prod |
+| `NETLIFY` | `dev.familiarisenow.com` | `familiarise.netlify.app` | Dev branch deploy    |
+| `NETLIFY` | `*.familiarisenow.com`   | `familiarise.netlify.app` | Wildcard             |
+
+The TXT, MX and CNAME mail records are listed in [Domains and DNS records](./README.md#domains-and-dns-records).
 
 > **Note on the `NETLIFY` type for `dev.familiarisenow.com`:** Even though the value
 > shows `familiarise.netlify.app`, Netlify internally routes requests for this hostname

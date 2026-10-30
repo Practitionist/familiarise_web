@@ -35,6 +35,8 @@ const DAY_MS = 24 * HOUR_MS;
 const ACK_WARN_MS = 2 * HOUR_MS;
 const RES_WARN_MS = 24 * HOUR_MS;
 const AUTO_CLOSE_DAYS_MS = 28 * DAY_MS;
+const AUTO_CLOSE_START_BUDGET_MS = 16_000;
+const AUTO_CLOSE_HOLD_SAMPLE_LIMIT = 10;
 const DISPUTE_HORIZON_MS = 72 * HOUR_MS;
 const DISPUTE_CRITICAL_MS = 12 * HOUR_MS;
 // Past due by more than a day, earlier sweeps already fired both windows; the bound keeps those rows from filling the batch.
@@ -89,6 +91,9 @@ export interface SupportSlaSweepResult {
   slaNoticesStaged: number;
   orgEscalationEmailsSent: number;
   autoClosedCount: number;
+  autoCloseHeldOpen: number;
+  autoCloseHolds: Array<{ caseId: string; reason: string }>;
+  autoCloseHasMore: boolean;
   incidentsCascaded: number;
   /** Incidents left open because releasing their payout holds was refused. */
   incidentsHeldOpen: number;
@@ -559,77 +564,147 @@ async function autoCloseRefusalTx(
   return doors();
 }
 
+type AutoCloseResult = Pick<
+  SupportSlaSweepResult,
+  | "autoClosedCount"
+  | "autoCloseHeldOpen"
+  | "autoCloseHolds"
+  | "autoCloseHasMore"
+>;
+
+async function attemptAutoCloseCase(
+  c: {
+    id: string;
+    autoCloseLastAttemptAt: Date | null;
+    updatedAt: Date;
+  },
+  now: Date,
+  autoCloseCutoff: Date,
+  doors: () => Promise<string | null>,
+): Promise<number | string> {
+  // Polling progress must advance without resetting the case's business clocks.
+  const attemptedAt = new Date(
+    Math.max(Date.now(), (c.autoCloseLastAttemptAt?.getTime() ?? 0) + 1),
+  );
+  const stamped = await prisma.supportCase.updateMany({
+    where: {
+      id: c.id,
+      status: "RESOLVED",
+      resolvedAt: { lte: autoCloseCutoff },
+      deletedAt: null,
+      autoCloseLastAttemptAt: c.autoCloseLastAttemptAt,
+      updatedAt: c.updatedAt,
+    },
+    data: { autoCloseLastAttemptAt: attemptedAt, updatedAt: c.updatedAt },
+  });
+  if (stamped.count === 0) return 0;
+  return prisma.$transaction(
+    async (tx) => {
+      const refused = await autoCloseRefusalTx(tx, c.id, doors);
+      if (refused) return refused;
+      const res = await tx.supportCase.updateMany({
+        where: {
+          id: c.id,
+          status: "RESOLVED",
+          resolvedAt: { lte: autoCloseCutoff },
+          deletedAt: null,
+        },
+        data: { status: "CLOSED", closedAt: now },
+      });
+      if (res.count > 0) {
+        await tx.supportCaseEvent.create({
+          data: {
+            caseId: c.id,
+            kind: "AUTO_CLOSED",
+            fromValue: "RESOLVED",
+            toValue: "CLOSED",
+            createdAt: now,
+          },
+        });
+        await releaseAutoClosedCaseTx(tx, c.id, now);
+      }
+      return res.count;
+    },
+    {
+      maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+      timeout: ALLOCATION_TX_TIMEOUT_MS,
+    },
+  );
+}
+
+function recordAutoCloseRefusal(
+  result: AutoCloseResult,
+  caseId: string,
+  reason: string,
+  errors: string[],
+) {
+  result.autoCloseHasMore = true;
+  if (reason !== "RECOMMENDATION_OPEN" && reason !== "MAINTENANCE") {
+    errors.push(`auto-close case ${caseId}: left RESOLVED (${reason})`);
+    return;
+  }
+  result.autoCloseHeldOpen++;
+  if (result.autoCloseHolds.length < AUTO_CLOSE_HOLD_SAMPLE_LIMIT)
+    result.autoCloseHolds.push({ caseId, reason });
+}
+
 async function autoCloseResolvedRows(
   now: Date,
   limit: number,
   errors: string[],
-): Promise<number> {
+  startedAt: number,
+): Promise<AutoCloseResult> {
+  const result: AutoCloseResult = {
+    autoClosedCount: 0,
+    autoCloseHeldOpen: 0,
+    autoCloseHolds: [],
+    autoCloseHasMore: false,
+  };
+  const timedOut = () => Date.now() - startedAt >= AUTO_CLOSE_START_BUDGET_MS;
+  if (timedOut()) return { ...result, autoCloseHasMore: true };
   const autoCloseCutoff = new Date(now.getTime() - AUTO_CLOSE_DAYS_MS);
   let gate: Promise<string | null> | undefined;
   const doors = () =>
     (gate ??= moneyDoorsRefusal().then((refusal) => refusal?.code ?? null));
+  const readCap = limit * HELD_OPEN_SCAN_FACTOR;
   const staleResolvedCases = await prisma.supportCase.findMany({
     where: {
       status: "RESOLVED",
       resolvedAt: { lte: autoCloseCutoff },
       deletedAt: null,
     },
-    orderBy: { resolvedAt: "asc" },
-    select: { id: true },
-    take: limit * HELD_OPEN_SCAN_FACTOR,
+    orderBy: [
+      { autoCloseLastAttemptAt: { sort: "asc", nulls: "first" } },
+      { resolvedAt: "asc" },
+      { id: "asc" },
+    ],
+    select: { id: true, autoCloseLastAttemptAt: true, updatedAt: true },
+    take: readCap,
   });
-
-  const closeOne = async (c: { id: string }): Promise<number> => {
+  let examined = 0;
+  // Each attempt commits progress before the next budget admission check.
+  for (const c of staleResolvedCases ?? []) {
+    if (result.autoClosedCount >= limit || timedOut()) break;
+    examined++;
     try {
-      const closed = await prisma.$transaction(
-        async (tx) => {
-          const refused = await autoCloseRefusalTx(tx, c.id, doors);
-          if (refused) return refused;
-          const res = await tx.supportCase.updateMany({
-            where: {
-              id: c.id,
-              status: "RESOLVED",
-              resolvedAt: { lte: autoCloseCutoff },
-            },
-            data: { status: "CLOSED", closedAt: now },
-          });
-          if (res.count > 0) {
-            await tx.supportCaseEvent.create({
-              data: {
-                caseId: c.id,
-                kind: "AUTO_CLOSED",
-                fromValue: "RESOLVED",
-                toValue: "CLOSED",
-                createdAt: now,
-              },
-            });
-            await releaseAutoClosedCaseTx(tx, c.id, now);
-          }
-          return res.count;
-        },
-        {
-          maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-          timeout: ALLOCATION_TX_TIMEOUT_MS,
-        },
-      );
-      if (typeof closed === "number") return closed;
-      errors.push(`auto-close case ${c.id}: left RESOLVED (${closed})`);
-      return 0;
+      const closed = await attemptAutoCloseCase(c, now, autoCloseCutoff, doors);
+      if (typeof closed === "number") {
+        result.autoClosedCount += closed;
+        result.autoCloseHasMore ||= closed === 0;
+        continue;
+      }
+      recordAutoCloseRefusal(result, c.id, closed, errors);
     } catch (err) {
+      result.autoCloseHasMore = true;
       errors.push(
         `auto-close case ${c.id}: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return 0;
     }
-  };
-
-  // Sequential, and stops at `limit` closes: refused held cases never crowd out closable ones.
-  let closedCount = 0;
-  for (const c of staleResolvedCases ?? []) {
-    if (closedCount >= limit) break;
-    closedCount += await closeOne(c);
   }
-  return closedCount;
+  result.autoCloseHasMore ||=
+    staleResolvedCases.length === readCap ||
+    examined < staleResolvedCases.length;
+  return result;
 }
 
 /** One page per run for disputes due within 12 h or already past due; new ids re-page, repeats stay quiet for 24 h. */
@@ -871,7 +946,9 @@ function moderationDeadlineIds(
 export async function runSupportSlaSweep(opts?: {
   limit?: number;
   now?: Date;
+  startedAt?: number;
 }): Promise<SupportSlaSweepResult> {
+  const startedAt = opts?.startedAt ?? Date.now();
   return withCronLock("support-sla-sweep", { failMode: "open" }, async () => {
     const now = opts?.now ?? new Date();
     const limit = opts?.limit ?? 50;
@@ -930,7 +1007,12 @@ export async function runSupportSlaSweep(opts?: {
       0,
     );
 
-    const autoClosedCount = await autoCloseResolvedRows(now, limit, errors);
+    const autoClose = await autoCloseResolvedRows(
+      now,
+      limit,
+      errors,
+      startedAt,
+    );
     const cascade = await cascadeResolvedProblems({
       limit: Math.min(limit, PROBLEM_CASCADE_CAP),
       now,
@@ -1095,7 +1177,7 @@ export async function runSupportSlaSweep(opts?: {
       scanned: candidates.length,
       slaNoticesStaged,
       orgEscalationEmailsSent,
-      autoClosedCount,
+      ...autoClose,
       incidentsCascaded: cascade.cascaded,
       incidentsHeldOpen: cascade.heldOpen.length,
       evidenceCasesPurged: evidencePurge.casesPurged,

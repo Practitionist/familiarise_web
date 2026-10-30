@@ -10,12 +10,47 @@ last-reviewed: 2026-10-23
 
 This document holds the step-by-step procedures for enterprise incidents and scheduled operational tasks that are **not** about money: consent withdrawal, organisation onboarding, the content security policy, SSO key rotation, staff off-boarding and authenticator recovery. Pair it with the alerting playbook in `monitoring`.
 
-Every money procedure (a stuck top-up, refund or payout, an overdue invoice, an overage that will not clear, a ledger finding, a frozen wallet, rotating Razorpay credentials, going live) lives in the finance documentation: [money runbooks](../../finance/70-operations/05-money-runbooks.md), [ledger drift runbook](../../finance/70-operations/06-ledger-drift-runbook.md), [webhook recovery](../../finance/70-operations/04-webhook-recovery.md) and [the go-live checklist](../../finance/70-operations/07-go-live-checklist.md). The money job schedule is generated in [scheduled money jobs](../../finance/70-operations/01-scheduled-jobs.md). Scheduling is the Netlify five-minute ticker, not GitHub Actions; to run any registered job by hand, `POST /api/cleanup/<slug>` with `Authorization: Bearer $CRON_SECRET`.
+Every money procedure (a stuck top-up, refund or payout, an overdue invoice, an overage that will not clear, a ledger finding, a frozen wallet, rotating Razorpay credentials, going live) lives in the finance documentation: [money runbooks](../../finance/70-operations/05-money-runbooks.md), [ledger drift runbook](../../finance/70-operations/06-ledger-drift-runbook.md), [webhook recovery](../../finance/70-operations/04-webhook-recovery.md) and [the go-live checklist](../../finance/70-operations/07-go-live-checklist.md). The money job schedule is listed in [scheduled money jobs](../../finance/70-operations/01-scheduled-jobs.md). Scheduling is the Netlify five-minute ticker, not GitHub Actions; to run any registered job by hand, `POST /api/cleanup/<slug>` with `Authorization: Bearer $CRON_SECRET`.
 
 > Legend
 >
 > - 🚨 — incident response (reactive)
 > - 🗓️ — scheduled operational task (proactive)
+
+## 🗓️ Scheduled work and ownership
+
+Use the [cron reference](../../maintenance/04-cron-jobs-reference.md) and
+[SRE orientation](../../start-here/10-infra-and-maintenance-sre-orientation.md)
+for the current job inventory and operational boundaries. Source registry
+entries determine the implementation; the ticker determines its due slots.
+A workflow declaration or old per-job docstring is not evidence of execution.
+
+The five-minute Netlify ticker owns recovery sweeps, email/notification
+relays, session outcomes, money jobs and statutory exports. Money batch jobs
+run in bounded calendar-window slices. Actions still declares non-money
+batch jobs pending their bounded migration; it is not an automatic backstop
+for ticker targets. Preserve one automatic scheduling owner during handoff.
+
+A cleanup call authenticates with CRON_SECRET, checks maintenance admission
+and enters its canonical leased core. Postgres mutual exclusion applies to
+the same job name; domain CAS and external idempotency must protect repeated
+or cross-job operations. A timed-out caller does not establish that the
+worker stopped. Persistent 409s require finding the owner and progress, not
+deleting the lease.
+
+Inspect the core result, execution history, failed/held dispatcher buckets
+and committed domain effects. A ticker 200 or an Actions workflow marked
+active is insufficient. The current shared heartbeat can remain green while
+one required capability has stopped. See the independent completion probe
+and alert-delivery operating gates in the linked maintenance runbooks before declaring health.
+
+For a manual recovery, use the authenticated canonical cleanup or admin
+door with a bounded limit and operator reason where supported. Do not run
+an old GITHUB_OUTPUT wrapper or an unbounded fleet script against the shared
+development/production database. Data exports use processDataExports via
+the ticker; no separate Actions data-export workflow is present.
+
+---
 
 ## 🚨 DPDP consent-withdrawal purge didn't run
 
@@ -27,10 +62,10 @@ withdrawal-of-consent request doesn't propagate.
 
 1. Verify the sweeper ran: check the last scheduled run of
    `jobs/compliance/consent-retention-sweeper.ts` in CI logs.
-2. If `DPDP_SWEEPER_DELETE=false` (default), the sweeper only counts —
-   **this is the deliberate pre-MVP posture**. Flip the env flag to
-   `true` in production to enable deletions, roll out behind a feature
-   flag per tenant if needed.
+2. The sweeper is count-only by default. Deletion needs `?delete=1` on
+   `/api/cleanup/consent-retention-sweeper` (or `--delete` on the script) and
+   waits for the hash-only consent-proof archive. The admin system-jobs Run
+   button only counts.
 3. For individual withdrawal, call the API:
    ```bash
    curl -X DELETE "https://app.familiarise.com/api/organizations/$ORG/consent" \

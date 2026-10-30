@@ -135,15 +135,9 @@ export async function createMockRefund(
 // Environment Checks
 // ============================================================================
 
-/**
- * Check if mock payments should be enabled
- */
+/** Mock payments exist only under `next dev`. */
 export function shouldEnableMockPayments(): boolean {
-  // Enable mock payments in development or when explicitly enabled
-  return (
-    process.env.NODE_ENV === "development" ||
-    process.env.ENABLE_MOCK_PAYMENTS === "true"
-  );
+  return process.env.NODE_ENV === "development";
 }
 
 /**

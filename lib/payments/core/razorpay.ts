@@ -338,13 +338,16 @@ export function sanitizeRazorpayNotes(
 /**
  * Create a Razorpay Order
  */
-export async function createRazorpayOrder({
-  amount,
-  currency,
-  metadata,
-  customerId,
-  holdExpiresAt,
-}: PaymentIntentParams): Promise<PaymentIntent> {
+export async function createRazorpayOrder(
+  {
+    amount,
+    currency,
+    metadata,
+    customerId,
+    holdExpiresAt,
+  }: PaymentIntentParams,
+  timeoutMs: number = SDK_CALL_TIMEOUT_MS,
+): Promise<PaymentIntent> {
   // Normalise settlement currency before client initialisation so non-INR orders
   // never reach Razorpay on any call path.
   const settlementCurrency = assertInrSettlement(
@@ -371,21 +374,23 @@ export async function createRazorpayOrder({
   }
 
   const sanitizedNotes = sanitizeRazorpayNotes(metadata);
-  const submitOrder = (resolvedCustomerId?: string) =>
-    Sentry.startSpan({ op: "http.client", name: "razorpay.createOrder" }, () =>
-      withRazorpaySdkTimeout("orders.create", () =>
-        razorpayClient.orders.create({
-          amount,
-          currency: settlementCurrency,
-          notes: sanitizedNotes,
-          receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
-          ...(resolvedCustomerId ? { customer_id: resolvedCustomerId } : {}),
-          ...(holdExpiresAt
-            ? { payment: holdCaptureSettings(holdExpiresAt) }
-            : {}),
-        }),
-      ),
+  const submitOrder = (resolvedCustomerId?: string) => {
+    const call = () =>
+      razorpayClient.orders.create({
+        amount,
+        currency: settlementCurrency,
+        notes: sanitizedNotes,
+        receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
+        ...(resolvedCustomerId ? { customer_id: resolvedCustomerId } : {}),
+        ...(holdExpiresAt
+          ? { payment: holdCaptureSettings(holdExpiresAt) }
+          : {}),
+      });
+    return Sentry.startSpan(
+      { op: "http.client", name: "razorpay.createOrder" },
+      () => withRazorpaySdkTimeout("orders.create", call, timeoutMs),
     );
+  };
 
   try {
     let effectiveCustomerId = customerId;
@@ -649,13 +654,16 @@ export type RazorpayOrderHolding =
  */
 export async function readRazorpayOrderHolding(
   orderId: string,
+  timeoutMs: number = SDK_CALL_TIMEOUT_MS,
 ): Promise<RazorpayOrderHolding> {
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) throw new Error("RAZORPAY_NOT_INITIALIZED");
   let payments;
   try {
-    payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
-      razorpayClient.orders.fetchPayments(orderId),
+    payments = await withRazorpaySdkTimeout(
+      "orders.fetchPayments",
+      () => razorpayClient.orders.fetchPayments(orderId),
+      timeoutMs,
     );
   } catch (error) {
     if (isUnknownOrderId(error)) return { kind: "empty" };
@@ -664,9 +672,13 @@ export async function readRazorpayOrderHolding(
   const captured = payments.items.find((p) => p.status === "captured");
   if (captured) {
     const amountPaise = Number(captured.amount);
-    if (!Number.isSafeInteger(amountPaise) || captured.currency !== "INR") {
+    if (
+      !Number.isSafeInteger(amountPaise) ||
+      amountPaise <= 0 ||
+      captured.currency !== "INR"
+    ) {
       throw new Error(
-        `Order ${orderId} captured ${String(captured.amount)} ${captured.currency}, not whole INR paise`,
+        `Order ${orderId} captured ${String(captured.amount)} ${captured.currency}, not positive whole INR paise`,
       );
     }
     return { kind: "captured", paymentId: captured.id, amountPaise };
@@ -679,11 +691,14 @@ export async function readRazorpayOrderHolding(
 /** The gateway's own order record; null without a client, throws when Razorpay cannot answer. */
 export async function fetchRazorpayOrder(
   orderId: string,
+  timeoutMs: number = SDK_CALL_TIMEOUT_MS,
 ): Promise<RazorpayOrderEntity | null> {
   const razorpayClient = getRazorpayClient();
   if (!razorpayClient) return null;
-  const order = await withRazorpaySdkTimeout("orders.fetch", () =>
-    razorpayClient.orders.fetch(orderId),
+  const order = await withRazorpaySdkTimeout(
+    "orders.fetch",
+    () => razorpayClient.orders.fetch(orderId),
+    timeoutMs,
   );
   return razorpayOrderEntitySchema.parse(order);
 }

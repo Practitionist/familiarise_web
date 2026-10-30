@@ -102,4 +102,4 @@ ENABLE_SAVED_CARDS=false                      # Gates ensureRazorpayCustomer + c
 ENABLE_CHECKOUT_EMI=false                     # When false, hides the EMI block on Standard Checkout via config.display.hide
 ```
 
-> **Naming gotcha (`RAZORPAY_SECRET` vs `RAZORPAY_KEY_SECRET`):** Core payment code reads `process.env.RAZORPAY_SECRET`. RazorpayX code reads `process.env.RAZORPAYX_KEY_SECRET || process.env.RAZORPAY_SECRET`. Reconcilers read `process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET`. Always set `RAZORPAY_SECRET` in production and local `.env`. <!-- drift-ok -->
+> **Naming gotcha (`RAZORPAY_SECRET` vs `RAZORPAY_KEY_SECRET`):** Core payment code reads `process.env.RAZORPAY_SECRET`. RazorpayX code reads `process.env.RAZORPAYX_KEY_SECRET || process.env.RAZORPAY_SECRET`. Reconcilers read `process.env.RAZORPAY_SECRET` only; the `RAZORPAY_KEY_SECRET` fallback is gone. Always set `RAZORPAY_SECRET` in production and local `.env`. <!-- drift-ok -->

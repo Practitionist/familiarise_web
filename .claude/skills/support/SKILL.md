@@ -1,6 +1,6 @@
 ---
 name: support
-description: Guardrails for the support case system — one SupportCase per request, guided flows and hand-off, the CASE_TRANSITIONS table, explicit reopen only, immutable decisions with admin supersede and independent appeals, evidence requests, private attachments, money remedies through audited doors (support refund door, staff caps ₹5,000 per payment and ₹50,000 per rolling 24 h, second admin above ₹25,000, payout holds as EarningsHold SUPPORT_CASE), case-linked chat access and Familiarise Support intervention, the support-sla-sweep arms (notices, auto-close, problem cascade, 180-day purge, chat backstop, dispute alerts), DPDP export, erasure, legal hold, org ownership scopes, and the durable notification outbox. Load when working on anything under lib/support/, app/api/support/, app/api/appointments/[appointmentId]/support, app/api/staff/appointments/*/cancel|reschedule, lib/stream/support-*, lib/moderation/report-case.ts, components/support/, components/dashboard/backoffice/support/, the SupportCase* or SupportFinancialRecommendation models, or support sidecars in prisma/sql/check-constraints.sql; or when asked about tickets, cases, appeals, refunds from a complaint, payout holds, chat transcripts, grievances or the SLA sweep.
+description: Work on support intake, case transitions, decisions and appeals, private evidence, audited money remedies, case-linked chat access, SLA recovery, privacy and organization scopes. Use for lib/support/, app/api/support/, support-linked appointment and staff routes, components/support/, moderation case creation or support-sla-sweep. Domain docs and linked references define the active permissions, limits and verification procedures.
 ---
 
 # Support
@@ -55,6 +55,13 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 
 ## Gotchas
 
+- Attachment finalisation and orphan removal compete on the pending row. Claim
+  the tombstone before deleting, reread live references per 100-path batch, and
+  never revive a tombstoned upload. Completed live evidence retains its replay
+  policy; pending evidence does not bypass closure. See
+  [attachment ownership](../../../docs/support/04-evidence-and-attachments.md#finalisation-and-cleanup-ownership)
+  for retry, verification and rollback limits.
+
 - `SupportTicket`, `supportTicketId`, `SupportThreadCategory`, `/support-threads`, `support-ticket-update` and the export key `supportTickets` all mean `SupportCase` now. `app/api/support/tickets/route.ts` is a staff-only outbound intake, not a legacy reader.
 - No caller passes actor `SYSTEM` to the transition table; the sweep's auto-close and the cascade write their own compare-and-set. Both release holds and end chat grants in their transaction. Auto-close (`releaseAutoClosedCaseTx()`) releases as the system without step-up, but skips a held case while a recommendation is open or money doors are closed (`autoCloseRefusalTx()`); keep that gate if you touch it.
 - The hold and void doors run at default isolation inside `withOpsAction`; `performCaseAction()` (decisions, evidence, recommendations, review) runs Serializable with `withSerializableRetry()`.
@@ -66,3 +73,5 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - Customer copy must never promise that a reply reopens a case.
 - Host organizations are booking parties only through captured payments (`CAPTURED_PAYMENT_WHERE` in `lib/support/evidence-parties.ts`).
 - The DPDP export shows a chat grant's basis and case reference only to the person who filed the case.
+
+Auto-close polling uses Prisma `updateMany` on `autoCloseLastAttemptAt`, committed with eligibility and prior-attempt CAS before the closing transaction. Preserve `resolvedAt` and `updatedAt`; classify intentional recommendation/maintenance holds separately from genuine failures. The 16-second admission budget bounds this arm only, and `autoCloseHasMore` is conservative. Apply the reviewed column/index rollout before deploying readers; see [sweep contracts](../../../docs/support/07-sla-sweep.md#2-auto-close).

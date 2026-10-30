@@ -91,7 +91,6 @@ flowchart TB
 
     subgraph CLIENT["CLIENT-SIDE — LIVE"]
         direction TB
-        CL_PROV["providers/NovuProvider.tsx\nWraps app with NovuSDKProvider\nAuth-gated rendering"]
         CL_INBOX["components/notifications/\nNotificationInbox.tsx\nBell icon + unread badge\nClick → redirect URL"]
         CL_HOOK["hooks/useNovuSubscriberSync.ts\nReact Query, 30min staleTime\nPOST /api/novu/subscriber"]
         CL_PREFS["components/notifications/\nNotificationPreferencesPanel.tsx\n3 channels + 7 categories\n+ quiet hours"]
@@ -212,7 +211,7 @@ The delivery events close the loop that the outbox opened. A `FailedEmail` row r
 | WaitlistWelcomeEmail       | `newsletter@news.familiarisenow.com`    | Sent once the confirm link is clicked                 |
 | (inline HTML, no template) | `notifications@mail.familiarisenow.com` | `/contactus` submission → `sendContactInquiryEmail`   |
 
-Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NEWSLETTER_DOMAIN`; the values shown are the defaults.
+Every address above is built on the `EMAIL_TRANSACTIONAL_DOMAIN` and `EMAIL_NEWSLETTER_DOMAIN` constants in `lib/company.ts`. They are not environment variables, so changing a sending domain is a code change.
 
 **Design system:** White card on `#f5f5f5` background, black CTA button, `-apple-system` font stack, `16px` body, `28px` heading.
 
@@ -454,23 +453,23 @@ The two relays are the outbox halves of #1654: every email and every Novu trigge
 
 ### LIVE (fully working)
 
-| Component                                      | Files                                                                                                            |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Resend email client                            | `lib/email/index.ts`, `lib/email/deliver.ts`, `lib/email/config.ts`                                              |
-| 10 React Email templates behind 11 senders     | `emails/auth/`, `emails/payments/`, `emails/organizations/`, `emails/waitlist/`, `emails/components/`            |
-| Novu client + service + workflows + subscriber | `lib/novu/*.ts`                                                                                                  |
-| Novu React provider + bell icon + sync hook    | `providers/NovuProvider.tsx`, `components/notifications/NotificationInbox.tsx`, `hooks/useNovuSubscriberSync.ts` |
-| Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx`                                                      |
-| Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                                    |
-| Subscriber sync API                            | `app/api/novu/subscriber/route.ts` (POST)                                                                        |
-| Waitlist double opt-in confirm/unsubscribe     | `lib/waitlist/tokens.ts`, `lib/waitlist/service.ts`                                                              |
-| Admin waitlist broadcast                       | `app/api/admin/waitlist/broadcast/route.ts`                                                                      |
-| Appointment reminders cron                     | `app/api/cleanup/appointment-reminders/route.ts`                                                                 |
-| Auto-complete + notify                         | `scripts/appointments/auto-complete-appointments.ts`                                                             |
-| Stream recording webhook                       | `app/api/stream/webhooks/route.ts`                                                                               |
-| Stream main webhook                            | `app/api/stream/webhooks/route.ts`                                                                               |
-| Announcements + broadcast                      | `app/api/announcements/route.ts`                                                                                 |
-| 30+ notification trigger wiring                | Various API routes and services                                                                                  |
+| Component                                      | Files                                                                                                 |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Resend email client                            | `lib/email/index.ts`, `lib/email/deliver.ts`, `lib/email/config.ts`                                   |
+| 10 React Email templates behind 11 senders     | `emails/auth/`, `emails/payments/`, `emails/organizations/`, `emails/waitlist/`, `emails/components/` |
+| Novu client + service + workflows + subscriber | `lib/novu/*.ts`                                                                                       |
+| Novu inbox + bell icon + sync hook             | `components/notifications/NotificationInbox.tsx`, `hooks/useNovuSubscriberSync.ts`                    |
+| Notification Preferences Panel                 | `components/notifications/NotificationPreferencesPanel.tsx`                                           |
+| Preferences API                                | `app/api/novu/preferences/route.ts` (GET/PUT)                                                         |
+| Subscriber sync API                            | `app/api/novu/subscriber/route.ts` (POST)                                                             |
+| Waitlist double opt-in confirm/unsubscribe     | `lib/waitlist/tokens.ts`, `lib/waitlist/service.ts`                                                   |
+| Admin waitlist broadcast                       | `app/api/admin/waitlist/broadcast/route.ts`                                                           |
+| Appointment reminders cron                     | `app/api/cleanup/appointment-reminders/route.ts`                                                      |
+| Auto-complete + notify                         | `scripts/appointments/auto-complete-appointments.ts`                                                  |
+| Stream recording webhook                       | `app/api/stream/webhooks/route.ts`                                                                    |
+| Stream main webhook                            | `app/api/stream/webhooks/route.ts`                                                                    |
+| Announcements + broadcast                      | `app/api/announcements/route.ts`                                                                      |
+| 30+ notification trigger wiring                | Various API routes and services                                                                       |
 
 ### STUB (placeholder code, no functionality)
 
@@ -501,23 +500,17 @@ The two relays are the outbox halves of #1654: every email and every Novu trigge
 
 ## Environment Variables
 
-| Variable                             | Required | Used By                                                                              |
-| ------------------------------------ | -------- | ------------------------------------------------------------------------------------ |
-| `RESEND_API_KEY`                     | Yes      | Resend direct emails, waitlist broadcast                                             |
-| `RESEND_WEBHOOK_SECRET`              | Yes      | Signature verification in `/api/webhooks/resend` (#1647); production context only    |
-| `EMAIL_TRANSACTIONAL_DOMAIN`         | No       | Transactional sender domain (defaults to `mail.familiarisenow.com`)                  |
-| `EMAIL_NEWSLETTER_DOMAIN`            | No       | Waitlist/newsletter sender domain (defaults to `news.familiarisenow.com`)            |
-| `NEXT_PUBLIC_SUPPORT_EMAIL`          | No       | Public support mailbox, default Reply-To                                             |
-| `CONTACT_INBOX_ADDRESS`              | No       | `/contactus` delivery inbox (defaults to the support mailbox)                        |
-| `BILLING_EMAIL`                      | No       | Supplier contact on tax invoices (defaults to the support mailbox)                   |
-| `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` | No       | Optional postal line in `EmailFooter`                                                |
-| `NOVU_DEVELOPMENT_KEY`               | Yes      | Novu server-side SDK, Development environment (local, previews)                      |
-| `NOVU_PRODUCTION_KEY`                | Yes      | Novu server-side SDK, Production environment (production only)                       |
-| `NEXT_PUBLIC_NOVU_APP_ID`            | Yes      | Novu React SDK (client-side)                                                         |
-| `NEXT_PUBLIC_APP_URL`                | Yes      | Email link URLs, unsubscribe URLs                                                    |
-| `CRON_SECRET`                        | Yes      | Auth for cron job endpoints                                                          |
-| `WAITLIST_HMAC_SECRET`               | Yes      | Waitlist confirm/unsubscribe token signing; there is no fallback to `RESEND_API_KEY` |
-| `STREAM_WEBHOOK_SECRET`              | Yes      | Stream webhook signature verification                                                |
+| Variable                  | Required | Used By                                                                              |
+| ------------------------- | -------- | ------------------------------------------------------------------------------------ |
+| `RESEND_API_KEY`          | Yes      | Resend direct emails, waitlist broadcast                                             |
+| `RESEND_WEBHOOK_SECRET`   | Yes      | Signature verification in `/api/webhooks/resend` (#1647); production context only    |
+| `NOVU_DEVELOPMENT_KEY`    | Yes      | Novu server-side SDK, Development environment (local, previews)                      |
+| `NOVU_PRODUCTION_KEY`     | Yes      | Novu server-side SDK, Production environment (production only)                       |
+| `NEXT_PUBLIC_NOVU_APP_ID` | Yes      | Novu React SDK (client-side)                                                         |
+| `NEXT_PUBLIC_APP_URL`     | Yes      | Email link URLs, unsubscribe URLs                                                    |
+| `CRON_SECRET`             | Yes      | Auth for cron job endpoints                                                          |
+| `WAITLIST_HMAC_SECRET`    | Yes      | Waitlist confirm/unsubscribe token signing; there is no fallback to `RESEND_API_KEY` |
+| `STREAM_WEBHOOK_SECRET`   | Yes      | Stream webhook signature verification                                                |
 
 ---
 

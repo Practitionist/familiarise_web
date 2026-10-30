@@ -36,6 +36,7 @@ jest.mock("../../lib/rate-limit", () => ({
   moneyOpsLimiter: {},
 }));
 jest.mock("../../lib/pdf/supplier", () => ({
+  ...jest.requireActual("../../lib/pdf/supplier"),
   getPlatformSupplier: jest.fn().mockReturnValue({ name: "Supplier" }),
 }));
 jest.mock("../../lib/pdf/storage", () => ({
@@ -50,6 +51,7 @@ jest.mock("../../lib/pdf/invoice-renderer", () => ({
 }));
 
 import { GET } from "@/app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pdf/route";
+import { getPlatformSupplier } from "@/lib/pdf/supplier";
 
 describe("PDF routes", () => {
   it("answers 500 JSON and reports once when the render rejects", async () => {
@@ -60,6 +62,27 @@ describe("PDF routes", () => {
     expect(res.status).toBe(500);
     expect((await res.json()).error).toBe("Failed to generate invoice PDF");
     expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers 503 for a GSTIN registered outside the registered office's state", async () => {
+    const actual = jest.requireActual<typeof import("@/lib/pdf/supplier")>(
+      "../../lib/pdf/supplier",
+    );
+    const previous = process.env.PLATFORM_GSTIN;
+    process.env.PLATFORM_GSTIN = "29AAFCF1234Q1ZN";
+    jest
+      .mocked(getPlatformSupplier)
+      .mockImplementationOnce(actual.getPlatformSupplier);
+    try {
+      const res = await GET({} as never, {
+        params: Promise.resolve({ orgId: "o1", invoiceId: "inv1" }),
+      });
+      expect(res.status).toBe(503);
+      expect((await res.json()).code).toBe("SUPPLIER_GSTIN_UNCONFIGURED");
+    } finally {
+      if (previous === undefined) delete process.env.PLATFORM_GSTIN;
+      else process.env.PLATFORM_GSTIN = previous;
+    }
   });
 
   it("traces pdfkit's standard fonts for all four PDF routes", () => {

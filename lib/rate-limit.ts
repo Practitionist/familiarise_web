@@ -6,14 +6,12 @@ import { Ratelimit } from "@upstash/ratelimit";
 import redis from "@/lib/redis-edge";
 import { NextResponse } from "next/server";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
-import { clientIpFrom } from "@/lib/request-ip";
+import { stampedClientIp } from "@/lib/request-ip";
 
 type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];
 
-const LIMITER_TIMEOUT_MS = (() => {
-  const v = Number(process.env.LIMITER_TIMEOUT_MS);
-  return Number.isFinite(v) && v > 0 ? v : 500;
-})();
+// Fail-open budget for one limiter round trip.
+const LIMITER_TIMEOUT_MS = 500;
 
 export function makeLimiter(
   requests: number,
@@ -206,12 +204,6 @@ export const inviteAcceptIpLimiter = makeLimiter(
 export const inviteAcceptLimiter = inviteAcceptIpLimiter;
 /** 10 per minute per IP — GET /api/referrals/code/check/[code] */
 export const referralCheckLimiter = makeLimiter(10, "1 m", "rl:referral-check");
-/** 2 per hour per recipient — the "someone tried to sign up" notice */
-export const existingAccountNoticeLimiter = makeLimiter(
-  2,
-  "1 h",
-  "rl:existing-account-notice",
-);
 /** 20 per hour per admin — POST /api/admin/team/members and setup-link */
 export const staffCreateLimiter = makeLimiter(
   20,
@@ -273,11 +265,11 @@ export async function applyRateLimit(
   }
 }
 
-/** The client IP from the header this runtime's edge sets (`lib/request-ip.ts`). */
+/** For route handlers: the client IP middleware stamped on the request. */
 export function getClientIp(req: {
   headers: { get(name: string): string | null };
 }): string {
-  return clientIpFrom(req.headers);
+  return stampedClientIp(req.headers);
 }
 
 /**

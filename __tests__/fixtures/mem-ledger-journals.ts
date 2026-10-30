@@ -18,7 +18,7 @@ export function memLedgerJournals<T extends { idempotencyKey: string }>(
       }),
     },
     ledgerAccount: {
-      upsert: jest.fn(async ({ where }: { where: { id: string } }) => where),
+      createMany: jest.fn(async () => ({ count: 0 })),
     },
   };
 }

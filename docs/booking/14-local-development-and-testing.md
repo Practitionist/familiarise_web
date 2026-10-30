@@ -20,7 +20,7 @@ The following variables are required for booking flows. Add them to your `.env` 
 | `UPSTASH_REDIS_REST_URL`   | Redis for distributed locks              | `https://xxx.upstash.io`                            |
 | `UPSTASH_REDIS_REST_TOKEN` | Redis auth token                         | `AXxx...`                                           |
 | `RAZORPAY_KEY_ID`          | Razorpay test key (Indian payments)      | `rzp_test_xxx`                                      |
-| `RAZORPAY_KEY_SECRET`      | Razorpay test secret                     | `xxx`                                               |
+| `RAZORPAY_SECRET`          | Razorpay test secret                     | `xxx`                                               |
 | `STRIPE_SECRET_KEY`        | Stripe test key (international payments) | `sk_test_xxx`                                       |
 | `STRIPE_PUBLISHABLE_KEY`   | Stripe publishable key                   | `pk_test_xxx`                                       |
 | `CRON_SECRET`              | Auth token for cron job endpoints        | Any strong random string                            |

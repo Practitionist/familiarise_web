@@ -1,21 +1,25 @@
 /** @jest-environment node */
-jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+jest.mock("@sentry/nextjs", () => ({
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+  flush: jest.fn().mockResolvedValue(true),
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  getIsolationScope: () => ({ setTag: jest.fn() }),
+}));
 jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 import { NextRequest, NextResponse } from "next/server";
 import * as zod from "zod";
-import * as Sentry from "@sentry/nextjs";
 
 const dispatch = jest.fn();
 const audit = jest.fn().mockResolvedValue({ id: "audit" });
 const authorize = jest.fn();
 const maintenance = jest.fn();
-const diagnostics = jest.mocked(Sentry.captureException);
+const guard = jest.fn();
 const after = jest.fn();
-const unexpectedJob = jest.fn(() => {
-  throw new Error("Unexpected synchronous job execution");
-});
 let post: typeof import("../../app/api/admin/system-jobs/run/route").POST;
+let registry: typeof import("../../lib/cron/cleanup-registry");
+let schedule: typeof import("../../lib/cron/schedule");
 
 beforeAll(async () => {
   const dependencies = new Map<string, unknown>([
@@ -26,7 +30,14 @@ beforeAll(async () => {
       { recordOpsAction: audit, opsReasonSchema: zod.z.string().min(5) },
     ],
     ["@/lib/maintenance-edge", { getMaintenanceState: maintenance }],
-    ["@/lib/maintenance-cron", { isFinancialJob: () => false }],
+    [
+      "@/lib/maintenance-cron",
+      {
+        assertNotInMaintenance: guard,
+        MaintenanceActiveError: class extends Error {},
+        MaintenanceUnavailableError: class extends Error {},
+      },
+    ],
     [
       "@/lib/cron/dispatch-background",
       {
@@ -34,40 +45,22 @@ beforeAll(async () => {
         dispatchBackgroundJob: dispatch,
       },
     ],
-    ["@/lib/observability/report", { reportSentryError: diagnostics }],
+    ["@/lib/observability/report", { reportSentryError: jest.fn() }],
     ["@/lib/api/after-safe", { scheduleAfter: after }],
+    [
+      "@/lib/cron/schedule",
+      {
+        ...jest.requireActual("@/lib/cron/schedule"),
+        latestWindowStart: jest.fn(
+          jest.requireActual("@/lib/cron/schedule").latestWindowStart,
+        ),
+      },
+    ],
   ]);
   for (const [name, mock] of dependencies) jest.doMock(name, () => mock);
-  // Unselected jobs must never execute through this dispatch door.
-  const unselectedModules = [
-    "@/scripts/payments/cleanup-abandoned-payments",
-    "@/scripts/payments/reconcile-payment-status",
-    "@/scripts/payments/reconcile-orphaned-confirmations",
-    "@/scripts/refunds/reconcile-pending-refunds",
-    "@/scripts/disputes/reconcile-disputes",
-    "@/scripts/earnings/sync-payment-earnings",
-    "@/scripts/earnings/release-earnings",
-    "@/scripts/appointments/auto-complete-appointments",
-    "@/scripts/appointments/expire-stale-requests",
-    "@/scripts/appointments/cleanup-tentative-occurrences",
-    "@/scripts/appointments/reconcile-occurrence-availability",
-    "@/lib/payments/payouts",
-    "@/scripts/payouts/handle-stuck-payouts",
-    "@/scripts/payouts/reconcile-payout-status",
-    "@/lib/auth/cleanup-auth-tokens",
-    "@/scripts/cleanup/archive-webhook-events",
-    "@/scripts/cleanup/reconcile-document-storage",
-    "@/lib/documents/document-purge",
-    "@/scripts/alerts/alert-orphaned-payments",
-    "@/scripts/stream/stream-sync",
-    "@/scripts/stream/reconcile-orphaned-recordings",
-    "@/lib/stream/recording-retention",
-    "@/jobs/stream/expire-event-channels",
-    "@/lib/meetings/reconcile-orphaned-sessions",
-  ];
-  for (const name of unselectedModules)
-    jest.doMock(name, () => new Proxy({}, { get: () => unexpectedJob }));
   post = (await import("../../app/api/admin/system-jobs/run/route")).POST;
+  registry = await import("../../lib/cron/cleanup-registry");
+  schedule = await import("../../lib/cron/schedule");
 });
 
 beforeEach(() => {
@@ -76,22 +69,22 @@ beforeEach(() => {
     session: { user: { id: "admin", role: "ADMIN", name: "Admin" } },
   });
   maintenance.mockResolvedValue({ phase: "OFF" });
+  guard.mockResolvedValue(undefined);
   dispatch.mockResolvedValue({ accepted: true, job: "transfer-recordings" });
 });
+
 function request(jobId = "transfer-recordings") {
   return new NextRequest(
     "https://untrusted-request-host.test/api/admin/system-jobs/run",
     {
       method: "POST",
-      body: JSON.stringify({
-        jobId,
-        reason: "Recover verified recording",
-      }),
+      body: JSON.stringify({ jobId, reason: "Recover verified recording" }),
     },
   );
 }
 
-it("records ACCEPTED, never SUCCEEDED, without starting synchronous or after work", async () => {
+it("runs the registry handler in-process without the cron secret and records ACCEPTED", async () => {
+  delete process.env.CRON_SECRET;
   const response = await post(request());
   expect(response.status).toBe(202);
   expect(await response.json()).toEqual({
@@ -101,41 +94,42 @@ it("records ACCEPTED, never SUCCEEDED, without starting synchronous or after wor
     message: "Queued for processing. Check execution history for completion.",
   });
   expect(dispatch).toHaveBeenCalledWith("transfer-recordings");
+  expect(guard).toHaveBeenCalledWith("transfer-recordings");
   expect(audit).toHaveBeenCalledTimes(1);
   expect(audit).toHaveBeenCalledWith(
     {},
     expect.objectContaining({
+      id: expect.any(String),
       targetId: "transfer-recordings",
-      after: { status: "ACCEPTED" },
+      after: { status: "ACCEPTED", httpStatus: 202 },
     }),
   );
-  expect(unexpectedJob).not.toHaveBeenCalled();
   expect(after).not.toHaveBeenCalled();
 });
 
-it("records FAILED and returns a generic error when worker admission fails", async () => {
+it("records FAILED with the route's stable message when worker admission fails", async () => {
   dispatch.mockRejectedValueOnce(
     new Error("private worker configuration diagnostic"),
   );
   const response = await post(request());
   expect(response.status).toBe(500);
-  expect(await response.json()).toEqual({ error: "Failed to run job" });
+  expect(JSON.stringify(await response.json())).not.toContain("diagnostic");
   expect(audit).toHaveBeenCalledWith(
     {},
-    expect.objectContaining({ after: { status: "FAILED" } }),
+    expect.objectContaining({ after: { status: "FAILED", httpStatus: 500 } }),
   );
-  expect(diagnostics).toHaveBeenCalledTimes(1);
 });
 
-it("keeps another job's runtime diagnostic out of the staff response while auditing failure", async () => {
-  const response = await post(request("cleanup-abandoned-payments"));
-  expect(response.status).toBe(500);
-  expect(await response.json()).toEqual({ error: "Failed to run job" });
-  expect(audit).toHaveBeenCalledWith(
-    {},
-    expect.objectContaining({ after: { status: "FAILED" } }),
-  );
-  expect(diagnostics).toHaveBeenCalledTimes(1);
+it("defers the payout run past the response and refuses ids outside the registry", async () => {
+  const deferred = await post(request("process-payouts"));
+  expect(deferred.status).toBe(202);
+  expect(after).toHaveBeenCalledTimes(1);
+  expect(audit).not.toHaveBeenCalled();
+
+  for (const legacy of ["cleanup-approval-payments", "constructor"]) {
+    expect((await post(request(legacy))).status).toBe(400);
+  }
+  expect(audit).not.toHaveBeenCalled();
 });
 
 it("does not dispatch when authentication or maintenance refuses the request", async () => {
@@ -147,4 +141,56 @@ it("does not dispatch when authentication or maintenance refuses the request", a
   expect((await post(request())).status).toBe(503);
   expect(dispatch).not.toHaveBeenCalled();
   expect(audit).not.toHaveBeenCalled();
+});
+
+it("repeats a windowed job's latest due window and refuses when none has come due", async () => {
+  const handlers = registry.getCleanupJobHandlers("settle-invoice-accruals");
+  if (!handlers) throw new Error("settle-invoice-accruals is not registered");
+  const invoke = jest
+    .spyOn(handlers, "invoke")
+    .mockResolvedValue(
+      NextResponse.json({}, { headers: { "X-Job-Outcome": "success" } }),
+    );
+  const at = new Date();
+  const response = await post(request("settle-invoice-accruals"));
+  expect(response.status).toBe(200);
+  const sent = invoke.mock.calls[0][0].nextUrl.searchParams;
+  expect(sent.get("windowStart")).toBe(
+    schedule.latestWindowStart("settle-invoice-accruals", at)?.toISOString(),
+  );
+  expect(sent.get("limit")).toBe("10");
+
+  jest.mocked(schedule.latestWindowStart).mockReturnValueOnce(null);
+  const refused = await post(request("settle-invoice-accruals"));
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({ code: "NO_DUE_WINDOW" });
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  ["partial", 207, "PARTIAL"],
+  ["attention", 207, "SUCCEEDED"],
+  ["held", 409, "HELD"],
+])("audits a %s run as %s", async (runOutcome, httpStatus, auditStatus) => {
+  const handlers = registry.getCleanupJobHandlers("reconcile-refunds");
+  if (!handlers) throw new Error("reconcile-refunds is not registered");
+  jest.spyOn(handlers, "invoke").mockResolvedValueOnce(
+    NextResponse.json(
+      {},
+      {
+        status: Number(httpStatus),
+        headers: {
+          "X-Job-Outcome": "success",
+          "X-Run-Outcome": String(runOutcome),
+        },
+      },
+    ),
+  );
+  await post(request("reconcile-refunds"));
+  expect(audit).toHaveBeenCalledWith(
+    {},
+    expect.objectContaining({
+      after: { status: auditStatus, httpStatus },
+    }),
+  );
 });

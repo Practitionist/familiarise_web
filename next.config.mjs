@@ -107,6 +107,9 @@ const CSP_REPORT_GROUP = "csp-endpoint";
  *   - `frame-src` allows Razorpay's checkout iframes; Razorpay
  *     serves the live checkout iframe from `api.razorpay.com`, not just
  *     `checkout.razorpay.com` (report-only violation on a real checkout).
+ *   - `challenges.cloudflare.com` in `script-src` and `frame-src` is the
+ *     Turnstile widget on the auth forms; it talks to Cloudflare from inside
+ *     its iframe, so `connect-src` needs nothing.
  *   - `media-src` is the load-bearing entry for Stream call audio /
  *     video / recording playback.
  *
@@ -153,12 +156,12 @@ const CSP_REPORT_GROUP = "csp-endpoint";
  */
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.sentry.io https://*.getstream.io https://*.supabase.co https://challenges.cloudflare.com",
   "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.r2.cloudflarestorage.com https://*.upstash.io https://api.razorpay.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
   "img-src 'self' data: https: blob:",
   "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com https://*.supabase.co https://*.r2.cloudflarestorage.com",
   "style-src 'self' 'unsafe-inline'",
-  "frame-src 'self' blob: https://*.supabase.co https://checkout.razorpay.com https://api.razorpay.com https://app.netlify.com",
+  "frame-src 'self' blob: https://*.supabase.co https://checkout.razorpay.com https://api.razorpay.com https://app.netlify.com https://challenges.cloudflare.com",
   "font-src 'self' data:",
   // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
   // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.
@@ -260,6 +263,9 @@ const nextConfig = {
     ...(process.env.BRANCH
       ? { NEXT_PUBLIC_SENTRY_BRANCH: process.env.BRANCH }
       : {}),
+    // Netlify sets NETLIFY only on the build machine, so runtime checks
+    // (lease cap, pool guard) need it inlined here.
+    ...(process.env.NETLIFY ? { NETLIFY: process.env.NETLIFY } : {}),
   },
   // Skipped on Netlify by default: with them on, the deploy preview was killed
   // (exit 137) at "Linting and checking validity of types" on the 6144 MB

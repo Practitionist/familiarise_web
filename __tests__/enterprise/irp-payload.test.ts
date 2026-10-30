@@ -9,17 +9,40 @@ import {
   buildIrpPayload,
   type BuildIrpPayloadInput,
 } from "@/lib/compliance/irp-payload";
+import { COMPANY_INFO, REGISTERED_OFFICE } from "@/lib/company";
 
+interface PayloadItem {
+  HsnCd: string;
+  CgstAmt: number;
+  SgstAmt: number;
+  IgstAmt: number;
+  GstRt: number;
+  AssAmt: number;
+  TotItemVal: number;
+}
+
+/** The slice of the NIC v1.1 payload these cases read. */
+interface Payload {
+  Version: string;
+  TranDtls: { SupTyp: string; TaxSch: string; RegRev: string };
+  DocDtls: { No: string; Dt: string };
+  SellerDtls: Record<string, unknown>;
+  BuyerDtls: { Gstin: string; Pos: string; Stcd: string };
+  ItemList: PayloadItem[];
+  ValDtls: Record<string, number>;
+}
+
+// The seller block the uploader builds from lib/company.ts.
 const seller = {
-  gstin: "29AAFCF1234Q1ZN", // Karnataka (29)
-  legalName: "Familiarise Technologies Private Limited",
-  address1: "Koramangala 1st Block",
-  location: "Bangalore",
-  pincode: "560034",
-  stateCode: "KA",
+  gstin: "06AAFCF1234Q1ZN", // Haryana (06)
+  legalName: COMPANY_INFO.name,
+  address1: REGISTERED_OFFICE.line1,
+  location: REGISTERED_OFFICE.city,
+  pincode: REGISTERED_OFFICE.pincode,
+  stateCode: REGISTERED_OFFICE.stateCode,
 };
 
-// Buyer in Karnataka → intra-state (CGST+SGST). 10000 paise @18% = 1800 tax,
+// Buyer in Haryana → intra-state (CGST+SGST). 10000 paise @18% = 1800 tax,
 // split 900/900.
 const intraInput = (): BuildIrpPayloadInput => ({
   invoice: {
@@ -33,7 +56,7 @@ const intraInput = (): BuildIrpPayloadInput => ({
     igstPaise: 0,
     totalPaise: 11800,
     hsnCode: "998314",
-    placeOfSupply: "KA",
+    placeOfSupply: "HR",
   },
   lineItems: [
     {
@@ -46,8 +69,8 @@ const intraInput = (): BuildIrpPayloadInput => ({
   ],
   buyer: {
     name: "Acme Corp",
-    gstin: "29ABCDE1234F1Z5", // Karnataka buyer
-    stateCode: "KA",
+    gstin: "06ABCDE1234F1Z5", // Haryana buyer
+    stateCode: "HR",
     hsnDefault: "999293",
   },
   seller,
@@ -58,7 +81,7 @@ describe("buildIrpPayload — happy path", () => {
     const r = buildIrpPayload(intraInput());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const p = r.payload as Record<string, any>;
+    const p = r.payload as unknown as Payload;
 
     expect(p.Version).toBe("1.1");
     expect(p.TranDtls.SupTyp).toBe("B2B");
@@ -67,10 +90,17 @@ describe("buildIrpPayload — happy path", () => {
     expect(p.DocDtls.Dt).toBe("15/01/2026");
 
     // Numeric state codes derived from GSTIN prefix.
-    expect(p.SellerDtls.Stcd).toBe("29");
-    expect(p.BuyerDtls.Stcd).toBe("29");
-    expect(p.BuyerDtls.Pos).toBe("29");
-    expect(p.BuyerDtls.Gstin).toBe("29ABCDE1234F1Z5");
+    expect(p.SellerDtls).toEqual({
+      Gstin: "06AAFCF1234Q1ZN",
+      LglNm: "Practitionist (OPC) Private Limited",
+      Addr1: "T 3 Fl 701, M3M Merlin, Main Gujjar Rd Sec 67",
+      Loc: "Gurgaon",
+      Pin: 122018,
+      Stcd: "06",
+    });
+    expect(p.BuyerDtls.Stcd).toBe("06");
+    expect(p.BuyerDtls.Pos).toBe("06");
+    expect(p.BuyerDtls.Gstin).toBe("06ABCDE1234F1Z5");
 
     // Line HSN falls back to invoice HSN when line is null.
     expect(p.ItemList[0].HsnCd).toBe("998314");
@@ -100,7 +130,7 @@ describe("buildIrpPayload — happy path", () => {
     const r = buildIrpPayload(input);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const p = r.payload as Record<string, any>;
+    const p = r.payload as unknown as Payload;
 
     expect(p.BuyerDtls.Stcd).toBe("33");
     expect(p.BuyerDtls.Pos).toBe("33");
@@ -122,7 +152,7 @@ describe("buildIrpPayload — happy path", () => {
     const r = buildIrpPayload(input);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect((r.payload as any).TranDtls.SupTyp).toBe("EXPWOP");
+    expect((r.payload as unknown as Payload).TranDtls.SupTyp).toBe("EXPWOP");
   });
 
   it("reverse charge sets RegRev=Y", () => {
@@ -131,7 +161,7 @@ describe("buildIrpPayload — happy path", () => {
     const r = buildIrpPayload(input);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect((r.payload as any).TranDtls.RegRev).toBe("Y");
+    expect((r.payload as unknown as Payload).TranDtls.RegRev).toBe("Y");
   });
 });
 
@@ -142,21 +172,51 @@ describe("buildIrpPayload — paise→rupee residual on last line", () => {
     const input = intraInput();
     // assessable 3334 + 3333 + 3333 = 10000; tax 900/900 each leg.
     input.lineItems = [
-      { position: 0, description: "L1", quantity: 1, unitPricePaise: 3334, hsnCode: null },
-      { position: 1, description: "L2", quantity: 1, unitPricePaise: 3333, hsnCode: null },
-      { position: 2, description: "L3", quantity: 1, unitPricePaise: 3333, hsnCode: null },
+      {
+        position: 0,
+        description: "L1",
+        quantity: 1,
+        unitPricePaise: 3334,
+        hsnCode: null,
+      },
+      {
+        position: 1,
+        description: "L2",
+        quantity: 1,
+        unitPricePaise: 3333,
+        hsnCode: null,
+      },
+      {
+        position: 2,
+        description: "L3",
+        quantity: 1,
+        unitPricePaise: 3333,
+        hsnCode: null,
+      },
     ];
 
     const r = buildIrpPayload(input);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const p = r.payload as Record<string, any>;
+    const p = r.payload as unknown as Payload;
 
     // Per-line legs (in rupees) must sum to the invoice legs exactly.
-    const sumCgst = p.ItemList.reduce((a: number, it: any) => a + it.CgstAmt, 0);
-    const sumSgst = p.ItemList.reduce((a: number, it: any) => a + it.SgstAmt, 0);
-    const sumAss = p.ItemList.reduce((a: number, it: any) => a + it.AssAmt, 0);
-    const sumTot = p.ItemList.reduce((a: number, it: any) => a + it.TotItemVal, 0);
+    const sumCgst = p.ItemList.reduce(
+      (a: number, it: PayloadItem) => a + it.CgstAmt,
+      0,
+    );
+    const sumSgst = p.ItemList.reduce(
+      (a: number, it: PayloadItem) => a + it.SgstAmt,
+      0,
+    );
+    const sumAss = p.ItemList.reduce(
+      (a: number, it: PayloadItem) => a + it.AssAmt,
+      0,
+    );
+    const sumTot = p.ItemList.reduce(
+      (a: number, it: PayloadItem) => a + it.TotItemVal,
+      0,
+    );
 
     expect(Number(sumCgst.toFixed(2))).toBe(p.ValDtls.CgstVal);
     expect(Number(sumSgst.toFixed(2))).toBe(p.ValDtls.SgstVal);
@@ -172,14 +232,26 @@ describe("buildIrpPayload — paise→rupee residual on last line", () => {
     input.invoice.sgstPaise = 901;
     input.invoice.totalPaise = 10000 + 901 + 901;
     input.lineItems = [
-      { position: 0, description: "L1", quantity: 1, unitPricePaise: 5000, hsnCode: null },
-      { position: 1, description: "L2", quantity: 1, unitPricePaise: 5000, hsnCode: null },
+      {
+        position: 0,
+        description: "L1",
+        quantity: 1,
+        unitPricePaise: 5000,
+        hsnCode: null,
+      },
+      {
+        position: 1,
+        description: "L2",
+        quantity: 1,
+        unitPricePaise: 5000,
+        hsnCode: null,
+      },
     ];
 
     const r = buildIrpPayload(input);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const p = r.payload as Record<string, any>;
+    const p = r.payload as unknown as Payload;
     // 451 paise = 4.51, 450 paise = 4.50; total 9.01 == CgstVal.
     expect(p.ItemList[0].CgstAmt).toBe(4.51);
     expect(p.ItemList[1].CgstAmt).toBe(4.5);

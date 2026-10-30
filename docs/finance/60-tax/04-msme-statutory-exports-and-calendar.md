@@ -33,7 +33,7 @@ For example, LearnPro Academy declares itself a small enterprise with a written 
 `msme-payment-alerts` (`jobs/compliance/msme-payment-alerts.ts`) runs once a day. The ticker fires it in a one-hour window from 03:00 UTC at the :45 slot, 03:45 UTC or 09:15 IST. It is one slot on purpose: the digest email is not idempotent, so it must not repeat.
 
 1. It reads consultant and organisation payouts that are not COMPLETED and whose `mustPayByDate` falls within the next 5 days or has passed, earliest first, up to 21 rows per rail.
-2. If any exist, it sends a compliance alert through the notification service to every administrator, an email to the same people, and a direct email to `MSME_ALERT_EMAIL` when that address is set and is not already an administrator. The link goes to the Compliance page in the back office, tab `msme`.
+2. If any exist, it sends a compliance alert through the notification service to every administrator, an email to the same people, and a direct email to `COMPLIANCE_ALERT_EMAIL` (a constant in `lib/company.ts`) when that address is not already an administrator. The link goes to the Compliance page in the back office, tab `msme`.
 3. It logs a structured line, `msme.payout.at_risk`, with the count.
 
 The lock is fail-open (`withCronLock`, `failMode: "open"`), because the side effects are alerts. The job is not in `FINANCIAL_JOB_NAMES`, so it keeps running while maintenance is DEGRADED.
@@ -56,7 +56,7 @@ Fail-closed means the job does nothing if the lease cannot be taken, because two
 - **GST register.** Nothing beyond the invoices themselves. Its healer needs the platform GSTIN to mint missing consumer invoices.
 - **TDS draft.** `TdsRate` rows, and the private storage bucket, which creates itself.
 - **IRP uploader.** The platform GSTIN and the ClearTax API key, token and GSTIN. Missing any of them, the job touches no invoice and reports a skip. Only organisation invoices that carry the buyer's GSTIN, are PENDING for the IRP and were issued in the last 30 days are sent, and a windowed run skips an invoice already attempted since the window opened, so a retry is spent at most once a day.
-- **MSME alerts.** Payouts with a deadline, and optionally `MSME_ALERT_EMAIL`.
+- **MSME alerts.** Payouts with a deadline, and `COMPLIANCE_ALERT_EMAIL`.
 
 ## The statutory dates the jobs are timed against
 

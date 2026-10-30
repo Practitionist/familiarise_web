@@ -597,6 +597,7 @@ export interface OrgOperationalEmailArgs {
   cap?: number;
   usedPct?: number;
   actionUrl: string;
+  entityRef?: string;
 }
 
 function buildOrgOperationalEmail(args: OrgOperationalEmailArgs): {
@@ -621,7 +622,9 @@ function buildOrgOperationalEmail(args: OrgOperationalEmailArgs): {
       emailType: `ORG_${args.kind}`,
       category,
       from: SENDERS.finance,
-      entityRef: `org:${args.organizationId}:${args.kind.toLowerCase()}`,
+      entityRef:
+        args.entityRef ??
+        `org:${args.organizationId}:${args.kind.toLowerCase()}`,
       subject: () =>
         orgOperationalEmailSubject({
           kind: args.kind,
@@ -662,6 +665,9 @@ export const sendOrgOperationalEmail =
     NOTHING_SENT,
     EMAIL_BUDGET_MS.JOB,
   );
+
+export const stageOrgOperationalEmail =
+  defineLifecycleStager<OrgOperationalEmailArgs>(buildOrgOperationalEmail);
 
 // ── Referral bonus & welcome credits ────────────────────────────────────────
 

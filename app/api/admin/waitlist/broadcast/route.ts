@@ -44,18 +44,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     const { subject, htmlBody, textBody } = parsed.data;
 
-    // #1298 — a marketing send without a postal address is not compliant
-    // (CAN-SPAM §5(a)(5)); refuse in production rather than ship it bare.
-    if (process.env.NODE_ENV === "production" && !companyPostalAddress()) {
-      return NextResponse.json(
-        {
-          error:
-            "NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS is not set; newsletter sends need a postal address in the footer",
-        },
-        { status: 412 },
-      );
-    }
-
     const resend = getResendClient();
     if (!resend) {
       return NextResponse.json(
@@ -227,8 +215,7 @@ async function settleBatch(
 function appendUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
   const line = `style="font-size:12px;color:#666;margin:10px 0;line-height:1.5"`;
   // #1298 — same postal line EmailFooter renders, so marketing mail carries it.
-  const postal = companyPostalAddress();
-  const postalLine = postal ? `\n  <p ${line}>${escapeHtml(postal)}</p>` : "";
+  const postalLine = `\n  <p ${line}>${escapeHtml(companyPostalAddress())}</p>`;
   const footer = `
 <div style="text-align:center;margin:30px 0 0;padding:20px 0;border-top:1px solid #eee">
   <p ${line}>

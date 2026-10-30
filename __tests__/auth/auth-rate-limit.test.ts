@@ -19,6 +19,16 @@ import {
   withRetryAfter,
   type RateLimitRedis,
 } from "../../lib/auth/rate-limit";
+import { betterAuth } from "better-auth";
+import { CLIENT_IP_HEADER } from "../../lib/request-ip";
+import { memoryAdapter } from "better-auth/adapters/memory";
+import {
+  ACCOUNT_TIERS,
+  PREFIX_TIERS,
+  createSignInThrottle,
+  networkPrefix,
+  waitSecondsFor,
+} from "../../lib/auth/account-throttle";
 
 jest.mock("../../lib/observability/throttled-capture", () => ({
   captureThrottled: jest.fn(),
@@ -182,5 +192,92 @@ describe("withRetryAfter", () => {
   it("leaves other responses alone", () => {
     const ok = new Response("{}", { status: 200 });
     expect(withRetryAfter(ok)).toBe(ok);
+  });
+});
+
+describe("per-account sign-in throttle on a real instance", () => {
+  const APP = "http://localhost:3000";
+  const redis = new MockRedis();
+  const throttle = createSignInThrottle(async () => redis);
+  const auth = betterAuth({
+    secret: "test-secret-that-is-at-least-32-characters",
+    baseURL: APP,
+    database: memoryAdapter({
+      user: [],
+      session: [],
+      account: [],
+      verification: [],
+    }),
+    emailAndPassword: { enabled: true },
+    rateLimit: { enabled: false },
+    plugins: [throttle.plugin],
+  });
+
+  // Form-encoded, the body type a JSON-only gate would miss.
+  const signIn = (password: string, ip: string) =>
+    auth.handler(
+      new Request(`${APP}/api/auth/sign-in/email`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: APP,
+          [CLIENT_IP_HEADER]: ip,
+        },
+        body: new URLSearchParams({ email: "victim@b.test", password }),
+      }),
+    );
+
+  beforeAll(async () => {
+    await auth.api.signUpEmail({
+      body: { email: "victim@b.test", password: "correct-horse-1", name: "V" },
+    });
+  });
+
+  it("escalates per address to 2 minutes at most, and to 15 minutes only per network prefix", () => {
+    expect(waitSecondsFor(ACCOUNT_TIERS, 9)).toBe(0);
+    expect(waitSecondsFor(ACCOUNT_TIERS, 10)).toBe(30);
+    expect(waitSecondsFor(ACCOUNT_TIERS, 400)).toBe(120);
+    expect(waitSecondsFor(PREFIX_TIERS, 39)).toBe(0);
+    expect(waitSecondsFor(PREFIX_TIERS, 40)).toBe(900);
+  });
+
+  it("blocks a form-encoded guess with BetterAuth's 429 and never lets a stranger hold a long lock", async () => {
+    for (let i = 0; i < 9; i++) {
+      expect((await signIn("wrong", "203.0.113.7")).status).toBe(401);
+    }
+    expect((await signIn("wrong", "203.0.113.8")).status).toBe(401);
+    const refused = await signIn("correct-horse-1", "203.0.113.9");
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("X-Retry-After")).toBe("30");
+
+    // 40 failures from one /24 lock that prefix for 15 minutes; the victim on
+    // another network waits only the per-address 2 minutes.
+    for (let i = 0; i < 40; i++) {
+      await throttle.recordFailure("victim@b.test", "203.0.113.0/24");
+    }
+    const attacker = await signIn("wrong", "203.0.113.50");
+    expect(Number(attacker.headers.get("X-Retry-After"))).toBeGreaterThan(120);
+    const victim = await signIn("correct-horse-1", "198.51.100.4");
+    expect(Number(victim.headers.get("X-Retry-After"))).toBeLessThanOrEqual(
+      120,
+    );
+  });
+
+  it("names the /24 or /48 the caller signs in from", () => {
+    expect(
+      networkPrefix(new Headers({ [CLIENT_IP_HEADER]: "203.0.113.77" })),
+    ).toBe("203.0.113.0/24");
+    expect(
+      networkPrefix(new Headers({ [CLIENT_IP_HEADER]: "2001:db8:abcd:12::1" })),
+    ).toBe("2001:0db8:abcd:0000:0000:0000:0000:0000");
+  });
+
+  it("fails open when Redis is down", async () => {
+    const down = createSignInThrottle(async () => {
+      throw new Error("upstash down");
+    });
+    await expect(
+      down.recordFailure("a@b.test", "unknown_ip"),
+    ).resolves.toBeUndefined();
   });
 });

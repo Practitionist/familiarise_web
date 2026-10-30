@@ -47,26 +47,8 @@ export function nextMonthStart(monthStart: Date): Date {
   );
 }
 
-/**
- * Parse a `YYYY-MM-DD` environment override into a UTC instant, rejecting
- * anything else. A silently-misparsed boundary exports the wrong period, and
- * that only surfaces at filing time, so the format is checked rather than
- * handed to the Date constructor to interpret however it likes.
- */
-export function parseIsoDateOverride(raw: string, envName: string): Date {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    throw new TypeError(`${envName} must be a YYYY-MM-DD date; got "${raw}"`);
-  }
-  const parsed = new Date(`${raw}T00:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new TypeError(`${envName} is not a real date; got "${raw}"`);
-  }
-  // The NaN check alone is not enough: the ISO parser ROLLS OVER a day that is
-  // out of range for its month, so "2026-02-30" silently becomes 2026-03-02 and
-  // the operator exports a period they never asked for. Round-tripping the
-  // parsed instant back to YYYY-MM-DD is the cheapest way to catch that.
-  if (parsed.toISOString().slice(0, 10) !== raw) {
-    throw new TypeError(`${envName} is not a real calendar date; got "${raw}"`);
-  }
-  return parsed;
+/** The instant that begins the IST calendar month named by `YYYY-MM`. */
+export function istMonthStart(period: string): Date {
+  const [year, month] = period.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, 1) - IST_OFFSET_MS);
 }

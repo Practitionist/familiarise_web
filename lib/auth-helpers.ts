@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { sessionLookupFailedResponse } from "@/lib/auth/session-lookup-error";
 import { EXPECTED_USER_HEADER } from "@/lib/auth/identity-header";
+import { needsOperatorTwoFactor } from "@/lib/auth/qa-accounts";
 import { reportSentryError } from "@/lib/observability/report";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 import {
@@ -115,8 +116,7 @@ export async function requireApiSession(): Promise<ApiAuthResult> {
 }
 
 function twoFactorPrecondition(session: Session): NextResponse | null {
-  if (!isPrivileged(session.user.role)) return null;
-  if (session.user.twoFactorEnabled === true) return null;
+  if (!needsOperatorTwoFactor(session.user)) return null;
   return NextResponse.json(
     {
       error: "Set up two-factor authentication before using the back office.",

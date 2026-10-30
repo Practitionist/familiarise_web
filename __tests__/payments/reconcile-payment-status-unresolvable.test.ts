@@ -293,7 +293,6 @@ describe("reconcile-payment-status — orphan PENDING rows are retired (#1757)",
     jest.clearAllMocks();
     process.env.CRON_SECRET = SECRET;
     setRazorpayEnv();
-    delete process.env.RECONCILE_ORPHAN_PENDING_MAX_AGE_MS;
     razorpayUnknownId();
     retireOrphanPendingPayment.mockResolvedValue({
       outcome: "retired",
@@ -347,22 +346,6 @@ describe("reconcile-payment-status — orphan PENDING rows are retired (#1757)",
       ]),
     );
     expect(mockCaptureMessage).toHaveBeenCalledTimes(2);
-  });
-
-  it("the orphan age is read from RECONCILE_ORPHAN_PENDING_MAX_AGE_MS", async () => {
-    process.env.RECONCILE_ORPHAN_PENDING_MAX_AGE_MS = String(
-      12 * 60 * 60 * 1000,
-    );
-    (prisma.payment.findMany as jest.Mock)
-      .mockResolvedValueOnce([youngRow])
-      .mockResolvedValueOnce([]);
-
-    const res = await POST(request());
-    const body = await res.json();
-
-    expect(body.retiredCount).toBe(1);
-    expect(body.unresolvableCount).toBe(0);
-    expect(retireOrphanPendingPayment).toHaveBeenCalledWith("pay-young");
   });
 });
 
@@ -452,7 +435,6 @@ describe("reconcile-payment-status — permanent rows and pre-mint rows", () => 
     jest.clearAllMocks();
     process.env.CRON_SECRET = SECRET;
     setRazorpayEnv();
-    delete process.env.RECONCILE_ORPHAN_PENDING_MAX_AGE_MS;
     updateMany.mockResolvedValue({ count: 1 });
   });
 

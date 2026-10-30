@@ -58,7 +58,7 @@ RETURNING id, token, "userId", "expiresAt";
 node -e '
 const fs = require("fs");
 const crypto = require("crypto");
-const env = fs.readFileSync("/usr/local/google/home/kaustavg/github/familiarise_web/.env", "utf8");
+const env = fs.readFileSync(path.join(process.cwd(), ".env"), "utf8");
 const secret = env.match(/^BETTER_AUTH_SECRET=["'\'']?([^"'\''\n]+)/m)[1];
 const token = process.argv[1];
 const sig = crypto.createHmac("sha256", secret).update(token).digest("base64");

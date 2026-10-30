@@ -58,7 +58,6 @@ export async function GET(
       requestedByMembershipId: true,
       fileSizeBytes: true,
       expiresAt: true,
-      error: true,
       createdAt: true,
       startedAt: true,
       completedAt: true,
@@ -66,7 +65,17 @@ export async function GET(
   });
   const role = access.member.role;
   return NextResponse.json({
-    data: exports.filter((e) => canHandleExportKind(role, e.kind)),
+    data: exports
+      .filter((e) => canHandleExportKind(role, e.kind))
+      .map((e) => ({
+        ...e,
+        ...(e.status === "FAILED"
+          ? {
+              error:
+                "The data export could not be generated. Please retry or contact support.",
+            }
+          : {}),
+      })),
   });
 }
 

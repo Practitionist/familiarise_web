@@ -2031,7 +2031,7 @@ flowchart TD
 
 Withdrawal is an irreversible event on an artifact. Re-granting creates a new artifact; it does not rewrite the prior evidence. `withdrawConsent` can target a single purpose and accepted legacy aliases, moves `auditRetainedUntil` to at least seven calendar years after withdrawal, and clears Stream's local sync cache where relevant. Withdrawal does not erase already collected data by itself.
 
-`jobs/compliance/consent-retention-sweeper.ts` counts expired rows weekly. Deletion is disabled unless `DPDP_SWEEPER_DELETE=true`; enabled runs delete in bounded batches. The default therefore reports expired evidence and deletes none. The distinct `scripts/cleanup/prune-audit-logs.ts` policy prunes org audit rows at category-specific age thresholds: seven years for financial/compliance categories and two years for other categories. Neither worker is a general data-retention engine for every model.
+`jobs/compliance/consent-retention-sweeper.ts` runs weekly and counts expired rows by default. Adding `?delete=1` to its cleanup route (or `--delete` to the script) deletes them in bounded batches once the consent-proof archive exists; the admin system-jobs Run button passes no argument, so it only counts. The distinct `scripts/cleanup/prune-audit-logs.ts` policy prunes org audit rows at category-specific age thresholds: seven years for financial/compliance categories and two years for other categories. Neither worker is a general data-retention engine for every model.
 
 | Transition       | Durable write                                     | Follow-up                                   | Failure behavior                                 |
 | ---------------- | ------------------------------------------------- | ------------------------------------------- | ------------------------------------------------ |
@@ -2124,46 +2124,43 @@ A complete data inventory must cover more than `User` and `ConsentArtifact`. `Fa
 
 #### 7.5.1. Org export lifecycle
 
-`OrgDataExportJob` stores `kind`, status, URL, size, expiry, and lifecycle timestamps. New jobs are `PEOPLE` or `FINANCE`; `FULL` is a legacy value and includes both. `lib/enterprise/data-export-kinds.ts` derives access from permission grants: PEOPLE is for OWNER/MAINTAINER, FINANCE is for OWNER/BILLING_ADMIN. The POST route validates kind and role, rate-limits one export per org/kind per 24 hours, and transactionally creates the job plus an audit row.
+`OrgDataExportJob` stores the requested kind, status, size, expiry and attempt timestamps. New jobs are `PEOPLE` or `FINANCE`; legacy `FULL` requires both grants. PEOPLE permits OWNER/MAINTAINER and FINANCE permits OWNER/BILLING_ADMIN, as derived by `lib/enterprise/data-export-kinds.ts`. The POST route limits requests per organization and transactionally creates the job with its audit. Customer-visible failure text is fixed safe prose; system events hold engineering diagnostics.
 
-The worker `scripts/cleanup/process-data-exports.ts` checks that the requester is still an active member with the necessary grant, builds a JSON bundle, uploads it to Supabase Storage, creates a seven-day signed URL, and records READY or FAILED. A 10-minute ticker target and the cleanup registry call the same locked worker. Bundle members whose `PRIMARY_PROCESSING` consent is absent are withheld from the `members` list and redacted in memberships; the worker comments that field-level scoping across the rest of the bundle is still TODO. The bundle contains membership, contract, program, invoice, earnings, payout, and audit data depending on kind.
+The ten-minute ticker and cleanup registry call the same implementation in `scripts/cleanup/process-data-exports.ts`. A fail-closed Postgres lease bounds normal overlap. A conditional claim admits PENDING or stale PROCESSING work and assigns a distinct `startedAt` attempt token. Terminal writes require the matching status and token. An independent `OrgDataExportArtifact` owner is retained before upload; its exact immutable path prevents a late attempt overwriting its successor. The requester must still hold the required grant before generation.
+
+READY, its audit and existing email/bell outbox obligations commit together on the transaction client. Delivery runs after commit through existing relays. A notice failure cannot write FAILED over READY. The JSON bundle is held in memory; one job per invocation bounds rows, not bundle size or memory use. Consent filtering and the field-level export inventory remain privacy verification requirements.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> PENDING: authorized POST
-  PENDING --> PROCESSING: worker claims
-  PROCESSING --> READY: build + upload + sign succeed
-  PROCESSING --> FAILED: build/upload/sign error
-  READY --> READY: link deadline passes; download answers 410
-  FAILED --> [*]: terminal in current worker
+  [*] --> PENDING: authorized request
+  PENDING --> PROCESSING: conditional claim
+  PROCESSING --> PROCESSING: stale reclaim with a new attempt token
+  PROCESSING --> READY: owned upload plus transactional publication
+  PROCESSING --> FAILED: owned generation failure
+  READY --> EXPIRED: exact object removal confirmed
+  FAILED --> [*]: new request required
 ```
 
-Download requires a matching org, role, kind, READY status, and a non-expired row. The route writes `DATA_EXPORT_DOWNLOADED` before returning the stored URL. Current code does not change a READY row to EXPIRED when time passes; it answers 410 based on `expiresAt`. The enum includes EXPIRED but no transition writer was found. The worker handles one PENDING job per tick, changes it to PROCESSING, then to READY or FAILED. FAILED is terminal in the inspected worker, and a crashed PROCESSING row is not reclaimed. These are recovery and state-model gaps, not implied behavior.
+#### 7.5.2. Download authorization and object ownership
 
-#### 7.5.2. Export design gaps and recommendations
+Notices open the authenticated export panel. The download route checks current org access, role, kind, READY, expiry and the matching artifact owner before requesting a signed URL. It never serves the legacy stored `fileUrl`. The requested lifetime uses a fresh clock after the owner lookup, a sixty-second cap and the remaining artifact lifetime. Expiry during signing or audit latency returns 410 without returning the URL. Responses are private, no-store and vary by Cookie.
 
-Current documentation in `docs/enterprise/40-compliance-and-data/03-data-export.md` still describes a single OWNER/BILLING_ADMIN export, JSON+CSV, and a requester-email flow. The implementation has split kinds, JSON-only output, and implementation-specific notification behavior; docs should follow the current code. The schema model comment has the same JSON+CSV drift.
+`DATA_EXPORT_DOWNLOAD_REQUESTED` records the authorized signing attempt; it does not prove that the URL was returned or the recipient read any bytes. Already issued links remain subject to the provider's token and caching contract. Revoking an org role prevents a new authorization but does not revoke an existing bearer token. Historical `DATA_EXPORT_DOWNLOADED` rows are not rewritten or treated as proof of recipient delivery.
 
-The download handler returns the stored `fileUrl` without an explicit `https:` check. Local worker mode stores a `file://` URL; the documentation says the route rejects non-HTTP URLs. Add an explicit allowlist check or ensure local jobs cannot reach the download route, then align the claim and test. The bundle URL expires, but database and storage-object cleanup after expiry are not established by the route; specify object deletion and row retention.
+Every attempt retains its exact bucket/path owner for seven days, including failed publication and superseded attempts. The owner deliberately survives parent deletion. The same worker rotates at most ten eligible deletion attempts, skips the exact currently PROCESSING attempt and retains failed obligations. After removal reports success, `info()` must return key-specific `NoSuchKey`; a generic 404, missing bucket or ambiguous HEAD result cannot retire the owner. Only confirmed absence permits transactional owner removal and EXPIRED on the matching published job.
 
-Use a versioned export schema and an explicit field inventory so customer processors can parse bundles and reviewers can understand what was included. Decide whether the current consent filter covers each PII field in each bundle section. The org export is a tenant-scoped administrative access bundle; it does not replace an individual data principal's access response. Preserve role rechecks at build and download time, private storage, short-lived links, and download audit events.
+#### 7.5.3. Operations and remaining limits
 
-#### 7.5.3. Export failure and recovery
+| Boundary                     | Implemented behavior                                                  | Operating requirement                                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Worker interruption          | Reclaim a stale PROCESSING attempt with a new fenced token            | Confirm automatic completion; a recent no-op is not backlog proof                                                                      |
+| Publication/delivery failure | Preserve atomic READY and durable notice obligations                  | Inspect the existing relays and actual recipient delivery                                                                              |
+| Artifact expiry              | Rotate exact owners and retain failed deletion work                   | Inspect remote absence and oldest outstanding deletion age                                                                             |
+| Download expiry/revocation   | Current grants and short new URL; refuse issuance after deadline      | An issued bearer URL follows provider validity/caching                                                                                 |
+| Deployment/rollback          | Additive owner table before the new reader; no retrospective adoption | Owner applies only reviewed additive SQL and reads back the catalog; reset mock data before cutover and preserve ownership on rollback |
+| Large organizations          | One selected bundle is built in memory                                | Measure representative size, runtime, transport and outage catch-up                                                                    |
 
-| Failure point                            | Durable evidence                                         | Retry or operator action                                                                                               |
-| ---------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Request authorization or body validation | No job row                                               | Correct role or request kind and submit again                                                                          |
-| Rate limit                               | No new job                                               | Retry after per-org/per-kind window                                                                                    |
-| Worker claim/build failure               | Job becomes FAILED; raw cause also goes to `SystemEvent` | Inspect error/correlation, fix cause, then request a fresh job or use an audited operator procedure                    |
-| Storage upload failure                   | Job not READY                                            | Retry upload with same org/job object path; idempotent upsert avoids duplicate names                                   |
-| Signed URL creation failure              | Object may exist; job not READY                          | Recreate URL or overwrite same object, then stamp job                                                                  |
-| Link expired                             | Job remains READY; download evaluates `expiresAt`        | Return 410 and require a fresh authorized export                                                                       |
-| Worker crash after PROCESSING            | Job remains PROCESSING                                   | No stale-claim recovery found; operator must resolve the row or reissue under an audited procedure                     |
-| Worker records FAILED                    | Job remains FAILED                                       | Current worker does not select FAILED rows; user requests a new export after the limiter window or support resolves it |
-
-Export lifecycle documentation should specify how stale PROCESSING rows are reclaimed, whether the requester receives a retry or must file a fresh request, and whether an expired file is deleted immediately or after a short grace interval. The current FAILED branch records a clean `OrgAuditLog` message and raw `SystemEvent`; it does not retry that job. The current worker can send the signed link by email/Novu after setting READY, so retrying a whole generation must account for duplicate notifications. These are operationally relevant privacy behaviors, not merely UI details.
-
-The worker also writes the caught exception message into `OrgDataExportJob.error`, and the list route selects that field for org members with export grants. Although the audit row uses clean prose, the job field can expose storage/provider or Prisma internals. Return a stable customer-safe error code/message in the job row and keep raw detail in `SystemEvent`; test the API projection against provider-error-shaped strings.
+The exact rollout and failure contracts live in [data exports](../enterprise/40-compliance-and-data/03-data-export.md), [worker recovery](../maintenance/12-worker-recovery.md) and [operating gates](../maintenance/13-readiness-and-operating-gates.md). Code and mocked tests establish implementation behavior; they do not establish the applied schema, deployed throughput, storage permissions or recipient receipt.
 
 #### 7.5.4. Privacy-safe audit surfaces
 
@@ -2453,9 +2450,7 @@ Deployment docs and the root agent contract describe an Upstash REST key named `
 
 #### 8.7.3. Request IP and cache variation
 
-`lib/rate-limit.ts:getClientIp` currently prefers `req.ip`, then `x-nf-client-connection-ip`, then the first `x-forwarded-for` value; it does not gate the Netlify header by runtime and does not use `x-vercel-forwarded-for`. `lib/auth.ts` supplies an ordered list of Netlify, Vercel, and generic forwarded headers without selecting a header based on the host. This differs from the explicit runtime trust rules in `AGENTS.md`.
-
-**Recommendation:** use one server-only request-IP helper that selects the trusted host header only when its runtime flag is true, with a carefully defined standard-proxy fallback for local and container hosts. Add coverage for spoofed cross-platform headers and multi-hop `X-Forwarded-For`. Do not accept caller-supplied host headers as equivalent to a platform-injected value.
+Edge middleware resolves the client IP once with `edgeClientIp` in `lib/request-ip.ts`: `x-vercel-forwarded-for` on Vercel, `fly-client-ip` on Fly, and otherwise the rightmost `x-forwarded-for` hop, which is the visitor on Netlify's edge and behind a standard proxy. It overwrites `x-familiarise-client-ip` with that address on every request it forwards. `lib/rate-limit.ts:getClientIp`, Better Auth's `ipAddressHeaders` in `lib/auth.ts` and the sign-in throttle read only that header, because inside the Node function every forwarded header names the edge function's egress address. `__tests__/security/client-ip-runtime.test.ts` pins the per-host resolution, the forged-prefix case and the overwrite of a forged stamp.
 
 Public consultant list responses vary by query through `Netlify-Vary`; the public cookie-aware detail branch uses a cookie key in `Netlify-Vary` but does not add standard `Vary: Cookie`. Follow `AGENTS.md` and pair the CDN-specific header with the standard cache variation header wherever the response changes by cookie. Private identity responses should remain `private, no-store`.
 
@@ -3136,7 +3131,7 @@ The replacement separates organizational discovery, capability and service visib
 
 #### Consent retention as a generic daily destructive purge
 
-Older compliance notes describe a generic daily purge. The current consent-retention worker runs weekly and counts expired evidence by default. Deletion requires `DPDP_SWEEPER_DELETE=true` and occurs in bounded batches. This is distinct from category-specific organization audit pruning and from a general policy for every data model.
+Older compliance notes describe a generic daily purge. The current consent-retention worker runs weekly and counts expired evidence by default; `?delete=1` deletes it in bounded batches. This is distinct from category-specific organization audit pruning and from a general policy for every data model.
 
 The replacement is to state the actual worker, schedule, default and data class. A row being past its retention timestamp does not prove it was deleted by the default run. Similarly, consent withdrawal records the change in processing permission; it is not itself an erasure of all historical records. Treating these operations as one generic cleanup obscures both retained evidence and uncompleted deletion work.
 

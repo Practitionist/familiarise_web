@@ -67,6 +67,17 @@ The tables below were generated from `netlify/functions/cron-tick.mts`, `lib/cro
 | `handle-stuck-payouts`    | every 2 h, even hours at :40 | 5              | 24 s    | yes              | Asks RazorpayX about payouts stuck in `PROCESSING` and retries or fails them.                           |
 | `reconcile-payout-status` | every 2 h, odd hours at :40  | 8              | 24 s    | yes              | Reconciles `PENDING` and `PROCESSING` payouts older than 48 h with RazorpayX in three rotating cohorts. |
 
+#### Retained invoice-order recovery
+
+`reconcile-org-invoice-payments` runs every four hours at :55 (03:55, 07:55,
+11:55, 15:55, 19:55 and 23:55 UTC), selecting at most five stored invoice order
+IDs per run with a 24-second HTTP abort and a fail-closed Postgres lease. It
+uses the canonical invoice settlement transaction; existing relays deliver the
+staged notices. These spare phases preserve every existing cadence and the
+calendar's ten-target bound. Five candidates per slot is at most thirty reads
+per day; measure cohort size and recovery age before treating this as adequate
+capacity. See [worker recovery](../../maintenance/12-worker-recovery.md#invoice-captures-and-uncertain-checkout-state).
+
 #### Calendar windows
 
 | Job (slug)                        | Schedule (UTC)                                                    | Bite (`limit`) | Timeout | Held in DEGRADED | What it does                                                                                                                                                                                                                                               |
@@ -86,6 +97,7 @@ The tables below were generated from `netlify/functions/cron-tick.mts`, `lib/cro
 | `irp-uploader`                    | daily: 17 slots 03:25–19:25 UTC (every hour)                      | 10             | 20 s    | yes              | Registers e-invoices with the IRP through ClearTax when the credentials are configured.                                                                                                                                                                    |
 | `msme-payment-alerts`             | daily: one slot at 03:45 UTC                                      | none           | 20 s    | no               | One digest email of organisation payouts within 5 days of their MSME deadline.                                                                                                                                                                             |
 | `gst-outward-register-export`     | day 2 of every month: 19 slots 04:45–22:45 UTC (every hour)       | 25             | 24 s    | yes              | Heals missing consumer invoices, then uploads the monthly GSTR-1 working register.                                                                                                                                                                         |
+| `heal-consumer-invoices`          | daily: 4 slots 01:50–19:50 UTC (every 6 hours)                    | 25             | 20 s    | yes              | Mints the consumer tax invoice for `SUCCEEDED` payments of the last 90 days that the capture path missed; a missing GSTIN is a skip.                                                                                                                       |
 | `tds-return-draft`                | day 5 of Jan, Apr, Jul, Oct: 2 slots 01:55–02:55 UTC (every hour) | none           | 20 s    | no               | Quarterly TDS return draft (Form 26Q or 140) for the closed quarter.                                                                                                                                                                                       |
 | `reconcile-gateway-settlements`   | daily: 6 slots 06:55–11:55 UTC (every hour)                       | none           | 20 s    | yes              | Matches Razorpay's settlement report to our money rows, books missing capture fees and settlement journals.                                                                                                                                                |
 | `reconcile-ledgers`               | hourly at `:55`, yielding at ticker capacity                      | none           | 20 s    | no               | Advances a bounded persisted full-scope audit; reuses completed daily audit. 200 RUNNING means continuation, 207 means completed discrepancies.                                                                                                            |
@@ -103,7 +115,7 @@ curl -sS -X POST -H "Authorization: Bearer $CRON_SECRET" \
   "$APP_URL/api/cleanup/reconcile-refunds?limit=10"
 ```
 
-Try it against a Netlify deploy preview first. The answer is the job's own result with status 200, 207 (rows flagged), 400 (bad `limit` or `windowStart`), 401 (bad secret), 409 (already running), 503 (held by maintenance, or the lock table unreachable) or 500. The same jobs can be started from the console without the secret: the Reconcile section of the money console runs four of them (see [admin money doors](02-admin-money-doors.md)), and `POST /api/admin/system-jobs/run` runs the jobs in its own `JOB_FUNCTIONS` map (any other id answers 400) for an admin with a reason and an ops-log row; it refuses a financial job in DEGRADED and every job in OFFLINE, and it answers `202` and runs `process-payouts` and `create-payout-batch` after the response, because a gateway call per payout would hit the edge timeout.
+Try it against a Netlify deploy preview first. The answer is the job's own result with status 200, 207 (rows flagged), 400 (bad `limit` or `windowStart`), 401 (bad secret), 409 (already running), 503 (held by maintenance, or the lock table unreachable) or 500. The same jobs can be started from the console without the secret: the Reconcile section of the money console runs four of them (see [admin money doors](02-admin-money-doors.md)), and `POST /api/admin/system-jobs/run` runs any job in the cleanup registry by its slug (any other id answers 400) for an admin with a reason and an ops-log row, in-process under the admin's own run context, so the execution row records `admin:<userId>` as its trigger and links to the ops-log row; it refuses a financial job in DEGRADED and every job in OFFLINE, and it answers `202` and runs `process-payouts` and `create-payout-batch` after the response, because a gateway call per payout would hit the edge timeout.
 
 ## Why a missed job is not lost
 

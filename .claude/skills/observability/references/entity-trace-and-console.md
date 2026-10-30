@@ -1,0 +1,40 @@
+# Entity trace, job run metrics and the operations console
+
+Read this before extending the Entity trace or the Run metrics card, and before building the operations console. The trace and the metrics card arrive with #2422 (`origin/feat/backoffice-entity-trace`) and are not on `dev` until it merges. The operations console is planned (#2424, ADR-13 in `docs/decisions/2026-10-26-launch-sweep-observability-and-money-holds.md`) and nothing of it is built.
+
+## The question each tool answers
+
+Sentry answers "what failed", and Better Stack together with the ticker check-in answers "what did not run". The question "what happened to this payment or booking" belongs to the read-only entity trace at `/dashboard/<tree>/trace` (`lib/backoffice/entity-trace.ts`). The trace merges every timestamped write across the money, booking, support and audit tables into one timeline, with a Sentry search link for each row's id. Its sibling is the Run metrics card on the System Jobs page (`lib/backoffice/job-run-metrics.ts`), which judges each job's missed window from `lib/cron/schedule.ts` and `lib/cron/operational-health.ts` and never from cadence data of its own. Keep both read-only, with one bounded query per source run in sequence. When a source cannot be linked without an unindexed JSON scan, skip it and list it in the Sources table rather than adding a slow query. Read `docs/observability/three-layers.md` before extending either one.
+
+## Read-only rules for the trace and the metrics card
+
+- Add no table, no column and no write path. The trace opens with no call to the Sentry API: `sentrySearchHref` in `lib/observability/sentry-issues.ts` only builds a URL.
+- Run one bounded query per source and run them in sequence, never in `Promise.all`, because `PG_POOL_MAX=1` on Netlify. Every source reads at most `TRACE_ROW_CAP` (50) rows and fetches one extra so a capped source can say "Capped; older rows hidden". Support cases are capped at 10 with 30 events each, and a booking trace covers at most 20 payments.
+- A source that fails shows "Read failed" and the rest of the trace still renders.
+- Respect the visibility rules of the surfaces that already show the data. The trace sits behind `payments.read`, so admin and staff can open it. Staff see only the console actions they took themselves, and system events appear only in an admin's trace.
+- Judge a job's missed window with `assessOperationalCompletions` for a job in `OPERATIONAL_COMPLETION_REQUIREMENTS`, otherwise through its ticker target in `lib/cron/schedule.ts`. Never copy cadence data into the metrics reader.
+
+## Query budget
+
+A trace issues one statement per source and skips a source that has nothing to link to. A consumer payment with no booking costs 10 statements, a booked consultation with a paid-out earning costs 13, and the ceiling is 17 for an org-tagged booking with organisation earnings, both kinds of payout, an organisation invoice and organisation credit notes. The user picker costs one. The Run metrics card costs four: two Prisma `groupBy` queries and two read-only `$queryRaw` queries for the percentiles (`percentile_cont`) and the IST-day buckets, which have no `groupBy` form. At roughly 95 ms a round trip, a typical trace loads in about a second. Count statements before adding a source.
+
+## Skipped sources
+
+- `WebhookEvent` is not read. A row is keyed `<event type>:<gateway entity id>:<event id>` and holds the payment only inside its JSON payload, so matching needs a payload scan or a leading-wildcard `LIKE`. The webhook's effects still show, because the handler writes the capture, refund and dispute rows.
+- `SystemJobExecution` is not linked to a traced row. No traced row records which job run wrote it, and up to ten jobs share a tick, so matching by time would usually name the wrong job. Use the Run metrics card to judge whether the responsible sweep is healthy.
+- `AppointmentOccurrence` is not read separately, because every session transition is already in `BookingStatusHistory` under the `OCCURRENCE` entity.
+
+## Building the operations console (planned)
+
+Follow ADR-13 and issue #2424. The console extends the existing back-office and uses the job machinery catalog (`docs/maintenance/11-job-machinery-catalog.md`, section 5) as its specification.
+
+- **Truth first.** Before any panel, make the recorded data true: real outcomes instead of `COMPLETED` for partial runs, the stored `summarize()` result, rows for held and skipped runs, and the integrity counters. This step needs no DDL.
+- **System versus customer (owner, 2026-10-28).** Sentry and Better Stack fix the system (one grouped issue per failure class, ten sample ids, no user identity on cron events, one aggregate Better Stack line per tick). The console fixes the customer: the specific stuck item, why it failed, what was tried, and a remediation through the audited money doors. Per-entity truth lives in Postgres. The run id (`job_run_id` tag, `SystemEvent.context.jobRunId`) ties a Sentry event and a system event to one run row, and the tick id ties the Better Stack summary to the run rows it dispatched. Refund, payout and invoice rows carry no run id yet; per-item linkage arrives with the planned `SystemJobRunItem`.
+- **Sub-tabs, the support pattern.** Overview (the inbox), Jobs, Runs, Integrity and Performance (collapsed; p50 and p95 live here). Build them like `SupportInboxShell`: a `Tabs` strip whose value is a URL query parameter read through `useListParams`, default omitted from the URL.
+- **Phase 2, no DDL: the Needs attention inbox of items**, not counters: refunds owed and retired (`Payment.refundOwedKey`, `refundOwedReason`, `refundOwedAttempts`), payouts `PROCESSING` or `FAILED`, unpaid invoice captures, dead-lettered emails and recording copies. Each row shows the reason, attempts, age, Retry where a door allows it (payouts: #2433) and an Entity trace link. Do not hand-code a panel per job: drive the inbox from a registry of owed-work sources, each declaring its stuck-item query, reason field, age limit and remediation door (see section 5.3 of the job machinery catalog), the way `lib/cron/cleanup-registry.ts` drives jobs.
+- **Job health table.** Last real outcome, age, backlog, SLO tier, Run, Pause. Do not build Drain.
+- **Controls are admin-only and audited** through the existing `OpsActionLog` pattern: Run now (one bounded slice), Pause and Resume (a database flag the ticker checks before it dispatches, with a reason and an optional auto-resume time), and Retry failed items (requeue specific owed items, not a blind re-run). There is no hard Stop, because a running serverless invocation cannot be killed from outside.
+- **Integrity panel.** Per-run counters for lost compare-and-swap claims, serialization retries, deadlock and lock timeouts, pool timeouts and lease takeovers. It shows evidence only. Postgres constraints and compare-and-swap transitions stay the enforcers, so do not add a JavaScript reconciler for an invariant the database already holds.
+- **Per-item log (Phase 3, DDL).** `SystemJobRunItem` (new, kept 90 days) holds one row per entity a run changed or failed on, with outcome, reason code, attempt number and a short error. Jobs write it with one `createMany` per run, and Run detail shows the attempt history per item. STUCK is computed, never stored: an entity that fails in consecutive runs or whose owed marker has aged out. Raw log lines stay in Better Stack, tagged with the run id.
+- **Pull, not push.** The console adds no alerting. Sentry and Better Stack keep that role.
+- **Staff and organisations.** Staff get a read-only health summary without raw job output, because `result` and `errorLog` can carry user ids and gateway ids. Organisation roles get no platform console; a scoped money timeline is a later phase and must scope every read by `organizationId` in the `WHERE` clause.
