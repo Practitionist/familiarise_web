@@ -5701,12 +5701,15 @@ model RecordingPurchase {
   gatewayPaymentId String? // `pay_…`, stamped on capture
   amountPaise      BigInt
   status           RecordingPurchaseStatus @default(PENDING)
+  // Last gateway check by the recovery sweep; its rotation key, never the expiry clock.
+  reconciledAt     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([recordingId, buyerId, status])
   @@index([buyerId])
+  @@index([status, reconciledAt])
 }
 
 enum DigitalProductStatus {
@@ -5818,6 +5821,8 @@ model DigitalProductPurchase {
   status            DigitalProductPurchaseStatus @default(PENDING)
   // Refundable until the first download stamps this.
   firstDownloadedAt DateTime?                    @db.Timestamptz
+  // Last gateway check by the recovery sweep; its rotation key, never the expiry clock.
+  reconciledAt      DateTime?                    @db.Timestamptz
   createdAt         DateTime                     @default(now()) @db.Timestamptz
   updatedAt         DateTime                     @updatedAt @db.Timestamptz
 
@@ -5826,6 +5831,7 @@ model DigitalProductPurchase {
   @@index([productId, buyerId, status])
   @@index([buyerId])
   @@index([status, createdAt])
+  @@index([status, reconciledAt])
 }
 
 model DigitalProductDownload {

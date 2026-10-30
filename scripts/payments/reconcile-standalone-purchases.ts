@@ -1,8 +1,9 @@
 /**
  * Recover standalone sales (digital products and replays) whose capture never
- * reached us: a PENDING purchase older than 15 minutes is checked against its
- * Razorpay order, a captured payment is routed to its handler exactly as the
- * webhook would, and an order still empty after 24 hours is marked FAILED.
+ * reached us: a PENDING purchase older than 15 minutes, or a FAILED one under
+ * 7 days old, is checked against its Razorpay order and a captured payment is
+ * routed to its handler exactly as the webhook would. A PENDING order still
+ * empty 24 hours after creation is marked FAILED; REFUNDED is never read.
  */
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -57,74 +58,112 @@ const DEFAULT_LIMIT = 5;
 /** Leaves the webhook and the client verify their own chance first. */
 const GRACE_MS = 15 * 60_000;
 const EXPIRE_AFTER_MS = 24 * 60 * 60_000;
+/** A failed attempt's order can still capture a retry or a late authorisation. */
+export const FAILED_RECOVERY_MS = 7 * 24 * 60 * 60_000;
 
 type Rail = "digital" | "replay";
+type RecoverableStatus = "PENDING" | "FAILED";
 interface Candidate {
   rail: Rail;
   id: string;
   orderId: string;
+  status: RecoverableStatus;
   createdAt: Date;
 }
 
-async function pendingCandidates(
-  limit: number,
-  graceCutoff: Date,
-): Promise<Candidate[]> {
-  // Oldest-touched first, so a row left PENDING rotates behind fresh ones.
-  const [digital, replay] = await Promise.all([
-    prisma.digitalProductPurchase.findMany({
-      where: {
-        status: "PENDING",
-        gatewayOrderId: { not: null },
-        createdAt: { lt: graceCutoff },
+/** PENDING past the grace period, or FAILED inside the recovery window. */
+function recoverableWhere(now: Date) {
+  return {
+    OR: [
+      {
+        status: "PENDING" as const,
+        createdAt: { lt: new Date(now.getTime() - GRACE_MS) },
       },
-      orderBy: { updatedAt: "asc" },
-      take: limit,
-      select: { id: true, gatewayOrderId: true, createdAt: true },
-    }),
-    prisma.recordingPurchase.findMany({
-      where: { status: "PENDING", createdAt: { lt: graceCutoff } },
-      orderBy: { updatedAt: "asc" },
-      take: limit,
-      select: { id: true, gatewayOrderId: true, createdAt: true },
-    }),
-  ]);
-  return [
-    ...digital.flatMap((row) =>
-      row.gatewayOrderId
-        ? [
-            {
-              rail: "digital" as const,
-              id: row.id,
-              orderId: row.gatewayOrderId,
-              createdAt: row.createdAt,
-            },
-          ]
-        : [],
-    ),
-    ...replay.map((row) => ({
-      rail: "replay" as const,
-      id: row.id,
-      orderId: row.gatewayOrderId,
-      createdAt: row.createdAt,
-    })),
-  ];
+      {
+        status: "FAILED" as const,
+        createdAt: { gt: new Date(now.getTime() - FAILED_RECOVERY_MS) },
+      },
+    ],
+  };
 }
 
-/** CAS on the PENDING row: FAILED once expired, otherwise touched so it rotates. */
-async function settleStillPending(
+async function recoverableCandidates(
+  limit: number,
+  now: Date,
+): Promise<Candidate[]> {
+  // Least recently checked first: every check stamps reconciledAt, so failures rotate too.
+  const orderBy = [
+    { reconciledAt: { sort: "asc" as const, nulls: "first" as const } },
+    { createdAt: "asc" as const },
+  ];
+  const select = {
+    id: true,
+    gatewayOrderId: true,
+    status: true,
+    createdAt: true,
+  } as const;
+  const [digital, replay] = await Promise.all([
+    prisma.digitalProductPurchase.findMany({
+      where: { ...recoverableWhere(now), gatewayOrderId: { not: null } },
+      orderBy,
+      take: limit,
+      select,
+    }),
+    prisma.recordingPurchase.findMany({
+      where: recoverableWhere(now),
+      orderBy,
+      take: limit,
+      select,
+    }),
+  ]);
+  const candidates: Candidate[] = [];
+  for (const row of digital) {
+    if (row.gatewayOrderId && isRecoverable(row.status)) {
+      candidates.push({
+        rail: "digital",
+        id: row.id,
+        orderId: row.gatewayOrderId,
+        status: row.status,
+        createdAt: row.createdAt,
+      });
+    }
+  }
+  for (const row of replay) {
+    if (isRecoverable(row.status)) {
+      candidates.push({
+        rail: "replay",
+        id: row.id,
+        orderId: row.gatewayOrderId,
+        status: row.status,
+        createdAt: row.createdAt,
+      });
+    }
+  }
+  return candidates;
+}
+
+function isRecoverable(status: string): status is RecoverableStatus {
+  return status === "PENDING" || status === "FAILED";
+}
+
+/**
+ * Stamp the check by CAS on the status it was read in, keeping the order and
+ * createdAt; a PENDING row past 24 hours with nothing live moves to FAILED.
+ */
+async function markChecked(
   candidate: Candidate,
-  expired: boolean,
+  now: Date,
+  expire: boolean,
 ): Promise<boolean> {
-  const where = { id: candidate.id, status: "PENDING" as const };
-  const data = expired
-    ? { status: "FAILED" as const }
-    : { updatedAt: new Date() };
+  const where = { id: candidate.id, status: candidate.status };
+  const data = expire
+    ? { status: "FAILED" as const, reconciledAt: now }
+    : { reconciledAt: now };
   const res =
     candidate.rail === "digital"
       ? await prisma.digitalProductPurchase.updateMany({ where, data })
       : await prisma.recordingPurchase.updateMany({ where, data });
-  return expired && res.count === 1;
+  return expire && res.count === 1;
 }
 
 async function reconcileUnlocked(
@@ -139,10 +178,7 @@ async function reconcileUnlocked(
     errors: 0,
     timestamp: now.toISOString(),
   };
-  const candidates = await pendingCandidates(
-    limit,
-    new Date(now.getTime() - GRACE_MS),
-  );
+  const candidates = await recoverableCandidates(limit, now);
   result.scanned = candidates.length;
 
   // One Sentry event per run, never per row.
@@ -152,15 +188,17 @@ async function reconcileUnlocked(
     try {
       const holding = await recoverStandaloneOrder(candidate.orderId);
       if (holding === "captured") result.recovered += 1;
-      // A capture the handler refunded leaves the row PENDING; a live (authorized) payment may still capture.
-      const expired =
+      // A capture the handler refunded leaves the row unsettled; a live (authorized) payment may still capture.
+      const expire =
+        candidate.status === "PENDING" &&
         holding !== "live" &&
         now.getTime() - candidate.createdAt.getTime() > EXPIRE_AFTER_MS;
-      if (await settleStillPending(candidate, expired)) result.expired += 1;
+      if (await markChecked(candidate, now, expire)) result.expired += 1;
     } catch (error) {
       result.errors += 1;
       firstError ??= error;
       failedIds.push(candidate.id);
+      await markChecked(candidate, now, false).catch(() => false);
     }
   }
   if (failedIds.length > 0) {
