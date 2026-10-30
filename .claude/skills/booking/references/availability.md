@@ -163,6 +163,27 @@ checkout's recheck under the slot lock is the only correctness mechanism, and a
 taken slot answers 409 `code: "SLOT_TAKEN"`, which returns the buyer to a
 refetched grid with "That time was just taken — pick another."
 
+The ETag (`lib/scheduling/availabilityGridMarker.ts`) folds in more than the
+rows, because three things change a cell without any row changing: the earliest
+live hold's `expiresAt` (`nextHoldExpiry`), so a hold that lapses by the clock
+changes the tag; the lead-time bucket (`leadTimeBucket`), so a cell that enters
+the lead time changes it; and, when the overlay is asked for, the subscription
+quota fold.
+
+The route also returns per-cell flags the client paints as their own
+non-selectable states. A cell that starts inside the buyer lead time
+(`MINIMUM_BOOKING_LEAD_TIME_MS`, 15 minutes) is "Too soon". With `subscriptionId`
+(and optionally `releasing`, the occurrence ids a reschedule is moving, which
+count as released) it adds the **quota overlay**: a `GridQuota`
+(`lib/scheduling/grid-quota.ts`) with the cycle `unit`, `capacity`, `filled`,
+`remainingThisCycle`, `allBooked`, the exclusive `windowStart`/`windowEnd`, the
+fixed `planEndsAt`, the per-day cap and the `fullDays` already at it. Cells in a
+full cycle, on a full day, or at or after the plan end paint "Limit reached",
+and the footer reads the cycle count ("2 of 3 this week"). The overlay is
+authorized and folded before the conditional GET, so a 304 never serves it to a
+caller who has lost access. The rolling cycle is the only weekly counter; there
+is no Sunday-week cap on a subscription.
+
 Host-cancelled class sessions keep their row (no `deletedAt`) for make-up and
 refund accounting, so every occupancy reader filters occurrences through
 `OCCUPYING_OCCURRENCE_WHERE` (`utils/scheduling-engine/occupancyPolicy.ts`): live,
@@ -231,14 +252,28 @@ routes is a thin delegator that only resolves its own typed segment param. There
 is no per-event-type copy of the allocate logic to drift out of sync.
 
 A conflict on allocation answers one of a typed family, not a bare 409: `AllocationErrorCode`
-carries `LOCK_CONTENTION` (Redis lock busy or a replay in flight), `ALREADY_ALLOCATED`
-(confirmed slots already exist), `RESCHEDULE_STATE_CHANGED` (the stale-tab case —
-the tentative-slot count moved since the client loaded the page), and `SLOT_TAKEN`
-(a chosen time went to someone else mid-allocation). A client must branch on
-`errorCode`, never on the message wording: the message is free to change for
-readability, and only `ALREADY_ALLOCATED` is the one code that should close the
-dialog and drop the row — every other code should keep the dialog open and
-refetch the grid, because the underlying request is still live and retriable.
+carries, among others, `LOCK_CONTENTION` (Redis lock busy or a replay in flight),
+`ALREADY_ALLOCATED` (confirmed slots already exist; a second auto-allocate on an
+allocated event is this 409), `RESCHEDULE_STATE_CHANGED` (the stale-tab case — the
+tentative-slot count moved since the client loaded the page), `SLOT_TAKEN` (a chosen
+time went to someone else mid-allocation), `TIMES_TAKEN` (a picked time is held
+by another writer right now; the body names the taken times in the viewer's zone
+and the other picks are kept), `ALLOCATION_RACE` (auto found no free set after
+its re-searches; retryable), `SEARCH_TIMEOUT` (503, the auto search ran out of
+time), `TOO_CLOSE_TO_START` (an unpaid approval whose first session starts too
+soon to pay for), `CHECKOUT_IN_PROGRESS` (the buyer's own checkout is still
+being paid) and `SESSION_HAS_REMEDY`. The full union is `AllocationErrorCode` in
+`utils/scheduling-engine/types.ts`. Conflict text names a time, never another
+party. A client must branch on `errorCode`, never on the message wording: only
+`ALREADY_ALLOCATED` closes the dialog and drops the row; every other code keeps
+the dialog open and refetches the grid, because the underlying request is still
+live and retriable.
+
+Every server-placed session respects the lead time: 15 minutes once the booking
+is settled and 2 hours while the client still has to pay (`leadTimeFor` in
+`lib/booking/lead-time.ts`), passed into the search and the validator by all
+three modes. The pre-lock overlap probe checks each chosen interval on its own,
+so an unrelated session between two picks is not a conflict.
 
 Also as of wave 5 (#1329), the co-host guard runs in **every** allocation mode:
 `assertCollaboratorsFree` (`lib/booking/allocation/collaborators.ts`) calls
@@ -253,20 +288,77 @@ blocks an allocation even though its slot is still tentative. It was previously 
 a class scheduled through the allocator could land on a time a co-host was
 already busy (AE-2, #784).
 
-## Grid states, and how they are painted (#1703 D6)
+## 7. Grid states, and how they are painted
 
-`lib/scheduling/interval-status-tokens.ts` is the single colour vocabulary the
-grid, the legend and the time picker all read from, so a swatch can never
-document a state the cells do not actually paint. Two states are hatched
-rather than given a new hue, because the palette itself is locked: `outsidePeriod`
-(inside the consultant's published hours but outside this booking's own
-scheduling period) uses a 45° stripe, and `past` (already gone, shown only so
-the day reads whole) uses a 135° stripe, so the two "not really available"
-states cannot be mistaken for each other at a glance. `rescheduling` (a slot a
-reschedule released, awaiting a new time) keeps the same amber fill as
-`partiallyBooked` but adds a dashed border, because two solid-amber states next
-to each other read as one state. `unavailable` (outside the consultant's
-published hours at all) is flat — no fill, no border — because the dead-hour
-folding on the allocate grid already names those hours in a collapsed strip,
-so the cells inside it can go quiet rather than repeat the same grey the whole
-row already announced.
+`lib/scheduling/interval-status-tokens.ts` is the single status vocabulary the
+dashboard heat map, the mobile day list, the trial picker and the legend
+(`components/scheduling/SlotStatusLegend.tsx`) all read, so a swatch can never
+document a paint the cells do not use. Every state carries a colour **and** a
+non-colour cue (a pattern, a border style or an icon), so no two states differ
+by hue alone, and every identifying border clears 3:1 against the white card.
+`resolveSlotStatusKey` is the one place a cell's state is decided, in this
+precedence order:
+
+| Key               | Label          | Fill        | Non-colour cue                 |
+| ----------------- | -------------- | ----------- | ------------------------------ |
+| `justTaken`       | Just taken     | rose-100    | strike-through                 |
+| `selected`        | Selected       | emerald-700 | check icon                     |
+| `thisEvent`       | This booking   | indigo-200  | person icon                    |
+| `rescheduling`    | Being moved    | orange-100  | dashed border, move icon       |
+| `fullyBooked`     | Booked         | slate-300   | lock icon                      |
+| `partiallyBooked` | Partly booked  | amber-100   | amber hatch; not selectable    |
+| `unavailable`     | Unavailable    | transparent | none (outside published hours) |
+| `past`            | Past           | slate-50    | 50 % opacity                   |
+| `outsidePeriod`   | Outside period | white       | slate hatch                    |
+| `tooSoon`         | Too soon       | slate-100   | dotted border                  |
+| `limitReached`    | Limit reached  | slate-100   | cross-hatch                    |
+| `available`       | Free           | emerald-100 | solid border                   |
+
+"Just taken" outranks "Selected": a pick that the latest poll proves gone paints
+"Just taken" for exactly one committed render, then is deselected and announced
+(`useJustTaken` in `lib/scheduling/use-just-taken.ts`). The legend shows only
+the states the grid painted this render (`legendKeysFor`); a buyer grid explains
+four (`BUYER_LEGEND_KEYS`). Requested times are painted on the allocate grid as a
+"Requested" outline (`REQUESTED_OUTLINE`), not as a state.
+
+## 8. Per-day rows in the display zone
+
+The grid draws per-day row lists in the display zone, never from a browser-local
+`Date` (`lib/time/grid-zone.ts`). `dayRows` returns every 30-minute UTC atom
+whose start falls on that calendar date in the zone: 48 on a normal day, 46 or 50
+across an hour shift, 47 or 49 across a half-hour shift. Cells stay on the UTC
+:00/:30 grid whatever the offset, so a viewer at UTC+05:45 reads "9:15–9:45"
+labels, and the repeated fall-back hour is labelled "1:00 am (2nd)".
+`cellInstant` and `dayStartInstant` resolve instants through the zone's rules.
+
+The display zone is the viewer's profile zone when it is valid
+(`resolveGridZone`), with a "Use my device's time zone" switch
+(`components/scheduling/ZoneSwitch.tsx`) offered only when it would change
+anything (`canSwitchToDeviceZone`). The grid labels the zone it shows times in.
+
+## 9. The mobile day list
+
+Below the `md` breakpoint a consultee picking times gets
+`components/scheduling/MobileDayListPicker.tsx`, chosen by
+`components/scheduling/TimePicker.tsx`: day chips over `DAY_LIST_DAYS` (14) days
+and a list of times, built by `lib/scheduling/day-list.ts` from the same grid
+endpoint, the same status tokens and the same quota overlay. It starts at the
+plan's allowed window and pages through it, refuses a pick that overlaps another
+pick or lands on a full day (`pickConflict`), and drops stale picks the same
+"Just taken" way. The consultant's allocate and availability grids stay
+desktop-only behind `DesktopOnlyNotice`.
+
+## Deprecated & Superseded Approaches
+
+- **The locked palette with stripe angles.** An earlier grid told "outside
+  period" and "past" apart only by a 45° versus 135° stripe and gave
+  "rescheduling" the "partly booked" amber with a dashed border. The token table
+  in §7 replaced it with a distinct cue per state.
+- **Browser-local grid rows.** Cells were once built from the browser's local
+  `Date`, which dropped or doubled an hour on DST days and could not draw
+  :30/:45 offsets. Use `dayRows` and `cellInstant`.
+- **The Sunday-week subscription cap.** The client counted subscription sessions
+  per calendar week beside the rolling cycle, so the two caps disagreed at cycle
+  edges. The rolling cycle is the only weekly counter.
+- **A single-instant overlap probe.** The allocator once probed one span from
+  the earliest to the latest pick, so a session between two picks read as taken.

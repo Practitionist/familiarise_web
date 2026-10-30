@@ -775,7 +775,8 @@ ORDER BY soa."startsAt" ASC;
 - 4 appointments, each with 2 slots (30 min each = 1 hour total)
 - OR 4 appointments with appropriate slot groupings
 - All slots within the scheduling period
-- No more than 1 call per Sunday-Saturday week
+- No more than 1 call per rolling weekly cycle (seven days counted from the plan
+  start in the consultant's zone; there is no Sunday-to-Saturday cap)
 - All `isTentative` = `false`
 
 ### Test 2.3: Consultant Manual-Allocates Subscription Slots
