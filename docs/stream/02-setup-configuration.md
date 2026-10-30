@@ -196,7 +196,7 @@ Chat text-only is a separate script: run `npx tsx scripts/stream/ensure-chat-tex
 
 Every READY recording is copied server-side from Stream's signed recording URL into Cloudflare R2 by the `transfer-recordings` job (S3-compatible multipart streaming via `lib/storage/r2-client.ts` and `lib/stream/recording-transfer-service.ts`, HEAD-verified after upload). R2 is the only destination; preview clips and thumbnails stay in the public Supabase `recordings-previews` bucket.
 
-Set `R2_S3_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` in Netlify (playback presigning, deletes, and the `transfer-recordings` and `expire-recordings` jobs, which run on the Netlify ticker). No GitHub Actions secret is needed.
+Set `R2_S3_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` on the active application host and on the standby Netlify site (playback presigning, deletes, and the `transfer-recordings` and `expire-recordings` jobs, which run on the Netlify ticker). No GitHub Actions secret is needed.
 
 ### 3. Live Stream Rate-Limit Ceilings & Batch Pacing Invariant
 

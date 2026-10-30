@@ -223,10 +223,11 @@ Still missing, because each needs a value only a human can supply:
 | ----------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SLACK_OPS_WEBHOOK_URL` | GitHub Actions | An incoming-webhook URL from the Slack workspace. Referenced by 57 workflows. Until it exists, Sentry is the only channel by which a money-cron failure reaches anyone. |
 
-**`CRON_SECRET` lives in Netlify only.**
-The route compares against the Netlify value, and the ticker reads the same value from the same
+**`CRON_SECRET` lives with the hosts, not in GitHub.**
+The route compares against its host's value, and the ticker reads the same value from the same
 environment. No GitHub Actions workflow calls a cleanup route any more (the cron fleet workflows are
-deleted), so no copy is needed in GitHub. `bearerMatches` in `lib/cron/cleanup-route.ts` compares
+deleted), so no copy is needed in GitHub. The active cron host and the standby Netlify site must hold
+the same value, and a rotation on Netlify takes effect only after a new deploy. `bearerMatches` in `lib/cron/cleanup-route.ts` compares
 `sha256(header)` against `sha256("Bearer " + secret)` with `timingSafeEqual`, so a caller must send the
 exact value.
 

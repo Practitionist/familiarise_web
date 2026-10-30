@@ -73,7 +73,8 @@ export async function runBackgroundWorker(
   }
   try {
     const response = await handlers().POST(new NextRequest(req));
-    if (response.status >= 500) {
+    const outcome = response.headers.get("x-job-outcome");
+    if (outcome === "failure" || outcome === "partial_failure") {
       console.error(
         JSON.stringify({
           event: "background-worker-failed",
