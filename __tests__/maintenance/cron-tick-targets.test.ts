@@ -330,7 +330,7 @@ describe("cron-tick dueTargets cadence", () => {
     );
   });
 
-  it("fires the Sentry ingest canary every 6 hours at :50, not every tick", () => {
+  it("fires the Sentry ingest canary once a day at 00:50 UTC", () => {
     const name = "sentry-ingest-canary";
     const ticks = Array.from({ length: 24 * 12 }, (_, i) => i * 5).filter(
       (minuteOfDay) =>
@@ -347,7 +347,7 @@ describe("cron-tick dueTargets cadence", () => {
         ).includes(name),
     );
 
-    expect(ticks).toEqual([50, 410, 770, 1130]);
+    expect(ticks).toEqual([50]);
   });
   it("never reports the Sentry ingest canary's failure TO Sentry", () => {
     /**
@@ -558,23 +558,6 @@ describe("cron-tick failed-target reporting", () => {
   });
   afterEach(() => jest.useRealTimers());
 
-  it("reports a one-off failure as a warning on one shared fingerprint", () => {
-    const ev = buildFailedTargetEvent(
-      {
-        name: "release-earnings",
-        status: 500,
-        errorBody: "Internal Server Error - Request ID: abc",
-      },
-      false,
-    );
-    expect(ev.level).toBe("warning");
-    expect(ev.fingerprint).toEqual(["cron-tick", "target-failed-once"]);
-    expect(ev.tags).toMatchObject({
-      target: "release-earnings",
-      class: "platform",
-    });
-  });
-
   it("names the target in the message and fingerprint", () => {
     const ev = buildFailedTargetEvent({
       name: "sweep-stuck-webhook-events",
@@ -590,6 +573,13 @@ describe("cron-tick failed-target reporting", () => {
       status: 0,
       outcome: "network",
     });
+    expect(
+      buildFailedTargetEvent({
+        name: "release-earnings",
+        status: 500,
+        errorBody: "Internal Server Error - Request ID: abc",
+      }).tags,
+    ).toMatchObject({ target: "release-earnings", class: "platform" });
   });
 
   it("the shared repeat filter throttles per target, not across targets", () => {

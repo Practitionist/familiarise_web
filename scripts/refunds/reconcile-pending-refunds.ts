@@ -599,6 +599,7 @@ async function reconcilePendingRefundsUnlocked(
       () =>
         reportSentryMessage(message, {
           subsystem: "payments",
+          level: "warning",
           tags: { feature: "refund-reconcile" },
           extra: { ambiguous: ambiguousPlaceholders },
         }),

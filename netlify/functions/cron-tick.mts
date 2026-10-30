@@ -328,20 +328,16 @@ async function alertMissingSecret(error: string): Promise<void> {
   }
 }
 
-/**
- * The Sentry event for one failing target. A repeat failure is an error issue
- * per target; a one-off is a warning on one shared fingerprint, target in tags.
- */
-export function buildFailedTargetEvent(
-  failed: { name: string; status: number; errorBody?: string },
-  repeated = true,
-) {
+/** The Sentry event for a target that keeps failing: one error issue per target. */
+export function buildFailedTargetEvent(failed: {
+  name: string;
+  status: number;
+  errorBody?: string;
+}) {
   return {
     message: `cron-tick: target ${failed.name} failed`,
-    level: repeated ? ("error" as const) : ("warning" as const),
-    fingerprint: repeated
-      ? ["cron-tick", failed.name]
-      : ["cron-tick", "target-failed-once"],
+    level: "error" as const,
+    fingerprint: ["cron-tick", failed.name],
     tags: {
       subsystem: "cron",
       op: "cron-tick",
@@ -360,11 +356,6 @@ export function buildFailedTargetEvent(
   };
 }
 
-/**
- * Report each failing target to Sentry, once an hour per target. `statusFor`
- * answers 200 regardless, so without this a broken sweep only shows in the log;
- * a total outage is bounded by the shared 10/hour breaker.
- */
 /** Bounded read of each failing target's last COMPLETED run; null means history unknown. */
 async function fetchStreaks(
   baseUrl: string,
@@ -391,6 +382,7 @@ async function fetchStreaks(
   }
 }
 
+/** Judges each failing target on its first due tick of the hour; only repeats page Sentry. */
 async function alertFailedTargets(
   failed: { name: string; status: number; errorBody?: string }[],
   tickStart: Date,
@@ -404,6 +396,26 @@ async function alertFailedTargets(
     history.secret,
     due.map((f) => f.name),
   );
+  // A one-off stays in the logs; only a repeat (isRepeatedFailure) reaches Sentry.
+  const repeated = due.filter((f) =>
+    isRepeatedFailure(
+      scheduleFor(f.name)?.everyMinutes ?? 5,
+      streaks?.[f.name],
+      tickStart,
+    ),
+  );
+  for (const f of due) {
+    if (repeated.includes(f)) continue;
+    console.warn(
+      JSON.stringify({
+        event: "cron-tick.target-failed-once",
+        target: f.name,
+        status: f.status,
+        ...(isPlatformErrorBody(f.errorBody) ? { class: "platform" } : {}),
+      }),
+    );
+  }
+  if (repeated.length === 0) return;
   try {
     const Sentry = await import("@sentry/node");
     const { applyErrorBudget } = await import("../../sentry.shared.config");
@@ -429,14 +441,8 @@ async function alertFailedTargets(
         stackFrameVariables: false,
       },
     });
-    for (const f of due) {
-      const everyMinutes = scheduleFor(f.name)?.everyMinutes ?? 5;
-      const repeated = isRepeatedFailure(
-        everyMinutes,
-        streaks?.[f.name],
-        tickStart,
-      );
-      const event = buildFailedTargetEvent(f, repeated);
+    for (const f of repeated) {
+      const event = buildFailedTargetEvent(f);
       Sentry.captureMessage(event.message, event);
     }
     await Sentry.flush(2_000);

@@ -211,7 +211,7 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "dispatch-outbound-webhooks": 15,
   "drain-notification-outbox": 10,
   "retry-failed-emails": 15,
-  "sentry-ingest-canary": 360,
+  "sentry-ingest-canary": 1440,
   "sync-payment-earnings": 15,
   "release-earnings": 15,
   "reconcile-refunds": 15,

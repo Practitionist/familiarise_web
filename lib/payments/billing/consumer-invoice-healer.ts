@@ -41,7 +41,6 @@ export interface HealConsumerInvoicesResult {
  */
 export async function healConsumerInvoices(opts: {
   limit: number;
-  windowStart?: Date;
   startedAt?: number;
   now?: Date;
   pivot?: string;
@@ -49,12 +48,7 @@ export async function healConsumerInvoices(opts: {
   // Null for an unset, malformed or wrong-state GSTIN: the run skips, no row is touched.
   if (!getPlatformSupplier()) {
     const skipped: ConfigSkip = "PLATFORM_GSTIN not configured";
-    reportConfigSkip(
-      "heal-consumer-invoices",
-      skipped,
-      opts.windowStart,
-      opts.now,
-    );
+    reportConfigSkip("heal-consumer-invoices", skipped);
     return { scanned: 0, minted: 0, declined: 0, failed: 0, skipped };
   }
   // Fail-closed: every mint takes a number from the gapless Rule 46 series.

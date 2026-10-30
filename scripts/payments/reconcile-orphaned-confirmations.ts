@@ -31,7 +31,6 @@ import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-cha
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
-import * as Sentry from "@sentry/nextjs";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   isFreeCreditIntent,
@@ -42,7 +41,10 @@ import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-ma
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { claimAndNotifyOnce } from "@/lib/cron/cas-notice";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
-import { reportSentryMessage } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 
 export interface OrphanedConfirmationResult {
@@ -80,20 +82,40 @@ type OrphanChannelOutcome =
   | { kind: "skipped"; reason: string }
   | { kind: "failed" };
 
-// #1708 — no retry can make this pair's channel succeed, so the row leaves the
-// `chatChannelEnsuredAt IS NULL` queue; rationale in the cron reference.
-async function markChannelTerminal(
-  appointmentId: string,
-  reason: string,
-): Promise<string> {
-  await prisma.appointment.updateMany({
-    where: { id: appointmentId, chatChannelEnsuredAt: null },
-    data: { chatChannelEnsuredAt: new Date() },
-  });
+// No retry can create this pair's channel; the run stamps it out of the queue afterwards.
+function terminalReason(appointmentId: string, reason: string): string {
   console.warn(
-    `💬 Chat channel for appointment ${appointmentId} marked terminal: ${reason}`,
+    `💬 Chat channel for appointment ${appointmentId} is terminal: ${reason}`,
   );
   return reason;
+}
+
+type TerminalSkip = {
+  appointmentId: string;
+  appointmentType: string;
+  reason: string;
+};
+
+// The stamp and its finding commit together, so a failed insert leaves the rows queued for the next run.
+async function stampChannelsTerminal(skipped: TerminalSkip[]): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.appointment.updateMany({
+      where: {
+        id: { in: skipped.map((s) => s.appointmentId) },
+        chatChannelEnsuredAt: null,
+      },
+      data: { chatChannelEnsuredAt: new Date() },
+    });
+    await recordSystemEvent({
+      db: tx,
+      strict: true,
+      category: "BOOKING",
+      severity: "WARN",
+      message: `reconcile-orphaned-confirmations: ${skipped.length} appointment(s) marked terminal — no retry can create their chat channel`,
+      context: { skipped },
+      correlationId: "reconcile-orphaned-confirmations:channel-terminal",
+    });
+  });
 }
 
 async function ensureChannelForOrphan(
@@ -108,7 +130,7 @@ async function ensureChannelForOrphan(
     if (result.reason === "no_channel_branch_for_appointment") {
       return {
         kind: "skipped",
-        reason: await markChannelTerminal(appointmentId, result.reason),
+        reason: terminalReason(appointmentId, result.reason),
       };
     }
     console.warn(
@@ -119,7 +141,7 @@ async function ensureChannelForOrphan(
     if (err instanceof DmNotPermittedError) {
       return {
         kind: "skipped",
-        reason: await markChannelTerminal(appointmentId, "dm_not_permitted"),
+        reason: terminalReason(appointmentId, "dm_not_permitted"),
       };
     }
     console.error(
@@ -275,11 +297,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
 
   let channelsEnsured = 0;
   let channelsFailed = 0;
-  const skipped: {
-    appointmentId: string;
-    appointmentType: string;
-    reason: string;
-  }[] = [];
+  const skipped: TerminalSkip[] = [];
   let channelBuyerOps = 0;
   let channelsDeferred = 0;
   for (const [index, appointment] of unchanneled.entries()) {
@@ -315,21 +333,20 @@ async function reconcileOrphanedConfirmationsUnlocked(
     }
   }
 
-  const channelsSkipped = skipped.length;
-  // #1708 — one warning per run that counts up, not one event per row per tick.
-  if (channelsSkipped > 0) {
-    Sentry.captureMessage(
-      `reconcile-orphaned-confirmations: ${channelsSkipped} appointment(s) marked terminal — no retry can create their chat channel`,
-      {
-        level: "warning",
-        fingerprint: ["reconcile-orphaned-confirmations", "dm_not_permitted"],
-        tags: { subsystem: "payments" },
-        extra: {
-          appointmentIds: skipped.map((r) => r.appointmentId),
-          skipped,
-        },
-      },
-    );
+  // One console finding per run; if it cannot be saved the rows stay queued and Sentry hears once.
+  let channelsSkipped = 0;
+  if (skipped.length > 0) {
+    try {
+      await stampChannelsTerminal(skipped);
+      channelsSkipped = skipped.length;
+    } catch (err) {
+      channelsFailed += skipped.length;
+      reportSentryError(err, {
+        subsystem: "payments",
+        op: "reconcile-orphaned-confirmations:channel-terminal",
+        extra: { appointmentIds: skipped.map((s) => s.appointmentId) },
+      });
+    }
   }
 
   console.log(
