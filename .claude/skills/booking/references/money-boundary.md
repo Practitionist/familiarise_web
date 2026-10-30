@@ -311,8 +311,8 @@ Every door that ends a booking and then refunds (the cancel route, trial
 cancel, rejection, moderation, the maintenance freeze, a consultant no-show and
 a whole-event cancel) is **state-as-outbox**. In the same transaction that ends
 the booking it stamps the per-payment marker `Payment.refundOwedPaise`,
-`refundOwedKey` (unique), `refundOwedReason`, `refundOwedAt` and
-`refundOwedAttempts` through `stampRefundOwed` or `stampRefundsOwed`
+`refundOwedKey` (unique), `refundOwedReason`, `refundOwedAt`,
+`refundOwedAttempts` and `refundOwedNextAt` through `stampRefundOwed` or `stampRefundsOwed`
 (`lib/payments/operations/refund-owed.ts`). After the commit the door calls
 `driveRefundOwed`, which runs `refundBookingPayment` under the marker's key
 (`cancel:<appointmentId>:<paymentId>`, `trial-cancel:<trialId>:<paymentId>`,
@@ -323,10 +323,13 @@ and clears the marker by CAS on the key once the refund is not PENDING. The firs
 writer wins, so a second door cannot overwrite the amount owed. A death between
 commit and drive leaves CANCELLED plus SUCCEEDED plus a marker, and the
 `retry-auto-refunds` sweep (`scripts/payments/retry-auto-refunds.ts`) re-drives
-every marker older than 15 minutes, fewest attempts first. A drive that fails
-counts an attempt; at `MAX_REFUND_OWED_ATTEMPTS` (3) the sweep stops and records
-one system error ("refund by hand"), and a marker unresolved after two hours is
-reported once per run from the persisted amount. Do not pre-create a `Refund` row
+every marker older than 15 minutes whose `refundOwedNextAt` is null or past,
+fewest attempts first. A drive that fails counts an attempt by CAS on the key
+and the prior count, and sets `refundOwedNextAt` 1 hour out after the first
+failure and 4 hours out after the second, so a gateway outage of a few hours
+does not page. At `MAX_REFUND_OWED_ATTEMPTS` (3), about 5 hours after the stamp,
+the sweep stops and records one system error ("refund by hand"). A marker
+unresolved after six hours is reported once a day from the persisted amount. Do not pre-create a `Refund` row
 to mark intent: a PENDING row reduces the refundable balance and makes the
 credits rail refuse. The older `Auto-refund pending:` family means "booking not
 confirmed, refund the whole capture" and is a different thing.
@@ -364,10 +367,27 @@ dispute holds the payment. The cancel route, trial cancel and seat leave all
 follow this rule, so no door drives a refund it does not own and none leaves its
 own refund undurable. A `REFUND_NEEDS_SUPPORT` refusal writes one audited
 `SystemEvent` per payment and marker (`recordRefundNeedsSupport`), and support
-settles the stuck marker through the admin refund door
-(`app/api/admin/refunds/issue/route.ts`), which clears it by
-`clearStuckRefundOwed` when the hand refund covers it. A seat leave or removal
-stamps its marker in the commit that releases the seat.
+settles the marker through an operator refund door.
+
+**An operator's refund settles the owed refund by hand.** Every operator door
+passes `settlesOwedByHand` to `refundBookingPayment`: the issue and ladder
+override door (`app/api/admin/refunds/issue/route.ts`), the admin single-payment
+refund (`app/api/admin/refunds/route.ts`) and the approved support remedy
+(`executeApprovedRefund` in `lib/support/case-actions.ts`); the credit-return
+door (`restoreSessionCredits`) always does. Inside the transaction that creates
+the operator's `Refund` row, `settleOwedByHand` clears the payment's marker,
+`refundOwedNextAt` included, by CAS on its key, whatever the hand refund's
+amount. The cleared marker is written to the Refund row's
+`metadata.settledOwed` (`{ key, owedPaise, reason }`), returned as
+`settledOwed`, and the refund dialog tells the operator the owed amount was
+settled by hand. A marker whose own refund is PENDING refuses the hand refund
+with 409 `OWED_REFUND_IN_FLIGHT`. Every drive carries `owedKey`, and each rail's
+transaction checks the marker still holds the payment (`assertOwedMarkerHeld`);
+a drive that lost to a hand refund ends `settled` and moves no money. If the
+gateway refuses the hand refund outright, `restoreHandSettledOwed` stamps the
+marker back for the sweep. A hand refund that stays PENDING and later fails is
+a FAILED refund in the ops queue. A seat leave or removal stamps its marker in
+the commit that releases the seat.
 
 **A cancel cannot race a capture into a free cancellation.** The cancel's
 request CAS is pinned to the status it read inside the transaction, and the same

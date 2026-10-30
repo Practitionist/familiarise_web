@@ -35,7 +35,7 @@ const mockRefundBookingPayment = jest.fn();
 const mockRecordSystemError = jest.fn(async () => undefined);
 const mockRecordSystemEvent = jest.fn(async () => undefined);
 
-const longAgo = () => new Date(Date.now() - 3 * 60 * 60_000);
+const longAgo = () => new Date(Date.now() - 7 * 60 * 60_000);
 /** The marker's backoff ran out. */
 const elapse = (id: string) => {
   mockRows.get(id)!.refundOwedNextAt = new Date(Date.now() - 1);
@@ -63,6 +63,7 @@ type Where = Record<string, unknown> & {
   refundOwedKey?: string | null | { not: null };
   refundOwedAttempts?: number | { lt: number };
   OR?: { refundOwedNextAt: null | { lte: Date } }[];
+  refundOwedAt?: { lt: Date };
   disputes?: unknown;
   refunds?: unknown;
   description?: unknown;
@@ -101,6 +102,11 @@ function matches(row: Row, where: Where): boolean {
       : row.refundOwedNextAt !== null &&
         row.refundOwedNextAt <= c.refundOwedNextAt.lte;
   if (where.OR && !where.OR.some(due)) return false;
+  if (
+    where.refundOwedAt &&
+    !(row.refundOwedAt && row.refundOwedAt < where.refundOwedAt.lt)
+  )
+    return false;
   if (where.disputes && row.disputed) return false;
   // The owed cohort leaves a payment with a PENDING refund to reconcile.
   if (
@@ -121,6 +127,11 @@ const view = (row: Row) => ({
 
 const mockDb = {
   payment: {
+    // A snapshot, as Prisma returns: a later write does not change what was read.
+    findUnique: jest.fn(async ({ where }: { where: { id: string } }) => {
+      const row = mockRows.get(where.id);
+      return row ? { ...row } : null;
+    }),
     findMany: jest.fn(
       async ({ where, take }: { where: Where; take?: number }) =>
         [...mockRows.values()]
@@ -164,6 +175,10 @@ const mockDb = {
               },
             }))
         : [],
+    ),
+    findUnique: jest.fn(
+      async ({ where }: { where: { dedupeKey: string } }) =>
+        mockRefunds.find((x) => x.dedupeKey === where.dedupeKey) ?? null,
     ),
     updateMany: jest.fn(async ({ where }: { where: { id: string } }) => {
       const r = mockRefunds.find((x) => x.id === where.id);
@@ -292,19 +307,29 @@ jest.mock("../../lib/payments/webhooks/handlers", () => ({
 }));
 
 import { refundWholeEventPayments } from "../../lib/payments/operations/event-refunds";
-import { driveRefundOwed } from "../../lib/payments/operations/refund-owed";
+import {
+  driveRefundOwed,
+  settleOwedByHand,
+} from "../../lib/payments/operations/refund-owed";
 import { retryAutoRefunds } from "../../scripts/payments/retry-auto-refunds";
 import { notifyFailedRefunds } from "../../scripts/refunds/reconcile-pending-refunds";
 
-/** The front door: one Refund per key, the credits rail refusing an amount. */
+/** The front door: one Refund per key, and a drive only while its marker holds. */
 function settles() {
   mockRefundBookingPayment.mockImplementation(
     async (input: {
       paymentId: string;
       amountPaise?: number;
       dedupeKey: string;
+      owedKey?: string;
     }) => {
       const row = mockRows.get(input.paymentId)!;
+      if (input.owedKey && row.refundOwedKey !== input.owedKey) {
+        const { RefundValidationError } = jest.requireMock<{
+          RefundValidationError: new (message: string, code: string) => Error;
+        }>("../../lib/payments/operations/refund");
+        throw new RefundValidationError("settled", "OWED_MARKER_SETTLED");
+      }
       const amountPaise = input.amountPaise ?? row.amount;
       const refund = {
         id: `rf_${mockRefunds.length + 1}`,
@@ -655,6 +680,42 @@ describe("owed-refund backoff", () => {
   });
 });
 
+describe("a hand refund during the backoff", () => {
+  /** The operator's refund transaction, as the front door runs it. */
+  const handRefund = (id: string) =>
+    mockDb.$transaction((tx) => settleOwedByHand(tx as never, id));
+
+  it("clears the marker in its own transaction, and the sweep then does nothing", async () => {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    gatewayFails("SERVER_ERROR");
+    await retryAutoRefunds();
+    expect(mockRows.get("p1")!.refundOwedNextAt).not.toBeNull();
+
+    expect(await handRefund("p1")).toEqual({
+      key: "cancel:appt:p1",
+      owedPaise: 5_000,
+      reason: "cancellation",
+    });
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: null,
+      refundOwedAttempts: 0,
+      refundOwedNextAt: null,
+    });
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+    expect(mockRefundBookingPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops a drive that read the marker before the hand refund", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    await handRefund("p1");
+
+    expect((await driveRefundOwed(owed)).kind).toBe("settled");
+    expect(mockRefunds).toHaveLength(0);
+  });
+});
+
 describe("retry-auto-refunds: the owed cohort", () => {
   it("starts a settled trial refund's earnings hold", async () => {
     seat("t1", 0, "free_abc");
@@ -676,13 +737,17 @@ describe("retry-auto-refunds: the owed cohort", () => {
     );
   });
 
-  it("surfaces markers older than two hours once, reading the persisted amount", async () => {
+  it("surfaces markers older than six hours once, reading the persisted amount", async () => {
     seat("p1", 10_000);
     marker("p1", 4_000);
+    // Three hours old: still inside the backoff, so not yet surfaced.
+    seat("p2", 10_000);
+    marker("p2", 4_000);
+    mockRows.get("p2")!.refundOwedAt = new Date(Date.now() - 3 * 60 * 60_000);
     mockRefundBookingPayment.mockRejectedValue(new Error("gateway 503"));
 
     const result = await retryAutoRefunds();
-    expect(result.owed.failed).toBe(1);
+    expect(result.owed.failed).toBe(2);
     expect(result.owed.aged).toBe(1);
     expect(mockRecordSystemEvent).toHaveBeenCalledWith(
       expect.objectContaining({

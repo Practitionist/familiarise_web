@@ -4,8 +4,8 @@
 
 /**
  * #1824 QA — a gateway refund that threw after its keyed row was reserved is
- * in flight, not a 500: the door answers that PENDING row, and a partial
- * amount keeps the seat.
+ * in flight, not a 500: the door answers that PENDING row, a partial amount
+ * keeps the seat, and the owed refund it settled by hand is reported.
  */
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
@@ -23,7 +23,20 @@ jest.mock("../../lib/backoffice/money-limit", () => ({
 const create = jest.fn(async (_a: unknown) => ({ id: "row" }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { opsActionLog: { create: (a: unknown) => create(a) } },
+  default: {
+    opsActionLog: { create: (a: unknown) => create(a) },
+    refund: {
+      findUnique: async () => ({
+        metadata: {
+          settledOwed: {
+            key: "cancel:appt_1:pay_1",
+            owedPaise: 5_000,
+            reason: "cancellation",
+          },
+        },
+      }),
+    },
+  },
 }));
 const refundBookingPayment = jest.fn();
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
@@ -76,9 +89,11 @@ it("answers the reserved PENDING refund when the gateway call throws", async () 
   expect((await res.json()).result).toMatchObject({
     refundId: "ref_1",
     status: "PENDING",
+    settledOwed: { key: "cancel:appt_1:pay_1", owedPaise: 5_000 },
   });
   expect(refundBookingPayment.mock.calls[0][0]).toMatchObject({
     keepSeat: true,
     dedupeKey: "ops:11111111-2222-4333-8444-555555555555",
+    settlesOwedByHand: true,
   });
 });

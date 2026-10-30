@@ -24,7 +24,7 @@
  * drives each marker under its own key until the money is back. A failed drive
  * waits out `refundOwedNextAt` (1 h, then 4 h), the attempt count retires a
  * marker to an operator at MAX_REFUND_OWED_ATTEMPTS, and markers older than
- * two hours are surfaced once a day as an ops event.
+ * six hours, past the backoff's last retry, are surfaced once a day as an ops event.
  *
  * Imported by jobs/payments/retry-auto-refunds.ts (GitHub Actions) and
  * app/api/cleanup/retry-auto-refunds/route.ts (the ticker twin).
@@ -95,7 +95,7 @@ export interface RetryAutoRefundsResult {
     failed: number;
     /** Markers retired to an operator this run. */
     stuck: string[];
-    /** Markers older than two hours, stuck ones included. */
+    /** Markers older than six hours, stuck ones included. */
     aged: number;
   };
   /** The run hit its start deadline with rows left for the next one. */
@@ -109,7 +109,7 @@ const GRACE_MS = 15 * 60_000;
 /** Failed gateway refunds after which the payment goes to an operator. */
 export const MAX_AUTO_REFUND_ATTEMPTS = 3;
 /** A refund owed this long after its door committed is surfaced to ops. */
-const OWED_ALERT_AFTER_MS = 2 * 60 * 60_000;
+const OWED_ALERT_AFTER_MS = 6 * 60 * 60_000;
 const OWED_REPORT_WINDOW_MS = 24 * 60 * 60_000;
 
 // #476 — one lock for every entry; fail-closed because this sweep refunds.
@@ -311,7 +311,7 @@ async function startTrialHoldIfSettled(
 }
 
 /**
- * Markers older than two hours are money a booking door still owes. The ops
+ * Markers older than six hours are money a booking door still owes. The ops
  * event reads the persisted owed amount and is recorded once per distinct id
  * set per day, so a stuck backlog does not re-page every tick.
  */
@@ -357,7 +357,7 @@ async function reportAgedRefundsOwed(
   await recordSystemEvent({
     category: "PAYMENT",
     severity: "WARN",
-    message: `${aged.length} cancelled or ended bookings still owe a refund more than 2 h after their door committed`,
+    message: `${aged.length} cancelled or ended bookings still owe a refund more than 6 h after their door committed`,
     context: {
       owed: aged.slice(0, 50).map((p) => ({
         paymentId: p.id,

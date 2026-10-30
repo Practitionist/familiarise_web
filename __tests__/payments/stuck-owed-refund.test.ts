@@ -3,9 +3,9 @@
  */
 
 /**
- * A refund marker that spent its attempts must have an exit: an ops hand
- * refund clears it (and only a stuck one), and the needs-human queue lists it
- * until it is gone.
+ * An owed refund always has an exit: an operator's hand refund settles and
+ * clears its marker in the refund's own transaction, and the needs-human queue
+ * lists a stuck one until it is gone.
  */
 const mockPaymentFindMany = jest.fn();
 
@@ -22,31 +22,21 @@ jest.mock("@/lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: jest.fn(),
 }));
 
-import type { PrismaLike } from "@/lib/prisma";
+import type { Tx } from "@/lib/prisma";
 import { readStuckOwedRefunds } from "@/lib/backoffice/needs-human";
 import {
-  clearStuckRefundOwed,
   MAX_REFUND_OWED_ATTEMPTS,
+  settleOwedByHand,
 } from "@/lib/payments/operations/refund-owed";
 
-const STAMPED_AT = new Date("2026-05-01T00:00:00Z");
-
-function fakeDb(
-  row: {
-    refundOwedKey: string | null;
-    refundOwedAttempts: number;
-    refundOwedPaise?: number | null;
-  },
-  refundedSincePaise = 0,
-) {
+function fakeDb(ownRefundStatus: "PENDING" | "SUCCEEDED" | null = null) {
   const updates: unknown[] = [];
-  const aggregates: unknown[] = [];
   const db = {
     payment: {
       findUnique: jest.fn(async () => ({
-        refundOwedPaise: null,
-        refundOwedAt: STAMPED_AT,
-        ...row,
+        refundOwedKey: "cancel:appt-1:pay-1",
+        refundOwedPaise: 500_000,
+        refundOwedReason: "cancellation",
       })),
       updateMany: jest.fn(async (args: unknown) => {
         updates.push(args);
@@ -54,102 +44,46 @@ function fakeDb(
       }),
     },
     refund: {
-      aggregate: jest.fn(async (args: unknown) => {
-        aggregates.push(args);
-        return { _sum: { amountPaise: refundedSincePaise } };
-      }),
+      findUnique: jest.fn(async () =>
+        ownRefundStatus ? { status: ownRefundStatus } : null,
+      ),
     },
   };
-  return {
-    db: db as unknown as Pick<PrismaLike, "payment" | "refund">,
-    updates,
-    aggregates,
-  };
+  return { db: db as unknown as Pick<Tx, "payment" | "refund">, updates };
 }
 
-describe("clearStuckRefundOwed", () => {
-  it("clears a marker that spent its attempts, by CAS on its key", async () => {
-    const { db, updates } = fakeDb({
-      refundOwedKey: "incident:inc-1:occ-1:u-1",
-      refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS,
-    });
-    expect(await clearStuckRefundOwed(db, "pay-1", { full: true })).toEqual({
-      cleared: "incident:inc-1:occ-1:u-1",
+describe("settleOwedByHand", () => {
+  it("clears the marker by CAS on its key, backoff included, and answers what it owed", async () => {
+    const { db, updates } = fakeDb();
+    expect(await settleOwedByHand(db, "pay-1")).toEqual({
+      key: "cancel:appt-1:pay-1",
+      owedPaise: 500_000,
+      reason: "cancellation",
     });
     expect(updates).toEqual([
-      expect.objectContaining({
-        where: {
-          id: "pay-1",
-          refundOwedKey: "incident:inc-1:occ-1:u-1",
-          refundOwedAttempts: { gte: MAX_REFUND_OWED_ATTEMPTS },
-        },
-      }),
+      {
+        where: { id: "pay-1", refundOwedKey: "cancel:appt-1:pay-1" },
+        data: expect.objectContaining({
+          refundOwedKey: null,
+          refundOwedAttempts: 0,
+          refundOwedNextAt: null,
+        }),
+      },
     ]);
   });
 
-  it("never touches a marker still retrying", async () => {
-    const { db, updates } = fakeDb({
-      refundOwedKey: "cancel:appt-1:pay-1",
-      refundOwedAttempts: 1,
-    });
-    expect(await clearStuckRefundOwed(db, "pay-1", { full: true })).toBeNull();
-    expect(updates).toEqual([]);
-  });
-
-  it("a partial hand refund smaller than the debt leaves the marker owed", async () => {
-    const { db, updates } = fakeDb(
-      {
-        refundOwedKey: "cancel:appt-1:pay-1",
-        refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS,
-        refundOwedPaise: 500_000,
-      },
-      10_000,
-    );
-    expect(await clearStuckRefundOwed(db, "pay-1", { full: false })).toEqual({
-      stillOwed: { key: "cancel:appt-1:pay-1", paise: 500_000 },
+  it("refuses while the marker's own refund is in flight", async () => {
+    const { db, updates } = fakeDb("PENDING");
+    await expect(settleOwedByHand(db, "pay-1")).rejects.toMatchObject({
+      code: "OWED_REFUND_IN_FLIGHT",
     });
     expect(updates).toEqual([]);
   });
 
-  it("hand refunds since the marker that add up to the debt clear it", async () => {
-    const { db, updates, aggregates } = fakeDb(
-      {
-        refundOwedKey: "cancel:appt-1:pay-1",
-        refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS,
-        refundOwedPaise: 500_000,
-      },
-      500_000,
-    );
-    expect(await clearStuckRefundOwed(db, "pay-1", { full: false })).toEqual({
-      cleared: "cancel:appt-1:pay-1",
-    });
+  it("clears a marker its own refund already settled without reporting it as settled by hand", async () => {
+    const { db, updates } = fakeDb("SUCCEEDED");
+    expect(await settleOwedByHand(db, "pay-1")).toBeNull();
     expect(updates).toHaveLength(1);
-    expect(aggregates).toEqual([
-      expect.objectContaining({
-        where: {
-          paymentId: "pay-1",
-          status: "SUCCEEDED",
-          createdAt: { gte: STAMPED_AT },
-        },
-      }),
-    ]);
-  });
-
-  it("a marker owing the full balance clears only on a full refund", async () => {
-    const row = {
-      refundOwedKey: "plan-end:sub-1:pay:pay-1",
-      refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS,
-      refundOwedPaise: null,
-    };
-    const partial = fakeDb(row, 9_999_999);
-    expect(
-      await clearStuckRefundOwed(partial.db, "pay-1", { full: false }),
-    ).toEqual({ stillOwed: { key: "plan-end:sub-1:pay:pay-1", paise: null } });
-    expect(partial.updates).toEqual([]);
-    const full = fakeDb(row);
-    expect(
-      await clearStuckRefundOwed(full.db, "pay-1", { full: true }),
-    ).toEqual({ cleared: "plan-end:sub-1:pay:pay-1" });
   });
 });
 

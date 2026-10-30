@@ -131,7 +131,14 @@ import {
   reverseOverageCapture,
 } from "@/lib/payments/ledger/overage-capture-reversal";
 // Late-bound cycle: refund-owed reaches refundPayment through booking-refund.
-import { stampRefundOwed, type RefundOwedMarker } from "./refund-owed";
+import {
+  claimOwedMarker,
+  restoreHandSettledOwed,
+  stampRefundOwed,
+  type HandSettledOwed,
+  type OwedMarkerInput,
+  type RefundOwedMarker,
+} from "./refund-owed";
 
 import {
   applyCappedEarningReversal,
@@ -159,7 +166,7 @@ export type RefundInput = {
    */
   dedupeKey?: string;
   supportRecommendationId?: string;
-};
+} & OwedMarkerInput;
 
 export type RefundResult = {
   refundId: string;
@@ -177,6 +184,8 @@ export type RefundResult = {
    * `pending_` placeholder and the reconcile cron owns recovery (release
    * #1014 review: never surface "" as a gateway id). */
   gatewayRefundId?: string;
+  /** The owed refund this hand refund settled and cleared. */
+  settledOwed?: HandSettledOwed;
 };
 
 /**
@@ -447,10 +456,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // outcome, not an anomaly. Unwrapped, that surfaced to the caller as a raw
   // Prisma error instead of being retried into the correct answer (either a
   // successful reservation or a typed AMOUNT_EXCEEDS_REFUNDABLE rejection).
+  let settledOwed = null as HandSettledOwed | null;
   const reserveRefund = () =>
     withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
+          settledOwed = null;
           // Re-derive `refundable` inside the Serializable tx — defends
           // against two refunds racing through the outer read. Must mirror the
           // outer computation EXACTLY (refunds + lost chargebacks): the outer
@@ -510,6 +521,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             throw err;
           }
 
+          settledOwed = await claimOwedMarker(tx, input.paymentId, input);
+
           return tx.refund.create({
             data: {
               paymentId: input.paymentId,
@@ -532,6 +545,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
               metadata: {
                 initiatedByUserId: input.initiatedByUserId ?? null,
                 source: "app",
+                ...(settledOwed ? { settledOwed } : {}),
               } as Prisma.InputJsonValue,
             },
           });
@@ -658,6 +672,9 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           : { metadata },
       })
       .catch(() => undefined); // best-effort; the reconcile cron is the backstop
+    if (settledOwed && isDefinitiveRefundRefusal(err)) {
+      await restoreHandSettledOwed(input.paymentId, settledOwed);
+    }
     throw new RefundGatewayError(
       `Gateway refund failed for payment ${input.paymentId}: ${err instanceof Error ? err.message : String(err)}`,
       "GATEWAY_REFUND_FAILED",
@@ -697,6 +714,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         })
         .catch(() => undefined);
     }
+    if (settledOwed) await restoreHandSettledOwed(input.paymentId, settledOwed);
     const declineErr = new RefundGatewayError(
       `Gateway declined refund for payment ${input.paymentId}`,
       "GATEWAY_REFUND_DECLINED",
@@ -803,6 +821,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       clawbackInitiated: false,
       status: "PENDING" as const,
       gatewayRefundId: gateway.refundId || undefined,
+      ...(settledOwed ? { settledOwed } : {}),
     };
   }
 
@@ -949,7 +968,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     ),
   ]);
 
-  return settled;
+  return settledOwed ? { ...settled, settledOwed } : settled;
 }
 
 /** The refund a fully-refunded booking owes on one CHARGE_MEMBER side-payment. */

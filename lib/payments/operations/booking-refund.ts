@@ -95,6 +95,13 @@ import {
   RefundValidationError,
   refundPayment,
 } from "./refund";
+// Late-bound cycle: refund-owed drives its markers through this module.
+import {
+  claimOwedMarker,
+  settleOwedByHand,
+  type HandSettledOwed,
+  type OwedMarkerInput,
+} from "./refund-owed";
 
 import {
   applyCappedEarningReversal,
@@ -171,23 +178,27 @@ export type BookingRefundResult = {
   rail: FundingRail;
   /** Present when the gateway returned a settlement status ("SUCCEEDED" | "PENDING"). */
   status?: "SUCCEEDED" | "PENDING";
+  /** The owed refund this hand refund settled and cleared. */
+  settledOwed?: HandSettledOwed;
 };
 
-export async function refundBookingPayment(input: {
-  paymentId: string;
-  /** Defaults to the full remaining refundable balance. */
-  amountPaise?: number;
-  reason: string;
-  initiatedByUserId?: string | null;
-  /** #1780 — one refund per key on every rail; a repeat returns the first. */
-  dedupeKey?: string;
-  supportRecommendationId?: string;
-  /**
-   * #1780 row 4 — a per-session refund (a missed class session) leaves the
-   * seat live; every other refund marks the funded seat REFUNDED.
-   */
-  keepSeat?: boolean;
-}): Promise<BookingRefundResult> {
+export async function refundBookingPayment(
+  input: {
+    paymentId: string;
+    /** Defaults to the full remaining refundable balance. */
+    amountPaise?: number;
+    reason: string;
+    initiatedByUserId?: string | null;
+    /** #1780 — one refund per key on every rail; a repeat returns the first. */
+    dedupeKey?: string;
+    supportRecommendationId?: string;
+    /**
+     * #1780 row 4 — a per-session refund (a missed class session) leaves the
+     * seat live; every other refund marks the funded seat REFUNDED.
+     */
+    keepSeat?: boolean;
+  } & OwedMarkerInput,
+): Promise<BookingRefundResult> {
   // #781 §B — soft-deleted financial rows are retired; never refund them.
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
@@ -223,6 +234,7 @@ export async function refundBookingPayment(input: {
       amountRefundedPaise: r.amountRefundedPaise,
       rail: "GATEWAY",
       ...(r.status ? { status: r.status } : {}),
+      ...(r.settledOwed ? { settledOwed: r.settledOwed } : {}),
     };
   }
 
@@ -276,13 +288,15 @@ async function withDedupe(
  * idempotency claim — a second cancellation of the same booking restores
  * nothing twice.
  */
-async function refundFreeCreditPayment(input: {
-  paymentId: string;
-  reason: string;
-  initiatedByUserId?: string | null;
-  dedupeKey?: string;
-  supportRecommendationId?: string;
-}): Promise<BookingRefundResult> {
+async function refundFreeCreditPayment(
+  input: {
+    paymentId: string;
+    reason: string;
+    initiatedByUserId?: string | null;
+    dedupeKey?: string;
+    supportRecommendationId?: string;
+  } & OwedMarkerInput,
+): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
     select: {
@@ -325,6 +339,7 @@ async function refundFreeCreditPayment(input: {
             "ALREADY_FULLY_REFUNDED",
           );
         }
+        const settledOwed = await claimOwedMarker(tx, payment.id, input);
 
         const refundRow = await tx.refund.create({
           data: {
@@ -346,6 +361,7 @@ async function refundFreeCreditPayment(input: {
             metadata: {
               initiatedByUserId: input.initiatedByUserId ?? null,
               source: "free-credit",
+              ...(settledOwed ? { settledOwed } : {}),
             } as Prisma.InputJsonValue,
           },
         });
@@ -386,6 +402,7 @@ async function refundFreeCreditPayment(input: {
           refundId: refundRow.id,
           amountRefundedPaise: 0,
           rail: "CREDITS" as const,
+          ...(settledOwed ? { settledOwed } : {}),
         };
       },
       {
@@ -499,6 +516,8 @@ export async function restoreSessionCredits(input: {
             seatLive,
           });
           const asked = Number(ledger.unitPaise) * input.sessions;
+          // Only operators return session credits, so this settles the owed refund by hand.
+          const settledOwed = await settleOwedByHand(tx, payment.id);
           const refundRow = await tx.refund.create({
             data: {
               paymentId: payment.id,
@@ -513,6 +532,7 @@ export async function restoreSessionCredits(input: {
                 initiatedByUserId: input.initiatedByUserId,
                 source: "free-credit-partial",
                 sessions: input.sessions,
+                ...(settledOwed ? { settledOwed } : {}),
               } as Prisma.InputJsonValue,
             },
           });
@@ -537,6 +557,7 @@ export async function restoreSessionCredits(input: {
                 source: "free-credit-partial",
                 sessions: input.sessions,
                 restoredPaise,
+                ...(settledOwed ? { settledOwed } : {}),
               } as Prisma.InputJsonValue,
             },
           });
@@ -562,6 +583,7 @@ export async function restoreSessionCredits(input: {
             refundId: refundRow.id,
             amountRefundedPaise: 0,
             rail: "CREDITS" as const,
+            ...(settledOwed ? { settledOwed } : {}),
           };
         },
         {
@@ -1084,15 +1106,17 @@ async function reverseFreeCreditSettlement(
  * race-safety. There is no gateway leg to wait on, so unlike `refundPayment`
  * this settles in a single phase.
  */
-async function refundInternalFundedPayment(input: {
-  paymentId: string;
-  amountPaise?: number;
-  reason: string;
-  initiatedByUserId?: string | null;
-  dedupeKey?: string;
-  supportRecommendationId?: string;
-  keepSeat?: boolean;
-}): Promise<BookingRefundResult> {
+async function refundInternalFundedPayment(
+  input: {
+    paymentId: string;
+    amountPaise?: number;
+    reason: string;
+    initiatedByUserId?: string | null;
+    dedupeKey?: string;
+    supportRecommendationId?: string;
+    keepSeat?: boolean;
+  } & OwedMarkerInput,
+): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
     select: {
@@ -1158,6 +1182,7 @@ async function refundInternalFundedPayment(input: {
             "AMOUNT_EXCEEDS_REFUNDABLE",
           );
         }
+        const settledOwed = await claimOwedMarker(tx, payment.id, input);
 
         const refundRow = await tx.refund.create({
           data: {
@@ -1182,6 +1207,7 @@ async function refundInternalFundedPayment(input: {
             metadata: {
               initiatedByUserId: input.initiatedByUserId ?? null,
               source: "internal-funded",
+              ...(settledOwed ? { settledOwed } : {}),
             } as Prisma.InputJsonValue,
           },
         });
@@ -1222,6 +1248,7 @@ async function refundInternalFundedPayment(input: {
           refundId: refundRow.id,
           amountRefundedPaise: requested,
           rail: "INTERNAL" as const,
+          ...(settledOwed ? { settledOwed } : {}),
         };
       },
       {
