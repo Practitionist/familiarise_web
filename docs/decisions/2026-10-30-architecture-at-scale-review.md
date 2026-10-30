@@ -1,6 +1,7 @@
 # ADR: Architecture at scale: keep the domain, change the runtime
 
 - **Status**: Proposed. This is a principal-architect review written for the owner on 2026-10-30. Nothing here is accepted until the owner records a decision for each numbered proposal. The tracking issue is #2466.
+- **Status update (2026-10-31)**: The owner's decisions are recorded in [Ticker through launch, the scale path, the phase 2 queue and the database plan](2026-10-31-ticker-scale-path-and-queue.md). Phase 1's container option (web plus worker in a Mumbai container) is **superseded** by a Vercel Pro `bom1` trial with Netlify as hot standby. The phase 2 queue is a hand-written Prisma `Job` table. The database split moves to after launch.
 - **Date**: 2026-10-30
 - **Author**: Platform engineering
 - **Related**: [Launch sweep decisions (ADR-01 to ADR-13)](2026-10-26-launch-sweep-observability-and-money-holds.md), [Job machinery catalog](../maintenance/11-job-machinery-catalog.md), [Deployment and pooling](../deployment/README.md), [Observability system design](../observability/00-system-design.md), issues #2460 (runtime assumptions), #2466 (ticker and Sentry readiness), #2424 (operations console), #2095 (Mumbai worker)
@@ -122,4 +123,5 @@
 ## Deprecated & Superseded Approaches
 
 - **The 5-minute HTTP fan-out ticker as the only job engine.** This is proposed to become a safety-net scheduler inside a worker in phase 2. Until then it stays authoritative (AGENTS.md rule 4).
-- **One database for every environment.** Superseded by the 2026-10-30 decision to split before launch.
+- **One database for every environment.** The 2026-10-30 decision to split before launch was itself reversed on 2026-10-31: the split now follows launch (see the 2026-10-31 record).
+- **Phase 1 as a Mumbai container for web and worker.** Superseded on cost by the 2026-10-31 record's Vercel `bom1` trial.

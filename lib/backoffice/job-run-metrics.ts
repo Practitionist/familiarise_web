@@ -10,6 +10,7 @@ import {
   JOB_SCHEDULES,
   jobNameFor,
   latestWindowStart,
+  TICK_CLAIM_JOB,
   type JobSchedule,
 } from "@/lib/cron/schedule";
 
@@ -257,7 +258,8 @@ const DailyRow = z.object({
 });
 
 /**
- * Seven days of SystemJobExecution per job, in four statements run in turn.
+ * Seven days of SystemJobExecution per job, in four statements run in turn;
+ * the ticker's slot-claim rows are not job runs and are left out.
  * Outcome counts, percentiles and IST-day buckets have no Prisma groupBy form,
  * so those are parameterised read-only `$queryRaw`; the last finish uses groupBy.
  */
@@ -277,6 +279,7 @@ export async function readJobRunMetrics(
         coalesce(sum("itemsProcessed"), 0)::int AS "itemsProcessed"
       FROM "SystemJobExecution"
       WHERE "startedAt" >= ${since}
+        AND "jobName" <> ${TICK_CLAIM_JOB}
       GROUP BY 1, 2, 3`),
   );
   const percentiles = z.array(PercentileRow).parse(
@@ -286,6 +289,7 @@ export async function readJobRunMetrics(
         percentile_cont(0.95) WITHIN GROUP (ORDER BY "durationMs")::float8 AS p95
       FROM "SystemJobExecution"
       WHERE "startedAt" >= ${since}
+        AND "jobName" <> ${TICK_CLAIM_JOB}
         AND "durationMs" IS NOT NULL
         AND "status" IN ('COMPLETED', 'FAILED')
       GROUP BY "jobName"`),
@@ -298,12 +302,14 @@ export async function readJobRunMetrics(
         (count(*) FILTER (WHERE "status" = 'FAILED'))::int AS failures
       FROM "SystemJobExecution"
       WHERE "startedAt" >= ${since}
+        AND "jobName" <> ${TICK_CLAIM_JOB}
       GROUP BY 1, 2`),
   );
   // A partial run ran to the end, the same freshness rule the SLOs use.
   const lastSuccess = await prisma.systemJobExecution.groupBy({
     by: ["jobName"],
     where: {
+      jobName: { not: TICK_CLAIM_JOB },
       OR: [
         { status: "COMPLETED" },
         { status: "FAILED", result: { path: ["outcome"], equals: "partial" } },

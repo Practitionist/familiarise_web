@@ -86,6 +86,9 @@ export const TARGETS = [
 
 export type Target = (typeof TARGETS)[number];
 
+/** The ticker's per-slot claim rows; bookkeeping, not a job run, so job views exclude it. */
+export const TICK_CLAIM_JOB = "cron-tick";
+
 /**
  * The `SystemJobExecution.jobName` a target's core writes when it differs from the
  * target name; `null` means the core writes no execution row.

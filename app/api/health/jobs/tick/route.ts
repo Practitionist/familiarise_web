@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { bearerMatches } from "@/lib/cron/cleanup-route";
 import { jobEnvironment } from "@/lib/cron/run-outcome";
+import { TICK_CLAIM_JOB } from "@/lib/cron/schedule";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 
 export const dynamic = "force-dynamic";
 const HEADERS = { "Cache-Control": "no-store", Vary: "Authorization" };
-const TICK_JOB = "cron-tick";
 
 const claimSchema = z.object({
   tickId: z.string().uuid(),
@@ -41,8 +41,8 @@ export async function POST(request: NextRequest) {
     await prisma.systemJobExecution.create({
       data: {
         id: tickId,
-        jobId: TICK_JOB,
-        jobName: TICK_JOB,
+        jobId: TICK_CLAIM_JOB,
+        jobName: TICK_CLAIM_JOB,
         status: "COMPLETED",
         startedAt: now,
         endedAt: now,
