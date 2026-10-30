@@ -21,9 +21,10 @@
  * A second cohort drains the refunds the booking doors owe: a cancel,
  * rejection, moderation ban, maintenance freeze or no-show stamps
  * `Payment.refundOwedKey` in the commit that ends the booking, and this sweep
- * drives each marker under its own key until the money is back. The attempt
- * count on the row retires a marker to an operator at MAX_REFUND_OWED_ATTEMPTS,
- * and markers older than two hours are surfaced once a day as an ops event.
+ * drives each marker under its own key until the money is back. A failed drive
+ * waits out `refundOwedNextAt` (1 h, then 4 h), the attempt count retires a
+ * marker to an operator at MAX_REFUND_OWED_ATTEMPTS, and markers older than
+ * two hours are surfaced once a day as an ops event.
  *
  * Imported by jobs/payments/retry-auto-refunds.ts (GitHub Actions) and
  * app/api/cleanup/retry-auto-refunds/route.ts (the ticker twin).
@@ -226,6 +227,8 @@ async function retryRefundsOwed(
       refundOwedKey: { not: null },
       refundOwedAt: { lt: new Date(now.getTime() - GRACE_MS) },
       refundOwedAttempts: { lt: MAX_REFUND_OWED_ATTEMPTS },
+      // A failed drive's backoff: the marker waits out its next-drive time.
+      OR: [{ refundOwedNextAt: null }, { refundOwedNextAt: { lte: now } }],
       paymentStatus: PaymentStatus.SUCCEEDED,
       deletedAt: null,
       refunds: { none: { status: RefundStatus.PENDING } },

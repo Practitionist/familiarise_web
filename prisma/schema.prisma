@@ -5897,6 +5897,8 @@ model Payment {
   refundOwedReason            String?
   refundOwedAt                DateTime?                    @db.Timestamptz
   refundOwedAttempts          Int                          @default(0)
+  // The sweep's next drive after a failed one (backoff); null = due now.
+  refundOwedNextAt            DateTime?
   // Referrals this payment qualified (at most one in practice).
   qualifyingReferrals         Referral[]                   @relation("ReferralQualifyingPayment")
   firstPaymentOfRelationships ExpertCustomerRelationship[]

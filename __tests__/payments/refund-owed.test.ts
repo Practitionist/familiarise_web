@@ -16,6 +16,7 @@ type Row = {
   refundOwedReason: string | null;
   refundOwedAt: Date | null;
   refundOwedAttempts: number;
+  refundOwedNextAt: Date | null;
   disputed: boolean;
 };
 type RefundRow = {
@@ -35,6 +36,10 @@ const mockRecordSystemError = jest.fn(async () => undefined);
 const mockRecordSystemEvent = jest.fn(async () => undefined);
 
 const longAgo = () => new Date(Date.now() - 3 * 60 * 60_000);
+/** The marker's backoff ran out. */
+const elapse = (id: string) => {
+  mockRows.get(id)!.refundOwedNextAt = new Date(Date.now() - 1);
+};
 
 function seat(id: string, amount: number, paymentIntent = `order_${id}`): Row {
   const row: Row = {
@@ -46,6 +51,7 @@ function seat(id: string, amount: number, paymentIntent = `order_${id}`): Row {
     refundOwedReason: null,
     refundOwedAt: null,
     refundOwedAttempts: 0,
+    refundOwedNextAt: null,
     disputed: false,
   };
   mockRows.set(id, row);
@@ -56,6 +62,7 @@ type Where = Record<string, unknown> & {
   id?: string | { in: string[] };
   refundOwedKey?: string | null | { not: null };
   refundOwedAttempts?: number | { lt: number };
+  OR?: { refundOwedNextAt: null | { lte: Date } }[];
   disputes?: unknown;
   refunds?: unknown;
   description?: unknown;
@@ -87,6 +94,13 @@ function matches(row: Row, where: Where): boolean {
     row.refundOwedAttempts >= attempts.lt
   )
     return false;
+  // The sweep's backoff claim: no next-drive time, or one already passed.
+  const due = (c: { refundOwedNextAt: null | { lte: Date } }) =>
+    c.refundOwedNextAt === null
+      ? row.refundOwedNextAt === null
+      : row.refundOwedNextAt !== null &&
+        row.refundOwedNextAt <= c.refundOwedNextAt.lte;
+  if (where.OR && !where.OR.some(due)) return false;
   if (where.disputes && row.disputed) return false;
   // The owed cohort leaves a payment with a PENDING refund to reconcile.
   if (
@@ -505,6 +519,7 @@ describe("a gateway that does not know the payment", () => {
 
     expect((await retryAutoRefunds()).owed.stuck).toEqual([]);
     expect(mockRows.get("p1")!.refundOwedAttempts).toBe(1);
+    elapse("p1");
     expect((await retryAutoRefunds()).owed.scanned).toBe(1);
     expect(mockRecordSystemError).not.toHaveBeenCalled();
   });
@@ -518,6 +533,7 @@ describe("a failed gateway attempt", () => {
 
     expect((await retryAutoRefunds()).owed.failed).toBe(1);
     expect(mockRows.get("p1")!.refundOwedKey).toBe("cancel:appt:p1");
+    elapse("p1");
     expect((await retryAutoRefunds()).owed.refunded).toBe(1);
     expect(mockRows.get("p1")!.refundOwedKey).toBeNull();
     const moved = mockRefunds.filter((r) => r.status === "SUCCEEDED");
@@ -530,6 +546,7 @@ describe("a failed gateway attempt", () => {
     failsOnce("PENDING");
 
     await retryAutoRefunds();
+    elapse("p1");
     expect((await retryAutoRefunds()).owed.scanned).toBe(0);
     expect(mockRefundBookingPayment).toHaveBeenCalledTimes(1);
   });
@@ -565,6 +582,76 @@ describe("a failed gateway attempt", () => {
     );
     // Claimed silently, so a later success never sends a stale failure email.
     expect(mockRefunds[0].failedNotifiedAt).toBeInstanceOf(Date);
+  });
+});
+
+describe("owed-refund backoff", () => {
+  const HOUR = 60 * 60_000;
+  const waitOf = (id: string, from: number) =>
+    mockRows.get(id)!.refundOwedNextAt!.getTime() - from;
+
+  it("waits 1 h, then 4 h, between failed drives and pages once at the cap", async () => {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    gatewayFails("SERVER_ERROR");
+
+    let at = Date.now();
+    await retryAutoRefunds();
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(1);
+    expect(waitOf("p1", at)).toBeGreaterThanOrEqual(HOUR);
+    expect(waitOf("p1", at)).toBeLessThan(HOUR + 60_000);
+    // Inside the backoff the sweep does not claim the marker.
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+    expect(mockRefundBookingPayment).toHaveBeenCalledTimes(1);
+
+    elapse("p1");
+    at = Date.now();
+    await retryAutoRefunds();
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(2);
+    expect(waitOf("p1", at)).toBeGreaterThanOrEqual(4 * HOUR);
+    expect(waitOf("p1", at)).toBeLessThan(4 * HOUR + 60_000);
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+
+    elapse("p1");
+    expect((await retryAutoRefunds()).owed.stuck).toEqual(["p1"]);
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: "cancel:appt:p1",
+      refundOwedAttempts: 3,
+      refundOwedNextAt: null,
+    });
+    expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+    expect((await retryAutoRefunds()).owed.scanned).toBe(0);
+  });
+
+  it("writes nothing for a drive that read a stale attempt count", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    const nextAt = new Date(Date.now() + HOUR);
+    Object.assign(mockRows.get("p1")!, {
+      refundOwedAttempts: 2,
+      refundOwedNextAt: nextAt,
+    });
+    gatewayFails("SERVER_ERROR");
+
+    const outcome = await driveRefundOwed({ ...owed, attempts: 1 });
+    expect(outcome.kind).toBe("failed");
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedAttempts: 2,
+      refundOwedNextAt: nextAt,
+    });
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+
+  it("clears the next-drive time with the marker", async () => {
+    seat("p1", 10_000);
+    marker("p1", 5_000);
+    mockRows.get("p1")!.refundOwedNextAt = new Date(Date.now() - 1);
+
+    expect((await retryAutoRefunds()).owed.refunded).toBe(1);
+    expect(mockRows.get("p1")).toMatchObject({
+      refundOwedKey: null,
+      refundOwedNextAt: null,
+    });
   });
 });
 

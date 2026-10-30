@@ -37,6 +37,12 @@ export type RefundOwedMarker = {
 /** Failed drives after which an operator refunds by hand. */
 export const MAX_REFUND_OWED_ATTEMPTS = 3;
 
+/**
+ * The wait after the first and second failed drive before the sweep drives
+ * again; with the sweep's 15-minute grace the cap pages about 5 h after the stamp.
+ */
+const REFUND_OWED_BACKOFF_MS = [60 * 60_000, 4 * 60 * 60_000] as const;
+
 /** The standing ops finding for a payment whose stuck marker blocks a cancel. */
 export const REFUND_NEEDS_SUPPORT_PREFIX = "refund-needs-support:";
 
@@ -91,6 +97,7 @@ export async function clearStuckRefundOwed(
       refundOwedReason: null,
       refundOwedAt: null,
       refundOwedAttempts: 0,
+      refundOwedNextAt: null,
     },
   });
   return count === 1 ? { cleared: row.refundOwedKey } : null;
@@ -254,6 +261,7 @@ export async function stampRefundOwed(
       refundOwedReason: marker.reason,
       refundOwedAt: new Date(),
       refundOwedAttempts: 0,
+      refundOwedNextAt: null,
     },
   });
   return count === 1;
@@ -282,6 +290,7 @@ export function stampRefundsOwed(
         "refundOwedReason" = v.reason,
         "refundOwedAt" = now(),
         "refundOwedAttempts" = 0,
+        "refundOwedNextAt" = NULL,
         "updatedAt" = now()
     FROM unnest(${ids}::text[], ${keys}::text[], ${owed}::bigint[], ${reasons}::text[])
       AS v(id, key, owed, reason)
@@ -411,6 +420,7 @@ async function clearRefundOwed(marker: RefundOwedMarker): Promise<void> {
         refundOwedReason: null,
         refundOwedAt: null,
         refundOwedAttempts: 0,
+        refundOwedNextAt: null,
       },
     })
     .catch((err: unknown) => {
@@ -422,8 +432,9 @@ async function clearRefundOwed(marker: RefundOwedMarker): Promise<void> {
 }
 
 /**
- * Counts one failed drive by CAS on the attempt it read; a permanent failure
- * spends the whole budget at once. Only the drive that hits the cap pages.
+ * Counts one failed drive by CAS on the attempt it read and schedules the
+ * sweep's next drive; a permanent failure spends the whole budget at once.
+ * Only the drive that hits the cap pages.
  */
 async function countFailedAttempt(
   marker: RefundOwedMarker,
@@ -434,6 +445,7 @@ async function countFailedAttempt(
   const next = permanent
     ? Math.max(attempts + 1, MAX_REFUND_OWED_ATTEMPTS)
     : attempts + 1;
+  const stuck = next >= MAX_REFUND_OWED_ATTEMPTS;
   const counted = await prisma.payment
     .updateMany({
       where: {
@@ -441,11 +453,15 @@ async function countFailedAttempt(
         refundOwedKey: marker.key,
         refundOwedAttempts: attempts,
       },
-      data: { refundOwedAttempts: next },
+      data: {
+        refundOwedAttempts: next,
+        refundOwedNextAt: stuck
+          ? null
+          : new Date(Date.now() + REFUND_OWED_BACKOFF_MS[next - 1]),
+      },
     })
     .then((r) => r.count === 1)
     .catch(() => false);
-  const stuck = next >= MAX_REFUND_OWED_ATTEMPTS;
   if (counted && stuck) {
     await recordSystemErrorSafe({
       organizationId: null,
