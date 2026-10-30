@@ -152,7 +152,7 @@ The outcome is recorded on the Refund row as `metadata.settledOwed` (`key`, `rea
 
 Worked example: Charlotte's cancel stamped 59,000 paise owed, and the first drive failed. An operator then sends ₹200 (20,000 paise) by hand. The marker drops to 39,000 paise and keeps its next drive at 11:00. The operator reads "Settled ₹200.00 of the owed ₹590.00; ₹390.00 still owed and retrying." At 11:00 the sweep refunds 39,000 paise. Had the operator sent ₹590 or more, the marker would have been cleared and the sweep would send nothing.
 
-Three guards keep this from paying twice or losing the debt:
+These guards keep this from paying twice or losing the debt:
 
 - If the marker's own refund is already `PENDING` at the gateway, the hand refund is refused with 409 `OWED_REFUND_IN_FLIGHT` and nothing is committed.
 - A sweep that read the marker before the hand refund committed carries the marker it read as `owedMarker` (key and amount). Each rail's transaction checks the marker still holds the payment at that amount (`assertOwedMarkerHeld`). A drive whose marker was cleared ends `settled`, and one whose marker was reduced ends `blocked`. Neither moves money, and the next drive reads the reduced amount afresh.

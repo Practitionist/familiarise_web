@@ -260,12 +260,18 @@ export async function restoreOwedOnFailedRefund(
     where: { id: refund.paymentId },
     select: {
       amount: true,
+      paymentStatus: true,
+      deletedAt: true,
       refundOwedKey: true,
       refundOwedPaise: true,
       ...REFUNDABLE_BALANCE_SELECT,
     },
   });
   if (!payment) return;
+  // A marker is only ever stamped on a live SUCCEEDED payment.
+  const stampable =
+    payment.paymentStatus === PaymentStatus.SUCCEEDED &&
+    payment.deletedAt === null;
   const refundable = refundableBalancePaise(Number(payment.amount), payment);
   const owedNow =
     payment.refundOwedPaise === null ? null : Number(payment.refundOwedPaise);
@@ -289,7 +295,7 @@ export async function restoreOwedOnFailedRefund(
         },
         data: { refundOwedPaise: owedNow + restoredPaise },
       });
-  } else if (payment.refundOwedKey === null) {
+  } else if (payment.refundOwedKey === null && stampable) {
     restoredPaise = Math.max(0, Math.min(settled.settledPaise, refundable));
     restoredKey = `${settled.key}:restored:${refundRowId}`;
     const now = new Date();
@@ -311,11 +317,12 @@ export async function restoreOwedOnFailedRefund(
         },
       });
   } else if (payment.refundOwedKey !== settled.key) {
-    // Another door's marker holds the payment; one marker cannot carry two debts.
+    // Another door's marker holds the payment (one marker cannot carry two
+    // debts), or the payment can no longer carry one.
     await recordSystemError({
       organizationId: null,
       category: "PAYMENT",
-      summary: `A failed hand refund on payment ${refund.paymentId} could not give back the ${rupees(settled.settledPaise)} it settled (${settled.key}): another refund is owed — refund by hand`,
+      summary: `A failed hand refund on payment ${refund.paymentId} could not give back the ${rupees(settled.settledPaise)} it settled (${settled.key}): another refund is owed or the payment is no longer live — refund by hand`,
       err: new Error("OWED_REFUND_NOT_RESTORED"),
       context: { refundRowId, heldKey: payment.refundOwedKey, ...settled },
       db: tx,

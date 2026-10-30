@@ -158,6 +158,8 @@ function failedHandRefund(opts: {
   };
   const payment = {
     amount: 10_000,
+    paymentStatus: "SUCCEEDED",
+    deletedAt: null,
     refundOwedKey: opts.marker?.key ?? null,
     refundOwedPaise: opts.marker?.paise ?? null,
     refundOwedAttempts: 1,
