@@ -23,19 +23,20 @@ If the complaint is "we lost the error", branch A is always the right entry even
 **A1 — Is Sentry accepting anything at all?** This outranks every code hypothesis, because if the answer is no, no code change can fix it.
 
 ```bash
-npx tsx -r dotenv/config jobs/observability/sentry-ingest-canary.ts
+curl -sS -X POST https://<site>/api/cleanup/sentry-ingest-canary \
+  -H "Authorization: Bearer $CRON_SECRET" | jq
 ```
 
-| Verdict               | Meaning                                                               | Go to |
-| --------------------- | --------------------------------------------------------------------- | ----- |
-| `accepted`            | Ingest is healthy; the problem is upstream of Sentry                  | A2    |
-| `rate-limited`        | Quota or window exhausted — read `x-sentry-rate-limits`               | A5    |
-| `dropped-despite-2xx` | Sentry is 2xx-ing and discarding                                      | A5    |
-| `rejected-auth`       | Sentry saw the DSN and refused it — wrong project, revoked key        | A1.1  |
-| `unconfigured`        | No DSN in the runtime; nothing was sent and the SDK never initialised | A1.3  |
-| `unavailable`         | 5xx or unreachable; Sentry is unwell                                  | A5    |
+| Verdict            | Meaning                                                                                | Go to |
+| ------------------ | -------------------------------------------------------------------------------------- | ----- |
+| `accepted`         | No quota or rate-limit rejections in the last day; the problem is upstream of Sentry   | A2    |
+| `rejecting`        | `rate_limited` outcomes or a `usage_exceeded` / `error_usage_exceeded` reason          | A5    |
+| `stats-unreadable` | The `stats_v2` read failed; check `SENTRY_STATS_TOKEN`, `SENTRY_API_URL`, `SENTRY_ORG` | A1.2  |
+| config skip        | `SENTRY_STATS_TOKEN` is unset; nothing was checked                                     | A1.2  |
 
-**A1.1** — `rejected-auth` means the client is aimed at a project that does not
+The canary cannot see a wrong DSN, a revoked public key or a missing DSN, because those events never reach the organisation's stats. For those, read the envelope response on the wire (A1.1, A1.3).
+
+**A1.1** — An envelope answered `401`/`403` means the client is aimed at a project that does not
 exist or will not accept. Two dead values are in circulation: a numeric project
 id from a mis-rotation (answers `403 event submission rejected with_reason:
 ProjectId`) and a revoked public key. Check that `NEXT_PUBLIC_SENTRY_DSN` is not
@@ -45,9 +46,9 @@ sixteen digits and both live in the DSN — the org's is in the **host** as
 that caused the 2026-09-20 incident shared its first ten digits with the org id,
 so the two read as siblings. `01` has the full taxonomy.
 
-**A1.2** — Repeated identical alerts? That is a symptom of a long outage, not of noise: it means ingest has been unhealthy for days and the cause is further down. Check `alertSuppressed` in the route's JSON. `true` means the cooldown is correctly holding the repeats back. `false` on a stream of emails means the cooldown's Redis state is unreachable — it fails open by design so you keep getting told, but the store needs fixing.
+**A1.2** — No verdict means no check. A config skip or `stats-unreadable` says nothing about ingest; create or fix the `org:read` organization token and re-run. One alert a day for several days is a long outage, not noise.
 
-**A1.3** — `unconfigured` is deliberately distinct from `rejected-auth`, because
+**A1.3** — No DSN in the runtime is deliberately distinct from a rejected DSN, because
 the operator's action is different and paging someone about auth when nothing was
 ever sent is a false alarm about the wrong subsystem. Nothing reached Sentry and
 nothing was refused: the SDK is simply not initialised in that runtime, so
@@ -141,7 +142,7 @@ If the block is quota, that is a legitimate, dated answer — and the canary is 
 - **One failure recurring** (`UpstashError` on every request while a dependency is walled off) → **throttle**. `INFRA_THROTTLE_MS` keeps one event per class per hour and drops the rest in `beforeSend`; a throttled event never reaches the transport, so it never costs quota. The issue's count then under-reports by design, which is correct — it means "at least one per window", not 3,000.
 - **One run finding many distinct things** (a reconcile pass finding 12 missing ledger transactions) → **aggregate** into one `reportSentryMessage` with the count and ids in `extra`, tagged `expected`. Nothing is discarded, so nothing needs inventing.
 - **Never aggregate a recurrence.** You would replace a real stack trace with a number the code produced by dropping events, and that number silently under-reports during the incident you are trying to size. Events lost to a window boundary, an instance dying mid-window, or a deploy are invisible and uncountable.
-- **Grouping ≠ saving.** A shared `fingerprint` gives N events one issue with a count and costs N. The canary did exactly this and still cost 8,640 events a month until its cadence was cut to 30.
+- **Grouping ≠ saving.** A shared `fingerprint` gives N events one issue with a count and costs N. The old envelope-posting canary did exactly this and spent quota every run.
 
 **E5** — Check whether the `ignoreErrors`/`denyUrls` lists and the breadcrumb path are doing their job, then consider a second sink. `system_events` in Postgres already holds the audit row for money paths, and `lib/observability/betterstack-telemetry.ts` has an out-of-band path that is currently disabled.
 

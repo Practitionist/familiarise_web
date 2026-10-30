@@ -1,152 +1,106 @@
 # The ingest canary
 
-Everything on this page exists because of one incident, and the incident is the reason to read it.
+The ingest canary answers one question: **is Sentry storing our errors, or throwing them away?** It is the only check that can catch an exhausted error quota, because an exhausted quota looks exactly like a quiet day.
 
-## What happened
+## Why it exists
 
-On 2026-09-22 the organisation's error allowance for the billing period was spent. For six days afterwards Sentry answered **`429` to the `error` item of every envelope while answering `200` to its `session` and `transaction` items** — the app was healthy, deploys were green, the cron jobs were quiet, and the error stream was empty. Nothing in the product, in CI, or in the deploy pipeline could tell, because the thing that reports on errors is the thing that had stopped working. The partial nature of the failure is the reason it was invisible: the dashboard kept receiving data, just not errors.
+On 2026-09-22 the organisation's error allowance for the billing period was spent. For six days Sentry answered `429` to the `error` item of every envelope while still answering `200` to its `session` and `transaction` items. The app was healthy, deploys were green, the cron jobs were quiet, and the error stream was empty. The SDK behaved as designed: it dropped each event, honoured `retry-after` and told the application nothing. Spans and logs kept arriving, so the dashboard looked alive while every error issue sat frozen.
 
-The cause is on the record in `sentry.shared.config.ts`: on 2026-09-21 the Upstash request cap (`ERR max requests limit exceeded. Limit: 500000`) put 2,147 `UpstashError` events and roughly 900 `CronLockUnavailableError` events through the Developer plan's 5,000-error allowance in 24 hours. The `INFRA_THROTTLE_MS` guard was added that day to stop a repeat, and it worked — but the allowance for the period was already gone, and a throttle cannot un-spend it.
+Three facts from that incident shape the canary:
 
-## What Sentry actually did
+- **A health check on the application proves nothing about the error stream.** The SDK never surfaces a drop.
+- **The dashboard cannot be the check.** "Did the canary event appear" fails exactly when it is needed.
+- **The alert cannot go through Sentry.** A check that reports its own failure through the failing system is not a check.
+
+## How it works today
+
+The canary is the registry job `sentry-ingest-canary` in `lib/cron/cleanup-registry.ts`, dispatched by the ticker once a day at 00:50 UTC (06:20 IST; `TARGET_EVERY_MINUTES` is 1,440 and the offset is 50 in `lib/cron/schedule.ts`). It sends **no event to Sentry**. Instead it reads the organisation's error outcomes for the last day from Sentry's usage stats API:
 
 ```
-HTTP/1.1 429 Too Many Requests
-retry-after: 60
-x-sentry-rate-limits: 60:default;error;security;attachment:organization:error_usage_exceeded
-
-{"detail":"Sentry dropped data due to a quota or internal rate limit being reached.
- This will not affect your application."}
+GET {SENTRY_API_URL}/api/0/organizations/{SENTRY_ORG}/stats_v2/
+    ?category=error&field=sum(quantity)&statsPeriod=1d&groupBy=outcome&groupBy=reason
+Authorization: Bearer {SENTRY_STATS_TOKEN}
 ```
 
-Three properties of that response make it the worst failure mode an error tracker has, and each one is why the canary is shaped the way it is.
+The answer is a list of groups, one per outcome and reason pair, each with a `totals["sum(quantity)"]` count (Sentry API reference, "Retrieve Event Counts for an Organization (v2)"). `judgeStats` in `lib/observability/ingest-canary.ts` parses it with Zod and classifies it:
 
-**The SDK is well behaved.** It drops the event, honours `retry-after`, and surfaces nothing to the application. There is no exception, no log line, no non-2xx in the app. A health check on the application proves nothing about the error stream.
+| Verdict            | When                                                                                                                                                                        | Pages? |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `accepted`         | No group with a non-zero count has outcome `rate_limited` or reason `usage_exceeded` / `error_usage_exceeded`.                                                              | No     |
+| `rejecting`        | At least one such group. The quota case is reason `error_usage_exceeded`; Spike Protection and short-window throttles also show as `rate_limited`, with a different reason. | Yes    |
+| `stats-unreadable` | The request failed, answered non-2xx, timed out after 8 seconds, or returned a body that does not match the schema. Ingest health is unknown.                               | Yes    |
 
-**Only some categories are limited.** The header names `error`, `security` and `attachment`. It does **not** name `session`, `transaction` or `log`. So the dashboard kept showing current data — the span-derived `N+1 Query` issues went on updating hourly for days — while every error issue sat frozen with `last seen: 6 days ago`. A glance reads as "healthy, just quiet", which is the most expensive possible misreading. Confirming this took two probes: on the same page load, the `session` envelope returned `200` and the `event` envelope returned `429`.
+`client_discard` groups (`before_send`, `sample_rate`, `network_error`, `ratelimit_backoff`) are the SDK's own drops. They never page, because most are deliberate.
 
-**The dashboard cannot be the check.** Any test of the form "did the canary event appear in the UI" fails precisely when it is needed. The canary therefore asserts on the ingest _response_, which is still available when storage is not.
+A worked example from the live organisation, read on 2026-10-31 over 30 days: `accepted/none` 276, `rate_limited/error_usage_exceeded` 6,639, and four `client_discard` reasons (`network_error` 1,077, `ratelimit_backoff` 746, `before_send` 440, `sample_rate` 172). A one-day read with the 6,639 rejections in it would be `rejecting` with the quota remedy. A day holding only the 276 accepted errors and the discards would be `accepted`.
 
-## The canary
+### What it does with a verdict
 
-`lib/observability/ingest-canary.ts` posts one real, minimal error envelope at Sentry's envelope endpoint and classifies the response.
+| Verdict                           | Route answer | Run row                                                                    | Alert                                                    |
+| --------------------------------- | ------------ | -------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `accepted`                        | 200          | None; the canary takes no lease, so only the tick summary records it       | None                                                     |
+| `rejecting` or `stats-unreadable` | 503          | None; the tick lists it under `failed`                                     | Email, Better Stack error line, ops chat mirror          |
+| `SENTRY_STATS_TOKEN` unset        | 200          | `CANCELLED`, outcome `skipped`, reason `SENTRY_STATS_TOKEN not configured` | None. It is a config skip, listed by `/api/health/jobs`. |
 
-| Verdict               | Meaning                                                                                                                                                                                        |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accepted`            | 2xx with no drop notice. Error events are being taken.                                                                                                                                         |
-| `dropped-despite-2xx` | 2xx, but the body says the data was dropped. Sentry does this.                                                                                                                                 |
-| `rate-limited`        | 429. Read `x-sentry-rate-limits` to separate a short-window throttle from an exhausted period allowance.                                                                                       |
-| `rejected-auth`       | 401/403. Sentry saw the DSN and refused it — wrong project or revoked key.                                                                                                                     |
-| `unconfigured`        | No DSN in the runtime, so nothing was ever sent and the SDK never initialised. Distinct from `rejected-auth` on purpose: nothing was rejected, and the fix is configuration rather than a key. |
-| `unavailable`         | 5xx, or the request never completed. Sentry is unwell or unreachable.                                                                                                                          |
+`sendSentryIngestAlert` in `lib/observability/ingest-alert.ts` sends on two independent channels at once:
 
-`isIngestHealthy()` is true for `accepted` and nothing else — in particular a 2xx alone is not sufficient, because `dropped-despite-2xx` exists and is the case that hid this for six days.
+- **Email** through `deliver()` to `OBSERVABILITY_ALERT_EMAIL`, falling back to the support mailbox. Resend is a separate provider with a separate quota.
+- **Better Stack**, as one log line through `emitTelemetryLog` at level `error` with the message `sentry-ingest-canary unhealthy` and the verdict, accepted count and rejections as fields. A Better Stack alert matching that message pages on the same event. The line needs `ENABLE_BETTERSTACK_TELEMETRY=true` and the source token, like every other telemetry line.
 
-### Three decisions, each forced by the incident
+When the email is taken, the same text is mirrored to `SLACK_OPS_WEBHOOK_URL` if it is set. The remedy is chosen per case, because the wrong action is worse than no alert: a spent allowance is told to triage or raise the plan, a throttle is told it clears on its own and not to buy a plan, and an unreadable read is told to check the token, the API URL and the organisation slug.
 
-**A raw `fetch`, not the SDK.** `Sentry.captureException` followed by `flush()` cannot answer this question. `flush()` returns a boolean, not a reason, and a dropped event is indistinguishable from a delivered one from the caller's side. The ingest response — status, `x-sentry-error`, `x-sentry-rate-limits`, body — is the only evidence available while ingest is broken.
+There is no cooldown. The job runs once a day, so an outage that lasts a week sends one reminder a day, and an operator who re-runs it by hand from the System Jobs page gets a fresh answer.
 
-**The endpoint is derived from the DSN, never hardcoded.** `envelopeEndpointFromDsn()` parses `NEXT_PUBLIC_SENTRY_DSN` for the public key, host and project id. The host is used **verbatim**: Sentry Cloud DSNs already carry the collector subdomain (`o<orgId>.ingest.<region>.sentry.io`) and a self-hosted DSN points straight at its collector. An earlier draft prepended `ingest.` when the host did not _start_ with it, which produced a host with the label in the middle, `ingest.o<orgId>.ingest.<region>.sentry.io` — the label sits mid-host, not at the front. That resolves to nothing, and the failure mode is a bare DNS `fetch failed` rather than an HTTP status, so a unit test written against the same wrong logic passed while the probe was broken. Only running it live found it.
+After the verdict, the same run calls `checkSentryQuota` (`lib/observability/quota-alert.ts`), which emails once per billing period when accepted errors pass 70 % of `SENTRY_ERROR_QUOTA`. It uses the same token, and its failure never changes the canary's verdict.
 
-**It emails; it never reports to Sentry.** A check that reports its own failure through the failing system is not a check. `lib/observability/ingest-alert.ts` sends through Resend to `OBSERVABILITY_ALERT_EMAIL`, defaulting to the platform support mailbox — a separate quota, a separate provider and a separate failure mode. The message carries the verdict, the status, the event id, the raw rate-limit header, and the remedy, because the reader is looking at a dashboard that looks healthy and cannot derive the fix from what they can see.
+The canary's own 503 never reaches Sentry: `reportableToSentry()` in `netlify/functions/cron-tick.mts` keeps it out of the ticker's escalation, while it stays in the tick's `failed` list and in its run row.
 
-The same rule has to hold one level up, and that is what `reportableToSentry()` in `netlify/functions/cron-tick.mts` is for. The canary runs as a target of the ticker, so when it reports a failing run with a `503` the ticker's own failure path would dutifully report "cron failed: sentry-ingest-canary" — to Sentry. The filter drops the canary from that report and from nothing else: it stays in the tick's `failed` list, keeps its own status and body, and is written to the job-execution history, so the tick's visibility is untouched and only the Sentry write is suppressed. Suppression there is the same call as the email alert's, reaching it the other way round: the alert email fails _open_, so this outage can never silence its own alarm.
+### The token
 
-### Wiring
-
-| Piece         | Path                                            |
-| ------------- | ----------------------------------------------- |
-| Probe         | `lib/observability/ingest-canary.ts`            |
-| Alert         | `lib/observability/ingest-alert.ts`             |
-| HTTP twin     | `app/api/cleanup/sentry-ingest-canary/route.ts` |
-| Bare-Node job | `jobs/observability/sentry-ingest-canary.ts`    |
-| Ticker target | `netlify/functions/cron-tick.mts` → `TARGETS`   |
-
-The HTTP twin uses the shared `cleanupRoute` factory rather than hand-rolling the bearer check, maintenance guard and cron lock, so it inherits the `CRON_SECRET` gate, `withCronLock` and the `CronLockUnavailableError` backstop that every other job has. It sits in `TARGET_EVERY_MINUTES` at **6 hours** (360 minutes), not on the default five-minute tick, and that is a quota decision rather than an operational one. The canary posts a real _stored_ event every run, so cadence is a direct line item on the error allowance: five minutes is 288/day, 8,640/month, which is **173% of the Developer plan's 5,000 included errors** — the health check alone would exhaust the budget it exists to protect. Six hours is 4/day, 120/month (0.24% of Team, 2.4% of Developer). The up-to-six-hours of detection latency this gives up is cheap, because the alert email fires on the _failing_ run, and the healthy runs being removed were the ones that could not do anything about anything. The probe itself has no Redis dependency — it posts one HTTPS envelope with an injected `send` — but the path around it does: the cron lock (`withCronLock`) and the alert cooldown (issue 3 below) are both Redis-backed, so it is not lock-free relative to the other targets. It reports `503` when unhealthy, so the ticker's `failed` list separates "the route is broken" from "its subject is broken".
-
-The canary event carries a **fixed fingerprint**, so repeated runs collapse into one issue with a count rather than hundreds of near-identical issues, and it carries **no user, org, IP or URL**. It is an infrastructure probe and must never become a record about a person.
-
-## The alert has a cooldown, on purpose
-
-`sendSentryIngestAlert` has no throttle of its own, so without a gate the canary emails the same content on every failing run — **4 identical emails a day** at the six-hour cadence. An alert nobody reads is the same as no alert, which reintroduces through the front door the exact outcome this canary exists to prevent.
-
-`canaryAlertNeeded` sends **one email per distinct state**, re-armed the moment the state changes, and re-asserted at most once per **24 hours** so a week-long outage does not go silent after its first email. A change from `rate-limited` to `rejected-auth` alerts immediately, because that changes what the operator should do. The route reports `alertSuppressed` alongside `alerted`, because "told them" and "told them recently" are different things to see in a log.
-
-Two decisions in there are forced by the runtime rather than chosen, and both are the opposite of what the rest of this page does:
-
-**The cooldown is armed only by a send that actually landed.** `canaryAlertNeeded` is a pure read; `recordCanaryAlertSent` does the write and the route calls it _after_ `sendSentryIngestAlert` returns true. This separation is the fix for a bug that shipped in the first version, where the read and the write happened together before the send was attempted: one failed delivery — the email provider down — armed a 24-hour suppression for a verdict nobody had been told about, and the canary went quiet about broken ingest for a day. That is the exact failure this mechanism exists to prevent, reached by the alerting itself. Both remaining failure modes cost a duplicate email rather than a missed alert: a send that succeeds and a cooldown write that then fails, and two healthy runs racing.
-
-**The state lives in Redis, not in a module variable.** A six-hour cron against serverless functions means the process is almost certainly cold, so an in-memory value is reset before the next run and the gate would suppress nothing. The _probe_ still has no Redis dependency — it runs and reports regardless — and only suppression consults it. `lib/redis`'s circuit breaker means a walled-off Redis fails fast rather than adding latency to a check whose job is to be fast.
-
-**It fails open.** If the store is unreachable, the answer is "send". A duplicate email costs a glance; a suppressed one costs an outage nobody was told about. This is the one place in the canary where a skip is the dangerous direction, and it is the same reasoning that makes `notify-ops-failure.sh` refuse to skip its own check: a sink that can silently skip is a dead sink nobody sees. The store's error is logged rather than swallowed, so a gate that has silently degraded to permanently-off is still visible.
+`SENTRY_STATS_TOKEN` is a Sentry **organization auth token** whose only needed scope is `org:read` (the endpoint accepts `org:read`, `org:write` or `org:admin`). It is a runtime key for the production Netlify context. It is not `SENTRY_AUTH_TOKEN`, the build-time token that uploads source maps. `SENTRY_API_URL` defaults to `https://us.sentry.io` and `SENTRY_ORG` to `practitionist`.
 
 ## Running it by hand
 
 ```bash
-# Through the job, which is the same code path the ticker drives.
-npx tsx -r dotenv/config jobs/observability/sentry-ingest-canary.ts
-
-# Or through the HTTP twin.
 curl -sS -X POST https://<site>/api/cleanup/sentry-ingest-canary \
   -H "Authorization: Bearer $CRON_SECRET" | jq
 ```
 
-A healthy body is `{"healthy":true,"verdict":"accepted","status":200,...}`. An unhealthy one is `503` with `verdict`, `detail` and `alerted`.
-
-Verified live against the exhausted quota on 2026-09-28, which is the only test of this thing that proves anything:
-
-```
-verdict    : rate-limited
-status     : 429
-healthy    : false
-rateLimits : 60:default;error;security;attachment:organization:error_usage_exceeded
-```
+A healthy body is `{"healthy":true,"verdict":"accepted","accepted":<n>,"rejections":[],...}`. An unhealthy one answers 503 with `verdict`, `rejections`, `detail` and `alerted`. The admin Run door on the System Jobs page runs the same code in-process.
 
 ## The remedy, and why you do not have to wait for the month
 
-The quota is measured against the plan's **included volume**, not against a counter that resets independently of the plan. Upgrading therefore raises the ceiling immediately — the usage already spent is under the new number, and `error_usage_exceeded` clears on the next event. Developer is 5,000 errors/month; Team is 50,000 at $26/mo, and also brings 90-day retention instead of 30 and the `event:read` REST scope that `lib/observability/sentry-issues.ts` needs. So the sequence is: upgrade, then re-run the canary and confirm `healthy: true`. There is no need to wait for the period to roll over.
+The quota is measured against the plan's included volume. Upgrading raises the ceiling at once: the usage already spent sits under the new number, and `error_usage_exceeded` clears on the next event. Developer is 5,000 errors a month; Team is 50,000. So the sequence is: upgrade, then re-run the canary and confirm `healthy: true`.
 
 ## Mass events: what each one costs
 
-The question "should we merge or group them" has three different answers depending on which knob is meant, and confusing them is how a reporting mechanism becomes the outage. Measured against the 5,000-error Developer allowance:
+Measured against the 5,000-error Developer allowance:
 
 | Mechanism                               | Events it costs        | What survives                                                       |
 | --------------------------------------- | ---------------------- | ------------------------------------------------------------------- |
 | Report every occurrence                 | N                      | everything, and nothing left in the budget                          |
-| Shared `fingerprint` (one issue)        | **N** — still N events | grouping in the UI only; the count is real, the budget is not saved |
-| **Throttle** (`INFRA_THROTTLE_MS`)      | ~24/day/class          | one genuine event per window, with a real stack trace               |
+| Shared `fingerprint` (one issue)        | **N**, still N events  | grouping in the UI only; the count is real, the budget is not saved |
+| **Throttle** (`INFRA_THROTTLE_MS`)      | about 24 a day a class | one genuine event per window, with a real stack trace               |
 | **Aggregate** (a set, not a repetition) | 1 per run              | the count and the ids, in `extra`                                   |
 | Raise the plan                          | n/a                    | all of it                                                           |
 
-**Grouping into one issue is not grouping into one event.** A shared fingerprint is the cheapest-looking option and it saves nothing: the canary uses one, and each run still costs a stored event. That is precisely how the canary came to cost 8,640 events a month — 173% of the Developer allowance — before it was moved to a six-hour slot. Only sending fewer _events_ reduces the bill.
-
-**A repetition is throttled, a set is aggregated.** The rule and the reasoning are on the conventions page (`02`), because it is a decision rule rather than a fact about this deployment. The short version: throttle when one failure is happening again and again, because the evidence is one real stack trace and a count you would have to invent; aggregate when one run found many distinct things, because the set is the fact and the ids are the evidence. Aggregating a repetition is the mistake — it replaces a real trace with a number the code computed by discarding events, and that number under-reports exactly when you are trying to size the incident.
+**Grouping into one issue is not grouping into one event,** and an issue marked "ignored" still counts against the quota. Only sending fewer events reduces the bill. **A repetition is throttled, a set is aggregated;** the rule is on the conventions page (`02`).
 
 ## A quota drops every error, whatever its level
 
-Once the period allowance is spent, Sentry rejects the whole `error` category at ingest. Raising an event to `fatal`, fingerprinting it, or routing it around the process-local throttle does nothing, because the throttle and the level decide only which events the SDK sends; the quota decides which of those Sentry stores. During the 2026-09 exhaustion, `error` events were rate-limited with reason `error_usage_exceeded` every day while transactions, spans and logs continued to be accepted, so the dashboard looked alive while every error issue was frozen. The practical consequences are these.
+Once the allowance is spent, Sentry rejects the whole `error` category at ingest. Raising an event to `fatal` or fingerprinting it does nothing, because the throttle and the level only decide which events the SDK sends.
 
-- **Absence of an error is not evidence of health while the quota is exhausted.** A Prisma `P2022` (column missing) 500 that should have appeared in Sentry produced no event for exactly this reason. Before treating silence as good news, check the organisation stats for the `error` category: `accepted` must be non-zero and `rate_limited` should be near zero (`GET /api/0/organizations/<org>/stats_v2/` with `category=error`, grouped by `outcome` and `reason`).
-- **An alert whose only sink is Sentry fails with the quota.** `scripts/ci/notify-ops-failure.sh` posts to Slack first and falls back to a Sentry envelope. Sentry answers 2xx to that envelope even when it then drops the event, and the script treats any 2xx as delivered, so with no Slack webhook the script reports "recorded" for an alert nobody will ever see.
-
-## The scheduled drift check needs a sink outside Sentry
-
-`db-live-drift.yml` runs a read-only `prisma migrate diff` of the shared live database against the schema every morning, and calls the notify script on failure. In the incident that motivated this section it was red on every run for a week, and no page reached anyone: the Slack webhook had never been provisioned, the Sentry fallback was being dropped by the exhausted quota, and a permanently red check carries no new information. The standing rules are therefore these.
-
-- **Provision `SLACK_OPS_WEBHOOK_URL` as an Actions secret.** It is the one out-of-band channel that also repairs every other scheduled-workflow alert, and no new workflow, scheduler or in-app assertion is needed.
-- **Keep the check green so that red means something.** After any schema push, run the workflow once by hand and confirm it passes; a red run is then a real drift. The daily schedule is delayed by GitHub under load, so detection latency is up to about a day plus the delay.
-- **The canary is the monitor for the quota, not for drift.** It emails when ingest stops accepting errors, so it is the first thing to check when a drift alert appears to have gone missing.
+- **Absence of an error is not evidence of health while the quota is spent.** Before treating silence as good news, read the canary's last run, or the same `stats_v2` query by hand.
+- **An alert whose only sink is Sentry fails with the quota.** `scripts/ci/notify-ops-failure.sh` posts to Slack first and falls back to a Sentry envelope, which Sentry answers 2xx and then drops. Provision `SLACK_OPS_WEBHOOK_URL`.
 
 ## The standing risk
 
-The canary is wired, but the underlying fragility is unchanged: a 5,000-error monthly allowance is smaller than a single 24-hour dependency outage, and the whole system depends on that allowance never being exhausted. The throttle in `sentry.shared.config.ts` bounds the damage from a _known_ pattern and does so deliberately: `INFRA_THROTTLE_MS` is one hour, keyed by error **class** and not by route, and process-local rather than Redis-backed, because Redis _is_ the outage being guarded — a shared limiter needs the downed dependency to answer, and must then either fail open (restoring the firehose) or fail closed (dropping legitimate errors). The resulting bound is warm instances × 1 event/hour/class, against ~3,000/hour unthrottled, and that ~24/day is the **admitted** count, not the number of occurrences: the other 23 may or may not have happened, and the throttle deliberately declines to claim otherwise. Two limits follow from that design and are worth stating plainly. A flood that is _diverse_ rather than repetitive is bounded per class, so the ceiling scales with the number of distinct classes. And a server-side dashboard filter — dropping at ingest, before quota is spent — is the acknowledged follow-up and is not yet built.
-
-Two things would close this further and neither is done: a Sentry alert on the canary's own issue (which fails silently for the same reason everything else did, so it needs an external channel too), and routing error events to a second sink — `system_events` in Postgres already holds the audit row for money paths, and `lib/observability/betterstack-telemetry.ts` already has an out-of-band path that is currently disabled.
+A 5,000-error monthly allowance is smaller than one 24-hour dependency outage. Three things bound it today: the process-local throttle and breaker in `sentry.shared.config.ts`, the escalations-only policy (`00-system-design.md` section 5), and **Spike Protection, which is on for the project**. The canary does not prevent exhaustion; it makes it visible within a day, on channels that do not depend on Sentry.
 
 The alert email's routing, sender and Slack mirror are described in [Email at Familiarise](../../email/README.md).
 
 ## Deprecated & Superseded Approaches
 
-- **Treating a 2xx envelope response as delivery**: Sentry accepts and then drops events for an exhausted quota or a dead project, so a 2xx proves nothing. The canary's verdict comes from the status code and the response body (`dropped data` on a 2xx is a failure); it reports the `x-sentry-rate-limits` header in the alert but does not decide health from it. Alert paths must not depend on Sentry alone.
-- **A five-minute canary cadence**: it alone consumed more than the Developer plan's monthly error allowance; it runs every six hours.
-- **Hardcoding the ingest host**: the endpoint is derived from the DSN verbatim.
+- **Posting a real error envelope as the probe** (to 2026-10-31): each run was a stored event, about 120 a month at a six-hour cadence, and "ignored" did not stop it counting. The stats read costs nothing against the quota. Delete any `envelopeEndpointFromDsn`, `buildErrorEnvelope` or `SentryIngestCanary` residue.
+- **A Redis-backed alert cooldown** (`canaryAlertNeeded`, `recordCanaryAlertSent`, key `observability:canary:last-alerted-verdict`): needed when the canary ran every six hours; a daily run is its own reminder cadence. The key can be left to expire.
+- **A five-minute, then six-hour cadence**: five minutes alone exceeded the monthly allowance. It runs once a day.

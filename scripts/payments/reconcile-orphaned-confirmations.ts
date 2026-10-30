@@ -31,7 +31,6 @@ import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-cha
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
-import * as Sentry from "@sentry/nextjs";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   isFreeCreditIntent,
@@ -316,20 +315,15 @@ async function reconcileOrphanedConfirmationsUnlocked(
   }
 
   const channelsSkipped = skipped.length;
-  // #1708 — one warning per run that counts up, not one event per row per tick.
+  // One business finding per run for the console, not Sentry; each row leaves the queue once.
   if (channelsSkipped > 0) {
-    Sentry.captureMessage(
-      `reconcile-orphaned-confirmations: ${channelsSkipped} appointment(s) marked terminal — no retry can create their chat channel`,
-      {
-        level: "warning",
-        fingerprint: ["reconcile-orphaned-confirmations", "dm_not_permitted"],
-        tags: { subsystem: "payments" },
-        extra: {
-          appointmentIds: skipped.map((r) => r.appointmentId),
-          skipped,
-        },
-      },
-    );
+    await recordSystemEvent({
+      category: "BOOKING",
+      severity: "WARN",
+      message: `reconcile-orphaned-confirmations: ${channelsSkipped} appointment(s) marked terminal — no retry can create their chat channel`,
+      context: { skipped },
+      correlationId: "reconcile-orphaned-confirmations:channel-terminal",
+    });
   }
 
   console.log(

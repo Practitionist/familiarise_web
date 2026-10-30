@@ -33,7 +33,7 @@ Do not build an alert or figure on the row status without reading `result.outcom
 
 ## Streak escalation
 
-A failing ticker target is a grouped Sentry warning (fingerprint `cron-tick` / `target-failed-once`, the target in the `target` tag, `class: platform` for Netlify's own error page) unless `isRepeatedFailure()` in `lib/cron/failure-streak.ts` says it has had no `COMPLETED` run for three of its own cadences (`STREAK_CADENCES`). Only then is it an error with the fingerprint `cron-tick` / `<target>`. A target is judged only on its first due tick of an hour (`isFirstDueTickOfHour`). The ticker reads each target's last `COMPLETED` start from `GET /api/health/jobs/streaks`, bounded to two seconds; unknown history, an unreachable endpoint and a job whose rows use another name all count as a one-off. Never count consecutive failing ticks in Redis.
+A failing ticker target that fails once is a log line only (`cron-tick.target-failed-once`, with `class: platform` for Netlify's own error page) plus its entry in the tick summary. It reaches Sentry only when `isRepeatedFailure()` in `lib/cron/failure-streak.ts` says it has had no `COMPLETED` run for three of its own cadences (`STREAK_CADENCES`), as an error with the fingerprint `cron-tick` / `<target>`. A target is judged only on its first due tick of an hour (`isFirstDueTickOfHour`). The ticker reads each target's last `COMPLETED` start from `GET /api/health/jobs/streaks`, bounded to two seconds; unknown history, an unreachable endpoint and a job whose rows use another name all count as a one-off. Never count consecutive failing ticks in Redis.
 
 ## Better Stack
 

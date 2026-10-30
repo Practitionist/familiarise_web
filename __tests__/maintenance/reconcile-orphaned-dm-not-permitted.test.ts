@@ -8,7 +8,7 @@
  * Stream's DM rule refuses (`DmNotPermittedError`) can never succeed on a
  * retry, so leaving the row unmarked put it at the head of the queue on every
  * tick and the pass never converged. The sweep now stamps that row out of the
- * queue and reports it as `channelsSkipped`; a generic throw is still a
+ * queue and records it as `channelsSkipped` in a `SystemEvent`; a generic throw is still a
  * `channelsFailed` retry and writes nothing.
  */
 
@@ -46,15 +46,20 @@ jest.mock("../../lib/payments/webhooks/ensure-channels", () => ({
 jest.mock("../../lib/payments/webhooks/handlers", () => ({
   confirmExistingAppointment: jest.fn(),
 }));
+jest.mock("../../lib/enterprise/system-events", () => ({
+  recordSystemEvent: jest.fn(),
+}));
 
 import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
+import { recordSystemEvent } from "../../lib/enterprise/system-events";
 import { ensureChannelsForAppointment } from "../../lib/payments/webhooks/ensure-channels";
 import { DmNotPermittedError } from "../../lib/stream/dm-eligibility";
 import { reconcileOrphanedConfirmations } from "../../scripts/payments/reconcile-orphaned-confirmations";
 
 const mockEnsure = ensureChannelsForAppointment as jest.Mock;
 const mockCaptureMessage = Sentry.captureMessage as jest.Mock;
+const mockRecordEvent = recordSystemEvent as jest.Mock;
 const updateMany = prisma.appointment.updateMany as jest.Mock;
 
 describe("reconcile-orphaned-confirmations — DM not permitted (#1708)", () => {
@@ -77,13 +82,12 @@ describe("reconcile-orphaned-confirmations — DM not permitted (#1708)", () => 
       where: { id: "appt-1", chatChannelEnsuredAt: null },
       data: { chatChannelEnsuredAt: expect.any(Date) },
     });
-    expect(mockCaptureMessage).toHaveBeenCalledWith(
-      expect.stringContaining("1 appointment(s)"),
+    expect(mockCaptureMessage).not.toHaveBeenCalled();
+    expect(mockRecordEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        level: "warning",
-        fingerprint: ["reconcile-orphaned-confirmations", "dm_not_permitted"],
-        extra: {
-          appointmentIds: ["appt-1"],
+        severity: "WARN",
+        message: expect.stringContaining("1 appointment(s)"),
+        context: {
           skipped: [
             {
               appointmentId: "appt-1",
@@ -105,18 +109,16 @@ describe("reconcile-orphaned-confirmations — DM not permitted (#1708)", () => 
     const result = await reconcileOrphanedConfirmations({ limit: 10 });
 
     expect(result.channelsSkipped).toBe(1);
-    expect(mockCaptureMessage).toHaveBeenCalledWith(
-      expect.any(String),
+    expect(mockRecordEvent).toHaveBeenCalledWith(
       expect.objectContaining({
-        fingerprint: ["reconcile-orphaned-confirmations", "dm_not_permitted"],
-        extra: expect.objectContaining({
+        context: {
           skipped: [
             expect.objectContaining({
               reason: "no_channel_branch_for_appointment",
               appointmentType: "WEBINAR",
             }),
           ],
-        }),
+        },
       }),
     );
   });
@@ -129,6 +131,6 @@ describe("reconcile-orphaned-confirmations — DM not permitted (#1708)", () => 
     expect(result.channelsFailed).toBe(1);
     expect(result.channelsSkipped).toBe(0);
     expect(updateMany).not.toHaveBeenCalled();
-    expect(mockCaptureMessage).not.toHaveBeenCalled();
+    expect(mockRecordEvent).not.toHaveBeenCalled();
   });
 });

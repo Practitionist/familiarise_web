@@ -3,8 +3,8 @@
  */
 
 /**
- * Without PLATFORM_GSTIN the uploader touches no invoice, answers a typed
- * skip, and warns Sentry only on the first slot of its daily window.
+ * Without PLATFORM_GSTIN the uploader touches no invoice and answers a typed
+ * skip that the run row records; it never reaches Sentry.
  */
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -21,23 +21,18 @@ import prisma from "@/lib/prisma";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { runIrpUploader } from "@/jobs/compliance/irp-uploader";
 
-it("skips the run with a typed reason and warns once per window", async () => {
+it("skips the run with a typed reason and sends nothing to Sentry", async () => {
   delete process.env.PLATFORM_GSTIN;
   jest.spyOn(console, "warn").mockImplementation(() => {});
-  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000);
 
-  const first = await runIrpUploader({
-    limit: 10,
-    windowStart: minutesAgo(25),
-  });
-  await runIrpUploader({ limit: 10, windowStart: minutesAgo(85) });
+  const result = await runIrpUploader({ limit: 10 });
 
-  expect(first).toEqual({
+  expect(result).toEqual({
     processed: 0,
     failed: 0,
     skippedRows: 0,
     skipped: "PLATFORM_GSTIN not configured",
   });
   expect(prisma.organizationInvoice.findMany).not.toHaveBeenCalled();
-  expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+  expect(reportSentryMessage).not.toHaveBeenCalled();
 });

@@ -1,346 +1,151 @@
-/**
- * Sentry ingest canary — is Sentry actually ACCEPTING our error events?
- *
- * ## Why this exists
- *
- * On 2026-09-22 the organisation's error quota was exhausted (the Upstash
- * request-cap incident the day before put ~5,000 events through the Developer
- * plan's 5,000/month allowance in a single day). Sentry kept *accepting* the
- * HTTP envelope and answered `200 {}` for session and transaction items while
- * answering the error items with:
- *
- *     429  x-sentry-rate-limits: …organization:error_usage_exceeded
- *
- * Every SDK does the polite thing: drop the event, retry after `retry-after`,
- * and never surface it to the application. So the app was healthy, the deploys
- * were green, the cron jobs were quiet, and **the error stream was empty for
- * six days**. Nothing in the product or the CI could tell, because the thing
- * that reports on errors is the thing that had stopped working.
- *
- * This is the only observability check in the system that can catch that
- * class of failure, and it has to report somewhere Sentry cannot throttle —
- * hence email, not Sentry.
- *
- * ## Why a raw fetch instead of the SDK
- *
- * `Sentry.captureException` + `flush()` cannot answer this. `flush()` returns
- * a boolean, not a reason, and a dropped event is indistinguishable from a
- * successful one from the caller's side. Posting a hand-built envelope
- * envelope-header pair straight at the ingest endpoint is the only way to read
- * the real status code and the `x-sentry-rate-limits` / `x-sentry-error`
- * headers that name the reason.
- *
- * ## What it deliberately is not
- *
- * It does not assert on anything in Sentry. There is no "the canary event
- * appeared in the UI" check here, because that check cannot run while ingest
- * is broken — which is precisely the moment it is needed. It asserts on the
- * ingest *response*, which is available even when storage is not.
- */
+import { z } from "zod";
 
 /**
- * Where the canary event is posted, derived from the DSN.
- *
- * Derived rather than hardcoded, for the same reason the rest of this branch
- * reads Sentry endpoints from the environment: a hardcoded host is a second
- * thing to change when the org moves region, and this file would then point at
- * somebody else's Sentry. The DSN already encodes both parts:
- *
- *     https://<publicKey>@<host>/<projectId>
- *
- * The host is used VERBATIM. Sentry Cloud DSNs already carry the collector
- * subdomain — `o<orgId>.ingest.<region>.sentry.io` — and a self-hosted DSN
- * points straight at the collector. Rewriting it (an earlier draft prepended
- * `ingest.` when the host did not *start* with it) produced a host with the
- * label in the middle, `ingest.o<orgId>.ingest.<region>.sentry.io`, which
- * resolves to nothing: the `ingest.` label sits mid-host, not at the front.
- * Only live testing finds that, because the DNS failure is a clean
- * `fetch failed` rather than an HTTP status.
+ * Sentry ingest canary: reads the organisation's error outcomes for the last
+ * day from `stats_v2` instead of posting a probe event, so it spends no error
+ * quota. A quota or rate-limit rejection, or an unreadable stats answer, is
+ * unhealthy.
  */
-export function envelopeEndpointFromDsn(dsn: string): {
-  url: string;
-  publicKey: string;
-} | null {
-  try {
-    const parsed = new URL(dsn);
-    const publicKey = parsed.username;
-    const projectId = parsed.pathname.replace(/^\//, "");
-    if (!publicKey || !projectId || !parsed.host) return null;
-    const url = new URL(`https://${parsed.host}/api/${projectId}/envelope/`);
-    url.searchParams.set("sentry_version", "7");
-    url.searchParams.set("sentry_key", decodeURIComponent(publicKey));
-    return { url: url.toString(), publicKey: decodeURIComponent(publicKey) };
-  } catch {
-    return null;
-  }
+
+const STATS_PERIOD = "1d";
+const FETCH_TIMEOUT_MS = 8_000;
+const QUOTA_REASONS: ReadonlySet<string> = new Set([
+  "usage_exceeded",
+  "error_usage_exceeded",
+]);
+
+const statsResponseSchema = z.object({
+  groups: z.array(
+    z.object({
+      by: z.object({
+        outcome: z.string(),
+        reason: z.string().optional(),
+      }),
+      totals: z.object({ "sum(quantity)": z.number().nonnegative() }),
+    }),
+  ),
+});
+
+export type IngestVerdict = "accepted" | "rejecting" | "stats-unreadable";
+
+export interface IngestRejection {
+  outcome: string;
+  reason: string;
+  count: number;
 }
 
-/** Bound so a hung Sentry cannot hold a Netlify function open. */
-const PROBE_TIMEOUT_MS = 10_000;
-
-/** One event per run; the fingerprint pins it to a single non-noisy issue. */
-const CANARY_FINGERPRINT = ["sentry-ingest-canary"];
-
-export type IngestVerdict =
-  /** 2xx — Sentry is taking error events. */
-  | "accepted"
-  /** 2xx but the body says the item was dropped. Some Sentry 200s carry a reason. */
-  | "dropped-despite-2xx"
-  /** 429 — throttled or over quota. `detail` carries Sentry's own words. */
-  | "rate-limited"
-  /** 401/403 — Sentry saw the DSN and refused it. The DSN or key is wrong. */
-  | "rejected-auth"
-  /**
-   * No DSN at all, or one that does not parse — nothing was ever sent.
-   *
-   * Distinct from `rejected-auth` because the operator's action is different
-   * and neither is urgent-in-the-same-way: here the SDK is simply not
-   * initialised in this deployment, so there is no error reporting to be lost.
-   * Paging someone to fix their auth when nothing was ever sent is a false
-   * alarm about the wrong subsystem, and it is a *config* fault, found by
-   * looking at configuration.
-   */
-  | "unconfigured"
-  /** 5xx or transport failure — Sentry is unwell, or we cannot reach it. */
-  | "unavailable";
-
-export interface IngestProbeResult {
+export interface IngestCheck {
   verdict: IngestVerdict;
-  /** HTTP status, or 0 when the request never completed. */
-  status: number;
-  /** Sentry's own explanation, when it sent one. */
+  /** Errors Sentry stored over the period. */
+  accepted: number;
+  /** Quota or rate-limit rejections over the period, by outcome and reason. */
+  rejections: IngestRejection[];
+  /** Why the stats could not be read; null when they were. */
   detail: string | null;
-  /**
-   * The raw `x-sentry-rate-limits` header. This is the one piece of evidence
-   * that distinguishes "we are being throttled right now" from "the org has
-   * exceeded its allowance for the billing period", which look identical from
-   * the status code alone and need completely different responses.
-   */
-  rateLimits: string | null;
-  /** The event id we sent, so an operator can find the canary in the UI. */
-  eventId: string;
 }
 
-/**
- * Post one real error envelope and classify the response.
- *
- * `send` is injected so a test can drive every branch without a network, and
- * so this module carries no import-time dependency on a live DSN.
- */
-export async function probeSentryIngest(opts?: {
-  send?: typeof defaultSend;
-  dsn?: string;
-  url?: string;
-  eventId?: string;
-  now?: Date;
-}): Promise<IngestProbeResult> {
-  const send = opts?.send ?? defaultSend;
-  const dsn = opts?.dsn ?? process.env.NEXT_PUBLIC_SENTRY_DSN ?? "";
-  const derived = envelopeEndpointFromDsn(dsn);
-  // A DSN that will not parse means the app is not sending errors either, so
-  // the canary reports that rather than silently posting nowhere.
-  const url = opts?.url ?? derived?.url;
-  const eventId = opts?.eventId ?? newEventId();
-  const now = opts?.now ?? new Date();
+export function sentryStatsUrl(): string {
+  const base = (process.env.SENTRY_API_URL || "https://us.sentry.io").replace(
+    /\/+$/,
+    "",
+  );
+  const org = process.env.SENTRY_ORG || "practitionist";
+  const qs = new URLSearchParams({
+    category: "error",
+    field: "sum(quantity)",
+    statsPeriod: STATS_PERIOD,
+  });
+  qs.append("groupBy", "outcome");
+  qs.append("groupBy", "reason");
+  return `${base}/api/0/organizations/${encodeURIComponent(org)}/stats_v2/?${qs.toString()}`;
+}
 
-  if (!url) {
+function isRejection(outcome: string, reason: string | undefined): boolean {
+  return outcome === "rate_limited" || QUOTA_REASONS.has(reason ?? "");
+}
+
+/** Judges one `stats_v2` body grouped by outcome and reason. */
+export function judgeStats(body: unknown): IngestCheck {
+  const parsed = statsResponseSchema.safeParse(body);
+  if (!parsed.success) {
     return {
-      verdict: "unconfigured",
-      status: 0,
-      detail:
-        "NEXT_PUBLIC_SENTRY_DSN is unset or unparseable, so no error event " +
-        "can be sent at all. The SDK is disabled in this deployment.",
-      rateLimits: null,
-      eventId,
+      verdict: "stats-unreadable",
+      accepted: 0,
+      rejections: [],
+      detail: "stats_v2 answered an unexpected shape",
     };
   }
+  let accepted = 0;
+  const rejections: IngestRejection[] = [];
+  for (const group of parsed.data.groups) {
+    const count = group.totals["sum(quantity)"];
+    if (group.by.outcome === "accepted") accepted += count;
+    else if (count > 0 && isRejection(group.by.outcome, group.by.reason)) {
+      rejections.push({
+        outcome: group.by.outcome,
+        reason: group.by.reason ?? "none",
+        count,
+      });
+    }
+  }
+  return {
+    verdict: rejections.length > 0 ? "rejecting" : "accepted",
+    accepted,
+    rejections,
+    detail: null,
+  };
+}
 
-  // The envelope is the real thing on purpose: a hand-rolled POST that Sentry
-  // accepts is proof the endpoint and key work, which is the whole question.
-  const envelope = buildErrorEnvelope({ eventId, timestamp: now });
-
+/** Never throws; a failed read is the `stats-unreadable` verdict. */
+export async function checkSentryIngest(
+  token: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<IngestCheck> {
   try {
-    const res = await send(url as string, envelope);
-    const detail = await readDetail(res);
-    const rateLimits = res.headers?.get?.("x-sentry-rate-limits") ?? null;
-
-    if (res.status === 429) {
+    const res = await fetchImpl(sentryStatsUrl(), {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      cache: "no-store",
+    });
+    if (!res.ok) {
       return {
-        verdict: "rate-limited",
-        status: 429,
-        detail,
-        rateLimits,
-        eventId,
+        verdict: "stats-unreadable",
+        accepted: 0,
+        rejections: [],
+        detail: `stats_v2 answered ${res.status}`,
       };
     }
-    if (res.status === 401 || res.status === 403) {
-      return {
-        verdict: "rejected-auth",
-        status: res.status,
-        detail,
-        rateLimits,
-        eventId,
-      };
-    }
-    if (res.ok) {
-      // Sentry sometimes answers 200 and reports a drop in the body. Treating
-      // a 200 as success is how this failure mode stayed invisible for six
-      // days, so the body is read rather than assumed.
-      const dropped = detail?.includes("dropped data") ?? false;
-      return {
-        verdict: dropped ? "dropped-despite-2xx" : "accepted",
-        status: res.status,
-        detail,
-        rateLimits,
-        eventId,
-      };
-    }
-    return {
-      verdict: "unavailable",
-      status: res.status,
-      detail,
-      rateLimits,
-      eventId,
-    };
+    return judgeStats(await res.json());
   } catch (err) {
     return {
-      verdict: "unavailable",
-      status: 0,
+      verdict: "stats-unreadable",
+      accepted: 0,
+      rejections: [],
       detail: err instanceof Error ? err.message : String(err),
-      rateLimits: null,
-      eventId,
     };
   }
 }
 
-/** True only when error events are genuinely being taken. */
-export function isIngestHealthy(r: IngestProbeResult): boolean {
+export function isIngestHealthy(r: IngestCheck): boolean {
   return r.verdict === "accepted";
 }
 
-/**
- * A one-line, operator-readable explanation. Written to be pasted into an
- * email subject / chat without editing.
- */
-export function describeIngest(r: IngestProbeResult): string {
-  switch (r.verdict) {
-    case "accepted":
-      return "Sentry is accepting error events.";
-    case "rate-limited":
-      return [
-        "Sentry is REJECTING error events (429).",
-        r.rateLimits ? ` Rate limits: ${r.rateLimits}.` : "",
-        r.detail ? ` Sentry said: ${r.detail}` : "",
-        " If the rate-limit header mentions `error_usage_exceeded`, the",
-        " organisation's error allowance for the billing period is spent and",
-        " every error is being discarded — raising the plan (Team includes 50k",
-        " errors/month vs 5k on Developer) raises the ceiling immediately, so",
-        " this does not have to wait for the period to roll over.",
-      ].join("");
-    case "rejected-auth":
-      return `Sentry rejected the event (${r.status}) — the DSN or public key is wrong or revoked. ${r.detail ?? ""}`.trim();
-    case "dropped-despite-2xx":
-      return `Sentry answered 200 but dropped the event. ${r.detail ?? ""}`.trim();
-    case "unavailable":
-      return `Could not reach Sentry ingest (status ${r.status}). ${r.detail ?? ""}`.trim();
-    case "unconfigured":
-      return [
-        "Sentry is not configured — no DSN was available, so nothing was sent",
-        " and no error reporting is happening at all. This is a deployment",
-        " configuration gap, not a Sentry fault: set NEXT_PUBLIC_SENTRY_DSN in",
-        " the runtime environment and confirm the SDK is initialised. Note this",
-        " is NOT the same as a rejected DSN — nothing ever reached Sentry to be",
-        " rejected.",
-      ].join("");
+/** One operator-readable line, usable as an email summary or a log message. */
+export function describeIngest(r: IngestCheck): string {
+  if (r.verdict === "accepted") {
+    return `Sentry accepted ${r.accepted} error(s) in the last day and rejected none.`;
   }
-}
-
-function newEventId(): string {
-  // 32 hex chars, the shape Sentry expects. `crypto` is available in the Node
-  // and edge runtimes this runs in.
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/**
- * Build a minimal, valid Sentry error envelope.
- *
- * Deliberately carries NO user, org, IP or url: this is an infrastructure
- * check, and it should never become a record of anything about a person. The
- * identity it verifies is Sentry's own willingness to receive events, which
- * `lib/observability/identity.ts` covers separately.
- */
-export function buildErrorEnvelope(opts: {
-  eventId: string;
-  timestamp: Date;
-}): string {
-  const event = {
-    event_id: opts.eventId,
-    timestamp: opts.timestamp.toISOString(),
-    platform: "javascript",
-    level: "error",
-    logger: "sentry-ingest-canary",
-    environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ?? "canary",
-    // A fixed fingerprint groups every canary run into one issue instead of
-    // minting a new one per run.
-    fingerprint: CANARY_FINGERPRINT,
-    exception: {
-      values: [
-        {
-          type: "SentryIngestCanary",
-          value: "ingest canary — safe to ignore, this is a liveness probe",
-          stacktrace: { frames: [] },
-        },
-      ],
-    },
-    tags: { subsystem: "canary", op: "sentry-ingest-canary" },
-  };
-  return (
-    `${JSON.stringify({
-      event_id: opts.eventId,
-      sent_at: opts.timestamp.toISOString(),
-      sdk: { name: "familiarise.ingest-canary", version: "1" },
-    })}\n` +
-    `${JSON.stringify({ type: "event" })}\n` +
-    `${JSON.stringify(event)}\n`
-  );
-}
-
-async function readDetail(res: {
-  text?: () => Promise<string>;
-}): Promise<string | null> {
-  try {
-    if (typeof res.text !== "function") return null;
-    const body = await res.text();
-    if (!body) return null;
-    try {
-      const parsed = JSON.parse(body) as {
-        detail?: unknown;
-        message?: unknown;
-      };
-      const d = parsed?.detail ?? parsed?.message;
-      return typeof d === "string" ? d : body.slice(0, 300);
-    } catch {
-      return body.slice(0, 300);
-    }
-  } catch {
-    return null;
+  if (r.verdict === "stats-unreadable") {
+    return `The Sentry stats read failed, so ingest health is unknown: ${r.detail ?? "no detail"}.`;
   }
+  const rejected = r.rejections.reduce((n, x) => n + x.count, 0);
+  const reasons = r.rejections
+    .map((x) => `${x.count} ${x.outcome}/${x.reason}`)
+    .join(", ");
+  return `Sentry REJECTED ${rejected} error(s) in the last day (${reasons}) and accepted ${r.accepted}.`;
 }
 
-const defaultSend = async (url: string, body: string) => {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-  try {
-    return await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/x-sentry-envelope" },
-      body,
-      signal: controller.signal,
-      cache: "no-store",
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-};
+/** The spent-allowance case, as distinct from a short-window throttle. */
+export function isQuotaExhausted(r: IngestCheck): boolean {
+  return r.rejections.some((x) => QUOTA_REASONS.has(x.reason));
+}

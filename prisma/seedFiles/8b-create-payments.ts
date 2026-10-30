@@ -1,6 +1,8 @@
 import { faker } from "@faker-js/faker";
 import {
   Currency,
+  OccurrenceCompletionStatus,
+  OccurrenceOutcome,
   PaymentGateway,
   PaymentLegSource,
   PaymentStatus,
@@ -183,5 +185,29 @@ export async function createPayments(users: UserWithProfiles[]) {
     }
   }
 
-  console.log(`Finished creating payments`);
+  // A paid past session was held; left UNVERIFIED with no outcome, the sweep would park it for ops.
+  const now = new Date();
+  const held = await prisma.appointmentOccurrence.updateMany({
+    where: {
+      endsAt: { lt: now },
+      isTentative: false,
+      completionStatus: OccurrenceCompletionStatus.UNVERIFIED,
+      outcome: null,
+      deletedAt: null,
+      appointment: {
+        payment: {
+          some: { paymentStatus: PaymentStatus.SUCCEEDED, deletedAt: null },
+        },
+      },
+    },
+    data: {
+      completionStatus: OccurrenceCompletionStatus.COMPLETED,
+      completedAt: now,
+      outcome: OccurrenceOutcome.HELD,
+      outcomeAt: now,
+    },
+  });
+  console.log(
+    `Finished creating payments; ${held.count} paid past sessions held`,
+  );
 }
