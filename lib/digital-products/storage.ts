@@ -7,8 +7,13 @@ export function digitalProductsBucket(): string {
   return bucket;
 }
 
-/** Attachment disposition with an ASCII fallback and the RFC 5987 UTF-8 name. */
+/** Attachment disposition with an ASCII fallback and the RFC 8187 UTF-8 name. */
 export function attachmentDisposition(fileName: string): string {
   const ascii = fileName.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+  // encodeURIComponent leaves ' ( ) * bare, which RFC 8187 attr-char excludes.
+  const encoded = encodeURIComponent(fileName).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }

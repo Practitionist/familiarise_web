@@ -14,7 +14,7 @@ interface Entry {
 }
 
 /** A structurally valid archive; entry data is zero filler of the compressed size. */
-function buildZip(entries: Entry[]): Buffer {
+function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
@@ -52,7 +52,8 @@ function buildZip(entries: Entry[]): Buffer {
   eocd.writeUInt16LE(entries.length, 10);
   eocd.writeUInt32LE(cd.length, 12);
   eocd.writeUInt32LE(offset, 16);
-  return Buffer.concat([...locals, cd, eocd]);
+  eocd.writeUInt16LE(comment.length, 20);
+  return Buffer.concat([...locals, cd, eocd, comment]);
 }
 
 function inspect(zip: Buffer, checkEntryTypes = true) {
@@ -79,6 +80,9 @@ it("accepts a clean archive and rejects each unsafe shape", async () => {
     [[{ name: "/abs/file.txt" }], "UNSAFE_PATH"],
     [[{ name: "inner/pack.zip" }], "NESTED_ARCHIVE"],
     [[{ name: "setup.EXE" }], "EXECUTABLE_ENTRY"],
+    [[{ name: "evil.exe." }], "EXECUTABLE_ENTRY"],
+    [[{ name: "evil.exe " }], "EXECUTABLE_ENTRY"],
+    [[{ name: "inner/pack.zip. ." }], "NESTED_ARCHIVE"],
     [[{ name: "secret.pdf", flags: 0x0801 }], "ENCRYPTED_ENTRY"],
     [
       [{ name: "link", madeBy: 0x0314, externalAttrs: 0o120777 * 0x10000 }],
@@ -128,6 +132,32 @@ it("accepts a clean archive and rejects each unsafe shape", async () => {
   ).resolves.toMatchObject({
     ok: false,
     problem: "NOT_A_ZIP",
+  });
+});
+
+it("reads only the EOCD whose comment ends the file, never a decoy inside it", async () => {
+  await expect(
+    inspect(buildZip([{ name: "guide.pdf" }], Buffer.from("Made with zip"))),
+  ).resolves.toMatchObject({ ok: true, entries: 1 });
+
+  // The comment carries a benign directory and a decoy EOCD pointing at it.
+  const real = buildZip([{ name: "setup.exe" }]);
+  const benign = buildZip([{ name: "guide.pdf" }]);
+  const benignCd = benign.subarray(benign.length - 22 - 55, benign.length - 22);
+  const decoy = Buffer.from(benign.subarray(benign.length - 22));
+  decoy.writeUInt32LE(real.length, 16);
+  const withDecoy = (padding: string) => {
+    const comment = Buffer.concat([benignCd, decoy, Buffer.from(padding)]);
+    return buildZip([{ name: "setup.exe" }], comment);
+  };
+  await expect(inspect(withDecoy("padding"))).resolves.toMatchObject({
+    ok: false,
+    problem: "EXECUTABLE_ENTRY",
+  });
+  // A decoy that also ends the file leaves two candidates.
+  await expect(inspect(withDecoy(""))).resolves.toMatchObject({
+    ok: false,
+    problem: "EOCD_AMBIGUOUS",
   });
 });
 

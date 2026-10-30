@@ -146,6 +146,7 @@ import { POST as purchase } from "../../app/api/digital-products/[productId]/pur
 import { POST as claim } from "../../app/api/digital-products/[productId]/claim/route";
 import { GET as download } from "../../app/api/digital-products/[productId]/assets/[assetId]/download/route";
 import { quoteDigitalProductForBuyer } from "../../lib/payments/pricing/digital-product-price";
+import { attachmentDisposition } from "../../lib/digital-products/storage";
 
 const params = { params: Promise.resolve({ productId: "dp_1" }) };
 const req = () => new Request("http://localhost/x", { method: "POST" });
@@ -259,4 +260,10 @@ it("locks the live purchase in the download transaction: revoked first, download
   expect(downloadCreate).toHaveBeenLastCalledWith({
     data: { purchaseId: "dpp_9", assetId: "as_1" },
   });
+});
+
+it("encodes a download name to RFC 8187 attr-char with a quoted ASCII fallback", () => {
+  expect(attachmentDisposition("Léa's guide (v2)*.pdf")).toBe(
+    `attachment; filename="L_a's guide (v2)*.pdf"; filename*=UTF-8''L%C3%A9a%27s%20guide%20%28v2%29%2A.pdf`,
+  );
 });

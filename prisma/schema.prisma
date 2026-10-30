@@ -5839,8 +5839,10 @@ model DigitalProductPurchase {
   status            DigitalProductPurchaseStatus @default(PENDING)
   // Refundable until the first download stamps this.
   firstDownloadedAt DateTime?                    @db.Timestamptz
-  // Last gateway check by the recovery sweep; its rotation key, never the expiry clock.
+  // Last check by the recovery sweep (gateway or owed receipt); its rotation key, never the expiry clock.
   reconciledAt      DateTime?                    @db.Timestamptz
+  // Set when the receipt is staged or deliberately skipped; null on a SUCCEEDED row means it is still owed.
+  receiptStagedAt   DateTime?                    @db.Timestamptz
   createdAt         DateTime                     @default(now()) @db.Timestamptz
   updatedAt         DateTime                     @updatedAt @db.Timestamptz
 

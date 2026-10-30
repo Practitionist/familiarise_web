@@ -63,9 +63,10 @@ export function DigitalProductsSection({
                   {product.fileCount}{" "}
                   {product.fileCount === 1 ? "file" : "files"} ·{" "}
                   <span className="font-medium text-foreground">
+                    {/* Viewer-agnostic, so before GST; the product page shows this buyer's total. */}
                     {product.pricePaise === 0
                       ? "Free"
-                      : formatCurrencyAmount(product.pricePaise, "INR")}
+                      : `${formatCurrencyAmount(product.pricePaise, "INR")} + GST`}
                   </span>
                 </p>
               </div>

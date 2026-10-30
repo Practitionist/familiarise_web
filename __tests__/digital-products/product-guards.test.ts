@@ -38,9 +38,10 @@ jest.mock("../../lib/backoffice/ops-action-log", () => ({
 }));
 
 type Asset = { id: string; status: string; mimeType: string };
-const state: { status: string; assets: Asset[] } = {
+const state: { status: string; assets: Asset[]; sold: boolean } = {
   status: "DRAFT",
   assets: [],
+  sold: false,
 };
 const product = () => ({
   id: "dp_1",
@@ -80,6 +81,9 @@ function makeTx() {
         state.status = "PUBLISHED";
         return { count: 1 };
       },
+    },
+    digitalProductPurchase: {
+      findFirst: async () => (state.sold ? { id: "dpp_1" } : null),
     },
     digitalProductAsset: {
       count: async ({ where }: { where: { id: { not: string } } }) =>
@@ -154,6 +158,7 @@ beforeEach(() => {
   publishGate = null;
   state.status = "DRAFT";
   state.assets = [pdf("as_1")];
+  state.sold = false;
 });
 
 it("never leaves a published product without a file when publish and removal race", async () => {
@@ -176,6 +181,18 @@ it("never leaves a published product without a file when publish and removal rac
   expect(verified()).toBe(1);
   expect(revalidatePath).toHaveBeenCalledWith("/explore/experts/cp_owner");
   expect(revalidatePath).toHaveBeenCalledWith("/explore/products/guide-1");
+});
+
+it("keeps a sold product's last file even after it is archived", async () => {
+  state.status = "ARCHIVED";
+  state.sold = true;
+  const removed = await removeFile(req(), {
+    params: Promise.resolve({ productId: "dp_1", assetId: "as_1" }),
+  });
+  expect(removed.status).toBe(409);
+  expect((await removed.json()).code).toBe("LAST_PURCHASED_FILE");
+  // Still VERIFIED, so the buyer's download route keeps serving it.
+  expect(state.assets[0].status).toBe("VERIFIED");
 });
 
 it("refuses a draft category change its files do not fit", async () => {

@@ -1757,6 +1757,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           scanned: r.scanned,
           recovered: r.recovered,
           expired: r.expired,
+          receipts: r.receipts,
           errors: r.errors,
         }),
         items: (r) => ({ processed: r.scanned, errors: r.errors }),

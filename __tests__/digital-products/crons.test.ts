@@ -23,6 +23,13 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
     notes: { type: "digital_product_purchase" },
   }),
 }));
+jest.mock("../../lib/digital-products/purchase-email", () => ({
+  stageOwedDigitalProductReceipts: async () => ({
+    checked: 0,
+    handled: 0,
+    failedIds: [],
+  }),
+}));
 const route = jest.fn();
 jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
   routeCapturedPayment: (...a: unknown[]) => route(...a),
@@ -35,9 +42,11 @@ jest.mock("../../lib/storage/r2-client", () => ({
 }));
 
 const HOUR = 60 * 60_000;
+type Where = { status: string };
 const ago = (ms: number) => new Date(Date.now() - ms);
 const dpUpdate = jest.fn(async (_args: unknown) => ({ count: 1 }));
 const dpFindMany = jest.fn();
+const dpFindUnique = jest.fn();
 const rpUpdate = jest.fn(async () => ({ count: 1 }));
 const assetFindMany = jest.fn();
 const assetUpdateMany = jest.fn(async () => ({ count: 1 }));
@@ -47,17 +56,22 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     digitalProductPurchase: {
       findMany: (...a: unknown[]) => dpFindMany(...a),
+      findUnique: (...a: unknown[]) => dpFindUnique(...a),
       updateMany: (args: unknown) => dpUpdate(args),
     },
     recordingPurchase: {
-      findMany: async () => [
-        {
-          id: "rp_new",
-          gatewayOrderId: "order_rp",
-          status: "PENDING",
-          createdAt: ago(HOUR),
-        },
-      ],
+      findMany: async ({ where }: { where: { status: string } }) =>
+        where.status === "PENDING"
+          ? [
+              {
+                id: "rp_new",
+                gatewayOrderId: "order_rp",
+                status: "PENDING",
+                createdAt: ago(HOUR),
+              },
+            ]
+          : [],
+      findUnique: async () => ({ status: "PENDING" }),
       updateMany: (...a: unknown[]) => rpUpdate(...(a as [])),
     },
     digitalProductAsset: {
@@ -74,7 +88,8 @@ import { reconcileDigitalProductStorage } from "../../lib/digital-products/stora
 beforeEach(() => {
   jest.clearAllMocks();
   process.env.R2_DIGITAL_PRODUCTS_BUCKET = "digital-products";
-  dpFindMany.mockResolvedValue([
+  dpFindUnique.mockResolvedValue({ status: "SUCCEEDED" });
+  const pending = [
     {
       id: "dpp_cap",
       gatewayOrderId: "order_cap",
@@ -93,7 +108,10 @@ beforeEach(() => {
       status: "PENDING",
       createdAt: ago(30 * HOUR),
     },
-  ]);
+  ];
+  dpFindMany.mockImplementation(async ({ where }: { where: Where }) =>
+    where.status === "PENDING" ? pending : [],
+  );
 });
 
 it("routes captured orders, fails empty ones after 24 hours and leaves live ones pending", async () => {
@@ -130,24 +148,59 @@ it("routes captured orders, fails empty ones after 24 hours and leaves live ones
     where: { id: "rp_new", status: "PENDING" },
     data: { reconciledAt: expect.any(Date) },
   });
-  // FAILED rows inside the recovery window are read too; REFUNDED never is.
-  const [{ where, orderBy }] = dpFindMany.mock.calls[0] as [
-    { where: { OR: { status: string }[] }; orderBy: unknown[] },
-  ];
-  expect(where.OR.map((o) => o.status)).toEqual(["PENDING", "FAILED"]);
-  expect(orderBy[0]).toEqual({
+  // PENDING and FAILED (inside the recovery window) each get a slice; REFUNDED is never read.
+  const calls = dpFindMany.mock.calls.map(
+    ([a]) => a as { where: Where; take: number; orderBy: unknown[] },
+  );
+  expect(calls.map((c) => [c.where.status, c.take])).toEqual([
+    ["PENDING", 5],
+    ["FAILED", 2],
+  ]);
+  expect(calls[0].orderBy[0]).toEqual({
     reconciledAt: { sort: "asc", nulls: "first" },
   });
 });
 
+interface Row {
+  id: string;
+  gatewayOrderId: string;
+  status: string;
+  createdAt: Date;
+  reconciledAt: Date | null;
+}
+
+/** Back the digital rail with rows that honour status, rotation order, take and CAS. */
+function useStore(store: Row[]) {
+  dpFindMany.mockImplementation(
+    async ({ where, take }: { where: Where; take: number }) =>
+      store
+        .filter((r) => r.status === where.status)
+        .sort(
+          (a, b) =>
+            (a.reconciledAt?.getTime() ?? -1) -
+              (b.reconciledAt?.getTime() ?? -1) ||
+            a.createdAt.getTime() - b.createdAt.getTime(),
+        )
+        .slice(0, take),
+  );
+  dpFindUnique.mockImplementation(
+    async ({ where }: { where: { id: string } }) =>
+      store.find((r) => r.id === where.id),
+  );
+  dpUpdate.mockImplementation(async (args: unknown) => {
+    const { where, data } = args as {
+      where: { id: string; status: string };
+      data: Partial<Row>;
+    };
+    const row = store.find(
+      (r) => r.id === where.id && r.status === where.status,
+    );
+    if (row) Object.assign(row, data);
+    return { count: row ? 1 : 0 };
+  });
+}
+
 it("rotates a full page of failing gateway reads so a captured order behind it settles", async () => {
-  interface Row {
-    id: string;
-    gatewayOrderId: string;
-    status: string;
-    createdAt: Date;
-    reconciledAt: Date | null;
-  }
   const store: Row[] = [
     ...Array.from({ length: 5 }, (_, i) => ({
       id: `dpp_bad${i}`,
@@ -165,28 +218,7 @@ it("rotates a full page of failing gateway reads so a captured order behind it s
     },
   ];
   const created = new Map(store.map((r) => [r.id, r.createdAt]));
-  dpFindMany.mockImplementation(async ({ take }: { take: number }) =>
-    store
-      .filter((r) => r.status === "PENDING")
-      .sort(
-        (a, b) =>
-          (a.reconciledAt?.getTime() ?? -1) -
-            (b.reconciledAt?.getTime() ?? -1) ||
-          a.createdAt.getTime() - b.createdAt.getTime(),
-      )
-      .slice(0, take),
-  );
-  dpUpdate.mockImplementation(async (args: unknown) => {
-    const { where, data } = args as {
-      where: { id: string; status: string };
-      data: Partial<Row>;
-    };
-    const row = store.find(
-      (r) => r.id === where.id && r.status === where.status,
-    );
-    if (row) Object.assign(row, data);
-    return { count: row ? 1 : 0 };
-  });
+  useStore(store);
   holding.mockImplementation(async (id: string) => {
     if (id.startsWith("order_bad")) throw new Error("gateway 500");
     return id === "order_good"
@@ -212,6 +244,41 @@ it("rotates a full page of failing gateway reads so a captured order behind it s
     });
     expect(row.createdAt).toBe(created.get(row.id));
   }
+});
+
+it("never lets a page of dead FAILED rows block a PENDING capture, and counts only settled ones", async () => {
+  // Captured but refunded by the handler, so each re-route leaves the row FAILED.
+  const store: Row[] = [
+    ...Array.from({ length: 5 }, (_, i) => ({
+      id: `dpp_dead${i}`,
+      gatewayOrderId: `order_dead${i}`,
+      status: "FAILED",
+      createdAt: ago(48 * HOUR + i),
+      reconciledAt: null,
+    })),
+    {
+      id: "dpp_cap",
+      gatewayOrderId: "order_cap",
+      status: "PENDING",
+      createdAt: ago(HOUR),
+      reconciledAt: ago(HOUR / 4),
+    },
+  ];
+  useStore(store);
+  holding.mockResolvedValue({
+    kind: "captured",
+    paymentId: "pay_x",
+    amountPaise: 59_000,
+  });
+  route.mockImplementation(async ({ orderId }: { orderId: string }) => {
+    if (orderId === "order_cap") store[5].status = "SUCCEEDED";
+  });
+
+  const result = await reconcileStandalonePurchases({ limit: 5 });
+  expect(store[5].status).toBe("SUCCEEDED");
+  // The PENDING capture, two FAILED re-routes and the replay row (which stays PENDING).
+  expect(route).toHaveBeenCalledTimes(4);
+  expect(result).toMatchObject({ scanned: 4, recovered: 1, errors: 0 });
 });
 
 it("purges old versions, retires a dead upload before deleting it and deletes only unnamed old objects", async () => {

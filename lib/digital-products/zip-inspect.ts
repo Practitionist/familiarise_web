@@ -8,6 +8,7 @@ export type RangeReader = (
 
 export type ZipProblem =
   | "NOT_A_ZIP"
+  | "EOCD_AMBIGUOUS"
   | "MULTI_DISK"
   | "ZIP64_INCONSISTENT"
   | "CENTRAL_DIRECTORY_CORRUPT"
@@ -95,12 +96,17 @@ interface Directory {
   endBound: number;
 }
 
+/** The only EOCD whose comment ends exactly at the end of the file; two such records are ambiguous. */
 function findEocd(tail: Uint8Array): number {
   const dv = view(tail);
+  let found = -1;
   for (let i = tail.length - 22; i >= 0; i--) {
-    if (dv.getUint32(i, true) === EOCD_SIG) return i;
+    if (dv.getUint32(i, true) !== EOCD_SIG) continue;
+    if (i + 22 + dv.getUint16(i + 20, true) !== tail.length) continue;
+    if (found >= 0) throw new ZipFault("EOCD_AMBIGUOUS");
+    found = i;
   }
-  return -1;
+  return found;
 }
 
 async function readZip64Directory(
@@ -178,8 +184,9 @@ function isUnsafePath(name: string): boolean {
   return name.split(/[\\/]/).some((segment) => segment === "..");
 }
 
+/** Windows drops trailing dots and spaces on extraction, so `a.exe.` is an exe. */
 function extensionOf(name: string): string {
-  const base = name.split(/[\\/]/).pop() ?? "";
+  const base = (name.split(/[\\/]/).pop() ?? "").replace(/[. ]+$/, "");
   const dot = base.lastIndexOf(".");
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
 }

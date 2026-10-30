@@ -1,7 +1,8 @@
 /**
  * DELETE /api/digital-products/[productId]/assets/[assetId] — remove a file.
  * A verified file is superseded (object kept 30 days) and its in-flight
- * replacements are rejected; an unverified one is deleted outright.
+ * replacements are rejected; an unverified one is deleted outright. A sold or
+ * published product keeps its last verified file.
  */
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -59,7 +60,6 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     return NextResponse.json({ data: { id: asset.id, status: asset.status } });
   }
 
-  // A live product keeps at least one file; archive it to empty it.
   const removed = await prisma.$transaction(async (tx) => {
     await lockDigitalProductRow(tx, productId);
     const current = await tx.digitalProduct.findUnique({
@@ -69,7 +69,15 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     const others = await tx.digitalProductAsset.count({
       where: { productId, status: "VERIFIED", id: { not: asset.id } },
     });
-    if (current?.status === "PUBLISHED" && others === 0) return null;
+    if (others === 0) {
+      // Buyers keep delivery whatever the status; withdrawing sold content is an admin takedown.
+      const sold = await tx.digitalProductPurchase.findFirst({
+        where: { productId, status: "SUCCEEDED" },
+        select: { id: true },
+      });
+      if (sold) return "SOLD" as const;
+      if (current?.status === "PUBLISHED") return "LIVE" as const;
+    }
     const superseded = await tx.digitalProductAsset.updateMany({
       where: { id: asset.id, status: "VERIFIED" },
       data: { status: "SUPERSEDED", supersededAt: new Date() },
@@ -86,7 +94,14 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     });
     return { retired: pending };
   });
-  if (!removed) {
+  if (removed === "SOLD") {
+    return jsonError(
+      409,
+      "LAST_PURCHASED_FILE",
+      "Buyers own this product, so its last file stays; replace it instead",
+    );
+  }
+  if (removed === "LIVE") {
     return jsonError(
       409,
       "LAST_FILE",

@@ -44,8 +44,8 @@ jest.mock("../../lib/prisma", () => ({
         amountPaise: 59000,
         status: mockPurchaseRow.status,
       }),
-      findMany: async () =>
-        mockPurchaseRow.status === "FAILED"
+      findMany: async ({ where }: { where: { status: string } }) =>
+        where.status === "FAILED" && mockPurchaseRow.status === "FAILED"
           ? [
               {
                 id: "dpp-1",
@@ -103,6 +103,11 @@ jest.mock("../../lib/digital-products/purchase-email", () => ({
   }),
   stageDigitalProductReceipt: (...a: unknown[]) => mockStageReceipt(...a),
   flushDigitalProductReceipt: (...a: unknown[]) => mockFlushReceipt(...a),
+  stageOwedDigitalProductReceipts: async () => ({
+    checked: 0,
+    handled: 0,
+    failedIds: [],
+  }),
 }));
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
@@ -298,6 +303,12 @@ it("recovers a capture on a failed attempt's order when the webhook never arrive
   });
   mockTx.digitalProductPurchase.findUnique.mockResolvedValueOnce(
     purchase("FAILED"),
+  );
+  mockTx.digitalProductPurchase.updateMany.mockImplementation(
+    async ({ data }: { data: { status?: string } }) => {
+      if (data.status === "SUCCEEDED") mockPurchaseRow.status = "SUCCEEDED";
+      return { count: 1 };
+    },
   );
 
   const result = await reconcileStandalonePurchases({ limit: 5 });

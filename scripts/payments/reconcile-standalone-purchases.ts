@@ -2,8 +2,10 @@
  * Recover standalone sales (digital products and replays) whose capture never
  * reached us: a PENDING purchase older than 15 minutes, or a FAILED one under
  * 7 days old, is checked against its Razorpay order and a captured payment is
- * routed to its handler exactly as the webhook would. A PENDING order still
- * empty 24 hours after creation is marked FAILED; REFUNDED is never read.
+ * routed to its handler exactly as the webhook would. PENDING and FAILED rows
+ * have separate slices per rail, PENDING checked first. A PENDING order still
+ * empty 24 hours after creation is marked FAILED; REFUNDED is never read. Then
+ * receipts still owed on settled digital product purchases are staged.
  */
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -13,6 +15,7 @@ import {
 } from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { reportSentryError } from "@/lib/observability/report";
+import { stageOwedDigitalProductReceipts } from "@/lib/digital-products/purchase-email";
 
 const STANDALONE_ORDER_TYPES: ReadonlySet<string> = new Set([
   "recording_purchase",
@@ -46,15 +49,20 @@ export async function recoverStandaloneOrder(
 export interface ReconcileStandalonePurchasesResult {
   success: boolean;
   scanned: number;
-  /** Captures routed to their handler this run. */
+  /** Purchases a routed capture settled this run; a refunded re-route is not one. */
   recovered: number;
   /** Purchases marked FAILED after 24 hours with nothing captured for them. */
   expired: number;
+  /** Owed digital product receipts staged (or deliberately skipped) this run. */
+  receipts: number;
   errors: number;
   timestamp: string;
 }
 
 const DEFAULT_LIMIT = 5;
+/** FAILED rows rarely capture late, so a smaller slice of their own never crowds out PENDING. */
+const FAILED_LIMIT = 2;
+const OWED_RECEIPT_LIMIT = 3;
 /** Leaves the webhook and the client verify their own chance first. */
 const GRACE_MS = 15 * 60_000;
 const EXPIRE_AFTER_MS = 24 * 60 * 60_000;
@@ -71,27 +79,30 @@ interface Candidate {
   createdAt: Date;
 }
 
-/** PENDING past the grace period, or FAILED inside the recovery window. */
-function recoverableWhere(now: Date) {
-  return {
-    OR: [
-      {
-        status: "PENDING" as const,
-        createdAt: { lt: new Date(now.getTime() - GRACE_MS) },
-      },
-      {
-        status: "FAILED" as const,
-        createdAt: { gt: new Date(now.getTime() - FAILED_RECOVERY_MS) },
-      },
-    ],
-  };
-}
-
 async function recoverableCandidates(
   limit: number,
   now: Date,
 ): Promise<Candidate[]> {
-  // Least recently checked first: every check stamps reconciledAt, so failures rotate too.
+  const pending = {
+    status: "PENDING" as const,
+    createdAt: { lt: new Date(now.getTime() - GRACE_MS) },
+  };
+  const failed = {
+    status: "FAILED" as const,
+    createdAt: { gt: new Date(now.getTime() - FAILED_RECOVERY_MS) },
+  };
+  const [pendingRows, failedRows] = await Promise.all([
+    recoverableRows(pending, limit),
+    recoverableRows(failed, FAILED_LIMIT),
+  ]);
+  return [...toCandidates(pendingRows), ...toCandidates(failedRows)];
+}
+
+/** One status's slice of both rails, least recently checked first so failures rotate. */
+async function recoverableRows(
+  where: { status: RecoverableStatus; createdAt: { lt: Date } | { gt: Date } },
+  take: number,
+) {
   const orderBy = [
     { reconciledAt: { sort: "asc" as const, nulls: "first" as const } },
     { createdAt: "asc" as const },
@@ -104,18 +115,20 @@ async function recoverableCandidates(
   } as const;
   const [digital, replay] = await Promise.all([
     prisma.digitalProductPurchase.findMany({
-      where: { ...recoverableWhere(now), gatewayOrderId: { not: null } },
+      where: { ...where, gatewayOrderId: { not: null } },
       orderBy,
-      take: limit,
+      take,
       select,
     }),
-    prisma.recordingPurchase.findMany({
-      where: recoverableWhere(now),
-      orderBy,
-      take: limit,
-      select,
-    }),
+    prisma.recordingPurchase.findMany({ where, orderBy, take, select }),
   ]);
+  return { digital, replay };
+}
+
+function toCandidates({
+  digital,
+  replay,
+}: Awaited<ReturnType<typeof recoverableRows>>): Candidate[] {
   const candidates: Candidate[] = [];
   for (const row of digital) {
     if (row.gatewayOrderId && isRecoverable(row.status)) {
@@ -144,6 +157,22 @@ async function recoverableCandidates(
 
 function isRecoverable(status: string): status is RecoverableStatus {
   return status === "PENDING" || status === "FAILED";
+}
+
+/** Whether the row reads SUCCEEDED after its capture was routed. */
+async function isSettled(candidate: Candidate): Promise<boolean> {
+  const select = { status: true } as const;
+  const row =
+    candidate.rail === "digital"
+      ? await prisma.digitalProductPurchase.findUnique({
+          where: { id: candidate.id },
+          select,
+        })
+      : await prisma.recordingPurchase.findUnique({
+          where: { id: candidate.id },
+          select,
+        });
+  return row?.status === "SUCCEEDED";
 }
 
 /**
@@ -175,6 +204,7 @@ async function reconcileUnlocked(
     scanned: 0,
     recovered: 0,
     expired: 0,
+    receipts: 0,
     errors: 0,
     timestamp: now.toISOString(),
   };
@@ -187,7 +217,9 @@ async function reconcileUnlocked(
   for (const candidate of candidates) {
     try {
       const holding = await recoverStandaloneOrder(candidate.orderId);
-      if (holding === "captured") result.recovered += 1;
+      if (holding === "captured" && (await isSettled(candidate))) {
+        result.recovered += 1;
+      }
       // A capture the handler refunded leaves the row unsettled; a live (authorized) payment may still capture.
       const expire =
         candidate.status === "PENDING" &&
@@ -200,6 +232,21 @@ async function reconcileUnlocked(
       failedIds.push(candidate.id);
       await markChecked(candidate, now, false).catch(() => false);
     }
+  }
+  try {
+    const owed = await stageOwedDigitalProductReceipts(OWED_RECEIPT_LIMIT, now);
+    result.receipts = owed.handled;
+    if (owed.failedIds.length > 0) {
+      result.errors += owed.failedIds.length;
+      firstError ??=
+        owed.firstError ??
+        new Error("Owed digital product receipt not prepared");
+      failedIds.push(...owed.failedIds);
+    }
+  } catch (error) {
+    result.errors += 1;
+    firstError ??= error;
+    failedIds.push("owed-receipts");
   }
   if (failedIds.length > 0) {
     reportSentryError(firstError, {

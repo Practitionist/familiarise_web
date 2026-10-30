@@ -123,6 +123,8 @@ jest.mock("../../lib/prisma", () => {
   const tx = {
     digitalProductAsset: asset,
     digitalProduct,
+    // Unsold, so removing a draft's last file is allowed.
+    digitalProductPurchase: { findFirst: async () => null },
     $executeRaw: async (sql: TemplateStringsArray, id: string) => {
       mockLocks.push(`${sql.join("?")}|${id}`);
       return 1;
