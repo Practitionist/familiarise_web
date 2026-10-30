@@ -108,12 +108,12 @@ A waiver is refused when the payment carries promotion, either a welcome discoun
 
 Two jobs are registered in `lib/cron/cleanup-registry.ts`. Each has one implementation and a `CRON_SECRET` HTTP twin under `/api/cleanup/[job]`.
 
-| Job                       | Scheduler                                                                                                                    | Limit per run                               | Action                                                          |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------- |
-| `vest-referral-credits`   | The Netlify ticker, every 30 minutes, with a limit of 10 (`netlify/functions/cron-tick.mts`)                                 | 50 by default, 10 when called by the ticker | Settles `QUALIFYING` referrals, oldest examined first.          |
-| `expire-referral-credits` | GitHub Actions `cron-weekly.yml`, on the 1st of each month at 03:10 UTC, calling `POST /api/cleanup/expire-referral-credits` | 500 by default                              | Moves expired `VESTED` credits to `EXPIRED` and posts breakage. |
+| Job                       | Scheduler                                                                                                                   | Limit per run                               | Action                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------- |
+| `vest-referral-credits`   | The Netlify ticker, every 30 minutes, with a limit of 10 (`netlify/functions/cron-tick.mts`)                                | 50 by default, 10 when called by the ticker | Settles `QUALIFYING` referrals, oldest examined first.          |
+| `expire-referral-credits` | The Netlify ticker, hourly in a window that opens at 03:10 UTC on the 1st of each month (`netlify/functions/cron-tick.mts`) | 50 by default, 50 when called by the ticker | Moves expired `VESTED` credits to `EXPIRED` and posts breakage. |
 
-Both jobs hold a Postgres cron lease through `withCronLock` and fail closed if the lease cannot be taken. Failures are collected and reported to Sentry once per run, never per row. The monthly workflow needs the `CRON_SECRET` repository secret, and without it the curl call receives a 401.
+Both jobs hold a Postgres cron lease through `withCronLock` and fail closed if the lease cannot be taken. Failures are collected and reported to Sentry once per run, never per row.
 
 ## 7. Configuration and the budget
 

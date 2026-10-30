@@ -6,11 +6,13 @@
  * booking sweeps, the session-outcome jobs, the drains, hourly payout
  * processing, the dispute and payout reconcilers, and the money batch jobs,
  * the daily ledger reconcile, the GST register and the quarterly TDS draft
- * inside their calendar windows ({@link TARGET_WINDOWS}). GitHub Actions runs
- * only non-money batch jobs and is NOT a backstop for a ticker target: a
- * target missing here runs nowhere unless a workflow names it.
- * A tick first reads the fleet switch `ops:active_cron_platform` and skips every
- * target unless this host is the active one ({@link otherActivePlatform}).
+ * inside their calendar windows ({@link TARGET_WINDOWS}), and the housekeeping,
+ * compliance and retention jobs. No workflow schedules a registry job, so a
+ * target missing here runs nowhere.
+ * Only the production deploy dispatches. A tick reads the fleet switch
+ * `ops:active_cron_platform` and skips every target unless this host is the
+ * active one ({@link otherActivePlatform}), then claims its five-minute slot
+ * in Postgres so a second dispatch of the same slot stands down.
  * It never writes money state itself: every target is `CRON_SECRET`-gated and
  * wraps its core in `withCronLock`, so overlapping runs answer 409 from the
  * loser — expected, not an error.
@@ -24,7 +26,7 @@
  * The tick always answers 200; see {@link statusFor} for why.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   dueTargets,
@@ -38,10 +40,12 @@ import {
 import {
   isPlatformErrorBody,
   isRepeatedFailure,
+  lastRunFailed,
   streakReportSchema,
   type StreakReport,
 } from "../../lib/cron/failure-streak";
 import { jobOutcomeSchema, type JobOutcome } from "../../lib/cron/job-outcome";
+import { offProductionDeploy } from "../../lib/cron/deploy-context";
 
 export const config = { schedule: "*/5 * * * *" };
 
@@ -132,6 +136,8 @@ async function hitTarget(
   lockUnavailable?: boolean;
   errorBody?: string;
   outcome?: JobOutcome;
+  /** The tick's own abort fired; the target may still be running. */
+  aborted?: boolean;
 }> {
   const { url, timeoutMs } = targetRequest(baseUrl, name, now);
   const controller = new AbortController();
@@ -189,10 +195,49 @@ async function hitTarget(
       ...(errorBody ? { errorBody } : {}),
     };
   } catch {
-    return { name, status: 0, maintenance: false };
+    return {
+      name,
+      status: 0,
+      maintenance: false,
+      aborted: controller.signal.aborted,
+    };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** A retry needs at least this much of the tick's target budget left. */
+const RETRY_MIN_REMAINING_MS = 5_000;
+
+/**
+ * A request that never reached the app (a connection failure, not our abort,
+ * or Netlify's own 500 page) is retried once while the tick has time left.
+ */
+export function isRetryable(result: {
+  status: number;
+  aborted?: boolean;
+  errorBody?: string;
+}): boolean {
+  if (result.status === 0) return result.aborted !== true;
+  return result.status === 500 && isPlatformErrorBody(result.errorBody);
+}
+
+async function hitTargetOnceMore(
+  ...args: Parameters<typeof hitTarget>
+): ReturnType<typeof hitTarget> {
+  const first = await hitTarget(...args);
+  const deadline = args[4];
+  if (!isRetryable(first) || deadline - Date.now() < RETRY_MIN_REMAINING_MS) {
+    return first;
+  }
+  console.log(
+    JSON.stringify({
+      event: "cron-tick-target-retry",
+      target: first.name,
+      status: first.status,
+    }),
+  );
+  return hitTarget(...args);
 }
 
 /** Targets whose 207 means some rows failed; every other target's 207 is a successful run that flagged rows. */
@@ -526,9 +571,98 @@ export async function otherActivePlatform(
   }
 }
 
-export default async function cronTick(_req: Request): Promise<Response> {
+const SLOT_MS = 5 * 60_000;
+
+/** The tick's id, derived from its five-minute slot so a second dispatch of the slot carries the same id. */
+export function tickIdForSlot(slot: Date): string {
+  const hex = createHash("sha1")
+    .update(`cron-tick:${slot.toISOString()}`)
+    .digest("hex");
+  const variant = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+const TICK_CLAIM_TIMEOUT_MS = 2_500;
+const tickClaimReply = z.object({ claimed: z.boolean() });
+
+/**
+ * Claims the slot in Postgres through the app. False only when another
+ * dispatch already holds it; an unreachable or unreadable claim runs the tick.
+ */
+async function claimTickSlot(
+  baseUrl: string,
+  secret: string,
+  tickId: string,
+  slot: Date,
+): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TICK_CLAIM_TIMEOUT_MS);
+  try {
+    const query = `tickId=${encodeURIComponent(tickId)}&slot=${encodeURIComponent(slot.toISOString())}`;
+    const res = await fetch(`${baseUrl}/api/health/jobs/tick?${query}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}` },
+      signal: controller.signal,
+    });
+    if (!res.ok) return true;
+    const parsed = tickClaimReply.safeParse(await res.json());
+    return parsed.success ? parsed.data.claimed : true;
+  } catch {
+    return true;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Accepted background targets whose newest finished run failed: a 202 only
+ * admits the run, so the previous run's outcome stands in for the target's.
+ */
+async function failedBackgroundTargets(
+  accepted: string[],
+  history: { baseUrl: string; secret: string },
+): Promise<string[]> {
+  if (accepted.length === 0) return [];
+  const streaks = await fetchStreaks(history.baseUrl, history.secret, accepted);
+  return accepted.filter((name) => lastRunFailed(streaks?.[name]));
+}
+
+/** One Better Stack heartbeat per completed tick; unset skips it, a failure never fails the tick. */
+async function pingHeartbeat(): Promise<void> {
+  const url = process.env.BETTERSTACK_HEARTBEAT_URL;
+  if (!url) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      console.error(
+        JSON.stringify({ event: "heartbeat-rejected", status: res.status }),
+      );
+    }
+  } catch {
+    console.error(JSON.stringify({ event: "heartbeat-unavailable" }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export default async function cronTick(
+  _req: Request,
+  context?: unknown,
+): Promise<Response> {
   const started = Date.now();
-  const tickId = randomUUID();
+  // Netlify's "Run now" also fires previews and branch deploys; only production dispatches.
+  const deployContext = offProductionDeploy(context);
+  if (deployContext) {
+    console.log(
+      JSON.stringify({ event: "cron-tick", skipped: true, deployContext }),
+    );
+    return jsonResponse({ skipped: true, deployContext }, 200);
+  }
+  const tickDate = new Date(Math.round(started / 60_000) * 60_000);
+  const slot = new Date(Math.floor(tickDate.getTime() / SLOT_MS) * SLOT_MS);
+  const tickId = tickIdForSlot(slot);
   const otherPlatform = await otherActivePlatform();
   if (otherPlatform !== null) {
     console.log(
@@ -564,18 +698,29 @@ export default async function cronTick(_req: Request): Promise<Response> {
   }
 
   // Netlify sets URL to the site's primary deploy URL; CRON_TICK_BASE_URL is
-  // the override for local runs (`netlify dev`) and any deploy where URL
-  // resolves somewhere other than this app.
+  // the override for a host where URL resolves somewhere other than this app.
   // S8786 — a quantified trailing-slash regex risks catastrophic
   // backtracking; strip one slash at a time instead.
   let baseUrl = process.env.CRON_TICK_BASE_URL || process.env.URL || "";
   while (baseUrl.endsWith("/")) baseUrl = baseUrl.slice(0, -1);
-  const tickDate = new Date(Math.round(started / 60_000) * 60_000);
+  if (!(await claimTickSlot(baseUrl, secret, tickId, slot))) {
+    console.log(
+      JSON.stringify({ event: "cron-tick", duplicate: true, tickId }),
+    );
+    return jsonResponse({ duplicate: true, tickId }, 200);
+  }
   const targets = dueTargets(tickDate);
 
   const settled = await Promise.allSettled(
     targets.map((name) =>
-      hitTarget(baseUrl, secret, name, tickDate, started + 24_000, tickId),
+      hitTargetOnceMore(
+        baseUrl,
+        secret,
+        name,
+        tickDate,
+        started + 24_000,
+        tickId,
+      ),
     ),
   );
 
@@ -614,6 +759,19 @@ export default async function cronTick(_req: Request): Promise<Response> {
     }
   });
 
+  for (const name of await failedBackgroundTargets(accepted, {
+    baseUrl,
+    secret,
+  })) {
+    accepted.splice(accepted.indexOf(name), 1);
+    failed.push({ name, status: 202 });
+    failedForAlert.push({
+      name,
+      status: 202,
+      errorBody: "last background run failed",
+    });
+  }
+
   const durationMs = Date.now() - started;
   const body: TickBody = {
     event: "cron-tick",
@@ -630,6 +788,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
   await Promise.all([
     sendCheckIn(failed.length > 0 ? "error" : "ok", durationMs),
     emitTickSummary(body),
+    pingHeartbeat(),
     boundedAlert(
       failedForAlert.filter((f) => reportableToSentry(f.name)),
       tickDate,

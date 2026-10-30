@@ -9,8 +9,7 @@
  *   3. NEEDS_INFO requests unanswered for 14 days — closed as REJECTED with a
  *      reason the consultant can act on; profile follows; decision email.
  *
- * Imported by jobs/cleanup/sweep-verification.ts (GitHub Actions) and
- * app/api/cleanup/sweep-verification/route.ts (HTTP twin).
+ * Run daily by the cron ticker through the `sweep-verification` cleanup route.
  * See docs/onboarding/04-verification-lifecycle.md.
  */
 

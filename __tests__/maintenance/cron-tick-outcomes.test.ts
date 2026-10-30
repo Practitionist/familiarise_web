@@ -103,10 +103,45 @@ describe("ticker execution outcomes", () => {
     const response = await ticker.default(new Request("https://tick.test"));
     expect(response.status).toBe(200);
     const expectedTargets = dueTargets(new Date());
-    expect(fetchImpl).toHaveBeenCalledTimes(expectedTargets.length + 1);
+    // Targets, the slot claim, the background outcome read and the check-in.
+    expect(fetchImpl).toHaveBeenCalledTimes(expectedTargets.length + 3);
     expect(error).toHaveBeenCalledWith(
       JSON.stringify({ event: "cron-checkin-rejected", status: 403 }),
     );
+  });
+
+  it("stands down on an already-claimed slot and retries a connection failure once", async () => {
+    const duplicate = jest.fn(async (input: string | URL | Request) =>
+      String(input).includes("/api/health/jobs/tick")
+        ? new Response(JSON.stringify({ claimed: false }))
+        : new Response("{}"),
+    );
+    const skipped = await load(duplicate).default(
+      new Request("https://tick.test"),
+    );
+    expect(await skipped.json()).toMatchObject({ duplicate: true });
+    expect(duplicate).toHaveBeenCalledTimes(1);
+
+    const target = dueTargets(new Date()).find(
+      (name) => name !== "transfer-recordings",
+    );
+    let dropped = false;
+    const flaky = jest.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes(`/api/cleanup/${target}`) && !dropped) {
+        dropped = true;
+        throw new TypeError("fetch failed");
+      }
+      return new Response("{}", {
+        status: url.includes("-background") ? 202 : 200,
+      });
+    });
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    const body = await (
+      await load(flaky).default(new Request("https://tick.test"))
+    ).json();
+    expect(body.ok).toContain(target);
+    expect(body.failed).toEqual([]);
   });
 
   describe("Better Stack summary line", () => {

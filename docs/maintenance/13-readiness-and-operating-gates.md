@@ -46,8 +46,7 @@ features behind core recovery, safety and operator visibility.
 
 `lib/cron/schedule.ts` is the configured source for intervals, UTC phases,
 calendar windows, batch limits and HTTP aborts. The calendar test checks every
-five-minute tick over 400 days against the ten-target design bound. There are
-already fully occupied hours. Adding a job needs a proven slot or an explicit
+five-minute tick over 400 days against the twelve-target design bound (the busiest tick holds 11, so every tick keeps one free slot). Adding a job needs a proven slot or an explicit
 capacity change; arbitrarily increasing the cap is not capacity evidence.
 
 The ticker counts admission separately for background adapters. A core's

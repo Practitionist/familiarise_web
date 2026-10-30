@@ -60,10 +60,10 @@ withdrawal-of-consent request doesn't propagate.
 
 **Response:**
 
-1. Verify the sweeper ran: check the last scheduled run of
-   `jobs/compliance/consent-retention-sweeper.ts` in CI logs.
+1. Verify the sweeper ran: check the last `consent-retention-sweeper` run in the
+   System Jobs page (it is a weekly ticker target, Sunday 00:25 UTC).
 2. The sweeper is count-only by default. Deletion needs `?delete=1` on
-   `/api/cleanup/consent-retention-sweeper` (or `--delete` on the script) and
+   `/api/cleanup/consent-retention-sweeper` and
    waits for the hash-only consent-proof archive. The admin system-jobs Run
    button only counts.
 3. For individual withdrawal, call the API:

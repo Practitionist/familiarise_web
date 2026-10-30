@@ -64,14 +64,9 @@ A scheduled job in this repository is a single function in a single domain modul
 
 Adding a parallel `route.ts` plus a `jobs/` wrapper plus a `scripts/` wrapper for the same job is explicitly banned, because in practice those three copies drift apart and only one of them gets updated.
 
-There are exactly two schedulers, and every job is reached by at least one of them:
+There is exactly one scheduler, and every job is reached by it: `netlify/functions/cron-tick.mts` runs every five minutes and dispatches all 76 targets, from the **latency-sensitive recovery sweeps** (every 5 to 15 minutes) to the **daily, weekly and statutory batch work** (a window inside which a target fires on its slot). No GitHub Actions workflow schedules a registry job, so a job that is missing from the ticker runs nowhere. The ticker dispatches at most 12 targets per tick and the busiest tick has 11. Overlapping runs of the same job are safe because of the shared Postgres lease: whichever runner loses answers 409.
 
-- `netlify/functions/cron-tick.mts` runs every five minutes and drives the **latency-sensitive recovery sweeps**. It currently dispatches 28 targets.
-- The GitHub Actions cron workflows (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`) drive the **daily, weekly and statutory batch work**, where a delay of an hour or more is harmless.
-
-Most jobs sit on exactly one. A handful are deliberately on both — `alert-orphaned-payments` is a ticker target _and_ a daily Actions step, which buys fast recovery plus an unbounded safety net — and the shared Postgres lease makes the overlap safe: whichever runner loses answers 409.
-
-There is no silent gap: a test, `__tests__/maintenance/cleanup-job-scheduler-drift.test.ts`, fails the build if a registered job has no scheduler at all.
+There is no silent gap: a test, `__tests__/maintenance/cleanup-job-scheduler-drift.test.ts`, fails the build if a registered job has no ticker target and no explicit manual-only entry.
 
 ### 4. Status transitions are compare-and-set, never read-then-write
 
@@ -137,7 +132,7 @@ The dispatch path is:
 
 ```mermaid
 flowchart LR
-    S1["Netlify ticker<br/>every 5 min · 28 targets"] --> R
+    S1["Netlify ticker<br/>every 5 min · 76 targets"] --> R
     S2["GitHub Actions<br/>daily / weekly / statutory"] --> R
     R["app/api/cleanup/[job]/route.ts<br/>CRON_SECRET"] --> G["assertNotInMaintenance(job)"]
     G --> L["withCronLock(jobName, failMode)"]

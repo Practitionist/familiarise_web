@@ -47,7 +47,7 @@ The full reasoning for each rule is in `references/sentry.md` and `references/jo
 - **`SystemEvent` is the row; Sentry is the pager.** When they disagree, believe the row.
 - **Scrub everything.** Spans, metrics and Sentry Logs go through `lib/observability/sentry-scrubber.ts`, and `console.*` bypasses the scrubber, so never log raw payloads or full Prisma errors.
 - **A job's row is not proof the work finished.** A run can record `COMPLETED` for partial work until #2424 Phase 1; do not build a new alert on that status without stating it.
-- **Escalate a ticker failure only on repeats.** A one-off is a grouped warning, and a per-target error needs three cadences with no `COMPLETED` run.
+- **Escalate a ticker failure only on repeats.** A one-off is a grouped warning, and a per-target error needs three cadences with no `COMPLETED` run. A background target (202) is judged one tick late, from its newest finished run (`lastFailedAt`).
 - **Cron mutual exclusion is Postgres only.** Never add a Redis lock or a Redis failure counter for a job.
 - **The entity trace and the metrics card are read-only.** One bounded query per source, run in sequence, and skip a source that needs an unindexed JSON scan.
 

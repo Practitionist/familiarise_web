@@ -84,7 +84,7 @@ Before deploying this code, an operator must apply the additive columns/indexes 
 
 `netlify/functions/cron-tick.mts` retains the `*/5 * * * *` schedule. Once per tick it reads `ops:active_cron_platform` through Upstash REST and skips dispatch when another platform is selected. An absent key, missing credentials, unreadable response or timeout permits Netlify dispatch. This fail-open preference is not an exactly-once mechanism; verify standby ownership and in-flight work during failback.
 
-`lib/cron/schedule.ts` owns the target roster, cadence, offsets, UTC calendar windows, row limits and HTTP timeouts. `JOB_SCHEDULES` and `scheduleFor()` expose effective metadata; `dueTargets()`, `windowStartFor()` and `targetRequest()` provide pure scheduling helpers. The adapter supplies authentication and uses the catalog’s background destination for background targets, including `transfer-recordings`; other targets use `/api/cleanup/<slug>`. Document retention runs hourly at `:25`, requesting at most 100 rows with a 20-second HTTP timeout. The resumable ledger target yields only when the due roster would exceed the ten-target bound; statutory and settlement work keeps its slots.
+`lib/cron/schedule.ts` owns the target roster, cadence, offsets, UTC calendar windows, row limits and HTTP timeouts. `JOB_SCHEDULES` and `scheduleFor()` expose effective metadata; `dueTargets()`, `windowStartFor()` and `targetRequest()` provide pure scheduling helpers. The adapter supplies authentication and uses the catalog’s background destination for background targets, including `transfer-recordings`; other targets use `/api/cleanup/<slug>`. Document retention runs hourly at `:25`, requesting at most 100 rows with a 20-second HTTP timeout. The resumable ledger target yields only when the due roster would exceed the twelve-target bound (no tick reaches it today); statutory and settlement work keeps its slots.
 
 For targets with a configured cadence, the slot check is:
 
@@ -206,18 +206,13 @@ A sweep that finds something it cannot safely repair records a finding and stops
 
 ## Workflow inventory
 
-Six workflows declare a `cron:` schedule.
+Three workflows declare a `cron:` schedule. The three fleet workflows `cron-intra-day.yml`, `cron-daily.yml` and `cron-weekly.yml` are deleted; every registered job runs on the Netlify ticker.
 
-| Workflow             | Schedules (UTC)                                              | Purpose                                          |
-| -------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| `cron-intra-day.yml` | `:25,:55` hourly; `:17` hourly; `:52 */4`; `:33 */6`         | Recovery and sync jobs                           |
-| `cron-daily.yml`     | `03:00`; `23:30`                                             | Daily maintenance and billing batches            |
-| `cron-weekly.yml`    | Sun `00:25`; Mon `20:00`; Mon `21:00`; monthly and quarterly | Weekly, statutory and payout batch               |
-| `cron-heartbeat.yml` | `04:40`                                                      | Dead-man's switch for the Actions fleet          |
-| `db-live-drift.yml`  | `07:03`                                                      | Read-only schema drift against the live database |
-| `security-audit.yml` | Mon `07:00`                                                  | Supply-chain audit, including between PRs        |
-
-Every step in the three cron fleet workflows sets `continue-on-error: true`, and a final step fans out over every step outcome and calls `scripts/ci/notify-ops-failure.sh`. Each of those three declares a concurrency group with `cancel-in-progress: false`, so an overlapping run queues rather than cancelling one mid-flight. The two workflows that deliberately do the opposite are `ci.yaml` and `knip.yml`: both are pull-request triggered rather than scheduled, so superseding a stale run is the behaviour you want there.
+| Workflow             | Schedules (UTC) | Purpose                                          |
+| -------------------- | --------------- | ------------------------------------------------ |
+| `cron-heartbeat.yml` | `04:40`         | Dead-man's switch for the scheduled workflows    |
+| `db-live-drift.yml`  | `07:03`         | Read-only schema drift against the live database |
+| `security-audit.yml` | Mon `07:00`     | Supply-chain audit, including between PRs        |
 
 The heartbeat is deliberately **not** in `withCronLock`: a watchdog must not depend on the resource it is monitoring. It is read-only, so a double run is harmless. It writes `cron:heartbeat:last` to Upstash, which `/api/health` exposes as `cron.stale` after 45 minutes so an external uptime pinger can watch it with no GitHub dependency.
 

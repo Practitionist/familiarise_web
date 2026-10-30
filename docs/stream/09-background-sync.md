@@ -50,7 +50,7 @@ for wind-down, and 08:00–11:00 for principal/channel lifecycle. Each daily job
 three bounded slices. These are dispatch cadences, not a guarantee that a backlog
 has drained. The catalog is shared with documentation and tested over every tick
 of a week and 400 days, including monthly/quarterly collisions; no tick exceeds
-ten targets. Existing Stream membership and control-plane checks remain scheduled.
+eleven targets (the cap is twelve). Existing Stream membership and control-plane checks remain scheduled.
 
 | Core / entry                                      | UTC slots           | Work bound and continuation                                                                                                                                                                                                                                     |
 | ------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

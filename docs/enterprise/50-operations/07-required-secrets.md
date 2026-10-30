@@ -223,27 +223,18 @@ Still missing, because each needs a value only a human can supply:
 | ----------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SLACK_OPS_WEBHOOK_URL` | GitHub Actions | An incoming-webhook URL from the Slack workspace. Referenced by 57 workflows. Until it exists, Sentry is the only channel by which a money-cron failure reaches anyone. |
 
-**`CRON_SECRET` is provisioned in both stores, and the two copies must stay identical.**
-Netlify holds the value the route compares against; GitHub Actions holds the value the five HTTP cleanup
-steps send (three in `cron-daily.yml`, two in `cron-weekly.yml`) as `Authorization: Bearer …`. `bearerMatches`
-in `lib/cron/cleanup-route.ts` compares `sha256(header)` against `sha256("Bearer " + secret)`
-with `timingSafeEqual`, so the match is byte-for-byte — a freshly generated value in GitHub
-that Netlify does not share produces a 401 on every call.
+**`CRON_SECRET` lives in Netlify only.**
+The route compares against the Netlify value, and the ticker reads the same value from the same
+environment. No GitHub Actions workflow calls a cleanup route any more (the cron fleet workflows are
+deleted), so no copy is needed in GitHub. `bearerMatches` in `lib/cron/cleanup-route.ts` compares
+`sha256(header)` against `sha256("Bearer " + secret)` with `timingSafeEqual`, so a caller must send the
+exact value.
 
 **Rotating it has no grace window.** The route reads a single value with no `*_PREVIOUS`
 fallback, unlike `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`, and Netlify functions read their env at
-deploy time, so the two stores disagree for as long as the redeploy takes. Rotate with the
-fleet paused:
-
-1. `gh workflow disable cron-daily.yml cron-weekly.yml` — both carry `schedule:` triggers
-   (`0 3 * * *` daily and `25 0 * * 0` weekly), so one can fire mid-rotation.
-2. Set the new value in Netlify production and **redeploy**. This moves the route and the
-   ticker together, since both read from Netlify.
-3. `gh secret set CRON_SECRET` in GitHub Actions.
-4. `gh workflow enable cron-daily.yml cron-weekly.yml`.
-
-Skipping step 1, or setting GitHub before the redeploy, opens a 401 window on all five steps
-for the length of the deploy.
+deploy time. Set the new value in Netlify production and **redeploy**: this moves the route and
+the ticker together, since both read from Netlify. A tick that fires during the deploy can see a 401
+from the other side of the swap; the next tick recovers.
 
 Do not set it with `netlify env:set` and expect to read it back: the CLI masks it and the list
 endpoint nulls the top-level `value`. All three Netlify contexts currently hold one identical

@@ -1,26 +1,24 @@
-import { NextRequest } from "next/server.js";
 import { z } from "zod";
 import { STREAM_LIFECYCLE_JOBS } from "../../lib/cron/schedule";
 import { cleanupRoute } from "../../lib/cron/cleanup-route";
-import {
-  initJobSentry,
-  flushJobSentry,
-} from "../../lib/observability/job-sentry";
+import { runBackgroundWorker } from "../../lib/cron/background-worker";
 
 export const config = { background: true };
 const jobSchema = z.enum(STREAM_LIFECYCLE_JOBS);
 
 /** The ticker owns scheduling; this narrow adapter executes one selected Stream core. */
-export default async function streamMaintenance(req: Request): Promise<void> {
+export default async function streamMaintenance(
+  req: Request,
+  context?: unknown,
+): Promise<void> {
   if (req.method !== "POST") return;
   const selected = jobSchema.safeParse(
     new URL(req.url).searchParams.get("job"),
   );
   if (!selected.success) return;
-  initJobSentry();
-  try {
-    const job = selected.data;
-    const handlers = cleanupRoute({
+  const job = selected.data;
+  await runBackgroundWorker(job, req, context, () =>
+    cleanupRoute({
       job,
       run: async () => {
         switch (job) {
@@ -54,13 +52,6 @@ export default async function streamMaintenance(req: Request): Promise<void> {
         }
       },
       failureMessage: "Stream maintenance execution failed",
-    });
-    const response = await handlers.POST(new NextRequest(req));
-    if (response.status >= 500)
-      throw new Error(
-        `Stream maintenance worker returned HTTP ${response.status}`,
-      );
-  } finally {
-    await flushJobSentry();
-  }
+    }),
+  );
 }

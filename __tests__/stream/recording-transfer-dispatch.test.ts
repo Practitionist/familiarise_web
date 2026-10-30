@@ -9,6 +9,7 @@ beforeEach(() => {
     ...originalEnv,
     CRON_SECRET: "dispatch-test",
     CRON_TICK_BASE_URL: "https://app.test",
+    NEXT_PUBLIC_SENTRY_ENVIRONMENT: "production",
   };
 });
 afterEach(() => {

@@ -467,6 +467,8 @@ confirm the deployed behavior. The monitor detects ticker absence and reported
 tick failures. `/api/health/jobs` separately detects missing successful worker
 completions; neither establishes that vendor effects or all backlogs are complete.
 
+Better Stack adds a second "did not run" signal. When `BETTERSTACK_HEARTBEAT_URL` (optional, production Functions scope, documented in `.env.sample`) is set, the ticker sends one GET to it per completed tick, with a two-second timeout. A failed ping is logged and never fails the tick; an unset key skips the ping. Create a Better Stack heartbeat monitor with a five-minute period and a grace of a few minutes, and put its URL in that variable. A tick that was skipped (not the production deploy, or the fleet switch names another platform) or that stood down as a duplicate sends no ping.
+
 ### Configure the monitor and its notification route
 
 1. Locate the existing `cron-tick` monitor in the project identified by the
@@ -612,7 +614,7 @@ and [monitor update semantics](https://github.com/getsentry/sentry/blob/master/s
 
 When `ENABLE_BETTERSTACK_TELEMETRY` is `true` and the Better Stack source token and ingest URL are set, each tick posts one `cron-tick summary` log line (category `CRON`, level `error` when any target failed, else `info`) carrying the duration, the ok and accepted counts, the held target names and the failed targets with their statuses. It is a second sink that does not depend on Sentry, it is sent once per tick rather than per target, and a send failure never affects the tick. The ticker reads `SENTRY_DSN` and falls back to `NEXT_PUBLIC_SENTRY_DSN`.
 
-On Netlify (`NETLIFY=true`) `withCronLock` caps every lease at 90 seconds. A synchronous Netlify function stops at 60 seconds, but a background function (such as the recording transfer) may run for 15 minutes, so the cap is safe only because `startLeaseRenewal` refreshes a live run's lease every third of the TTL (30 seconds). The cap therefore never expires a run that is still alive; it only bounds how long a killed run's `RUNNING` row blocks the next ticks, so a killed run recovers within one 90-second lease window. Other hosts keep the per-job TTL. The ticker still files a 409 under `lockHeld`, a distinct field in the tick body and summary line, never under `ok`.
+On Netlify (`onNetlify()` in `lib/runtime-host.ts`: the build-inlined `NETLIFY=true`, or the runtime `SITE_ID` that functions see) `withCronLock` caps every lease at 90 seconds. A synchronous Netlify function stops at 60 seconds, but a background function (such as the recording transfer) may run for 15 minutes, so the cap is safe only because `startLeaseRenewal` refreshes a live run's lease every third of the TTL (30 seconds). The cap therefore never expires a run that is still alive; it only bounds how long a killed run's `RUNNING` row blocks the next ticks, so a killed run recovers within one 90-second lease window. Other hosts keep the per-job TTL. The ticker still files a 409 under `lockHeld`, a distinct field in the tick body and summary line, never under `ok`.
 
 ### Failure escalation
 

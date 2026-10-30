@@ -79,11 +79,16 @@ it.each(STREAM_LIFECYCLE_JOBS)(
   },
 );
 it.each(STREAM_LIFECYCLE_JOBS)(
-  "throws instead of returning a discarded failed %s response",
+  "logs a failed %s run instead of throwing into Netlify's retries",
   async (job) => {
+    const error = jest.spyOn(console, "error").mockImplementation(() => {});
     mocks.get(job)?.mockResolvedValueOnce({ success: false });
-    await expect(worker.run(request(job))).rejects.toThrow("HTTP 500");
+    await expect(worker.run(request(job))).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledWith(
+      JSON.stringify({ event: "background-worker-failed", job, status: 500 }),
+    );
     expect(flushJobSentry).toHaveBeenCalledTimes(1);
+    error.mockRestore();
   },
 );
 it("refuses wrong bearers, unknown targets and non-POST requests without executing any core", async () => {
@@ -103,6 +108,7 @@ it("refuses every core when maintenance admission fails", async () => {
   jest
     .mocked(assertNotInMaintenance)
     .mockRejectedValueOnce(new Error("maintenance unavailable"));
-  await expect(worker.run(request("stream-sync"))).rejects.toThrow("HTTP 500");
+  jest.spyOn(console, "error").mockImplementation(() => {});
+  await expect(worker.run(request("stream-sync"))).resolves.toBeUndefined();
   expect(mockSync).not.toHaveBeenCalled();
 });

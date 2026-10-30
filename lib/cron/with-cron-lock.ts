@@ -20,6 +20,7 @@ import {
   statusOfOutcome,
   type RunOutcome,
 } from "@/lib/cron/run-outcome";
+import { onNetlify } from "@/lib/runtime-host";
 
 // Postgres leases prevent overlap; each worker must independently tolerate replay.
 
@@ -174,9 +175,7 @@ function tagSentryRun(executionId: string): void {
 const NETLIFY_MAX_LEASE_MS = 90_000;
 
 export function effectiveLeaseTtlMs(ttlMs: number): number {
-  return process.env.NETLIFY === "true"
-    ? Math.min(ttlMs, NETLIFY_MAX_LEASE_MS)
-    : ttlMs;
+  return onNetlify() ? Math.min(ttlMs, NETLIFY_MAX_LEASE_MS) : ttlMs;
 }
 
 export async function withCronLock<T>(

@@ -1,10 +1,6 @@
-import { NextRequest } from "next/server.js";
 import { cleanupRoute } from "../../lib/cron/cleanup-route";
+import { runBackgroundWorker } from "../../lib/cron/background-worker";
 import { transferRecordings } from "../../lib/stream/recording-transfer-service";
-import {
-  initJobSentry,
-  flushJobSentry,
-} from "../../lib/observability/job-sentry";
 
 export const config = { background: true };
 
@@ -15,17 +11,15 @@ const handlers = cleanupRoute({
 });
 
 /** Netlify's 202 acknowledges invocation; execution history records the eventual result. */
-export default async function recordingTransfer(req: Request): Promise<void> {
+export default async function recordingTransfer(
+  req: Request,
+  context?: unknown,
+): Promise<void> {
   if (req.method !== "POST") return;
-  initJobSentry();
-  try {
-    const response = await handlers.POST(new NextRequest(req));
-    if (response.status >= 500) {
-      throw new Error(
-        `Recording transfer worker returned HTTP ${response.status}`,
-      );
-    }
-  } finally {
-    await flushJobSentry();
-  }
+  await runBackgroundWorker(
+    "transfer-recordings",
+    req,
+    context,
+    () => handlers,
+  );
 }
