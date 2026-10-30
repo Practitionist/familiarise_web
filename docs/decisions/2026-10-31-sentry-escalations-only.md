@@ -29,7 +29,7 @@ A Sentry event means "a person must act now". Everything else is a log line, a r
 4. **The canary reads usage stats instead of sending an event.** It reads `stats_v2` once a day with `SENTRY_STATS_TOKEN` (an Internal Integration token (Organization: Read)). It alerts by email and by an error-level Better Stack log line on any `rate_limited` outcome or `usage_exceeded` / `error_usage_exceeded` reason, and when the read fails. An unset token is a config skip.
 5. **Preview deploys send no error events.** `beforeSend` drops every event when `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is `preview`. Netlify sets that value per deploy context and Next inlines it into the server, edge and client bundles.
 6. **Spike Protection is on** for the project.
-7. **Seed data never reaches the needs-human queue.** The payments seed marks paid past sessions `COMPLETED` with outcome `HELD`, so a fresh database cannot raise the 72-hour finding (Sentry WEB-86).
+7. **Seed data never reaches the needs-human queue.** The payments seed marks the paid past sessions it created `COMPLETED` with outcome `HELD`, so a fresh database cannot raise the 72-hour finding (Sentry WEB-86).
 
 ## Consequences
 

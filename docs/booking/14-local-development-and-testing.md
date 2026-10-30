@@ -90,16 +90,16 @@ A mock payment sets `skipPayment`, so the row is written already `SUCCEEDED` in 
 
 The seeder runs in numbered phases. Booking-relevant phases:
 
-| Phase | Script                            | What It Creates                                                                         |
-| ----- | --------------------------------- | --------------------------------------------------------------------------------------- |
-| 1     | `1a-create-users`                 | Consultant and consultee user accounts with profiles                                    |
-| 4a    | `4a-create-consultation-plans`    | Consultation plans with duration and pricing                                            |
-| 4b    | `4b-create-subscription-plans`    | Subscription plans with `sessionsPerWeek`, `sessionDurationInHours`, `durationInMonths` |
-| 4c    | `4c-create-webinar-plans`         | Webinar plans with duration                                                             |
-| 4d    | `4d-create-class-plans`           | Class plans with `sessionsPerWeek` and class contents                                   |
-| 5a    | `5a-create-slots-of-availability` | Weekly and custom availability slots for consultants                                    |
-| 6a    | `6a-create-appointments`          | Appointments with slot records across all event types                                   |
-| 8b    | `8b-create-payments`              | Payment records linked to appointments; paid past sessions become `COMPLETED` / `HELD`  |
+| Phase | Script                            | What It Creates                                                                                |
+| ----- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 1     | `1a-create-users`                 | Consultant and consultee user accounts with profiles                                           |
+| 4a    | `4a-create-consultation-plans`    | Consultation plans with duration and pricing                                                   |
+| 4b    | `4b-create-subscription-plans`    | Subscription plans with `sessionsPerWeek`, `sessionDurationInHours`, `durationInMonths`        |
+| 4c    | `4c-create-webinar-plans`         | Webinar plans with duration                                                                    |
+| 4d    | `4d-create-class-plans`           | Class plans with `sessionsPerWeek` and class contents                                          |
+| 5a    | `5a-create-slots-of-availability` | Weekly and custom availability slots for consultants                                           |
+| 6a    | `6a-create-appointments`          | Appointments with slot records across all event types                                          |
+| 8b    | `8b-create-payments`              | Payment records linked to appointments; its own paid past sessions become `COMPLETED` / `HELD` |
 
 ### Running the Seeder
 

@@ -84,6 +84,7 @@ export async function createPayments(users: UserWithProfiles[]) {
     take: NUM_PAYMENTS,
   });
 
+  const paidAppointmentIds: string[] = [];
   for (let i = 0; i < appointments.length; i++) {
     const user = faker.helpers.arrayElement(users);
     const appointment = appointments[i];
@@ -164,6 +165,9 @@ export async function createPayments(users: UserWithProfiles[]) {
       const created = await prisma.payment.create({
         data: paymentData,
       });
+      if (paymentStatus === PaymentStatus.SUCCEEDED) {
+        paidAppointmentIds.push(appointment.id);
+      }
       // #1319 A9 — stamp the funding payment on the buyer's participant row.
       await prisma.appointmentParticipant.updateMany({
         where: {
@@ -185,10 +189,11 @@ export async function createPayments(users: UserWithProfiles[]) {
     }
   }
 
-  // A paid past session was held; left UNVERIFIED with no outcome, the sweep would park it for ops.
+  // A past session this run paid for was held; only this run's rows, since the DB is shared.
   const now = new Date();
   const held = await prisma.appointmentOccurrence.updateMany({
     where: {
+      appointmentId: { in: paidAppointmentIds },
       endsAt: { lt: now },
       isTentative: false,
       completionStatus: OccurrenceCompletionStatus.UNVERIFIED,

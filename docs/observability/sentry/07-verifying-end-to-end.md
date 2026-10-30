@@ -20,15 +20,15 @@ The trap in rung 3 is that it is genuinely good evidence and feels final. Readin
 
 ## Why not just the local dev server
 
-Verify against a **Netlify deploy preview**, not `next dev`. A local dev server is not a representative environment for this: dev builds skip the Sentry upload path, the release is a dirty working tree rather than a commit SHA, and the traffic would land in the production project where a real person might see a synthetic test error attributed to nobody in particular. The preview is a real build of a real commit, so `release` and `branch` are meaningful and the events are separable from production by the `environment` tag.
+Verify against a **deployed Netlify build whose environment is not `preview`** (today, production after release), not `next dev`. A local dev server is not a representative environment for this: dev builds skip the Sentry upload path, the release is a dirty working tree rather than a commit SHA, and the traffic would land in the production project where a real person might see a synthetic test error attributed to nobody in particular. A deployed build is a real build of a real commit, so `release` and `branch` are meaningful; use a seeded account so the test error is attributable.
 
 **A deploy preview sends no error events.** `beforeSend` drops every event when `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is `preview` (`isPreviewDeploy`), before transport, so on a preview no error envelope leaves the browser or the function and only the drop itself can be shown. Run the rungs that need an event on a deploy whose environment is not `preview`, which today means production after release.
 
-The trade-off is that a preview cannot see a local `.env`, so anything the test needs must be on the Netlify context. In practice the seeded test accounts are the hard part — see the recipe below.
+The trade-off is that a deployed build cannot see a local `.env`, so anything the test needs must be on the Netlify context. In practice the seeded test accounts are the hard part — see the recipe below.
 
 ## The procedure
 
-1. **Get the preview URL and a signed-in session.** Sign in as a real seeded user in the preview browser context. Do not fabricate an identity: the point of the test is that the _server_ supplies it from the session, and a hand-set client scope proves nothing about that.
+1. **Open the deployed (non-preview) URL with a signed-in session.** Sign in as a real seeded user in that browser context. Do not fabricate an identity: the point of the test is that the _server_ supplies it from the session, and a hand-set client scope proves nothing about that.
 2. **Note which user you are.** Get the cuid from the account page. Write it down before you start; you will need it to correlate the envelope, and reconstructing it afterwards from a log is painful.
 3. **Attach a transport spy.** The SDK is bundled by `sentry.shared.config.ts` and is deliberately **not** put on `window`, so there is no `window.Sentry` to inspect. The reliable place to see events is the HTTP layer: wrap `fetch` and `XMLHttpRequest` from a page-context script, and record the request URL, status, response body and the `x-sentry-rate-limits` header. `X-Sentry-Auth` carries the DSN, so the spy also confirms which project the client is aimed at.
 4. **Trigger a real, harmless error.** Navigate to something that fails for a modelled reason, or use a route with a test-only error. A synthetic `throw` from a script proves the transport works but not that the identity was applied by the server.
@@ -55,7 +55,7 @@ So: a `200` you observed on any Sentry request is not evidence that error events
 
 ## The seeded-account recipe
 
-A preview has no local `.env` and no local database, so the test user must exist in the shared Postgres project. Deterministic seed accounts are the intended route — see the `maintenance` skill's Prisma seed-suite reference. The failure mode to watch for is signing in as a user whose session exists but whose org membership row does not, which produces a request that is correctly authenticated and correctly missing an org, and will look like an identity bug if you do not know the difference.
+A deployed build has no local `.env` and no local database, so the test user must exist in the shared Postgres project. Deterministic seed accounts are the intended route — see the `maintenance` skill's Prisma seed-suite reference. The failure mode to watch for is signing in as a user whose session exists but whose org membership row does not, which produces a request that is correctly authenticated and correctly missing an org, and will look like an identity bug if you do not know the difference.
 
 Record the values you observed **outside the repository** — in the PR description, a private note, or your own working notes, never in a committed file. A user cuid is pseudonymous personal data and a seeded account's email is personal data full stop; both are in git history permanently once written, and neither is needed here. What belongs in this document is the _shape_ of the record and a redacted example: user `<user-cuid>` (role `ORG_WORKSPACE`), org `<org-cuid>` (membership `OWNER`), preview release `<40-char-sha>`, branch `pull/<pr>/head`. On the 2026-09-28 run those came from a live preview of this branch signed in as the seeded tour owner; the values themselves are deliberately not repeated. The `session` envelope's `did` field corroborated the client scope independently, which is a useful cross-check because it is set on a different code path than the event's `user`.
 
