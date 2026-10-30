@@ -213,9 +213,9 @@ jobs:
         id: prettier
         run: |
           if [ "${{ steps.changed.outputs.full }}" = "true" ]; then
-            npm run format:check 2>&1 | tee /tmp/prettier.txt; exit ${PIPESTATUS[0]}
+            npm run format:check 2>&1 | tee /tmp/prettier.txt; exit "${PIPESTATUS[0]}"
           else
-            tr '\n' '\0' < /tmp/changed.txt | xargs -0 -r npx prettier --check --ignore-unknown 2>&1 | tee /tmp/prettier.txt; exit ${PIPESTATUS[1]}
+            tr '\n' '\0' < /tmp/changed.txt | xargs -0 -r ./node_modules/.bin/prettier --check --ignore-unknown 2>&1 | tee /tmp/prettier.txt; exit "${PIPESTATUS[1]}"
           fi
         continue-on-error: true
 
@@ -223,10 +223,10 @@ jobs:
         id: eslint
         run: |
           if [ "${{ steps.changed.outputs.full }}" = "true" ]; then
-            npx eslint . --format stylish 2>&1 | tee /tmp/eslint.txt; exit ${PIPESTATUS[0]}
+            ./node_modules/.bin/eslint . --format stylish 2>&1 | tee /tmp/eslint.txt; exit "${PIPESTATUS[0]}"
           else
             grep -E '\.(js|jsx|mjs|cjs|ts|tsx|mts|cts)$' /tmp/changed.txt | tr '\n' '\0' \
-              | xargs -0 -r npx eslint --max-warnings=0 --no-warn-ignored --format stylish 2>&1 | tee /tmp/eslint.txt; exit ${PIPESTATUS[2]}
+              | xargs -0 -r ./node_modules/.bin/eslint --max-warnings=0 --no-warn-ignored --format stylish 2>&1 | tee /tmp/eslint.txt; exit "${PIPESTATUS[2]}"
           fi
 
       - name: Lint Summary
@@ -255,7 +255,7 @@ jobs:
             else
               echo "### ✅ ESLint — no issues"
             fi
-          } >> $GITHUB_STEP_SUMMARY
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Supply-chain security audit
         # Fail CI when any production dependency has a high or critical advisory
