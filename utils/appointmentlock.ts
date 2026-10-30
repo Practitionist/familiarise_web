@@ -456,6 +456,40 @@ export async function lockRecordingPurchase<T>(
   }
 }
 
+export class DigitalProductPurchaseInProgressError extends Error {
+  readonly code = "DIGITAL_PRODUCT_PURCHASE_IN_PROGRESS" as const;
+  readonly httpStatus = 409 as const;
+  constructor() {
+    super("This purchase is already being started. Please try again.");
+    this.name = "DigitalProductPurchaseInProgressError";
+  }
+}
+
+/** One order mint or free claim per (product, buyer) at a time. */
+export async function lockDigitalProductPurchase<T>(
+  productId: string,
+  buyerId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const key = `digital-product-purchase:${productId}:${buyerId}`;
+  let lock: ApprovalLock;
+  try {
+    lock = await acquireGuarded(
+      key,
+      RECORDING_PURCHASE_LOCK_TTL_MS,
+      "digital-product-purchase",
+    );
+  } catch (error) {
+    if (error instanceof BookingLockUnavailableError) throw error;
+    throw new DigitalProductPurchaseInProgressError();
+  }
+  try {
+    return await fn();
+  } finally {
+    await releaseLock(lock);
+  }
+}
+
 export async function unlockApproval(lock: ApprovalLock): Promise<void> {
   await releaseLock(lock);
 }

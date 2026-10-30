@@ -214,6 +214,13 @@ export const staffCreateLimiter = makeLimiter(
 /** 5 per 15 minutes per user — POST /api/user/reauthenticate (password and TOTP guesses) */
 export const reauthLimiter = makeLimiter(5, "15 m", "rl:reauth");
 
+/** 30 per 10 minutes per user — digital product file downloads */
+export const digitalProductDownloadLimiter = makeLimiter(
+  30,
+  "10 m",
+  "rl:digital-product-download",
+);
+
 /**
  * Seconds until the sliding window admits the caller again, floored at 1.
  */

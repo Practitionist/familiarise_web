@@ -29,6 +29,10 @@ import {
   handleRecordingPurchaseSuccess,
   handleRecordingPurchaseFailure,
 } from "@/lib/payments/webhooks/recording-purchase";
+import {
+  handleDigitalProductPurchaseSuccess,
+  handleDigitalProductPurchaseFailure,
+} from "@/lib/payments/webhooks/digital-product-purchase";
 import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
 import {
   razorpayPaymentCapturedEventSchema,
@@ -190,6 +194,16 @@ async function dispatchCapturedPayment(params: {
     );
     return;
   }
+  if (notes.type === "digital_product_purchase") {
+    // Settled on its own DigitalProductPurchase row; withhold the order total without a payment entity.
+    await handleDigitalProductPurchaseSuccess(
+      orderId,
+      gatewayPaymentId,
+      notes,
+      gatewayPaymentId ? amountPaise : undefined,
+    );
+    return;
+  }
   // #1353 — the B2C pipeline persists the `pay_…` id on the Payment row it is
   // already the single writer of, so later refund and dispute webhooks (which
   // carry only that id) can find the row without a live gateway lookup.
@@ -269,6 +283,8 @@ export async function processRazorpayWebhookEvent(
           await handleOverageMemberFailure(failedOrderId);
         } else if (failedNotes.type === "recording_purchase") {
           await handleRecordingPurchaseFailure(failedOrderId);
+        } else if (failedNotes.type === "digital_product_purchase") {
+          await handleDigitalProductPurchaseFailure(failedOrderId);
         } else {
           await handlePaymentFailure(
             failedOrderId,

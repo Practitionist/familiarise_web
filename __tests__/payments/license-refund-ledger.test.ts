@@ -179,6 +179,7 @@ function txStub() {
     recordingPurchase: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    digitalProductPurchase: { findUnique: jest.fn().mockResolvedValue(null) },
   };
 }
 

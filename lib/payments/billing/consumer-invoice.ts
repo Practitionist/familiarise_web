@@ -30,7 +30,10 @@ import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { numericStateCode } from "@/lib/compliance/state-codes";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
-import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
+import {
+  DIGITAL_PRODUCT_SAC_CODES,
+  TAX_CONSTANTS,
+} from "@/lib/payments/payouts/constants";
 import {
   COMMERCIAL_CREDIT_NOTE_REASON_PREFIX,
   isPastGstCreditNoteCutoff,
@@ -282,6 +285,9 @@ export async function mintConsumerInvoice(
       userId: true,
       legs: { select: { source: true } },
       creditUsages: { select: { originalAmount: true } },
+      digitalProductPurchase: {
+        select: { product: { select: { category: true } } },
+      },
       refunds: {
         where: { status: { in: CREDIT_NOTE_REFUND_STATUSES } },
         select: { id: true },
@@ -419,7 +425,12 @@ export async function mintConsumerInvoice(
       igstPaise: tax.igstPaise,
       totalPaise: tax.totalPaise,
       currency: payment.currency,
-      sacCode: TAX_CONSTANTS.HSN_CODES.CONSULTING,
+      // A digital product sale carries its category's SAC; every other supply is coaching.
+      sacCode: payment.digitalProductPurchase
+        ? DIGITAL_PRODUCT_SAC_CODES[
+            payment.digitalProductPurchase.product.category
+          ]
+        : TAX_CONSTANTS.HSN_CODES.CONSULTING,
       taxRateBps: CONSUMER_TAX_RATE_BPS,
       // The supply happened when the buyer paid, not when we got around to
       // documenting it; `issuedAt` is always now (a back-dated issue date on a

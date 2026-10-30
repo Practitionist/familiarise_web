@@ -35,6 +35,7 @@ import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
 import {
   REPLAY_SALE_PREFIX,
+  DIGITAL_PRODUCT_SALE_PREFIX,
   notSettledElsewhereWhere,
 } from "@/lib/payments/webhooks/auto-refund-marker";
 
@@ -201,6 +202,7 @@ async function alertOrphanedPaymentsUnlocked(
         { parentPaymentId: { not: null } },
         { paymentIntent: { startsWith: "overage:" } },
         { description: { startsWith: REPLAY_SALE_PREFIX } },
+        { description: { startsWith: DIGITAL_PRODUCT_SALE_PREFIX } },
       ],
     },
   });

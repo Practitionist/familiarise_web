@@ -1,3 +1,5 @@
+import type { DigitalProductCategory } from "@prisma/client";
+
 /**
  * Payout-related constants used across the payout system
  */
@@ -68,6 +70,15 @@ export const TAX_CONSTANTS = {
     TRAINING: "999295", // services involving conduct of examinations for admission
   } as const,
 } as const;
+
+/** Digital product SAC by category, pending CA sign-off: 998431 text downloads, 998439 other content. */
+export const DIGITAL_PRODUCT_SAC_CODES = {
+  DOCUMENT: "998431",
+  TEMPLATE: "998431",
+  ARCHIVE: "998439",
+  IMAGE: "998439",
+  AUDIO: "998439",
+} as const satisfies Record<DigitalProductCategory, string>;
 
 // ============================================================================
 // Payout Modes

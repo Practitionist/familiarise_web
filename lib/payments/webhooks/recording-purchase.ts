@@ -17,24 +17,20 @@ import {
 } from "@/lib/payments/payouts/earnings-service";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
-import { postUnappliedReceipt } from "@/lib/payments/ledger/unapplied-receipts";
+import { REPLAY_SALE_PREFIX } from "@/lib/payments/webhooks/auto-refund-marker";
 import {
-  AUTO_REFUND_PENDING_PREFIX,
-  AUTO_REFUND_STUCK_PREFIX,
-  AUTO_REFUNDED_PREFIX,
-  REPLAY_SALE_PREFIX,
-  settledAutoRefundDescription,
-} from "@/lib/payments/webhooks/auto-refund-marker";
+  AUTO_REFUND_MARKERS,
+  cardLeg,
+  paiseNote,
+  refundStagedCapture,
+  resolveStandaloneCharge,
+  stageCaptureRefund as stageStandaloneCaptureRefund,
+  type CaptureOutcome,
+  type StageRefundInput,
+  type StandaloneCharge,
+} from "@/lib/payments/webhooks/standalone-sale-capture";
 import { isDurablyOurs } from "@/lib/stream/recording-storage";
-import { reportSentryError } from "@/lib/observability/report";
 import * as Sentry from "@sentry/nextjs";
-
-const paiseNote = z
-  .string()
-  .regex(/^\d+$/)
-  .transform(Number)
-  .pipe(z.number().int().nonnegative().safe());
 
 /** The notes a replay order is minted with; the capture reads them back. */
 export const replayChargeNotesSchema = z.object({
@@ -45,45 +41,21 @@ export const replayChargeNotesSchema = z.object({
   taxAmountPaise: paiseNote,
   buyerCountry: z.string().length(2),
 });
-const chargeSplitSchema = replayChargeNotesSchema.pick({
-  originalAmountPaise: true,
-  taxAmountPaise: true,
-  buyerCountry: true,
-});
 const replayBuyerSchema = replayChargeNotesSchema.pick({ userId: true });
 
-interface ReplayCharge {
-  originalAmount: number;
-  taxAmount: number;
-  buyerCountry: string | null;
-}
+type ReplayCharge = StandaloneCharge;
 
-/**
- * The tax split the mint stamped on the order notes. An order minted before
- * replays were taxed carries none and settles untaxed, as it was charged.
- */
 function resolveReplayCharge(
   orderId: string,
   chargedPaise: number,
   notes: Record<string, string> | undefined,
 ): ReplayCharge {
-  const parsed = chargeSplitSchema.safeParse(notes ?? {});
-  if (
-    parsed.success &&
-    parsed.data.originalAmountPaise + parsed.data.taxAmountPaise ===
-      chargedPaise
-  ) {
-    return {
-      originalAmount: parsed.data.originalAmountPaise,
-      taxAmount: parsed.data.taxAmountPaise,
-      buyerCountry: parsed.data.buyerCountry.toUpperCase(),
-    };
-  }
-  Sentry.captureMessage(
-    `[recording-purchase] order notes missing or invalid tax split: ${orderId}`,
-    { level: "error", tags: { subsystem: "payments" } },
+  return resolveStandaloneCharge(
+    "recording-purchase",
+    orderId,
+    chargedPaise,
+    notes,
   );
-  return { originalAmount: chargedPaise, taxAmount: 0, buyerCountry: null };
 }
 
 interface ResolvedPurchasePlanInfo {
@@ -197,172 +169,11 @@ function resolvePurchasePlanInfo(purchase: {
   return null;
 }
 
-const AUTO_REFUND_MARKERS = [
-  AUTO_REFUND_PENDING_PREFIX,
-  AUTO_REFUNDED_PREFIX,
-  AUTO_REFUND_STUCK_PREFIX,
-];
-
-type CaptureOutcome =
-  | { kind: "settled"; paymentId: string }
-  | { kind: "refund"; paymentId: string; reason: string; marker: string };
-
-/** The leg trigger rejects a positive Payment without legs at commit. */
-function cardLeg(amountPaise: number, paymentIntent: string) {
-  return {
-    create: { source: "CARD" as const, amountPaise, sourceRef: paymentIntent },
-  };
-}
-
-/**
- * Record a capture that fulfils nothing as a SUCCEEDED Payment carrying the
- * auto-refund marker. A row already staged for the intent is re-driven only
- * while its marker is still pending.
- */
-async function stageExistingCaptureRefund(
+function stageCaptureRefund(
   tx: Tx,
-  existing: {
-    id: string;
-    description: string | null;
-    amount: number;
-    paymentStatus: string;
-    gatewayPaymentId: string | null;
-  },
-  input: {
-    paymentIntent: string;
-    buyerId: string;
-    chargedPaise: number;
-    charge: ReplayCharge;
-    organizationId: string | null;
-    gatewayPaymentId: string | undefined;
-    reason: string;
-  },
-  marker: string,
+  input: StageRefundInput,
 ): Promise<CaptureOutcome | null> {
-  if (
-    existing.gatewayPaymentId &&
-    input.gatewayPaymentId &&
-    existing.gatewayPaymentId !== input.gatewayPaymentId &&
-    input.paymentIntent !== input.gatewayPaymentId
-  ) {
-    return stageCaptureRefund(tx, {
-      ...input,
-      paymentIntent: input.gatewayPaymentId,
-    });
-  }
-  if (!existing.description?.startsWith(AUTO_REFUND_PENDING_PREFIX)) {
-    if (existing.paymentStatus !== "PENDING") {
-      return null;
-    }
-    const claimed = await tx.payment.updateMany({
-      where: { id: existing.id, paymentStatus: "PENDING" },
-      data: {
-        amount: input.chargedPaise,
-        originalAmount: input.charge.originalAmount,
-        taxAmount: input.charge.taxAmount,
-        paymentStatus: "SUCCEEDED",
-        gatewayPaymentId: input.gatewayPaymentId,
-        capturedAt: new Date(),
-        description: marker,
-      },
-    });
-    if (claimed.count === 0) return null;
-    // Ensure CARD leg matches amount so deferred payment_legs_sum_to_amount trigger passes at COMMIT.
-    const updatedLegs = await tx.paymentLeg.updateMany({
-      where: { paymentId: existing.id, source: "CARD" },
-      data: { amountPaise: input.chargedPaise },
-    });
-    if (updatedLegs.count === 0) {
-      await tx.paymentLeg.create({
-        data: {
-          paymentId: existing.id,
-          source: "CARD",
-          amountPaise: input.chargedPaise,
-          sourceRef: input.paymentIntent,
-        },
-      });
-    }
-    await postUnappliedReceipt(tx, {
-      paymentId: existing.id,
-      capturedPaise: input.chargedPaise,
-    });
-    return {
-      kind: "refund",
-      paymentId: existing.id,
-      reason: input.reason,
-      marker,
-    };
-  }
-  await postUnappliedReceipt(tx, {
-    paymentId: existing.id,
-    capturedPaise: existing.amount,
-  });
-  return {
-    kind: "refund",
-    paymentId: existing.id,
-    reason: input.reason,
-    marker: existing.description,
-  };
-}
-
-async function stageCaptureRefund(
-  tx: Tx,
-  input: {
-    paymentIntent: string;
-    buyerId: string;
-    chargedPaise: number;
-    charge: ReplayCharge;
-    organizationId: string | null;
-    gatewayPaymentId: string | undefined;
-    reason: string;
-  },
-): Promise<CaptureOutcome | null> {
-  const marker = `${AUTO_REFUND_PENDING_PREFIX} ${input.reason}. Replay NOT granted.`;
-  const existing = await tx.payment.findUnique({
-    where: { paymentIntent: input.paymentIntent },
-    select: {
-      id: true,
-      description: true,
-      amount: true,
-      paymentStatus: true,
-      gatewayPaymentId: true,
-    },
-  });
-  if (existing) {
-    return stageExistingCaptureRefund(tx, existing, input, marker);
-  }
-  const created = await tx.payment.create({
-    data: {
-      userId: input.buyerId,
-      appointmentId: null,
-      amount: input.chargedPaise,
-      originalAmount: input.charge.originalAmount,
-      taxAmount: input.charge.taxAmount,
-      currency: "INR",
-      paymentMethod: "CARD",
-      paymentIntent: input.paymentIntent,
-      paymentGateway: "RAZORPAY",
-      paymentStatus: "SUCCEEDED",
-      capturedAt: new Date(),
-      description: marker,
-      organizationId: input.organizationId,
-      legs: cardLeg(input.chargedPaise, input.paymentIntent),
-      ...(input.gatewayPaymentId
-        ? { gatewayPaymentId: input.gatewayPaymentId }
-        : {}),
-    },
-    select: { id: true },
-  });
-  await postUnappliedReceipt(tx, {
-    paymentId: created.id,
-    capturedPaise: input.chargedPaise,
-  });
-  return {
-    kind: "refund",
-    paymentId: created.id,
-    reason: input.reason,
-    marker,
-  };
+  return stageStandaloneCaptureRefund(tx, input, "Replay NOT granted.");
 }
 
 /**
@@ -838,26 +649,10 @@ export async function handleRecordingPurchaseSuccess(
     await mintConsumerInvoiceBestEffort({ paymentId: outcome.paymentId });
     return;
   }
-  try {
-    const refundOutcome = await refundBookingPayment({
-      paymentId: outcome.paymentId,
-      reason: outcome.reason,
-      initiatedByUserId: null,
-      dedupeKey: `replay-capture:${outcome.paymentId}`,
-    });
-    if (refundOutcome?.status !== "PENDING") {
-      await prisma.payment.updateMany({
-        where: { id: outcome.paymentId, description: outcome.marker },
-        data: { description: settledAutoRefundDescription(outcome.marker) },
-      });
-    }
-  } catch (refundError) {
-    // The marker stays pending, so retry-auto-refunds re-drives the refund.
-    reportSentryError(refundError, {
-      subsystem: "payments",
-      extra: { orderId, paymentId: outcome.paymentId },
-    });
-  }
+  await refundStagedCapture(outcome, {
+    orderId,
+    dedupePrefix: "replay-capture",
+  });
 }
 
 export async function handleRecordingPurchaseFailure(
