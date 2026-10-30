@@ -162,3 +162,10 @@ Preserve support refusal, payout-release and chat-ending transactions. Rotate ad
 ## Direct upload commit retries
 
 For plan-material commits, check session, rate limit, current plan-management access and payload/file policy before replaying by plan type, plan ID and storage path. Return committed rows before storage probes. Pre-verification policy rejection preserves the upload: a corrected concurrent retry may commit it, and a reference count cannot fence external deletion. Keep the committed-row lookup outside cleanup catches so database errors preserve the upload too. First-attach verification stays outside the transaction, inside its existing refusal-cleanup try/catch; the locked transaction repeats replay before the material cap and insert. Run the full document suites and direct mock dependants with `--maxWorkers=2`; see `docs/documents/README.md` for the replay and orphan-cleanup limits.
+
+## Ticker capacity, state ownership and the scale path
+
+- **Capacity.** The ticker has 288 ticks a day × `MAX_TARGETS_PER_TICK` slots, and on 2026-10-30 it was nearly full (about 2,900 starts a day). Eleven registered jobs are scheduled nowhere. Before adding a job, check that a slot exists in its window, or bundle it. The growth limit is database connections (one per function instance), not the tick's 30 seconds.
+- **Jobs are slices, not long runs.** Each run takes a `?limit=`, a 16-second deadline, a saved cursor and a 90-second lease. Long work goes to a background function. A crashed run's lease expires and the next run takes over.
+- **State ownership.** Jobs may touch the same rows. Correctness comes from the database, not from job order: CAS status writes, Serializable retry, constraints and triggers, and gateway idempotency keys. A new writer of a status column must appear in the state ownership matrix (#2466), and `result.counters.casMiss` is the live signal for contention.
+- **The scale path** is in `docs/decisions/2026-10-30-architecture-at-scale-review.md` (Proposed): co-locate compute with the database in Mumbai, then a Postgres-backed queue in one worker replaces the HTTP ticker. Never add a second scheduler beside the ticker.
