@@ -17,7 +17,6 @@ export async function GET(
   { params }: { params: Promise<{ code: string }> },
 ) {
   try {
-    // Keyed on Netlify's client IP: the first x-forwarded-for hop is client-set.
     const limited = await applyRateLimit(
       referralCheckLimiter,
       getClientIp(req),

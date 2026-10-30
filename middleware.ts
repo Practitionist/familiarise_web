@@ -22,12 +22,12 @@ import {
   ssoDomainCheckLimiter,
   inviteAcceptIpLimiter,
   applyRateLimit,
-  getClientIp,
   isBypassableIp,
   streamJoinLimiter,
   streamApiLimiter,
 } from "@/lib/rate-limit";
 import { Ratelimit } from "@upstash/ratelimit";
+import { CLIENT_IP_HEADER, edgeClientIp } from "@/lib/request-ip";
 import {
   ATTRIBUTION_COOKIE_MAX_AGE_S,
   EXPERT_VIA_COOKIE,
@@ -93,6 +93,7 @@ function handleMaintenance(
   req: NextRequest,
   pathname: string,
   state: MaintenanceState,
+  forwarded: Headers,
 ): MaintenanceGate | null {
   if (
     state.unreadable &&
@@ -134,7 +135,9 @@ function handleMaintenance(
         ),
       };
     }
-    const response = NextResponse.rewrite(new URL("/maintenance", req.url));
+    const response = NextResponse.rewrite(new URL("/maintenance", req.url), {
+      request: { headers: forwarded },
+    });
     for (const [key, value] of Object.entries(headers)) {
       response.headers.set(key, value);
     }
@@ -269,8 +272,8 @@ const RATE_LIMIT_RULES: RateRule[] = [
 async function applyEdgeRateLimits(
   req: NextRequest,
   pathname: string,
+  clientIp: string,
 ): Promise<NextResponse | null> {
-  const clientIp = getClientIp(req);
   const isLocalhost = isBypassableIp(clientIp);
 
   for (const rule of RATE_LIMIT_RULES) {
@@ -288,13 +291,15 @@ export async function middleware(
   event: NextFetchEvent,
 ): Promise<NextResponse> {
   const { pathname } = req.nextUrl;
+  const clientIp = edgeClientIp(req.headers);
+  const forwarded = forwardedHeaders(req, clientIp);
 
   if (
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/favicon") ||
     HAS_FILE_EXTENSION.test(pathname)
   ) {
-    return NextResponse.next();
+    return NextResponse.next({ request: { headers: forwarded } });
   }
 
   if (
@@ -317,10 +322,15 @@ export async function middleware(
     isSubNavigation && req.method === "GET"
       ? getMaintenanceStateCachedOnly(event.waitUntil.bind(event))
       : await getMaintenanceState();
-  const maintenance = handleMaintenance(req, pathname, maintenanceState);
+  const maintenance = handleMaintenance(
+    req,
+    pathname,
+    maintenanceState,
+    forwarded,
+  );
   if (maintenance?.kind === "respond") return maintenance.response;
 
-  const response = await routeRequest(req, pathname);
+  const response = await routeRequest(req, pathname, clientIp, forwarded);
   rememberExpertVia(req, pathname, response);
   if (maintenance?.kind === "banner") {
     for (const [key, value] of Object.entries(maintenance.headers)) {
@@ -328,6 +338,15 @@ export async function middleware(
     }
   }
   return response;
+}
+
+/** What every pass-through forwards: the edge-resolved client IP, never a client-sent stamp or `x-pathname`. */
+function forwardedHeaders(req: NextRequest, clientIp: string): Headers {
+  const headers = new Headers(req.headers);
+  headers.delete("x-pathname");
+  headers.delete(CLIENT_IP_HEADER);
+  headers.set(CLIENT_IP_HEADER, clientIp);
+  return headers;
 }
 
 export function isExpertShareAttributionPath(pathname: string): boolean {
@@ -355,19 +374,17 @@ function rememberExpertVia(
 async function routeRequest(
   req: NextRequest,
   pathname: string,
+  clientIp: string,
+  forwarded: Headers,
 ): Promise<NextResponse> {
-  const rateLimited = await applyEdgeRateLimits(req, pathname);
+  const rateLimited = await applyEdgeRateLimits(req, pathname, clientIp);
   if (rateLimited) return rateLimited;
 
   const next = (extra?: Record<string, string>): NextResponse => {
-    const spoofedPath = req.headers.has("x-pathname");
-    if (!extra && !spoofedPath) return NextResponse.next();
-    const requestHeaders = new Headers(req.headers);
-    requestHeaders.delete("x-pathname");
     for (const [key, value] of Object.entries(extra ?? {})) {
-      requestHeaders.set(key, value);
+      forwarded.set(key, value);
     }
-    return NextResponse.next({ request: { headers: requestHeaders } });
+    return NextResponse.next({ request: { headers: forwarded } });
   };
 
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_API_PREFIXES)) {
@@ -406,6 +423,8 @@ async function routeRequest(
   return next();
 }
 
+// Covers all of /api plus every page path, so no IP reader is reachable without
+// the stamp; a dotted page path skips middleware and must never read the client IP.
 export const config = {
   matcher: [
     "/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)",

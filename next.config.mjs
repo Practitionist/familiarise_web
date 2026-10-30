@@ -264,7 +264,7 @@ const nextConfig = {
       ? { NEXT_PUBLIC_SENTRY_BRANCH: process.env.BRANCH }
       : {}),
     // Netlify sets NETLIFY only on the build machine, so runtime checks
-    // (client-IP header, lease cap, pool guard) need it inlined here.
+    // (lease cap, pool guard) need it inlined here.
     ...(process.env.NETLIFY ? { NETLIFY: process.env.NETLIFY } : {}),
   },
   // Skipped on Netlify by default: with them on, the deploy preview was killed
