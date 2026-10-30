@@ -1,0 +1,261 @@
+---
+title: Digital Products — Architecture
+type: reference
+audience: sde2
+status: live
+last-reviewed: 2026-10-30
+---
+
+# Digital Products — Architecture
+
+A digital product is a file sale: an expert uploads e-books, templates, ZIP bundles, images or audio, sets one price, and a buyer pays once (or claims it for free) and keeps download access for life. There is no calendar, appointment or plan behind it. Files that are part of a consultation, subscription, webinar or class stay plan materials (`PlanMaterial`); a digital product is its own offering type with its own tables, routes and money rail.
+
+The rail is a sibling of the replay sale (`RecordingPurchase`), and the two share their capture plumbing. Everything on this page is merged on `dev` except where it says **(planned)**.
+
+## 1. Worked example
+
+Hannah (an expert) creates "Interview workbook" in the Document category at ₹500 (50,000 paise). She uploads `workbook.pdf` (2.4 MB). The browser sends the bytes straight to Cloudflare R2, the server reads the first 4 KB back, finds `%PDF-` and no script markers, and marks the file `VERIFIED`. She presses Publish; the product is now `PUBLISHED` and listed on her expert profile.
+
+Priya opens `/explore/products/interview-workbook-1a2b3c4d` and presses "Buy for ₹590.00". The server derives the amount with `deriveCheckoutAmount()`: ₹500 plus 18 % GST (₹90) is 59,000 paise. It mints a Razorpay order whose notes carry `type: "digital_product_purchase"`, `originalAmountPaise: "50000"` and `taxAmountPaise: "9000"`, and writes a `PENDING` purchase. Priya pays. The capture webhook settles the sale in one transaction: the purchase goes `PENDING → SUCCEEDED`, a `SUCCEEDED` Payment of 59,000 paise is created with one `CARD` leg of 59,000 paise, the purchase is linked to it, and Hannah's earnings row is created with a 7-day hold together with the `BOOKING` ledger journal. After the commit the consumer invoice is minted with SAC 998431, and Priya gets the "Your purchase: Interview workbook" email linking to her library.
+
+Priya downloads the PDF the next day. That first download stamps `firstDownloadedAt`, which ends the no-questions refund window. A week later Hannah replaces the PDF with a corrected version; Priya's library shows the product as "Updated" and her next download is the new version.
+
+## 2. Data model
+
+| Model                    | What one row is                                      | Key columns                                                                                                         |
+| ------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `DigitalProduct`         | The listing                                          | `consultantProfileId` (owner), `slug` (unique), `category`, `pricePaise`, `status`, `takenDownAt`, `coverImagePath` |
+| `DigitalProductAsset`    | One version of one file                              | `storageKey` (unique R2 key), `mimeType`, `sizeBytes`, `order`, `version`, `status`, `rejectReason`, `purgedAt`     |
+| `DigitalProductPurchase` | One attempt to buy or claim                          | `buyerId`, `gatewayOrderId` (null on a free claim), `paymentId`, `amountPaise`, `status`, `firstDownloadedAt`       |
+| `DigitalProductDownload` | One download, kept as refund and dispute evidence    | `purchaseId`, `assetId`, `createdAt`                                                                                |
+| `DigitalProductReport`   | A signed-in user's report of a product to moderators | `productId`, `reporterId`, `reason`, `resolvedAt`                                                                   |
+
+The R2 key is `products/<productId>/<assetId>/v<version>.<ext>`. The extension comes from the MIME type, never from the uploader's file name. A replacement keeps its lineage folder and bumps the version, so `v1.pdf` and `v2.pdf` sit side by side until the old one is purged.
+
+`organizationId` and `visibility` exist from day one so organisation-owned products need only a relaxed `NOT NULL` later. Today every product is consultant-owned and `PUBLIC`.
+
+### 2.1 Status machines
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  state "DigitalProduct" as P {
+    [*] --> DRAFT
+    DRAFT --> PUBLISHED: publish (needs a VERIFIED file)
+    PUBLISHED --> ARCHIVED: archive or takedown
+    DRAFT --> ARCHIVED: archive or takedown
+    ARCHIVED --> PUBLISHED: publish (not taken down)
+  }
+```
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> PENDING: upload-url or replace
+  PENDING --> VERIFIED: commit passes checks
+  PENDING --> REJECTED: commit fails checks (object deleted)
+  VERIFIED --> SUPERSEDED: replaced or removed (object kept 30 days)
+```
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> PENDING: order minted
+  [*] --> SUCCEEDED: free claim
+  PENDING --> SUCCEEDED: capture settled
+  PENDING --> FAILED: payment failed, or 24 h with nothing captured
+  FAILED --> SUCCEEDED: late capture on the same order
+  SUCCEEDED --> REFUNDED: full refund or lost chargeback
+```
+
+## 3. Invariants
+
+| Rule                                                                    | Enforcer                                                                                                                                                       |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A buyer holds at most one `SUCCEEDED` purchase of a product             | Postgres partial unique index `digital_product_purchase_succeeded_key` in `prisma/sql/check-constraints.sql`                                                   |
+| A free claim has no order, and a paid purchase always has one           | Postgres `CHECK` `digital_product_purchase_free_has_no_order`                                                                                                  |
+| A price is never negative; a file is at most 250 MB                     | Postgres `CHECK`s `digital_product_price_nonnegative` and `digital_product_asset_size_cap`                                                                     |
+| One order per buyer and product at a time                               | `lockDigitalProductPurchase()` in `utils/appointmentlock.ts` around the read-mint-create in the purchase route                                                 |
+| A product is published only with a verified file and not taken down     | The publish route's CAS `updateMany` (`app/api/digital-products/[productId]/publish/route.ts`)                                                                 |
+| Every status change compares the prior status                           | CAS `updateMany` in the routes, `verifyDigitalProductAsset()` and `handleDigitalProductPurchaseSuccess()`                                                      |
+| The settle writes purchase, Payment, leg, earnings and journal together | One `prisma.$transaction` in `lib/payments/webhooks/digital-product-purchase.ts`, every helper on `tx`; the leg sum is checked by `payment_legs_sum_to_amount` |
+| At most 20 files and 1 GB per product                                   | `checkUploadFits()` in `lib/digital-products/creator.ts`                                                                                                       |
+| A download needs a `SUCCEEDED` purchase, ownership, or an operator role | The download route (`app/api/digital-products/[productId]/assets/[assetId]/download/route.ts`)                                                                 |
+| The receipt email is sent at most once per purchase                     | An `IdempotencyRecord` claim in `stageDigitalProductPurchaseEmail()` (`lib/email/senders/money.ts`)                                                            |
+
+## 4. Upload and verification
+
+The creator works in the offering editor (`/dashboard/consultant/<id>/offerings/digital-product/<productId>/edit`). `ProductFilesManager` (`components/offerings/editor/ProductFilesManager.tsx`) uploads each file in three steps.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Creator's browser
+  participant API as App routes
+  participant DB as Postgres
+  participant R2 as Cloudflare R2
+  B->>API: POST assets/upload-url (fileName, mimeType, sizeBytes)
+  API->>API: owner check, rate limit, category and cap checks
+  API->>DB: create DigitalProductAsset PENDING
+  API-->>B: presigned PUT (15 min, signs content-type and content-length)
+  B->>R2: PUT bytes with progress
+  B->>API: POST assets/[assetId]/commit
+  API->>R2: HEAD, then ranged GETs (first 4 KB, ZIP directory)
+  alt passes every check
+    API->>DB: CAS PENDING to VERIFIED, older versions to SUPERSEDED
+  else fails a check
+    API->>R2: DELETE object
+    API->>DB: CAS PENDING to REJECTED with the reason
+  end
+  API-->>B: VERIFIED, or REJECTED and the reason
+```
+
+A commit that finds no object yet answers `409 UPLOAD_NOT_FOUND` and leaves the row `PENDING`; the editor retries once and offers a Verify button after that. Replacing a file uses `POST assets/<assetId>/replace` and the same commit. Removing a verified file supersedes it, but a published product refuses to lose its last verified file.
+
+### 4.1 Verification rules
+
+`inspectUploadedObject()` in `lib/digital-products/verify-asset.ts` decides, reading only the object's head, its first 4 KB and, for ZIP containers, its end-of-central-directory record and central directory.
+
+- **Allowed types.** PDF, EPUB, DOCX, XLSX, PPTX, TXT, CSV and Markdown for Document and Template; ZIP for Archive and Template; PNG, JPEG and WebP for Image and Template; MP3, M4A and WAV for Audio. SVG is refused because it is executable markup, and video is out of scope. The list is `DIGITAL_PRODUCT_MIME_TYPES` in `lib/digital-products/constants.ts`.
+- **Size.** The object must be non-empty, at most 250 MB, and exactly the size the browser declared.
+- **Signature.** `checkFileSignature()` in `lib/digital-products/file-signature.ts` matches the magic bytes to the declared type, refuses executables (`MZ`, ELF, Mach-O, `#!`) whatever they claim, and refuses binary files whose header carries `<script`, `<html`, `<?php` or `<svg` (and, for PDF, `/JavaScript` or `/Launch`).
+- **ZIP.** `inspectZip()` in `lib/digital-products/zip-inspect.ts` refuses more than 1,000 entries, more than 500 MB uncompressed, any entry compressed more than 100:1, absolute or `..` paths, encrypted entries, symlinks, inconsistent Zip64 records and, in a ZIP archive, nested archives and executable or script extensions.
+
+There is no antivirus scan. Moderators take down a product a structural check missed (§8).
+
+## 5. Purchase and settlement
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Buyer's browser
+  participant API as App routes
+  participant RP as Razorpay
+  participant WH as Capture webhook
+  participant DB as Postgres
+  B->>API: POST /api/digital-products/[id]/purchase
+  API->>API: checkProductForSale, derive amount
+  API->>API: lockDigitalProductPurchase
+  API->>DB: already owned, or a PENDING order to resume
+  API->>RP: create order (notes type digital_product_purchase)
+  API->>DB: create purchase PENDING with gatewayOrderId
+  API-->>B: purchaseId, orderId, amount
+  B->>RP: Checkout sheet, pays
+  RP->>WH: payment.captured
+  WH->>DB: one transaction: CAS purchase to SUCCEEDED, Payment SUCCEEDED with CARD leg, link, earnings and BOOKING journal
+  WH->>WH: after commit: consumer invoice (SAC by category), receipt email
+  loop up to 8 times, every 2 s
+    B->>API: GET /api/digital-products/purchases/[purchaseId]
+  end
+  opt still PENDING
+    B->>API: POST purchases/[purchaseId]/verify
+    API->>RP: read what the order holds
+    API->>WH: route the capture as the webhook would
+  end
+```
+
+The capture is routed by `routeCapturedPayment()` (`app/api/webhooks/razorpay-dispatch.ts`) on the order notes' `type`. `handleDigitalProductPurchaseSuccess()` exits early when the order's Payment is already `SUCCEEDED` with the same amount and payment id, so a redelivered webhook does nothing. A capture that cannot be granted is kept as a `SUCCEEDED` Payment under the auto-refund marker and refunded after commit, through `stageCaptureRefund()` and `refundStagedCapture()` in `lib/payments/webhooks/standalone-sale-capture.ts`. That happens when:
+
+- the purchase row is gone (the buyer comes from the order notes);
+- the captured amount differs from `amountPaise`;
+- a second payment lands on an order that is already settled;
+- the product was taken down, or is no longer published on a late retry of a `FAILED` purchase;
+- the buyer already owns the product through another purchase.
+
+Earnings use the `DIGITAL_PRODUCT` type with a 168-hour hold (`lib/payments/payouts/constants.ts`). The invoice SAC comes from `DIGITAL_PRODUCT_SAC_CODES`: 998431 for Document and Template, 998439 for Archive, Image and Audio. These codes await chartered accountant sign-off.
+
+## 6. Free claim
+
+A product priced at ₹0 is claimed with `POST /api/digital-products/<id>/claim`. Under the same lock the route checks for an existing `SUCCEEDED` purchase and creates one with `amountPaise = 0` and no order. There is no Payment, invoice, earnings or journal. The partial unique index refuses a second claim even if two requests slip past the lock. The receipt email follows the claim.
+
+## 7. Download
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as Buyer's browser
+  participant API as Download route
+  participant DB as Postgres
+  participant R2 as Cloudflare R2
+  B->>API: GET /api/digital-products/[id]/assets/[assetId]/download
+  API->>API: sign-in, rate limit, VERIFIED asset, not taken down
+  API->>DB: SUCCEEDED purchase for this buyer
+  API->>DB: CAS firstDownloadedAt where null, insert DigitalProductDownload
+  API-->>B: 302 to a 300 s presigned GET (Content-Disposition attachment)
+  B->>R2: GET the file
+```
+
+The owner and operators download without a purchase and leave no download row. A taken-down product answers `410` to buyers. The buyer library (`/dashboard/consultee/<id>/products`) and the product page link to this route; no email or page ever carries a storage URL.
+
+## 8. Refunds, disputes and takedown
+
+A buyer can ask for a refund until their first download; after that only a defective file justifies one. The refund goes through the existing support and admin refund doors, and the operator reads `firstDownloadedAt` and the download rows to decide. The doors do not check `firstDownloadedAt` themselves.
+
+A full refund (`applyRefundCascade()` in `lib/payments/operations/refund.ts`) and a lost chargeback (`settleLostDispute()` in `app/api/webhooks/utils.ts`) revoke access through `revokeStandaloneSaleEntitlement()` (`lib/payments/digital-product-entitlement.ts`). It finds the digital product sale by its `paymentId` link and moves it `SUCCEEDED → REFUNDED`; only when no purchase is linked does it fall back to the replay sale. A partial goodwill refund keeps access.
+
+Any signed-in user can report a product from its page or their library. An operator with `moderation.manage` takes it down through `POST /api/admin/digital-products/<id>/takedown`, which sets `takenDownAt` and the reason and archives the product in one CAS. Buyers keep their purchase rows but cannot download.
+
+## 9. Buyer email
+
+`DIGITAL_PRODUCT_PURCHASED` (`emails/payments/DigitalProductPurchaseEmail.tsx`) is sent from `payments@` under the payments preference. `notifyDigitalProductPurchase()` (`lib/digital-products/purchase-email.ts`) runs after the settling commit and after a claim. It stages the outbox row through an `IdempotencyRecord` claim keyed on the purchase, so a re-run stages nothing, and flushes it after the response with `flushNotificationsAfter`. A failure is reported to Sentry once and never touches the sale. The button opens the buyer's library through `/dashboard/go/client/products`, or the product page when the buyer has no learner profile.
+
+## 10. Background jobs
+
+| Job                                 | Cadence                     | What it does                                                                                                                                                                                                                 |
+| ----------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reconcile-standalone-purchases`    | Every 15 minutes, `limit=5` | For `PENDING` digital product and replay purchases older than 15 minutes, asks Razorpay what the order holds, routes a capture to its handler and marks an order still empty after 24 hours `FAILED`. A money job.           |
+| `reconcile-digital-product-storage` | Every 6 hours, `limit=25`   | Deletes objects of versions superseded more than 30 days ago (stamping `purgedAt`), clears `REJECTED` and abandoned `PENDING` uploads older than a day, and pages the bucket for objects older than a day that no row names. |
+
+Both are registered once in `lib/cron/cleanup-registry.ts`, scheduled in `lib/cron/schedule.ts`, run under `withCronLock` and report to Sentry once per run. See the [cron jobs reference](../maintenance/04-cron-jobs-reference.md).
+
+## 11. Surfaces
+
+- **Creator.** Offerings › Digital products lists the expert's products. New offering › Digital product opens the editor: Basics (title, subtitle, description, category, cover image), Pricing and Files. The cover image is written by `/api/plans/image` under `digital-products/<productId>` in the public `plan-images` bucket; the product routes never accept a cover path.
+- **Public.** `/explore/products/<slug>` shows a product on sale (published, publicly visible, not taken down) and the expert profile lists them, both through `digitalProductDiscoverableWhere()` in `lib/api/plans/visibility.ts`.
+- **Buyer.** Library › Digital products lists every product the buyer holds a `SUCCEEDED` purchase of, with an "Updated" badge when a verified file arrived after the purchase.
+
+## 12. Setting up the R2 bucket (one-time, done by a human)
+
+There is no Cloudflare automation in this repository, so these steps are manual.
+
+1. In the Cloudflare dashboard, create a private R2 bucket for product files, for example `familiarise-digital-products`, with an Asia-Pacific location hint. Leave public access off.
+2. Add a CORS policy for the app's origins. The editor PUTs files from the browser, so PUT is required; downloads are top-level redirects, and GET is allowed so a script-initiated download also works. List every custom domain in `docs/deployment/README.md` and any origin the active host serves:
+   ```json
+   [
+     {
+       "AllowedOrigins": [
+         "https://familiarisenow.com",
+         "https://www.familiarisenow.com",
+         "https://familiarise.in",
+         "https://dev.familiarisenow.com",
+         "https://<active-host-or-preview-origin>"
+       ],
+       "AllowedMethods": ["PUT", "GET"],
+       "AllowedHeaders": ["content-type", "content-length"],
+       "ExposeHeaders": ["ETag"],
+       "MaxAgeSeconds": 3600
+     }
+   ]
+   ```
+3. Give the existing R2 API token (the one behind `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`) Object Read and Write on the new bucket, or create a token scoped to the recordings bucket and this one only.
+4. Set `R2_DIGITAL_PRODUCTS_BUCKET` to the bucket name on Netlify and on the active host. `R2_S3_ENDPOINT` is shared with the recordings bucket.
+5. Verify: upload a small PDF from the editor and see it turn Verified, then download it from the editor's download button.
+
+Until the variable is set, the upload, commit and download routes fail with `R2_DIGITAL_PRODUCTS_BUCKET is not configured` and the storage sweep skips.
+
+## 13. Where in code
+
+- Constants, key layout and MIME allow-list: `lib/digital-products/constants.ts`
+- Creator helpers and upload caps: `lib/digital-products/creator.ts`
+- Verification: `lib/digital-products/verify-asset.ts`, `lib/digital-products/file-signature.ts`, `lib/digital-products/zip-inspect.ts`
+- Sale checks: `lib/digital-products/sale.ts`; settlement: `lib/payments/webhooks/digital-product-purchase.ts`
+- Entitlement and revocation: `lib/payments/digital-product-entitlement.ts`
+- Storage sweep: `lib/digital-products/storage-sweep.ts`; recovery: `scripts/payments/reconcile-standalone-purchases.ts`
+- Erasure: `lib/digital-products/erasure.ts`, called from `lib/compliance/erasure/scrub-user.ts`
+- Schemas: `schemas/digital-products.ts`
+- Public and library reads: `lib/data/digital-products-public.ts`, `lib/data/digital-product-library.ts`
+
+## Deprecated & Superseded Approaches
+
+- **"An appointment-less Payment is a replay sale."** Refunds and lost chargebacks used to revoke a replay entitlement for any Payment without an appointment. With a second standalone rail that guess would revoke the wrong thing, so `revokeStandaloneSaleEntitlement()` looks the sale up explicitly. Delete any new code that branches on `appointmentId === null` alone to decide what a payment bought.
+- **A client-writable cover path.** The first product schemas accepted `coverImagePath` in the create and update bodies. The plan-images route is now its only writer, so a cover always names an object in that bucket.

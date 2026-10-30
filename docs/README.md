@@ -98,6 +98,14 @@ The money subsystem: checkout and pricing, capture and webhooks, the double-entr
 
 ---
 
+### Digital Products
+
+Standalone file sales: upload and verification, purchase and free claim, downloads, refunds and the R2 bucket setup.
+
+- [01-architecture.md](./digital-products/01-architecture.md) - Data model, sequence diagrams, verification rules, background jobs and the R2 setup runbook
+
+---
+
 ### Errors
 
 How a modelled outcome travels from a route or a server action to a toast without becoming a Sentry fault.

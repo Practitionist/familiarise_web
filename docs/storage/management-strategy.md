@@ -369,6 +369,12 @@ Session documents and plan materials live in the private Supabase `documents` bu
 
 Session documents are tombstoned 90 days after the booking ends (or is cancelled) and purged 7 days later by the registered `purge-deleted-documents` job (`lib/documents/document-purge.ts`), which runs hourly on the Netlify ticker with `limit=100` (the route still accepts up to 200 for a manual drain). A tombstoned row keeps its object until the purge, and `reconcile-document-storage` imports the same `DOCUMENT_DELETE_GRACE_DAYS` constant so it never sweeps an object the purge still owns. The 10 MB limit and the allowed types come from one policy, `lib/documents/file-policy.ts`. See [session documents](../documents/README.md#retention-and-the-purge).
 
+## R2 for digital product files
+
+Files an expert sells as a digital product live in their own private R2 bucket, named by `R2_DIGITAL_PRODUCTS_BUCKET` and reached with the recordings bucket's credentials. They can be up to 250 MB each and are downloaded repeatedly, which is the R2 read pattern; Supabase Storage holds only the product's public cover image (`plan-images/digital-products/<productId>/`). The browser PUTs each file to a 15-minute presigned URL that signs its type and length, the commit route verifies it by ranged reads, and a buyer downloads through a 300-second presigned GET that the app hands out only after an entitlement check. Keys are `products/<productId>/<assetId>/v<version>.<ext>`, and a replacement keeps its folder with the next version number.
+
+`reconcile-digital-product-storage` (every 6 hours) keeps the bucket equal to its rows. It deletes the object of a version superseded more than 30 days ago and stamps `purgedAt` on the row, which stays as download evidence; it deletes rejected and abandoned uploads older than a day; and it pages through the bucket from a checkpoint deleting objects older than a day that no row names. An erased creator's objects are deleted after the erasure commit. See [digital products](../digital-products/01-architecture.md).
+
 ## Cleanup Strategy
 
 ### 1. Orphan Sweep (`reconcile-document-storage`, daily)
