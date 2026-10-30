@@ -5,12 +5,17 @@ import {
   PageHeader,
 } from "@/components/dashboard/PageScaffold";
 import { requireBackofficePage } from "@/lib/auth-guard";
-import { readJobRunMetrics } from "@/lib/backoffice/job-run-metrics";
+import {
+  defaultMetricsEnvironment,
+  metricsEnvironmentSchema,
+  readJobRunMetrics,
+  type MetricsEnvironment,
+} from "@/lib/backoffice/job-run-metrics";
 import { systemJobCards } from "@/lib/cron/job-catalog";
 
-async function metricsOrNull() {
+async function metricsOrNull(environment: MetricsEnvironment) {
   try {
-    return await readJobRunMetrics();
+    return await readJobRunMetrics(environment);
   } catch (err) {
     console.warn(
       "[system-jobs] run metrics read failed:",
@@ -22,9 +27,16 @@ async function metricsOrNull() {
 
 export default async function BackofficeSystemJobsPage({
   params,
-}: Readonly<{ params: Promise<{ tree: string }> }>) {
+  searchParams,
+}: Readonly<{
+  params: Promise<{ tree: string }>;
+  searchParams: Promise<{ env?: string | string[] }>;
+}>) {
   await requireBackofficePage("systemJobs.manage", (await params).tree);
-  const metrics = await metricsOrNull();
+  const environment = metricsEnvironmentSchema
+    .catch(defaultMetricsEnvironment())
+    .parse((await searchParams).env);
+  const metrics = await metricsOrNull(environment);
   return (
     <>
       <PageHeader
@@ -32,8 +44,12 @@ export default async function BackofficeSystemJobsPage({
         description="Manually trigger background jobs for data validation and cleanup"
       />
       <DashboardContent>
-        <JobRunMetrics metrics={metrics} />
-        <SystemJobsPanel jobs={systemJobCards()} />
+        <JobRunMetrics
+          metrics={metrics}
+          environment={environment}
+          environments={metricsEnvironmentSchema.options}
+        />
+        <SystemJobsPanel jobs={systemJobCards()} environment={environment} />
       </DashboardContent>
     </>
   );

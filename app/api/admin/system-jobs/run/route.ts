@@ -2,7 +2,8 @@
  * POST /api/admin/system-jobs/run — the admin Run door for every registered
  * cleanup job. It runs the registry's own handler in-process, inside an admin
  * run context, so a manual run and a ticker run share one implementation and
- * one execution trail. No CRON_SECRET reaches the browser.
+ * one execution trail. No CRON_SECRET reaches the browser. Off production the
+ * route refuses every job (409 `JOB_RUN_PRODUCTION_ONLY`); the database is shared.
  */
 
 import { randomUUID } from "node:crypto";
@@ -24,6 +25,7 @@ import {
   CLEANUP_JOB_BUILDERS,
   getCleanupJobHandlers,
 } from "@/lib/cron/cleanup-registry";
+import { jobsMayRunHere } from "@/lib/cron/dispatch-refusal";
 import { runOutcomeSchema } from "@/lib/cron/run-outcome";
 import { withRunContext } from "@/lib/cron/run-context";
 import {
@@ -184,7 +186,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
 
     // A payout run makes a gateway call per row and would meet the edge timeout inside the request.
-    if (entry.meta.manualRun === "after") {
+    // Off production the route refuses at once, so the refusal answers inline.
+    if (entry.meta.manualRun === "after" && jobsMayRunHere()) {
       scheduleAfter(async () => {
         try {
           const res = await run();

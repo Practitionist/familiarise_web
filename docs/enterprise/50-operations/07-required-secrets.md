@@ -235,6 +235,10 @@ Still missing, because each needs a value only a human can supply:
 | ----------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `SLACK_OPS_WEBHOOK_URL` | GitHub Actions | An incoming-webhook URL from the Slack workspace. Referenced by the 3 scheduled workflows (`cron-heartbeat`, `db-live-drift`, `security-audit`). Until it exists, Sentry is the only channel by which a money-cron failure reaches anyone. |
 
+**`CRON_SECRET` differs per Netlify context.** Production, deploy-preview and branch-deploy each hold their own value (set 2026-10-30), so a secret leaked from a preview cannot call production. A preview's value is still accepted by its own routes, but a preview refuses every job after the bearer check (409 `JOB_RUN_PRODUCTION_ONLY`), because it shares production's database.
+
+**`NEXT_PUBLIC_SENTRY_ENVIRONMENT` decides what a deploy may do.** The value `production` is what lets a deploy run jobs (`jobsMayRunHere()` in `lib/cron/dispatch-refusal.ts`) and write production-only shared state (`mayWriteProductionState()` in `lib/production-state.ts`: the maintenance window and its Redis mirror, the discount-code pause and `cron:heartbeat:last`). It must stay `production` only in the production context and `preview` on deploy-preview and branch-deploy; both of those record `preview`. `SENTRY_ENVIRONMENT` is read only when the public variable is absent. A local `next dev` process needs neither: it runs jobs without it.
+
 **`CRON_SECRET` lives with the hosts, not in GitHub.**
 The route compares against its host's value, and the ticker reads the same value from the same
 environment. No GitHub Actions workflow calls a cleanup route any more (the cron fleet workflows are

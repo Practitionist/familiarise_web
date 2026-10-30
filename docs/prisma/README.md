@@ -88,6 +88,8 @@ workflow is not a gate — it never appears, so a required check would read as
 success. The comparison is schema-to-schema, so a pull request that adds no
 schema object never reads the database at all.
 
+**The release gate.** `check-db-schema-required.ts --live` is the same check pointed at the whole schema instead of the merge-base diff. It runs `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` (read-only, needs `DIRECT_URL`; the catalog read uses `DATABASE_URL`) and fails when the schema declares a table, column, enum type or enum value the live database lacks. It ignores the other direction and the sidecar objects in `prisma/sql/*.sql`. It runs as the "Release schema gate" job (`release-schema-gate`) in `.github/workflows/db-live-drift.yml` on pull requests into `prod`. The owner adds it as a required check on `prod`. While the Actions budget is exhausted the job cannot run, so run `npx tsx scripts/ci/check-db-schema-required.ts --live` locally before merging a release, and have the human run the push preflight and push first when it fails. On 2026-10-31 the live database was ahead of the schema, which the gate ignores: the `DigitalProduct*` tables and enums, `RecordingPurchase.reconciledAt` and its index, and `Payment.refundOwedNextAt`.
+
 The other direction — the database carrying objects the schema does not want —
 is deliberately **not** checked. That is the reconcile push's business, it is
 not a runtime failure, and a live-database check in both directions blocks every

@@ -9,6 +9,7 @@ import { SystemJobStatus, Prisma } from "@prisma/client";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { TICK_CLAIM_JOB } from "@/lib/cron/schedule";
+import { metricsEnvironmentSchema } from "@/lib/backoffice/job-run-metrics";
 import * as Sentry from "@sentry/nextjs";
 /**
  * GET /api/staff/system-jobs/executions
@@ -36,6 +37,12 @@ export async function GET(req: NextRequest) {
     }
     if (status) {
       where.status = status;
+    }
+    const environment = metricsEnvironmentSchema.safeParse(
+      searchParams.get("environment"),
+    );
+    if (environment.success) {
+      where.result = { path: ["environment"], equals: environment.data };
     }
 
     const [executions, total] = await Promise.all([
