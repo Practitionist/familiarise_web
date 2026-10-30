@@ -694,20 +694,19 @@ export async function headR2Object(opts: {
 }
 
 /**
- * One ListObjectsV2 page of keys under `prefix`; `truncated` means more keys
- * remain, from `nextContinuationToken`. `objects` pairs each key with its age.
+ * One ListObjectsV2 page of keys under `prefix`, after `startAfter` when given;
+ * `truncated` means more keys remain. `objects` pairs each key with its age.
  */
 export async function listR2Keys(opts: {
   prefix: string;
   maxKeys: number;
   bucket?: string;
-  continuationToken?: string;
+  startAfter?: string;
   signal?: AbortSignal;
 }): Promise<{
   keys: string[];
   truncated: boolean;
   objects: Array<{ key: string; lastModified: Date | null }>;
-  nextContinuationToken: string | null;
 }> {
   const signed = signR2Request({
     method: "GET",
@@ -717,7 +716,7 @@ export async function listR2Keys(opts: {
       "list-type": "2",
       prefix: opts.prefix,
       "max-keys": String(opts.maxKeys),
-      "continuation-token": opts.continuationToken,
+      "start-after": opts.startAfter,
     },
   });
   const response = await fetch(signed.url, {
@@ -744,16 +743,12 @@ export async function listR2Keys(opts: {
       };
     },
   );
-  const token = /<NextContinuationToken>([^<]*)<\/NextContinuationToken>/.exec(
-    xml,
-  )?.[1];
   return {
     keys: Array.from(xml.matchAll(/<Key>([^<]*)<\/Key>/g), (m) =>
       unescapeXml(m[1] ?? ""),
     ),
     truncated: /<IsTruncated>true<\/IsTruncated>/.test(xml),
     objects,
-    nextContinuationToken: token ? unescapeXml(token) : null,
   };
 }
 

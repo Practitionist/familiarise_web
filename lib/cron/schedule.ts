@@ -33,6 +33,8 @@ export const TARGETS = [
   "settle-platform-incidents",
   "maintenance-booking-remediation",
   "retry-auto-refunds",
+  "reconcile-standalone-purchases",
+  "reconcile-digital-product-storage",
   "alert-orphaned-payments",
   "reconcile-orphaned-payments",
   "sentry-ingest-canary",
@@ -123,6 +125,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "settle-platform-incidents": 10,
   "maintenance-booking-remediation": 1,
   "retry-auto-refunds": 10,
+  "reconcile-standalone-purchases": 5,
+  "reconcile-digital-product-storage": 25,
   "appointment-reminders": 25,
   "expire-stale-requests": 20,
   "reschedule-proposals": 25,
@@ -201,6 +205,8 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "settle-platform-incidents": 60,
   "maintenance-booking-remediation": 15,
   "retry-auto-refunds": 15,
+  "reconcile-standalone-purchases": 15,
+  "reconcile-digital-product-storage": 360,
   "auto-complete-appointments": 30,
   "detect-consultant-no-shows": 30,
   "alert-orphaned-payments": 15,
@@ -276,6 +282,8 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "settle-platform-incidents": 30,
   "maintenance-booking-remediation": 0,
   "retry-auto-refunds": 10,
+  "reconcile-standalone-purchases": 10,
+  "reconcile-digital-product-storage": 125,
   "auto-complete-appointments": 15,
   "detect-consultant-no-shows": 20,
   "reconcile-orphaned-payments": 10,
@@ -320,8 +328,12 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "expire-event-channels": 55,
 };
 
-/** Regression ceiling for due work, enforced by the calendar test. */
-export const MAX_TARGETS_PER_TICK = 10;
+/**
+ * Regression ceiling for due work, enforced by the calendar test. Every slot
+ * already peaks at 10, so the two digital product sweeps sit on different
+ * 15-minute phases and raise the worst tick by one.
+ */
+export const MAX_TARGETS_PER_TICK = 11;
 
 /**
  * A UTC calendar window. Inside it the target fires on its every/offset slots;
@@ -487,6 +499,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "settle-cancelled-sessions": 20_000,
   "settle-platform-incidents": 20_000,
   "retry-auto-refunds": 20_000,
+  "reconcile-standalone-purchases": 20_000,
+  "reconcile-digital-product-storage": 20_000,
   "vest-referral-credits": 20_000,
   "reconcile-refunds": 20_000,
   "reconcile-org-invoice-payments": 24_000,

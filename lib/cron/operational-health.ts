@@ -26,6 +26,11 @@ export const OPERATIONAL_COMPLETION_REQUIREMENTS: readonly CompletionRequirement
     { jobName: "reconcile-pending-refunds", maxAgeMinutes: 45, tier: "paging" },
     { jobName: "retry-auto-refunds", maxAgeMinutes: 45, tier: "paging" },
     {
+      jobName: "reconcile-standalone-purchases",
+      maxAgeMinutes: 45,
+      tier: "paging",
+    },
+    {
       jobName: "sweep-stuck-webhook-events",
       maxAgeMinutes: 45,
       tier: "paging",
