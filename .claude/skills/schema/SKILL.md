@@ -100,7 +100,7 @@ old column is gone, the old code paths are deleted, and the contract step has
 shipped. An expand step left permanently unfinished is worse than the original
 schema, because now two columns exist and nobody knows which one is true.
 
-**A release into `prod` passes the live schema gate first.** The release cutter runs `npx tsx scripts/ci/check-db-schema-required.ts --live` (read-only) before opening the `prod` pull request and pastes its output into the body; GitHub Free allows no required check. It fails when the schema declares an object the live database lacks; the human then runs the push preflight and push, never an agent. It ignores database-ahead objects and sidecar objects. The job is "Release schema gate" in `.github/workflows/db-live-drift.yml`; the current database-ahead list is in `references/this-repo.md`.
+**A release into `prod` passes the live schema gate first.** The release cutter runs `npx --no-install tsx scripts/ci/check-db-schema-required.ts --live` (read-only) before opening the `prod` pull request and pastes its output into the body; GitHub Free allows no required check. When it fails by listing objects the live database lacks, the human runs the push preflight and push, never an agent; when it fails because it could not compare (a missing URL, a failed diff or catalog read), fix that cause and re-run instead. It ignores database-ahead objects and sidecar objects. The job is "Release schema gate" in `.github/workflows/db-live-drift.yml`; the current database-ahead list is in `references/this-repo.md`.
 
 ## Where to start
 

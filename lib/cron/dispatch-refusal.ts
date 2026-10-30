@@ -42,12 +42,11 @@ export class JobRunRefusedError extends ProductionOnlyRefusal {
 }
 
 /**
- * Jobs run on production, and in a local development or test process on no
+ * Jobs run on production, and in a local `development` or `test` process on no
  * host; every other deploy shares production's database and refuses.
  */
 export function jobsMayRunHere(): boolean {
-  return (
-    jobEnvironment() === "production" ||
-    (process.env.NODE_ENV !== "production" && !onNetlify())
-  );
+  const local =
+    process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+  return jobEnvironment() === "production" || (local && !onNetlify());
 }

@@ -125,10 +125,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // The route's own gate refuses too; checking first keeps a deferred payout run from a silent refusal.
-    const maintenanceState = await getMaintenanceState();
+    // Where jobs may run, checking maintenance first keeps a deferred payout run from a silent refusal;
+    // elsewhere the handler answers its 409 production-only refusal instead.
+    const mayRun = jobsMayRunHere();
+    const maintenanceState = mayRun ? await getMaintenanceState() : null;
     if (
-      maintenanceState.phase === "DEGRADED" &&
+      maintenanceState?.phase === "DEGRADED" &&
       FINANCIAL_JOB_NAMES.has(handlers.job)
     ) {
       return NextResponse.json(
@@ -139,7 +141,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         { status: 503 },
       );
     }
-    if (maintenanceState.phase === "OFFLINE") {
+    if (maintenanceState?.phase === "OFFLINE") {
       return NextResponse.json(
         {
           error: `All system jobs are blocked during OFFLINE maintenance. End maintenance mode first.`,
@@ -187,7 +189,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // A payout run makes a gateway call per row and would meet the edge timeout inside the request.
     // Off production the route refuses at once, so the refusal answers inline.
-    if (entry.meta.manualRun === "after" && jobsMayRunHere()) {
+    if (entry.meta.manualRun === "after" && mayRun) {
       scheduleAfter(async () => {
         try {
           const res = await run();

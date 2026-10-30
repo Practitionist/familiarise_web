@@ -446,7 +446,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const catalog = await readLiveCatalog(connectionString);
+  // --live reads the catalog from the same DIRECT_URL target the diff used.
+  const catalog = await readLiveCatalog(
+    (live && process.env.DIRECT_URL) || connectionString,
+  );
   const missing = required.filter((o) => !isPresent(o, catalog));
 
   if (missing.length === 0) {

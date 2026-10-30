@@ -37,24 +37,24 @@ Each stage ramps up for two minutes, holds for ten, and ramps down for two. Run 
 | 2     | 300           | The lower edge of the expected ceiling. The pooler client count is the number to watch.                         |
 | 3     | 1,000         | Past the expected ceiling. It is allowed to fail; what matters is which limit breaks first and how it degrades. |
 
-Use the traffic mix in the next section, not equal weights. Weights are a starting guess and should be replaced with real analytics once there is traffic.
+Use the traffic mix in the next section's Weight column, not equal weights, and the same mix at every stage. Each virtual user picks a route by weight, then pauses a random 1 to 5 seconds before its next request. Weights are a starting guess and should be replaced with real analytics once there is traffic; record the weights and pause used with each stage's results.
 
 ## The ten routes
 
 Every path below exists in `app/`. Public pages are ISR and mostly served from the cache, so they test the cache and the occasional regeneration; the API routes and the signed-in pages test the database path.
 
-| #   | Route                                                             | Why it is on the list                                                                                                                    | Kind           |
-| --- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| 1   | `GET /`                                                           | Every visitor lands here. ISR with `revalidate = 3600`.                                                                                  | Public page    |
-| 2   | `GET /explore/experts`                                            | The main discovery listing. ISR with `revalidate = 300`.                                                                                 | Public page    |
-| 3   | `GET /explore/experts/[consultantId]`                             | An expert's profile, the page every booking starts from. ISR per expert.                                                                 | Public page    |
-| 4   | `GET /api/user/consultants?limit=20&page=1`                       | The search and filter query behind the listing; it is the heaviest public read and sits behind `searchLimiter`.                          | Public API     |
-| 5   | `GET /api/scheduling/availability-with-allocation/[consultantId]` | The slot grid the booking page loads; it runs the scheduling engine's reads and sits behind `availabilityGridLimiter`.                   | Public API     |
-| 6   | `GET /api/plans/consultations/[consultationPlanId]`               | Plan detail loaded between the profile and checkout.                                                                                     | Public API     |
-| 7   | `GET /api/auth/get-session`                                       | Better Auth's session read. Every signed-in page and API route performs the equivalent lookup, so it is the most frequent database read. | Auth           |
-| 8   | `GET /api/checkout/context`                                       | The checkout page's tax and credits read, behind `checkoutContextLimiter`. Needs a session.                                              | Signed-in API  |
-| 9   | `GET /dashboard/consultee/[consulteeId]`                          | The buyer's dashboard page, a server-rendered page with several statements.                                                              | Signed-in page |
-| 10  | `GET /api/dashboard/consultee/[consulteeId]/events`               | The dashboard's appointments feed, which the page and its refreshes poll. The caller must be that consultee.                             | Signed-in API  |
+| #   | Route                                                             | Why it is on the list                                                                                                                    | Kind           | Weight |
+| --- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------- | ------ |
+| 1   | `GET /`                                                           | Every visitor lands here. ISR with `revalidate = 3600`.                                                                                  | Public page    | 15 %   |
+| 2   | `GET /explore/experts`                                            | The main discovery listing. ISR with `revalidate = 300`.                                                                                 | Public page    | 15 %   |
+| 3   | `GET /explore/experts/[consultantId]`                             | An expert's profile, the page every booking starts from. ISR per expert.                                                                 | Public page    | 15 %   |
+| 4   | `GET /api/user/consultants?limit=20&page=1`                       | The search and filter query behind the listing; it is the heaviest public read and sits behind `searchLimiter`.                          | Public API     | 10 %   |
+| 5   | `GET /api/scheduling/availability-with-allocation/[consultantId]` | The slot grid the booking page loads; it runs the scheduling engine's reads and sits behind `availabilityGridLimiter`.                   | Public API     | 10 %   |
+| 6   | `GET /api/plans/consultations/[consultationPlanId]`               | Plan detail loaded between the profile and checkout.                                                                                     | Public API     | 5 %    |
+| 7   | `GET /api/auth/get-session`                                       | Better Auth's session read. Every signed-in page and API route performs the equivalent lookup, so it is the most frequent database read. | Auth           | 15 %   |
+| 8   | `GET /api/checkout/context`                                       | The checkout page's tax and credits read, behind `checkoutContextLimiter`. Needs a session.                                              | Signed-in API  | 3 %    |
+| 9   | `GET /dashboard/consultee/[consulteeId]`                          | The buyer's dashboard page, a server-rendered page with several statements.                                                              | Signed-in page | 6 %    |
+| 10  | `GET /api/dashboard/consultee/[consulteeId]/events`               | The dashboard's appointments feed, which the page and its refreshes poll. The caller must be that consultee.                             | Signed-in API  | 6 %    |
 
 `GET /api/health` is also polled once a second by the harness as a probe, outside the ten. It reports database reachability and the maintenance phase, so a failing probe is the first sign the pooler is saturated. Checkout writes (`POST /api/checkout`) are deliberately not in the ten: they are covered by the load gate, and on a preview a purchase stops at a tentative hold against the real gateway (see the load gate runbook).
 
@@ -63,11 +63,11 @@ Every path below exists in `app/`. Public pages are ISR and mostly served from t
 All four must hold at the stage under test. A stage that fails any of them fails.
 
 1. **Pooler clients under 150.** The Supabase pooler client count, read from the Supabase dashboard's reports for the project, stays below 150 throughout the hold. Micro admits 200, so 150 leaves 25 percent headroom.
-2. **p95 under 5 seconds on each of the ten routes.** Measured per route with a k6 tag, so one slow route cannot hide behind fast ones.
-3. **At least 95 % of each route's requests answer without a 429.** Report the 429 rate per route; a stage whose limiters refused more than that measured the limiter, not the database, and is re-run from more source IPs before it counts.
+2. **p95 under 5 seconds on each of the ten routes.** Measured per route with a k6 tag on successful responses only, so one slow route cannot hide behind fast ones and fast errors cannot pass for speed.
+3. **At least 95 % of each route's requests answer without a 429, and at least 99 % of the rest succeed (2xx or 3xx).** Report both rates per route; a stage whose limiters refused more than that measured the limiter, not the database, and is re-run from more source IPs before it counts, and a route that mostly errors (a 404 included) fails the stage.
 4. **Zero `CRON_LOCK_UNAVAILABLE` answers.** This is the 503 a job returns when the database cannot grant its lease (`CronLockUnavailableError`, `lib/cron/cron-lock-errors.ts`). It shows that user traffic starved the job path of connections.
 
-Criterion 4 is measured against the production-context deploy of the split database, the one deploy whose ticker and job doors run jobs; a preview refuses every job (`JOB_RUN_PRODUCTION_ONLY`) before any lease is requested, so it can never show the lock failing. Count the ticker's 503 answers whose body has `code: "CRON_LOCK_UNAVAILABLE"` during each hold.
+Criterion 4 is measured against the production-context deploy of the split database, the one deploy whose ticker and job doors run jobs; a preview refuses every job (`JOB_RUN_PRODUCTION_ONLY`) before any lease is requested, so it can never show the lock failing. Count the ticker's 503 answers whose body has `code: "CRON_LOCK_UNAVAILABLE"` during each hold. The criterion only counts when jobs actually ran: every ticker slot in the hold must show `SystemJobExecution` rows with `environment` production that took their lease and completed, and ticker timeouts and other job failures are counted alongside.
 
 ## Tooling
 

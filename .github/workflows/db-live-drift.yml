@@ -20,6 +20,7 @@ concurrency:
 jobs:
   # Release gate: fails while the release's schema declares a table, column or
   # enum value the live database lacks; sidecar objects and database-ahead drift are ignored.
+  # A fork's pull request gets no secrets and so no run; the cutter's pasted --live output is its record.
   release-schema-gate:
     name: Release schema gate
     if: >-

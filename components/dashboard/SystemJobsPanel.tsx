@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/utils/tailwind";
 import { Button } from "@/components/ui/button";
@@ -209,8 +209,10 @@ export function SystemJobsPanel({
   const [loadingExecutions, setLoadingExecutions] = useState(true);
   const { toast } = useToast();
 
-  // Fetch recent executions
+  // Only the latest request may set state, so a slower answer for a previous environment is dropped.
+  const latestExecutionsRequest = useRef(0);
   const fetchExecutions = useCallback(async () => {
+    const request = ++latestExecutionsRequest.current;
     try {
       setLoadingExecutions(true);
       const response = await fetch(
@@ -218,11 +220,13 @@ export function SystemJobsPanel({
       );
       if (!response.ok) throw new Error("Failed to fetch executions");
       const data = await response.json();
-      setExecutions(data.executions || []);
+      if (request === latestExecutionsRequest.current)
+        setExecutions(data.executions || []);
     } catch (error) {
       console.error("Error fetching executions:", error);
     } finally {
-      setLoadingExecutions(false);
+      if (request === latestExecutionsRequest.current)
+        setLoadingExecutions(false);
     }
   }, [environment]);
 

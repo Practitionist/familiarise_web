@@ -17,9 +17,9 @@ Owner decision of 2026-10-26, recorded in `docs/decisions/2026-10-26-launch-swee
 ## Release gate for a pull request into `prod`
 
 - The release gate is `scripts/ci/check-db-schema-required.ts --live`. It diffs the live database against `prisma/schema.prisma` and fails when the schema declares a table, column, enum type or enum value the database lacks. It is read-only, and it ignores sidecar objects and objects only the database has.
-- The release cutter runs it locally before opening the `prod` pull request: `npx tsx scripts/ci/check-db-schema-required.ts --live` (needs `DIRECT_URL` and `DATABASE_URL`; it never writes). Paste its full output into the pull request body. A pass prints `check-db-schema-required: ok`.
-- The organisation is on GitHub Free, which has no branch protection on private repositories, so nothing can make this a required check. Once Actions runs, the **Release schema gate** job (`release-schema-gate` in `.github/workflows/db-live-drift.yml`) is the record on every pull request into `prod`.
-- On failure, stop. The human runs the push preflight (`npm run db:preflight`) and then the push (`npm run db:push`). Never an agent (`AGENTS.md` section 2.3). Re-run the gate, paste the new output, then merge.
+- The release cutter runs it locally before opening the `prod` pull request: `npx --no-install tsx scripts/ci/check-db-schema-required.ts --live` (needs `DIRECT_URL` and `DATABASE_URL`; it never writes; `--no-install` fails rather than downloading `tsx` when dependencies are missing). Paste its full output into the pull request body. A pass prints `check-db-schema-required: ok`.
+- The organisation is on GitHub Free, which has no branch protection on private repositories, so nothing can make this a required check. Once Actions runs, the **Release schema gate** job (`release-schema-gate` in `.github/workflows/db-live-drift.yml`) is the record on every pull request into `prod` opened from a branch of this repository. A fork's pull request gets no run, because the job needs the database secrets, so the cutter's pasted output is its only record.
+- On failure, stop and read why it failed. When it lists objects the live database lacks, the human runs the push preflight (`npm run db:preflight`) and then the push (`npm run db:push`). Never an agent (`AGENTS.md` section 2.3). When it could not compare (a missing URL, a failed `prisma migrate diff` or a failed catalog read), it proves nothing about the schema: fix that cause instead. Re-run the gate, paste the new output, then merge.
 
 ## Closing issues
 
