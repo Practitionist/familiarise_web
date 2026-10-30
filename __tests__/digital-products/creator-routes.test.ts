@@ -27,6 +27,7 @@ jest.mock("../../lib/storage/r2-client", () => ({
 const product = {
   id: "dp_1",
   consultantProfileId: "cp_owner",
+  slug: "guide-1",
   status: "DRAFT",
   category: "DOCUMENT",
   takenDownAt: null,
@@ -52,7 +53,11 @@ const assetModel = {
   aggregate: async () => ({ _max: { version: 1 } }),
   create: (...a: [{ data: object }]) => assetCreate(...a),
 };
-const tx = { digitalProductAsset: assetModel, $executeRaw: async () => 1 };
+const tx = {
+  digitalProductAsset: assetModel,
+  digitalProduct: { updateMany: (...a: unknown[]) => publish(...a) },
+  $executeRaw: async () => 1,
+};
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {

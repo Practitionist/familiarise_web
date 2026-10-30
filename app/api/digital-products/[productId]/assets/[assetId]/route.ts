@@ -61,10 +61,14 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
   // A live product keeps at least one file; archive it to empty it.
   const superseded = await prisma.$transaction(async (tx) => {
     await lockDigitalProductRow(tx, productId);
+    const current = await tx.digitalProduct.findUnique({
+      where: { id: productId },
+      select: { status: true },
+    });
     const others = await tx.digitalProductAsset.count({
       where: { productId, status: "VERIFIED", id: { not: asset.id } },
     });
-    if (owned.product.status === "PUBLISHED" && others === 0) return null;
+    if (current?.status === "PUBLISHED" && others === 0) return null;
     return tx.digitalProductAsset.updateMany({
       where: { id: asset.id, status: "VERIFIED" },
       data: { status: "SUPERSEDED", supersededAt: new Date() },

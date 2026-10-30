@@ -1,5 +1,6 @@
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
+import { purgeDigitalProductSurfaces } from "@/lib/data/public-cache";
 
 /**
  * Take a digital product down: off sale and downloads blocked for buyers.
@@ -37,7 +38,12 @@ export const POST = withOpsAction(
         where: { productId: params.id, resolvedAt: null },
         data: { resolvedAt: now },
       });
+      const shown = await tx.digitalProduct.findUniqueOrThrow({
+        where: { id: params.id },
+        select: { consultantProfileId: true, slug: true },
+      });
       return {
+        afterCommit: () => purgeDigitalProductSurfaces(shown),
         target: { kind: "DigitalProduct", id: params.id },
         before: { takenDownAt: null },
         after: { takenDownAt: now.toISOString() },

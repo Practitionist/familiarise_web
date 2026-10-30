@@ -4,6 +4,8 @@ import type { DigitalProductCategory } from "@prisma/client";
 export const DIGITAL_PRODUCT_MAX_FILE_BYTES = 250 * 1024 * 1024;
 export const DIGITAL_PRODUCT_MAX_FILES = 20;
 export const DIGITAL_PRODUCT_MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
+/** Razorpay's ₹1 order floor; a product is free or priced at least this. */
+export const DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE = 100;
 
 /** Lifetime of the presigned PUT a creator uploads one file with. */
 export const DIGITAL_PRODUCT_UPLOAD_URL_TTL_SECONDS = 15 * 60;

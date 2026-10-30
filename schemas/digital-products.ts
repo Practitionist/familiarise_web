@@ -3,6 +3,7 @@ import { DigitalProductCategory } from "@prisma/client";
 import {
   DIGITAL_PRODUCT_MAX_FILE_BYTES,
   DIGITAL_PRODUCT_MAX_FILES,
+  DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE,
   isDigitalProductMime,
   type DigitalProductMimeType,
 } from "@/lib/digital-products/constants";
@@ -16,7 +17,14 @@ const productFields = {
   subtitle: z.string().trim().max(200).nullable().optional(),
   description: z.string().trim().min(10).max(10_000),
   category: z.nativeEnum(DigitalProductCategory),
-  pricePaise: z.number().int().min(0).max(MAX_PRICE_PAISE),
+  pricePaise: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_PRICE_PAISE)
+    .refine((p) => p === 0 || p >= DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE, {
+      message: "A paid product costs at least ₹1",
+    }),
 };
 
 export const createDigitalProductSchema = z.object(productFields).strict();

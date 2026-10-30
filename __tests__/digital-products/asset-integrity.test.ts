@@ -118,6 +118,7 @@ import { createR2PresignedPutUrl } from "../../lib/storage/r2-client";
 const product = {
   id: "dp_1",
   consultantProfileId: "cp_1",
+  slug: "guide-1",
   status: "DRAFT" as const,
   category: "TEMPLATE" as const,
   takenDownAt: null,

@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { jsonError, requireOwnedProduct } from "@/lib/digital-products/creator";
+import { purgeDigitalProductSurfaces } from "@/lib/data/public-cache";
 
 type RouteParams = { params: Promise<{ productId: string }> };
 
@@ -21,5 +22,6 @@ export async function POST(_request: Request, { params }: RouteParams) {
       "This product is already archived",
     );
   }
+  purgeDigitalProductSurfaces(owned.product);
   return NextResponse.json({ data: { id: productId, status: "ARCHIVED" } });
 }

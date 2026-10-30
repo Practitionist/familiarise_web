@@ -25,6 +25,7 @@ import { digitalProductsBucket } from "@/lib/digital-products/storage";
 export interface OwnedProduct {
   id: string;
   consultantProfileId: string;
+  slug: string;
   status: DigitalProductStatus;
   category: DigitalProductCategory;
   takenDownAt: Date | null;
@@ -74,6 +75,7 @@ export async function requireOwnedProduct(
         select: {
           id: true,
           consultantProfileId: true,
+          slug: true,
           status: true,
           category: true,
           takenDownAt: true,

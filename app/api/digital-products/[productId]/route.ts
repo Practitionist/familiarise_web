@@ -12,6 +12,11 @@ import {
   parseBody,
   requireOwnedProduct,
 } from "@/lib/digital-products/creator";
+import { lockDigitalProductRow } from "@/lib/digital-products/product-lock";
+import {
+  isDigitalProductMime,
+  mimeFitsCategory,
+} from "@/lib/digital-products/constants";
 
 type RouteParams = { params: Promise<{ productId: string }> };
 
@@ -100,11 +105,11 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   if (!body.ok) return body.error;
   const patch = body.data;
 
-  if (
-    patch.category &&
-    patch.category !== product.category &&
-    product.status !== "DRAFT"
-  ) {
+  const newCategory =
+    patch.category && patch.category !== product.category
+      ? patch.category
+      : null;
+  if (newCategory && product.status !== "DRAFT") {
     return jsonError(
       409,
       "CATEGORY_LOCKED",
@@ -124,12 +129,54 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     }
   }
 
-  const updated = await prisma.digitalProduct.update({
-    where: { id: productId },
-    data: patch,
-    select: { id: true, status: true, updatedAt: true },
+  const select = { id: true, status: true, updatedAt: true } as const;
+  if (!newCategory) {
+    const updated = await prisma.digitalProduct.update({
+      where: { id: productId },
+      data: patch,
+      select,
+    });
+    return NextResponse.json({ data: updated });
+  }
+  // Under the file-set lock, so the file set cannot change between the check and the write.
+  const changed = await prisma.$transaction(async (tx) => {
+    await lockDigitalProductRow(tx, productId);
+    const current = await tx.digitalProduct.findUnique({
+      where: { id: productId },
+      select: { status: true },
+    });
+    if (current?.status !== "DRAFT") return "CATEGORY_LOCKED" as const;
+    const files = await tx.digitalProductAsset.findMany({
+      where: { productId, status: { in: ["PENDING", "VERIFIED"] } },
+      select: { mimeType: true },
+    });
+    const misfit = files.some(
+      (f) =>
+        !isDigitalProductMime(f.mimeType) ||
+        !mimeFitsCategory(f.mimeType, newCategory),
+    );
+    if (misfit) return "CATEGORY_MISMATCH" as const;
+    return tx.digitalProduct.update({
+      where: { id: productId },
+      data: patch,
+      select,
+    });
   });
-  return NextResponse.json({ data: updated });
+  if (changed === "CATEGORY_LOCKED") {
+    return jsonError(
+      409,
+      "CATEGORY_LOCKED",
+      "The category can change only while the product is a draft",
+    );
+  }
+  if (changed === "CATEGORY_MISMATCH") {
+    return jsonError(
+      409,
+      "CATEGORY_MISMATCH",
+      "Remove the files that do not fit the new category first",
+    );
+  }
+  return NextResponse.json({ data: changed });
 }
 
 export async function DELETE(_request: Request, { params }: RouteParams) {
