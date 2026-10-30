@@ -264,6 +264,7 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [sentry/08-error-telemetry-privacy-reference.md](./observability/sentry/08-error-telemetry-privacy-reference.md) - The privacy and lawful-basis reasoning for sending error data to a hosted vendor
 - [maintenance/11-job-machinery-catalog.md](./maintenance/11-job-machinery-catalog.md) - How every scheduled job runs, what each run records and reports, the observability gaps, and the operations dashboard spec
 - [2026-10-26-launch-sweep-observability-and-money-holds.md](./decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) - ADR-01 to ADR-12: money holds, invoice healing, tax identity, auth abuse controls, the three observability layers, ticker escalation and the Sentry quota posture
+- [2026-10-31-ci-on-github-hosted-with-cuts.md](./decisions/2026-10-31-ci-on-github-hosted-with-cuts.md) - CI stays on GitHub-hosted runners: the cuts applied, the roughly $15 a month hard-stop budget, the launch-pace target and the runner fallback
 
 ---
 
