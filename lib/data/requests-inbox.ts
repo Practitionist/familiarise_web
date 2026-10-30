@@ -21,7 +21,7 @@
 
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
-import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
+import { scopeToPlanHostWhere, type Scope } from "@/lib/api/scope/parse";
 import { liveCheckoutHold } from "@/lib/booking/request-cohort";
 import { mapLimit, poolLimit } from "@/lib/db/bounded";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
@@ -750,9 +750,11 @@ function strandedApprovedConsultationWhere(
 ): Prisma.ConsultationWhereInput {
   return {
     status: "APPROVED",
-    consultationPlan: { consultantProfileId: cp },
+    consultationPlan: {
+      consultantProfileId: cp,
+      ...scopeToPlanHostWhere(scope),
+    },
     appointment: {
-      ...scopeToWhereOrgId(scope),
       occurrences: {
         some: { completionStatus: "RESCHEDULED", deletedAt: null },
         none: {

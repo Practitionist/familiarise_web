@@ -65,6 +65,8 @@ export const ErrorTypes = {
   ORG_NOT_OPERATIONAL: "ORG_NOT_OPERATIONAL_ERROR",
   ORG_CANNOT_SPONSOR: "ORG_CANNOT_SPONSOR_ERROR",
   ORG_MEMBERSHIP_REQUIRED: "ORG_MEMBERSHIP_REQUIRED_ERROR",
+  // Org money funds LEARNER memberships only.
+  SPONSOR_SEAT_ROLE: "SPONSOR_SEAT_ROLE_ERROR",
   ORG_CREDIT_LIMIT_REACHED: "ORG_CREDIT_LIMIT_REACHED_ERROR",
   CONSULTANT_NOT_ON_PANEL: "CONSULTANT_NOT_ON_PANEL_ERROR",
   CONSULTANT_EXCLUSIVE_ENGAGEMENT: "CONSULTANT_EXCLUSIVE_ENGAGEMENT_ERROR",
@@ -431,6 +433,13 @@ const BUSINESS_ERROR_ENTRIES = [
     userMessage:
       "You are not an active member of this organisation, so it cannot sponsor this booking.",
   },
+  {
+    code: "SPONSOR_SEAT_ROLE",
+    errorType: ErrorTypes.SPONSOR_SEAT_ROLE,
+    httpStatus: 409,
+    userMessage:
+      "Sponsored seats are for learners in your organisation. Book this session yourself instead.",
+  },
   // #1744 row 4 — no userMessage: the thrown sentence names the rupee limit
   // and the outstanding figure (assertWithinInvoiceCreditLimit).
   {
@@ -575,6 +584,14 @@ const BUSINESS_ERROR_ENTRIES = [
     code: "WINDOW_DURATION_MISMATCH",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
+  },
+  // A seat checkout whose event is not on the plan it names.
+  {
+    code: "PLAN_EVENT_MISMATCH",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 409,
+    userMessage:
+      "This session no longer matches its plan. Refresh and try again.",
   },
   // #1527 Q4 — a new sale against a DRAFT 1:1 or subscription plan.
   {

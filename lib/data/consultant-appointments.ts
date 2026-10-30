@@ -33,7 +33,7 @@ import {
 } from "@/lib/appointments/report-anomalies";
 import type { TAppointment } from "@/types/appointment";
 import type { Scope } from "@/lib/api/scope/parse";
-import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
+import { scopeToPlanHostWhere, scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import {
   CONSULTANT_APPOINTMENTS_PAGE,
   CONSULTANT_APPOINTMENTS_RECENT_CAP,
@@ -154,9 +154,12 @@ export async function readConsultantAppointmentsPage(
     now = new Date(),
   } = args;
 
-  const whereClause: Prisma.AppointmentWhereInput = {
-    ...scopeToWhereOrgId(scope),
-  };
+  // A consultant's delivery splits on the plan's host org (a sponsor tag on
+  // the booking is a funding rail); a buyer's or attendee's view on the tag.
+  const planHost = scopeToPlanHostWhere(scope);
+  const whereClause: Prisma.AppointmentWhereInput = consultantProfileId
+    ? {}
+    : { ...scopeToWhereOrgId(scope) };
 
   const eventScoped = Boolean(
     eventIds?.webinarId ||
@@ -200,23 +203,24 @@ export async function readConsultantAppointmentsPage(
       OR: [
         {
           consultation: {
-            consultationPlan: { consultantProfileId },
+            consultationPlan: { consultantProfileId, ...planHost },
           },
         },
         {
           subscription: {
-            subscriptionPlan: { consultantProfileId },
+            subscriptionPlan: { consultantProfileId, ...planHost },
           },
         },
         {
           webinar: {
-            webinarPlan: { consultantProfileId },
+            webinarPlan: { consultantProfileId, ...planHost },
           },
         },
         {
           // Collaborated webinars (co-host, moderator, etc.)
           webinar: {
             webinarPlan: {
+              ...planHost,
               collaborators: {
                 some: {
                   consultantProfileId,
@@ -228,13 +232,14 @@ export async function readConsultantAppointmentsPage(
         },
         {
           class: {
-            classPlan: { consultantProfileId },
+            classPlan: { consultantProfileId, ...planHost },
           },
         },
         {
           // Collaborated classes (co-instructor, TA, etc.)
           class: {
             classPlan: {
+              ...planHost,
               collaborators: {
                 some: {
                   consultantProfileId,

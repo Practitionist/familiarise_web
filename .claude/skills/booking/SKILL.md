@@ -170,24 +170,28 @@ Compose filters with `scopeOrgId` and `scopeToWhereOrgId`, end every `buildWhere
 with `assertNeverScope` so an unhandled kind is a compile error instead of an
 unfiltered cross-tenant read, and never hand-roll an org filter.
 
-The `org` arm is **rows this org owns, and only while it is readable**.
-`lib/api/scope/list-appointments.ts` pins `organizationId` to this org and
-`organization.status` to `ORG_SCOPE_READABLE_STATUSES`, then admits a row on any
-one of three grounds: it has no payment yet (a request or free trial awaiting
-payment), a payment on it carries this org's id on a `WALLET`, `INVOICE` or
-`LICENSE` rail (the `sponsoredSeatsWhere` predicate, so the two surfaces answer
-"whose session is this" identically), or the org owns the catalog plan being
-delivered (provider-side hosting, whatever rail the buyer paid on). SUSPENDED
-stays in the readable tuple on purpose — its OWNER has to be able to open the org
-to find whatever suspended it; DEACTIVATED is the one exclusion. The `all` arm is
+The `org` arm is **rows this org owns, and only while it is readable**:
+`orgOwnedAppointmentWhere` in `lib/api/scope/list-appointments.ts`. A row is
+the org's on either of two grounds, each pinned to `ORG_SCOPE_READABLE_STATUSES`:
+it is tagged to this org (`Appointment.organizationId`) AND either has no payment
+yet (a request or free trial awaiting payment) or a payment on it carries this
+org's id on a `WALLET`, `INVOICE` or `LICENSE` rail (the `sponsoredSeatsWhere`
+predicate); OR the org hosts the catalog plan being delivered
+(`plan.organizationId`), whatever tag or rail the buyer used. The host org
+therefore sees every booking on plans it hosts, still metadata-only. The same
+predicate gates the org's pending queue, documents, recordings, the org detail
+page's operator branch and the org-party support grant. SUSPENDED stays in the
+readable tuple on purpose — its OWNER has to be able to open the org to find
+whatever suspended it; DEACTIVATED is the one exclusion. The `all` arm is
 deliberately left unfiltered, because verifying a teardown means being able to
 read the dead org.
 
 The ownership pin and the grounds are both load-bearing and they close different
 holes. #1166 ORG-8 removed the funded-elsewhere arm — `payment: { some:
 { organizationId } }` OR-ed beside the row's own `organizationId`, so the list
-offered rows the detail page 404s; the payment grounds now ride the ownership pin
-as an **AND**, so they cannot re-open that hole. They also close the half the tag
+offered rows the detail page 404s; the payment grounds now ride the tag as an
+**AND**, so they cannot re-open that hole, and the detail page admits exactly
+the rows this predicate does. They also close the half the tag
 never established — checkout stamps `Appointment.organizationId` for ANY org in the
 request body, including `fundingSource === "PERSONAL"`, so filtering on the tag
 alone published the amount of a member's personal card purchase to every MANAGER+
@@ -196,10 +200,9 @@ is therefore excluded. Cross-org funding visibility remains the money views' job
 Org lists stay metadata-only by design (ADR 20): an org sees that a session
 happened, never its content.
 
-The readable-status predicate is the same shape in `list-documents.ts` (through
-the parent `Appointment`, which is where a document's org lives) and
-`list-recordings.ts` (on the denormalized `organizationId` the org arm already
-pins). `resolveOrgScope`'s own `orgStatus` field is the other door:
+`list-documents.ts` and `list-recordings.ts` reach the same predicate through
+the parent `Appointment` (a document's or recording's org is its booking's), so
+the readable-status pin rides along. `resolveOrgScope`'s own `orgStatus` field is the other door:
 `app/api/collaborations/route.ts` passes the matched membership's
 `organization.status` and gates its org-hosted view on `ORG_SCOPE_READABLE_STATUSES`
 plus `catalog.manage`. The resolver refuses a DEACTIVATED org (403 `ORG_DEACTIVATED`) only when some

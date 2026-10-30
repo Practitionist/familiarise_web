@@ -19,13 +19,27 @@ import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { CreateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
-import { resolveOrgScope, scopeToWhereOrgId } from "@/lib/api/scope/parse";
+import {
+  resolveOrgScope,
+  scopeToPlanHostWhere,
+  scopeToWhereOrgId,
+} from "@/lib/api/scope/parse";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { planSaleRefusal } from "@/lib/api/plans/visibility";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { getAppUrl } from "@/lib/url";
+import { assertNotSelfBooking } from "@/lib/booking/self-booking";
+import { capacityRefusal } from "@/lib/booking/request-caps";
+import { apiError } from "@/lib/errors/api-error";
+import { isRefusal, Refusal } from "@/lib/errors/refusal";
+import {
+  BookingLockUnavailableError,
+  lockRequestCap,
+  RequestCapBusyError,
+  unlockRequestCap,
+} from "@/utils/appointmentlock";
 
 /**
  * GET /api/trials
@@ -119,38 +133,37 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // #674 B2B gap 9 — `orgMember` pins an org too: it is what an active
-    // member below `operations.read` resolves to. Testing `kind === "org"`
-    // alone dropped them into the unfiltered arm, so asking for one org's
-    // trials returned every org's plus the personal ones. scopeToWhereOrgId is
-    // the single place that knows which kinds pin.
-    const whereClause: Prisma.TrialWhereInput = scopeToWhereOrgId(
-      scopeResolution.scope,
-    );
+    // The delivering side splits on the subscription plan's host org, like
+    // every request; the learner side on the trial's own org tag.
+    const scope = scopeResolution.scope;
+    const delivered = (cp: string): Prisma.TrialWhereInput => ({
+      consultantProfileId: cp,
+      subscriptionPlan: { ...scopeToPlanHostWhere(scope) },
+    });
+    const booked = (ce: string): Prisma.TrialWhereInput => ({
+      consulteeProfileId: ce,
+      ...scopeToWhereOrgId(scope),
+    });
+    const whereClause: Prisma.TrialWhereInput = {};
 
     if (applyOwnershipOr) {
       // #org-appts — dual-identity union; AND-nested so it composes with the
       // search OR below without clobbering it.
       const ownershipArms: Prisma.TrialWhereInput[] = [];
       if (session.user.consultantProfileId) {
-        ownershipArms.push({
-          consultantProfileId: session.user.consultantProfileId,
-        });
+        ownershipArms.push(delivered(session.user.consultantProfileId));
       }
       if (session.user.consulteeProfileId) {
-        ownershipArms.push({
-          consulteeProfileId: session.user.consulteeProfileId,
-        });
+        ownershipArms.push(booked(session.user.consulteeProfileId));
       }
       whereClause.AND = [{ OR: ownershipArms }];
     } else {
-      if (consultantProfileId) {
-        whereClause.consultantProfileId = consultantProfileId;
-      }
-
-      if (consulteeProfileId) {
-        whereClause.consulteeProfileId = consulteeProfileId;
-      }
+      const sides: Prisma.TrialWhereInput[] = [
+        ...(consultantProfileId ? [delivered(consultantProfileId)] : []),
+        ...(consulteeProfileId ? [booked(consulteeProfileId)] : []),
+      ];
+      whereClause.AND =
+        sides.length > 0 ? sides : [{ ...scopeToWhereOrgId(scope) }];
     }
 
     if (subscriptionPlanId) {
@@ -277,13 +290,12 @@ export async function POST(request: NextRequest) {
 
     const isPrivileged =
       session.user.role === "ADMIN" || session.user.role === "STAFF";
-    if (!isPrivileged) {
-      if (
-        session.user.role !== "CONSULTEE" ||
-        session.user.consulteeProfileId !== consulteeProfileId
-      ) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
+    // Any role may take a trial as a learner, with their own learner profile.
+    if (
+      !isPrivileged &&
+      session.user.consulteeProfileId !== consulteeProfileId
+    ) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     // Rate limit: 3 trial requests per 24 hours per creator. #831 — applied
@@ -302,6 +314,7 @@ export async function POST(request: NextRequest) {
           select: {
             id: true,
             acceptingRequests: true,
+            maxOpenRequests: true,
             user: { select: { id: true } },
           },
         },
@@ -320,6 +333,12 @@ export async function POST(request: NextRequest) {
         { error: "Subscription plan does not belong to this consultant" },
         { status: 400 },
       );
+    }
+
+    try {
+      assertNotSelfBooking(session.user.consultantProfileId, subscriptionPlan);
+    } catch (error) {
+      return apiError({ tag: "[trials.POST]", error });
     }
 
     // #1527 Q4 — a DRAFT plan takes no new trial requests.
@@ -409,7 +428,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Enterprise: if the caller passed `organizationId`, verify they're
-    // an ACTIVE LEARNER (or higher) member of that org before we stamp
+    // an ACTIVE LEARNER member of that org before we stamp
     // attribution. This is org-tagging for analytics (conversion-rate
     // per org) — never a payment claim. Silently
     // dropping the field on membership mismatch would let a curious
@@ -423,6 +442,7 @@ export async function POST(request: NextRequest) {
           organizationId,
           userId: session.user.id,
           status: "ACTIVE",
+          role: "LEARNER",
         },
         select: { id: true },
       });
@@ -430,7 +450,8 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             error:
-              "You are not an active member of the specified organization.",
+              "Only learners in an organisation can link a trial to it. Request the trial without the organisation.",
+            code: "ORG_LEARNER_REQUIRED",
           },
           { status: 403 },
         );
@@ -443,51 +464,93 @@ export async function POST(request: NextRequest) {
     // same pair both pass the eligibility read and race into the insert — the
     // loser used to surface as a 500. It is the same "already requested"
     // answer the sequential path gives, so say so.
-    const trial = await prisma
-      .$transaction(async (tx) => {
-        // #1775 C-7 — a placeholder appointment (no sessions yet) anchors the
-        // pay order, so capture confirms THIS row; accept adds the session.
-        const placeholder = isPaidTrial
-          ? await tx.appointment.create({
-              data: { appointmentType: AppointmentsType.TRIAL },
-              select: { id: true },
-            })
-          : null;
-        const created = await tx.trial.create({
-          data: {
-            consulteeProfileId,
-            consultantProfileId,
-            subscriptionPlanId,
-            notes,
-            status: TrialStatus.PENDING,
-            organizationId: resolvedOrgId,
-            appointmentId: placeholder?.id ?? null,
-            paymentDueAt: placeholder
-              ? new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS)
-              : null,
+    // The expert's open-request cap: count and insert under one lock, the same
+    // gate request-for-approval applies, so a trial cannot overfill the queue.
+    let capLock: Awaited<ReturnType<typeof lockRequestCap>>;
+    try {
+      capLock = await lockRequestCap(consultantProfileId);
+    } catch (error) {
+      if (error instanceof RequestCapBusyError) {
+        return NextResponse.json(
+          {
+            error: error.message,
+            code: error.code,
+            retryAfter: error.retryAfterSeconds,
           },
-          include: TRIAL_CREATED_INCLUDE,
-        });
-        if (placeholder) {
-          await recordParticipants(
+          { status: error.httpStatus },
+        );
+      }
+      if (error instanceof BookingLockUnavailableError) {
+        return NextResponse.json(
+          { error: error.message },
+          { status: error.httpStatus },
+        );
+      }
+      throw error;
+    }
+    let trial;
+    try {
+      trial = await prisma
+        .$transaction(async (tx) => {
+          const atCapacity = await capacityRefusal(
             tx,
-            placeholder.id,
-            [
-              { userId: consulteeProfile.user.id, role: "CONSULTEE" },
-              {
-                userId: subscriptionPlan.consultantProfile.user.id,
-                role: "CONSULTANT",
-              },
-            ],
-            { organizationId: resolvedOrgId, status: "HELD" },
+            subscriptionPlan.consultantProfile,
           );
-        }
-        return created;
-      })
-      .catch((error: unknown) => {
-        if (isUniqueViolation(error)) return null;
-        throw error;
-      });
+          if (atCapacity) {
+            throw new Refusal({
+              code: atCapacity.code,
+              userMessage: atCapacity.message,
+            });
+          }
+          // #1775 C-7 — a placeholder appointment (no sessions yet) anchors the
+          // pay order, so capture confirms THIS row; accept adds the session.
+          const placeholder = isPaidTrial
+            ? await tx.appointment.create({
+                data: { appointmentType: AppointmentsType.TRIAL },
+                select: { id: true },
+              })
+            : null;
+          const created = await tx.trial.create({
+            data: {
+              consulteeProfileId,
+              consultantProfileId,
+              subscriptionPlanId,
+              notes,
+              status: TrialStatus.PENDING,
+              organizationId: resolvedOrgId,
+              appointmentId: placeholder?.id ?? null,
+              paymentDueAt: placeholder
+                ? new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS)
+                : null,
+            },
+            include: TRIAL_CREATED_INCLUDE,
+          });
+          if (placeholder) {
+            await recordParticipants(
+              tx,
+              placeholder.id,
+              [
+                { userId: consulteeProfile.user.id, role: "CONSULTEE" },
+                {
+                  userId: subscriptionPlan.consultantProfile.user.id,
+                  role: "CONSULTANT",
+                },
+              ],
+              { organizationId: resolvedOrgId, status: "HELD" },
+            );
+          }
+          return created;
+        })
+        .catch((error: unknown) => {
+          if (isUniqueViolation(error)) return null;
+          throw error;
+        });
+    } catch (error) {
+      if (isRefusal(error)) return apiError({ tag: "[trials.POST]", error });
+      throw error;
+    } finally {
+      await unlockRequestCap(capLock);
+    }
 
     if (!trial) {
       return NextResponse.json(

@@ -381,7 +381,10 @@ beforeEach(() => {
         organizationId: null,
       })),
     },
-    webinar: { findUnique: jest.fn(async () => webinarRow()) },
+    webinar: {
+      findUnique: jest.fn(async () => webinarRow()),
+      count: jest.fn(async () => 1),
+    },
     appointmentOccurrence: {
       update: jest.fn(async ({ where }: { where: unknown }) => where),
     },

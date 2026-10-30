@@ -1,6 +1,7 @@
 // Checkout's lock envelope: the event or slot lock, acquired and released as
 // one unit through utils/appointmentlock, and the in-lock plan re-read.
 
+import { Refusal } from "@/lib/errors/refusal";
 import {
   OCCUPYING_OCCURRENCE_WHERE,
   seatHoldingParticipant,
@@ -314,6 +315,7 @@ export async function verifyPlanExistsInsideLock(
   tx: Tx,
   appointmentType: string,
   planId: string,
+  eventId?: string | null,
 ): Promise<{
   consultantProfileId: string | null;
   organizationId: string | null;
@@ -362,6 +364,28 @@ export async function verifyPlanExistsInsideLock(
     throw new Error(
       "This plan is no longer available. Please refresh and try again.",
     );
+  }
+  // A seat is sold from the event; the plan the self-booking and related-party
+  // rules read must be that event's plan, never a client-chosen one.
+  if (appointmentType === "WEBINAR" || appointmentType === "CLASS") {
+    const matches =
+      !!eventId &&
+      (appointmentType === "WEBINAR"
+        ? await tx.webinar.count({
+            where: { id: eventId, webinarPlanId: planId },
+          })
+        : await tx.class.count({
+            where: { id: eventId, classPlanId: planId },
+          })) > 0;
+    if (!matches) {
+      throw new Refusal({
+        code: "PLAN_EVENT_MISMATCH",
+        httpStatus: 409,
+        userMessage:
+          "This session no longer matches its plan. Refresh and try again.",
+        devMessage: `event ${eventId ?? "(none)"} is not on plan ${planId}`,
+      });
+    }
   }
   return {
     consultantProfileId: plan.consultantProfileId,

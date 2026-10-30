@@ -88,6 +88,7 @@ interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
   orgSessions?: TConsultantDashboardResponse["orgSessions"];
+  clientBookings?: TConsultantDashboardResponse["clientBookings"];
   /** The "Add your bank account" row's input; absent on older payloads. #1675 PR-Y2 */
   payoutSetup: TConsultantDashboardResponse["payoutSetup"];
   /** #1527 — the Needs you strip's own reads; absent when that read failed. */
@@ -123,6 +124,7 @@ export function HomeTab({
   appointments,
   consultantId,
   orgSessions = [],
+  clientBookings = [],
   payoutSetup,
   needsYou,
   sessionsDelivered,
@@ -693,6 +695,39 @@ export function HomeTab({
                         </li>
                       );
                     })}
+                  </ul>
+                </DataCard>
+              )}
+
+              {/* Read-only busy time: sessions booked as a client with
+                  another expert, opened on the learner dashboard. */}
+              {clientBookings.length > 0 && (
+                <DataCard title="Booked as a client" icon={Calendar}>
+                  <ul className="divide-y divide-border text-sm">
+                    {clientBookings.map((booking) => (
+                      <li
+                        key={booking.occurrenceId}
+                        className="flex items-center justify-between gap-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-foreground">
+                            Booked as a client with {booking.expertName}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatForViewer(
+                              booking.startsAt,
+                              viewerZone,
+                              HOME_TIME_PATTERN,
+                            )}
+                          </p>
+                        </div>
+                        {booking.href ? (
+                          <Button asChild variant="outline" size="sm">
+                            <Link href={booking.href}>Open</Link>
+                          </Button>
+                        ) : null}
+                      </li>
+                    ))}
                   </ul>
                 </DataCard>
               )}

@@ -3,6 +3,11 @@
 
 import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import prisma from "@/lib/prisma";
+import { assertNotSelfBooking } from "@/lib/booking/self-booking";
+import {
+  checkAssignee,
+  SPONSOR_SEAT_MESSAGES,
+} from "@/lib/api/organizations/sponsor-seat";
 import type { CheckoutInput } from "@/schemas/checkout";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
@@ -86,41 +91,10 @@ export async function revalidateInsideLock(
       tx,
       data.appointmentType,
       data.planId,
+      data.eventId,
     );
 
-    // Nobody buys their own plan. Because one person can hold both profiles,
-    // a LEARNER in a sponsoring org who also sells on the marketplace could
-    // book their OWN plan against the org's credit pool and route the
-    // sponsor's money into their own payout account. The same-org
-    // EXPERT+LEARNER block doesn't reach this: it needs only a
-    // ConsulteeProfile and a plan, and `ProgramConsultantAllowlist` — the one
-    // thing that would have caught it — is empty by default under ADR 18's
-    // open network.
-    //
-    // Blocked for personal checkouts too. There the loss is the platform fee
-    // rather than someone else's money, so it is self-punishing rather than
-    // dangerous, but there is no legitimate reason to buy your own session and
-    // a rule with no exceptions needs no explanation at the call site.
-    //
-    // An ACCEPTED collaborator is the same party for this purpose: they hold a
-    // share of the price and would be paid back part of their own seat, so the
-    // sponsor-money loop above is reachable through a collaboration too. The
-    // capacity `excludeUserIds` sites are left alone — a buyer refused here
-    // never holds a seat (#1580 C-P0-2).
-    // Not gated on the owner existing: an org-owned plan has no owner and can
-    // still carry collaborators.
-    if (
-      user.consultantProfile &&
-      (plan.consultantProfileId === user.consultantProfile.id ||
-        plan.collaboratorProfileIds.includes(user.consultantProfile.id))
-    ) {
-      // A coded rejection, not a fault: the plain Error answered 500 and paged
-      // Sentry on every legitimate refusal (#1580 §2 E2E).
-      throw Object.assign(new Error("You cannot book your own plan."), {
-        httpStatus: 409,
-        code: "SELF_BOOKING",
-      });
-    }
+    assertNotSelfBooking(user.consultantProfile?.id, plan);
 
     // #1319 (B2B gap 3) — the org gate chain ran BEFORE the locks, so an org
     // suspended, a membership revoked, an assignment rolled or a consent
@@ -204,13 +178,22 @@ export async function revalidateInsideLock(
       };
       const membership = await tx.membership.findUnique({
         where: { id: orgContext.callerMembershipId },
-        select: { status: true },
+        select: { id: true, status: true, role: true },
       });
       if (membership?.status !== "ACTIVE") {
         throw Object.assign(
           new Error("You are not an active member of this organization."),
           { httpStatus: 403, code: "ORG_MEMBERSHIP_REQUIRED" },
         );
+      }
+      if (
+        freshOrgFunding.fundingSource !== "PERSONAL" &&
+        !checkAssignee(membership, membership.id, null).ok
+      ) {
+        throw Object.assign(new Error(SPONSOR_SEAT_MESSAGES.ROLE), {
+          httpStatus: 409,
+          code: "SPONSOR_SEAT_ROLE",
+        });
       }
       if (orgContext.programAssignmentId) {
         const assignment = await tx.programAssignment.findFirst({

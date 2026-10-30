@@ -170,6 +170,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "Not An Active Member",
     description: null,
   },
+  [ErrorTypes.SPONSOR_SEAT_ROLE]: {
+    title: "Sponsored Seats Are For Learners",
+    description: null,
+  },
   [ErrorTypes.ORG_CREDIT_LIMIT_REACHED]: {
     title: "Organisation Credit Limit Reached",
     description: null,

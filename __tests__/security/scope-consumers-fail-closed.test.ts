@@ -96,7 +96,7 @@ describe("every self-scoped consumer treats orgMember as an org filter", () => {
 
   it.each(CONSUMERS)("%s routes the org question through scopeOrgId", (rel) => {
     const src = read(rel);
-    expect(src).toMatch(/scopeOrgId|scopeToWhereOrgId/);
+    expect(src).toMatch(/scopeOrgId|scopeToWhereOrgId|scopeToPlanHostWhere/);
   });
 
   it.each(CONSUMERS)(

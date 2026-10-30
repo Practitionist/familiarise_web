@@ -10,7 +10,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeToPlanHostWhere } from "@/lib/api/scope/parse";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 /** The unscheduled side list is a to-do list, not a history. */
@@ -121,14 +121,8 @@ export async function GET(request: NextRequest) {
         { status: scopeResolution.status },
       );
     }
-    // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
-    const scopedOrgId = scopeOrgId(scopeResolution.scope);
-    const webinarPlanOrgWhere: Prisma.WebinarPlanWhereInput | null =
-      scopeResolution.scope.kind === "personal"
-        ? { organizationId: null }
-        : scopedOrgId
-          ? { organizationId: scopedOrgId }
-          : null; // "all" → no filter
+    const webinarPlanOrgWhere: Prisma.WebinarPlanWhereInput | undefined =
+      scopeToPlanHostWhere(scopeResolution.scope);
 
     let webinars;
 

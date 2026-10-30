@@ -83,6 +83,8 @@ interface AppointmentRow {
     id: string;
     user: { id: string; name: string | null; email: string } | null;
   }[];
+  /** Delivered by one of this org's owners (shown so finance can review it). */
+  relatedParty?: boolean;
 }
 
 interface AppointmentsResponse {
@@ -207,12 +209,19 @@ function columns(orgId: string): Column<AppointmentRow>[] {
       // full page for a participant, actions for the funding org's admins).
       header: "Plan / Title",
       accessor: (r) => (
-        <Link
-          href={`/dashboard/organization/${orgId}/appointments/${r.id}`}
-          className="font-medium underline-offset-2 hover:underline"
-        >
-          {getPlanTitle(r)}
-        </Link>
+        <>
+          <Link
+            href={`/dashboard/organization/${orgId}/appointments/${r.id}`}
+            className="font-medium underline-offset-2 hover:underline"
+          >
+            {getPlanTitle(r)}
+          </Link>
+          {r.relatedParty ? (
+            <span className="ml-2">
+              <StatusBadge label="Owner is the expert" tone="neutral" />
+            </span>
+          ) : null}
+        </>
       ),
     },
     { header: "Member", accessor: (r) => getMember(r) },

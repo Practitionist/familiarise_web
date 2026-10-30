@@ -1,7 +1,10 @@
 import prisma from "@/lib/prisma";
 import type { AppointmentStatus, Prisma, TrialStatus } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
-import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
+import {
+  ORG_SCOPE_READABLE_STATUSES,
+  scopeToPlanHostWhere,
+} from "@/lib/api/scope/parse";
 import {
   ANSWERABLE_CONSULTATION,
   ANSWERABLE_SUBSCRIPTION,
@@ -42,16 +45,10 @@ export interface NeedsYouSummary {
 }
 
 /**
- * #674 defect 13 — the org dimension comes from the shared projector, so
- * "what personal means" is defined once (lib/api/scope/parse.ts) instead of
- * being re-typed as a literal at each call site. The extra `appointment: null`
- * arm below is this surface's own business rule, not a scope rule: a request
- * has no appointment until it is allocated, and an unallocated request is by
- * definition not org-funded.
- *
- * #1345 — exported because the consultant Home badge counts the same cohort a
- * few inches above NeedsYou, and re-typing the predicate there let the two
- * numbers drift into different scopes.
+ * Requests split on the plan's HOST org (`scopeToPlanHostWhere`): personal is
+ * every request on a plan no org hosts, sponsor-tagged or not, so a sponsored
+ * learner's request reaches the expert who must answer it. Exported because
+ * the Home badge, NeedsYou and the inbox count the same cohort.
  */
 export function pendingConsultationWhere(
   consultantProfileId: string,
@@ -72,13 +69,9 @@ export function consultationRequestWhere(
   scope: Scope,
   status: AppointmentStatus,
 ): Prisma.ConsultationWhereInput {
-  const orgWhere = scopeToWhereOrgId(scope);
   return {
     status,
-    consultationPlan: { consultantProfileId },
-    ...(scope.kind === "personal"
-      ? { OR: [{ appointment: null }, { appointment: orgWhere }] }
-      : { appointment: orgWhere }),
+    consultationPlan: { consultantProfileId, ...scopeToPlanHostWhere(scope) },
   };
 }
 
@@ -97,14 +90,14 @@ export function pendingSubscriptionWhere(
   };
 }
 
-/** Trials are scoped by their own `organizationId` column, as `/api/trials` does. */
+/** Trials split on their subscription plan's host org, like every request. */
 export function trialRequestWhere(
   consultantProfileId: string,
   scope: Scope,
   statuses: TrialStatus[],
 ): Prisma.TrialWhereInput {
   return {
-    ...scopeToWhereOrgId(scope),
+    subscriptionPlan: { ...scopeToPlanHostWhere(scope) },
     consultantProfileId,
     // No `deletedAt`: every terminal trial outcome is a TrialStatus value, so
     // the status filter below is already the liveness test. See the Trial model.
@@ -196,14 +189,9 @@ export function subscriptionRequestWhere(
   scope: Scope,
   status: AppointmentStatus,
 ): Prisma.SubscriptionWhereInput {
-  const orgWhere = scopeToWhereOrgId(scope);
   return {
     status,
-    subscriptionPlan: { consultantProfileId },
-    ...(scope.kind === "personal"
-      ? { OR: [{ appointment: null }, { appointment: orgWhere }] }
-      : // "all" keeps the old `some: {}` meaning: any allocated wrapper.
-        { appointment: scope.kind === "all" ? { isNot: null } : orgWhere }),
+    subscriptionPlan: { consultantProfileId, ...scopeToPlanHostWhere(scope) },
   };
 }
 
@@ -255,16 +243,10 @@ export function nextCycleSubscriptionWhere(
   consultantProfileId: string,
   scope: Scope,
 ): Prisma.SubscriptionWhereInput {
-  const scoped = subscriptionRequestWhere(
-    consultantProfileId,
-    scope,
-    "APPROVED",
-  );
   return {
-    ...scoped,
+    ...subscriptionRequestWhere(consultantProfileId, scope, "APPROVED"),
     deletedAt: null,
     appointment: {
-      ...(scoped.appointment as Prisma.AppointmentWhereInput | undefined),
       occurrences: {
         some: {
           completionStatus: { in: ["COMPLETED", "UNVERIFIED"] },
@@ -293,7 +275,10 @@ export async function getNeedsYouSummary(
       userId,
       status: "ACTIVE",
       consultantProfileId,
-      organization: { canHost: true },
+      organization: {
+        canHost: true,
+        status: { in: ORG_SCOPE_READABLE_STATUSES },
+      },
     },
     select: {
       organizationId: true,

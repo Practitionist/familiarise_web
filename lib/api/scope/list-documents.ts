@@ -4,6 +4,7 @@
  * inherits via the parent `Appointment.organizationId`.
  */
 
+import { orgOwnedAppointmentWhere } from "./list-appointments";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import type { DocumentReviewStatus, Prisma } from "@prisma/client";
@@ -163,25 +164,9 @@ function buildWhere(
   if (params.scope.kind === "org") {
     return {
       ...base,
-      // Read-level twin of the DEACTIVATED refusal in `resolveOrgScope`, and for
-      // the same reason that one is opt-in: this query has no org row in scope
-      // to test, and `resolveOrgScope` is synchronous, so it cannot learn the
-      // org's status from the membership rows the caller pre-fetched. An ACTIVE
-      // membership outlives the org the teardown stamps DEACTIVATED, so without
-      // this clause a torn-down org's documents keep serving through the
-      // personal `?orgScope=` door while `requireOrgAccess` 403s the same org on
-      // the sibling one. SUSPENDED stays readable: its OWNER has to be able to
-      // find whatever got it suspended.
-      //
-      // Reached through the parent Appointment because a document has no
-      // `organizationId` of its own. `is` (rather than the shorthand) matches
-      // `list-appointments.ts`, and is safe here for the same reason it is there:
-      // `organizationId = orgId` is already in the WHERE, so the relation can
-      // never be NULL here and `is` cannot silently drop a matching row.
-      appointment: {
-        organizationId: params.scope.orgId,
-        organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
-      },
+      // A document's org is its booking's: the same ownership the org's
+      // appointment list uses (readable org; owned by tag + grounds or by host).
+      appointment: orgOwnedAppointmentWhere(params.scope.orgId),
     };
   }
   // `orgMember` = ONE member's own rows within an org. It must never fall

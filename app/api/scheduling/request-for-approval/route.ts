@@ -53,6 +53,8 @@ import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 
 import { getSession } from "@/lib/auth-server";
+import { assertNotSelfBooking } from "@/lib/booking/self-booking";
+import { apiError } from "@/lib/errors/api-error";
 import * as Sentry from "@sentry/nextjs";
 
 const SUBMITTED_MESSAGE = "Request for approval submitted successfully";
@@ -189,7 +191,7 @@ export async function POST(req: NextRequest) {
               organizationId,
             },
           },
-          select: { status: true },
+          select: { status: true, role: true },
         }),
       ]);
       // Same gate the checkout path applies: PENDING_VERIFICATION orgs may
@@ -209,6 +211,15 @@ export async function POST(req: NextRequest) {
               "This organization cannot sponsor your booking (it is not a sponsor org, it is not in good standing, or you are not an active member).",
           },
           { status: 403 },
+        );
+      }
+      if (membership.role !== "LEARNER") {
+        return NextResponse.json(
+          {
+            error: "Sponsored seats are for learners in your organisation",
+            code: "SPONSOR_SEAT_ROLE",
+          },
+          { status: 409 },
         );
       }
     }
@@ -253,6 +264,12 @@ export async function POST(req: NextRequest) {
         { error: "Consultation plan not found" },
         { status: 404 },
       );
+    }
+
+    try {
+      assertNotSelfBooking(session.user.consultantProfileId, consultationPlan);
+    } catch (error) {
+      return apiError({ tag: "[request-for-approval]", error });
     }
 
     // #1527 Q4 — a DRAFT plan takes no new requests.

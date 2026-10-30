@@ -37,14 +37,21 @@ export interface ConsultantNeedsYou {
 const DAY_MS = 86_400_000;
 const LIST_TAKE = 5;
 
-/** Personal (non-org) 1:1 and subscription bookings this consultant delivers. */
+/** 1:1 and subscription bookings on this consultant's plans no org hosts (sponsor-tagged included). */
 const personalOneToOne = (
   consultantProfileId: string,
 ): Prisma.AppointmentWhereInput => ({
-  organizationId: null,
   OR: [
-    { consultation: { consultationPlan: { consultantProfileId } } },
-    { subscription: { subscriptionPlan: { consultantProfileId } } },
+    {
+      consultation: {
+        consultationPlan: { consultantProfileId, organizationId: null },
+      },
+    },
+    {
+      subscription: {
+        subscriptionPlan: { consultantProfileId, organizationId: null },
+      },
+    },
   ],
 });
 
@@ -77,8 +84,7 @@ async function readOwedMakeUps(consultantProfileId: string, now: Date) {
     where: {
       ...UNSETTLED_MISS,
       appointment: {
-        organizationId: null,
-        class: { classPlan: { consultantProfileId } },
+        class: { classPlan: { consultantProfileId, organizationId: null } },
       },
     },
     orderBy: { startsAt: "asc" },

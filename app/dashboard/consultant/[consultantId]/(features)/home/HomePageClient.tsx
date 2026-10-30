@@ -67,6 +67,7 @@ export default function HomePageClient({
         appointments={dashboardData.appointments}
         consultantId={consultantId}
         orgSessions={dashboardData.orgSessions}
+        clientBookings={dashboardData.clientBookings}
         payoutSetup={dashboardData.payoutSetup}
         needsYou={dashboardData.needsYou}
         sessionsDelivered={dashboardData.sessionsDelivered}

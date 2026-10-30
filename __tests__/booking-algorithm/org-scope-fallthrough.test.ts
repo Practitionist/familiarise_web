@@ -151,8 +151,12 @@ describe("fall-through 3 — the trial list", () => {
     );
 
     expect(res.status).toBe(200);
+    // The learner's own trials are pinned to the org's tag.
     const where = trialFindMany.mock.calls[0][0].where;
-    expect(where.organizationId).toBe(ORG);
+    expect(JSON.stringify(where)).toContain(`"organizationId":"${ORG}"`);
+    expect(JSON.stringify(where)).toContain(
+      '"consulteeProfileId":"consultee-1"',
+    );
   });
 });
 

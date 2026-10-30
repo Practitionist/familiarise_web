@@ -51,7 +51,7 @@ export type CancelActor = {
   hostProfileId: string | null;
   /** Not the buyer's choice: the expert, a platform admin or a host-org operator. */
   isConsultantInitiated: boolean;
-  /** The expert side (not a platform admin) acted; a paid booking earns a strike. */
+  /** The expert themself acted (not an operator or admin); a paid booking earns a strike. */
   isExpertSideCancel: boolean;
 };
 
@@ -139,7 +139,7 @@ export async function resolveCancelActor(
       isExpert ||
       (isPrivilegedUser && !isBuyer) ||
       (isHostOrgOperator && !isBuyer),
-    isExpertSideCancel:
-      isExpert || (isHostOrgOperator && !isPrivilegedUser && !isBuyer),
+    // An operator's cancel is recorded under the operator and strikes nobody.
+    isExpertSideCancel: isExpert,
   };
 }

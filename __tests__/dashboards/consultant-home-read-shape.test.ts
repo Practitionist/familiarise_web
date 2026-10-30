@@ -61,12 +61,20 @@ describe("consultant Home read shape", () => {
   it("ranks Home appointments by slot time, anchored at the consultant's start of today", async () => {
     await getConsultantDashboard("cp-1", NOW);
 
-    // The ranking read, then the org-sessions strip (personal pin inverted).
+    // The ranking read (plans no org hosts), then the org-sessions strip
+    // (org-hosted plans), labelled with the host org.
     const [args] = slotFindMany.mock.calls[0];
     const [orgArgs] = slotFindMany.mock.calls[1];
-    expect(orgArgs.where.appointment.organizationId).toEqual({ not: null });
-    expect(orgArgs.select.appointment.select.organization).toEqual({
-      select: { name: true },
+    expect(JSON.stringify(args.where.appointment)).toContain(
+      '"consultationPlan":{"consultantProfileId":"cp-1","organizationId":null}',
+    );
+    expect(JSON.stringify(orgArgs.where.appointment)).toContain(
+      '"consultationPlan":{"consultantProfileId":"cp-1","organizationId":{"not":null},"organization":{"is":{"status"',
+    );
+    expect(
+      orgArgs.select.appointment.select.consultation.select.consultationPlan,
+    ).toEqual({
+      select: { organization: { select: { id: true, name: true } } },
     });
 
     // Ordering keys off the slot clock, never createdAt.

@@ -8,6 +8,16 @@ import { TAppointment } from "@/types/appointment";
  * Naming convention: T prefix for types (e.g., TConsultantOrgSession)
  */
 
+export interface TConsultantClientBooking {
+  occurrenceId: string;
+  appointmentId: string;
+  startsAt: Date | string;
+  endsAt: Date | string | null;
+  expertName: string;
+  /** The session on the consultant's learner dashboard; null without a learner profile. */
+  href: string | null;
+}
+
 export interface TConsultantOrgSession {
   occurrenceId: string;
   appointmentId: string;
@@ -40,8 +50,10 @@ export interface TFinancialSummary {
 /** Exactly what the consultant Home renders; nothing else is read. */
 export interface TConsultantDashboardResponse {
   appointments: TAppointment[];
-  /** Next org-funded sessions to deliver, metadata only. */
+  /** Next org-hosted sessions to deliver, metadata only. */
   orgSessions: TConsultantOrgSession[];
+  /** Next sessions this consultant booked as a client; read-only busy time. */
+  clientBookings?: TConsultantClientBooking[];
   /** Share of requests answered within a day over the last 30 days. */
   responseRate: {
     withinTarget: number;

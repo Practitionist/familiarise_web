@@ -40,11 +40,7 @@ const MEMBER = { organizationId: ORG, status: "ACTIVE" as const };
 function ctx(
   role: "OWNER" | "MANAGER" | "LEARNER",
   orgStatus?:
-    | "ACTIVE"
-    | "SUSPENDED"
-    | "DEACTIVATED"
-    | "PENDING_VERIFICATION"
-    | null,
+    "ACTIVE" | "SUSPENDED" | "DEACTIVATED" | "PENDING_VERIFICATION" | null,
 ) {
   return {
     raw: ORG,
@@ -192,9 +188,12 @@ describe("the org arm of the appointments list", () => {
     userId: "u1",
   }) as Record<string, unknown>;
 
-  it("hides rows whose org is no longer readable", () => {
-    expect(w.organization).toMatchObject({
-      is: { status: { in: ORG_SCOPE_READABLE_STATUSES } },
+  it("hides rows whose org is no longer readable, on both grounds", () => {
+    const readable = { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } };
+    const arms = w.OR as Array<Record<string, unknown>>;
+    expect(arms[0]).toMatchObject({ organization: readable });
+    expect(arms[1]).toMatchObject({
+      consultation: { consultationPlan: { organization: readable } },
     });
   });
 
@@ -223,7 +222,8 @@ describe("the org arm of the appointments list", () => {
       string,
       unknown
     >;
-    expect(p.organizationId).toBeNull();
-    expect(p.organization).toBeUndefined();
+    // Personal pins "no org" per side (buyer tag, plan host), never a status gate.
+    expect(JSON.stringify(p)).toContain('"organizationId":null');
+    expect(JSON.stringify(p)).not.toContain('"organization":');
   });
 });

@@ -63,6 +63,11 @@ export const db = makePrismaDouble();
 
 export function resetDouble(next: Overrides): void {
   for (const key of Object.keys(overrides)) delete overrides[key];
-  Object.assign(overrides, next);
+  // The seat's event is on the plan the checkout names unless a test says not.
+  Object.assign(
+    overrides,
+    { "webinar.count": () => 1, "class.count": () => 1 },
+    next,
+  );
   calls.length = 0;
 }

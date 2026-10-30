@@ -95,6 +95,7 @@ describe("consultant Home loader", () => {
     const payload = await getConsultantDashboard("cp-1", NOW);
     expect(Object.keys(payload).sort()).toEqual([
       "appointments",
+      "clientBookings",
       "financialSummary",
       "needsYou",
       "orgSessions",
