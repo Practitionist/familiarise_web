@@ -1,5 +1,6 @@
 /**
- * Money emails: refund processed and failed for the payer, and org billing
+ * Money emails: refund processed and failed for the payer, the digital product
+ * purchase receipt, and org billing
  * notices (invoice overdue, wallet low, payout failed or reversed, member
  * overage due) for the org's visibility roster.
  */
@@ -16,6 +17,10 @@ import {
 import { OrgOverageDueEmail } from "@/emails/orgs/OrgOverageDueEmail";
 import { OrgPayoutFailedEmail } from "@/emails/orgs/OrgPayoutFailedEmail";
 import { OrgWalletLowEmail } from "@/emails/orgs/OrgWalletLowEmail";
+import {
+  DigitalProductPurchaseEmail,
+  digitalProductPurchaseSubject,
+} from "@/emails/payments/DigitalProductPurchaseEmail";
 import {
   DisputeNoticeEmail,
   type DisputeNoticeKind,
@@ -52,6 +57,7 @@ import {
   money,
   prepareSpecEmails,
   stageSpecGuarded,
+  stageSpecOncePerRecipient,
   type Paise,
   type PreparedRecipientEmails,
   type RecipientEmailSpec,
@@ -74,6 +80,7 @@ export const MONEY_EMAIL_TYPES = {
   ORG_WALLET_LOW: "ORG_WALLET_LOW",
   ORG_PAYOUT_FAILED: "ORG_PAYOUT_FAILED",
   ORG_PROGRAM_OVERAGE_DUE: "ORG_PROGRAM_OVERAGE_DUE",
+  DIGITAL_PRODUCT_PURCHASED: "DIGITAL_PRODUCT_PURCHASED",
 } as const;
 
 const NOTHING_SENT: SendToRecipientsResult = { sent: 0, skipped: 0, failed: 0 };
@@ -127,6 +134,51 @@ export async function stageRefundProcessedEmail(
   args: RefundProcessedEmailArgs,
 ): Promise<StagedRecipientEmail[]> {
   return stageSpecGuarded(refundProcessedSpec(args), [args.userId], tx);
+}
+
+// ── Digital product purchased ───────────────────────────────────────────────
+
+export interface DigitalProductPurchaseEmailArgs {
+  purchaseId: string;
+  buyerId: string;
+  productTitle: string;
+  creatorName: string | null;
+  amountPaise: Paise;
+  /** The buyer's library (or the product page); never a file URL. */
+  libraryHref: string;
+}
+
+/** A claim's ttl outlives every retry of the capture that could stage it again. */
+const PURCHASE_EMAIL_CLAIM_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Stages the receipt at most once per purchase; the caller attempts it. */
+export function stageDigitalProductPurchaseEmail(
+  args: DigitalProductPurchaseEmailArgs,
+): Promise<StagedRecipientEmail[]> {
+  const free = Number(args.amountPaise) === 0;
+  const amountText = free ? null : money(args.amountPaise, "INR");
+  const libraryUrl = absolute(args.libraryHref);
+  const spec: RecipientEmailSpec = {
+    emailType: MONEY_EMAIL_TYPES.DIGITAL_PRODUCT_PURCHASED,
+    category: "payments",
+    from: SENDERS.payments,
+    entityRef: `digital-product-purchase:${args.purchaseId}`,
+    subject: () => digitalProductPurchaseSubject(args.productTitle, free),
+    render: (r: EmailRecipient): ReactElement =>
+      DigitalProductPurchaseEmail({
+        recipientName: greet(r),
+        productTitle: args.productTitle,
+        creatorName: args.creatorName,
+        amountText,
+        libraryUrl,
+        unsubscribeUrl: r.unsubscribeUrl,
+      }),
+  };
+  return stageSpecOncePerRecipient(spec, [args.buyerId], {
+    scope: "digital-product.purchased",
+    key: (userId) => `${args.purchaseId}:${userId}`,
+    ttlMs: PURCHASE_EMAIL_CLAIM_TTL_MS,
+  });
 }
 
 // ── Refund failed ───────────────────────────────────────────────────────────

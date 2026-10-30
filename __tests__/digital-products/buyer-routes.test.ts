@@ -49,6 +49,10 @@ jest.mock("../../lib/rate-limit", () => ({
   checkoutLimiter: {},
   digitalProductDownloadLimiter: {},
 }));
+const notifyPurchase = jest.fn();
+jest.mock("../../lib/digital-products/purchase-email", () => ({
+  notifyDigitalProductPurchase: (...a: unknown[]) => notifyPurchase(...a),
+}));
 jest.mock("../../lib/payments/core/saved-card-customer", () => ({
   savedCardCustomerId: async () => undefined,
 }));
@@ -166,6 +170,11 @@ it("mints one order for overlapping purchases and refuses a second free claim", 
   const again = await claim(req(), params);
   expect(again.status).toBe(400);
   expect((await again.json()).code).toBe("ALREADY_ENTITLED");
+  expect(notifyPurchase).toHaveBeenCalledTimes(1);
+  expect(notifyPurchase).toHaveBeenCalledWith(
+    { id: rows[0].id },
+    expect.any(Number),
+  );
 });
 
 it("stamps the first download by CAS and redirects to a 300 s attachment URL", async () => {

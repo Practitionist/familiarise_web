@@ -8,6 +8,8 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, checkoutLimiter } from "@/lib/rate-limit";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import { notifyDigitalProductPurchase } from "@/lib/digital-products/purchase-email";
 import {
   checkProductForSale,
   SALE_REFUSAL_STATUS,
@@ -65,6 +67,10 @@ export async function POST(_request: Request, { params }: RouteParams) {
       },
     );
     if (!claimed) return alreadyOwned();
+    await notifyDigitalProductPurchase(
+      { id: claimed.id },
+      EMAIL_BUDGET_MS.REQUEST,
+    );
     return NextResponse.json(
       { data: { purchaseId: claimed.id } },
       { status: 201 },

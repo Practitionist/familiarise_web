@@ -18,6 +18,7 @@ const mockSettleMarker = jest.fn();
 const mockRefund = jest.fn();
 const mockCreateEarnings = jest.fn();
 const mockMintInvoice = jest.fn();
+const mockNotifyPurchase = jest.fn();
 
 jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
   postUnappliedReceipt: jest.fn(),
@@ -41,6 +42,9 @@ jest.mock("../../lib/payments/payouts/earnings-service", () => ({
 }));
 jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
   mintConsumerInvoiceBestEffort: (...a: unknown[]) => mockMintInvoice(...a),
+}));
+jest.mock("../../lib/digital-products/purchase-email", () => ({
+  notifyDigitalProductPurchase: (...a: unknown[]) => mockNotifyPurchase(...a),
 }));
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
@@ -117,6 +121,10 @@ it("settles a capture atomically and refunds mismatched, duplicate and orphan ca
     expect.objectContaining({ appointmentType: "DIGITAL_PRODUCT", tx: mockTx }),
   );
   expect(mockMintInvoice).toHaveBeenCalledWith({ paymentId: "pay-order_1" });
+  expect(mockNotifyPurchase).toHaveBeenCalledWith(
+    { paymentId: "pay-order_1" },
+    expect.any(Number),
+  );
   expect(mockRefund).not.toHaveBeenCalled();
 
   // Amount mismatch: staged under the marker, refunded, never granted.
@@ -148,6 +156,7 @@ it("settles a capture atomically and refunds mismatched, duplicate and orphan ca
     paymentIntent: "pay_C",
   });
   expect(mockCreateEarnings).not.toHaveBeenCalled();
+  expect(mockNotifyPurchase).not.toHaveBeenCalled();
 
   // The purchase row is gone: refund the buyer the notes name.
   jest.clearAllMocks();

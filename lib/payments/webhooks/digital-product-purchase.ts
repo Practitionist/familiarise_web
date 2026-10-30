@@ -20,6 +20,8 @@ import {
   type CreateEarningsParams,
 } from "@/lib/payments/payouts/earnings-service";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import { notifyDigitalProductPurchase } from "@/lib/digital-products/purchase-email";
 import { DIGITAL_PRODUCT_SALE_PREFIX } from "@/lib/payments/webhooks/auto-refund-marker";
 import {
   AUTO_REFUND_MARKERS,
@@ -437,6 +439,10 @@ export async function handleDigitalProductPurchaseSuccess(
   // Post-commit and best effort, as the booking confirmation mints it.
   if (outcome.kind === "settled") {
     await mintConsumerInvoiceBestEffort({ paymentId: outcome.paymentId });
+    await notifyDigitalProductPurchase(
+      { paymentId: outcome.paymentId },
+      EMAIL_BUDGET_MS.WEBHOOK,
+    );
     return;
   }
   await refundStagedCapture(outcome, {
