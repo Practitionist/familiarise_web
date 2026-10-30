@@ -46,7 +46,8 @@ describe("GET /api/bookings/webinars — unscheduled and a date range", () => {
     const res = await call(`consultantProfileId=cp-1&unscheduled=1&${RANGE}`);
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: "unscheduled cannot be combined with a date range",
+      error:
+        "Unscheduled webinars have no dates, so they can't be filtered by a date range. Clear the dates and try again.",
       code: "INVALID_QUERY",
     });
     expect(findMany).not.toHaveBeenCalled();

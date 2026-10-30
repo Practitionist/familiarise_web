@@ -22,7 +22,7 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
-import { liveParticipant } from "./participants";
+import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { BookingRuleError } from "./booking-rule-error";
 import { RESCHEDULE_MIN_LEAD_HOURS } from "./reschedule-proposals";
 import {
@@ -168,8 +168,7 @@ export async function retimeWebinar(args: {
               const seats = await tx.appointmentParticipant.findMany({
                 where: {
                   appointmentId,
-                  role: "CONSULTEE",
-                  ...liveParticipant(),
+                  ...seatHoldingParticipant(now),
                 },
                 select: { userId: true },
               });

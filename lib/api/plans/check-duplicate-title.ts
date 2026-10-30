@@ -3,7 +3,14 @@ import { z } from "zod";
 
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { apiError } from "@/lib/errors/api-error";
+import {
+  classifyError,
+  ErrorTypes,
+} from "@/lib/errors/classification/payment-error-classification";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
+
+const TITLE_CHECK_FAILED = "We couldn't check that title. Try again.";
 
 export type DuplicateTitlePlanKind =
   "consultation" | "subscription" | "webinar" | "class";
@@ -77,11 +84,27 @@ export async function checkDuplicateTitle(
     });
     return NextResponse.json({ isDuplicate }, { status: 200 });
   } catch (error) {
+    const tag = `[check-duplicate-title.${kind}]`;
+    // An unrecognised failure answers with plain copy, never its raw message.
+    if (classifyError(error).errorType === ErrorTypes.UNKNOWN) {
+      const errorId = reportSentryError(error, {
+        subsystem: "api",
+        tags: { route_tag: tag },
+      });
+      return NextResponse.json(
+        {
+          error: TITLE_CHECK_FAILED,
+          errorType: ErrorTypes.UNKNOWN,
+          ...(errorId ? { errorId } : {}),
+        },
+        { status: 500 },
+      );
+    }
     return apiError({
-      tag: `[check-duplicate-title.${kind}]`,
+      tag,
       error,
       userId: session.user.id,
-      fallbackMessage: "We couldn't check that title. Try again.",
+      fallbackMessage: TITLE_CHECK_FAILED,
     });
   }
 }

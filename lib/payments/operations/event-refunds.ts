@@ -33,6 +33,7 @@ import {
   termsFromPolicyRow,
 } from "./cancellation-policy-store";
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
+import { liveParticipant } from "@/lib/booking/participants";
 import {
   seatLedger,
   occurrenceRefundsPaise,
@@ -73,7 +74,7 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-type EventSeatPlan =
+export type EventSeatPlan =
   | { kind: "owe"; marker: RefundOwedMarker }
   | { kind: "settled" }
   | { kind: "escalate"; delivered: number; partlyReturned: boolean };
@@ -95,30 +96,35 @@ type EventRefundArgs = {
 /**
  * What each SUCCEEDED seat of the event is owed, read on `db`: the undelivered
  * share clamped to the remaining balance, a whole credit restoration, a skip
- * when nothing is left, or an escalation the credits rail cannot pay.
+ * when nothing is left, or an escalation the credits rail cannot pay. A seat
+ * already released settled its money on the way out, so it is owed nothing.
  */
 async function planEventSeats(
   db: PrismaLike,
   args: EventRefundArgs,
-): Promise<{ paymentIds: string[]; plans: Map<string, EventSeatPlan> }> {
+): Promise<{ plans: Map<string, EventSeatPlan>; currency: string }> {
   const prefix = args.dedupeKeyPrefix ?? "event-cancel";
+  const eventFilter =
+    args.kind === "webinar"
+      ? { webinarId: args.eventId }
+      : { classId: args.eventId };
   const payments = await db.payment.findMany({
     where: {
-      appointment:
-        args.kind === "webinar"
-          ? { webinarId: args.eventId }
-          : { classId: args.eventId },
+      appointment: eventFilter,
       paymentStatus: "SUCCEEDED",
       // Retired rows stay out: the front door refuses them.
       deletedAt: null,
     },
     select: {
       id: true,
+      userId: true,
       amount: true,
+      currency: true,
       paymentIntent: true,
       ...REFUNDABLE_BALANCE_SELECT,
     },
   });
+  const liveSeats = await liveSeatPayments(db, eventFilter, payments);
   const creditStates = await creditSeatStates(
     db,
     payments
@@ -127,6 +133,10 @@ async function planEventSeats(
   );
   const plans = new Map<string, EventSeatPlan>();
   for (const p of payments) {
+    if (!liveSeats.has(p.id)) {
+      plans.set(p.id, { kind: "settled" });
+      continue;
+    }
     const ledger = args.ledgers?.get(p.id);
     const key = `${prefix}:${args.eventId}:pay:${p.id}`;
     const credit = creditStates.get(p.id);
@@ -176,7 +186,67 @@ async function planEventSeats(
         : { kind: "settled" },
     );
   }
-  return { paymentIds: payments.map((p) => p.id), plans };
+  // Settlement is INR-only by design, so the seats of one event share a currency.
+  return { plans, currency: payments[0]?.currency ?? "INR" };
+}
+
+/**
+ * The cancel preview's answer, from the same plan the cancel stamps: the cash
+ * it would pay back and how many seats are owed something.
+ */
+export async function quoteWholeEventRefunds(
+  kind: "class" | "webinar",
+  eventId: string,
+  ledgers: ReadonlyMap<string, SeriesSeat> | null,
+): Promise<{ owedPaise: number; seats: number; currency: string }> {
+  const { plans, currency } = await planEventSeats(prisma, {
+    kind,
+    eventId,
+    reason: "preview",
+    ledgers: ledgers ?? undefined,
+  });
+  let owedPaise = 0;
+  let seats = 0;
+  for (const plan of plans.values()) {
+    if (plan.kind === "settled") continue;
+    seats += 1;
+    if (plan.kind === "owe") owedPaise += plan.marker.amountPaise ?? 0;
+  }
+  return { owedPaise, seats, currency };
+}
+
+/**
+ * The payments that still fund a live seat on the event: the seat row linked
+ * to the payment, or a legacy unlinked seat of the same buyer.
+ */
+async function liveSeatPayments(
+  db: PrismaLike,
+  eventFilter: { webinarId: string } | { classId: string },
+  payments: readonly { id: string; userId: string }[],
+): Promise<Set<string>> {
+  if (payments.length === 0) return new Set();
+  const seats = await db.appointmentParticipant.findMany({
+    where: {
+      appointment: eventFilter,
+      ...liveParticipant(),
+      OR: [
+        { paymentId: { in: payments.map((p) => p.id) } },
+        { paymentId: null, userId: { in: payments.map((p) => p.userId) } },
+      ],
+    },
+    select: { userId: true, paymentId: true },
+  });
+  return new Set(
+    payments
+      .filter((p) =>
+        seats.some(
+          (s) =>
+            s.paymentId === p.id ||
+            (s.paymentId === null && s.userId === p.userId),
+        ),
+      )
+      .map((p) => p.id),
+  );
 }
 
 /**
@@ -205,6 +275,11 @@ export async function refundWholeEventPayments(
   opts: {
     ledgers?: ReadonlyMap<string, SeriesSeat>;
     dedupeKeyPrefix?: string;
+    /**
+     * The plans the cancelling commit stamped. That commit released every
+     * seat, so a fresh plan would read them all as already settled.
+     */
+    plans?: ReadonlyMap<string, EventSeatPlan>;
   } = {},
 ): Promise<WholeEventRefundSummary> {
   const summary: WholeEventRefundSummary = {
@@ -216,13 +291,12 @@ export async function refundWholeEventPayments(
     deferred: 0,
     alreadyRefunded: false,
   };
-  const args: EventRefundArgs = { kind, eventId, reason, ...opts };
+  const { plans: stamped, ...rest } = opts;
+  const args: EventRefundArgs = { kind, eventId, reason, ...rest };
 
-  // A door that stamped in its own commit makes this a no-op: the CAS keeps
-  // the first marker on every seat.
-  const plans = await prisma.$transaction((tx) =>
-    stampWholeEventRefundsOwed(tx, args),
-  );
+  const plans =
+    stamped ??
+    (await prisma.$transaction((tx) => stampWholeEventRefundsOwed(tx, args)));
   if (plans.size === 0) return summary;
 
   const owing: string[] = [];

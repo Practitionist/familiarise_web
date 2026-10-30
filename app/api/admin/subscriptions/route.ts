@@ -16,35 +16,64 @@ import {
 
 type PlanEndBucket = "active" | "expiring_soon" | "expired";
 
+/** Rows read per page of the rows without a stored plan end. */
+const NULL_END_PAGE = 500;
+/** The most of them one request reads; past it the rest are left out and reported. */
+const NULL_END_CAP = 5_000;
+
+const NULL_END_SELECT = {
+  id: true,
+  planEndsAt: true,
+  schedulingPeriodStartsAt: true,
+  schedulingTimezone: true,
+  subscriptionPlan: { select: { durationInMonths: true } },
+} satisfies Prisma.SubscriptionSelect;
+
 /**
  * Rows from before plan ends were stored carry none; each is bucketed by its
- * derived end, exactly as the list renders it.
+ * derived end, exactly as the list renders it. New rows always store their
+ * end, so this set only shrinks: it is read in keyset pages, up to a cap.
  */
 async function nullEndBuckets(
   now: Date,
   soonThreshold: Date,
 ): Promise<Record<PlanEndBucket, string[]>> {
-  const rows = await prisma.subscription.findMany({
-    where: { planEndsAt: null, status: { not: "CANCELLED" } },
-    select: {
-      id: true,
-      planEndsAt: true,
-      schedulingPeriodStartsAt: true,
-      schedulingTimezone: true,
-      subscriptionPlan: { select: { durationInMonths: true } },
-    },
-  });
   const buckets: Record<PlanEndBucket, string[]> = {
     active: [],
     expiring_soon: [],
     expired: [],
   };
-  for (const row of rows) {
-    const end = subscriptionPlanEnd(row).getTime();
-    if (end <= now.getTime()) buckets.expired.push(row.id);
-    else if (end <= soonThreshold.getTime()) buckets.expiring_soon.push(row.id);
-    else buckets.active.push(row.id);
+  let cursor: string | null = null;
+  for (let read = 0; read < NULL_END_CAP; read += NULL_END_PAGE) {
+    const rows: Prisma.SubscriptionGetPayload<{
+      select: typeof NULL_END_SELECT;
+    }>[] = await prisma.subscription.findMany({
+      where: {
+        planEndsAt: null,
+        status: { not: "CANCELLED" },
+        ...(cursor ? { id: { gt: cursor } } : {}),
+      },
+      orderBy: { id: "asc" },
+      take: NULL_END_PAGE,
+      select: NULL_END_SELECT,
+    });
+    for (const row of rows) {
+      const end = subscriptionPlanEnd(row).getTime();
+      if (end <= now.getTime()) buckets.expired.push(row.id);
+      else if (end <= soonThreshold.getTime())
+        buckets.expiring_soon.push(row.id);
+      else buckets.active.push(row.id);
+    }
+    if (rows.length < NULL_END_PAGE) return buckets;
+    cursor = rows[rows.length - 1].id;
   }
+  Sentry.captureMessage(
+    "admin subscriptions: rows without a plan end exceed the read cap",
+    {
+      level: "warning",
+      extra: { cap: NULL_END_CAP },
+    },
+  );
   return buckets;
 }
 

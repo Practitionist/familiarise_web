@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
+import { PERSONAL_PLAN_HOST } from "@/lib/api/scope/parse";
 import {
   MAKEUP_WINDOW_DAYS,
   UNSETTLED_MISS,
@@ -44,12 +45,12 @@ const personalOneToOne = (
   OR: [
     {
       consultation: {
-        consultationPlan: { consultantProfileId, organizationId: null },
+        consultationPlan: { consultantProfileId, ...PERSONAL_PLAN_HOST },
       },
     },
     {
       subscription: {
-        subscriptionPlan: { consultantProfileId, organizationId: null },
+        subscriptionPlan: { consultantProfileId, ...PERSONAL_PLAN_HOST },
       },
     },
   ],
@@ -84,7 +85,7 @@ async function readOwedMakeUps(consultantProfileId: string, now: Date) {
     where: {
       ...UNSETTLED_MISS,
       appointment: {
-        class: { classPlan: { consultantProfileId, organizationId: null } },
+        class: { classPlan: { consultantProfileId, ...PERSONAL_PLAN_HOST } },
       },
     },
     orderBy: { startsAt: "asc" },

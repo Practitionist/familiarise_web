@@ -1,6 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
 import {
   AppointmentSlot,
   CustomSlot,
@@ -15,6 +14,7 @@ import {
   buildConsultantOccupancyWhere,
   OCCUPYING_OCCURRENCE_WHERE,
   buildOccupiedAppointmentFilter,
+  timeHoldingParticipant,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { isOccupiedByLiveAppointment } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { getSession } from "@/lib/auth-server";
@@ -698,7 +698,7 @@ export async function GET(
 
     const occupiedAppointmentWhere = {
       AND: [
-        buildConsultantOccupancyWhere(consultantId, consultant.userId),
+        buildConsultantOccupancyWhere(consultantId, consultant.userId, now),
         slotsInWindow,
       ],
     };
@@ -735,7 +735,11 @@ export async function GET(
           where: {
             AND: [
               { OR: buildOccupiedAppointmentFilter() },
-              { participants: { some: liveParticipant(consulteeUserId) } },
+              {
+                participants: {
+                  some: timeHoldingParticipant(now, consulteeUserId),
+                },
+              },
               slotsInWindow,
             ],
           },
@@ -757,6 +761,7 @@ export async function GET(
                     buildConsultantOccupancyWhere(
                       ch.consultantProfileId,
                       ch.userId,
+                      now,
                     ),
                   ),
                 },

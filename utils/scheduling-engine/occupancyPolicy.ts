@@ -157,19 +157,14 @@ export function buildOccupiedAppointmentFilter(
 export function buildConsultantOccupancyWhere(
   consultantProfileId: string | undefined,
   consultantUserId: string,
-  now?: Date,
+  now: Date,
 ): Prisma.AppointmentWhereInput {
   const reachesConsultant: Prisma.AppointmentWhereInput[] = [
     {
       // The consultant holds a seat (as consultee elsewhere) on an
       // appointment with a row that still holds its time; a lapsed seat hold
       // holds nothing.
-      participants: {
-        some: {
-          ...liveParticipant(consultantUserId),
-          ...(now ? { NOT: buildDeadSeatFilter(now) } : {}),
-        },
-      },
+      participants: { some: timeHoldingParticipant(now, consultantUserId) },
       occurrences: { some: OCCUPYING_OCCURRENCE_WHERE },
     },
   ];
@@ -188,7 +183,7 @@ export function buildConsultantOccupancyWhere(
     AND: [
       { OR: buildOccupiedAppointmentFilter() },
       { OR: reachesConsultant },
-      ...(now ? [{ NOT: buildDeadHoldFilter(now) }] : []),
+      { NOT: buildDeadHoldFilter(now) },
     ],
   };
 }

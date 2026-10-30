@@ -145,13 +145,18 @@ function seatPayment(tx: Tx, kind: EventKind, eventId: string, userId: string) {
   });
 }
 
-/** The class quote for a seat under way (D-4), from its ledger. */
+/**
+ * The class quote for a seat under way (D-4), from its ledger. A next session
+ * moved on the buyer is priced as outside the window unless the class was
+ * re-timed, whose free leave is bounded by its retimeBy instead.
+ */
 export async function classSeatQuote(
   tx: Tx,
   ledger: SeatLedger,
   payment: NonNullable<Awaited<ReturnType<typeof seatPayment>>>,
   joinedAt: Date,
   now: Date,
+  movesForgive: boolean,
 ): Promise<number> {
   const next = ledger.remaining[0];
   const quote = quoteClassSeatRefund({
@@ -161,7 +166,7 @@ export async function classSeatQuote(
     remainingStartsMs: ledger.remaining.map((r) => r.startsAt.getTime()),
     neverScheduled: ledger.neverScheduled,
     movedStartsMs:
-      next && movedAfter(next.movedAt, joinedAt)
+      movesForgive && next && movedAfter(next.movedAt, joinedAt)
         ? [next.startsAt.getTime()]
         : [],
     alreadyRefundedPaise: await occurrenceRefundsPaise(tx, payment.id),
@@ -233,14 +238,32 @@ export async function planSelfLeave(
       sessions,
     };
   }
+  const cls = await tx.class.findUnique({
+    where: { id: eventId },
+    select: { retimeBy: true },
+  });
+  const movesForgive = !cls?.retimeBy;
   // A session under way when the attendee leaves is theirs to forfeit, so it
   // counts as delivered and the ladder prices only what has not started.
   if (ledger.deliveredHeld + ledger.inProgressHeld === 0) {
-    assertOutsideWindow(ledger.remaining[0], joinedAt, windowHours, now);
+    assertOutsideWindow(
+      ledger.remaining[0],
+      joinedAt,
+      windowHours,
+      now,
+      movesForgive,
+    );
     return { mode: "full", sessions };
   }
   return {
-    amountPaise: await classSeatQuote(tx, ledger, payment, joinedAt, now),
+    amountPaise: await classSeatQuote(
+      tx,
+      ledger,
+      payment,
+      joinedAt,
+      now,
+      movesForgive,
+    ),
     sessions,
   };
 }

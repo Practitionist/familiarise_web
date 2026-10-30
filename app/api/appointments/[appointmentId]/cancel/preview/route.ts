@@ -15,15 +15,13 @@ import {
   membershipSuspendedResponse,
 } from "@/lib/enterprise/suspended-member-sessions";
 import { quoteSeatLeave } from "@/lib/booking/seat-leave";
-import { seriesCancelRefundPaise } from "@/lib/booking/class-series";
-import { classSeriesLedgers } from "@/lib/payments/operations/event-refunds";
+import {
+  classSeriesLedgers,
+  quoteWholeEventRefunds,
+} from "@/lib/payments/operations/event-refunds";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import { creditStillUsedPaise } from "@/lib/payments/operations/credit-plan-return";
-import {
-  REFUNDABLE_BALANCE_SELECT,
-  refundableBalancePaise,
-} from "@/lib/payments/refundable-balance";
 import prisma from "@/lib/prisma";
 
 // A money read: never cached (repo rule for edited money GETs).
@@ -78,62 +76,23 @@ type PreviewAppointment = NonNullable<
  * What cancelling a class or webinar actually pays back.
  *
  * The POST route does not tier a group event at all: it hands the whole event
- * to `refundWholeEventPayments`, which refunds EVERY attendee's seat in full,
- * whoever pressed cancel. Quoting that act against the viewer's own payment was
- * the defect — an organiser owns no seat, so the preview found no payment and
- * told them "no refund at this notice" while the click was about to return
- * every attendee's money.
- *
- * The payment set is `refundWholeEventPayments`' own, filter for filter:
- * SUCCEEDED, live (`deletedAt: null`) seats with no amount floor — free_
- * (credit-funded) seats refund too, via credit restoration (#1161), and
- * retired rows stay out (#781 §B). A quote that reads a different set than
- * the charge is just a second opinion. Each seat is worth its refundable
- * balance rather than its gross, because that is what a full refund of an
- * already partly-refunded seat returns.
+ * to `refundWholeEventPayments`, whoever pressed cancel. The quote reads that
+ * door's own seat plan, so it can never be a second opinion: each live paid
+ * seat is owed what it was not delivered, clamped to its refundable balance,
+ * and a seat already released is owed nothing.
  */
 async function quoteWholeEventRefund(
   kind: "class" | "webinar",
   eventId: string,
 ) {
-  const seats = await prisma.payment.findMany({
-    where: {
-      appointment:
-        kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
-      paymentStatus: "SUCCEEDED",
-      deletedAt: null,
-    },
-    select: {
-      id: true,
-      amount: true,
-      currency: true,
-      ...REFUNDABLE_BALANCE_SELECT,
-    },
-  });
   // #1780 D-5 — a class series pays back only what each seat was not delivered.
   const ledgers = kind === "class" ? await classSeriesLedgers(eventId) : null;
-  const owed = (seat: (typeof seats)[number]) => {
-    const balance = refundableBalancePaise(Number(seat.amount), seat);
-    const ledger = ledgers?.get(seat.id);
-    return ledger
-      ? Math.max(
-          0,
-          Math.min(
-            balance,
-            Number(seriesCancelRefundPaise(ledger, seat.amount)) -
-              (ledger.occRefundedPaise ?? 0),
-          ),
-        )
-      : balance;
-  };
-
+  const quote = await quoteWholeEventRefunds(kind, eventId, ledgers);
   return {
-    estimatedRefundPaise: seats.reduce((total, seat) => total + owed(seat), 0),
+    estimatedRefundPaise: quote.owedPaise,
     /** Paid seats — the attendees who are owed something, not the roster. */
-    attendeeCount: seats.length,
-    // Settlement is INR-only by design, so the seats of one event share a
-    // currency and the sum above is denominated in it.
-    currency: seats[0]?.currency ?? "INR",
+    attendeeCount: quote.seats,
+    currency: quote.currency,
   };
 }
 

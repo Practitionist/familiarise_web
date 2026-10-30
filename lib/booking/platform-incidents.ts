@@ -14,8 +14,20 @@ import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { voidRefundExists } from "@/lib/backoffice/session-outcomes";
-import { subscriptionIsOver, subscriptionPlanEnd } from "./entitlement";
+import { isFreeCreditIntent } from "@/lib/payments/funding-rail";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
+import { stampRefundOwed } from "@/lib/payments/operations/refund-owed";
+import {
+  sessionsTotalOf,
+  subscriptionIsOver,
+  subscriptionPlanEnd,
+} from "./entitlement";
+import { incidentRefundKey } from "./incident-keys";
 import { onClassSessionVoided } from "./class-sessions";
 import { LIVE_PARTICIPANT_STATUSES } from "./participants";
 import { flushClassVoidNotices } from "./session-outcome-sweep";
@@ -120,6 +132,19 @@ const RETRO_SELECT = {
       classId: true,
       webinarId: true,
       trial: { select: { id: true, paymentId: true } },
+      subscription: {
+        select: {
+          status: true,
+          sessionsTotal: true,
+          subscriptionPlan: { select: { totalSessions: true } },
+        },
+      },
+      class: {
+        select: {
+          status: true,
+          classPlan: { select: { totalSessions: true } },
+        },
+      },
       participants: {
         where: { role: "CONSULTEE", status: { in: LIVE_PARTICIPANT_STATUSES } },
         select: { userId: true, paymentId: true, createdAt: true },
@@ -196,6 +221,130 @@ export function remedyRowsFor(
 type RetroOutcome = "voided" | "relabelled" | "kept" | "skipped" | "lost";
 
 /**
+ * A plan or series whose money was already settled as delivered: a subscription
+ * no longer live, or a cancelled class. Neither the plan extension nor the
+ * class make-up sweep can repay a session voided after that, so the incident
+ * owes the session's unit in cash itself.
+ */
+function settledParent(occ: RetroOccurrence): boolean {
+  const { subscription, class: cls } = occ.appointment;
+  if (subscription) {
+    return (
+      subscription.status !== "APPROVED" && subscription.status !== "SCHEDULED"
+    );
+  }
+  return cls?.status === "CANCELLED";
+}
+
+/** Sessions a settled plan's seat paid for: one unit is its share of the price. */
+function settledParentSessions(
+  occ: RetroOccurrence,
+  sessionsPurchased: number | null,
+): number {
+  const { subscription, class: cls } = occ.appointment;
+  if (subscription) return sessionsTotalOf(subscription);
+  return sessionsPurchased || cls?.classPlan?.totalSessions || 1;
+}
+
+/**
+ * The learners a settled plan billed for this session, each owed its unit in
+ * cash under the incident key, stamped on `tx`. A released seat held the
+ * session only when it was released after the session started. Null when a
+ * seat cannot be repaid in cash (credits restore whole or not at all), so the
+ * session is kept for a human instead of voided.
+ */
+async function stampSettledParentRefunds(
+  tx: Tx,
+  occ: RetroOccurrence,
+  incidentId: string,
+  now: Date,
+): Promise<Prisma.IncidentRemedyCreateManyInput[] | null> {
+  const payments = await tx.payment.findMany({
+    where: {
+      appointmentId: occ.appointmentId,
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      userId: true,
+      amount: true,
+      createdAt: true,
+      paymentIntent: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
+  });
+  if (payments.length === 0) return [];
+  const seats = await tx.appointmentParticipant.findMany({
+    where: {
+      appointmentId: occ.appointmentId,
+      role: "CONSULTEE",
+      OR: [
+        { paymentId: { in: payments.map((p) => p.id) } },
+        { paymentId: null, userId: { in: payments.map((p) => p.userId) } },
+      ],
+    },
+    select: {
+      userId: true,
+      paymentId: true,
+      status: true,
+      createdAt: true,
+      updatedAt: true,
+      sessionsPurchased: true,
+    },
+  });
+  const rows: Prisma.IncidentRemedyCreateManyInput[] = [];
+  for (const payment of payments) {
+    const seat = seats.find(
+      (s) =>
+        s.paymentId === payment.id ||
+        (s.paymentId === null && s.userId === payment.userId),
+    );
+    if (!seat) continue;
+    const joinedAt = Math.max(
+      seat.createdAt.getTime(),
+      payment.createdAt.getTime(),
+    );
+    const heldIt =
+      joinedAt < occ.startsAt.getTime() &&
+      (LIVE_PARTICIPANT_STATUSES.includes(seat.status) ||
+        seat.updatedAt >= occ.startsAt);
+    if (!heldIt) continue;
+    if (isFreeCreditIntent(payment.paymentIntent)) return null;
+    const unit = Math.floor(
+      payment.amount / settledParentSessions(occ, seat.sessionsPurchased),
+    );
+    const owed = Math.min(
+      unit,
+      refundableBalancePaise(payment.amount, payment),
+    );
+    if (owed > 0) {
+      const stamped = await stampRefundOwed(tx, {
+        paymentId: payment.id,
+        amountPaise: owed,
+        key: incidentRefundKey(incidentId, occ.id, payment.userId),
+        reason: `platform incident ${incidentId}: session voided after its plan was settled`,
+      });
+      // Another door's refund is still owed on this payment: retried next run.
+      if (!stamped) {
+        throw new Error(
+          `Payment ${payment.id} already owes another refund; incident ${incidentId} retries session ${occ.id}`,
+        );
+      }
+    }
+    rows.push({
+      incidentId,
+      occurrenceId: occ.id,
+      userId: payment.userId,
+      paymentId: payment.id,
+      kind: "REFUND_NOW",
+      dueAt: now,
+    });
+  }
+  return rows;
+}
+
+/**
  * Voids one overlapping session as PLATFORM_OUTAGE (CAS on the status read)
  * and writes its remedy rows in the same commit, so a kill leaves either both or neither.
  */
@@ -210,11 +359,26 @@ export async function voidForIncident(
   ) {
     return { outcome: "skipped", created: 0 };
   }
-  const rows = remedyRowsFor(occ, incidentId, now);
+  const settled = settledParent(occ) && VOIDABLE_FROM.has(occ.completionStatus);
   const committed = await prisma.$transaction(
     async (tx) => {
       let outcome: RetroOutcome = "kept";
       let classVoid: ClassVoid = null;
+      const rows = settled
+        ? await stampSettledParentRefunds(tx, occ, incidentId, now)
+        : remedyRowsFor(occ, incidentId, now);
+      if (rows === null) {
+        await recordSystemEvent({
+          db: tx,
+          strict: true,
+          category: "BOOKING",
+          severity: "WARN",
+          message: `Incident ${incidentId} kept session ${occ.id}: its plan was settled and a credit seat cannot be repaid in part`,
+          context: { incidentId, occurrenceId: occ.id },
+          correlationId: `incident-kept:${incidentId}:${occ.id}`,
+        });
+        return { outcome: "kept" as const, classVoid, created: 0 };
+      }
       if (VOIDABLE_FROM.has(occ.completionStatus)) {
         const moved = await transitionOccurrenceCompletion(tx, {
           where: {
@@ -239,7 +403,8 @@ export async function voidForIncident(
         if (moved === 0)
           return { outcome: "lost" as const, classVoid, created: 0 };
         outcome = "voided";
-        if (occ.appointment.classId) {
+        // A cancelled series has no make-up to schedule; its cash remedy is stamped above.
+        if (occ.appointment.classId && !settled) {
           classVoid = await onClassSessionVoided(tx, {
             appointmentId: occ.appointmentId,
             occurrenceId: occ.id,

@@ -20,6 +20,8 @@ import { consulteeHasOverlappingSession } from "../../../lib/payments/checkout/o
 import { randomUUID } from "node:crypto";
 import { ScheduleValidationService } from "../../../utils/scheduling-engine/ScheduleValidationService";
 import { confirmExistingAppointment } from "../../../lib/payments/webhooks/handlers";
+import { findAvailableSlots } from "../../../lib/booking/allocation/search/find-available-slots";
+import { SlotShortageError } from "../../../utils/scheduling-engine/errors";
 
 async function dualRoleSeatOn(expiresAt: Date) {
   const webinar = await seedWebinar({ capacity: 5 });
@@ -200,6 +202,70 @@ describe("seat liveness in the capture recheck", () => {
         confirmExistingAppointment(tx, booking.appointmentId, consultee.userId),
       );
       expect(outcome.doubleBookingBlocked === true).toBe(blocks);
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// The allocator's search reads the same seat liveness as the validator, on
+// both arms: the consultee's own seats and the expert's seats as a client.
+// ---------------------------------------------------------------------------
+
+/** One hour of custom availability exactly over the webinar's time. */
+const availableOnlyAt = (
+  userId: string,
+  window: { startsAt: Date; endsAt: Date },
+) => ({
+  userId,
+  scheduleType: "CUSTOM" as const,
+  availabilityWindowsWeekly: [],
+  availabilityWindowsCustom: [{ id: randomUUID(), ...window }],
+  hasCustomRows: true,
+});
+
+const search = (
+  expert: { userId: string; consultantProfileId: string },
+  window: { startsAt: Date; endsAt: Date },
+  consulteeUserId: string,
+) =>
+  findAvailableSlots(
+    prisma,
+    availableOnlyAt(expert.userId, window),
+    1,
+    1,
+    "consultation",
+    { durationInHours: 1 },
+    [],
+    [],
+    consulteeUserId,
+    expert.consultantProfileId,
+  ).then(
+    (starts) => starts.map((s) => s.getTime()),
+    (error: unknown) =>
+      error instanceof SlotShortageError ? ("shortage" as const) : error,
+  );
+
+describe("seat liveness in the allocator search", () => {
+  it.each(SEATS)(
+    "%s: keeps the consultee's time off the search only while it is live",
+    async (_label, shape, blocks) => {
+      const { webinar, consultee } = await consulteeWithSeat(shape());
+      const expert = await seedHost();
+      const found = await search(expert, webinar, consultee.userId);
+      expect(found).toEqual(blocks ? "shortage" : [webinar.startsAt.getTime()]);
+    },
+  );
+
+  it.each([
+    ["a lapsed", new Date(Date.now() - 60_000), false],
+    ["a live", new Date(Date.now() + 10 * 60_000), true],
+  ] as const)(
+    "%s seat the expert holds as a client elsewhere is busy only while it is live",
+    async (_label, expiresAt, blocks) => {
+      const { webinar, buyer: expert } = await dualRoleSeatOn(expiresAt);
+      const consultee = await seedConsultee();
+      const found = await search(expert, webinar, consultee.userId);
+      expect(found).toEqual(blocks ? "shortage" : [webinar.startsAt.getTime()]);
     },
   );
 });

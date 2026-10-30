@@ -185,15 +185,26 @@ describe("anomalyCollector", () => {
     expect(anomalies()).toHaveLength(2);
   });
 
-  it("is linear on a 10k-row series", () => {
+  it("is linear on a 10k-row series: a fixed number of reads per row", () => {
     const start = Date.parse("2026-01-05T09:00:00Z");
-    const rows = Array.from({ length: 10_000 }, (_, i) => ({
-      id: `o${i}`,
-      startsAt: new Date(start + i * 24 * HOUR),
-      endsAt: new Date(start + i * 24 * HOUR + HOUR),
-    }));
-    const t0 = Date.now();
+    const reads = { startsAt: 0, endsAt: 0 };
+    const rows = Array.from({ length: 10_000 }, (_, i) => {
+      const startsAt = new Date(start + i * 24 * HOUR);
+      const endsAt = new Date(start + i * 24 * HOUR + HOUR);
+      return {
+        id: `o${i}`,
+        get startsAt() {
+          reads.startsAt += 1;
+          return startsAt;
+        },
+        get endsAt() {
+          reads.endsAt += 1;
+          return endsAt;
+        },
+      };
+    });
     expect(normalizeOccurrences(rows)).toHaveLength(10_000);
-    expect(Date.now() - t0).toBeLessThan(500);
+    expect(reads.startsAt).toBe(10_000);
+    expect(reads.endsAt).toBeLessThanOrEqual(3 * 10_000);
   });
 });

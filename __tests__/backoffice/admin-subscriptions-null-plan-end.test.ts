@@ -100,4 +100,26 @@ describe("GET /api/admin/subscriptions — rows without a stored plan end", () =
       status: { not: "CANCELLED" },
     });
   });
+
+  it("reads them in bounded keyset pages and stops at the cap", async () => {
+    const page = (from: number) =>
+      Array.from({ length: 500 }, (_, i) =>
+        legacy(`sub-${String(from + i).padStart(5, "0")}`, 3),
+      );
+    m.subscription.findMany.mockImplementation(
+      async (args: { where: { id?: { gt: string } } }) => {
+        const after = args.where.id?.gt;
+        return page(after ? Number(after.slice(4)) + 1 : 0);
+      },
+    );
+
+    expect((await call("active")).status).toBe(200);
+
+    const reads = m.subscription.findMany.mock.calls.map(([args]) => args);
+    expect(reads).toHaveLength(10);
+    expect(reads.every((r) => r.take === 500)).toBe(true);
+    expect(reads[0].where.id).toBeUndefined();
+    expect(reads[1].where.id).toEqual({ gt: "sub-00499" });
+    expect(reads[1].orderBy).toEqual({ id: "asc" });
+  });
 });

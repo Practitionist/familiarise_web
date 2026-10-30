@@ -15,7 +15,10 @@
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
-import { ORG_SCOPE_READABLE_STATUSES } from "@/lib/api/scope/parse";
+import {
+  PERSONAL_PLAN_HOST,
+  READABLE_ORG_PLAN_HOST,
+} from "@/lib/api/scope/parse";
 import { runBounded } from "@/lib/db/bounded";
 import { readByIds } from "@/lib/data/read-by-ids";
 import { readPayoutSetupNeeded } from "@/lib/data/needs-you";
@@ -57,11 +60,6 @@ const HOME_ORG_SESSIONS_TAKE = 5;
  * plan no org hosts (sponsor-funded ones included, money as metadata only);
  * the "Organisation sessions" strip is the org-hosted rest, trials included.
  */
-const PERSONAL_PLAN_HOST = { organizationId: null };
-const ORG_PLAN_HOST = {
-  organizationId: { not: null },
-  organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
-};
 
 const consultantAppointmentScope = (consultantProfileId: string) =>
   ({
@@ -81,12 +79,12 @@ const consultantAppointmentScope = (consultantProfileId: string) =>
 const consultantOrgAppointmentScope = (consultantProfileId: string) =>
   ({
     OR: [
-      ...consultantDeliveryArms(consultantProfileId, ORG_PLAN_HOST),
+      ...consultantDeliveryArms(consultantProfileId, READABLE_ORG_PLAN_HOST),
       {
         trial: {
           consultantProfileId,
           status: "SCHEDULED" as const,
-          subscriptionPlan: ORG_PLAN_HOST,
+          subscriptionPlan: READABLE_ORG_PLAN_HOST,
         },
       },
     ],
@@ -163,7 +161,7 @@ const LIVE_EVENT = { in: ["SCHEDULED" as const, "IN_PROGRESS" as const] };
 
 const consultantDeliveryArms = (
   consultantProfileId: string,
-  planHost: typeof PERSONAL_PLAN_HOST | typeof ORG_PLAN_HOST,
+  planHost: typeof PERSONAL_PLAN_HOST | typeof READABLE_ORG_PLAN_HOST,
 ): Prisma.AppointmentWhereInput[] => [
   {
     consultation: {

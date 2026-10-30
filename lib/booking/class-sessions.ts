@@ -50,6 +50,7 @@ import {
 } from "@/utils/appointmentlock";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
+import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   acceptedCohostProfileIds,
   hostBatchEntries,
@@ -706,8 +707,9 @@ export async function scheduleClassMakeUp(
             });
             // #1569 — the hold anchors on the last live session's end.
             await recomputeEarningsHold(tx, appointmentId);
+            // Both re-time doors tell the seats that hold a place right now.
             const seats = await tx.appointmentParticipant.findMany({
-              where: { appointmentId, ...SEATED },
+              where: { appointmentId, ...seatHoldingParticipant(now) },
               select: { userId: true },
             });
             const seatUserIds = seats.map((s) => s.userId);

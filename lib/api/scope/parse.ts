@@ -256,7 +256,7 @@ export function scopeToWhereOrgId(
 ): { organizationId: string | null } | undefined {
   switch (scope.kind) {
     case "personal":
-      return { organizationId: null };
+      return { ...PERSONAL_PLAN_HOST };
     case "org":
     case "orgMember":
       return { organizationId: scope.orgId };
@@ -273,3 +273,12 @@ export function scopeToWhereOrgId(
  * buyer's booking is tagged to (a sponsor tag is a funding rail, not a host).
  */
 export const scopeToPlanHostWhere = scopeToWhereOrgId;
+
+/** A consultant's personal side of the plan-host split: plans no org hosts. */
+export const PERSONAL_PLAN_HOST = { organizationId: null } as const;
+
+/** The org side of the plan-host split: plans hosted by any org still readable. */
+export const READABLE_ORG_PLAN_HOST = {
+  organizationId: { not: null },
+  organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
+} as const;

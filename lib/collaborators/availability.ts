@@ -5,8 +5,8 @@ import {
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
   OCCUPYING_OCCURRENCE_WHERE,
+  timeHoldingParticipant,
 } from "@/utils/scheduling-engine/occupancyPolicy";
-import { liveParticipant } from "@/lib/booking/participants";
 
 /**
  * AE-2 (#784) — collaborator double-booking guard.
@@ -48,9 +48,10 @@ export class ConsultantScheduleConflictError extends Error {
 function commitmentClauses(
   consultantProfileId: string,
   consultantUserId: string,
+  now: Date,
 ): Prisma.AppointmentWhereInput[] {
   return [
-    { participants: { some: liveParticipant(consultantUserId) } },
+    { participants: { some: timeHoldingParticipant(now, consultantUserId) } },
     { consultation: { consultationPlan: { consultantProfileId } } },
     { subscription: { subscriptionPlan: { consultantProfileId } } },
     { webinar: { webinarPlan: { consultantProfileId } } },
@@ -181,7 +182,11 @@ export async function assertCollaboratorsAvailableForWindows(
   const anyClash = await db.appointmentOccurrence.findFirst({
     where: overlapWhere({
       OR: collaborators.flatMap((c) =>
-        commitmentClauses(c.consultantProfileId, c.consultantProfile.user.id),
+        commitmentClauses(
+          c.consultantProfileId,
+          c.consultantProfile.user.id,
+          now,
+        ),
       ),
     }),
     select: { id: true },
@@ -197,6 +202,7 @@ export async function assertCollaboratorsAvailableForWindows(
         OR: commitmentClauses(
           c.consultantProfileId,
           c.consultantProfile.user.id,
+          now,
         ),
       }),
       select: { id: true },

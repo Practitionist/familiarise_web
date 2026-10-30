@@ -37,11 +37,13 @@ function weekly(firstStartMs: number): LedgerOccurrence[] {
   });
 }
 
-function fakeTx(occurrences: LedgerOccurrence[]) {
+function fakeTx(occurrences: LedgerOccurrence[], retimeBy: Date | null = null) {
   return {
     class: {
       findUnique: jest.fn(async () => ({
         classPlan: { refundWindowHours: 24 },
+        retimeBy,
+        appointment: { id: "appt-class" },
       })),
     },
     payment: {
@@ -60,7 +62,10 @@ function fakeTx(occurrences: LedgerOccurrence[]) {
         class: { classPlan: { totalSessions: 8 } },
       })),
     },
-    appointmentOccurrence: { findMany: jest.fn(async () => occurrences) },
+    appointmentOccurrence: {
+      findMany: jest.fn(async () => occurrences),
+      count: jest.fn(async () => 0),
+    },
     refund: { findMany: jest.fn(async () => []) },
   } as unknown as Tx;
 }
@@ -98,6 +103,33 @@ describe("leaving a class while a session is under way", () => {
       NOW,
     );
     expect(plan).toEqual({ amountPaise: 300_000, sessions: 3 });
+  });
+});
+
+describe("a next session the host moved inside the window", () => {
+  /** Session 1 starts in 12 h (inside the 24 h window), moved after the purchase. */
+  const movedSoon = () =>
+    weekly(12 * HOUR).map((o, i) =>
+      i === 0 ? { ...o, movedAt: new Date(NOW.getTime() - DAY) } : o,
+    );
+  const leave = (retimeBy: Date | null) =>
+    planSelfLeave(
+      fakeTx(movedSoon(), retimeBy),
+      "class",
+      "cls-1",
+      "user-learner",
+      seat,
+      NOW,
+    );
+
+  it("waives the window for a class never re-timed", async () => {
+    await expect(leave(null)).resolves.toEqual({ mode: "full", sessions: 8 });
+  });
+
+  it("keeps the window once a re-time's free leave has ended", async () => {
+    await expect(leave(new Date(NOW.getTime() - HOUR))).rejects.toMatchObject({
+      code: "REFUND_WINDOW_CLOSED",
+    });
   });
 });
 

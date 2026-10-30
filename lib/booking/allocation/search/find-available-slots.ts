@@ -1,7 +1,6 @@
 // The read-only availability search. It takes the base client, so it runs
 // outside the write transaction, under the caller's locks.
 
-import { liveParticipant } from "@/lib/booking/participants";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import type { PrismaLike } from "@/lib/prisma";
 import { Prisma, ScheduleType } from "@prisma/client";
@@ -27,6 +26,7 @@ import {
   buildConsultantOccupancyWhere,
   buildOccupiedAppointmentFilter,
   OCCUPYING_OCCURRENCE_WHERE,
+  timeHoldingParticipant,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   MAX_CLASS_SESSIONS_PER_DAY,
@@ -143,7 +143,11 @@ export async function findAvailableSlots(
   // Shared with the availability grid so the two cannot disagree about who
   // is busy — see buildConsultantOccupancyWhere.
   const appointmentFilter: Prisma.AppointmentWhereInput[] = [
-    buildConsultantOccupancyWhere(consultantProfileId, consultant.userId),
+    buildConsultantOccupancyWhere(
+      consultantProfileId,
+      consultant.userId,
+      occupancyClock,
+    ),
     // Bounded read — see occupancyClock above.
     {
       occurrences: {
@@ -222,7 +226,11 @@ export async function findAvailableSlots(
       where: {
         AND: [
           { OR: buildOccupiedAppointmentFilter() },
-          { participants: { some: liveParticipant(consulteeUserId) } },
+          {
+            participants: {
+              some: timeHoldingParticipant(occupancyClock, consulteeUserId),
+            },
+          },
           {
             occurrences: {
               some: {

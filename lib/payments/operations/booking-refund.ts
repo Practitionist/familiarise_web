@@ -440,21 +440,24 @@ export async function restoreSessionCredits(input: {
     (!payment.appointment?.classId && !payment.appointment?.subscriptionId)
   ) {
     throw new RefundValidationError(
-      `Payment ${input.paymentId} is not a class seat or a subscription`,
+      "This payment is not for a class seat or a subscription, so it has no session credits to restore.",
       "NOT_SESSION_CREDIT",
+      { paymentId: input.paymentId },
     );
   }
   const isSubscription = !payment.appointment.classId;
   if (!isFreeCreditIntent(payment.paymentIntent)) {
     throw new RefundValidationError(
-      `Payment ${input.paymentId} is not credit-funded; refund an amount instead`,
+      "This payment was not made with credits. Refund an amount instead.",
       "NOT_CREDIT_FUNDED",
+      { paymentId: input.paymentId },
     );
   }
   if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
     throw new RefundValidationError(
-      `Payment ${input.paymentId} is not SUCCEEDED; cannot restore`,
+      "This payment was never completed, so there is nothing to restore.",
       "PAYMENT_NOT_SUCCEEDED",
+      { paymentId: input.paymentId, paymentStatus: payment.paymentStatus },
     );
   }
   const appointmentId = payment.appointmentId;

@@ -84,7 +84,8 @@ export async function GET(request: NextRequest) {
     if (unscheduled && (startDateStr || endDateStr)) {
       return NextResponse.json(
         {
-          error: "unscheduled cannot be combined with a date range",
+          error:
+            "Unscheduled webinars have no dates, so they can't be filtered by a date range. Clear the dates and try again.",
           code: "INVALID_QUERY",
         },
         { status: 400 },

@@ -2,10 +2,8 @@ import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
-import {
-  liveParticipant,
-  recordParticipants,
-} from "@/lib/booking/participants";
+import { recordParticipants } from "@/lib/booking/participants";
+import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   curriculumCreateNested,
   faqCreateNested,
@@ -933,7 +931,7 @@ export async function PATCH(request: NextRequest) {
                         where: { classId: updatedClass.id },
                         include: {
                           participants: {
-                            where: liveParticipant(),
+                            where: seatHoldingParticipant(new Date()),
                             select: { userId: true },
                           },
                         },

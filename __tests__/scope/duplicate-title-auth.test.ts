@@ -60,6 +60,17 @@ beforeEach(() => {
 });
 
 describe.each(Object.entries(ROUTES))("%s check-duplicate-title", (_n, GET) => {
+  it("answers an unrecognised failure with plain copy, never its raw message", async () => {
+    findFirst.mockRejectedValueOnce(
+      new Error('relation "ClassPlan" column "title" does not exist'),
+    );
+    const res = await GET(req("cp-own"));
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe("We couldn't check that title. Try again.");
+    expect(JSON.stringify(body)).not.toContain("ClassPlan");
+  });
+
   it("401s without a session and reads nothing", async () => {
     auth.session = null;
     expect((await GET(req("cp-own"))).status).toBe(401);

@@ -19,6 +19,7 @@ import {
   seedConsultee,
   seedHost,
   seedOneToOne,
+  untilLockWaiter,
 } from "./harness";
 
 const readGate = { current: null as ReturnType<typeof gate> | null };
@@ -284,7 +285,7 @@ describe("cancel × capture", () => {
     await paused.arrived;
     // The capture blocks on the payment row the cancel holds, then retries.
     const capturing = capture(payment, booking.captureMetadata);
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await untilLockWaiter();
     paused.open();
     const res = await cancelling;
     await capturing;

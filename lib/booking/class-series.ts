@@ -269,7 +269,13 @@ export async function seriesLedger(
   });
 }
 
-/** Units this payment already got back per session (`occ:*`, `incident:*`). */
+/** Seat doors whose refund returns sessions of this payment: a leave (the re-time free leave included) and the exit right. */
+const SEAT_REFUND_KEY_PREFIXES = ["seat-leave:", "seat-exit:"] as const;
+
+/**
+ * What this payment already got back for sessions it will not be delivered:
+ * per session (`occ:*`, `incident:*`) and per seat (`seat-leave:*`, `seat-exit:*`).
+ */
 export async function occurrenceRefundsPaise(
   db: Pick<Tx, "refund">,
   paymentId: string,
@@ -281,6 +287,9 @@ export async function occurrenceRefundsPaise(
       OR: [
         { dedupeKey: { startsWith: "occ:", endsWith: `:pay:${paymentId}` } },
         { dedupeKey: { startsWith: INCIDENT_REFUND_KEY_PREFIX } },
+        ...SEAT_REFUND_KEY_PREFIXES.map((prefix) => ({
+          dedupeKey: { startsWith: prefix, endsWith: `:pay:${paymentId}` },
+        })),
       ],
     },
     select: { amountPaise: true },

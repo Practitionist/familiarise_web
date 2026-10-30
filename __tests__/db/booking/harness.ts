@@ -237,3 +237,21 @@ export function gate() {
     },
   };
 }
+
+/**
+ * Resolves once some backend is waiting on a lock, so a racer is provably
+ * parked behind the other's row lock; throws if none ever waits.
+ */
+export async function untilLockWaiter(timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const [{ waiting }] = await prisma.$queryRaw<{ waiting: number }[]>(
+      Prisma.sql`SELECT count(*)::int AS waiting FROM pg_locks WHERE NOT granted`,
+    );
+    if (waiting > 0) return;
+    if (Date.now() > deadline) {
+      throw new Error("No backend waited on a lock: the race never blocked");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}

@@ -1095,14 +1095,15 @@ export async function POST(
                   organizationId: appointment.organizationId,
                 });
               }
-              if (eventKind && eventId) {
-                await stampWholeEventRefundsOwed(tx, {
-                  kind: eventKind,
-                  eventId,
-                  reason: eventRefundReason,
-                  ledgers: seriesLedgers ?? undefined,
-                });
-              }
+              const eventPlans =
+                eventKind && eventId
+                  ? await stampWholeEventRefundsOwed(tx, {
+                      kind: eventKind,
+                      eventId,
+                      reason: eventRefundReason,
+                      ledgers: seriesLedgers ?? undefined,
+                    })
+                  : null;
 
               // Soft-cancel: mark slots as CANCELLED instead of deleting.
               // CRITICAL: Do NOT delete appointments — Payment records have onDelete: Cascade
@@ -1157,6 +1158,7 @@ export async function POST(
                 quote,
                 owed,
                 holdNotices,
+                eventPlans,
                 gatewayCancels: pendingExpiry?.gatewayCancels ?? [],
               };
             },
@@ -1185,8 +1187,15 @@ export async function POST(
         throw err;
       });
     if ("replay" in committed) return NextResponse.json(committed.replay);
-    const { holdNotices, paidPayment, quote, owed, gatewayCancels, ...result } =
-      committed;
+    const {
+      holdNotices,
+      paidPayment,
+      quote,
+      owed,
+      gatewayCancels,
+      eventPlans,
+      ...result
+    } = committed;
     await flushBackupInterestNotices(holdNotices);
     await cancelGatewayOrders(gatewayCancels, {
       op: "cancel.gateway-cancel",
@@ -1261,7 +1270,10 @@ export async function POST(
         eventId,
         eventRefundReason,
         session.user.id,
-        { ledgers: seriesLedgers ?? undefined },
+        {
+          ledgers: seriesLedgers ?? undefined,
+          plans: eventPlans ?? undefined,
+        },
       );
     }
 

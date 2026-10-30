@@ -59,20 +59,23 @@ export async function closeCreditReturnWithoutCredit(
   const plan = payment?.appointment?.subscription;
   if (!payment || !plan) {
     throw new RefundValidationError(
-      `Payment ${input.paymentId} is not a subscription`,
+      "This payment is not for a subscription.",
       "NOT_SESSION_CREDIT",
+      { paymentId: input.paymentId },
     );
   }
   if (!isFreeCreditIntent(payment.paymentIntent)) {
     throw new RefundValidationError(
-      `Payment ${input.paymentId} is not credit-funded`,
+      "This payment was not made with credits.",
       "NOT_CREDIT_FUNDED",
+      { paymentId: input.paymentId },
     );
   }
   if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
     throw new RefundValidationError(
-      `Payment ${input.paymentId} is not SUCCEEDED`,
+      "This payment was never completed, so there is nothing to return.",
       "PAYMENT_NOT_SUCCEEDED",
+      { paymentId: input.paymentId, paymentStatus: payment.paymentStatus },
     );
   }
   if (!ENDED_PLAN_STATUSES.has(plan.status)) {

@@ -13,10 +13,8 @@ import {
   withHostSlotBatch,
 } from "@/lib/booking/host-slot-batch";
 import prisma from "@/lib/prisma";
-import {
-  liveParticipant,
-  recordParticipants,
-} from "@/lib/booking/participants";
+import { recordParticipants } from "@/lib/booking/participants";
+import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
@@ -891,7 +889,7 @@ export async function PATCH(request: NextRequest) {
                             where: { id: updatedWebinar.appointment.id },
                             include: {
                               participants: {
-                                where: liveParticipant(),
+                                where: seatHoldingParticipant(new Date()),
                                 select: { userId: true },
                               },
                             },
