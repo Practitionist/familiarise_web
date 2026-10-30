@@ -22,7 +22,7 @@ The organisation is on the Developer (free) plan (`docs/observability/sentry/06-
 - Session replay is not configured anywhere (no replay integration or sample rates in `sentry.shared.config.ts` or `instrumentation-client.ts`), so it stays at the SDK default of off. Do not add replay without a budget.
 - `instrumentation-client.ts` loads `@sentry/nextjs` lazily and skips synthetic traffic when `navigator.webdriver` is true or the user agent matches `HeadlessChrome|Lighthouse|PTST`.
 - The ingest canary (`lib/observability/ingest-canary.ts`, target `sentry-ingest-canary`) runs once a day and costs no error quota: it reads `stats_v2` with `SENTRY_STATS_TOKEN` instead of sending an event (the old six-hourly probe event cost about 120 stored errors a month). Its alert goes by email through Resend and as an error-level Better Stack line, never through Sentry.
-- Sentry is escalations only (`docs/decisions/2026-10-31-sentry-escalations-only.md`): one-off ticker failures, config skips, business findings and every preview event stay out of it, and Spike Protection is on.
+- Sentry is escalations only (`docs/decisions/2026-10-31-sentry-escalations-only.md`): one-off ticker failures, config skips, non-money business findings and every preview event stay out of it; money-integrity findings page once per new id set; Spike Protection is on.
 - `lib/observability/quota-alert.ts` emails once per period at 70 percent of the error quota, reading `stats_v2`.
 - Open exposure (issue #2145): database-unreachable (`P1001`) and connection-timeout failures have no budget family, so each failing request is limited only by the 10-an-hour breaker.
 

@@ -37,7 +37,7 @@ The full reasoning for each rule is in `references/sentry.md` and `references/jo
 - **Unset token is off; empty token is broken on.** Gate token paths on presence, not truthiness.
 - **The SDK is not on `window`.** Attach a listener from a `<script>` in the page's main world, because a DevTools evaluation runs in an isolated world and looks identical to "Sentry is not initialised".
 - **A 2xx is not acceptance, and acceptance is not queryability.** Read `x-sentry-rate-limits`; a working session or transaction stream is no evidence that errors are taken.
-- **The canary spends no error quota.** It reads `stats_v2` once a day with `SENTRY_STATS_TOKEN` (org token, `org:read`) and pages by email and an error-level Better Stack line on a `rate_limited` outcome, a `usage_exceeded` / `error_usage_exceeded` reason, or a failed read. An unset token is a config skip.
+- **The canary spends no error quota.** It reads `stats_v2` once a day with `SENTRY_STATS_TOKEN` (an Internal Integration token (Organization: Read)) and pages by email and an error-level Better Stack line on a `rate_limited` outcome, a `usage_exceeded` / `error_usage_exceeded` reason, or a failed read. An unset token is a config skip.
 - **A check that reports its own failure through the failing system is not a check.**
 - **Modelled refusals are warnings.** A `BUSINESS_ERROR_CODES` code is `expected: true`, re-levelled by `beforeSend`, and never an error event.
 - **A repetition is throttled; a set is aggregated.** Never aggregate a repetition, and remember that a shared `fingerprint` groups events without saving any.
@@ -48,7 +48,7 @@ The full reasoning for each rule is in `references/sentry.md` and `references/jo
 - **`SystemEvent` is the row; Sentry is the pager.** When they disagree, believe the row.
 - **Scrub everything.** Spans, metrics and Sentry Logs go through `lib/observability/sentry-scrubber.ts`, and `console.*` bypasses the scrubber, so never log raw payloads or full Prisma errors.
 - **A job's row is not proof the work finished.** A run can record `COMPLETED` for partial work until #2424 Phase 1; do not build a new alert on that status without stating it.
-- **Sentry is escalations only.** A one-off ticker failure is a log line; only `isRepeatedFailure` (three cadences with no `COMPLETED` run) sends a per-target error. Config skips are `skipped` run rows, business findings are `SystemEvent` rows, preview deploys send no events, and only money drift pages as a standing finding. Spike Protection is on. A background target (202) is judged one tick late, from its newest finished run (`lastFailedAt`).
+- **Sentry is escalations only.** A one-off ticker failure is a log line; only `isRepeatedFailure` (three cadences with no `COMPLETED` run) sends a per-target error. Config skips are `skipped` run rows, business findings are `SystemEvent` rows (Sentry fixes the system, the console fixes the customer), and preview deploys send no events. Money integrity is the one standing-finding exception (wallet drift `fatal`, ledger drift `error`, ambiguous placeholder refunds `warning`, once per new id set); thrown errors and failed runs always page. Spike Protection is on. A background target (202) is judged one tick late, from its newest finished run (`lastFailedAt`).
 - **Cron mutual exclusion is Postgres only.** Never add a Redis lock or a Redis failure counter for a job.
 - **The entity trace and the metrics card are read-only.** One bounded query per source, run in sequence, and skip a source that needs an unindexed JSON scan.
 

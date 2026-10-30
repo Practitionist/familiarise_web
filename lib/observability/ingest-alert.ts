@@ -29,7 +29,7 @@ function remedyFor(r: IngestCheck): string[] {
     "To confirm recovery, read the same stats_v2 query with statsPeriod=1h: rejections already counted stay in the canary's one-day window, so a re-run can stay unhealthy for up to a day after the fix.";
   if (r.verdict === "stats-unreadable") {
     return [
-      "Ingest health is unknown, not known bad. Check that SENTRY_STATS_TOKEN is a live org token with org:read, and that SENTRY_API_URL and SENTRY_ORG name the right organisation.",
+      "Ingest health is unknown, not known bad. Check that SENTRY_STATS_TOKEN is a live Internal Integration token (Organization: Read), and that SENTRY_API_URL and SENTRY_ORG name the right organisation.",
       "After fixing it, re-run sentry-ingest-canary from the System Jobs page.",
     ];
   }

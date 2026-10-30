@@ -57,7 +57,7 @@ The canary's own 503 never reaches Sentry: `reportableToSentry()` in `netlify/fu
 
 ### The token
 
-`SENTRY_STATS_TOKEN` is a Sentry **organization auth token** whose only needed scope is `org:read` (the endpoint accepts `org:read`, `org:write` or `org:admin`). It is a runtime key for the production Netlify context. It is not `SENTRY_AUTH_TOKEN`, the build-time token that uploads source maps. `SENTRY_API_URL` defaults to `https://us.sentry.io` and `SENTRY_ORG` to `practitionist`.
+`SENTRY_STATS_TOKEN` is **an Internal Integration token (Organization: Read)**, which grants the `org:read` scope the endpoint needs (it accepts `org:read`, `org:write` or `org:admin`). An organization auth token does not work, because it only carries `org:ci`. It is a runtime key for the production Netlify context. It is not `SENTRY_AUTH_TOKEN`, the build-time token that uploads source maps. `SENTRY_API_URL` defaults to `https://us.sentry.io` and `SENTRY_ORG` to `practitionist`.
 
 ## Running it by hand
 

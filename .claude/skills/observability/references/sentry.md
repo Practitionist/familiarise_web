@@ -92,7 +92,7 @@ Sweeps aggregate once per run in `settle-cancelled-sessions`, `retry-auto-refund
 
 The rule for new code is to never capture per row. A loop that can fail on many rows keeps a per-row `console.error` that logs `scrubStringValue(message)` from `lib/observability/sentry-scrubber.ts` rather than the raw error, because console output bypasses Sentry's scrubber. It collects the failures and, after the loop, emits one `reportSentryError` with a stable `fingerprint` and `extra: { failed, sample }` holding the count and the first ten ids. A repetition of one failure is throttled and a set of distinct failures is aggregated, as the non-negotiables above describe.
 
-The ingest canary also warns before the quota is gone, and it runs that check after the urgent rejection alert so that alert still fits inside the roughly 26 second function ceiling. When `SENTRY_STATS_TOKEN` (an `org:read` token) is set, each daily canary run reads the accepted error count for the current billing period and emails once per period when it reaches 70% of `SENTRY_ERROR_QUOTA` (default 5000). `SENTRY_QUOTA_PERIOD_START_DAY` (default 19) sets the day the period starts, and an unset token makes the whole canary run a config skip.
+The ingest canary also warns before the quota is gone, and it runs that check after the urgent rejection alert so that alert still fits inside the roughly 26 second function ceiling. When `SENTRY_STATS_TOKEN` (an Internal Integration token, Organization: Read) is set, each daily canary run reads the accepted error count for the current billing period and emails once per period when it reaches 70% of `SENTRY_ERROR_QUOTA` (default 5000). `SENTRY_QUOTA_PERIOD_START_DAY` (default 19) sets the day the period starts, and an unset token makes the whole canary run a config skip.
 
 ### Sentry-side state on 2026-10-02
 
@@ -100,7 +100,7 @@ The high-priority alert workflow 3606037 now filters on `environment: production
 
 ### Still to do (owner)
 
-The owner still has to create an `org:read` Sentry organization token and set `SENTRY_STATS_TOKEN` on Netlify production, with the optional `SENTRY_QUOTA_PERIOD_START_DAY` and `SENTRY_ERROR_QUOTA`. Until then the canary records a config skip every day and alerts nobody. In one to two months the owner plans to upgrade to the Team plan (US$26 a month billed annually, 50,000 errors, pay-as-you-go), and at that point the DSN key rate limit and the dropped preview events should be revisited. Issue #1933 stays open until then.
+Ops still has to create an Internal Integration token (Organization: Read) and set it as `SENTRY_STATS_TOKEN` on Netlify production (an organization auth token only carries `org:ci`), with the optional `SENTRY_QUOTA_PERIOD_START_DAY` and `SENTRY_ERROR_QUOTA`. Until then the canary records a config skip every day and alerts nobody. In one to two months the owner plans to upgrade to the Team plan (US$26 a month billed annually, 50,000 errors, pay-as-you-go), and at that point the DSN key rate limit and the dropped preview events should be revisited. Issue #1933 stays open until then.
 
 For the email map, the pre-launch delivery guard and ops alert routing, see [docs/email/README.md](../../../../docs/email/README.md).
 

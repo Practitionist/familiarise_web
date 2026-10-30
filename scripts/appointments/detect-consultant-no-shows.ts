@@ -3,7 +3,6 @@
  * session-outcome verdict; multi-session partial refunds are excluded.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
 import { reportStandingFinding } from "../../lib/observability/standing-finding";
 import {
@@ -301,33 +300,17 @@ export async function refusalFromStreamEvidence(
   return null;
 }
 
-const REPORTED_SAMPLE_SIZE = 10;
-
-/**
- * One Sentry message per run however many rows hit it, and only when the set of
- * affected consultations has a member not already reported inside the window.
- */
+/** One console finding per run, recorded only when the set has a consultation not already recorded in the window. */
 async function reportOncePerRun(
   message: string,
   entries: Array<{ consultationId: string; refusal?: string }>,
 ): Promise<void> {
   if (entries.length === 0) return;
-  await reportStandingFinding(
-    {
-      key: `detect-consultant-no-shows:${message}`,
-      ids: entries.map((e) => e.consultationId),
-      message,
-    },
-    () =>
-      Sentry.captureMessage(message, {
-        level: "warning",
-        tags: { subsystem: "jobs", job: "detect-consultant-no-shows" },
-        extra: {
-          count: entries.length,
-          sample: entries.slice(0, REPORTED_SAMPLE_SIZE),
-        },
-      }),
-  );
+  await reportStandingFinding({
+    key: `detect-consultant-no-shows:${message}`,
+    ids: entries.map((e) => e.consultationId),
+    message,
+  });
 }
 
 /** A per-run cache over `getCallPresenceEvidence`, so one call id is fetched once inside the held lock. */

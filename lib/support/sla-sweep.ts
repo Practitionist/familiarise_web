@@ -10,10 +10,7 @@ import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
 import { DEFAULT_FROM_ADDRESS, deliver, EMAIL_BUDGET_MS } from "@/lib/email";
-import {
-  reportSentryError,
-  reportSentryMessage,
-} from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { slaStateOf } from "./sla";
 import {
@@ -707,7 +704,7 @@ async function autoCloseResolvedRows(
   return result;
 }
 
-/** One page per run for disputes due within 12 h or already past due; new ids re-page, repeats stay quiet for 24 h. */
+/** One console finding per run for disputes due within 12 h or past due; the bells and emails above reach the admins. */
 async function pageCriticalDisputeDeadlines(
   now: Date,
   disputes: { id: string; disputeId: string; dueBy: Date | null }[],
@@ -717,28 +714,12 @@ async function pageCriticalDisputeDeadlines(
     (d) => d.dueBy && d.dueBy.getTime() - now.getTime() <= DISPUTE_CRITICAL_MS,
   );
   if (critical.length === 0) return;
-  const message = `${critical.length} dispute(s) due within 12 h or past due with no response`;
   try {
-    await reportStandingFinding(
-      {
-        key: "dispute-deadline:critical",
-        ids: critical.map((d) => d.id),
-        message,
-      },
-      () =>
-        reportSentryMessage(message, {
-          subsystem: "payments",
-          op: "dispute-deadline-critical",
-          level: "error",
-          extra: {
-            disputes: critical.map((d) => ({
-              id: d.id,
-              disputeId: d.disputeId,
-              dueBy: d.dueBy?.toISOString(),
-            })),
-          },
-        }),
-    );
+    await reportStandingFinding({
+      key: "dispute-deadline:critical",
+      ids: critical.map((d) => d.id),
+      message: `${critical.length} dispute(s) due within 12 h or past due with no response`,
+    });
   } catch (err) {
     errors.push(
       `dispute-deadline critical page: ${err instanceof Error ? err.message : String(err)}`,

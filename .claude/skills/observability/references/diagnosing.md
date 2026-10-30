@@ -46,7 +46,7 @@ sixteen digits and both live in the DSN — the org's is in the **host** as
 that caused the 2026-09-20 incident shared its first ten digits with the org id,
 so the two read as siblings. `01` has the full taxonomy.
 
-**A1.2** — No verdict means no check. A config skip or `stats-unreadable` says nothing about ingest; create or fix the `org:read` organization token and re-run. One alert a day for several days is a long outage, not noise.
+**A1.2** — No verdict means no check. A config skip or `stats-unreadable` says nothing about ingest; create or fix an Internal Integration token (Organization: Read) and re-run. One alert a day for several days is a long outage, not noise.
 
 **A1.3** — No DSN in the runtime is deliberately distinct from a rejected DSN, because
 the operator's action is different and paging someone about auth when nothing was

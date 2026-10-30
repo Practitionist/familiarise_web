@@ -134,7 +134,7 @@ Closed cases 180 days past `closedAt` have their evidence deleted and their free
 
 ### 6. Chargeback deadline alerts
 
-Gateway disputes in `NEEDS_RESPONSE` or `WARNING_NEEDS_RESPONSE` with `dueBy` between 24 hours ago and 72 hours ahead are read, up to 500. Each gets one admin alert at the 72-hour window and one at the 24-hour window, keyed `dispute-due:<disputeId>:<72|24>` (bell on `DISPUTE_UPDATED`, email `dispute-deadline-alert`), with already-sent pairs matched on outbox `entityRef` so they never consume the send limit. Disputes due within 12 hours or past due also produce one Sentry page per run through `reportStandingFinding()`, quiet for 24 hours per unchanged dispute.
+Gateway disputes in `NEEDS_RESPONSE` or `WARNING_NEEDS_RESPONSE` with `dueBy` between 24 hours ago and 72 hours ahead are read, up to 500. Each gets one admin alert at the 72-hour window and one at the 24-hour window, keyed `dispute-due:<disputeId>:<72|24>` (bell on `DISPUTE_UPDATED`, email `dispute-deadline-alert`), with already-sent pairs matched on outbox `entityRef` so they never consume the send limit. Disputes due within 12 hours or past due also produce one `SystemEvent` finding per run for the operations console through `reportStandingFinding()`, quiet for 24 hours per unchanged dispute. It is not a Sentry event: the bells and emails reach the admins.
 
 ### 7. Moderation deadlines
 

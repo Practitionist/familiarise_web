@@ -2,8 +2,8 @@
 const mockStageBell = jest.fn<Promise<null>, unknown[]>(async () => null);
 const mockReportSentryMessage = jest.fn<void, unknown[]>();
 const mockReportStandingFinding = jest.fn(
-  async (_args: unknown, report: () => void) => {
-    report();
+  async (_args: unknown, report?: () => void) => {
+    report?.();
     return true;
   },
 );
@@ -28,7 +28,7 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryMessage: (...args: unknown[]) => mockReportSentryMessage(...args),
 }));
 jest.mock("../../lib/observability/standing-finding", () => ({
-  reportStandingFinding: (args: unknown, report: () => void) =>
+  reportStandingFinding: (args: unknown, report?: () => void) =>
     mockReportStandingFinding(args, report),
 }));
 jest.mock("../../lib/support/problem-cascade", () => ({
@@ -156,7 +156,7 @@ describe("dispute deadline alerts", () => {
     expect(stagedDisputeKeys()).toEqual(["dispute-due:soon:24"]);
   });
 
-  it("pages once per run with every dispute due within 12 h or past due", async () => {
+  it("records one console finding per run with every dispute due within 12 h or past due, not a Sentry page", async () => {
     seedDisputes([
       dispute("due-10h", 10),
       dispute("past-2h", -2),
@@ -173,7 +173,7 @@ describe("dispute deadline alerts", () => {
     ];
     expect(args.key).toBe("dispute-deadline:critical");
     expect([...args.ids].sort()).toEqual(["due-10h", "past-2h"]);
-    expect(mockReportSentryMessage).toHaveBeenCalledTimes(1);
+    expect(mockReportSentryMessage).not.toHaveBeenCalled();
     expect(stagedDisputeKeys()).toHaveLength(4);
   });
 

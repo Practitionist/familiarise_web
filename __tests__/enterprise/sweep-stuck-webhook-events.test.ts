@@ -43,8 +43,8 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 
 jest.mock("../../lib/observability/standing-finding", () => ({
-  reportStandingFinding: async (_args: unknown, report: () => void) => {
-    report();
+  reportStandingFinding: async (_args: unknown, report?: () => void) => {
+    report?.();
     return true;
   },
 }));
