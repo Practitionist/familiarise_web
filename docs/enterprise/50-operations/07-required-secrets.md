@@ -257,8 +257,9 @@ cron (the standby, or the active host after a switch), set the same new value th
 on whichever host fires.
 
 Do not set it with `netlify env:set` and expect to read it back: the CLI masks it and the list
-endpoint nulls the top-level `value`. All three Netlify contexts currently hold one identical
-value (verified by hash), so the #1634 single-context failure mode is not present.
+endpoint nulls the top-level `value`. All three Netlify contexts hold a value, each its own (see
+above), so the #1634 failure mode, a context with no value, is not present. Never copy the
+production value into a preview context while rotating.
 
 Those five steps — `auth-tokens`, `expire-stale-collaborator-invites`,
 `purge-unverified-users`, `archive-webhook-events` and `expire-onboarding-drafts` —
