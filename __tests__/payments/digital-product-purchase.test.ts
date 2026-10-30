@@ -6,6 +6,8 @@
  * entitlement by its explicit purchase link, never by "appointment-less".
  */
 const mockTx = {
+  $executeRaw: jest.fn(),
+  digitalProduct: { findFirst: jest.fn() },
   digitalProductPurchase: {
     findUnique: jest.fn(),
     findFirst: jest.fn(),
@@ -157,6 +159,7 @@ beforeEach(() => {
   mockStageReceipt.mockResolvedValue([{ staged: { id: "fe_1" } }]);
   mockTx.payment.findUnique.mockResolvedValue(null);
   mockTx.digitalProductPurchase.findFirst.mockResolvedValue(null);
+  mockTx.digitalProduct.findFirst.mockResolvedValue({ id: "dp-1" });
   mockTx.digitalProductPurchase.updateMany.mockResolvedValue({ count: 1 });
   mockTx.payment.create.mockImplementation(({ data }) =>
     Promise.resolve({ id: `pay-${data.paymentIntent}`, ...data }),
@@ -239,6 +242,33 @@ it("settles a capture atomically and refunds mismatched, duplicate and orphan ca
     paymentIntent: "order_9",
   });
   expect(mockRefund).toHaveBeenCalledTimes(1);
+});
+
+it("settles under the product row lock and refunds when the last file was removed first", async () => {
+  mockTx.digitalProductPurchase.findUnique.mockResolvedValueOnce(
+    purchase("PENDING"),
+  );
+  mockTx.digitalProduct.findFirst.mockResolvedValueOnce(null);
+  await handleDigitalProductPurchaseSuccess("order_1", "pay_A", NOTES, 59000);
+  expect(mockTx.$executeRaw).toHaveBeenCalledTimes(1);
+  // The purchase stays unsettled; the capture is staged under the marker and refunded.
+  expect(mockTx.digitalProductPurchase.updateMany).not.toHaveBeenCalled();
+  expect(mockTx.payment.create.mock.calls[0][0].data.description).toMatch(
+    /^Auto-refund pending: NO_DELIVERABLE .*Digital product NOT granted\.$/,
+  );
+  expect(mockRefund).toHaveBeenCalledTimes(1);
+  expect(mockCreateEarnings).not.toHaveBeenCalled();
+  expect(mockStageReceipt).not.toHaveBeenCalled();
+
+  // A deliverable product: the lock is taken before the purchase CAS.
+  jest.clearAllMocks();
+  mockTx.digitalProductPurchase.findUnique.mockResolvedValueOnce(
+    purchase("PENDING"),
+  );
+  await handleDigitalProductPurchaseSuccess("order_1", "pay_A", NOTES, 59000);
+  expect(mockTx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+    mockTx.digitalProductPurchase.updateMany.mock.invocationCallOrder[0],
+  );
 });
 
 it("revokes the digital entitlement by its purchase link, and only then falls back to the replay", async () => {

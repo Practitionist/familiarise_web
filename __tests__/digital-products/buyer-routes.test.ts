@@ -5,7 +5,8 @@
 /**
  * The buyer doors: overlapping purchase POSTs mint one order (the second
  * resumes it) at the amount the page quotes, a free claim stages its receipt
- * in its transaction and a second one is refused, and a download locks the
+ * in its transaction, a second one or one with nothing deliverable is
+ * refused, and a download locks the
  * live purchase in its transaction, refusing one a refund revoked first.
  */
 
@@ -117,8 +118,13 @@ const purchaseModel = {
     return row;
   },
 };
+const deliverable = { ok: true };
 const tx = {
   $queryRaw: (...a: unknown[]) => lockPurchase(...a),
+  $executeRaw: async () => 1,
+  digitalProduct: {
+    findFirst: async () => (deliverable.ok ? { id: "dp_1" } : null),
+  },
   digitalProductPurchase: { ...purchaseModel, updateMany: stamp },
   digitalProductDownload: { create: downloadCreate },
 };
@@ -155,6 +161,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   rows.length = 0;
   mintCount = 0;
+  deliverable.ok = true;
   product.pricePaise = 50_000;
   process.env.R2_DIGITAL_PRODUCTS_BUCKET = "digital-products";
 });
@@ -215,6 +222,14 @@ it("mints one order at the quoted amount for overlapping purchases and refuses a
     [{ staged: { id: "fe_1" } }],
     expect.any(Number),
   );
+
+  // Nothing deliverable under the product lock: refused, and no claim row.
+  rows.length = 0;
+  deliverable.ok = false;
+  const empty = await claim(req(), params);
+  expect(empty.status).toBe(409);
+  expect((await empty.json()).code).toBe("NO_DELIVERABLE");
+  expect(rows).toHaveLength(0);
 });
 
 const downloadOnce = () =>

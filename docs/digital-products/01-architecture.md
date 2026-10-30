@@ -87,10 +87,13 @@ stateDiagram-v2
 | One current version per file, and never an older one after a newer      | Postgres partial unique index `digital_product_asset_one_verified_per_lineage`; `verifyDigitalProductAsset()` rejects a version older than a verified one, under the product row lock                                                               |
 | A removed file never comes back through a replacement in flight         | Under the product row lock the remove route rejects the lineage's `PENDING` rows (`LINEAGE_DELETED`), and `verifyDigitalProductAsset()` promotes a version above 1 only while its lineage has a `VERIFIED` row                                      |
 | A sold or published product keeps its last verified file                | Under the product row lock the remove route refuses the last `VERIFIED` file with `409 LAST_PURCHASED_FILE` when any purchase is `SUCCEEDED`, whatever the status, and `409 LAST_FILE` when the product is published                                |
+| A purchase becomes `SUCCEEDED` only while its product is deliverable    | `lockDeliverableDigitalProduct()` in `lib/digital-products/product-lock.ts`: the settle and the free claim take the product row lock, then require "not taken down" and one `VERIFIED` file, before the purchase CAS or insert                      |
 | Every live file fits its product's category                             | `reservePendingAsset()` re-reads the category and takedown under the product row lock; a draft's category change checks the file set under the same lock                                                                                            |
 | A row names its object until R2 confirms the delete                     | The storage sweep and the remove route retire `PENDING` to `REJECTED` by CAS before deleting, and delete the row only after R2 answers                                                                                                              |
 | A download needs a `SUCCEEDED` purchase, ownership, or an operator role | The download route locks the buyer's `SUCCEEDED` purchase (`FOR UPDATE`) in the transaction that records the download, before it signs a URL                                                                                                        |
 | The receipt email is sent at most once per purchase, and never lost     | It is staged in the settling or claiming transaction under an `IdempotencyRecord` claim (`stageDigitalProductPurchaseEmail()` in `lib/email/senders/money.ts`); one that could not be prepared leaves `receiptStagedAt` null for the recovery sweep |
+
+**Lock order.** A transaction that takes both the product row lock and a purchase row (a `FOR UPDATE`, a CAS `updateMany`, an insert or a delete) takes the product lock first. The settle and the free claim lock the product, then CAS or insert the purchase; the erasure scrub updates the erased creator's live products before it deletes the erased buyer's purchases. The download route and refund revocation touch only the purchase row; file removal, publish and takedown touch only the product row and its files, and read purchases without locking them. So the settle and a last-file removal are ordered by the product lock: a removal that commits first leaves nothing deliverable and the capture is auto-refunded with the purchase left unsettled, and a settle that commits first makes the removal answer `409 LAST_PURCHASED_FILE`.
 
 ## 4. Upload and verification
 
@@ -171,13 +174,14 @@ The capture is routed by `routeCapturedPayment()` (`app/api/webhooks/razorpay-di
 - the captured amount differs from `amountPaise`;
 - a second payment lands on an order that is already settled;
 - the product was taken down, or is no longer published on a late retry of a `FAILED` purchase;
+- under the product row lock, just before the purchase CAS, the product is taken down or has no `VERIFIED` file (`NO_DELIVERABLE`), which closes the race with a last-file removal;
 - the buyer already owns the product through another purchase.
 
 Earnings use the `DIGITAL_PRODUCT` type with a 168-hour hold (`lib/payments/payouts/constants.ts`). The invoice SAC comes from `DIGITAL_PRODUCT_SAC_CODES`: 998431 for Document and Template, 998439 for Archive, Image and Audio. These codes await chartered accountant sign-off.
 
 ## 6. Free claim
 
-A product priced at ₹0 is claimed with `POST /api/digital-products/<id>/claim`. Under the same lock, in one transaction, the route checks for an existing `SUCCEEDED` purchase, creates one with `amountPaise = 0` and no order, and stages the receipt email. There is no Payment, invoice, earnings or journal. The partial unique index refuses a second claim even if two requests slip past the lock.
+A product priced at ₹0 is claimed with `POST /api/digital-products/<id>/claim`. Under the same lock, in one transaction, the route takes the product row lock and answers `409 NO_DELIVERABLE` when the product is taken down or has no `VERIFIED` file, then checks for an existing `SUCCEEDED` purchase, creates one with `amountPaise = 0` and no order, and stages the receipt email. There is no Payment, invoice, earnings or journal. The partial unique index refuses a second claim even if two requests slip past the lock.
 
 ## 7. Download
 
@@ -256,7 +260,7 @@ Until the variable is set, the upload, commit and download routes fail with `R2_
 ## 13. Where in code
 
 - Constants, key layout and MIME allow-list: `lib/digital-products/constants.ts`
-- Creator helpers and upload caps: `lib/digital-products/creator.ts`; the product row lock: `lib/digital-products/product-lock.ts`
+- Creator helpers and upload caps: `lib/digital-products/creator.ts`; the product row lock and the deliverable check: `lib/digital-products/product-lock.ts`
 - Verification: `lib/digital-products/verify-asset.ts`, `lib/digital-products/file-signature.ts`, `lib/digital-products/zip-inspect.ts`
 - Sale checks: `lib/digital-products/sale.ts`; settlement: `lib/payments/webhooks/digital-product-purchase.ts`
 - Entitlement and revocation: `lib/payments/digital-product-entitlement.ts`

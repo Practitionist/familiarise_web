@@ -3,8 +3,8 @@
  */
 
 /**
- * Product-level guards: publish and file removal serialise on the product row
- * lock, a draft's category change must fit its files, a paid price clears
+ * Product-level guards: publish, settlement and file removal serialise on the
+ * product row lock, a draft's category change must fit its files, a paid price clears
  * Razorpay's ₹1 floor (schema and CHECK), and public pages are purged only
  * after a committed flip or a committed edit of a published listing.
  */
@@ -68,6 +68,7 @@ function makeTx() {
     },
     digitalProduct: {
       findUnique: async () => ({ status: state.status }),
+      findFirst: async () => (verified() > 0 ? { id: "dp_1" } : null),
       update: async ({ data }: { data: object }) => ({ id: "dp_1", ...data }),
       updateMany: async ({
         where,
@@ -138,6 +139,8 @@ import { POST as archiveRoute } from "../../app/api/digital-products/[productId]
 import { PATCH } from "../../app/api/digital-products/[productId]/route";
 import { DELETE as removeFile } from "../../app/api/digital-products/[productId]/assets/[assetId]/route";
 import { readFileSync } from "node:fs";
+import prisma from "../../lib/prisma";
+import { lockDeliverableDigitalProduct } from "../../lib/digital-products/product-lock";
 import { createDigitalProductSchema } from "../../schemas/digital-products";
 import { DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE } from "../../lib/digital-products/constants";
 
@@ -193,6 +196,36 @@ it("keeps a sold product's last file even after it is archived", async () => {
   expect((await removed.json()).code).toBe("LAST_PURCHASED_FILE");
   // Still VERIFIED, so the buyer's download route keeps serving it.
   expect(state.assets[0].status).toBe("VERIFIED");
+});
+
+it("orders a settle and a last-file removal on the product row lock", async () => {
+  state.status = "ARCHIVED";
+  const file = {
+    params: Promise.resolve({ productId: "dp_1", assetId: "as_1" }),
+  };
+  // A settle holding the lock commits SUCCEEDED first; the waiting removal then sees the sale.
+  let commit = () => {};
+  const settling = prisma.$transaction(async (tx) => {
+    const ok = await lockDeliverableDigitalProduct(tx, "dp_1");
+    await new Promise<void>((r) => (commit = r));
+    state.sold = ok;
+  });
+  await new Promise((r) => setImmediate(r));
+  const removing = removeFile(req(), file);
+  await new Promise((r) => setImmediate(r));
+  commit();
+  await settling;
+  const removed = await removing;
+  expect(removed.status).toBe(409);
+  expect((await removed.json()).code).toBe("LAST_PURCHASED_FILE");
+
+  // The removal commits first; a later settle finds nothing deliverable under the lock.
+  state.sold = false;
+  process.env.R2_DIGITAL_PRODUCTS_BUCKET = "digital-products";
+  expect((await removeFile(req(), file)).status).toBe(200);
+  await expect(
+    prisma.$transaction((tx) => lockDeliverableDigitalProduct(tx, "dp_1")),
+  ).resolves.toBe(false);
 });
 
 it("refuses a draft category change its files do not fit", async () => {

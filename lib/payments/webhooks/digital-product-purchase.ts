@@ -3,8 +3,9 @@
  *
  * A capture settles its DigitalProductPurchase (PENDING, or FAILED on a late
  * retry of the same order) to SUCCEEDED with the Payment, CARD leg, earnings,
- * BOOKING journal and staged receipt email in one transaction. A capture that cannot fulfil a
- * purchase is staged under the auto-refund marker and refunded after commit.
+ * BOOKING journal and staged receipt email in one transaction, under the product
+ * row lock. A capture that cannot fulfil a purchase is staged under the
+ * auto-refund marker and refunded after commit.
  */
 import { z } from "zod";
 import type {
@@ -28,6 +29,7 @@ import {
   type DigitalProductReceipt,
 } from "@/lib/digital-products/purchase-email";
 import type { StagedRecipientEmail } from "@/lib/email/send-to-recipients";
+import { lockDeliverableDigitalProduct } from "@/lib/digital-products/product-lock";
 import { DIGITAL_PRODUCT_SALE_PREFIX } from "@/lib/payments/webhooks/auto-refund-marker";
 import {
   AUTO_REFUND_MARKERS,
@@ -383,6 +385,14 @@ async function settleCapture(
     return refundCapture(
       orderId,
       `capture on digital product order ${orderId}; the buyer already owns this product`,
+    );
+  }
+
+  // Product lock before the purchase CAS: a file removal or takedown committed first is seen here.
+  if (!(await lockDeliverableDigitalProduct(tx, purchase.productId))) {
+    return refundCapture(
+      orderId,
+      `NO_DELIVERABLE capture on digital product order ${orderId}; the product has no verified file or was taken down`,
     );
   }
 
