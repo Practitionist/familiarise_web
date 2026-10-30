@@ -207,3 +207,15 @@ Stream app (#1134 P0-6), which is why the grants script defaults to a dry run.
 ---
 
 Addendum (2026-09-14): `SlotOfAppointment` is `AppointmentOccurrence` since #1554.
+
+Addendum (2026-10-30): the Messages search offers exactly what `/open` accepts.
+`GET /api/stream/channels/search-appointments` reads the same
+`DM_ELIGIBLE_STATUSES` and `excludeTrialBooking()` as `pairBookingContexts`; before
+this it listed trial bookings that `/open` refused with a 403. It matches only the
+_other_ party: a consultee's query reaches the consultant's name, a consultant's
+reaches the consultee's name or email, and a consultee never matches or sees a
+consultant's email. It also matches plan title, an event host's name and the
+calendar day of a live session (`lib/stream/search-date.ts`, in the viewer's zone
+from the `tz` parameter). The sidebar narrows its loaded chats from the same term in
+the browser, and the dropdown leaves out rows that list already shows. Message-text
+search is deliberately absent; it is tracked in issue #2469.

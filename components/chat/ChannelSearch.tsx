@@ -5,10 +5,18 @@ import { useDebouncedCallback } from "use-debounce";
 import Image from "next/image";
 import { useChatPane } from "./ChatPaneContext";
 import { useChatContext } from "stream-chat-react";
-import { SearchIcon, UserIcon, VideoIcon, BookOpenIcon } from "lucide-react";
+import { format } from "date-fns";
+import {
+  SearchIcon,
+  UserIcon,
+  VideoIcon,
+  BookOpenIcon,
+  XIcon,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { scopeOrgId, type Scope } from "@/lib/api/scope/parse";
 import type { AppointmentSearchResult } from "@/schemas/stream-search";
+import { MIN_SEARCH_LENGTH } from "./utils/channelUtils";
 
 // Type badge configuration for events (webinars/classes)
 const EVENT_TYPE_CONFIG = {
@@ -69,14 +77,34 @@ type GroupedConversation = {
    * subscription with the same person share a channel.
    */
   planTitles: string[];
+  /** The soonest session among this conversation's matched rows (ISO). */
+  startsAt?: string;
+  /** Shown only when the search matched the email rather than the name. */
+  counterpartyEmail?: string;
 };
 
 const DEFAULT_PERSONAL_SCOPE: Scope = { kind: "personal" };
 
+const formatSessionTime = (iso: string) =>
+  format(new Date(iso), "EEE d MMM, h:mm a");
+
+/**
+ * The search box over the sidebar.
+ *
+ * Typing filters the already-loaded chats instantly (the parent does that, fed by
+ * `onTermChange`). The server search below finds what the list does not hold:
+ * unloaded conversations, plan titles, people by email, sessions by date. Rows
+ * whose channel is in `listedChannelIds` are the list's own matches and are left
+ * out of the dropdown.
+ */
 export const ChannelSearch = ({
   scope = DEFAULT_PERSONAL_SCOPE,
+  onTermChange,
+  listedChannelIds,
 }: {
   scope?: Scope;
+  onTermChange?: (term: string) => void;
+  listedChannelIds?: ReadonlySet<string>;
 } = {}) => {
   const { client, setActiveChannel } = useChatContext();
   // Below `md` the conversation pane is `hidden` until this runs — see
@@ -111,6 +139,8 @@ export const ChannelSearch = ({
    * misleading thing it could say: it tells you the person does not exist.
    */
   const [searchError, setSearchError] = useState<string | null>(null);
+  /** The dropdown is closed by an outside click while the term (and the list filter) stays. */
+  const [dropdownDismissed, setDropdownDismissed] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   /**
    * Latest-wins guard, mirroring `hooks/scheduling/useCalendarData.ts`.
@@ -140,6 +170,14 @@ export const ChannelSearch = ({
       if (!existing.planTitles.includes(result.name)) {
         existing.planTitles.push(result.name);
       }
+      // ISO timestamps from `toISOString` compare correctly as strings.
+      if (
+        result.startsAt &&
+        (!existing.startsAt || result.startsAt < existing.startsAt)
+      ) {
+        existing.startsAt = result.startsAt;
+      }
+      existing.counterpartyEmail ??= result.counterpartyEmail;
       return;
     }
     byChannel.set(result.channelId, {
@@ -151,6 +189,8 @@ export const ChannelSearch = ({
       hasSubscription: result.type === "subscription",
       channelId: result.channelId,
       planTitles: [result.name],
+      startsAt: result.startsAt,
+      counterpartyEmail: result.counterpartyEmail,
     });
   };
 
@@ -171,6 +211,7 @@ export const ChannelSearch = ({
     }
 
     for (const result of searchResults) {
+      if (listedChannelIds?.has(result.channelId)) continue;
       if (isEventResult(result)) {
         eventResults.push(result);
       } else {
@@ -182,7 +223,7 @@ export const ChannelSearch = ({
       groupedConversations: Array.from(byChannel.values()),
       events: eventResults,
     };
-  }, [searchResults]);
+  }, [searchResults, listedChannelIds]);
 
   const runSearch = useCallback(
     async (raw: string) => {
@@ -193,7 +234,7 @@ export const ChannelSearch = ({
       // cost, not just a wasted response.
       abortRef.current?.abort();
 
-      if (term.length < 2) {
+      if (term.length < MIN_SEARCH_LENGTH) {
         abortRef.current = null;
         setSearchResults([]);
         setSettledQuery("");
@@ -220,8 +261,10 @@ export const ChannelSearch = ({
         setOpenError(null);
         setSearchError(null);
 
+        // The viewer's zone decides which calendar day "3 nov" or "today" means.
+        const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const response = await fetch(
-          `/api/stream/channels/search-appointments?q=${encodeURIComponent(term)}&scope=${encodeURIComponent(scopeParam)}`,
+          `/api/stream/channels/search-appointments?q=${encodeURIComponent(term)}&scope=${encodeURIComponent(scopeParam)}&tz=${encodeURIComponent(zone)}`,
           { signal: controller.signal },
         );
 
@@ -282,16 +325,18 @@ export const ChannelSearch = ({
     debouncedSearch.flush();
   };
 
+  useEffect(() => {
+    onTermChange?.(query);
+  }, [query, onTermChange]);
+
   /**
-   * Dismiss the dropdown on an outside click or Escape.
+   * Escape and the clear button empty the search; an outside click only closes the
+   * dropdown.
    *
-   * Neither existed. The only way to close this was to pick a result or empty
-   * the input, so a search you had changed your mind about stayed on screen
-   * over the channel list indefinitely — and once a failed open stopped
-   * clearing the query, there was no way to close it at all.
-   *
-   * `pointerdown`, not `click`: a `click` listener fires after the button's own
-   * handler and after focus moves, which on a touch device closed the panel
+   * The term also filters the sidebar list, so clearing it on `pointerdown` would
+   * re-expand that list under the pointer before the click lands, and the tap
+   * would hit a different row than the one aimed at. `pointerdown`, not `click`:
+   * a `click` listener fires after focus moves, which on touch closed the panel
    * before the tap that opened a row could land.
    */
   const dismiss = useCallback(() => {
@@ -308,7 +353,9 @@ export const ChannelSearch = ({
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
       if (!containerRef.current) return;
-      if (!containerRef.current.contains(event.target as Node)) dismiss();
+      if (!containerRef.current.contains(event.target as Node)) {
+        setDropdownDismissed(true);
+      }
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") dismiss();
@@ -415,11 +462,19 @@ export const ChannelSearch = ({
    * covering the debounce wait, which `loading` does not, because `loading`
    * only goes true once the fetch actually starts 300ms later.
    */
-  const isPending = term.length >= 2 && (loading || settledQuery !== term);
+  const isPending =
+    term.length >= MIN_SEARCH_LENGTH && (loading || settledQuery !== term);
+  // The list below already shows its own matches, so "no results" would contradict it.
+  const listHasMatches = (listedChannelIds?.size ?? 0) > 0;
   const showNoResults =
-    term.length >= 2 && !isPending && !hasResults && searchError === null;
+    term.length >= MIN_SEARCH_LENGTH &&
+    !isPending &&
+    !hasResults &&
+    !listHasMatches &&
+    searchError === null;
   const isOpen =
-    hasResults || openError !== null || searchError !== null || showNoResults;
+    !dropdownDismissed &&
+    (hasResults || openError !== null || searchError !== null || showNoResults);
 
   return (
     <div className="channel-search relative" ref={containerRef}>
@@ -427,11 +482,25 @@ export const ChannelSearch = ({
         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
           type="text"
-          placeholder="Search..."
+          placeholder="Search people, sessions or dates"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="pl-9 w-full text-sm normal-case"
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setDropdownDismissed(false);
+          }}
+          onFocus={() => setDropdownDismissed(false)}
+          className="pl-9 pr-9 w-full text-sm normal-case"
         />
+        {query !== "" && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={dismiss}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground"
+          >
+            <XIcon className="w-4 h-4" />
+          </button>
+        )}
       </form>
 
       {isOpen && (
@@ -522,6 +591,16 @@ export const ChannelSearch = ({
                           {conversation.planTitles.join(" · ")}
                         </div>
                       )}
+                      {conversation.counterpartyEmail && (
+                        <div className="text-xs text-muted-foreground truncate mt-0.5">
+                          {conversation.counterpartyEmail}
+                        </div>
+                      )}
+                      {conversation.startsAt && (
+                        <div className="text-xs text-muted-foreground truncate mt-0.5">
+                          {formatSessionTime(conversation.startsAt)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </button>
@@ -583,6 +662,11 @@ export const ChannelSearch = ({
                             {event.counterpartyName}
                           </span>
                         </div>
+                        {event.startsAt && (
+                          <div className="text-xs text-muted-foreground truncate mt-0.5">
+                            {formatSessionTime(event.startsAt)}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </button>

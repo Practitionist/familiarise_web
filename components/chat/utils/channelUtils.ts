@@ -210,6 +210,34 @@ export const getTruncatedDisplayName = (
   return displayInfo.displayName.substring(0, maxLength - 3) + "...";
 };
 
+/** Shortest term the chat search acts on, shared by the sidebar filter and the server search. */
+export const MIN_SEARCH_LENGTH = 2;
+
+/**
+ * The channels whose listed title contains `term`, case-insensitively.
+ *
+ * Matches only what the row shows (the other person's name, a group's members, an
+ * event's name), so a filtered list never contains a row that looks unrelated.
+ * Returns `channels` itself while `term` is too short to filter by.
+ */
+export function filterChannelsByTerm(
+  channels: Channel[],
+  viewerId: string | undefined,
+  term: string,
+): Channel[] {
+  const needle = term.trim().toLowerCase();
+  if (needle.length < MIN_SEARCH_LENGTH) return channels;
+  return channels.filter((channel) => {
+    const { displayName, fullGroupName } = getChannelDisplayInfo(
+      channel,
+      viewerId,
+    );
+    return `${displayName} ${fullGroupName ?? ""}`
+      .toLowerCase()
+      .includes(needle);
+  });
+}
+
 /**
  * The `?orgScope=` selection as a Stream channel filter. Stream channels
  * created by the enterprise wiring carry a `custom.organization_id`, and

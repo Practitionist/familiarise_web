@@ -5,6 +5,7 @@ import { formatDistanceToNow } from "date-fns";
 import { RefreshCwIcon, ShieldCheckIcon } from "lucide-react";
 import {
   useEffect,
+  useMemo,
   useState,
   useCallback,
   useRef,
@@ -29,9 +30,11 @@ import {
 import {
   buildOrgChannelFilter,
   channelHasSupportMember,
+  filterChannelsByTerm,
   getChannelDisplayInfo,
   isUsableDmChannel,
   lastVisibleMessage,
+  MIN_SEARCH_LENGTH,
 } from "./utils/channelUtils";
 import { appendUniqueChannels, insertChannelAtTop } from "./utils/channelList";
 import { useChatPane } from "./ChatPaneContext";
@@ -344,6 +347,29 @@ export const ChatSidebar = () => {
   const deepLinkedChannelCidRef = useRef<string | null>(null);
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
+  // What the search box holds; both lists below narrow to it instantly.
+  const [searchTerm, setSearchTerm] = useState("");
+  const isFiltering = searchTerm.trim().length >= MIN_SEARCH_LENGTH;
+  const visibleTeamChannels = useMemo(
+    () => filterChannelsByTerm(teamChannels, client?.userID, searchTerm),
+    [teamChannels, client?.userID, searchTerm],
+  );
+  const visibleDirectMessages = useMemo(
+    () => filterChannelsByTerm(directMessages, client?.userID, searchTerm),
+    [directMessages, client?.userID, searchTerm],
+  );
+  // Handed to the search dropdown so it leaves out rows this list already shows.
+  const listedChannelIds = useMemo(
+    () =>
+      new Set(
+        isFiltering
+          ? [...visibleTeamChannels, ...visibleDirectMessages].flatMap((ch) =>
+              ch.id ? [ch.id] : [],
+            )
+          : [],
+      ),
+    [isFiltering, visibleTeamChannels, visibleDirectMessages],
+  );
   // The listener below reads the lists through refs so it can tell a message
   // for a channel outside the loaded page without re-attaching per update.
   const listedCidsRef = useRef<Set<string>>(new Set());
@@ -1038,7 +1064,11 @@ export const ChatSidebar = () => {
 
       {/* Search Bar */}
       <div className="p-4">
-        <ChannelSearch scope={scope} />
+        <ChannelSearch
+          scope={scope}
+          onTermChange={setSearchTerm}
+          listedChannelIds={listedChannelIds}
+        />
       </div>
 
       {/* Channel Sections */}
@@ -1072,9 +1102,9 @@ export const ChatSidebar = () => {
               Try Again
             </Button>
           </div>
-        ) : teamChannels.length > 0 ? (
+        ) : visibleTeamChannels.length > 0 ? (
           <div>
-            {teamChannels.map((channel) => (
+            {visibleTeamChannels.map((channel) => (
               <ChannelItem
                 key={channel.cid}
                 channel={channel}
@@ -1082,7 +1112,7 @@ export const ChatSidebar = () => {
                 onClick={() => handleChannelSelect(channel)}
               />
             ))}
-            {hasMoreTeamChannels && (
+            {hasMoreTeamChannels && !isFiltering && (
               <div className="p-2">
                 <Button
                   variant="ghost"
@@ -1100,7 +1130,9 @@ export const ChatSidebar = () => {
           </div>
         ) : (
           <div className="p-4 text-center text-muted-foreground text-sm">
-            No team channels found.
+            {isFiltering
+              ? `No channels match “${searchTerm.trim()}”.`
+              : "No team channels found."}
           </div>
         )}
 
@@ -1131,7 +1163,7 @@ export const ChatSidebar = () => {
           // empty state only claims there is nothing when there is genuinely
           // nothing left to fetch.
           <div>
-            {directMessages.map((channel) => (
+            {visibleDirectMessages.map((channel) => (
               <ChannelItem
                 key={channel.cid}
                 channel={channel}
@@ -1140,17 +1172,25 @@ export const ChatSidebar = () => {
               />
             ))}
 
-            {directMessages.length === 0 && !hasMoreDMChannels && (
+            {isFiltering && visibleDirectMessages.length === 0 && (
               <div className="p-4 text-center text-muted-foreground text-sm">
-                {scopeOrgId(scope)
-                  ? "No conversations yet. Threads appear here once you're part of a session in this organization."
-                  : isConsultant
-                    ? "No conversations yet. Conversations will appear here once clients book sessions."
-                    : "No conversations yet. Book a consultation to start chatting."}
+                {`No conversations match “${searchTerm.trim()}”.`}
               </div>
             )}
 
-            {hasMoreDMChannels && (
+            {!isFiltering &&
+              directMessages.length === 0 &&
+              !hasMoreDMChannels && (
+                <div className="p-4 text-center text-muted-foreground text-sm">
+                  {scopeOrgId(scope)
+                    ? "No conversations yet. Threads appear here once you're part of a session in this organization."
+                    : isConsultant
+                      ? "No conversations yet. Conversations will appear here once clients book sessions."
+                      : "No conversations yet. Book a consultation to start chatting."}
+                </div>
+              )}
+
+            {hasMoreDMChannels && !isFiltering && (
               <div className="p-2">
                 <Button
                   variant="ghost"
