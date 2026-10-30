@@ -13,13 +13,15 @@ const hops = (value: string | null): string[] =>
     .map((hop) => hop.trim())
     .filter(Boolean);
 
+/** Literal reads, so the build can inline each host's marker. */
+function currentEdgeHost(): EdgeHost {
+  return { VERCEL: process.env.VERCEL, FLY_APP_NAME: process.env.FLY_APP_NAME };
+}
+
 /** The visitor's IP as edge middleware sees it on this host, or `unknown_ip`. */
 export function edgeClientIp(
   headers: IpHeaders,
-  host: EdgeHost = {
-    VERCEL: process.env.VERCEL,
-    FLY_APP_NAME: process.env.FLY_APP_NAME,
-  },
+  host: EdgeHost = currentEdgeHost(),
 ): string {
   if (host.VERCEL === "1") {
     return hops(headers.get("x-vercel-forwarded-for"))[0] || "unknown_ip";
