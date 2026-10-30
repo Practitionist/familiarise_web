@@ -201,8 +201,16 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
             },
           },
         },
-        // A co-host booked as someone else's client is busy too.
-        { participants: { some: liveParticipant("u-collab-1") } },
+        // A co-host booked as someone else's client is busy too, unless the
+        // seat is a lapsed hold.
+        {
+          participants: {
+            some: expect.objectContaining({
+              ...liveParticipant("u-collab-1"),
+              NOT: expect.objectContaining({ status: "HELD" }),
+            }),
+          },
+        },
       ]),
     );
   });
