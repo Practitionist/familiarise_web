@@ -1453,9 +1453,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS "digital_product_purchase_succeeded_key"
   ON "DigitalProductPurchase" ("productId", "buyerId")
   WHERE "status" = 'SUCCEEDED';
 -- SPLIT
+-- Free, or at least Razorpay's ₹1 order floor (DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE).
 ALTER TABLE "DigitalProduct" DROP CONSTRAINT IF EXISTS "digital_product_price_nonnegative";
 -- SPLIT
-ALTER TABLE "DigitalProduct" ADD CONSTRAINT "digital_product_price_nonnegative" CHECK ("pricePaise" >= 0);
+ALTER TABLE "DigitalProduct" DROP CONSTRAINT IF EXISTS "digital_product_price_free_or_min_paid";
+-- SPLIT
+ALTER TABLE "DigitalProduct" ADD CONSTRAINT "digital_product_price_free_or_min_paid"
+  CHECK ("pricePaise" = 0 OR "pricePaise" >= 100);
 -- SPLIT
 -- A free claim has no gateway order and a paid purchase always has one.
 ALTER TABLE "DigitalProductPurchase" DROP CONSTRAINT IF EXISTS "digital_product_purchase_free_has_no_order";

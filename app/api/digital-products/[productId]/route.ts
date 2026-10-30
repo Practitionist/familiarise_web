@@ -13,6 +13,7 @@ import {
   requireOwnedProduct,
 } from "@/lib/digital-products/creator";
 import { lockDigitalProductRow } from "@/lib/digital-products/product-lock";
+import { purgeDigitalProductSurfaces } from "@/lib/data/public-cache";
 import {
   isDigitalProductMime,
   mimeFitsCategory,
@@ -136,6 +137,8 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       data: patch,
       select,
     });
+    // Every editable field shows on the public page; the slug never changes.
+    if (updated.status === "PUBLISHED") purgeDigitalProductSurfaces(product);
     return NextResponse.json({ data: updated });
   }
   // Under the file-set lock, so the file set cannot change between the check and the write.

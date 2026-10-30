@@ -8,7 +8,11 @@
  * are allocated per lineage under the product row lock, an older version never
  * becomes current after a newer one, and the caps hold under concurrency.
  */
-jest.mock("../../lib/auth-helpers", () => ({ requireApiAuth: jest.fn() }));
+jest.mock("../../lib/auth-helpers", () => ({
+  requireApiAuth: async () => ({
+    session: { user: { id: "u_1", consultantProfileId: "cp_1" } },
+  }),
+}));
 
 interface Asset {
   id: string;
@@ -24,14 +28,28 @@ interface Asset {
 }
 const mockAssets: Asset[] = [];
 const mockLocks: string[] = [];
+const mockProduct = {
+  id: "dp_1",
+  consultantProfileId: "cp_1",
+  slug: "guide-1",
+  status: "DRAFT",
+  category: "TEMPLATE",
+  takenDownAt: null,
+};
 
 type Where = Record<string, unknown>;
 function mockMatches(row: Asset, where: Where): boolean {
   return Object.entries(where).every(([key, cond]) => {
     const value = row[key as keyof Asset];
     if (cond && typeof cond === "object") {
-      const c = cond as { in?: unknown[]; gt?: number; lt?: number };
+      const c = cond as {
+        in?: unknown[];
+        not?: unknown;
+        gt?: number;
+        lt?: number;
+      };
       if (c.in) return c.in.includes(value);
+      if (c.not !== undefined) return value !== c.not;
       if (c.gt !== undefined) return Number(value) > c.gt;
       if (c.lt !== undefined) return Number(value) < c.lt;
     }
@@ -88,10 +106,23 @@ jest.mock("../../lib/prisma", () => {
       for (const hit of hits) Object.assign(hit, data);
       return { count: hits.length };
     },
+    count: async ({ where }: { where: Where }) =>
+      mockAssets.filter((a) => mockMatches(a, where)).length,
+    deleteMany: async ({ where }: { where: Where }) => {
+      const kept = mockAssets.filter((a) => !mockMatches(a, where));
+      const count = mockAssets.length - kept.length;
+      mockAssets.splice(0, mockAssets.length, ...kept);
+      return { count };
+    },
+  };
+  const digitalProduct = {
+    findFirst: async () => mockProduct,
+    findUnique: async () => mockProduct,
   };
   let queue: Promise<unknown> = Promise.resolve();
   const tx = {
     digitalProductAsset: asset,
+    digitalProduct,
     $executeRaw: async (sql: TemplateStringsArray, id: string) => {
       mockLocks.push(`${sql.join("?")}|${id}`);
       return 1;
@@ -101,6 +132,7 @@ jest.mock("../../lib/prisma", () => {
     __esModule: true,
     default: {
       digitalProductAsset: asset,
+      digitalProduct,
       // One product row lock: transactions on it run one after another.
       $transaction: (cb: (t: typeof tx) => Promise<unknown>) => {
         const run = queue.then(() => cb(tx));
@@ -114,6 +146,7 @@ jest.mock("../../lib/prisma", () => {
 import { reservePendingAsset } from "../../lib/digital-products/creator";
 import { verifyDigitalProductAsset } from "../../lib/digital-products/verify-asset";
 import { createR2PresignedPutUrl } from "../../lib/storage/r2-client";
+import { DELETE as removeFile } from "../../app/api/digital-products/[productId]/assets/[assetId]/route";
 
 const product = {
   id: "dp_1",
@@ -127,6 +160,7 @@ const MB = 1024 * 1024;
 const fetchMock = jest.fn();
 
 beforeEach(() => {
+  mockProduct.category = "TEMPLATE";
   mockAssets.length = 0;
   mockLocks.length = 0;
   fetchMock.mockReset();
@@ -138,6 +172,21 @@ beforeEach(() => {
     R2_DIGITAL_PRODUCTS_BUCKET: "digital-products",
   });
 });
+
+// Every R2 read sees a 10-byte object whose body matches its extension.
+function mockR2() {
+  fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+    if (init.method === "HEAD") {
+      return new Response(null, {
+        status: 200,
+        headers: { "content-length": "10", etag: '"e"' },
+      });
+    }
+    if (init.method === "DELETE") return new Response(null, { status: 204 });
+    const body = url.includes(".pdf") ? "%PDF-1.4\n\n" : "plain text";
+    return new Response(Uint8Array.from(Buffer.from(body)), { status: 206 });
+  });
+}
 
 function seedVerified(): Asset {
   const row: Asset = {
@@ -236,17 +285,7 @@ it("versions concurrent different-MIME replacements per lineage, retries past a 
   expect(v3.storageKey).toMatch(/^products\/dp_1\/lin_1\/[0-9a-f-]{36}\.txt$/);
 
   // v3 settles first; the older v2 then passes inspection but must not become current.
-  fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
-    if (init.method === "HEAD") {
-      return new Response(null, {
-        status: 200,
-        headers: { "content-length": "10", etag: '"e"' },
-      });
-    }
-    if (init.method === "DELETE") return new Response(null, { status: 204 });
-    const body = url.includes(".pdf") ? "%PDF-1.4\n\n" : "plain text";
-    return new Response(Uint8Array.from(Buffer.from(body)), { status: 206 });
-  });
+  mockR2();
   expect(await verifyDigitalProductAsset(v3)).toEqual({ status: "VERIFIED" });
   expect(mockAssets[0].status).toBe("SUPERSEDED");
   expect(await verifyDigitalProductAsset(v2)).toEqual({
@@ -307,4 +346,47 @@ it("holds the final file slot and the final bytes under the product lock", async
     "PRODUCT_TOO_LARGE",
     "ok",
   ]);
+});
+
+it("checks the category read under the lock, not the caller's earlier read", async () => {
+  // A draft's switch to AUDIO commits after the route read TEMPLATE.
+  mockProduct.category = "AUDIO";
+  const refused = await reservePendingAsset({
+    product,
+    fileName: "a.pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 10,
+  });
+  expect(refused).toEqual({ ok: false, refusal: "CATEGORY_MISMATCH" });
+  expect(mockAssets).toHaveLength(0);
+});
+
+it("never promotes a replacement once its lineage's current file is deleted", async () => {
+  seedVerified();
+  mockR2();
+  await reservePendingAsset({
+    product,
+    fileName: "v2.pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 10,
+    replacesAssetId: "as_1",
+  });
+  const v2 = { ...mockAssets[1] };
+  const removed = await removeFile(new Request("http://localhost/x"), {
+    params: Promise.resolve({ productId: "dp_1", assetId: "as_1" }),
+  });
+  expect((await removed.json()).data.status).toBe("SUPERSEDED");
+  // The in-flight replacement was retired, its object deleted and its row cleared.
+  expect(mockAssets.map((a) => [a.id, a.status])).toEqual([
+    ["as_1", "SUPERSEDED"],
+  ]);
+  expect(await verifyDigitalProductAsset(v2)).toEqual({ status: "SETTLED" });
+
+  // Any later version of the headless lineage is rejected, never made current.
+  const v3: Asset = { ...v2, id: "as_3", version: 3, status: "PENDING" };
+  mockAssets.push(v3);
+  expect(await verifyDigitalProductAsset(v3)).toEqual({
+    status: "REJECTED",
+    reason: "LINEAGE_DELETED",
+  });
 });

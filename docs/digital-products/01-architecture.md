@@ -55,7 +55,7 @@ stateDiagram-v2
   direction LR
   [*] --> PENDING: upload-url or replace
   PENDING --> VERIFIED: commit passes checks
-  PENDING --> REJECTED: fails checks, newer version already verified, removed, or abandoned a day
+  PENDING --> REJECTED: fails checks, newer version verified, it or its lineage's current file removed, or abandoned a day
   REJECTED --> [*]: object delete confirmed, row deleted
   VERIFIED --> SUPERSEDED: replaced or removed (object kept 30 days)
 ```
@@ -73,21 +73,23 @@ stateDiagram-v2
 
 ## 3. Invariants
 
-| Rule                                                                    | Enforcer                                                                                                                                                                                            |
-| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A buyer holds at most one `SUCCEEDED` purchase of a product             | Postgres partial unique index `digital_product_purchase_succeeded_key` in `prisma/sql/check-constraints.sql`                                                                                        |
-| A free claim has no order, and a paid purchase always has one           | Postgres `CHECK` `digital_product_purchase_free_has_no_order`                                                                                                                                       |
-| A price is never negative; a file is at most 250 MB                     | Postgres `CHECK`s `digital_product_price_nonnegative` and `digital_product_asset_size_cap`                                                                                                          |
-| One order per buyer and product at a time                               | `lockDigitalProductPurchase()` in `utils/appointmentlock.ts` around the read-mint-create in the purchase route                                                                                      |
-| A product is published only with a verified file and not taken down     | The publish route's CAS `updateMany` (`app/api/digital-products/[productId]/publish/route.ts`)                                                                                                      |
-| Every status change compares the prior status                           | CAS `updateMany` in the routes, `verifyDigitalProductAsset()` and `handleDigitalProductPurchaseSuccess()`                                                                                           |
-| The settle writes purchase, Payment, leg, earnings and journal together | One `prisma.$transaction` in `lib/payments/webhooks/digital-product-purchase.ts`, every helper on `tx`; the leg sum is checked by `payment_legs_sum_to_amount`                                      |
-| At most 20 files and 1 GB per product                                   | `reservePendingAsset()` in `lib/digital-products/creator.ts`: the cap check and the `PENDING` row are one transaction under the product row lock (`SELECT … FOR UPDATE`, `lockDigitalProductRow()`) |
-| A stored file never changes after it is written                         | The presigned PUT signs `If-None-Match: *` (R2 refuses a second write to the key); inspection reads are fenced with `If-Match` on the HEAD's ETag                                                   |
-| One current version per file, and never an older one after a newer      | Postgres partial unique index `digital_product_asset_one_verified_per_lineage`; `verifyDigitalProductAsset()` rejects a version older than a verified one, under the product row lock               |
-| A row names its object until R2 confirms the delete                     | The storage sweep and the remove route retire `PENDING` to `REJECTED` by CAS before deleting, and delete the row only after R2 answers                                                              |
-| A download needs a `SUCCEEDED` purchase, ownership, or an operator role | The download route locks the buyer's `SUCCEEDED` purchase (`FOR UPDATE`) in the transaction that records the download, before it signs a URL                                                        |
-| The receipt email is sent at most once per purchase, and never lost     | It is staged in the settling or claiming transaction under an `IdempotencyRecord` claim (`stageDigitalProductPurchaseEmail()` in `lib/email/senders/money.ts`)                                      |
+| Rule                                                                    | Enforcer                                                                                                                                                                                                       |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A buyer holds at most one `SUCCEEDED` purchase of a product             | Postgres partial unique index `digital_product_purchase_succeeded_key` in `prisma/sql/check-constraints.sql`                                                                                                   |
+| A free claim has no order, and a paid purchase always has one           | Postgres `CHECK` `digital_product_purchase_free_has_no_order`                                                                                                                                                  |
+| A price is free or at least ₹1 (100 paise); a file is at most 250 MB    | Postgres `CHECK`s `digital_product_price_free_or_min_paid` and `digital_product_asset_size_cap`; `DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE` mirrors the floor in `schemas/digital-products.ts`                     |
+| One order per buyer and product at a time                               | `lockDigitalProductPurchase()` in `utils/appointmentlock.ts` around the read-mint-create in the purchase route                                                                                                 |
+| A product is published only with a verified file and not taken down     | The publish route's CAS `updateMany` (`app/api/digital-products/[productId]/publish/route.ts`)                                                                                                                 |
+| Every status change compares the prior status                           | CAS `updateMany` in the routes, `verifyDigitalProductAsset()` and `handleDigitalProductPurchaseSuccess()`                                                                                                      |
+| The settle writes purchase, Payment, leg, earnings and journal together | One `prisma.$transaction` in `lib/payments/webhooks/digital-product-purchase.ts`, every helper on `tx`; the leg sum is checked by `payment_legs_sum_to_amount`                                                 |
+| At most 20 files and 1 GB per product                                   | `reservePendingAsset()` in `lib/digital-products/creator.ts`: the cap check and the `PENDING` row are one transaction under the product row lock (`SELECT … FOR UPDATE`, `lockDigitalProductRow()`)            |
+| A stored file never changes after it is written                         | The presigned PUT signs `If-None-Match: *` (R2 refuses a second write to the key); inspection reads are fenced with `If-Match` on the HEAD's ETag                                                              |
+| One current version per file, and never an older one after a newer      | Postgres partial unique index `digital_product_asset_one_verified_per_lineage`; `verifyDigitalProductAsset()` rejects a version older than a verified one, under the product row lock                          |
+| A removed file never comes back through a replacement in flight         | Under the product row lock the remove route rejects the lineage's `PENDING` rows (`LINEAGE_DELETED`), and `verifyDigitalProductAsset()` promotes a version above 1 only while its lineage has a `VERIFIED` row |
+| Every live file fits its product's category                             | `reservePendingAsset()` re-reads the category and takedown under the product row lock; a draft's category change checks the file set under the same lock                                                       |
+| A row names its object until R2 confirms the delete                     | The storage sweep and the remove route retire `PENDING` to `REJECTED` by CAS before deleting, and delete the row only after R2 answers                                                                         |
+| A download needs a `SUCCEEDED` purchase, ownership, or an operator role | The download route locks the buyer's `SUCCEEDED` purchase (`FOR UPDATE`) in the transaction that records the download, before it signs a URL                                                                   |
+| The receipt email is sent at most once per purchase, and never lost     | It is staged in the settling or claiming transaction under an `IdempotencyRecord` claim (`stageDigitalProductPurchaseEmail()` in `lib/email/senders/money.ts`)                                                 |
 
 ## 4. Upload and verification
 
@@ -102,7 +104,7 @@ sequenceDiagram
   participant R2 as Cloudflare R2
   B->>API: POST assets/upload-url (fileName, mimeType, sizeBytes)
   API->>API: owner check, rate limit, category check
-  API->>DB: lock product row, cap checks, create DigitalProductAsset PENDING
+  API->>DB: lock product row, re-read category and takedown, cap checks, create DigitalProductAsset PENDING
   API-->>B: presigned PUT (15 min, signs content-type, content-length, If-None-Match *)
   B->>R2: PUT bytes with progress (a second PUT to the key gets 412)
   B->>API: POST assets/[assetId]/commit
@@ -116,7 +118,7 @@ sequenceDiagram
   API-->>B: VERIFIED, or REJECTED and the reason
 ```
 
-A commit that finds no object yet answers `409 UPLOAD_NOT_FOUND`, and one whose object changed between reads (an `If-Match` 412) answers `409 UPLOAD_CHANGED`; both leave the row `PENDING`, and the editor retries once and offers a Verify button after that. Replacing a file uses `POST assets/<assetId>/replace` and the same commit; two replacements started together get consecutive versions, and if the newer one verifies first the older one is rejected with `NEWER_VERSION_EXISTS`. Removing a verified file supersedes it, but a published product refuses to lose its last verified file. Removing an unverified file retires it to `REJECTED` first, then deletes the object, then the row.
+A commit that finds no object yet answers `409 UPLOAD_NOT_FOUND`, and one whose object changed between reads (an `If-Match` 412) answers `409 UPLOAD_CHANGED`; both leave the row `PENDING`, and the editor retries once and offers a Verify button after that. Replacing a file uses `POST assets/<assetId>/replace` and the same commit; two replacements started together get consecutive versions, and if the newer one verifies first the older one is rejected with `NEWER_VERSION_EXISTS`. Removing a verified file supersedes it and, in the same locked transaction, rejects any replacement of it still in flight with `LINEAGE_DELETED` (its object and row are then deleted like any rejected upload), but a published product refuses to lose its last verified file. A later commit of a version in that lineage is rejected the same way. Removing an unverified file retires it to `REJECTED` first, then deletes the object, then the row.
 
 ### 4.1 Verification rules
 
@@ -218,7 +220,7 @@ Both are registered once in `lib/cron/cleanup-registry.ts`, scheduled in `lib/cr
 ## 11. Surfaces
 
 - **Creator.** Offerings › Digital products lists the expert's products. New offering › Digital product opens the editor: Basics (title, subtitle, description, category, cover image), Pricing and Files. The cover image is written by `/api/plans/image` under `digital-products/<productId>` in the public `plan-images` bucket; the product routes never accept a cover path.
-- **Public.** `/explore/products/<slug>` shows a product on sale (published, publicly visible, not taken down) and the expert profile lists them, both through `digitalProductDiscoverableWhere()` in `lib/api/plans/visibility.ts`. A buyer who holds a `SUCCEEDED` purchase also opens an archived product there (`getEntitledDigitalProductBySlug()`), with downloads and no checkout; this is the only library a buyer without a learner profile has. A taken-down product opens for nobody.
+- **Public.** `/explore/products/<slug>` shows a product on sale (published, publicly visible, not taken down) and the expert profile lists them, both through `digitalProductDiscoverableWhere()` in `lib/api/plans/visibility.ts`. Publish, archive, takedown and every edit of a published listing (the PATCH route and the cover image route) call `purgeDigitalProductSurfaces()` after the write commits; the slug never changes, so one path per product is purged. A buyer who holds a `SUCCEEDED` purchase also opens an archived product there (`getEntitledDigitalProductBySlug()`), with downloads and no checkout; this is the only library a buyer without a learner profile has. A taken-down product opens for nobody.
 - **Buyer.** Library › Digital products lists every product the buyer holds a `SUCCEEDED` purchase of, with an "Updated" badge when a verified file arrived after the purchase.
 
 ## 12. Setting up the R2 bucket (one-time, done by a human)

@@ -8,6 +8,7 @@ import {
   type TPlanImageType,
 } from "@/lib/supabase";
 import { apiError } from "@/lib/errors";
+import { purgeDigitalProductSurfaces } from "@/lib/data/public-cache";
 import { z } from "zod";
 
 // Must list every TPlanImageType member. It admitted only two, so a
@@ -171,12 +172,22 @@ async function writePlanImageUrl(
     case "subscription-plans":
       await prisma.subscriptionPlan.update(args);
       return;
-    case "digital-products":
-      await prisma.digitalProduct.update({
+    case "digital-products": {
+      const product = await prisma.digitalProduct.update({
         where: { id: planId },
         data: { coverImagePath: imageUrl },
+        select: {
+          consultantProfileId: true,
+          slug: true,
+          status: true,
+          takenDownAt: true,
+        },
       });
+      if (product.status === "PUBLISHED" && !product.takenDownAt) {
+        purgeDigitalProductSurfaces(product);
+      }
       return;
+    }
   }
 }
 

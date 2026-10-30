@@ -5,7 +5,8 @@
 /**
  * Product-level guards: publish and file removal serialise on the product row
  * lock, a draft's category change must fit its files, a paid price clears
- * Razorpay's ₹1 floor, and public pages are purged only after a committed flip.
+ * Razorpay's ₹1 floor (schema and CHECK), and public pages are purged only
+ * after a committed flip or a committed edit of a published listing.
  */
 jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: async () => ({
@@ -14,6 +15,7 @@ jest.mock("../../lib/auth-helpers", () => ({
   requireApiSession: async () => ({ error: true }),
 }));
 const revalidatePath = jest.fn();
+let purgesAtCommit: number | null = null;
 jest.mock("next/cache", () => ({
   revalidatePath: (path: string) => revalidatePath(path),
   revalidateTag: jest.fn(),
@@ -108,6 +110,10 @@ jest.mock("../../lib/prisma", () => ({
     },
     digitalProduct: {
       findFirst: async () => product(),
+      update: async () => {
+        purgesAtCommit = revalidatePath.mock.calls.length;
+        return { id: "dp_1", status: state.status, updatedAt: new Date() };
+      },
       updateMany: async () => {
         if (state.status === "ARCHIVED") return { count: 0 };
         state.status = "ARCHIVED";
@@ -127,7 +133,9 @@ import { POST as publishRoute } from "../../app/api/digital-products/[productId]
 import { POST as archiveRoute } from "../../app/api/digital-products/[productId]/archive/route";
 import { PATCH } from "../../app/api/digital-products/[productId]/route";
 import { DELETE as removeFile } from "../../app/api/digital-products/[productId]/assets/[assetId]/route";
+import { readFileSync } from "node:fs";
 import { createDigitalProductSchema } from "../../schemas/digital-products";
+import { DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE } from "../../lib/digital-products/constants";
 
 const params = { params: Promise.resolve({ productId: "dp_1" }) };
 const req = (body?: unknown) =>
@@ -188,6 +196,9 @@ it("prices a paid product at Razorpay's ₹1 floor or above", () => {
   const ok = (pricePaise: number) =>
     createDigitalProductSchema.safeParse({ ...listing, pricePaise }).success;
   expect([ok(0), ok(1), ok(99), ok(100)]).toEqual([true, false, false, true]);
+  expect(readFileSync("prisma/sql/check-constraints.sql", "utf8")).toContain(
+    `CHECK ("pricePaise" = 0 OR "pricePaise" >= ${DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE})`,
+  );
 });
 
 it("purges the public pages only after a committed takedown or archive", async () => {
@@ -218,4 +229,15 @@ it("purges the public pages only after a committed takedown or archive", async (
   state.status = "ARCHIVED";
   expect((await archiveRoute(req(), params)).status).toBe(409);
   expect(revalidatePath).not.toHaveBeenCalled();
+});
+
+it("purges a published listing after its edit commits, and leaves a draft's alone", async () => {
+  expect((await PATCH(req({ title: "New title" }), params)).status).toBe(200);
+  expect(revalidatePath).not.toHaveBeenCalled();
+
+  state.status = "PUBLISHED";
+  expect((await PATCH(req({ pricePaise: 4900 }), params)).status).toBe(200);
+  expect(purgesAtCommit).toBe(0);
+  expect(revalidatePath).toHaveBeenCalledWith("/explore/products/guide-1");
+  expect(revalidatePath).toHaveBeenCalledWith("/explore/experts/cp_owner");
 });

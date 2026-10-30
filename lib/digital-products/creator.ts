@@ -17,7 +17,7 @@ import {
   DIGITAL_PRODUCT_MAX_TOTAL_BYTES,
   DIGITAL_PRODUCT_UPLOAD_URL_TTL_SECONDS,
   digitalProductAssetKey,
-  mimePolicy,
+  mimeFitsCategory,
   type DigitalProductMimeType,
 } from "@/lib/digital-products/constants";
 import { digitalProductsBucket } from "@/lib/digital-products/storage";
@@ -104,13 +104,18 @@ export function productSlug(title: string): string {
 }
 
 export type UploadRefusal =
-  "CATEGORY_MISMATCH" | "TOO_MANY_FILES" | "PRODUCT_TOO_LARGE" | "NOT_FOUND";
+  | "CATEGORY_MISMATCH"
+  | "TAKEN_DOWN"
+  | "TOO_MANY_FILES"
+  | "PRODUCT_TOO_LARGE"
+  | "NOT_FOUND";
 
 export const UPLOAD_REFUSAL_MESSAGES: Record<UploadRefusal, string> = {
   CATEGORY_MISMATCH: "This file type does not fit the product's category",
+  TAKEN_DOWN: "This product was taken down",
   TOO_MANY_FILES: "A product holds at most 20 files",
   PRODUCT_TOO_LARGE: "A product holds at most 1 GB of files",
-  NOT_FOUND: "Verified file not found",
+  NOT_FOUND: "Product or verified file not found",
 };
 
 /** Whether one more file fits the product's file and byte caps; `replacing` frees its own slot. */
@@ -138,9 +143,10 @@ async function checkUploadFits(
 }
 
 /**
- * Check the caps and reserve a PENDING asset under the product row lock, then
- * presign a create-only PUT to its fresh key. A replacement joins the replaced
- * file's lineage at the next version of every upload that lineage ever had.
+ * Check the category, takedown and caps and reserve a PENDING asset under the
+ * product row lock, then presign a create-only PUT to its fresh key. A
+ * replacement joins the replaced file's lineage at the next version of every
+ * upload that lineage ever had.
  */
 export async function reservePendingAsset(params: {
   product: OwnedProduct;
@@ -160,13 +166,20 @@ export async function reservePendingAsset(params: {
   | { ok: false; refusal: UploadRefusal }
 > {
   const { product, mimeType, sizeBytes, replacesAssetId } = params;
-  if (!mimePolicy(mimeType).categories.some((c) => c === product.category)) {
-    return { ok: false, refusal: "CATEGORY_MISMATCH" };
-  }
   const assetId = randomUUID();
   const reserved = await prisma.$transaction(
     async (tx): Promise<{ storageKey: string } | UploadRefusal> => {
       await lockDigitalProductRow(tx, product.id);
+      // Re-read under the lock: a draft's category change serialises on the same row.
+      const locked = await tx.digitalProduct.findUnique({
+        where: { id: product.id },
+        select: { category: true, takenDownAt: true },
+      });
+      if (!locked) return "NOT_FOUND";
+      if (locked.takenDownAt) return "TAKEN_DOWN";
+      if (!mimeFitsCategory(mimeType, locked.category)) {
+        return "CATEGORY_MISMATCH";
+      }
       const current = replacesAssetId
         ? await tx.digitalProductAsset.findFirst({
             where: {

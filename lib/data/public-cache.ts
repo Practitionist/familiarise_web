@@ -71,7 +71,7 @@ export function purgeOrgSurfaces(
   }
 }
 
-/** A digital product went on or off sale: its page and the creator's profile section. */
+/** A digital product went on or off sale or its live listing changed: its page and the creator's profile section. */
 export function purgeDigitalProductSurfaces(product: {
   consultantProfileId: string;
   slug: string;

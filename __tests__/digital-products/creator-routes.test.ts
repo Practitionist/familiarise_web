@@ -55,7 +55,10 @@ const assetModel = {
 };
 const tx = {
   digitalProductAsset: assetModel,
-  digitalProduct: { updateMany: (...a: unknown[]) => publish(...a) },
+  digitalProduct: {
+    findUnique: async () => product,
+    updateMany: (...a: unknown[]) => publish(...a),
+  },
   $executeRaw: async () => 1,
 };
 jest.mock("../../lib/prisma", () => ({

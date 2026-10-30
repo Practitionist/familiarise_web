@@ -113,7 +113,8 @@ async function inspectOneVersion(asset: PendingAsset): Promise<Inspection> {
 /**
  * Verify a PENDING asset and settle it by CAS under the product row lock:
  * VERIFIED (superseding older versions of its lineage), or REJECTED with its
- * object deleted. A version older than one already verified never becomes current.
+ * object deleted. A version older than one already verified, or one whose
+ * lineage's current file was deleted, never becomes current.
  */
 export async function verifyDigitalProductAsset(
   asset: PendingAsset,
@@ -134,11 +135,20 @@ export async function verifyDigitalProductAsset(
             select: { id: true },
           })
         : null;
-      const reason = verdict.ok
-        ? newer
+      // A replacement is promoted only while its lineage still has a current file.
+      const headless =
+        verdict.ok && !newer && asset.version > 1
+          ? (await tx.digitalProductAsset.count({
+              where: { lineageId: asset.lineageId, status: "VERIFIED" },
+            })) === 0
+          : false;
+      const reason = !verdict.ok
+        ? verdict.reason
+        : newer
           ? "NEWER_VERSION_EXISTS"
-          : null
-        : verdict.reason;
+          : headless
+            ? "LINEAGE_DELETED"
+            : null;
       const now = new Date();
       if (reason) {
         const rejected = await tx.digitalProductAsset.updateMany({

@@ -1,6 +1,7 @@
 /**
  * DELETE /api/digital-products/[productId]/assets/[assetId] — remove a file.
- * A verified file is superseded (object kept 30 days); an unverified one is deleted outright.
+ * A verified file is superseded (object kept 30 days) and its in-flight
+ * replacements are rejected; an unverified one is deleted outright.
  */
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -18,7 +19,7 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
 
   const asset = await prisma.digitalProductAsset.findFirst({
     where: { id: assetId, productId },
-    select: { id: true, status: true, storageKey: true },
+    select: { id: true, status: true, storageKey: true, lineageId: true },
   });
   if (!asset) return jsonError(404, "NOT_FOUND", "File not found");
 
@@ -59,7 +60,7 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
   }
 
   // A live product keeps at least one file; archive it to empty it.
-  const superseded = await prisma.$transaction(async (tx) => {
+  const removed = await prisma.$transaction(async (tx) => {
     await lockDigitalProductRow(tx, productId);
     const current = await tx.digitalProduct.findUnique({
       where: { id: productId },
@@ -69,17 +70,45 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
       where: { productId, status: "VERIFIED", id: { not: asset.id } },
     });
     if (current?.status === "PUBLISHED" && others === 0) return null;
-    return tx.digitalProductAsset.updateMany({
+    const superseded = await tx.digitalProductAsset.updateMany({
       where: { id: asset.id, status: "VERIFIED" },
       data: { status: "SUPERSEDED", supersededAt: new Date() },
     });
+    if (superseded.count === 0) return { retired: [] };
+    // Retire in-flight replacements before any R2 delete, so none becomes current later.
+    const pending = await tx.digitalProductAsset.findMany({
+      where: { lineageId: asset.lineageId, status: "PENDING" },
+      select: { id: true, storageKey: true },
+    });
+    await tx.digitalProductAsset.updateMany({
+      where: { id: { in: pending.map((p) => p.id) }, status: "PENDING" },
+      data: { status: "REJECTED", rejectReason: "LINEAGE_DELETED" },
+    });
+    return { retired: pending };
   });
-  if (!superseded) {
+  if (!removed) {
     return jsonError(
       409,
       "LAST_FILE",
       "A published product needs at least one file; archive it first",
     );
+  }
+  // A failed delete leaves the REJECTED row naming its key for the storage sweep.
+  const bucket = digitalProductsBucket();
+  const results = await Promise.all(
+    removed.retired.map((p) =>
+      deleteR2Object({ key: p.storageKey, bucket }).catch(() => ({
+        success: false,
+      })),
+    ),
+  );
+  const clearedIds = removed.retired
+    .filter((_, i) => results[i].success)
+    .map((p) => p.id);
+  if (clearedIds.length > 0) {
+    await prisma.digitalProductAsset.deleteMany({
+      where: { id: { in: clearedIds }, status: "REJECTED" },
+    });
   }
   return NextResponse.json({ data: { id: asset.id, status: "SUPERSEDED" } });
 }
