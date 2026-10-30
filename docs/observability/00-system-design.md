@@ -214,13 +214,15 @@ The Sentry set is indexed in [README.md](./README.md). The ticker drill is in [t
 
 ## Sentry noise policy (decided 2026-10-30)
 
-The free Sentry plan stores 5,000 errors a month, shared by every environment. Sentry should mean "a person must act", so the policy is **escalations only**:
+The free Sentry plan stores 5,000 errors a month, shared by every environment. Sentry should mean "a person must act", so the decided policy is **escalations only**. It is a target that #2466 (PR B) implements; the notes after the list say what happens today.
 
 - A single failed ticker target is logged, not sent to Sentry. A repeat within the streak window escalates as an error.
 - Config skips and standing business findings are logged and shown in the operations console, not filed as Sentry errors.
 - The ingest canary reports outside the error quota. An issue marked "ignored" still counts against the quota.
 - Events from preview deploys are dropped from the production project.
 - Spike Protection stays on.
+
+**Today, before PR B:** the ingest canary posts a real stored event on each run, so it uses error quota; `reportableToSentry()` only stops the ticker from reporting the same failure twice. Preview deploys send to the shared production project with `environment: preview`: preview warnings and info are dropped, ordinary preview errors are sampled at 10 %, and uncaught server errors are always kept.
 
 **Documented alternative, not adopted yet:** a second Sentry project for previews. Preview errors would stay visible without touching the production quota. Adopt it if preview debugging needs Sentry and the second project's quota is affordable.
 
