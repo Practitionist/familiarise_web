@@ -110,6 +110,20 @@ describe("ticker execution outcomes", () => {
     );
   });
 
+  it("stands down on any deploy context other than production", async () => {
+    const fetchImpl = jest.fn(async () => new Response("{}"));
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    const res = await load(fetchImpl).default(
+      new Request("https://tick.test"),
+      { deploy: { context: "branch-deploy", id: "d1" } },
+    );
+    expect(await res.json()).toEqual({
+      skipped: true,
+      deployContext: "branch-deploy",
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("stands down on an already-claimed slot and retries a connection failure once", async () => {
     const duplicate = jest.fn(async (input: string | URL | Request) =>
       String(input).includes("/api/health/jobs/tick")

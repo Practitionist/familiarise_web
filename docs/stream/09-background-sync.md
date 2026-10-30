@@ -26,9 +26,10 @@ flowchart LR
 
 Background responses acknowledge admission before authentication and execution.
 The ticker accepts only 202 for background targets, records `accepted` separately
-from `ok`, and never treats that admission as completed work. The adapters validate
-the bearer and maintenance state before invoking a core, and throw on server
-failures because Netlify discards background response bodies. The cleanup route
+from `ok`, and never treats that admission as completed work. The adapters run only on
+the production deploy and validate the method and bearer before any work, then
+the maintenance state before invoking a core. They never throw: a failed run is
+logged and recorded, because a throw would buy Netlify's two automatic retries. The cleanup route
 and staff dispatch use configured HTTPS origins, refuse embedded credentials and
 redirects, and keep the bearer server-side.
 

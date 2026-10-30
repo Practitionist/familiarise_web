@@ -31,6 +31,7 @@ import {
   type RunOutcome,
 } from "@/lib/cron/run-outcome";
 import { recordRouteRun, type RouteRunRecord } from "@/lib/cron/run-record";
+import { BackgroundDispatchRefusedError } from "@/lib/cron/dispatch-refusal";
 
 /**
  * The one result→status mapping the whole cohort shares. Failure is tested
@@ -255,6 +256,12 @@ function verdictOfError(error: unknown): RunVerdict | null {
   if (error instanceof MaintenanceUnavailableError) {
     return { outcome: "refused", reason: "maintenance-state-unreadable" };
   }
+  if (error instanceof BackgroundDispatchRefusedError) {
+    return {
+      outcome: "refused",
+      reason: "background-dispatch-production-only",
+    };
+  }
   return {
     outcome: "failed",
     reason: error instanceof Error ? error.name : "thrown",
@@ -338,6 +345,14 @@ function cleanupFailure(
   if (error instanceof MaintenanceActiveError) {
     return {
       body: { error: error.message, phase: error.phase },
+      status: error.httpStatus,
+      ok: true,
+      outcome: "held",
+    };
+  }
+  if (error instanceof BackgroundDispatchRefusedError) {
+    return {
+      body: { error: error.message, code: error.code },
       status: error.httpStatus,
       ok: true,
       outcome: "held",

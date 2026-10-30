@@ -91,8 +91,36 @@ it.each(STREAM_LIFECYCLE_JOBS)(
     error.mockRestore();
   },
 );
+it("refuses off production before any work, whatever the bearer", async () => {
+  const log = jest.spyOn(console, "log").mockImplementation(() => {});
+  await worker.run(request("stream-sync"), {
+    deploy: { context: "deploy-preview", id: "d1" },
+  });
+  for (const mock of mocks.values()) expect(mock).not.toHaveBeenCalled();
+  expect(assertNotInMaintenance).not.toHaveBeenCalled();
+  expect(log).toHaveBeenCalledWith(
+    JSON.stringify({
+      event: "background-worker-refused",
+      job: "stream-sync",
+      reason: "off-production",
+      deployContext: "deploy-preview",
+    }),
+  );
+  log.mockRestore();
+});
 it("refuses wrong bearers, unknown targets and non-POST requests without executing any core", async () => {
-  await worker.run(request("stream-sync", "wrong"));
+  const log = jest.spyOn(console, "log").mockImplementation(() => {});
+  await worker.run(request("stream-sync", "wrong"), {
+    deploy: { context: "production" },
+  });
+  expect(log).toHaveBeenCalledWith(
+    JSON.stringify({
+      event: "background-worker-refused",
+      job: "stream-sync",
+      reason: "unauthorized",
+    }),
+  );
+  expect(assertNotInMaintenance).not.toHaveBeenCalled();
   await worker.run(request("transfer-recordings"));
   await worker.run(request("stream-sync", "test-lifecycle", "GET"));
   for (const mock of mocks.values()) expect(mock).not.toHaveBeenCalled();

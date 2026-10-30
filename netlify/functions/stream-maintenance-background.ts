@@ -11,11 +11,18 @@ export default async function streamMaintenance(
   req: Request,
   context?: unknown,
 ): Promise<void> {
-  if (req.method !== "POST") return;
   const selected = jobSchema.safeParse(
     new URL(req.url).searchParams.get("job"),
   );
-  if (!selected.success) return;
+  if (!selected.success) {
+    console.log(
+      JSON.stringify({
+        event: "background-worker-refused",
+        reason: "unknown-job",
+      }),
+    );
+    return;
+  }
   const job = selected.data;
   await runBackgroundWorker(job, req, context, () =>
     cleanupRoute({

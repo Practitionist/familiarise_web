@@ -77,3 +77,19 @@ it.each(["http://app.test", "https://user:pass@app.test", "invalid"])(
     expect(fetchMock).not.toHaveBeenCalled();
   },
 );
+
+it("refuses off production with the typed code and never calls the worker", async () => {
+  process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "preview";
+  const fetchMock = jest.fn<
+    ReturnType<typeof fetch>,
+    Parameters<typeof fetch>
+  >();
+  global.fetch = fetchMock;
+  await expect(
+    dispatchBackgroundJob("expire-event-channels"),
+  ).rejects.toMatchObject({
+    code: "BACKGROUND_DISPATCH_PRODUCTION_ONLY",
+    httpStatus: 409,
+  });
+  expect(fetchMock).not.toHaveBeenCalled();
+});

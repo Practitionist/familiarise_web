@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { currentRun } from "@/lib/cron/run-context";
 import { jobEnvironment } from "@/lib/cron/run-outcome";
+import { BackgroundDispatchRefusedError } from "@/lib/cron/dispatch-refusal";
 import { STREAM_LIFECYCLE_JOBS, targetRequest } from "@/lib/cron/schedule";
 
 export const backgroundJobSchema = z.enum([
@@ -16,7 +17,7 @@ export async function dispatchBackgroundJob(
 ) {
   // The configured origin is the production site, so another deploy would start production code.
   if (jobEnvironment() !== "production") {
-    throw new Error("Background jobs are dispatched only from production");
+    throw new BackgroundDispatchRefusedError(job);
   }
   const secret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
   if (!secret) throw new Error("Stream worker authentication is unconfigured");
