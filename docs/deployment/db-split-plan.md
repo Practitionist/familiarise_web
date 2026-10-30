@@ -68,7 +68,7 @@ Two ordering rules apply. The build prerenders static pages against the database
 
 ## Rollback
 
-The split changes only environment variables, so the rollback is to set the preview and branch-deploy contexts' variables back to production's values and redeploy. Do not delete the dev project until a week after the split, so a revert never has to repeat the seed. Production is untouched throughout, so no production rollback exists to perform.
+The split changes only environment variables, so the rollback restores today's shared posture: set the preview and branch-deploy contexts' variables back to production's values and redeploy. The code refusals (no jobs, no production-only writes off production) still hold while shared; if that posture is not acceptable at the time, turn deploy previews off in Netlify instead and fix the dev project. Do not delete the dev project until a week after the split, so a revert never has to repeat the seed. Production is untouched throughout, so no production rollback exists to perform.
 
 ## Related
 

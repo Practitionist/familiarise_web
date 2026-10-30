@@ -390,7 +390,17 @@ export function isPresent(o: RequiredObject, catalog: LiveCatalog): boolean {
 }
 
 async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const live = argv.includes("--live");
   const connectionString = process.env.DATABASE_URL;
+  // The release gate has nothing to skip to: without the live database it must fail.
+  if (live && (!connectionString || !process.env.DIRECT_URL)) {
+    console.error(
+      "check-db-schema-required: --live needs DATABASE_URL and DIRECT_URL — refusing to pass without the live database.",
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (!connectionString) {
     // A gate that cannot run must not pass. Outside CI there is simply no live
     // database to compare against and skipping is the useful answer; inside
@@ -408,8 +418,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  const argv = process.argv.slice(2);
-  const live = argv.includes("--live");
   let plan: string;
   let ref = "origin/dev";
   try {
