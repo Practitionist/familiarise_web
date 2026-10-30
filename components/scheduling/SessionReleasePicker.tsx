@@ -1,11 +1,15 @@
 "use client";
 
 import React from "react";
-import { format } from "date-fns";
 import { CalendarClock, CalendarRange, Check, CheckSquare } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { toDate, type OccurrenceLike } from "@/lib/appointments/view-model";
+import {
+  formatClockTime,
+  formatDateLabel,
+  formatWeekdayShort,
+} from "@/lib/time/display";
 import { cn } from "@/utils/tailwind";
 
 /**
@@ -24,41 +28,44 @@ export interface ReleasableSession {
 }
 
 /**
- * Sessions of a booking, newest last. One session can span several 30-minute
- * slots (ADR B1), so they group by owning appointment; a slot with no
- * appointment id stands alone.
+ * The booking's live sessions, earliest first. Each occurrence is one
+ * session (a subscription or class is one appointment carrying many), so a
+ * released, cancelled or tombstoned row is not offered.
  */
 export function groupReleasableSessions(
   slots: readonly OccurrenceLike[],
 ): ReleasableSession[] {
-  const groups = new Map<string, OccurrenceLike[]>();
-  for (const slot of slots) {
-    if (slot.isTentative) continue;
-    const key = slot.appointmentId ?? slot.id;
-    const bucket = groups.get(key);
-    if (bucket) bucket.push(slot);
-    else groups.set(key, [slot]);
-  }
-  return Array.from(groups.values())
-    .map((sessionSlots) => {
-      const sorted = [...sessionSlots].sort(
-        (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
-      );
-      const last = sorted[sorted.length - 1];
-      return {
-        slots: sorted,
-        startTime: toDate(sorted[0].startsAt),
-        endTime: toDate(last.endsAt ?? last.startsAt),
-      };
-    })
+  return slots
+    .filter(
+      (slot) =>
+        !slot.isTentative &&
+        !slot.deletedAt &&
+        slot.completionStatus !== "CANCELLED" &&
+        slot.completionStatus !== "RESCHEDULED",
+    )
+    .map((slot) => ({
+      slots: [slot],
+      startTime: toDate(slot.startsAt),
+      endTime: toDate(slot.endsAt ?? slot.startsAt),
+    }))
+    .filter((session) => Number.isFinite(session.startTime.getTime()))
     .sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+}
+
+const RELEASE_MODES: readonly ReleaseMode[] = [
+  "individual",
+  "multiple",
+  "entire",
+];
+
+function isReleaseMode(value: string): value is ReleaseMode {
+  return (RELEASE_MODES as readonly string[]).includes(value);
 }
 
 function isWithinLeadTime(session: ReleasableSession, minLeadHours: number) {
   if (minLeadHours <= 0) return false;
   return (
-    (session.startTime.getTime() - Date.now()) / (1000 * 60 * 60) <
-    minLeadHours
+    (session.startTime.getTime() - Date.now()) / (1000 * 60 * 60) < minLeadHours
   );
 }
 
@@ -68,7 +75,9 @@ function SessionList({
   minLeadHours,
   selectedSlotIds,
   onChange,
+  zone,
 }: Readonly<{
+  zone: string;
   mode: Exclude<ReleaseMode, "entire">;
   sessions: ReleasableSession[];
   minLeadHours: number;
@@ -107,6 +116,7 @@ function SessionList({
             type="button"
             onClick={toggle}
             disabled={locked}
+            aria-pressed={isSelected}
             className={cn(
               "flex w-full items-center justify-between rounded-md p-2.5 text-left transition-colors",
               isSelected
@@ -133,7 +143,8 @@ function SessionList({
               )}
               <div>
                 <div className="text-sm font-medium">
-                  {format(session.startTime, "EEE, d MMM yyyy")}
+                  {formatWeekdayShort(session.startTime, { zone })},{" "}
+                  {formatDateLabel(session.startTime, { zone })}
                 </div>
                 <div
                   className={cn(
@@ -143,8 +154,8 @@ function SessionList({
                       : "text-muted-foreground",
                   )}
                 >
-                  {format(session.startTime, "h:mm a")} &ndash;{" "}
-                  {format(session.endTime, "h:mm a")}
+                  {formatClockTime(session.startTime, { zone })} &ndash;{" "}
+                  {formatClockTime(session.endTime, { zone })}
                 </div>
               </div>
             </div>
@@ -193,7 +204,10 @@ export function SessionReleasePicker({
   onModeChange,
   selectedSlotIds,
   onSelectionChange,
+  zone,
 }: Readonly<{
+  /** The zone the page draws times in, so the list matches the grid. */
+  zone: string;
   sessions: ReleasableSession[];
   minLeadHours: number;
   mode: ReleaseMode;
@@ -233,7 +247,9 @@ export function SessionReleasePicker({
 
       <RadioGroup
         value={mode}
-        onValueChange={(value) => handleModeChange(value as ReleaseMode)}
+        onValueChange={(value) => {
+          if (isReleaseMode(value)) handleModeChange(value);
+        }}
         className="grid gap-2 sm:grid-cols-3"
       >
         {MODE_OPTIONS.map((option) => (
@@ -274,6 +290,7 @@ export function SessionReleasePicker({
           minLeadHours={minLeadHours}
           selectedSlotIds={selectedSlotIds}
           onChange={onSelectionChange}
+          zone={zone}
         />
       )}
     </div>

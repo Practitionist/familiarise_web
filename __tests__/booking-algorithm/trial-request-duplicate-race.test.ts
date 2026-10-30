@@ -39,6 +39,13 @@ jest.mock("../../lib/novu", () => ({
   notifyTrialRequested: jest.fn(async () => undefined),
 }));
 
+jest.mock("../../utils/appointmentlock", () => ({
+  lockRequestCap: jest.fn(async () => ({ key: "request-cap" })),
+  unlockRequestCap: jest.fn(async () => undefined),
+  RequestCapBusyError: class extends Error {},
+  BookingLockUnavailableError: class extends Error {},
+}));
+
 jest.mock("../../lib/prisma", () => {
   const db: Record<string, unknown> = {
     trial: {
@@ -109,7 +116,10 @@ beforeEach(() => {
     title: "Career Clarity",
     consultantProfileId: CONSULTANT,
     trialEnabled: true,
-    consultantProfile: { user: { id: "expert-1", name: "Expert" } },
+    consultantProfile: {
+      maxOpenRequests: null,
+      user: { id: "expert-1", name: "Expert" },
+    },
   });
   (prisma.consulteeProfile.findUnique as jest.Mock).mockResolvedValue({
     id: CONSULTEE,

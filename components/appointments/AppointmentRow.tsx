@@ -6,6 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { eventUnionStatusBadge } from "@/lib/appointments/status";
 import { getProximityLabel } from "@/lib/appointments/occurrences";
+import { noSessionLabel } from "@/lib/appointments/bucket";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import {
@@ -68,7 +69,7 @@ export function AppointmentRow({
 
   const timeLabel = vm.nextAt
     ? formatInViewerZone(vm.nextAt, viewerZone.zone, "h:mm a")
-    : "Not scheduled";
+    : noSessionLabel(vm.needsActionReason);
   const endOfAnchor = vm.nextAt
     ? vm.occurrences.find(
         (s) => s.startsAt.getTime() === vm.nextAt?.getTime() && s.endsAt,

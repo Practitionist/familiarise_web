@@ -2,7 +2,7 @@ import type { TimePickerSubject } from "@/components/scheduling/time-picker-poli
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 
 /**
- * Where the slot picker should already be looking when it opens (#1073).
+ * Where the time picker should already be looking when it opens.
  *
  * One resolver, not four: the surfaces differ only in which sessions their
  * subject carries. Reschedule carries the live sessions of the booking being
@@ -41,18 +41,18 @@ interface DatedSlot {
 function liveSlotsInOrder(
   subject: Pick<TimePickerSubject, "slots">,
 ): DatedSlot[] {
-  return (subject.slots ?? [])
-    .filter((slot) => !DEAD_STATUSES.has(slot.completionStatus ?? ""))
-    // A10 tombstone (#676). Filtered here rather than at each call site
-    // because every surface feeding this resolver reads its slots straight
-    // off a relation that keeps deleted rows.
-    .filter((slot) => !slot.deletedAt)
-    .map((slot) => ({
-      at: new Date(slot.startsAt),
-      isTentative: Boolean(slot.isTentative),
-    }))
-    .filter((entry) => Number.isFinite(entry.at.getTime()))
-    .sort((a, b) => a.at.getTime() - b.at.getTime());
+  return (
+    (subject.slots ?? [])
+      .filter((slot) => !DEAD_STATUSES.has(slot.completionStatus ?? ""))
+      // Tombstones: every surface feeding this reads a relation that keeps them.
+      .filter((slot) => !slot.deletedAt)
+      .map((slot) => ({
+        at: new Date(slot.startsAt),
+        isTentative: Boolean(slot.isTentative),
+      }))
+      .filter((entry) => Number.isFinite(entry.at.getTime()))
+      .sort((a, b) => a.at.getTime() - b.at.getTime())
+  );
 }
 
 /**
@@ -84,8 +84,7 @@ function periodAnchor(now: Date, start?: Date, end?: Date): Date {
  * has closed. A program whose placed sessions have all run but whose period
  * still has months left has sessions LEFT to place, and they can only go in
  * the future — opening on a dead week would be both the wrong answer and,
- * in allocate mode, a request stretching from that week to the end of the
- * period on the endpoint #997 measured in tens of seconds.
+ * in allocate mode, a needlessly wide request.
  */
 export function resolveFocusTarget(
   subject: Pick<TimePickerSubject, "slots" | "allowedStart" | "allowedEnd">,
@@ -126,70 +125,64 @@ export interface FocusGridPosition {
   day: number;
   hour: number;
   minute: number;
-  /** Index into the 48 half-hour rows the week grid renders. */
-  rowIndex: number;
+  /** Wall-clock minutes since local midnight; the grid maps it to a row. */
+  minuteOfDay: number;
 }
 
 /**
- * The instant, as a place on the grid.
- *
- * `timeZone` must be the one the COLUMNS were drawn in. Reading the row off a
- * different zone than the cells were built in puts focus out by the UTC
- * offset — the same class of defect as the `datetime-local` bug in #1064.
+ * The instant, as a place on the grid. `timeZone` must be the one the
+ * columns were drawn in, or focus lands out by the offset between them.
  */
 export function focusGridPosition(
   at: Date,
   timeZone: string,
 ): FocusGridPosition {
-  const { year, month, day, hour, minute } = ScheduleCalculationService.wallClock(
-    at,
-    timeZone,
-  );
-  return {
-    year,
-    month,
-    day,
-    hour,
-    minute,
-    rowIndex: hour * 2 + (minute >= 30 ? 1 : 0),
-  };
+  const { year, month, day, hour, minute } =
+    ScheduleCalculationService.wallClock(at, timeZone);
+  return { year, month, day, hour, minute, minuteOfDay: hour * 60 + minute };
 }
 
 /**
- * The consultant's earliest published time of day, as a row.
- *
- * A better vertical anchor than 00:00 when the target instant is only a
- * window bound: their working day is where the grid has anything to offer.
- * Returns null when nothing is published, leaving the caller its own fallback.
+ * The consultant's earliest published time of day, as minutes since local
+ * midnight — a better vertical anchor than midnight when the target is only
+ * a window bound. Null when nothing is published.
  */
-export function earliestAvailabilityRow(
+export function earliestAvailabilityMinute(
   slots: readonly { startTime: Date }[],
   timeZone: string,
 ): number | null {
   let earliest: number | null = null;
   for (const slot of slots) {
-    const { rowIndex } = focusGridPosition(slot.startTime, timeZone);
-    if (earliest === null || rowIndex < earliest) earliest = rowIndex;
+    const { minuteOfDay } = focusGridPosition(slot.startTime, timeZone);
+    if (earliest === null || minuteOfDay < earliest) earliest = minuteOfDay;
   }
   return earliest;
 }
 
 /**
- * The row the target sits on, given what the consultant has published.
- *
- * The whole of the effect's decision, kept out of the effect: a window bound
- * carries no time of day, so its own row would just be 00:00 again and the
- * earliest published hour is the real start of the working day. A session
- * time answers for itself.
+ * The time of day the target sits at: a session answers for itself, a window
+ * bound defers to the earliest published hour.
  */
-export function focusTargetRow(
+export function focusTargetMinute(
   focus: TimePickerFocus,
   availableSlots: readonly { startTime: Date }[],
   timeZone: string,
 ): number {
-  const ownRow = focusGridPosition(focus.at, timeZone).rowIndex;
-  if (focus.precision !== "period") return ownRow;
-  return earliestAvailabilityRow(availableSlots, timeZone) ?? ownRow;
+  const own = focusGridPosition(focus.at, timeZone).minuteOfDay;
+  if (focus.precision !== "period") return own;
+  return earliestAvailabilityMinute(availableSlots, timeZone) ?? own;
+}
+
+/** The index of the row holding `minuteOfDay`: the last row starting at or before it. */
+export function rowIndexForMinute(
+  rows: readonly { minuteOfDay: number }[],
+  minuteOfDay: number,
+): number {
+  let index = 0;
+  rows.forEach((row, i) => {
+    if (row.minuteOfDay <= minuteOfDay) index = i;
+  });
+  return index;
 }
 
 /**
@@ -200,14 +193,7 @@ export function focusScrollRow(targetRow: number): number {
   return Math.max(0, targetRow - FOCUS_LEAD_ROWS);
 }
 
-/**
- * The timezone the week grid is DRAWN in.
- *
- * Cells are built with `setHours` on a local Date and the footer prints this
- * same zone, so this — not the event's `schedulingTimezone` — is the zone the
- * columns exist in. Using the scheduling zone to pick the row would land the
- * focus off by the difference between the two whenever they disagree (#1073).
- */
+/** The device's own zone, the fallback when the viewer has no profile zone. */
 export function gridTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }

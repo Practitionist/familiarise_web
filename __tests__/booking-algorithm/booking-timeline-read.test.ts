@@ -114,7 +114,6 @@ describe("getBookingTimeline", () => {
       from: null,
       to: "ACCEPTED",
       proposedSlotCount: 3,
-      round: 1,
       actor: { id: "user-1", name: "Asha" },
     });
     expect(approval).toMatchObject({ kind: "status", to: "APPROVED" });

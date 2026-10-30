@@ -7,6 +7,8 @@ import {
 } from "@/lib/fetch-helpers";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 import { CalendarInterval } from "./calendarUtils";
+import { gridQuotaSchema } from "./grid-quota";
+import { z } from "zod";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 
 /** #997 Phase 2 — tooltip display metadata for a booked slot, computed
@@ -19,12 +21,51 @@ export interface OverlappingAppointmentMeta {
 }
 
 /** Shape of a raw availability slot returned from the availability-with-allocation API */
+const takenStartsSchema = z.array(z.string().datetime());
+
+/** The refusal's code, from `errorCode` or the shared `code` field. */
+function codeOf(body: unknown): string | undefined {
+  const parsed = z.object({ code: z.string() }).safeParse(body);
+  return parsed.success ? parsed.data.code : undefined;
+}
+
+/** `takenSlotStarts` from a TIMES_TAKEN refusal, top level or under `details`. */
+export function takenSlotStartsOf(body: unknown): string[] | undefined {
+  const parsed = z
+    .object({
+      takenSlotStarts: takenStartsSchema.optional(),
+      details: z
+        .object({ takenSlotStarts: takenStartsSchema.optional() })
+        .optional(),
+    })
+    .safeParse(body);
+  if (!parsed.success) return undefined;
+  return parsed.data.takenSlotStarts ?? parsed.data.details?.takenSlotStarts;
+}
+
+/** The pay window's end from the allocate response; null when absent or unreadable. */
+function payExpiresAtOf(value: unknown): Date | null {
+  const parsed = z.string().datetime().safeParse(value);
+  return parsed.success ? new Date(parsed.data) : null;
+}
+
+/** Event context for the availability grid read. */
+export interface AvailabilityContext {
+  webinarId?: string;
+  classId?: string;
+  subscriptionId?: string;
+  /** Comma-separated occurrence ids a reschedule would release. */
+  releasing?: string;
+}
+
 interface RawAvailabilityApiSlot {
   slotId: string;
   startsAt: string;
   endsAt: string;
   bookingStatus: "available" | "partially-booked" | "fully-booked";
   type: "WEEKLY" | "CUSTOM";
+  tooSoon?: boolean;
+  limitReached?: boolean;
   dayOfWeek?: string;
   localStartTime?: string;
   localEndTime?: string;
@@ -70,6 +111,8 @@ export interface AllocationResponse {
   error?: string;
   /** Structured code from the server (NO_AVAILABILITY, PERIOD_ENDED, etc.). */
   errorCode?: string;
+  /** On a 409 TIMES_TAKEN: the session starts (ISO) someone else took. */
+  takenSlotStarts?: string[];
   /** HTTP status of the failed response — 409 means "allocated elsewhere". */
   httpStatus?: number;
   /** #1206 — set on success when fewer sessions were placed than the plan
@@ -80,8 +123,10 @@ export interface AllocationResponse {
   requiredSessions?: number;
   unplacedSessions?: number;
   placeableSessions?: number;
-  /** #1775 — the approval minted a pay order; the client has 24 h to pay. */
+  /** The approval is waiting on a pay order. */
   awaitingPayment?: boolean;
+  /** When the pay-link minted by this call stops being payable. */
+  payExpiresAt?: Date | null;
 }
 
 export interface AllocationCallOptions {
@@ -226,6 +271,7 @@ export class AllocationService {
         unplacedSessions?: number;
         placeableSessions?: number;
         awaitingPayment?: boolean;
+        payExpiresAt?: string | null;
       } = {};
       let parseFailed = false;
       try {
@@ -243,7 +289,8 @@ export class AllocationService {
         return {
           success: false,
           error: data.error || fallback,
-          errorCode: data.errorCode,
+          errorCode: data.errorCode ?? codeOf(data),
+          takenSlotStarts: takenSlotStartsOf(data),
           httpStatus: response.status,
           // #1206 — a shortage the consultant can still act on.
           placeableSessions: data.placeableSessions,
@@ -270,6 +317,7 @@ export class AllocationService {
         requiredSessions: data.requiredSessions,
         unplacedSessions: data.unplacedSessions,
         awaitingPayment: data.awaitingPayment === true,
+        payExpiresAt: payExpiresAtOf(data.payExpiresAt),
       };
     } catch (error) {
       console.error(`Allocation request failed (${url}):`, error);
@@ -539,7 +587,7 @@ export class AllocationService {
     timezone?: string,
     includeAppointmentDetails?: boolean,
     consulteeUserId?: string,
-    options?: { webinarId?: string; classId?: string },
+    options?: AvailabilityContext,
   ): string {
     const tz =
       timezone ||
@@ -563,6 +611,10 @@ export class AllocationService {
     }
     if (options?.classId) {
       params.set("classId", options.classId);
+    }
+    if (options?.subscriptionId) {
+      params.set("subscriptionId", options.subscriptionId);
+      if (options.releasing) params.set("releasing", options.releasing);
     }
     return `/api/scheduling/availability-with-allocation/${consultantId}?${params}`;
   }
@@ -610,10 +662,10 @@ export class AllocationService {
      */
     ifNoneMatch?: string | null,
     /**
-     * #1689 — optional webinar/class context so the availability grid folds in
-     * ACCEPTED co-hosts' schedules and busy commitments.
+     * Webinar/class context folds in ACCEPTED co-hosts; a subscription id adds
+     * the plan's weekly/day limit overlay.
      */
-    options?: { webinarId?: string; classId?: string },
+    options?: AvailabilityContext,
   ) {
     if (!consultantId) {
       throw new Error("Consultant ID is required");
@@ -672,6 +724,7 @@ export class AllocationService {
       }
       const result = await response.json();
       const { data: slotsByDate } = result;
+      const quota = gridQuotaSchema.safeParse(result.quota);
 
       // Flatten the grouped-by-date slots into a single array
       const allSlots: RawAvailabilityApiSlot[] = (
@@ -681,6 +734,7 @@ export class AllocationService {
       return {
         weekly: allSlots.filter((s) => s.type === "WEEKLY"),
         custom: allSlots.filter((s) => s.type === "CUSTOM"),
+        quota: quota.success ? quota.data : null,
         etag: response.headers.get("ETag"),
         notModified: false as const,
       };
@@ -704,20 +758,13 @@ export class AllocationService {
   }
 
   /**
-   * Fetches specific event slots for any event type
-   * Used to display "This Event" (black) instead of "Booked" (gray) in calendar
-   *
-   * #997 Phase 3 — when `slotsPerCall` is given for a subscription, the
-   * response also carries `weeklyConfirmedCallCounts` (server-bucketed by
-   * scheduling-timezone week, ADR B9) so the calendar's interactive
-   * weekly-limit guard no longer needs a separate whole-window appointment
-   * fetch to re-derive it.
+   * This event's own sessions, so the grid paints them "This booking" rather
+   * than someone else's "Booked".
    */
   static async fetchEventSlots(
     eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
     consultantProfileId: string,
-    slotsPerCall?: number,
     /** Lets the caller cancel on unmount; an aborted read is not a fault. */
     signal?: AbortSignal,
   ) {
@@ -734,9 +781,6 @@ export class AllocationService {
         params.append("classId", eventId);
       } else if (eventType === "subscription") {
         params.append("subscriptionId", eventId);
-        if (slotsPerCall && slotsPerCall > 0) {
-          params.append("slotsPerCall", String(slotsPerCall));
-        }
       } else if (eventType === "consultation") {
         params.append("consultationId", eventId);
       }
@@ -754,18 +798,13 @@ export class AllocationService {
         });
       }
 
-      const { data, weeklyConfirmedCallCounts } = await response.json();
-      return {
-        data: data || [],
-        weeklyConfirmedCallCounts:
-          (weeklyConfirmedCallCounts as Record<string, number> | undefined) ||
-          {},
-      };
+      const { data } = await response.json();
+      return { data: data || [] };
     } catch (error) {
       if (isAbortedFetch(error, signal)) {
         // The page moved on mid-read: the same quiet "nothing known" the
         // hook degrades to, minus the Sentry event (FAMILIARISE_WEB-4J).
-        return { data: [], weeklyConfirmedCallCounts: {} };
+        return { data: [] };
       }
       console.error("Error fetching event slots:", error);
       const httpStatus =

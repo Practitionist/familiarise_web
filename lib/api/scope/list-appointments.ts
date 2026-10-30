@@ -19,6 +19,7 @@
 
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import { readOrgOwnerUserIds } from "@/lib/enterprise/related-party";
 import type { AppointmentsType, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
@@ -35,6 +36,20 @@ import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
  */
 const ORG_FUNDED_PAYMENT_METHODS = ["WALLET", "INVOICE", "LICENSE"];
 
+/** Live sessions a list row carries; the rest are counted, not loaded. */
+const LIST_UPCOMING_OCCURRENCES = 3;
+
+/** Join state needs the slot id, times, tombstone and the call's end. */
+const LIST_OCCURRENCE_SELECT = {
+  id: true,
+  startsAt: true,
+  endsAt: true,
+  isTentative: true,
+  completionStatus: true,
+  deletedAt: true,
+  meeting: { select: { endedAt: true, endedReason: true } },
+} satisfies Prisma.AppointmentOccurrenceSelect;
+
 export interface ListAppointmentsParams {
   scope: Scope;
   /** The session user's id. Used as the personal-scope filter root. */
@@ -46,6 +61,7 @@ export interface ListAppointmentsParams {
   perPage?: number;
   /** Narrows the scoped set further (e.g. suspended members' sessions). */
   extraWhere?: Prisma.AppointmentWhereInput;
+  now?: Date;
 }
 
 export interface ListAppointmentsResult {
@@ -58,48 +74,96 @@ export interface ListAppointmentsResult {
 /**
  * Build the Prisma `where` clause for the requested scope.
  *
- *   - `personal`: rows with `organizationId IS NULL` AND the user
- *     participates — either as the consultee (booked the session) OR as the
- *     consultant (owns the linked plan). Both sides are covered (#674): a
- *     consultant's own B2C sessions appear in their personal list; org-hosted
- *     sessions carry an organizationId and fall under `org` scope instead.
- *   - `org`: rows where `organizationId = orgId` AND this org's money paid
- *     them (`payment.paymentMethod ∈ {WALLET, INVOICE, LICENSE}`) AND the org
- *     is still readable. No user filter — MANAGER+ sees the org's funded
- *     activity. The funding clause is load-bearing, not belt-and-braces:
- *     `organizationId` is a tag checkout stamps for a `PERSONAL`-rail booking
- *     too, where the member's own card paid.
+ *   - `personal`: the user's B2C rows. Booked or attended (consultee side) when
+ *     the booking carries no org tag; delivered (consultant side) when the plan
+ *     has no host org, whatever sponsor tag the booking carries.
+ *   - `orgMember`: one member's rows within the org, split the same way: booked
+ *     or attended when tagged to this org, delivered when this org hosts the plan.
+ *   - `org`: rows tagged to this org on a ground the org owns (unpaid, paid
+ *     from this org's money, or delivered on its plan), while it is readable.
+ *     No user filter; MANAGER+ sees the org's activity.
  *   - `all`: no scope filter; admin-only.
  */
-function deliveredGroupEventArms(uid: string): Prisma.AppointmentWhereInput[] {
+function deliveredArms(
+  uid: string,
+  planHost: { organizationId: string | null },
+): Prisma.AppointmentWhereInput[] {
+  const acceptedCoHost = {
+    collaborators: {
+      some: { consultantProfile: { userId: uid }, status: "ACCEPTED" as const },
+    },
+  };
   return [
-    { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
+    {
+      consultation: {
+        consultationPlan: { ...planHost, consultantProfile: { userId: uid } },
+      },
+    },
+    {
+      subscription: {
+        subscriptionPlan: { ...planHost, consultantProfile: { userId: uid } },
+      },
+    },
     {
       webinar: {
-        webinarPlan: {
-          collaborators: {
-            some: {
-              consultantProfile: { userId: uid },
-              status: "ACCEPTED",
-            },
-          },
-        },
+        webinarPlan: { ...planHost, consultantProfile: { userId: uid } },
       },
     },
-    { class: { classPlan: { consultantProfile: { userId: uid } } } },
+    { webinar: { webinarPlan: { ...planHost, ...acceptedCoHost } } },
     {
-      class: {
-        classPlan: {
-          collaborators: {
-            some: {
-              consultantProfile: { userId: uid },
-              status: "ACCEPTED",
+      class: { classPlan: { ...planHost, consultantProfile: { userId: uid } } },
+    },
+    { class: { classPlan: { ...planHost, ...acceptedCoHost } } },
+  ];
+}
+
+/** Booked as the buyer or holding a live seat (webinar/class attendee). */
+function attendedArms(uid: string): Prisma.AppointmentWhereInput[] {
+  return [
+    { consultation: { requestedBy: { userId: uid } } },
+    { subscription: { requestedBy: { userId: uid } } },
+    { participants: { some: liveParticipant(uid) } },
+  ];
+}
+
+/**
+ * Rows an org owns, only while it is readable: tagged to the org AND unpaid
+ * or paid from this org's money (WALLET/INVOICE/LICENSE), OR delivered on a
+ * plan the org hosts, whatever the buyer's tag or rail. A tagged card-paid
+ * booking on someone else's plan is not the org's. Org lists stay
+ * metadata-only. Every org-side read of bookings (lists, queues, documents,
+ * recordings, detail and access grants) uses it.
+ */
+export function orgOwnedAppointmentWhere(
+  orgId: string,
+): Prisma.AppointmentWhereInput {
+  const hostedHere = {
+    organizationId: orgId,
+    organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
+  };
+  return {
+    OR: [
+      {
+        organizationId: orgId,
+        organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
+        OR: [
+          { payment: { none: {} } },
+          {
+            payment: {
+              some: {
+                organizationId: orgId,
+                paymentMethod: { in: ORG_FUNDED_PAYMENT_METHODS },
+              },
             },
           },
-        },
+        ],
       },
-    },
-  ];
+      { consultation: { consultationPlan: hostedHere } },
+      { subscription: { subscriptionPlan: hostedHere } },
+      { webinar: { webinarPlan: hostedHere } },
+      { class: { classPlan: hostedHere } },
+    ],
+  };
 }
 
 export function buildWhere(
@@ -115,127 +179,46 @@ export function buildWhere(
   };
 
   if (params.scope.kind === "personal") {
-    // #org-appts — the personal dashboards are now purely B2C on BOTH sides.
-    // Every org-hosted session (delivered OR attended) lives in that org's
-    // dashboard under `orgMember` scope, so both arms are constrained to
-    // `organizationId: null`. This retires the earlier #674 carve-out that
-    // force-showed delivered org sessions here — they were double-listed once
-    // experts got a real org appointments surface. Trials stay B2C (personal)
-    // even when org-tagged for analytics.
     const uid = params.userId;
     return {
       ...base,
-      organizationId: null,
       OR: [
-        // Consultee side — self-funded bookings.
-        { consultation: { requestedBy: { userId: uid } } },
-        { subscription: { requestedBy: { userId: uid } } },
+        { organizationId: null, OR: attendedArms(uid) },
+        // A trial is always personal for the learner; delivery splits on the
+        // subscription plan's host org like every request.
         { trial: { consulteeProfile: { userId: uid } } },
-        // Consultant side — sessions the user delivers B2C.
         {
-          consultation: {
-            consultationPlan: { consultantProfile: { userId: uid } },
+          trial: {
+            consultantProfile: { userId: uid },
+            subscriptionPlan: { organizationId: null },
           },
         },
-        {
-          subscription: {
-            subscriptionPlan: { consultantProfile: { userId: uid } },
-          },
-        },
-        { trial: { consultantProfile: { userId: uid } } },
-        ...deliveredGroupEventArms(uid),
+        ...deliveredArms(uid, { organizationId: null }),
       ],
     };
   }
 
   if (params.scope.kind === "orgMember") {
-    // #org-appts — ONE member's own appointments WITHIN this org: sessions they
-    // booked (as a learner), hold a seat in (webinar/class attendee), OR
-    // deliver (as an expert). Hoists `organizationId: orgId` so it is strictly
-    // this org's activity. Distinct from `org` (all-org, MANAGER+).
-    //
-    // Trials are intentionally EXCLUDED: a trial is a B2C acquisition session
-    // (org-tagged only for conversion analytics, never org-sponsored), so it
-    // belongs in the member's PERSONAL appointments, not the org view. The
-    // attendee arm can't smuggle one in — trial checkout never stamps
-    // Appointment.organizationId, so trials fail the org pin above.
+    // A trial is personal for the learner, so only the delivered arm appears.
     const uid = params.scope.userId;
+    const orgId = params.scope.orgId;
     return {
       ...base,
-      organizationId: params.scope.orgId,
       OR: [
-        // Consumed as a learner (org-sponsored bookings).
-        { consultation: { requestedBy: { userId: uid } } },
-        { subscription: { requestedBy: { userId: uid } } },
-        // #1166 ORG-5 — attended via a held seat. Group events share ONE
-        // Appointment and registrants never appear in requestedBy, so without
-        // this arm an org-sponsored webinar/class attendee's session was
-        // invisible on BOTH dashboards (personal excludes org rows by design).
-        // Mirrors lib/data/consultee-events-read.ts slot membership.
-        { participants: { some: liveParticipant(uid) } },
-        // Delivered as an expert (owns the plan or is an accepted collaborator).
+        { organizationId: orgId, OR: attendedArms(uid) },
         {
-          consultation: {
-            consultationPlan: { consultantProfile: { userId: uid } },
+          trial: {
+            consultantProfile: { userId: uid },
+            subscriptionPlan: { organizationId: orgId },
           },
         },
-        {
-          subscription: {
-            subscriptionPlan: { consultantProfile: { userId: uid } },
-          },
-        },
-        ...deliveredGroupEventArms(uid),
+        ...deliveredArms(uid, { organizationId: orgId }),
       ],
     };
   }
 
   if (params.scope.kind === "org") {
-    // #1166 ORG-8 — org-OWNED rows only (`organizationId = orgId`), narrowed to
-    // rows that legitimately belong to the org's operations feed:
-    //   1. Unpaid bookings (`payment: { none: {} }`) — e.g. PENDING/APPROVED
-    //      requests awaiting payment or free TRIAL appointments.
-    //   2. Org-funded bookings (`payment.some` with `paymentMethod` in
-    //      WALLET/INVOICE/LICENSE for this org).
-    //   3. Provider-side org-hosted bookings (`plan.organizationId = orgId`),
-    //      where the org owns the catalog plan regardless of how the buyer paid.
-    // Self-funded B2C bookings on a non-org plan that merely carried an
-    // `organizationId` tag are excluded.
-    return {
-      ...base,
-      organizationId: params.scope.orgId,
-      OR: [
-        { payment: { none: {} } },
-        {
-          payment: {
-            some: {
-              organizationId: params.scope.orgId,
-              paymentMethod: { in: ORG_FUNDED_PAYMENT_METHODS },
-            },
-          },
-        },
-        {
-          consultation: {
-            consultationPlan: { organizationId: params.scope.orgId },
-          },
-        },
-        {
-          subscription: {
-            subscriptionPlan: { organizationId: params.scope.orgId },
-          },
-        },
-        {
-          webinar: {
-            webinarPlan: { organizationId: params.scope.orgId },
-          },
-        },
-        {
-          class: {
-            classPlan: { organizationId: params.scope.orgId },
-          },
-        },
-      ],
-      organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
-    };
+    return { ...base, ...orgOwnedAppointmentWhere(params.scope.orgId) };
   }
 
   // Explicit rather than a fall-through: `base` alone is the admin/staff arm,
@@ -250,6 +233,7 @@ export async function listAppointmentsScoped(
 ): Promise<ListAppointmentsResult> {
   const page = Math.max(1, params.page ?? 1);
   const perPage = Math.min(100, Math.max(1, params.perPage ?? 20));
+  const now = params.now ?? new Date();
   const scoped = buildWhere(params);
   const where = params.extraWhere
     ? { AND: [scoped, params.extraWhere] }
@@ -285,24 +269,16 @@ export async function listAppointmentsScoped(
               },
             }
           : {}),
-        // #org-appts — slot fields drive the in-context Join (getOrCreate needs
-        // slot id + startsAt); consultantProfile.user.id lets the caller stamp
-        // per-appointment identity into the Stream call (host/guest derivation).
-        // deletedAt + meeting ride along so isDeadOccurrence/getOccurrenceJoinState
-        // see what they need: without deletedAt a tombstoned row counted as
-        // live, and without meeting a host-ended call still offered
-        // Join (booking-journey audit B7).
+        // The next few live sessions (Join and the displayed time) plus a
+        // count; a fully past row gets its latest session below instead.
         occurrences: {
-          select: {
-            id: true,
-            startsAt: true,
-            endsAt: true,
-            isTentative: true,
-            completionStatus: true,
-            deletedAt: true,
-            meeting: { select: { endedAt: true, endedReason: true } },
-          },
+          where: { deletedAt: null, endsAt: { gte: now } },
+          select: LIST_OCCURRENCE_SELECT,
           orderBy: { startsAt: "asc" },
+          take: LIST_UPCOMING_OCCURRENCES,
+        },
+        _count: {
+          select: { occurrences: { where: { deletedAt: null } } },
         },
         consultation: {
           select: {
@@ -394,8 +370,58 @@ export async function listAppointmentsScoped(
       orderBy: { createdAt: "desc" },
       take: perPage,
       skip: (page - 1) * perPage,
+      relationLoadStrategy: "join",
     }),
   ]);
 
-  return { items, total, page, perPage };
+  const owners =
+    params.scope.kind === "org"
+      ? await readOrgOwnerUserIds(prisma, params.scope.orgId)
+      : null;
+  const pastIds = items
+    .filter((a) => a.occurrences.length === 0 && a._count.occurrences > 0)
+    .map((a) => a.id);
+  const latest =
+    pastIds.length === 0
+      ? []
+      : await prisma.appointment.findMany({
+          where: { id: { in: pastIds } },
+          select: {
+            id: true,
+            occurrences: {
+              where: { deletedAt: null },
+              select: LIST_OCCURRENCE_SELECT,
+              orderBy: { startsAt: "desc" },
+              take: 1,
+            },
+          },
+          relationLoadStrategy: "join",
+        });
+  const latestById = new Map(latest.map((a) => [a.id, a.occurrences]));
+  return {
+    items: items.map((a) => {
+      const expertUserId = (
+        a.consultation?.consultationPlan ??
+        a.subscription?.subscriptionPlan ??
+        a.webinar?.webinarPlan ??
+        a.class?.classPlan
+      )?.consultantProfile?.user.id;
+      return {
+        ...a,
+        occurrences: latestById.get(a.id) ?? a.occurrences,
+        // Org lists flag sessions an OWNER of this org delivered on its money
+        // (the `payment` include is already this org's funded rails only).
+        relatedParty:
+          !!owners &&
+          !!expertUserId &&
+          owners.has(expertUserId) &&
+          "payment" in a &&
+          Array.isArray(a.payment) &&
+          a.payment.length > 0,
+      };
+    }),
+    total,
+    page,
+    perPage,
+  };
 }

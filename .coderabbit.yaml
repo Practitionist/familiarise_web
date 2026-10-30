@@ -193,8 +193,9 @@ reviews:
         mirror implementation or require new tests for trivial reversible edits.
         Choose relevant authorization, tenant, replay, race, time and failure
         boundaries for the subsystem instead of imposing money cases everywhere.
-        Use mocked vendors and Prisma; never shared/real DB writes. Preserve
-        existing DB-constraint tests without adding redundant production sweeps.
+        Use repository harnesses, mocked vendors and isolated fixtures; never
+        write shared/dev/prod data. Preserve existing DB-constraint tests without
+        adding redundant production sweeps.
     - path: "{AGENTS.md,.claude/**,docs/**,.coderabbit.yaml}"
       instructions: |
         Verify commands, paths, scopes and architecture claims against current

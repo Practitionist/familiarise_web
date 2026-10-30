@@ -36,6 +36,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
+import { noSessionLabel } from "@/lib/appointments/bucket";
 import {
   toOccurrenceVM,
   type NeedsActionReason,
@@ -141,7 +142,7 @@ function awaitingLabel(reason: NeedsActionReason | null): string {
     case "PENDING_APPROVAL":
       return "Pending";
     default:
-      return "Not scheduled";
+      return noSessionLabel(reason);
   }
 }
 

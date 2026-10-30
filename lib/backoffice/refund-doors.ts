@@ -79,6 +79,7 @@ export async function ladderOverrideAmount(
     sessionsTotal: ctx.sessionsTotal,
     sessionsCompleted: ctx.sessionsCompleted,
     scheduledStarts: ctx.scheduledStarts,
+    alreadyRefundedPaise: ctx.alreadyRefundedPaise,
     isSubscription: !!appointment.subscriptionId,
     isConsultantInitiated: true,
     isFreeCreditFunded: false,

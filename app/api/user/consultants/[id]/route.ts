@@ -86,14 +86,15 @@ const customSlotSchema = z.object({
   endsAt: dateTimeSchema,
 });
 
-// #1703 D1/D4 — the Booking requests settings. Optional so older callers keep
-// working; null clears the cap. The PUT carries them with the whole profile;
-// the PATCH (#1527) saves them alone.
-const bookingRequestFields = {
-  bookingMode: z.nativeEnum(BookingMode).optional(),
-  acceptingRequests: z.boolean().optional(),
-  maxOpenRequests: z.number().int().min(1).max(50).nullable().optional(),
-};
+// The Booking requests settings; null clears the cap. Only the PATCH writes
+// them, so a whole-profile save can never carry a stale copy back.
+const bookingRequestFields = z
+  .object({
+    bookingMode: z.nativeEnum(BookingMode).optional(),
+    acceptingRequests: z.boolean().optional(),
+    maxOpenRequests: z.number().int().min(1).max(50).nullable().optional(),
+  })
+  .strict();
 
 // Main request body schema
 const updateConsultantSchema = z
@@ -130,7 +131,6 @@ const updateConsultantSchema = z
       .optional(),
     // User-level field (stored on User model, not ConsultantProfile)
     linkedinUrl: z.string().url().nullable().optional().or(z.literal("")),
-    ...bookingRequestFields,
   })
   // #1703 — an unknown key is a 400, so a misspelt setting cannot be dropped silently.
   .strict()
@@ -156,12 +156,26 @@ const updateConsultantSchema = z
     },
   );
 
+/**
+ * `set` holds only the fields the user changed; `expect` holds the value the
+ * screen showed for each of them. The write lands only while every expected
+ * value still holds, so two tabs never silently undo each other.
+ */
 const bookingRequestSettingsSchema = z
-  .object(bookingRequestFields)
+  .object({ set: bookingRequestFields, expect: bookingRequestFields })
   .strict()
-  .refine((data) => Object.values(data).some((v) => v !== undefined), {
+  .refine((data) => Object.keys(data.set).length > 0, {
     message: "Send at least one booking-request setting",
+  })
+  .refine((data) => Object.keys(data.set).every((key) => key in data.expect), {
+    message: "Every changed setting needs the value it replaces",
   });
+
+const BOOKING_SETTINGS_SELECT = {
+  bookingMode: true,
+  acceptingRequests: true,
+  maxOpenRequests: true,
+} as const;
 
 /** The caller's own profile's owner, or the 401/403 response to return. */
 async function authorizeOwner(
@@ -394,9 +408,6 @@ export async function PUT(
       offeringFormats,
       // User-level field
       linkedinUrl,
-      bookingMode,
-      acceptingRequests,
-      maxOpenRequests,
     } = data;
 
     // ------------------------------------------------------------------
@@ -564,10 +575,6 @@ export async function PUT(
                 toolsAndTechnologies: toolsAndTechnologies ?? [],
                 mentoringStyle: mentoringStyle ?? null,
                 offeringFormats: offeringFormats ?? [],
-                // #1703 — absent means "leave as is"; a null cap means off.
-                ...(bookingMode !== undefined && { bookingMode }),
-                ...(acceptingRequests !== undefined && { acceptingRequests }),
-                ...(maxOpenRequests !== undefined && { maxOpenRequests }),
               },
             });
 
@@ -641,10 +648,9 @@ export async function PUT(
 }
 
 /**
- * PATCH — the Booking requests settings alone (#1527). The PUT replaces the
- * whole profile and re-validates every availability window, so one stale
- * overlap made the Requests page's "Accepting requests" switch fail; these
- * flags touch no windows.
+ * PATCH — the Booking requests settings, and the only writer of them. A CAS on
+ * the values the screen showed: a change made elsewhere since then answers
+ * 409 SETTINGS_CHANGED with the current values instead of being overwritten.
  */
 export async function PATCH(
   request: NextRequest,
@@ -663,15 +669,35 @@ export async function PATCH(
       );
     }
 
-    const data = await prisma.consultantProfile.update({
-      where: { id },
-      data: parsed.data,
-      select: {
-        bookingMode: true,
-        acceptingRequests: true,
-        maxOpenRequests: true,
-      },
+    const { set, expect } = parsed.data;
+    const expected = {
+      ...("bookingMode" in set && { bookingMode: expect.bookingMode }),
+      ...("acceptingRequests" in set && {
+        acceptingRequests: expect.acceptingRequests,
+      }),
+      ...("maxOpenRequests" in set && {
+        maxOpenRequests: expect.maxOpenRequests,
+      }),
+    };
+    const written = await prisma.consultantProfile.updateMany({
+      where: { id, ...expected },
+      data: set,
     });
+    const data = await prisma.consultantProfile.findUnique({
+      where: { id },
+      select: BOOKING_SETTINGS_SELECT,
+    });
+    if (written.count === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Your booking settings were changed somewhere else. Reload to see the latest, then try again.",
+          code: "SETTINGS_CHANGED",
+          data,
+        },
+        { status: 409 },
+      );
+    }
     // The public page shows whether the expert is taking requests.
     purgeExpertSurfaces(id);
     return NextResponse.json({ data });

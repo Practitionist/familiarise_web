@@ -105,6 +105,22 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 describe("a user cannot book their own plan", () => {
+  it("refuses a seat whose event is not on the plan named, so a foreign planId cannot dodge the guard", async () => {
+    // The seller names someone else's plan for their own event.
+    setup("cons-profile", lookup("someone-else"), {
+      "webinar.count": () => 0,
+    });
+    expect(await checkout()).toMatchObject({
+      httpStatus: 409,
+      code: "PLAN_EVENT_MISMATCH",
+    });
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+    const match = calls.find((call) => call.path === "webinar.count");
+    expect(match?.args).toEqual({
+      where: { id: "web-1", webinarPlanId: "wplan-1" },
+    });
+  });
+
   it("refuses the plan's owner with a typed 409 before any gateway order", async () => {
     setup("cons-profile", lookup("cons-profile"));
     expect(await checkout()).toMatchObject({

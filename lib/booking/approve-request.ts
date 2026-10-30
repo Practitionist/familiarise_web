@@ -5,9 +5,7 @@ import {
   PaymentStatus,
   type Prisma,
 } from "@prisma/client";
-import { addMonths } from "date-fns";
 import prisma from "@/lib/prisma";
-import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 
 /**
  * #1775 B-9 — approving a REQUEST-mode booking is one decision with two
@@ -73,6 +71,8 @@ export type MintApprovalOutcome =
       paymentUrl: string;
       paymentAmount: number;
       paymentCurrency: string;
+      /** When the link stops being payable; never later than the first session allows. */
+      payExpiresAt: Date;
     }
   /** The row already carries a live link: nothing minted, nothing mailed. */
   | { status: "already_live"; paymentUrl: string }
@@ -238,7 +238,11 @@ export async function mintApprovalPaymentAfterCommit(args: {
   // Loaded here, not at module scope: the payments barrel and the email
   // senders are heavy, and the scheduling engine imports this module.
   const [
-    { ApprovalWindowLapsedError, createApprovalPaymentIntent },
+    {
+      ApprovalTooCloseToStartError,
+      ApprovalWindowLapsedError,
+      createApprovalPaymentIntent,
+    },
     email,
     { notifyPaymentLink, notificationScope },
   ] = await Promise.all([
@@ -250,7 +254,6 @@ export async function mintApprovalPaymentAfterCommit(args: {
     await import("@/lib/booking/pay-link-persist");
 
   const slot = row.appointment?.occurrences[0];
-  const now = new Date();
   // The kind-specific half of the mint params: the consultation's held slot
   // times, or the subscription's scheduling period (already committed by the
   // approval; recomputing it would drift the gateway metadata off the row).
@@ -268,13 +271,9 @@ export async function mintApprovalPaymentAfterCommit(args: {
           plan: row.subscriptionPlan,
           timing: {
             subscriptionId: row.id,
-            schedulingPeriodStartsAt: (
-              row.schedulingPeriodStartsAt ?? now
-            ).toISOString(),
-            schedulingPeriodEndsAt: (
-              row.schedulingPeriodEndsAt ??
-              addMonths(now, row.subscriptionPlan.durationInMonths || 1)
-            ).toISOString(),
+            schedulingPeriodStartsAt:
+              row.schedulingPeriodStartsAt.toISOString(),
+            schedulingPeriodEndsAt: row.schedulingPeriodEndsAt.toISOString(),
           },
         };
   let paymentResult;
@@ -299,6 +298,23 @@ export async function mintApprovalPaymentAfterCommit(args: {
     if (linkError instanceof ApprovalWindowLapsedError) {
       return { status: "lapsed", message: linkError.message };
     }
+    // The pay window can no longer open: release the approval rather than
+    // leave it awaiting a payment nobody can make.
+    if (linkError instanceof ApprovalTooCloseToStartError) {
+      const { lapseTooCloseApproval, TOO_CLOSE_TO_PAY_REASON } =
+        await import("@/lib/booking/lapse-approved-request");
+      await lapseTooCloseApproval({
+        kind: args.kind,
+        id: row.id,
+        consulteeUserId: row.requestedBy.user.id,
+        consulteeName: row.requestedBy.user.name,
+        consultantName: plan.consultantProfile.user.name,
+        planTitle: plan.title,
+        organizationId: row.appointment?.organizationId ?? null,
+        startsAt: slot?.startsAt ?? null,
+      });
+      return { status: "lapsed", message: TOO_CLOSE_TO_PAY_REASON };
+    }
     report(linkError);
     return { status: "mint_failed", error: linkError };
   }
@@ -312,7 +328,7 @@ export async function mintApprovalPaymentAfterCommit(args: {
   );
   if (!paymentUrl) return { status: "not_delivered" };
 
-  const expiresAt = new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS);
+  const { expiresAt } = paymentResult;
   const consultantName = plan.consultantProfile.user.name || "Consultant";
   await Promise.all([
     notifyPaymentLink(
@@ -371,5 +387,6 @@ export async function mintApprovalPaymentAfterCommit(args: {
     paymentUrl,
     paymentAmount: paymentResult.amount,
     paymentCurrency: paymentResult.currency,
+    payExpiresAt: expiresAt,
   };
 }

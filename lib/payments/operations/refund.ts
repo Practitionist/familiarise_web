@@ -222,6 +222,8 @@ export class RefundValidationError extends Error {
   constructor(
     message: string,
     public code: string,
+    /** Developer detail (ids) the refusal carries beside its plain copy. */
+    public detail?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "RefundValidationError";

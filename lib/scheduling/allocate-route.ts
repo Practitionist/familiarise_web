@@ -115,7 +115,7 @@ export async function handleAllocate(
       // LAYER 2: Business Logic Validation & Allocation
       //
       // #1846 — the allocation itself, as a span. This is the single most
-      // expensive operation on the booking funnel (a Serializable transaction
+      // expensive operation on the booking funnel (a write transaction
       // that may re-validate conflicts, absorb the #440 GiST constraint and
       // write N occurrences), and with no metrics emission anywhere in the repo
       // its latency was unmeasurable. `Sentry.startSpan` is the same idiom
@@ -190,6 +190,7 @@ export async function handleAllocate(
       // same state the detail PATCH leaves — recorded as a system error;
       // re-approving reuses the same PENDING intent (#1181).
       const awaitingPayment = result.outcome === "awaiting_payment";
+      let payExpiresAt: Date | null = null;
       if (
         awaitingPayment &&
         (eventType === "consultation" || eventType === "subscription")
@@ -235,14 +236,18 @@ export async function handleAllocate(
             { status: 502 },
           );
         }
+        if (mint.status === "minted") payExpiresAt = mint.payExpiresAt;
       }
 
       return NextResponse.json({
         data: result.appointments,
         warnings: result.warnings,
-        // #1775 B-9 — the client says "the client has 24 h to pay", not
-        // "Confirmed", when the approval is waiting on the pay order.
+        // The client says how long the payer has, not "Confirmed", when the
+        // approval is waiting on the pay order.
         awaitingPayment,
+        // The pay window's end, clamped before the first session; null when
+        // no link was minted by this call.
+        payExpiresAt: payExpiresAt?.toISOString() ?? null,
         // #1206 — derived, never stored: how much of the plan now has times.
         partial: result.partial,
         placedSessions: result.placedSessions,
@@ -255,16 +260,19 @@ export async function handleAllocate(
     } catch (validationError) {
       const duration = Date.now() - startTime;
       // Zod validation errors - return 400 Bad Request
+      // The issue paths are developer detail: logged, never the user copy.
       if (validationError instanceof ZodError) {
-        const errorMessage = validationError.errors
-          .map((err) => `${err.path.join(".")}: ${err.message}`)
-          .join("; ");
         console.error(
           `${label} Validation failed after ${duration}ms:`,
           JSON.stringify(validationError.errors, null, 2),
         );
         return NextResponse.json(
-          { error: errorMessage, details: validationError.errors, eventId },
+          {
+            error:
+              "This request couldn't be read. Reload the page and try again.",
+            errorCode: "VALIDATION_ERROR",
+            eventId,
+          },
           { status: 400 },
         );
       }

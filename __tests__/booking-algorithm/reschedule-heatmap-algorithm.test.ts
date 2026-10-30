@@ -38,8 +38,12 @@ describe("contiguous session groups (heatmap selection)", () => {
     const day = [slot(15, 30), slot(16, 0), slot(16, 30), slot(17, 0)];
     const group = findConsecutiveGroupContaining(day[2], day);
     expect(group).toHaveLength(4);
-    expect(group[0].startTime.toISOString()).toBe(day[0].startTime.toISOString());
-    expect(group[3].startTime.toISOString()).toBe(day[3].startTime.toISOString());
+    expect(group[0].startTime.toISOString()).toBe(
+      day[0].startTime.toISOString(),
+    );
+    expect(group[3].startTime.toISOString()).toBe(
+      day[3].startTime.toISOString(),
+    );
   });
 });
 

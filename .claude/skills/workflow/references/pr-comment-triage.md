@@ -41,11 +41,14 @@ committed branch, use `--committed --base origin/dev` instead of `--uncommitted`
 or the actual parent branch for a stacked PR. Keep both AGENTS.md and the YAML
 as review context; do not assume the CLI auto-loads every domain skill.
 
-For large diffs, use `--dir <path>` per changed top-level directory and record
-which files each chunk covered. Review the interfaces between chunks as well;
-directory-by-directory passes alone do not establish integration correctness.
+For large diffs, follow [large-pr-cli-review.md](large-pr-cli-review.md) to
+select bounded batches within the actual plan/tool limits and preserve the
+complete HEAD context with synthetic base-tree plumbing. Avoid naive
+per-directory passes that exhaust the rolling allowance. Record which files
+each batch covered and review the interfaces between batches as well;
+batched passes alone do not establish integration correctness.
 
-After the first full or chunked pass, every further round should be a **delta
+After the first full or batched pass, every further round should be a **delta
 round** against the last reviewed commit:
 
 ```bash

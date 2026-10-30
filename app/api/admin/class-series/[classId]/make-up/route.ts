@@ -23,7 +23,7 @@ export const POST = withOpsAction(
       id: body.occurrenceId,
     }),
     run: async ({ params, body, actor }) => {
-      const hosted = await hostedForClass(params.classId, actor.userId);
+      const hosted = await hostedForClass(params.classId);
       const result = await scheduleClassMakeUp(
         hosted,
         body.occurrenceId,

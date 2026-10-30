@@ -234,7 +234,7 @@ describe("findAvailableSlots — scanning within an availability row", () => {
         "consultation",
         consultationConfig,
       ),
-    ).rejects.toThrow(/No 2 consecutive slots available/);
+    ).rejects.toThrow(/No free time in the coming weeks/);
   });
 
   it("does not start a block that cannot fit before the row ends", async () => {
@@ -494,7 +494,7 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
         schedulingPeriodEndsAt: new Date(probe.getTime() + 30 * 60 * 1000),
         schedulingTimezone: IST,
       }),
-    ).rejects.toThrow(/Could only find/);
+    ).rejects.toThrow(/sessions fit in the free times/);
   });
 
   it("counts a partial reschedule's surviving sessions against the week cap", async () => {

@@ -528,14 +528,9 @@ async function completeSubscriptions(
     where: {
       ...unseen(seen),
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      // #1554 — one wrapper: at least one occurrence, and every live one ended.
-      appointment: {
-        AND: [
-          { occurrences: allLiveOccurrencesEnded(bufferTime) },
-          { occurrences: { none: UNSETTLED_MISS } },
-          { occurrences: { none: AWAITING_HUMAN } },
-        ],
-      },
+      // Every live session ended and decided, and no void left unsettled:
+      // otherwise plan-end settlement owns completion and pays the void.
+      appointment: { AND: endedAndSettled(bufferTime) },
     },
     include: {
       subscriptionPlan: {
@@ -585,6 +580,7 @@ async function completeSubscriptions(
         occurrences: subscription.appointment?.occurrences ?? [],
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
         schedulingTimezone: subscription.schedulingTimezone,
+        planEndsAt: subscription.planEndsAt,
       });
       if (entitlement.remaining > 0) {
         console.log(

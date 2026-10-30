@@ -17,9 +17,28 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
+import {
+  isExpectedRefusal,
+  userMessageFrom,
+} from "@/lib/errors/client-refusal";
+import { z } from "zod";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { FREE_TRIAL_LABEL } from "@/lib/appointments/trial-labels";
 import { Gift, Clock, Loader2, CheckCircle } from "lucide-react";
+
+const profileAnswerSchema = z.object({
+  data: z.object({ id: z.string() }).nullish(),
+});
+const eligibilityAnswerSchema = z.object({
+  data: z.object({
+    isEligible: z.boolean(),
+    reason: z.string().nullish(),
+  }),
+});
+const createdAnswerSchema = z.object({
+  checkoutUrl: z.string().nullish(),
+});
 
 interface TrialBookingModalProps {
   isOpen: boolean;
@@ -82,28 +101,43 @@ export function TrialBookingModal({
       setIsSubmitting(true);
 
       // First, get the consultee profile ID
+      // A 404 is the modelled "no learner profile yet" answer.
       const profileResponse = await fetch(
         `/api/profiles/consultee?userId=${session.user.id}`,
       );
-      if (!profileResponse.ok) {
-        throw new Error("Failed to get your profile. Please try again.");
-      }
-      const { data: consulteeProfile } = await profileResponse.json();
+      const profileBody =
+        profileResponse.status === 404
+          ? null
+          : profileAnswerSchema.safeParse(
+              await requireJsonResponse(
+                profileResponse,
+                "Profile lookup failed",
+              ),
+            );
+      const consulteeProfileId = profileBody?.success
+        ? profileBody.data.data?.id
+        : undefined;
 
-      if (!consulteeProfile?.id) {
-        throw new Error(
-          "You need a consultee profile to request a trial. Please complete your profile setup.",
-        );
+      if (!consulteeProfileId) {
+        toast({
+          title: "Finish your profile first",
+          description:
+            "You need a learner profile to request a trial. Complete your profile setup, then try again.",
+          variant: "destructive",
+        });
+        return;
       }
 
       // Check eligibility
-      const eligibilityResponse = await fetch(
-        `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfile.id}&consultantProfileId=${consultantProfileId}&subscriptionPlanId=${subscriptionPlanId}`,
+      const eligibilityBody = eligibilityAnswerSchema.parse(
+        await requireJsonResponse(
+          await fetch(
+            `/api/trials/check-eligibility?consulteeProfileId=${consulteeProfileId}&consultantProfileId=${consultantProfileId}&subscriptionPlanId=${subscriptionPlanId}`,
+          ),
+          "Eligibility check failed",
+        ),
       );
-      if (!eligibilityResponse.ok) {
-        throw new Error("Failed to check eligibility");
-      }
-      const { data: eligibility } = await eligibilityResponse.json();
+      const eligibility = eligibilityBody.data;
 
       if (!eligibility.isEligible) {
         toast({
@@ -121,20 +155,18 @@ export function TrialBookingModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          consulteeProfileId: consulteeProfile.id,
+          consulteeProfileId,
           consultantProfileId,
           subscriptionPlanId,
           notes: notes.trim() || null,
         }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to submit trial request");
-      }
-
       // #1775 C-7 — a paid trial is paid now: straight to its checkout page.
-      const created: { checkoutUrl?: string | null } = await response.json();
+      const createdBody = createdAnswerSchema.safeParse(
+        await requireJsonResponse(response, "Trial request failed"),
+      );
+      const created = createdBody.success ? createdBody.data : {};
       if (created.checkoutUrl) {
         router.push(created.checkoutUrl);
         return;
@@ -153,15 +185,22 @@ export function TrialBookingModal({
         setNotes("");
       }, 2000);
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
-      console.error("Error requesting trial:", error);
+      console.warn("Trial request failed", error);
+      // A modelled refusal is an answer, not a fault: it carries a sentence
+      // written for the buyer and is not a Sentry event.
+      const expected = isExpectedRefusal(error);
+      if (!expected) {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client", flow: "trial-request" } },
+        );
+      }
       toast({
-        title: "Error",
+        title: "Couldn't request the trial",
         description:
-          error instanceof Error ? error.message : "Failed to request trial",
+          expected && error instanceof ApiResponseError && error.code
+            ? userMessageFrom(error)
+            : "Please try again in a moment.",
         variant: "destructive",
       });
     } finally {

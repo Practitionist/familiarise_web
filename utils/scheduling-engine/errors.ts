@@ -7,11 +7,18 @@
 
 import { AllocationErrorCode } from "./types";
 
-abstract class AllocationError extends Error {
+export abstract class AllocationError extends Error {
   abstract readonly httpStatus: number;
   abstract readonly errorCode: AllocationErrorCode;
 
-  constructor(message: string) {
+  /**
+   * `message` is plain user copy. `details` is developer detail (times as
+   * ISO, internal tags, counts) for logs and Sentry only, never a response.
+   */
+  constructor(
+    message: string,
+    readonly details?: Record<string, unknown>,
+  ) {
     super(message);
     this.name = this.constructor.name;
   }
@@ -24,8 +31,12 @@ abstract class AllocationError extends Error {
 export class AllocationValidationError extends AllocationError {
   readonly httpStatus = 400 as const;
   readonly errorCode: AllocationErrorCode;
-  constructor(message: string, code: AllocationErrorCode = "VALIDATION_ERROR") {
-    super(message);
+  constructor(
+    message: string,
+    code: AllocationErrorCode = "VALIDATION_ERROR",
+    details?: Record<string, unknown>,
+  ) {
+    super(message, details);
     this.errorCode = code;
   }
 }
@@ -59,7 +70,11 @@ export type AllocationConflictCode = Extract<
   | "ALREADY_ALLOCATED"
   | "RESCHEDULE_STATE_CHANGED"
   | "SLOT_TAKEN"
+  | "TIMES_TAKEN"
+  | "ALLOCATION_RACE"
+  | "AVAILABILITY_CHANGED"
   | "RESCHEDULE_NO_LONGER_OPEN"
+  | "SESSION_HAS_REMEDY"
 >;
 
 /** 409 — lock contention, duplicate booking race, already allocated */
@@ -69,8 +84,9 @@ export class AllocationConflictError extends AllocationError {
   constructor(
     message: string,
     code: AllocationConflictCode = "LOCK_CONTENTION",
+    details?: Record<string, unknown>,
   ) {
-    super(message);
+    super(message, details);
     this.errorCode = code;
   }
 }
@@ -84,4 +100,20 @@ export class AllocationConflictError extends AllocationError {
 export class AllocationIdempotencyMismatchError extends AllocationError {
   readonly httpStatus = 422 as const;
   readonly errorCode = "IDEMPOTENCY_KEY_REUSE" as const;
+}
+
+/**
+ * 503 — the auto search stopped at its time budget before placing every
+ * session. Not a shortage: the calendar may have room, so a retry (or a manual
+ * pick) can succeed.
+ */
+export class SearchTimeoutError extends AllocationError {
+  readonly httpStatus = 503 as const;
+  readonly errorCode = "SEARCH_TIMEOUT" as const;
+  constructor(details?: Record<string, unknown>) {
+    super(
+      "This calendar is taking too long to search. Try again, or pick the times yourself.",
+      details,
+    );
+  }
 }

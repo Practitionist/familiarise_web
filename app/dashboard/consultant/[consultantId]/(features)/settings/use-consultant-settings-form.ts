@@ -444,7 +444,11 @@ export function useConsultantSettingsForm(
         response,
         "Failed to update settings",
       )) as {
-        uncoveredUpcoming?: { count: number; appointmentIds: string[] };
+        uncoveredUpcoming?: {
+          count: number;
+          appointmentIds: string[];
+          awaitingConfirmation?: number;
+        };
       };
 
       const updatedResponse = await fetch(
@@ -468,11 +472,16 @@ export function useConsultantSettingsForm(
       // A booking keeps its time when the hours shrink; say how many sit
       // outside the new hours instead of refusing (docs/onboarding/03-availability-contract.md).
       const uncovered = saved.uncoveredUpcoming?.count ?? 0;
+      const awaiting = saved.uncoveredUpcoming?.awaitingConfirmation ?? 0;
+      const awaitingNote =
+        awaiting > 0
+          ? ` ${awaiting} of them ${awaiting === 1 ? "is" : "are"} still awaiting payment or approval.`
+          : "";
       toast({
         title: "Settings updated",
         description:
           uncovered > 0
-            ? `Saved. ${uncovered} upcoming ${uncovered === 1 ? "session now falls" : "sessions now fall"} outside your published hours — they keep their time; reschedule or cancel from Appointments if needed.`
+            ? `Saved. ${uncovered} upcoming ${uncovered === 1 ? "session now falls" : "sessions now fall"} outside your published hours — they keep their time; reschedule or cancel from Appointments if needed.${awaitingNote}`
             : "Your profile settings have been successfully updated.",
       });
     } catch (error) {

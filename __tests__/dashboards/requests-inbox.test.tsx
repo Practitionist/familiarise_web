@@ -134,9 +134,20 @@ describe("Requests inbox anatomy (A-4)", () => {
     expect(html).toContain(">Approve<");
   });
 
-  it("the approve toast follows the allocate response's awaitingPayment flag", () => {
+  it("the approve toast follows the allocate response's awaitingPayment flag and names the real pay deadline", () => {
+    // A window clamped to 15 minutes before a session, not a flat 24 h.
+    expect(
+      approvedToast(
+        {
+          awaitingPayment: true,
+          payExpiresAt: new Date("2026-09-24T08:45:00.000Z"),
+        },
+        { zone: "Asia/Kolkata" },
+      ),
+    ).toBe("Approved — the learner has until Thu, 24 Sept, 2:15 pm to pay");
+    // No deadline on the response (a link already live): no number invented.
     expect(approvedToast({ awaitingPayment: true })).toBe(
-      "Approved — the learner has 24 h to pay",
+      "Approved — waiting for the learner to pay",
     );
     // Absent or false → today's behaviour.
     expect(approvedToast({})).toBe("Approved");

@@ -611,7 +611,6 @@ function seed() {
     });
   mockTable("appointment").push({
     id: "appt-1",
-    organizationId: null,
     participants: [
       {
         userId: "u-expert",
@@ -622,7 +621,10 @@ function seed() {
     ],
     payment: [{ userId: "u-owner", hostOrganizationId: null }],
     occurrences: [],
-    organization: null,
+    // Hosted by org-1, so its operators hold the org-party support grant.
+    organizationId: "org-1",
+    consultation: { consultationPlan: { organizationId: "org-1" } },
+    organization: { status: "ACTIVE" },
   });
   mockTable("supportCaseEvidenceRequest").push({
     id: "ev-1",

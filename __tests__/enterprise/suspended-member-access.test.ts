@@ -113,7 +113,7 @@ describe("where allowSuspended is used", () => {
   it("serves the detail read-only and 404s the operator branch", () => {
     const src = read(`${DASH}/appointments/[appointmentId]/page.tsx`);
     expect(src).toContain("readOnly={suspended}");
-    expect(src).toContain("if (suspended) notFound();");
+    expect(src).toContain("if (suspended || !ownedByOrg) notFound();");
   });
 
   it("Join is participant-based, with no org-membership gate to trip", () => {

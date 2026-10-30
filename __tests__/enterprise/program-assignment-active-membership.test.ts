@@ -101,6 +101,7 @@ describe("program assignment requires an ACTIVE membership (B2B gap 10)", () => 
     mockMembershipFindFirst.mockResolvedValue({
       id: MEMBERSHIP,
       status: "ACTIVE",
+      role: "LEARNER",
     });
 
     const res = await POST(request(), params());
@@ -116,7 +117,11 @@ describe("program assignment requires an ACTIVE membership (B2B gap 10)", () => 
   it.each(["PENDING", "SUSPENDED", "REMOVED", "ERASED"])(
     "409s for a %s membership and never touches the seat count",
     async (status) => {
-      mockMembershipFindFirst.mockResolvedValue({ id: MEMBERSHIP, status });
+      mockMembershipFindFirst.mockResolvedValue({
+        id: MEMBERSHIP,
+        status,
+        role: "LEARNER",
+      });
 
       const res = await POST(request(), params());
 
@@ -147,6 +152,7 @@ describe("program assignment requires an ACTIVE membership (B2B gap 10)", () => 
     mockMembershipFindFirst.mockResolvedValue({
       id: MEMBERSHIP,
       status: "ACTIVE",
+      role: "LEARNER",
     });
 
     await POST(request(), params());

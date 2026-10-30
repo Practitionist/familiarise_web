@@ -66,7 +66,7 @@ describe("AllocationAlgorithms.manualAllocate", () => {
       baseOptions,
     );
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Expected 2 slots but received 1");
+    expect(result.error).toContain("Pick times for 1 session");
   });
 
   it("should reject past slots", async () => {
@@ -218,7 +218,7 @@ describe("AllocationAlgorithms.manualAllocate", () => {
       },
     );
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Expected 4 slots but received 8");
+    expect(result.error).toContain("Pick times for 2 sessions; 4 picked");
   });
 
   it("should adjust required slots for in-progress subscription with past slots", async () => {
@@ -262,7 +262,7 @@ describe("AllocationAlgorithms.manualAllocate", () => {
       },
     );
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Expected 4 slots but received 8");
+    expect(result.error).toContain("Pick times for 2 sessions; 4 picked");
   });
 
   it("should not adjust required slots for non-recurring events", async () => {

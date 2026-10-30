@@ -30,13 +30,17 @@ All test data uses the `-006` suffix to avoid collisions with existing seed data
 
 **Distributed locking** (`utils/appointmentlock.ts`):
 
-- `lockAutoAllocate(consultantProfileId, ttl?, scope?)` — consultant-level lock
-  for auto-allocation, key `auto-allocate:<consultantProfileId>[:<scope>]`
-- `lockSlotBooking(consultantProfileId, startsAt, endsAt, ttl?)` — the booking
-  lock, **interval-granular** since #1169: it delegates to `lockSlotInterval`,
-  which floors the window onto the 30-minute grid and takes one
-  `slot-booking:<consultantProfileId>:<atomStartISO>` key per atom, in ascending
-  order, all-or-nothing. There is no single per-slot key and the retired
+- `lockAutoAllocate(consultantProfileId, ttl?)` — consultant-level lock for
+  allocation, key `auto-allocate:<consultantProfileId>` (one key per expert; there
+  are no day-scoped keys).
+- `tryLockSlotBatch(entries, ttl?)` / `lockSlotBatch(entries, ttl?, retry?)` — the
+  slot lock. Every 30-minute atom of every interval a write makes busy, for every
+  profile it touches, is one `slot-booking:<consultantProfileId>:<atomStartISO>`
+  key, and the whole set is taken in **one atomic Lua call**, all or nothing.
+  `tryLockSlotBatch` never waits and returns the held keys; `lockSlotBatch` (buyer
+  doors: checkout, request, trial) retries it briefly. The allocator also takes
+  this batch after its search: a held time is 409 `TIMES_TAKEN` (manual and
+  requested modes) or a re-search, then 409 `ALLOCATION_RACE` (auto). The retired
   `trial-slot-booking:` namespace must not come back — trials take these same
   atoms.
 - `lockEventCheckout(appointmentType, eventOrPlanId)` — event-level lock for
@@ -413,8 +417,12 @@ async () => {
 };
 ```
 
-**Expected:** One returns 200, the other returns 409 (lock contention).
-The order doesn't matter — exactly one succeeds.
+**Expected:** Both return 409 and neither writes. The setup above already
+allocated the webinar, so each request is either refused at the consultant
+lock (`errorCode: "LOCK_CONTENTION"`, the one that lost the
+`auto-allocate:<consultantProfileId>` key) or by the already-allocated guard
+(`errorCode: "ALREADY_ALLOCATED"`). The auto allocator never re-plans a fully
+allocated event.
 
 DB verify:
 
@@ -422,7 +430,7 @@ DB verify:
 SELECT COUNT(DISTINCT a.id) AS apt_count
 FROM "Appointment" a
 WHERE a."webinarId" = 'test-webinar-006a';
--- Expected: 1 (no double-booking)
+-- Expected: 1 (the setup's appointment; no double-booking)
 ```
 
 ### Test 2.2 — Concurrent Auto-Allocate for SAME Class
@@ -459,7 +467,8 @@ async () => {
 };
 ```
 
-**Expected:** One 200, one 409
+**Expected:** Both 409 (`LOCK_CONTENTION` or `ALREADY_ALLOCATED`), for the same
+reason as Test 2.1: the class was allocated just before. Nothing is written.
 
 DB verify:
 
@@ -470,9 +479,10 @@ WHERE a."classId" = 'test-class-006a';
 -- Expected: 2 (class has 2 total sessions, no more)
 ```
 
-### Test 2.3 — Sequential Auto-Allocate After First Succeeds
+### Test 2.3 — Sequential Auto-Allocate After the Lock Is Released
 
-After lock is released from Test 2.1, a sequential call should succeed:
+After the lock is released from Test 2.1, a sequential call is no longer
+refused by the lock:
 
 ```javascript
 async () => {
@@ -488,7 +498,9 @@ async () => {
 };
 ```
 
-**Expected:** 200 — lock was released, sequential allocation works
+**Expected:** 409 with `errorCode: "ALREADY_ALLOCATED"`, never `LOCK_CONTENTION`:
+the lock was released, and the refusal now comes from the already-allocated
+guard alone. Nothing is written.
 
 ---
 
@@ -1104,9 +1116,9 @@ SELECT
 
 | #   | Check                                                     | Expected              |
 | --- | --------------------------------------------------------- | --------------------- |
-| 1   | Concurrent webinar auto-allocate -> one 200, one 409      | Exactly one succeeds  |
-| 2   | Concurrent class auto-allocate -> one 200, one 409        | Exactly one succeeds  |
-| 3   | Sequential auto-allocate after lock release -> 200        | 200                   |
+| 1   | Concurrent webinar re-auto-allocate -> two 409s           | No second appointment |
+| 2   | Concurrent class re-auto-allocate -> two 409s             | No extra appointments |
+| 3   | Sequential re-auto-allocate after lock release -> 409     | `ALREADY_ALLOCATED`   |
 | 4   | No double-booking in DB after concurrent requests         | Verified via COUNT    |
 | 5   | Validation error -> 400 (not 500)                         | 400                   |
 | 6   | Not-found event -> 400 (not 404, not 500)                 | 400                   |

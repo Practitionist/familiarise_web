@@ -19,6 +19,7 @@ import { useState } from "react";
 
 import { PricingOption } from "../defaults";
 import { bookingModeBadge } from "@/lib/booking/booking-mode";
+import type { DisplayZone } from "@/lib/time/use-display-zone";
 
 const getDurationLabel = (durationInHours: number): string => {
   return `${durationInHours} Hour${durationInHours > 1 ? "s" : ""}`;
@@ -42,9 +43,10 @@ interface ExpertPricingProps {
   setCurrentDate: (date: Date) => void;
   renderCalendar: () => JSX.Element[];
   slotTimings: TIntervalTiming[];
+  slotsReady: boolean;
   selectedSlot: TIntervalTiming | null;
   setSelectedSlot: (slot: TIntervalTiming | null) => void;
-  timezone: string;
+  displayZone: DisplayZone;
   autoOpenTrial?: boolean;
   onRefreshSlots?: () => void;
   onDurationChange?: (durationInHours: number) => void;
@@ -61,9 +63,10 @@ export function ExpertPricing({
   setCurrentDate,
   renderCalendar,
   slotTimings,
+  slotsReady,
   selectedSlot,
   setSelectedSlot,
-  timezone,
+  displayZone,
   autoOpenTrial,
   onRefreshSlots,
   onDurationChange,
@@ -232,7 +235,7 @@ export function ExpertPricing({
             Choose your preferred option
           </p>
           {/* Metadata only: how this expert takes bookings, shown for consultations
-              (a plan is always paid at purchase). A pause stops every new booking, so it shows on every tab. */}
+              (a plan is always paid at purchase). A pause stops new 1:1 bookings and trials, so it shows on every tab. */}
           {(consultantDetails.acceptingRequests === false ||
             (hasConsultations &&
               (!hasSubscriptions || activeServiceTab === "consultations"))) && (
@@ -295,9 +298,10 @@ export function ExpertPricing({
                 setCurrentDate={setCurrentDate}
                 renderCalendar={renderCalendar}
                 slotTimings={slotTimings}
+                slotsReady={slotsReady}
                 selectedSlot={selectedSlot}
                 setSelectedSlot={setSelectedSlot}
-                timezone={timezone}
+                displayZone={displayZone}
                 onRefreshSlots={onRefreshSlots}
                 onDurationChange={onDurationChange}
               />
@@ -307,7 +311,7 @@ export function ExpertPricing({
                 subscriptionOptions={subscriptionOptions}
                 consultantDetails={consultantDetails}
                 handleSubscriptionBooking={handleSubscriptionBooking}
-                timezone={timezone}
+                timezone={displayZone.zone}
                 autoOpenTrial={autoOpenTrial}
               />
             </TabsContent>
@@ -323,9 +327,10 @@ export function ExpertPricing({
             setCurrentDate={setCurrentDate}
             renderCalendar={renderCalendar}
             slotTimings={slotTimings}
+            slotsReady={slotsReady}
             selectedSlot={selectedSlot}
             setSelectedSlot={setSelectedSlot}
-            timezone={timezone}
+            displayZone={displayZone}
             onRefreshSlots={onRefreshSlots}
             onDurationChange={onDurationChange}
           />
@@ -334,7 +339,7 @@ export function ExpertPricing({
             subscriptionOptions={subscriptionOptions}
             consultantDetails={consultantDetails}
             handleSubscriptionBooking={handleSubscriptionBooking}
-            timezone={timezone}
+            timezone={displayZone.zone}
           />
         ) : (
           <div className="text-center py-8">

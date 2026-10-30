@@ -1,6 +1,6 @@
 /**
- * #1703 QA-1 — the grid is drawn in ONE zone, the viewer's profile zone, and
- * the footer label is derived from that zone rather than from `Intl`.
+ * The grid is drawn in ONE zone, the viewer's profile zone, and the footer
+ * label is derived from that zone rather than from `Intl`.
  */
 import {
   cellInstant,
@@ -8,7 +8,6 @@ import {
   footerZoneLine,
   isOnCalendarDay,
   resolveGridZone,
-  rowOf,
 } from "@/lib/time/grid-zone";
 
 /** 2026-09-24 as a calendar date; 08:30Z is 14:00 in Kolkata and 05:30 in Bahia. */
@@ -31,7 +30,6 @@ describe("grid zone", () => {
     expect(cellInstant(day, 5, 30, "America/Bahia").toISOString()).toBe(
       "2026-09-24T08:30:00.000Z",
     );
-    expect(rowOf(at, "America/Bahia")).toEqual({ rowIndex: 11, fraction: 0 });
     expect(isOnCalendarDay(day, at, "America/Bahia")).toBe(true);
   });
 
@@ -44,7 +42,7 @@ describe("grid zone", () => {
   it("labels the footer from the zone it is handed, not Intl", () => {
     const line = footerZoneLine(at, "America/Bahia", "Asia/Kolkata");
     // The abbreviation is ICU's ("GMT-3" today); only the offset is pinned.
-    expect(line.label).toMatch(/^Times in \S+ \(UTC-03:00\)$/);
+    expect(line.label).toMatch(/^Times shown in \S+ \(UTC-03:00\)$/);
     expect(line.title).toBe("America/Bahia");
     expect(line.limits).toEqual({
       label: "Limits counted in IST (UTC+05:30)",

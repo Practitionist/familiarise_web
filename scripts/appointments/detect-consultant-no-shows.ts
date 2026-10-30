@@ -54,6 +54,7 @@ import {
 } from "@/lib/booking/session-outcome";
 import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 
@@ -111,6 +112,8 @@ export async function detectConsultantNoShows(opts?: {
 // longer this job's to cancel and refund; cohort and CAS both exclude it.
 const DECIDED_OR_PARKED = {
   deletedAt: null,
+  // An incident-voided original is history, not a decision on its rebook.
+  completionStatus: { not: OccurrenceCompletionStatus.VOIDED },
   OR: [
     { outcome: { not: null } },
     { completionStatus: OccurrenceCompletionStatus.UNVERIFIED },
@@ -143,6 +146,7 @@ function findNoShowCandidates(
         occurrences: {
           every: { endsAt: { lt: graceCutoff } },
           some: {
+            ...LIVE_SLOT_WHERE,
             endsAt: { lt: graceCutoff },
             meeting: { isNot: null },
           },
@@ -191,6 +195,15 @@ function findNoShowCandidates(
 }
 
 type NoShowCandidate = Awaited<ReturnType<typeof findNoShowCandidates>>[number];
+
+/** The sessions the verdict is about: live ones, never an incident-voided original. */
+function judgedSessions(consultation: NoShowCandidate) {
+  return (consultation.appointment?.occurrences ?? []).filter(
+    (o) =>
+      !isDeadOccurrence(o) &&
+      o.completionStatus !== OccurrenceCompletionStatus.VOIDED,
+  );
+}
 type NoShowParty = {
   consultantUserId: string;
   consulteeUserId: string;
@@ -221,21 +234,19 @@ function evaluateConsultantNoShow(
     return null;
   }
 
-  const outcomes = (consultation.appointment?.occurrences ?? [])
-    .filter((o) => !isDeadOccurrence(o))
-    .map(
-      (o) =>
-        classifySessionOutcome({
-          startsAt: o.startsAt,
-          endsAt: o.endsAt,
-          hostUserIds: [consultantUserId],
-          intervals: o.presences,
-          meeting: o.meeting,
-          // Stream corroboration is its own refusal below.
-          report: null,
-          maintenanceWindows: outages,
-        }).outcome,
-    );
+  const outcomes = judgedSessions(consultation).map(
+    (o) =>
+      classifySessionOutcome({
+        startsAt: o.startsAt,
+        endsAt: o.endsAt,
+        hostUserIds: [consultantUserId],
+        intervals: o.presences,
+        meeting: o.meeting,
+        // Stream corroboration is its own refusal below.
+        report: null,
+        maintenanceWindows: outages,
+      }).outcome,
+  );
   const hostNeverPresent = outcomes.every((o) => HOST_NEVER_PRESENT.has(o));
   if (!outcomes.includes("HOST_ABSENT") || !hostNeverPresent) return null;
 
@@ -271,7 +282,7 @@ export async function refusalFromStreamEvidence(
   consultation: NoShowCandidate,
   lookup: PresenceLookup = makePresenceLookup(),
 ): Promise<string | null> {
-  const callIds = (consultation.appointment?.occurrences ?? [])
+  const callIds = judgedSessions(consultation)
     .map((slot) => slot.meeting?.streamCallId)
     .filter((id): id is string => !!id);
 
@@ -365,6 +376,15 @@ async function claimConsultantNoShow(
         },
       });
 
+      const claimedSessions = await tx.appointmentOccurrence.findMany({
+        where: {
+          appointmentId,
+          deletedAt: null,
+          outcome: null,
+          completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+        },
+        select: { id: true },
+      });
       // #1583 A-P0-05 — through the helper, tombstoned, with a history row;
       // the from-set is the one the raw updateMany carried.
       await transitionOccurrenceCompletion(tx, {
@@ -385,6 +405,7 @@ async function claimConsultantNoShow(
         ...strike,
         cause: "CONSULTANT_NO_SHOW",
         appointmentId,
+        occurrenceIds: claimedSessions.map((o) => o.id),
       });
     });
   } catch (error) {

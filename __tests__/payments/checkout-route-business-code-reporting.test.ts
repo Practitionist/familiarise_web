@@ -33,6 +33,7 @@ jest.mock("../../lib/payments/checkout", () => ({
 
 jest.mock("../../lib/payments/operations/checkout-replay", () => ({
   replayByIdempotencyKey: jest.fn(async () => null),
+  checkoutRequestFingerprint: () => "fp",
 }));
 
 jest.mock("../../lib/payments/tax/checkout-context", () => ({
@@ -325,7 +326,7 @@ describe("a same-key P2002 out of handleCheckout replays the winner", () => {
     // by the one key both tabs sent, never a server-minted one.
     expect(replayByIdempotencyKey).toHaveBeenCalledTimes(3);
     for (const call of (replayByIdempotencyKey as jest.Mock).mock.calls) {
-      expect(call).toEqual(["user_1", KEY]);
+      expect(call).toEqual(["user_1", KEY, "fp"]);
     }
   });
 });

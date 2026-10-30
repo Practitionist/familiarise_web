@@ -17,7 +17,12 @@
 import * as Sentry from "@sentry/nextjs";
 import { transitionParticipant } from "@/lib/booking/participants";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
-import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
+import {
+  readCancelWindowState,
+  resolveBookingRefundContext,
+} from "@/lib/booking/cancellation-scope";
+import { cancelWindowRefusal } from "@/lib/booking/session-window";
+import type { Refusal } from "@/lib/errors/refusal";
 import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
 import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
@@ -25,11 +30,7 @@ import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
-import { computeRefundPct } from "@/lib/payments/operations/cancellation-policy";
-import {
-  POLICY_TERMS_INCLUDE,
-  termsFromPolicyRow,
-} from "@/lib/payments/operations/cancellation-policy-store";
+import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
   driveRefundOwed,
   type RefundOwedMarker,
@@ -166,6 +167,20 @@ export async function stampTrialEarningsOnCancel(
 }
 
 /**
+ * A trial whose session is about to start, under way or already held is not
+ * cancellable on any path; null when the cancel may proceed.
+ */
+export async function trialCancelWindowRefusal(
+  appointmentId: string | null,
+  db: PrismaLike = prisma,
+): Promise<Refusal | null> {
+  if (!appointmentId) return null;
+  return cancelWindowRefusal(await readCancelWindowState(db, appointmentId), {
+    appointmentId,
+  });
+}
+
+/**
  * #1846 — what cancelling this paid trial right now pays back, computed and
  * never written. The trial cancel dialog shows it before the click, and trial
  * DELETE refunds only the amount the caller confirmed from it (a changed quote
@@ -245,81 +260,51 @@ export async function quoteTrialRefund(
 
   if (!payment) return null;
 
-  const appointment = appointmentId
-    ? await db.appointment.findUnique({
-        where: { id: appointmentId },
-        select: {
-          cancellationPolicy: POLICY_TERMS_INCLUDE,
-          // The next undelivered session, so a rebook's voided original is never the clock.
-          occurrences: {
-            where: LIVE_SLOT_WHERE,
-            orderBy: { startsAt: "asc" },
-            take: 1,
-            select: { startsAt: true },
-          },
-        },
-      })
-    : null;
-
-  // #1775 C-11 — no session yet (a paid trial waiting for its answer) is
-  // infinite notice, as quoteBookingRefund reads it; -1 refunded 0 %.
-  const startsAt = appointment?.occurrences[0]?.startsAt;
-  const hoursUntilStart = startsAt
-    ? (startsAt.getTime() - Date.now()) / 3_600_000
-    : Number.POSITIVE_INFINITY;
-
-  const refundPct = computeRefundPct(
-    termsFromPolicyRow(appointment?.cancellationPolicy),
-    hoursUntilStart,
-    args.isConsultantInitiated,
-  );
   const grossPaise = Number(payment.amount);
   const refundablePaise = refundableBalancePaise(grossPaise, payment);
-  // #1500 — a fully-credit-funded trial. The rail alone is not enough: a `free_`
-  // intent with a non-zero amount is a mixed payment that settles on the money
-  // arm, so both halves of the predicate are load-bearing. The credits rail
-  // refuses a partial `amountPaise` outright, so a tier above 0% restores the
-  // credit in full and a 0% tier restores nothing — a late cancel bites a credit
-  // buyer exactly as it bites a card buyer.
-  const isFreeCreditFunded =
-    fundingRailForIntent(payment.paymentIntent) === "CREDITS" &&
-    grossPaise === 0;
-  const creditRestoresInFull = isFreeCreditFunded && refundPct > 0;
-  // #1396 — `refundPct` may carry two decimals (a policy can say 12.5%), so
-  // multiplying paise by the float first put a binary rounding error inside a
-  // money amount before the floor ever ran. Scale to integer basis points and
-  // divide once, exactly as `quoteBookingRefund` in cancellation-policy and
-  // `refundRemovedAttendeeSeat` in event-refunds do; BigInt because the
-  // intermediate product leaves the safe-integer range long before the amounts
-  // stop being real money. BigInt division truncates toward zero and both
-  // operands are non-negative, so this floors — the same rounding direction as
-  // every other rail, which is what keeps a quote and a charge from disagreeing.
-  const policyRefundPaise = Number(
-    (BigInt(grossPaise) * BigInt(Math.round(refundPct * 100))) / BigInt(10_000),
-  );
-  // Clamp to the remaining balance, as the cancel and seat-refund paths do. A
-  // percentage of the gross overshoots a payment that has already given some
-  // back, `refundPayment` rejects the whole request, and the catch below turns
-  // that into "refunded 0" — the buyer loses the remainder they were owed.
-  const estimatedRefundPaise = Math.max(
-    0,
-    Math.min(policyRefundPaise, refundablePaise),
-  );
+  // Same notice, ladder and clamp as every other booking; a trial with no
+  // appointment yet has no session at all, which reads as full notice.
+  const ctx = appointmentId
+    ? await resolveBookingRefundContext({ appointmentId }, undefined, db)
+    : null;
+  const quote = quoteBookingRefund({
+    policy: ctx?.policy ?? null,
+    hoursUntilNextSession: ctx?.hoursUntilNextSession ?? null,
+    // No live session and none ever confirmed: the paid trial is still
+    // waiting for its answer, so it has infinite notice. Once a session was
+    // confirmed, its absence means held or settled, never full notice.
+    slotsTotal:
+      ctx?.hoursUntilNextSession === null
+        ? ctx.confirmedSlotsTotal
+        : (ctx?.slotsTotal ?? 0),
+    sessionsRemaining: ctx?.sessionsRemaining ?? 0,
+    isSubscription: false,
+    isConsultantInitiated: args.isConsultantInitiated,
+    // The rail alone is not enough: `free_` with a non-zero amount is a mixed
+    // payment on the money arm.
+    isFreeCreditFunded:
+      fundingRailForIntent(payment.paymentIntent) === "CREDITS" &&
+      grossPaise === 0,
+    grossPaise,
+    refundablePaise,
+  });
+  const creditRestoresInFull = quote.creditRestoresInFull;
+  const estimatedRefundPaise = Math.max(0, quote.refundPaise);
 
   return {
     paymentId: payment.id,
-    refundPct: creditRestoresInFull ? 100 : refundPct,
+    refundPct: quote.refundPct,
     estimatedRefundPaise,
     grossPaise,
     refundablePaise,
     currency: payment.currency,
     fundingRail: fundingRailForIntent(payment.paymentIntent),
-    hoursUntilNextSession: Number.isFinite(hoursUntilStart)
-      ? hoursUntilStart
+    hoursUntilNextSession: Number.isFinite(quote.noticeHours)
+      ? quote.noticeHours
       : null,
     prorated: false,
     creditRestoresInFull,
-    tierRefundPct: refundPct,
+    tierRefundPct: quote.tierRefundPct,
   };
 }
 

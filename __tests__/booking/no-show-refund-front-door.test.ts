@@ -278,8 +278,10 @@ describe("consultant no-show refunds", () => {
     ]);
     await detectConsultantNoShows();
 
+    // An incident-voided original is history, never a decision on its rebook.
     const parked = {
       deletedAt: null,
+      completionStatus: { not: "VOIDED" },
       OR: [{ outcome: { not: null } }, { completionStatus: "UNVERIFIED" }],
     };
     const [query] = (prisma.consultation.findMany as jest.Mock).mock.calls[0];

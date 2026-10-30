@@ -15,6 +15,7 @@
 
 // ─── Module Mocks ───────────────────────────────────────────────────────────
 
+jest.mock("next/headers", () => ({ headers: async () => new Headers() }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -84,6 +85,7 @@ const NEAR_DATE = new Date(Date.now() + 12 * 60 * 60 * 1000);
 
 function makeSlot(id: string, startsAt: Date, appointmentId = "apt-1") {
   return {
+    ordinal: 1,
     id,
     startsAt,
     endsAt: new Date(startsAt.getTime() + 30 * 60 * 1000),
@@ -104,6 +106,7 @@ function makeConsultationAppointment(slotOverrides?: any[]) {
     occurrences: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
     consultation: {
       id: "cons-1",
+      status: "APPROVED",
       consultationPlan: {
         title: "Test Plan",
         consultantProfileId: "cp-001",
@@ -126,6 +129,7 @@ function makeSubscriptionAppointment(slotOverrides?: any[]) {
     consultation: null,
     subscription: {
       id: "sub-1",
+      status: "APPROVED",
       subscriptionPlan: {
         title: "Monthly Plan",
         consultantProfileId: "cp-001",
@@ -206,7 +210,12 @@ function makeMockTx(appointmentData: any) {
       // The reschedule caps count past release acts.
       groupBy: jest.fn().mockResolvedValue([]),
     },
-    rescheduleRequest: { findMany: jest.fn().mockResolvedValue([]) },
+    rescheduleRequest: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: "reschedule-request-1" }),
+    },
+    payment: { count: jest.fn().mockResolvedValue(0) },
   };
 }
 

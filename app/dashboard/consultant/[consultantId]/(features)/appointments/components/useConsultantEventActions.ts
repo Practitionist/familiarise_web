@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import {
   isExpectedRefusal,
   userMessageFrom,
@@ -17,11 +19,21 @@ import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { SlotPreference } from "@/components/scheduling/time-picker-policy";
 import {
   applyRefundRequote,
+  paymentLandedUnderClick,
+  cancelPreviewQueryKey,
+  cancelAlreadySettled,
   cancelPreviewUrl,
+  cancelRefusalFrom,
   readRefundQuoteChanged,
   shownQuoteBody,
   type ShownCancelQuote,
 } from "@/lib/appointments/cancel-requote";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
+import {
+  rescheduleTimesTaken,
+  takenStartsFrom,
+} from "@/lib/scheduling/allocationMessages";
+import { takenSlotStartsOf } from "@/lib/scheduling/allocationService";
 
 interface UseConsultantEventActionsOptions {
   consultantId: string;
@@ -31,6 +43,11 @@ interface UseConsultantEventActionsOptions {
   title: string;
   type: "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial";
 }
+
+const RetimeAnswerSchema = z.object({
+  attendeesWithClash: z.number(),
+  retimeBy: z.string(),
+});
 
 /** Shape of `/api/appointments/[id]/cancel`'s `refund` field (1:1 bookings). */
 interface CancelRefundResult {
@@ -91,6 +108,7 @@ export function useConsultantEventActions({
   type,
 }: UseConsultantEventActionsOptions) {
   const { toast } = useToast();
+  const formatZoned = useZonedFormat();
   const queryClient = useQueryClient();
   const [isLoading, setIsLoading] = useState(false);
 
@@ -126,6 +144,8 @@ export function useConsultantEventActions({
     // #1065 — only meaningful alongside an absent proposedSlots: how to place
     // the replacement when no time is named.
     preference?: SlotPreference,
+    /** The zone the picker showed, for naming taken times back. */
+    displayZone?: string,
   ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
@@ -151,7 +171,7 @@ export function useConsultantEventActions({
       if (preference?.preferredDays)
         payload.preferredDays = preference.preferredDays;
 
-      const response = await fetch(url, {
+      const response = await fetchWithIdentity(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: Object.keys(payload).length ? JSON.stringify(payload) : undefined,
@@ -183,6 +203,15 @@ export function useConsultantEventActions({
       invalidateBookingData();
       return true;
     } catch (error) {
+      if (error instanceof ApiResponseError && error.code === "TIMES_TAKEN") {
+        toast(
+          rescheduleTimesTaken(
+            takenStartsFrom(takenSlotStartsOf(error.body)),
+            displayZone,
+          ),
+        );
+        return false;
+      }
       // The same refusal the consultee page sees (FAMILIARISE_WEB-2Z): shown,
       // not captured.
       if (!isExpectedRefusal(error)) {
@@ -203,15 +232,10 @@ export function useConsultantEventActions({
   };
 
   /**
-   * Withdraw a published group event's date without ending the booking.
-   *
-   * Same route as `handleReschedule`, deliberately: for a WEBINAR/CLASS that
-   * call never opened a proposal — there is no single counterparty to propose
-   * to — it only released the slots back to the allocate queue. That behaviour
-   * was correct and is what this names (#1082). Nothing here touches money,
-   * enrolment, earnings or the ledger; that is Cancel.
+   * Move a published webinar to `startsAt` in one step. Resolves true when it
+   * moved; refusals (too soon, the host is busy then) are shown, not captured.
    */
-  const handleUnschedule = async (): Promise<boolean> => {
+  const handleRetime = async (startsAt: string): Promise<boolean> => {
     if (!appointmentId) {
       toast({
         title: "Error",
@@ -223,32 +247,37 @@ export function useConsultantEventActions({
 
     setIsLoading(true);
     try {
-      // No `type` param: the route derives it from the DB and only compares
-      // when one is supplied, so omitting it cannot mismatch.
-      const response = await fetch(
-        `/api/appointments/${appointmentId}/reschedule`,
-        { method: "POST", headers: { "Content-Type": "application/json" } },
+      const response = await fetchWithIdentity(
+        `/api/appointments/${appointmentId}/retime`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ startsAt }),
+        },
       );
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to unschedule");
-      }
-
+      const data = RetimeAnswerSchema.parse(
+        await requireJsonResponse(response, "Couldn't move the webinar"),
+      );
       toast({
-        title: `${type} unscheduled`,
-        description: `"${title}" is off the calendar and back in your queue. Attendees stay enrolled and have been told the date is withdrawn.`,
+        title: "Webinar moved",
+        description:
+          `"${title}" has a new date. Attendees were offered a full refund until ${formatZoned(data.retimeBy, "EEE, d MMM · h:mm a")}.` +
+          (data.attendeesWithClash > 0
+            ? ` ${data.attendeesWithClash} already have another session then.`
+            : ""),
       });
       invalidateBookingData();
       return true;
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
+      if (!isExpectedRefusal(error)) {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client" } },
+        );
+      }
       toast({
-        title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to unschedule",
+        title: "Couldn't move the webinar",
+        description: userMessageFrom(error, "Couldn't move the webinar"),
         variant: "destructive",
       });
       return false;
@@ -272,7 +301,7 @@ export function useConsultantEventActions({
 
     setIsLoading(true);
     try {
-      const response = await fetch(
+      const response = await fetchWithIdentity(
         `/api/appointments/${appointmentId}/cancel`,
         {
           method: "POST",
@@ -294,6 +323,14 @@ export function useConsultantEventActions({
           error instanceof ApiResponseError && error.status === 409
             ? readRefundQuoteChanged(error.body)
             : null;
+        if (requote && paymentLandedUnderClick(quote)) {
+          toast({
+            title: "The payment just went through",
+            description: "Review the refund before you cancel.",
+          });
+          invalidateBookingData();
+          return true;
+        }
         if (requote) {
           applyRefundRequote(
             queryClient,
@@ -304,6 +341,36 @@ export function useConsultantEventActions({
             title: "The refund has changed",
             description:
               "Check the new amount in the dialog and confirm again.",
+          });
+          return false;
+        }
+        const refusal =
+          error instanceof ApiResponseError && error.status === 409
+            ? cancelRefusalFrom(error.body)
+            : null;
+        if (refusal) {
+          toast({
+            title: "This booking can't be cancelled right now",
+            description: refusal.message,
+            variant: "destructive",
+          });
+          void queryClient.invalidateQueries({
+            queryKey: cancelPreviewQueryKey(cancelPreviewUrl(appointmentId)),
+          });
+          return false;
+        }
+        if (
+          error instanceof ApiResponseError &&
+          error.status === 409 &&
+          !cancelAlreadySettled(error.code)
+        ) {
+          toast({
+            title: "This booking can't be cancelled right now",
+            description: actionFailureMessage(
+              error,
+              "Failed to cancel appointment",
+            ),
+            variant: "destructive",
           });
           return false;
         }
@@ -354,7 +421,7 @@ export function useConsultantEventActions({
   return {
     isLoading,
     handleReschedule,
-    handleUnschedule,
+    handleRetime,
     handleCancelConfirm,
   };
 }

@@ -17,12 +17,7 @@
  * − 24h); see lib/booking/reschedule-proposals.ts for why a single fixed timer
  * gets one of those two cases wrong.
  *
- * This module exports the core function.
- * It is imported by:
- * - jobs/appointments/expire-reschedule-proposals.ts (GitHub Actions)
- * - app/api/cleanup/reschedule-proposals/route.ts (API endpoint)
- *
- * Schedule: hourly
+ * Registered in lib/cron/cleanup-registry.ts; runs on the 15-minute ticker.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -41,6 +36,8 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { startDeadline } from "@/lib/cron/run-deadline";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { errorMessageOf, reportSentryError } from "@/lib/observability/report";
 import { notifyRescheduleRestored } from "@/lib/booking/reschedule-outcome-notice";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
@@ -54,6 +51,8 @@ export interface RescheduleProposalExpiryResult {
   proposalsExpired: number;
   /** Expired, but the original time was taken, so the slots stay released. */
   proposalsExpiredUnrestored: number;
+  /** The run stopped on its budget or deadline with lapsed proposals left. */
+  hasMore: boolean;
   errors: string[];
   timestamp: string;
 }
@@ -103,6 +102,7 @@ const EXPIRY_SELECT = {
   id: true,
   appointmentId: true,
   createdAt: true,
+  originStatus: true,
   releasedOccurrenceIds: true,
   appointment: { select: { consultationId: true, subscriptionId: true } },
 } as const;
@@ -214,7 +214,7 @@ async function expireOneProposal(
   } catch (error) {
     // Answered between the read and the write — the answer wins, and there
     // is nothing left to expire. A held appointment lock means a live writer
-    // is on this booking right now; the next hourly tick takes the row.
+    // is on this booking right now; the next tick takes the row.
     if (
       error instanceof IllegalTransitionError ||
       error instanceof AppointmentBusyError
@@ -230,42 +230,62 @@ async function expireRescheduleProposalsUnlocked(
 ): Promise<RescheduleProposalExpiryResult> {
   const errors: string[] = [];
   const misses: RestoreMisses = { ids: [] };
+  const failures = createRunFailureReporter("jobs");
+  const outOfTime = startDeadline();
   let proposalsExpired = 0;
   let proposalsExpiredUnrestored = 0;
+  let hasMore = false;
 
   console.log("⏳ Expiring lapsed reschedule proposals...");
 
   try {
     const now = new Date();
-
-    // The status+expiresAt index covers this predicate exactly.
-    //
-    // Two independent bounds: the batch size keeps one read from loading every
-    // id, and `maxPerRun` keeps the whole RUN inside the caller's budget. The
-    // old pair (4 × 500) was sized for the 10-minute Actions workflow; the
-    // Netlify ticker drives the same core inside a 20 s abort.
+    // Rows this run already took (expired, skipped or failed) are not re-read,
+    // and a failed row is rotated to the back so it cannot block the queue.
+    const seen: string[] = [];
     let processed = 0;
-    for (;;) {
-      if (processed >= maxPerRun) break;
+    batches: for (;;) {
+      if (processed >= maxPerRun) {
+        hasMore = true;
+        break;
+      }
       const stale = await prisma.rescheduleRequest.findMany({
         where: {
           status: { in: RESCHEDULE_OPEN_STATUSES },
           expiresAt: { lt: now },
+          ...(seen.length > 0 ? { id: { notIn: seen } } : {}),
         },
-        orderBy: { id: "asc" },
+        orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
         take: Math.min(BATCH_SIZE, maxPerRun - processed),
         select: EXPIRY_SELECT,
       });
       if (stale.length === 0) break;
 
       for (const row of stale) {
-        const outcome = await expireOneProposal(row, now, misses);
-        if (outcome !== "skipped") proposalsExpired += 1;
-        if (outcome === "unrestored") proposalsExpiredUnrestored += 1;
+        if (outOfTime()) {
+          hasMore = true;
+          break batches;
+        }
+        seen.push(row.id);
         processed += 1;
+        try {
+          const outcome = await expireOneProposal(row, now, misses);
+          if (outcome !== "skipped") proposalsExpired += 1;
+          if (outcome === "unrestored") proposalsExpiredUnrestored += 1;
+        } catch (error) {
+          errors.push(`${row.id}: ${errorMessageOf(error)}`);
+          failures.add("reschedule-expiry-row", error, {
+            rescheduleRequestId: row.id,
+            appointmentId: row.appointmentId,
+          });
+          await prisma.rescheduleRequest
+            .updateMany({
+              where: { id: row.id, status: { in: RESCHEDULE_OPEN_STATUSES } },
+              data: { updatedAt: new Date() },
+            })
+            .catch(() => undefined);
+        }
       }
-
-      if (stale.length < BATCH_SIZE) break;
     }
 
     if (proposalsExpired > 0) {
@@ -275,14 +295,14 @@ async function expireRescheduleProposalsUnlocked(
     const message = error instanceof Error ? error.message : String(error);
     errors.push(message);
     console.error("❌ Reschedule proposal expiry failed:", message);
-    // Neither caller (GH Actions wrapper, cleanup API route) sees a throw from
-    // this function — the failure is folded into the result object instead —
-    // so this is the only place left to report it.
+    // Neither caller sees a throw from this function — the failure is folded
+    // into the result — so this is the only place left to report it.
     Sentry.captureException(
       error instanceof Error ? error : new Error(message),
       { tags: { subsystem: "jobs", job: "expire-reschedule-proposals" } },
     );
   }
+  failures.flush();
 
   if (misses.ids.length > 0) {
     reportSentryError(misses.firstError, {
@@ -299,6 +319,7 @@ async function expireRescheduleProposalsUnlocked(
     success: errors.length === 0,
     proposalsExpired,
     proposalsExpiredUnrestored,
+    hasMore,
     errors,
     timestamp: new Date().toISOString(),
   };

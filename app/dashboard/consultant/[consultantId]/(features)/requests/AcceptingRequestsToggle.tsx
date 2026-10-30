@@ -14,10 +14,9 @@ import { consultantSettingsQueryKey } from "../settings/settings";
 import { useSaveBookingRequestSettings } from "../settings/use-save-booking-request-settings";
 
 /**
- * #1527 §14 — "Accepting requests" lives on the working page. It saves the
- * one flag through the narrow booking-settings PATCH (the whole-profile PUT
- * 400'd on any stale availability overlap and the switch reverted silently)
- * and shares the settings query with the Booking requests page.
+ * The pause switch on the working page. It saves the one flag through the
+ * booking-settings PATCH, guarded by the value it showed, and shares the
+ * settings query with the Booking requests page.
  */
 export function AcceptingRequestsToggle({
   consultantId,
@@ -52,7 +51,7 @@ function ToggleSwitch({
   // Optimistic while in flight; server truth otherwise (a failure reverts
   // and the hook toasts why).
   const checked = save.isPending
-    ? (save.variables.acceptingRequests ?? true)
+    ? (save.variables.set.acceptingRequests ?? true)
     : (consultant.acceptingRequests ?? true);
   return (
     <div className="flex items-center gap-2">
@@ -62,14 +61,19 @@ function ToggleSwitch({
         disabled={save.isPending}
         onCheckedChange={(next) =>
           save.mutate(
-            { acceptingRequests: next },
+            {
+              set: { acceptingRequests: next },
+              expect: {
+                acceptingRequests: consultant.acceptingRequests ?? true,
+              },
+            },
             // The paused banner is server-rendered from the profile.
             { onSuccess: () => router.refresh() },
           )
         }
       />
       <Label htmlFor={id} className="text-sm font-medium">
-        Accepting requests
+        Taking new 1:1 bookings and trials
       </Label>
     </div>
   );
