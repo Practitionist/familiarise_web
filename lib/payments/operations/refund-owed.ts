@@ -623,6 +623,105 @@ export async function stampRefundOwed(
   return count === 1;
 }
 
+/** The ops event a door records when its refund found another door's already owed. */
+export const OWED_ALREADY_HELD_PREFIX = "owed-already-held:";
+
+/** A door's refund that another door's owed refund already held: the door added nothing. */
+export type OwedRefundAlreadyHeld = {
+  paymentId: string;
+  /** The key this door would have stamped. */
+  key: string;
+  heldKey: string;
+  /** Null is the full remaining balance. */
+  heldPaise: number | null;
+  /** The operator-facing explanation. */
+  note: string;
+};
+
+/**
+ * Stamps the door's marker; when another door's owed refund already holds the
+ * payment (first writer wins), records in the caller's transaction that this
+ * action added nothing and answers what holds it, so an operator can top up by hand.
+ */
+export async function stampOwedOrHeld(
+  tx: Tx,
+  marker: RefundOwedMarker,
+): Promise<OwedRefundAlreadyHeld | null> {
+  if (await stampRefundOwed(tx, marker)) return null;
+  return heldBy(tx, marker);
+}
+
+/** The operator-facing line for a door whose refund another door's owed refund already held. */
+export function owedAlreadyHeldNote(
+  paymentId: string,
+  heldKey: string,
+  heldPaise: number | null,
+): string {
+  return `A refund of ${heldPaise === null ? "the full balance" : rupees(heldPaise)} was already owed on payment ${paymentId} for another reason (${heldKey}), so this action added nothing to it. Refund any difference by hand.`;
+}
+
+/** What holds the payment instead of `marker`, recorded as an ops event; null when nothing else does. */
+async function heldBy(
+  tx: Tx,
+  marker: RefundOwedMarker,
+): Promise<OwedRefundAlreadyHeld | null> {
+  const row = await tx.payment.findUnique({
+    where: { id: marker.paymentId },
+    select: { id: true, refundOwedKey: true, refundOwedPaise: true },
+  });
+  return row ? reportHeld(tx, marker, row) : null;
+}
+
+async function reportHeld(
+  tx: Tx,
+  marker: RefundOwedMarker,
+  row: { refundOwedKey: string | null; refundOwedPaise: number | null },
+): Promise<OwedRefundAlreadyHeld | null> {
+  const heldKey = row.refundOwedKey;
+  if (!heldKey || heldKey === marker.key) return null;
+  const heldPaise =
+    row.refundOwedPaise === null ? null : Number(row.refundOwedPaise);
+  const held = {
+    paymentId: marker.paymentId,
+    key: marker.key,
+    heldKey,
+    heldPaise,
+    note: owedAlreadyHeldNote(marker.paymentId, heldKey, heldPaise),
+  };
+  await recordSystemEvent({
+    category: "PAYMENT",
+    severity: "WARN",
+    message: held.note,
+    context: { ...held, reason: marker.reason, owedPaise: marker.amountPaise },
+    correlationId: `${OWED_ALREADY_HELD_PREFIX}${marker.paymentId}:${marker.key}`,
+    db: tx,
+  });
+  return held;
+}
+
+/** For a batch the caller already stamped: the markers another door's owed refund held instead, in one read. */
+export async function heldInsteadOf(
+  tx: Tx,
+  markers: readonly RefundOwedMarker[],
+): Promise<OwedRefundAlreadyHeld[]> {
+  if (markers.length === 0) return [];
+  const rows = await tx.payment.findMany({
+    where: {
+      id: { in: markers.map((m) => m.paymentId) },
+      refundOwedKey: { not: null },
+    },
+    select: { id: true, refundOwedKey: true, refundOwedPaise: true },
+  });
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const held: OwedRefundAlreadyHeld[] = [];
+  for (const marker of markers) {
+    const row = byId.get(marker.paymentId);
+    const h = row ? await reportHeld(tx, marker, row) : null;
+    if (h) held.push(h);
+  }
+  return held;
+}
+
 /**
  * Stamps many markers in one statement, so a whole roster costs one round trip
  * inside the caller's transaction instead of one per seat.

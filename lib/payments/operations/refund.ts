@@ -134,7 +134,7 @@ import {
 import {
   claimOwedMarker,
   failRefund,
-  stampRefundOwed,
+  stampOwedOrHeld,
   type HandSettledOwed,
   type OwedMarkerInput,
   type RefundOwedMarker,
@@ -1651,7 +1651,8 @@ export async function applyRefundCascade(
         charged.overageBehavior === "CHARGE_MEMBER" &&
         charged.paymentId
       ) {
-        await stampRefundOwed(
+        // Another door's owed refund keeps the side-payment (first writer wins) and is recorded.
+        await stampOwedOrHeld(
           tx,
           overageCreditBackOwed(payment.id, charged.paymentId),
         );
