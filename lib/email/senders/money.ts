@@ -39,6 +39,7 @@ import ReferralBonusEmail, {
 } from "@/emails/payments/ReferralBonusEmail";
 import { RefundFailedEmail } from "@/emails/payments/RefundFailedEmail";
 import { RefundProcessedEmail } from "@/emails/payments/RefundProcessedEmail";
+import type { Tx } from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "../config";
@@ -49,6 +50,7 @@ import type {
 } from "../send-to-recipients";
 import {
   absolute,
+  claimAndStagePrepared,
   dateText,
   defineBudgetedEmailSender,
   defineFixedBudgetEmailSender,
@@ -57,7 +59,6 @@ import {
   money,
   prepareSpecEmails,
   stageSpecGuarded,
-  stageSpecOncePerRecipient,
   type Paise,
   type PreparedRecipientEmails,
   type RecipientEmailSpec,
@@ -151,10 +152,17 @@ export interface DigitalProductPurchaseEmailArgs {
 /** A claim's ttl outlives every retry of the capture that could stage it again. */
 const PURCHASE_EMAIL_CLAIM_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** Stages the receipt at most once per purchase; the caller attempts it. */
-export function stageDigitalProductPurchaseEmail(
+/** A rendered receipt, ready to stage inside the settling or claiming transaction. */
+export interface PreparedDigitalProductPurchaseEmail {
+  purchaseId: string;
+  buyerId: string;
+  prepared: PreparedRecipientEmails;
+}
+
+/** Renders the receipt outside any transaction. */
+export async function prepareDigitalProductPurchaseEmail(
   args: DigitalProductPurchaseEmailArgs,
-): Promise<StagedRecipientEmail[]> {
+): Promise<PreparedDigitalProductPurchaseEmail> {
   const free = Number(args.amountPaise) === 0;
   const amountText = free ? null : money(args.amountPaise, "INR");
   const libraryUrl = absolute(args.libraryHref);
@@ -174,11 +182,32 @@ export function stageDigitalProductPurchaseEmail(
         unsubscribeUrl: r.unsubscribeUrl,
       }),
   };
-  return stageSpecOncePerRecipient(spec, [args.buyerId], {
-    scope: "digital-product.purchased",
-    key: (userId) => `${args.purchaseId}:${userId}`,
-    ttlMs: PURCHASE_EMAIL_CLAIM_TTL_MS,
-  });
+  return {
+    purchaseId: args.purchaseId,
+    buyerId: args.buyerId,
+    prepared: await prepareSpecEmails(spec, [args.buyerId]),
+  };
+}
+
+export type ReceiptStagingTx = Pick<
+  Tx,
+  "idempotencyRecord" | "failedEmail" | "emailSuppression"
+>;
+
+/** Stages the receipt inside `tx` at most once per purchase; the caller attempts it after commit. */
+export function stageDigitalProductPurchaseEmail(
+  tx: ReceiptStagingTx,
+  receipt: PreparedDigitalProductPurchaseEmail,
+): Promise<StagedRecipientEmail[]> {
+  return claimAndStagePrepared(
+    tx,
+    {
+      scope: "digital-product.purchased",
+      key: (userId) => `${receipt.purchaseId}:${userId}`,
+      ttlMs: PURCHASE_EMAIL_CLAIM_TTL_MS,
+    },
+    [{ userId: receipt.buyerId, prepared: receipt.prepared }],
+  );
 }
 
 // ── Refund failed ───────────────────────────────────────────────────────────

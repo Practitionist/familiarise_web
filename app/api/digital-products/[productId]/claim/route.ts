@@ -3,13 +3,18 @@
  * claim is a SUCCEEDED purchase of 0 paise with no order, Payment, invoice or
  * earnings; the partial unique on (productId, buyerId) refuses a second one.
  */
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, checkoutLimiter } from "@/lib/rate-limit";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
-import { notifyDigitalProductPurchase } from "@/lib/digital-products/purchase-email";
+import {
+  flushDigitalProductReceipt,
+  prepareDigitalProductReceipt,
+  stageDigitalProductReceipt,
+} from "@/lib/digital-products/purchase-email";
 import {
   checkProductForSale,
   SALE_REFUSAL_STATUS,
@@ -51,30 +56,37 @@ export async function POST(_request: Request, { params }: RouteParams) {
       );
     }
 
-    const claimed = await lockDigitalProductPurchase(
-      productId,
+    const purchaseId = randomUUID();
+    const receipt = await prepareDigitalProductReceipt({
+      purchaseId,
       buyerId,
-      async () => {
-        const owned = await prisma.digitalProductPurchase.findFirst({
+      productId,
+      amountPaise: 0,
+    });
+    const claimed = await lockDigitalProductPurchase(productId, buyerId, () =>
+      prisma.$transaction(async (tx) => {
+        const owned = await tx.digitalProductPurchase.findFirst({
           where: { productId, buyerId, status: "SUCCEEDED" },
           select: { id: true },
         });
         if (owned) return null;
-        return prisma.digitalProductPurchase.create({
-          data: { productId, buyerId, amountPaise: 0, status: "SUCCEEDED" },
+        await tx.digitalProductPurchase.create({
+          data: {
+            id: purchaseId,
+            productId,
+            buyerId,
+            amountPaise: 0,
+            status: "SUCCEEDED",
+          },
           select: { id: true },
         });
-      },
+        // The receipt obligation commits with the claim.
+        return stageDigitalProductReceipt(tx, receipt);
+      }),
     );
     if (!claimed) return alreadyOwned();
-    await notifyDigitalProductPurchase(
-      { id: claimed.id },
-      EMAIL_BUDGET_MS.REQUEST,
-    );
-    return NextResponse.json(
-      { data: { purchaseId: claimed.id } },
-      { status: 201 },
-    );
+    await flushDigitalProductReceipt(claimed, EMAIL_BUDGET_MS.REQUEST);
+    return NextResponse.json({ data: { purchaseId } }, { status: 201 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&

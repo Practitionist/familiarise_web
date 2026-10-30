@@ -3,8 +3,9 @@
  */
 
 /**
- * The digital product receipt stages through the outbox at most once per
- * purchase and links to the buyer's library, never to a file.
+ * The digital product receipt is rendered before the settling transaction,
+ * staged through the outbox on that transaction at most once per purchase,
+ * and links to the buyer's library, never to a file.
  */
 
 const mockStage = jest.fn();
@@ -41,9 +42,11 @@ jest.mock("../../lib/prisma", () => {
         where.key.in
           .filter((key) => mockClaims.includes(key))
           .map(() => ({ userId: "buyer_1" })),
+      // skipDuplicates: an existing claim is not returned.
       createManyAndReturn: async ({ data }: { data: { key: string }[] }) => {
-        mockClaims.push(...data.map((d) => d.key));
-        return data.map(() => ({ userId: "buyer_1" }));
+        const fresh = data.filter((d) => !mockClaims.includes(d.key));
+        mockClaims.push(...fresh.map((d) => d.key));
+        return fresh.map(() => ({ userId: "buyer_1" }));
       },
     },
     $transaction: (cb: (tx: unknown) => Promise<unknown>) => cb(db),
@@ -52,7 +55,11 @@ jest.mock("../../lib/prisma", () => {
 });
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
-import { stageDigitalProductPurchaseEmail } from "@/lib/email/senders/money";
+import prisma from "@/lib/prisma";
+import {
+  prepareDigitalProductPurchaseEmail,
+  stageDigitalProductPurchaseEmail,
+} from "@/lib/email/senders/money";
 
 it("stages one receipt per purchase, linking the library and no file", async () => {
   mockStage.mockResolvedValue({ id: "fe_1", idempotencyKey: "k" });
@@ -65,17 +72,21 @@ it("stages one receipt per purchase, linking the library and no file", async () 
     libraryHref: "/dashboard/go/client/products",
   };
 
-  const first = await stageDigitalProductPurchaseEmail(args);
+  const receipt = await prepareDigitalProductPurchaseEmail(args);
+  const first = await stageDigitalProductPurchaseEmail(prisma, receipt);
   expect(first).toHaveLength(1);
   const [message, emailType, opts] = mockStage.mock.calls[0];
   expect(emailType).toBe("DIGITAL_PRODUCT_PURCHASED");
-  expect(opts).toMatchObject({ entityRef: "digital-product-purchase:dpp_1" });
+  expect(opts).toMatchObject({
+    entityRef: "digital-product-purchase:dpp_1",
+    tx: prisma,
+  });
   expect(message.subject).toBe("Your purchase: Interview workbook");
   expect(message.html).toContain("/dashboard/go/client/products");
   expect(message.html).toContain("₹499.00");
   expect(message.html).not.toContain("/download");
 
   // A re-run of the capture or claim stages nothing.
-  expect(await stageDigitalProductPurchaseEmail(args)).toEqual([]);
+  expect(await stageDigitalProductPurchaseEmail(prisma, receipt)).toEqual([]);
   expect(mockStage).toHaveBeenCalledTimes(1);
 });

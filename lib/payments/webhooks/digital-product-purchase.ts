@@ -2,8 +2,8 @@
  * Digital product sale settlement.
  *
  * A capture settles its DigitalProductPurchase (PENDING, or FAILED on a late
- * retry of the same order) to SUCCEEDED with the Payment, CARD leg, earnings
- * and BOOKING journal in one transaction. A capture that cannot fulfil a
+ * retry of the same order) to SUCCEEDED with the Payment, CARD leg, earnings,
+ * BOOKING journal and staged receipt email in one transaction. A capture that cannot fulfil a
  * purchase is staged under the auto-refund marker and refunded after commit.
  */
 import { z } from "zod";
@@ -21,7 +21,13 @@ import {
 } from "@/lib/payments/payouts/earnings-service";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
-import { notifyDigitalProductPurchase } from "@/lib/digital-products/purchase-email";
+import {
+  flushDigitalProductReceipt,
+  prepareDigitalProductReceipt,
+  stageDigitalProductReceipt,
+  type DigitalProductReceipt,
+} from "@/lib/digital-products/purchase-email";
+import type { StagedRecipientEmail } from "@/lib/email/send-to-recipients";
 import { DIGITAL_PRODUCT_SALE_PREFIX } from "@/lib/payments/webhooks/auto-refund-marker";
 import {
   AUTO_REFUND_MARKERS,
@@ -400,6 +406,31 @@ async function settleCapture(
   });
 }
 
+/** The receipt for the purchase this order would settle, rendered before the transaction. */
+async function receiptForOrder(
+  orderId: string,
+): Promise<DigitalProductReceipt | null> {
+  const purchase = await prisma.digitalProductPurchase.findUnique({
+    where: { gatewayOrderId: orderId },
+    select: {
+      id: true,
+      buyerId: true,
+      productId: true,
+      amountPaise: true,
+      status: true,
+    },
+  });
+  if (purchase?.status !== "PENDING" && purchase?.status !== "FAILED") {
+    return null;
+  }
+  return prepareDigitalProductReceipt({
+    purchaseId: purchase.id,
+    buyerId: purchase.buyerId,
+    productId: purchase.productId,
+    amountPaise: purchase.amountPaise,
+  });
+}
+
 export async function handleDigitalProductPurchaseSuccess(
   orderId: string,
   gatewayPaymentId?: string,
@@ -432,17 +463,27 @@ export async function handleDigitalProductPurchaseSuccess(
     return;
   }
 
-  const outcome = await prisma.$transaction((tx) =>
-    settleCapture(tx, orderId, gatewayPaymentId, notes, capturedPaise),
-  );
+  const receipt = await receiptForOrder(orderId);
+  const { outcome, staged } = await prisma.$transaction(async (tx) => {
+    const settled = await settleCapture(
+      tx,
+      orderId,
+      gatewayPaymentId,
+      notes,
+      capturedPaise,
+    );
+    // The receipt obligation commits with the sale; a crash after commit leaves it staged.
+    const emails: StagedRecipientEmail[] =
+      settled?.kind === "settled"
+        ? await stageDigitalProductReceipt(tx, receipt)
+        : [];
+    return { outcome: settled, staged: emails };
+  });
   if (!outcome) return;
   // Post-commit and best effort, as the booking confirmation mints it.
   if (outcome.kind === "settled") {
     await mintConsumerInvoiceBestEffort({ paymentId: outcome.paymentId });
-    await notifyDigitalProductPurchase(
-      { paymentId: outcome.paymentId },
-      EMAIL_BUDGET_MS.WEBHOOK,
-    );
+    await flushDigitalProductReceipt(staged, EMAIL_BUDGET_MS.WEBHOOK);
     return;
   }
   await refundStagedCapture(outcome, {
