@@ -32,7 +32,8 @@ import {
 } from "../../lib/email";
 import {
   driveRefundOwed,
-  stampRefundOwed,
+  stampOwedOrHeld,
+  type OwedRefundAlreadyHeld,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -70,6 +71,8 @@ export interface NoShowResult {
    * is a refund that would have been issued wrongly before this check existed.
    */
   contradicted: number;
+  /** No-shows whose payment already owed another door's refund, so this added nothing; top up by hand. */
+  refundsAlreadyOwed: OwedRefundAlreadyHeld[];
   errors: string[];
   timestamp: string;
 }
@@ -353,9 +356,9 @@ async function claimConsultantNoShow(
   owed: RefundOwedMarker | null,
   strike: { consultantProfileId: string; organizationId: string | null },
   failures: RunFailureReporter,
-): Promise<boolean> {
+): Promise<{ held: OwedRefundAlreadyHeld | null } | false> {
   try {
-    await prisma.$transaction(async (tx) => {
+    return await prisma.$transaction(async (tx) => {
       // #1493 — route through the CAS helper so this cancel writes a
       // BookingStatusHistory row like every other status change; the bare
       // updateMany left no timeline entry for the no-show path.
@@ -399,14 +402,16 @@ async function claimConsultantNoShow(
         actorUserId: null,
         reason: "consultant no-show",
       });
-      // The full refund the no-show owes commits with the claim.
-      if (owed) await stampRefundOwed(tx, owed);
+      // The full refund the no-show owes commits with the claim; one another
+      // door already owes is reported instead (first writer wins).
+      const held = owed ? await stampOwedOrHeld(tx, owed) : null;
       await recordExpertStrike(tx, {
         ...strike,
         cause: "CONSULTANT_NO_SHOW",
         appointmentId,
         occurrenceIds: claimedSessions.map((o) => o.id),
       });
+      return { held };
     });
   } catch (error) {
     // Zero rows matched (parent or occurrences) means someone else moved it
@@ -422,7 +427,6 @@ async function claimConsultantNoShow(
     }
     throw error;
   }
-  return true;
 }
 
 /** The full refund a consultant no-show owes, under the arm's own key. */
@@ -584,6 +588,7 @@ interface NoShowTally {
   refunded: number;
   contradicted: number;
   refusals: Array<{ consultationId: string; refusal: string }>;
+  refundsAlreadyOwed: OwedRefundAlreadyHeld[];
   errors: string[];
   failures: RunFailureReporter;
 }
@@ -635,6 +640,17 @@ async function handleNoShowCandidate(
       tally.detected--;
       return;
     }
+    if (claimed.held) {
+      // Another door's refund is the one owed; the no-show added nothing to it.
+      tally.refundsAlreadyOwed.push(claimed.held);
+      await notifyNoShowParties(
+        consultation,
+        party,
+        0,
+        paidPaymentOf(consultation),
+      );
+      return;
+    }
 
     const { refundedPaise, succeeded, paidPayment } =
       await refundNoShowConsultation(
@@ -661,6 +677,7 @@ async function detectConsultantNoShowsUnlocked(
     refunded: 0,
     contradicted: 0,
     refusals: [],
+    refundsAlreadyOwed: [],
     errors: [],
     failures: createRunFailureReporter("bookings"),
   };
@@ -729,6 +746,7 @@ async function detectConsultantNoShowsUnlocked(
     detected: tally.detected,
     refunded: tally.refunded,
     contradicted: tally.contradicted,
+    refundsAlreadyOwed: tally.refundsAlreadyOwed,
     errors,
     timestamp: new Date().toISOString(),
   };

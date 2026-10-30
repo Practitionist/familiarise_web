@@ -54,6 +54,8 @@ const tx = {
   },
   payment: {
     findUniqueOrThrow: jest.fn(),
+    // No owed-refund marker on the payment: the operator's return settles nothing.
+    findUnique: jest.fn(async () => ({ refundOwedKey: null })),
   },
   consultantEarnings: {
     update: jest.fn(),

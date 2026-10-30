@@ -17,6 +17,7 @@ import {
   LEAST_RECENTLY_RECONCILED,
 } from "@/lib/payments/payouts/reconcile-cursor";
 import prisma from "../../lib/prisma";
+import { failRefund } from "@/lib/payments/operations/refund-owed";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import { getRefund, listRefunds } from "../../lib/payments";
@@ -157,14 +158,16 @@ async function reconcilePendingRefundsUnlocked(
     if (Date.now() - refund.createdAt.getTime() <= PLACEHOLDER_FAIL_AFTER_MS) {
       return false;
     }
-    const claim = await prisma.refund.updateMany({
-      where: { id: refund.id, status: RefundStatus.PENDING },
-      data: {
-        status: RefundStatus.FAILED,
-        failureReason: "GATEWAY_DISABLED",
-        failedAt: new Date(),
-      },
-    });
+    const claim = await failRefund(refund.id, (tx) =>
+      tx.refund.updateMany({
+        where: { id: refund.id, status: RefundStatus.PENDING },
+        data: {
+          status: RefundStatus.FAILED,
+          failureReason: "GATEWAY_DISABLED",
+          failedAt: new Date(),
+        },
+      }),
+    );
     if (claim.count !== 1) return false;
     failedCount++;
     failedGatewayDisabled++;
@@ -314,18 +317,20 @@ async function reconcilePendingRefundsUnlocked(
       if (isVeryOld) {
         // CAS: a `refund.created` webhook may bind this row to SUCCEEDED
         // between the read and this write — only FAIL a still-PENDING row.
-        const claimed = await prisma.refund.updateMany({
-          where: { id: refund.id, status: RefundStatus.PENDING },
-          data: {
-            status: RefundStatus.FAILED,
-            metadata: {
-              ...(refund.metadata as object),
-              reconciliation_error:
-                "No refund carrying this reservation id found at gateway after 24 hours",
-              reconciled_at: new Date().toISOString(),
+        const claimed = await failRefund(refund.id, (tx) =>
+          tx.refund.updateMany({
+            where: { id: refund.id, status: RefundStatus.PENDING },
+            data: {
+              status: RefundStatus.FAILED,
+              metadata: {
+                ...(refund.metadata as object),
+                reconciliation_error:
+                  "No refund carrying this reservation id found at gateway after 24 hours",
+                reconciled_at: new Date().toISOString(),
+              },
             },
-          },
-        });
+          }),
+        );
         if (claimed.count === 0) {
           skippedCount++;
           continue;
@@ -352,14 +357,16 @@ async function reconcilePendingRefundsUnlocked(
           skippedCount++;
           continue;
         }
-        const claim = await prisma.refund.updateMany({
-          where: { id: refund.id, status: RefundStatus.PENDING },
-          data: {
-            status: RefundStatus.FAILED,
-            failureReason: `Gateway has no record of order ${refund.payment.paymentIntent} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
-            failedAt: new Date(),
-          },
-        });
+        const claim = await failRefund(refund.id, (tx) =>
+          tx.refund.updateMany({
+            where: { id: refund.id, status: RefundStatus.PENDING },
+            data: {
+              status: RefundStatus.FAILED,
+              failureReason: `Gateway has no record of order ${refund.payment.paymentIntent} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
+              failedAt: new Date(),
+            },
+          }),
+        );
         if (claim.count === 1) {
           failedCount++;
           failedUnknownId++;
@@ -468,14 +475,16 @@ async function reconcilePendingRefundsUnlocked(
         );
         reconciledCount++;
       } else if (gatewayRefund.status === RefundStatus.FAILED) {
-        const claimed = await prisma.refund.updateMany({
-          where: { id: refund.id, status: RefundStatus.PENDING },
-          data: {
-            status: RefundStatus.FAILED,
-            failureReason: "Gateway reports the refund failed",
-            failedAt: new Date(),
-          },
-        });
+        const claimed = await failRefund(refund.id, (tx) =>
+          tx.refund.updateMany({
+            where: { id: refund.id, status: RefundStatus.PENDING },
+            data: {
+              status: RefundStatus.FAILED,
+              failureReason: "Gateway reports the refund failed",
+              failedAt: new Date(),
+            },
+          }),
+        );
         if (claimed.count === 0) {
           skippedCount++;
           continue;
@@ -493,14 +502,16 @@ async function reconcilePendingRefundsUnlocked(
       if (isRazorpayUnknownRefundIdError(error)) {
         // FAMILIARISE_WEB-3V — terminal, not transient; same FAILED shape as
         // above, CAS on PENDING so a webhook that settled it is not undone.
-        const claim = await prisma.refund.updateMany({
-          where: { id: refund.id, status: RefundStatus.PENDING },
-          data: {
-            status: RefundStatus.FAILED,
-            failureReason: `Gateway has no record of refund id ${refund.refundId} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
-            failedAt: new Date(),
-          },
-        });
+        const claim = await failRefund(refund.id, (tx) =>
+          tx.refund.updateMany({
+            where: { id: refund.id, status: RefundStatus.PENDING },
+            data: {
+              status: RefundStatus.FAILED,
+              failureReason: `Gateway has no record of refund id ${refund.refundId} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
+              failedAt: new Date(),
+            },
+          }),
+        );
         if (claim.count === 1) {
           failedCount++;
           failedUnknownId++;

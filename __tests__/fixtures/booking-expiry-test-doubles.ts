@@ -24,6 +24,9 @@ export const refundOwedTestModule = {
         }
       : null,
   stampRefundOwed: async () => true,
+  // Every stamp wins: no other door's owed refund holds the payment.
+  stampOwedOrHeld: async () => null,
+  heldInsteadOf: async () => [],
   stampRefundsOwed: async (_tx: unknown, markers: readonly unknown[]) =>
     markers.length,
 };
