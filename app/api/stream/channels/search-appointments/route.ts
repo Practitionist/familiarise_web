@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
+import { z } from "zod";
 import prisma from "lib/prisma";
 import {
   PARTY_USER_SELECT,
@@ -18,6 +19,10 @@ import {
 import { buildBookingOrgScopeWhere } from "@/lib/stream/event-channel-service";
 import { parseSearchDays, type DayRange } from "@/lib/stream/search-date";
 import { resolveViewerZone } from "@/lib/time/viewer-zone";
+import {
+  MAX_SHORT_FIELD_LENGTH,
+  MAX_TITLE_LENGTH,
+} from "@/lib/validation/limits";
 import {
   AppointmentSearchResultSchema,
   type AppointmentSearchResult,
@@ -38,6 +43,13 @@ const MAX_CHANNELS = 20;
 const MAX_ROWS_PER_CHANNEL = 3;
 /** A cancelled or replaced session is not "on" a date any more. */
 const DEAD_OCCURRENCE = ["CANCELLED", "RESCHEDULED"] as const;
+
+const SearchParamsSchema = z.object({
+  // The query is matched against titles, so nothing longer than one can match.
+  q: z.string().trim().toLowerCase().min(2).max(MAX_TITLE_LENGTH),
+  // An unusable zone falls back to UTC rather than failing the search.
+  tz: z.string().max(MAX_SHORT_FIELD_LENGTH).nullable().catch(null),
+});
 
 type Party = { id: string; name: string | null; image: string | null };
 
@@ -301,17 +313,20 @@ export async function GET(request: NextRequest) {
     const userId = session.user.id;
     const searchParams =
       request.nextUrl?.searchParams ?? new URL(request.url).searchParams;
-    const query = searchParams.get("q")?.trim().toLowerCase();
-
-    if (!query || query.length < 2) {
+    const params = SearchParamsSchema.safeParse({
+      q: searchParams.get("q") ?? "",
+      tz: searchParams.get("tz"),
+    });
+    if (!params.success) {
       return NextResponse.json([]);
     }
+    const { q: query, tz } = params.data;
 
     const now = new Date();
     const days = parseSearchDays(
       query,
       now,
-      resolveViewerZone({ userTimezone: searchParams.get("tz") }),
+      resolveViewerZone({ userTimezone: tz }),
     );
     const occurrences = occurrenceSelect(days, now);
 

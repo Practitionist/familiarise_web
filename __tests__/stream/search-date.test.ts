@@ -79,6 +79,10 @@ describe("parseSearchDays", () => {
     "2026-02-30",
     "2026-13-01",
     "0 nov",
+    "constructor",
+    "__proto__",
+    "3 constructor",
+    "constructor 3",
   ])("does not treat %p as a date", (term) => {
     expect(parseSearchDays(term, NOW, KOLKATA)).toEqual([]);
   });

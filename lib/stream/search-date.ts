@@ -116,7 +116,10 @@ export function parseSearchDays(
     .replace(/\s+/g, " ")
     .trim();
 
-  const relative = RELATIVE_DAYS[text];
+  // Own keys only: "constructor" and "__proto__" must not read as dates.
+  const relative = Object.hasOwn(RELATIVE_DAYS, text)
+    ? RELATIVE_DAYS[text]
+    : undefined;
   if (relative !== undefined) {
     return [dayRange(addDays(today(now, timeZone), relative), timeZone)];
   }
@@ -134,7 +137,10 @@ export function parseSearchDays(
     : monthFirst
       ? [monthFirst[1], monthFirst[2], monthFirst[3]]
       : [];
-  const month = monthWord ? MONTHS[monthWord] : undefined;
+  const month =
+    monthWord && Object.hasOwn(MONTHS, monthWord)
+      ? MONTHS[monthWord]
+      : undefined;
   if (!month || !dayWord) return [];
 
   const years = yearWord

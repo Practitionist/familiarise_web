@@ -124,8 +124,48 @@ describe("access", () => {
 
   it("does not query for a term shorter than two characters", async () => {
     expect((await search({ q: "k" })).body).toEqual([]);
+    expect((await search({ q: "  k " })).body).toEqual([]);
     expect(mockConsultations).not.toHaveBeenCalled();
   });
+
+  it("does not query for a term longer than any plan title", async () => {
+    expect((await search({ q: "a".repeat(201) })).body).toEqual([]);
+    expect(mockConsultations).not.toHaveBeenCalled();
+
+    expect((await search({ q: "a".repeat(200) })).status).toBe(200);
+    expect(mockConsultations).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to UTC for an oversized or unknown time zone instead of failing", async () => {
+    const day = {
+      startsAt: {
+        gte: new Date("2026-11-03T00:00:00Z"),
+        lt: new Date("2026-11-04T00:00:00Z"),
+      },
+    };
+    for (const tz of ["x".repeat(200), "Not/AZone"]) {
+      mockConsultations.mockClear();
+      expect((await search({ q: "3 nov 2026", tz })).status).toBe(200);
+      const where =
+        mockConsultations.mock.calls[0][0].select.appointment.select.occurrences
+          .where;
+      expect(where.OR).toEqual([day]);
+    }
+  });
+
+  it.each(["constructor", "__proto__"])(
+    "treats %p as plain text, not a date",
+    async (q) => {
+      expect((await search({ q })).status).toBe(200);
+      const where =
+        mockConsultations.mock.calls[0][0].select.appointment.select.occurrences
+          .where;
+      expect(where.OR).toBeUndefined();
+      expect(mockConsultations.mock.calls[0][0].where.AND[0].OR).toHaveLength(
+        3,
+      );
+    },
+  );
 });
 
 describe("what the query asks of the database", () => {
