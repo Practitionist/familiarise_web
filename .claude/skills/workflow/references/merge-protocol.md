@@ -16,10 +16,10 @@ Owner decision of 2026-10-26, recorded in `docs/decisions/2026-10-26-launch-swee
 
 ## Release gate for a pull request into `prod`
 
-- A release pull request (base `prod`) must pass the **Release schema gate**, the `release-schema-gate` job in `.github/workflows/db-live-drift.yml`. It runs `scripts/ci/check-db-schema-required.ts --live`, which diffs the live database against `prisma/schema.prisma` and fails when the schema declares a table, column, enum type or enum value the database lacks. It is read-only, and it ignores sidecar objects and objects only the database has.
-- While the GitHub Actions budget is exhausted the job reports failure without running. Run it yourself before merging: `npx tsx scripts/ci/check-db-schema-required.ts --live` (needs `DIRECT_URL` and `DATABASE_URL`; it never writes). A pass prints `check-db-schema-required: ok`.
-- The owner adds "Release schema gate" as a required check on the `prod` branch protection. An agent cannot do that. A passing local run does not satisfy that required check: while it cannot run, the merge waits for Actions capacity or takes the owner's explicit branch-protection bypass, never an agent's.
-- On failure, stop. The human runs the push preflight (`npm run db:preflight`) and then the push (`npm run db:push`). Never an agent (`AGENTS.md` section 2.3). Re-run the gate afterwards, then merge.
+- The release gate is `scripts/ci/check-db-schema-required.ts --live`. It diffs the live database against `prisma/schema.prisma` and fails when the schema declares a table, column, enum type or enum value the database lacks. It is read-only, and it ignores sidecar objects and objects only the database has.
+- The release cutter runs it locally before opening the `prod` pull request: `npx tsx scripts/ci/check-db-schema-required.ts --live` (needs `DIRECT_URL` and `DATABASE_URL`; it never writes). Paste its full output into the pull request body. A pass prints `check-db-schema-required: ok`.
+- The organisation is on GitHub Free, which has no branch protection on private repositories, so nothing can make this a required check. Once Actions runs, the **Release schema gate** job (`release-schema-gate` in `.github/workflows/db-live-drift.yml`) is the record on every pull request into `prod`.
+- On failure, stop. The human runs the push preflight (`npm run db:preflight`) and then the push (`npm run db:push`). Never an agent (`AGENTS.md` section 2.3). Re-run the gate, paste the new output, then merge.
 
 ## Closing issues
 

@@ -67,14 +67,14 @@ All four must hold at the stage under test. A stage that fails any of them fails
 3. **At least 95 % of each route's requests answer without a 429.** Report the 429 rate per route; a stage whose limiters refused more than that measured the limiter, not the database, and is re-run from more source IPs before it counts.
 4. **Zero `CRON_LOCK_UNAVAILABLE` answers.** This is the 503 a job returns when the database cannot grant its lease (`CronLockUnavailableError`, `lib/cron/cron-lock-errors.ts`). It shows that user traffic starved the job path of connections.
 
-Criterion 4 needs one extra step, because a preview now refuses every job (`JOB_RUN_PRODUCTION_ONLY`, a 409 that answers before any lease is requested). A preview therefore cannot show the lock failing. To measure it, run the ticker's own load from a local `next dev` process that points at the dev project, which is allowed to run jobs, while k6 hits the preview. Call the due jobs through `/api/cleanup/<job>` with the local `CRON_SECRET` on the ticker's cadence and count 503 answers whose body has `code: "CRON_LOCK_UNAVAILABLE"`. This approach has not been tried; the owner should confirm it before the first run.
+Criterion 4 is measured against the production-context deploy of the split database, the one deploy whose ticker and job doors run jobs; a preview refuses every job (`JOB_RUN_PRODUCTION_ONLY`) before any lease is requested, so it can never show the lock failing. Count the ticker's 503 answers whose body has `code: "CRON_LOCK_UNAVAILABLE"` during each hold.
 
 ## Tooling
 
 Use **k6**, the tool already in the repository.
 
 - `.github/workflows/load-test.yml` is a manual workflow that installs k6 and runs `load-tests/smoke.js` against a `base_url`, with seeded credentials from the `LOAD_TEST_EMAIL` and `LOAD_TEST_PASSWORD` secrets.
-- `load-tests/smoke.js` is the starting point for the scripts. Its sign-in step and its structure carry over, but its availability request goes to `/api/slots/availability/<id>`, which no longer exists under `app/api`; replace it with route 5 above before using it. Its ramp (to 100 virtual users) matches stage 1 only.
+- `load-tests/smoke.js` is the starting point for the scripts. Its sign-in step, its structure and its availability request (route 5 above, one week ahead) carry over. Its ramp (to 100 virtual users) matches stage 1 only.
 - `load-tests/booking/lib/` (`config.js`, `http.js`, `metrics.js`, `report.js`, `session.js`, `thresholds.js`, `window.js`) holds the shared helpers the load gate uses. Reuse them rather than writing new ones.
 - `.github/workflows/load-gate.yml` and [the load gate runbook](09-load-gate-runbook.md) cover the booking write storms (checkout, cancel, reschedule, allocate). Run the load gate after this plan's stage 2 passes, on the same isolated database, because the two together exercise reads and writes.
 
@@ -121,4 +121,3 @@ Issues #2466 and #2460.
 ## Deprecated & Superseded Approaches
 
 - **Load testing the shared database.** The smoke workflow's older wording allowed a run against "a staging clone" that was in practice the shared project. Superseded: no run happens before the split.
-- **`/api/slots/availability/<id>` in `load-tests/smoke.js`.** That route is gone; the booking page reads the availability routes under `/api/scheduling/`. Delete the old request when the script is next edited.
