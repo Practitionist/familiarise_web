@@ -34,6 +34,7 @@ import {
 } from "@/lib/appointments/cancel-requote";
 import { OperatorOpsHint } from "@/components/appointments/OperatorOpsHint";
 import { AllocateOrgBookingDialog } from "../AllocateOrgBookingDialog";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 export interface OrgActorDetailProps {
   orgId: string;
@@ -66,7 +67,7 @@ const fmt = (d: Date) =>
   });
 
 async function postJson(url: string, body: unknown) {
-  const res = await fetch(url, {
+  const res = await fetchWithIdentity(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -163,22 +164,25 @@ export function OrgActorDetail({
     const shown = queryClient.getQueryData<CancelRefundPreview>(
       cancelPreviewQueryKey(previewUrl),
     );
-    const res = await fetch(`/api/appointments/${appointmentId}/cancel`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        notes: `Cancelled on behalf of ${orgName}`,
-        ...shownQuoteBody(
-          shown && shown.paid !== false
-            ? {
-                estimatedRefundPaise: shown.estimatedRefundPaise,
-                creditRestoresInFull: shown.creditRestoresInFull,
-                expectedPaid: shown.expectedPaid,
-              }
-            : undefined,
-        ),
-      }),
-    });
+    const res = await fetchWithIdentity(
+      `/api/appointments/${appointmentId}/cancel`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notes: `Cancelled on behalf of ${orgName}`,
+          ...shownQuoteBody(
+            shown && shown.paid !== false
+              ? {
+                  estimatedRefundPaise: shown.estimatedRefundPaise,
+                  creditRestoresInFull: shown.creditRestoresInFull,
+                  expectedPaid: shown.expectedPaid,
+                }
+              : undefined,
+          ),
+        }),
+      },
+    );
     const json: unknown = await res.json().catch(() => null);
     if (!res.ok) {
       const requote = res.status === 409 ? readRefundQuoteChanged(json) : null;

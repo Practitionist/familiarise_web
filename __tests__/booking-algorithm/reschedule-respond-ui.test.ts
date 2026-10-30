@@ -116,7 +116,7 @@ describe("#1163 — the consultant inbox answers proposals", () => {
   it("only a PENDING_REVIEW consultee-initiated proposal with times is answerable", () => {
     expect(inboxRow).toContain('p?.status !== "PENDING_REVIEW"');
     expect(inboxRow).toContain('p.initiatorRole !== "CONSULTEE"');
-    expect(inboxRow).toContain("t.round === p.round).length === 0");
+    expect(inboxRow).toContain("p.proposedTimes.length === 0");
   });
 
   it("decline is confirmed, covers subscriptions, and disables in flight", () => {

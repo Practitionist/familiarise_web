@@ -593,7 +593,7 @@ export async function POST(
 ) {
   try {
     // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
-    const authResult = await requireApiAuth();
+    const authResult = await requireApiAuth({ expectUser: true });
     if (authResult.error) return authResult.error;
     const { session } = authResult;
     // #1319 — this route triggers refunds/reallocation and had no limiter.
@@ -1082,10 +1082,16 @@ export async function POST(
                   (eventKind !== null &&
                     (await hasPaidLiveSeat(tx, appointmentId))))
               ) {
+                const cancelledSessions =
+                  await tx.appointmentOccurrence.findMany({
+                    where: { appointmentId, ...LIVE_SLOT_WHERE },
+                    select: { id: true },
+                  });
                 await recordExpertStrike(tx, {
                   consultantProfileId: hostProfileId,
                   cause: "EXPERT_CANCEL",
                   appointmentId,
+                  occurrenceIds: cancelledSessions.map((o) => o.id),
                   organizationId: appointment.organizationId,
                 });
               }

@@ -660,7 +660,11 @@ export async function autoAllocate(
           releasedOccurrenceIds,
           excludeRescheduleRequestId,
         );
-        await txOptions.inTx?.(tx);
+        await txOptions.inTx?.(tx, {
+          consultantProfileId,
+          freedWindows: isReschedule ? freedWindows : [],
+          placed: appointments.flatMap((a) => a.occurrences ?? []),
+        });
 
         // #1697 item 5 — staged in THIS transaction; attempted after commit.
         const stagedNotices = await stageAllocationNotices(

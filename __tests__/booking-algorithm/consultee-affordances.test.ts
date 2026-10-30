@@ -1,7 +1,6 @@
 import {
   consulteeDestructiveAction,
   consulteeMayReschedule,
-  currentRoundProposedSlots,
   openProposalTarget,
   type OpenRescheduleProposal,
 } from "@/lib/appointments/consultee-affordances";
@@ -29,7 +28,6 @@ describe("#1163 open proposal detection", () => {
     id: `req-${round}`,
     status: "PENDING_REVIEW",
     reason: null,
-    round,
     expiresAt: "2026-08-20T10:00:00.000Z",
     initiatorRole: "CONSULTANT",
     initiatedById: "user-1",
@@ -37,12 +35,10 @@ describe("#1163 open proposal detection", () => {
       {
         startsAt: "2026-08-21T10:00:00.000Z",
         endsAt: "2026-08-21T10:30:00.000Z",
-        round: 1,
       },
       {
         startsAt: "2026-08-22T10:00:00.000Z",
         endsAt: "2026-08-22T10:30:00.000Z",
-        round: 2,
       },
     ],
   });
@@ -59,14 +55,5 @@ describe("#1163 open proposal detection", () => {
 
   it("returns null when nothing is open (the reads pre-narrow to open statuses)", () => {
     expect(openProposalTarget([{ id: "a" }, null, undefined])).toBeNull();
-  });
-
-  // The round filter outlived the counter-round: it is now the only thing
-  // standing between a two-round row and a card that offers the other
-  // side's own rejected times back to them.
-  it("shows only the current round, whatever round that is", () => {
-    const slots = currentRoundProposedSlots(proposal(2));
-    expect(slots).toHaveLength(1);
-    expect(slots[0].round).toBe(2);
   });
 });

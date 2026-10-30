@@ -86,12 +86,11 @@ export interface InboxProposal {
   id: string;
   status: string;
   reason: string | null;
-  round: number;
   expiresAt: Stamp;
   initiatorRole: string;
   preferredTimeOfDay: string | null;
   preferredDays: string | null;
-  proposedTimes: { startsAt: Stamp; endsAt: Stamp; round: number }[];
+  proposedTimes: { startsAt: Stamp; endsAt: Stamp }[];
 }
 
 export interface InboxRowInput {

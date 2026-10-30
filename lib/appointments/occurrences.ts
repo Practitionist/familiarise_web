@@ -170,15 +170,31 @@ export async function replaceOccurrence(
   });
 
   if (live.length === 0) {
-    const replaced = existing
-      .filter((row) => row.completionStatus === "RESCHEDULED")
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
+    // A released (RESCHEDULED) session is replaced: the new row takes its
+    // ordinal and counts as a move, and the released rows stop holding time.
+    const released = existing.filter(
+      (row) => row.completionStatus === "RESCHEDULED" && !row.deletedAt,
+    );
+    const replaced = [...released].sort(
+      (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+    )[0];
+    if (released.length > 0) {
+      await transitionOccurrenceCompletion(tx, {
+        reason: "replaced by a new time",
+        where: { id: { in: released.map((row) => row.id) } },
+        to: "CANCELLED",
+        data: { deletedAt: new Date() },
+        fromIn: ["RESCHEDULED"],
+        allowZero: true,
+      });
+    }
     const created = await tx.appointmentOccurrence.create({
       data: {
         appointmentId: args.appointmentId,
         ...target,
         ordinal:
           replaced?.ordinal ?? (await nextOrdinal(tx, args.appointmentId)),
+        ...(replaced ? { movedAt: new Date() } : {}),
       },
     });
     await recomputeEarningsHold(tx, args.appointmentId);
@@ -275,14 +291,6 @@ export function allowsManageTimings(
   if (kind === "WEBINAR" || kind === "CLASS") return true;
   if (occurrences.length === 0) return true;
   return occurrences.every((row) => Boolean(row.isTentative));
-}
-
-export function allowsUnschedule(
-  kind: AppointmentKind,
-  occurrences: Array<{ isTentative?: boolean | null }>,
-): boolean {
-  if (kind !== "WEBINAR" && kind !== "CLASS") return false;
-  return occurrences.some((row) => !row.isTentative);
 }
 
 export function upcomingOccurrences<

@@ -338,6 +338,15 @@ export async function PATCH(
               }
             }
 
+            // A decline, like an approval, waits for the buyer's own live
+            // checkout to finish or lapse.
+            if (status === AppointmentStatus.REJECTED) {
+              await assertNoLiveCheckoutHold(
+                tx,
+                "subscription",
+                subscriptionId,
+              );
+            }
             // #836 — allowed-from guard rides the WHERE; the idempotency
             // pre-checks above are only friendly error text. updateMany
             // returns no row, so re-read for the heavy include.

@@ -312,6 +312,12 @@ jest.mock("../../lib/booking/expiry-notices", () => ({
 }));
 jest.mock("../../lib/booking/backup-interest", () => ({
   expireBackupInterest: jest.fn(async () => ({ count: 0 })),
+  flushBackupInterestNotices: jest.fn(async () => undefined),
+  stageNoticesForAppointmentHolds: jest.fn(async () => ({
+    bells: [],
+    emails: [],
+  })),
+  stageNoticesForFreedWindows: jest.fn(async () => ({ bells: [], emails: [] })),
 }));
 jest.mock("../../lib/novu/service", () => ({
   notifyUnscheduledSubscriptionNudge: jest.fn(),

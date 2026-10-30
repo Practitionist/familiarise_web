@@ -354,7 +354,6 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
 
     const hosted: HostedClass = {
       found: true,
-      isHost: true,
       appointment: { id: "appt-class-1", organizationId: null } as never,
       cls: {
         id: "class-1",

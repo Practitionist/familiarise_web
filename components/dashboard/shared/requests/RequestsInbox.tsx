@@ -77,6 +77,7 @@ import {
   errorSentence,
   nextReminderLine,
 } from "./labels";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 import {
   DecisionError,
   approveRequestedTimes,
@@ -395,7 +396,7 @@ export function RequestsInbox({
       const proposal = answerableProposal(row);
       if (proposal) {
         // Confirming proposed times ANSWERS the proposal (#1163).
-        const response = await fetch(
+        const response = await fetchWithIdentity(
           `/api/appointments/${row.appointmentId}/reschedule/respond`,
           {
             method: "POST",
@@ -971,9 +972,7 @@ export function RequestsInbox({
         requestedSlots={(() => {
           if (!approveTarget) return [];
           const proposal = answerableProposal(approveTarget);
-          const slots = proposal
-            ? proposal.proposedTimes.filter((t) => t.round === proposal.round)
-            : approveTarget.slots;
+          const slots = proposal ? proposal.proposedTimes : approveTarget.slots;
           return slots.map((s) => toStampDate(s.startsAt).toISOString());
         })()}
         requestedSlotsWithStatus={approveTarget?.slots.map((s) => ({

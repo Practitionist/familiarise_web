@@ -186,15 +186,12 @@ export async function readAppointmentDetail(appointmentId: string) {
           id: true,
           status: true,
           reason: true,
-          round: true,
           expiresAt: true,
           initiatorRole: true,
           initiatedById: true,
           proposedTimes: {
             orderBy: { startsAt: "asc" },
-            // `round` is selected so the card can filter to the current
-            // offer rather than rendering every round on the request.
-            select: { startsAt: true, endsAt: true, round: true },
+            select: { startsAt: true, endsAt: true },
           },
         },
       },

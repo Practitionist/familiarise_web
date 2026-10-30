@@ -463,7 +463,11 @@ export async function useRequestedSlots(
             data: { allocationIdempotencyKey: idempotencyKey },
           });
         }
-        await txOptions.inTx?.(tx);
+        await txOptions.inTx?.(tx, {
+          consultantProfileId,
+          freedWindows: [],
+          placed: [],
+        });
 
         return {
           success: true,

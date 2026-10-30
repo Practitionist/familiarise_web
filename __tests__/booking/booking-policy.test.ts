@@ -282,12 +282,14 @@ describe("expert reliability strikes", () => {
         consultantProfileId: "cp-1",
         cause: "PLATFORM_VOID",
         appointmentId: "appt-1",
+        occurrenceIds: ["occ-1"],
       }),
     ).resolves.toBe(false);
     await recordExpertStrike(db, {
       consultantProfileId: "cp-1",
       cause: "EXPERT_CANCEL",
       appointmentId: "appt-1",
+      occurrenceIds: ["occ-1"],
     });
     expect(create).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalledWith({

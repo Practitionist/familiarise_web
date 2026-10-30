@@ -40,6 +40,8 @@ export interface RestorableRequest {
   id: string;
   appointmentId: string;
   createdAt: Date;
+  /** The parent's status before the release; null on a request opened before it was recorded. */
+  originStatus: string | null;
   releasedOccurrenceIds: string[];
   appointment: {
     consultationId: string | null;
@@ -57,17 +59,18 @@ export interface RestoreMeta {
 type RestoreTx = Tx;
 
 /**
- * #1589 R-P1-01 / R-P1-04 — the status the request held BEFORE the reschedule
- * flipped it to PENDING, read from the history row the reschedule route wrote
- * in the same transaction as the proposal (#1333). `undefined` means no such
- * row: a pre-#1333 proposal, or a partial one that never re-stamped.
+ * The status the parent held before the release: the request's own record, or
+ * for a request opened before that was written, the PENDING history row the
+ * release wrote beside it. `undefined` means neither exists.
  */
 async function readRescheduleOrigin(
   tx: Pick<Tx, "bookingStatusHistory">,
   entity: "CONSULTATION" | "SUBSCRIPTION",
   entityId: string,
-  requestCreatedAt: Date,
+  request: Pick<RestorableRequest, "createdAt" | "originStatus">,
 ): Promise<string | undefined> {
+  if (request.originStatus) return request.originStatus;
+  const requestCreatedAt = request.createdAt;
   const skewMs = 5_000;
   const origin = await tx.bookingStatusHistory.findFirst({
     where: {
@@ -104,11 +107,11 @@ function restoreTargetFor(
   switch (parsed.data) {
     case AppointmentStatus.APPROVED_PENDING_PAYMENT:
       return AppointmentStatus.APPROVED_PENDING_PAYMENT;
-    // SCHEDULED is unreachable for requests (docs/booking/18-state-machines.md),
-    // so APPROVED is the only live shape it can stand for.
     case AppointmentStatus.APPROVED:
-    case AppointmentStatus.SCHEDULED:
       return AppointmentStatus.APPROVED;
+    // An incident rebook leaves a consultation SCHEDULED; it goes back there.
+    case AppointmentStatus.SCHEDULED:
+      return AppointmentStatus.SCHEDULED;
     default:
       return null;
   }
@@ -163,7 +166,7 @@ async function settleParentAfterReschedule(
       tx,
       "CONSULTATION",
       consultationId,
-      request.createdAt,
+      request,
     );
     if (origin === undefined) reportMissingOrigin("CONSULTATION");
     const to = restoreTargetFor(origin);
@@ -197,7 +200,7 @@ async function settleParentAfterReschedule(
         tx,
         "SUBSCRIPTION",
         subscriptionId,
-        request.createdAt,
+        request,
       );
       if (origin === undefined) reportMissingOrigin("SUBSCRIPTION");
       // No origin row and the parent sits in PENDING: the request row cannot
@@ -248,8 +251,15 @@ export async function restoreRescheduledBooking(
   });
 
   await settleParentAfterReschedule(tx, request, meta);
-  // The sessions are back where they were, so the payout wait is too.
-  if (restored > 0) await restoreEarningsHold(tx, request.appointmentId);
+  if (restored > 0) {
+    // The booking is back as it was: this request costs no reschedule.
+    await tx.rescheduleRequest.updateMany({
+      where: { id: request.id },
+      data: { restoredAt: new Date() },
+    });
+    // The sessions are back where they were, so the payout wait is too.
+    await restoreEarningsHold(tx, request.appointmentId);
+  }
 
   return restored;
 }

@@ -10,13 +10,20 @@
  * plan-end settlement refunds it if it is never placed.
  */
 
-const STALE = [
+const STALE: Array<{
+  id: string;
+  appointmentId: string;
+  startsAt: Date;
+  consultantProfileId?: string;
+}> = [
   {
     id: "occ-r1",
     appointmentId: "apt-1",
     startsAt: new Date("2026-08-01T04:30:00Z"),
   },
 ];
+/** The rows the release's CAS actually moved, as its re-read sees them. */
+const FREED: Array<{ id: string }> = [];
 
 jest.mock("../../lib/prisma", () => {
   const db: Record<string, unknown> = {
@@ -35,7 +42,11 @@ jest.mock("../../lib/prisma", () => {
       // Only the stale-reschedule cohort read asks for RESCHEDULED rows.
       findMany: jest.fn(
         async ({ where }: { where: Record<string, unknown> }) =>
-          where.completionStatus === "RESCHEDULED" ? STALE : [],
+          where.completionStatus === "RESCHEDULED"
+            ? STALE
+            : where.completionStatus === "CANCELLED"
+              ? FREED
+              : [],
       ),
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
@@ -119,6 +130,17 @@ jest.mock("../../lib/email", () => ({
     .fn()
     .mockResolvedValue({ success: true }),
 }));
+const stageNoticesForFreedWindows = jest.fn(
+  async (_tx: unknown, _host: string, _rows: Array<{ id: string }>) => {},
+);
+jest.mock("../../lib/booking/backup-interest", () => ({
+  ...jest.requireActual("../../lib/booking/backup-interest"),
+  stageNoticesForFreedWindows: (
+    tx: unknown,
+    host: string,
+    rows: Array<{ id: string }>,
+  ) => stageNoticesForFreedWindows(tx, host, rows),
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_key: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
@@ -159,4 +181,43 @@ it("returns a stale released session to the plan and tells both parties", async 
     }),
   );
   expect(flushNotificationsAfter).toHaveBeenCalled();
+});
+
+it("tells waiters only about windows the release freed, under each row's host", async () => {
+  STALE.splice(
+    0,
+    STALE.length,
+    {
+      id: "occ-a",
+      appointmentId: "apt-1",
+      startsAt: new Date("2026-08-01T04:30:00Z"),
+      consultantProfileId: "cp-a",
+    },
+    {
+      id: "occ-b",
+      appointmentId: "apt-1",
+      startsAt: new Date("2026-08-02T04:30:00Z"),
+      consultantProfileId: "cp-b",
+    },
+    {
+      id: "occ-c",
+      appointmentId: "apt-1",
+      startsAt: new Date("2026-08-03T04:30:00Z"),
+      consultantProfileId: "cp-b",
+    },
+  );
+  FREED.splice(0, FREED.length, { id: "occ-a" }, { id: "occ-c" });
+  stageNoticesForFreedWindows.mockClear();
+
+  await expireStaleRequests();
+
+  expect(
+    stageNoticesForFreedWindows.mock.calls.map(([, host, rows]) => [
+      host,
+      rows.map((r) => r.id),
+    ]),
+  ).toEqual([
+    ["cp-a", ["occ-a"]],
+    ["cp-b", ["occ-c"]],
+  ]);
 });

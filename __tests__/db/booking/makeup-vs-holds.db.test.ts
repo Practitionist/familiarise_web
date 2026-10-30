@@ -27,6 +27,8 @@ import {
   scheduleClassMakeUp,
 } from "../../../lib/booking/class-sessions";
 import { BookingRuleError } from "../../../lib/booking/booking-rule-error";
+import { quoteSeatLeave } from "../../../lib/booking/seat-leave";
+import { seedSeatBuyer } from "./harness-seats";
 
 /** A scheduled class of `host` whose first session the host cancelled (a miss). */
 async function seedMissedClass(host: SeededHost) {
@@ -68,11 +70,7 @@ async function seedMissedClass(host: SeededHost) {
 
 async function makeUpAt(host: SeededHost, startsAt: Date) {
   const { appointmentId, sourceId } = await seedMissedClass(host);
-  const hosted = await readHostedClass(appointmentId, {
-    userId: host.userId,
-    consultantProfileId: host.consultantProfileId,
-    isPrivileged: false,
-  });
+  const hosted = await readHostedClass(appointmentId);
   if (!hosted.found) throw new Error("class not found");
   return scheduleClassMakeUp(hosted, sourceId, startsAt).then(
     () => "scheduled" as const,
@@ -168,5 +166,72 @@ describe("make-up × every hold kind on the host's time", () => {
       payment: { status: "PENDING", expiresAt: new Date(Date.now() - HOUR_MS) },
     });
     expect(await makeUpAt(host, WINDOW().startsAt)).toBe("scheduled");
+  }, 30_000);
+});
+
+describe("make-up × the attendee's free leave", () => {
+  it("lets a seat bought before the make-up leave with every undelivered session refunded", async () => {
+    const host = await seedHost();
+    const { appointmentId, sourceId } = await seedMissedClass(host);
+    const cls = await prisma.appointment.findUniqueOrThrow({
+      where: { id: appointmentId },
+      select: { classId: true, class: { select: { classPlanId: true } } },
+    });
+    const classId = cls.classId ?? "";
+    // The whole run sits inside the plan's refund window.
+    await prisma.classPlan.update({
+      where: { id: cls.class?.classPlanId ?? "" },
+      data: { refundWindowHours: 400 },
+    });
+    await prisma.appointmentOccurrence.create({
+      data: {
+        appointmentId,
+        ordinal: 2,
+        startsAt: futureAt(6, 9),
+        endsAt: futureAt(6, 10),
+        isTentative: false,
+        consultantProfileId: host.consultantProfileId,
+      },
+    });
+    const buyer = await seedSeatBuyer();
+    const price = BigInt(200_000);
+    const payment = await prisma.payment.create({
+      data: {
+        amount: price,
+        originalAmount: price,
+        paymentMethod: "card",
+        paymentIntent: `order_dbtier_makeup_${appointmentId}`,
+        paymentGateway: "RAZORPAY",
+        paymentStatus: "SUCCEEDED",
+        userId: buyer.userId,
+        appointmentId,
+        isMockPayment: true,
+        legs: { create: [{ source: "CARD", amountPaise: price }] },
+      },
+    });
+    await prisma.appointmentParticipant.create({
+      data: {
+        appointmentId,
+        userId: buyer.userId,
+        role: "CONSULTEE",
+        status: "CONFIRMED",
+        paymentId: payment.id,
+      },
+    });
+
+    expect(await quoteSeatLeave("class", classId, buyer.userId)).toMatchObject({
+      seated: true,
+      refused: true,
+    });
+
+    const hosted = await readHostedClass(appointmentId);
+    if (!hosted.found) throw new Error("class not found");
+    await scheduleClassMakeUp(hosted, sourceId, futureAt(5, 9));
+
+    expect(await quoteSeatLeave("class", classId, buyer.userId)).toMatchObject({
+      seated: true,
+      refused: false,
+      estimatedRefundPaise: 200_000,
+    });
   }, 30_000);
 });

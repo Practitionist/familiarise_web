@@ -629,7 +629,11 @@ export async function manualAllocate(
           releasedOccurrenceIds,
           excludeRescheduleRequestId,
         );
-        await txOptions.inTx?.(tx);
+        await txOptions.inTx?.(tx, {
+          consultantProfileId,
+          freedWindows: isReschedule ? freedWindows : [],
+          placed: appointments.flatMap((a) => a.occurrences ?? []),
+        });
 
         return {
           success: true,

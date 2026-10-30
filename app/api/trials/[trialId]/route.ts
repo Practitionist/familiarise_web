@@ -71,9 +71,10 @@ import {
 } from "@/utils/scheduling-engine/availabilityCoverage";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import {
+  prepareTrialScheduledEmail,
   stageTrialLifecycleEmail,
-  stageTrialScheduledEmail,
 } from "@/lib/email/senders/booking";
+import { stagePreparedEmails } from "@/lib/email/send-to-recipients";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
@@ -587,10 +588,24 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         }
 
         try {
+          // Rendered before the transaction: the schedule stages only its rows.
+          const preparedEmails = await prepareTrialScheduledEmail({
+            trialId,
+            consulteeUserId: existingTrial.consulteeProfile.user.id,
+            consultantUserId: existingTrial.consultantProfile.user.id,
+            consulteeName: existingTrial.consulteeProfile.user.name || "User",
+            consultantName:
+              existingTrial.consultantProfile.user.name || "Consultant",
+            planTitle: existingTrial.subscriptionPlan.title,
+            startsAt: startTime,
+            awaitingPayment: false,
+            dashboardUrl: `${getAppUrl()}${goHref("auto", "appointments")}`,
+            paymentUrl: null,
+          });
           // 2+3. Validate and write in ONE transaction — the availability
           // check previously ran on the global client before the transaction
           // opened, a classic check-then-act window (#1093 §1).
-          const result = await prisma.$transaction(async (tx) => {
+          const scheduled = await prisma.$transaction(async (tx) => {
             // The published window first — the same union coverage rule
             // checkout applies, on this transaction's client. Enforced even
             // when the consultant is the one scheduling: a trial is a booking.
@@ -714,8 +729,44 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               },
             });
 
-            return updatedTrial;
+            // The notices commit with the schedule, so a rollback takes them too.
+            const bellPayload = {
+              consultantName:
+                existingTrial.consultantProfile.user.name || "Consultant",
+              consulteeName: existingTrial.consulteeProfile.user.name || "User",
+              planTitle: existingTrial.subscriptionPlan.title,
+              dateTime: startTime.toISOString(),
+              status: TrialStatus.SCHEDULED,
+            };
+            const consulteeBell = await notifyTrialScheduled(
+              existingTrial.consulteeProfile.user.id,
+              {
+                ...bellPayload,
+                dashboardUrl: goHref("client", "appointments"),
+              },
+              { deferAttempt: true, tx },
+            );
+            const consultantBell = await notifyTrialScheduled(
+              existingTrial.consultantProfile.user.id,
+              {
+                ...bellPayload,
+                dashboardUrl: goHref("expert", "appointments"),
+              },
+              { deferAttempt: true, tx },
+            );
+            const scheduledEmails = await stagePreparedEmails(
+              tx,
+              preparedEmails,
+            );
+
+            return {
+              trial: updatedTrial,
+              staged: { consulteeBell, consultantBell, scheduledEmails },
+            };
           });
+          const { consulteeBell, consultantBell, scheduledEmails } =
+            scheduled.staged;
+          const result = scheduled.trial;
 
           // 4. Log activity (outside transaction for non-critical operation)
           await logTrialScheduled(
@@ -729,56 +780,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             existingTrial.subscriptionPlan.title,
             startTime,
           );
-
-          const [consulteeBell, consultantBell, scheduledEmails] =
-            await Promise.all([
-              Promise.resolve(
-                notifyTrialScheduled(
-                  existingTrial.consulteeProfile.user.id,
-                  {
-                    consultantName:
-                      existingTrial.consultantProfile.user.name || "Consultant",
-                    consulteeName:
-                      existingTrial.consulteeProfile.user.name || "User",
-                    planTitle: existingTrial.subscriptionPlan.title,
-                    dateTime: startTime.toISOString(),
-                    status: TrialStatus.SCHEDULED,
-                    dashboardUrl: goHref("client", "appointments"),
-                  },
-                  { deferAttempt: true },
-                ),
-              ).catch(() => null),
-              Promise.resolve(
-                notifyTrialScheduled(
-                  existingTrial.consultantProfile.user.id,
-                  {
-                    consultantName:
-                      existingTrial.consultantProfile.user.name || "Consultant",
-                    consulteeName:
-                      existingTrial.consulteeProfile.user.name || "User",
-                    planTitle: existingTrial.subscriptionPlan.title,
-                    dateTime: startTime.toISOString(),
-                    status: TrialStatus.SCHEDULED,
-                    dashboardUrl: goHref("expert", "appointments"),
-                  },
-                  { deferAttempt: true },
-                ),
-              ).catch(() => null),
-              stageTrialScheduledEmail(prisma, {
-                trialId,
-                consulteeUserId: existingTrial.consulteeProfile.user.id,
-                consultantUserId: existingTrial.consultantProfile.user.id,
-                consulteeName:
-                  existingTrial.consulteeProfile.user.name || "User",
-                consultantName:
-                  existingTrial.consultantProfile.user.name || "Consultant",
-                planTitle: existingTrial.subscriptionPlan.title,
-                startsAt: startTime,
-                awaitingPayment: false,
-                dashboardUrl: `${getAppUrl()}${goHref("auto", "appointments")}`,
-                paymentUrl: null,
-              }).catch(() => []),
-            ]);
 
           await flushNotificationsAfter(
             {

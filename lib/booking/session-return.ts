@@ -36,6 +36,7 @@ import {
   RETURN_HISTORY_REASON,
   RETURN_NOTICE_HOURS,
 } from "./session-return-rules";
+import { stageNoticesForFreedWindows } from "@/lib/booking/backup-interest";
 
 const HOUR_MS = 3_600_000;
 
@@ -63,6 +64,8 @@ const RETURN_SELECT = {
   id: true,
   appointmentId: true,
   startsAt: true,
+  endsAt: true,
+  consultantProfileId: true,
   completionStatus: true,
   isTentative: true,
   deletedAt: true,
@@ -204,6 +207,11 @@ export async function returnSessionToPlan(args: {
               "SESSION_NOT_RETURNABLE",
               "This session can no longer be returned — it was moved, cancelled or already returned.",
             );
+          }
+          if (occ.consultantProfileId) {
+            await stageNoticesForFreedWindows(tx, occ.consultantProfileId, [
+              occ,
+            ]);
           }
 
           // The counter and the extension move together, so a plan is extended

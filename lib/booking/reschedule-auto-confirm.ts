@@ -1,26 +1,17 @@
 /**
- * Auto-confirmation of a consultee's reschedule proposal.
- *
- * This is the piece that makes rescheduling feel immediate rather than
- * bureaucratic: when a consultee picks a time inside the consultant's published
- * availability and both calendars are free, there is nothing for the consultant
- * to decide, so nothing is asked of them. Publishing availability IS the
- * consent. A consultant-initiated proposal never takes this path — being free
- * at a time is not consent to be moved to it.
- *
- * Rather than re-deriving the consultant profile, plan config, weekly caps and
- * both parties' calendars, this writes the proposed times onto the released slot
- * rows and then runs the ordinary `requested` allocation, which already performs
- * the full validation under the correct locks. If that rejects the times, the
- * rows are restored and the proposal simply stays PENDING_REVIEW for the
- * consultant to answer — a proposal failing to auto-confirm is an ordinary
- * outcome, not an error.
+ * Auto-confirmation of a consultee's reschedule proposal: when the picked time
+ * is inside the consultant's published availability and both calendars are
+ * free, publishing availability is the consent, so nothing is asked of them.
+ * The proposed times go to the allocator (`manual`), which validates them
+ * under the booking's locks and writes nothing unless it commits. A
+ * consultant-initiated proposal never takes this path.
  */
 
 import prisma from "@/lib/prisma";
 import type { EventType } from "@/utils/scheduling-engine/types";
 import { allocate } from "@/lib/booking/allocation";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
+import { stageNoticesForFreedWindows } from "@/lib/booking/backup-interest";
 import { mayAutoConfirm } from "@/lib/booking/reschedule-proposals";
 import {
   AppointmentBusyError,
@@ -29,7 +20,8 @@ import {
 } from "@/utils/appointmentlock";
 
 export type AutoConfirmOutcome =
-  { confirmed: true } | { confirmed: false; reason: string };
+  | { confirmed: true }
+  | { confirmed: false; reason: string; takenSlotStarts?: string[] };
 
 /**
  * @param rescheduleRequestId the proposal to try
@@ -90,11 +82,18 @@ export async function tryAutoConfirmProposal(
         // one being confirmed, not superseded, so it is excluded.
         excludeRescheduleRequestId: request.id,
         // AUTO_ACCEPTED commits with the move or not at all.
-        inTx: (tx) =>
-          closeConfirmedProposal(tx, {
+        inTx: async (tx, moved) => {
+          await closeConfirmedProposal(tx, {
             where: { id: request.id },
             to: "AUTO_ACCEPTED",
-          }),
+          });
+          await stageNoticesForFreedWindows(
+            tx,
+            moved.consultantProfileId,
+            moved.freedWindows,
+            moved.placed,
+          );
+        },
       });
 
       if (!result.success) {
@@ -104,6 +103,9 @@ export async function tryAutoConfirmProposal(
         return {
           confirmed: false,
           reason: result.errorCode ?? "VALIDATION_FAILED",
+          ...(result.takenSlotStarts
+            ? { takenSlotStarts: result.takenSlotStarts }
+            : {}),
         };
       }
 
@@ -121,4 +123,21 @@ export async function tryAutoConfirmProposal(
     }
     throw err;
   }
+}
+
+/**
+ * Drop the times of a proposal whose auto-confirm was refused for the times
+ * themselves: Accept would repeat the same refusal, so the request stays open
+ * as preference-only and the consultant places the session. A request answered
+ * meanwhile keeps its times.
+ */
+export async function dropRefusedProposalTimes(
+  rescheduleRequestId: string,
+): Promise<void> {
+  await prisma.rescheduleProposedTime.deleteMany({
+    where: {
+      rescheduleRequestId,
+      rescheduleRequest: { status: "PENDING_REVIEW" },
+    },
+  });
 }

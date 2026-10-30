@@ -28,7 +28,12 @@ import {
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { SLOT_TRANSITION_TX_OPTIONS } from "@/lib/booking/slot-release";
-import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
+import {
+  expireBackupInterest,
+  flushBackupInterestNotices,
+  stageNoticesForAppointmentHolds,
+  stageNoticesForFreedWindows,
+} from "@/lib/booking/backup-interest";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
   notifyConsulteeRequestExpired,
@@ -43,7 +48,6 @@ import { deriveTransactionId } from "@/lib/novu/outbox";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
-import { expireBackupInterest } from "@/lib/booking/backup-interest";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import type { Tx } from "@/lib/prisma";
 import {
@@ -523,6 +527,7 @@ async function expirePendingConsultations(
                 stale.id,
               );
               if (!stale.appointment) return { released: 0, markers: owed };
+              await stageNoticesForAppointmentHolds(tx, stale.appointment.id);
               const released = await transitionOccurrenceCompletion(tx, {
                 where: {
                   appointmentId: stale.appointment.id,
@@ -775,7 +780,13 @@ async function releaseStaleRescheduledSlots(
         ...staleRescheduled,
         completionStatus: OccurrenceCompletionStatus.RESCHEDULED,
       },
-      select: { id: true, appointmentId: true, startsAt: true },
+      select: {
+        id: true,
+        appointmentId: true,
+        startsAt: true,
+        endsAt: true,
+        consultantProfileId: true,
+      },
       orderBy: { updatedAt: "asc" },
       take: limits.maxSlotReleases,
     });
@@ -798,6 +809,26 @@ async function releaseStaleRescheduledSlots(
             allowZero: true,
           });
           if (moved === 0) return { moved, bells: [], emails: [] };
+          // Only the rows this release moved free a window, each under its own host.
+          const freed = await tx.appointmentOccurrence.findMany({
+            where: {
+              id: { in: rows.map((r) => r.id) },
+              completionStatus: OccurrenceCompletionStatus.CANCELLED,
+            },
+            select: { id: true },
+          });
+          const freedIds = new Set(freed.map((r) => r.id));
+          const byHost = new Map<string, typeof rows>();
+          for (const row of rows) {
+            if (!row.consultantProfileId || !freedIds.has(row.id)) continue;
+            byHost.set(row.consultantProfileId, [
+              ...(byHost.get(row.consultantProfileId) ?? []),
+              row,
+            ]);
+          }
+          for (const [host, hostRows] of byHost) {
+            await stageNoticesForFreedWindows(tx, host, hostRows);
+          }
           const wrapper = await tx.appointment.findUnique({
             where: { id: appointmentId },
             select: STALE_RELEASE_PARTIES_SELECT,

@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 type NullableDate = Date | string | null;
 
@@ -40,7 +41,7 @@ const DAY_MS = 86_400_000;
 const toDate = (v: Date | string) => (v instanceof Date ? v : new Date(v));
 
 async function post(url: string, body?: unknown) {
-  const res = await fetch(url, {
+  const res = await fetchWithIdentity(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),

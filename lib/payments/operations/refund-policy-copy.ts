@@ -40,7 +40,7 @@ export const REFUND_POLICY_COPY = {
   noticeRule: `Notice is counted to your next session. If you moved that session yourself, the shortest notice you gave when moving it is the notice that counts.`,
   freezeRule: `A session can't be cancelled from ${freezeMinutes} minutes before it starts until it ends, or after it has taken place. If something went wrong, report a problem from the booking.`,
   expertCancel: `If your expert, our team or the expert's organisation cancels, you get a ${CONSULTANT_INITIATED_PCT}% refund, whatever the timing.`,
-  reschedules: `You can move each session up to ${MAX_CONSULTEE_RESCHEDULES} times. A proposal you withdraw doesn't count.`,
+  reschedules: `You can move each session up to ${MAX_CONSULTEE_RESCHEDULES} times. A proposal you withdraw, or one that ends with your original time kept, doesn't count.`,
   eventWindow: `Cancel at least ${hours(EVENT_REFUND_WINDOW_HOURS_DEFAULT)} before the event starts for a full refund. The host may set a longer window, up to ${hours(EVENT_REFUND_WINDOW_HOURS_MAX)}; the window shown when you booked is the one that applies. Inside the window your seat can't be refunded.`,
   classSeries:
     "Once a class has started, leaving refunds each session that hasn't started yet, at the notice ladder above for its own start time. A session already under way when you leave counts as attended.",

@@ -39,6 +39,7 @@ import {
 } from "@/utils/appointmentlock";
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
 import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
+import { stageNoticesForFreedWindows } from "@/lib/booking/backup-interest";
 import {
   isRestoreMiss,
   parkParentForUnrestoredEnding,
@@ -126,12 +127,20 @@ export async function acceptProposal(args: {
     // superseded.
     excludeRescheduleRequestId: request.id,
     // ACCEPTED commits with the move or not at all.
-    inTx: (tx) =>
-      closeConfirmedProposal(tx, {
+    inTx: async (tx, moved) => {
+      await closeConfirmedProposal(tx, {
         where: { id: request.id },
         to: "ACCEPTED",
         data: { resolvedById: args.resolvedById },
-      }),
+      });
+      // The original times are free now; waitlisters hear in this commit.
+      await stageNoticesForFreedWindows(
+        tx,
+        moved.consultantProfileId,
+        moved.freedWindows,
+        moved.placed,
+      );
+    },
   });
   if (!result.success) {
     // Nothing was written; the proposal stays open unless it was closed under us.
@@ -269,6 +278,7 @@ const DECLINE_SELECT = {
   id: true,
   appointmentId: true,
   createdAt: true,
+  originStatus: true,
   releasedOccurrenceIds: true,
   appointment: { select: { consultationId: true, subscriptionId: true } },
 } as const;

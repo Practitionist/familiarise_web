@@ -30,7 +30,7 @@ function codeOf(body: unknown): string | undefined {
 }
 
 /** `takenSlotStarts` from a TIMES_TAKEN refusal, top level or under `details`. */
-function takenSlotStartsOf(body: unknown): string[] | undefined {
+export function takenSlotStartsOf(body: unknown): string[] | undefined {
   const parsed = z
     .object({
       takenSlotStarts: takenStartsSchema.optional(),

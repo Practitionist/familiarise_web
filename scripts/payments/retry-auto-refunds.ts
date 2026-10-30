@@ -69,6 +69,7 @@ import {
 } from "@/lib/payments/operations/refund-owed";
 import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { reportSentryError } from "@/lib/observability/report";
+import { startDeadline, startDeadlineShare } from "@/lib/cron/run-deadline";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 
 export interface RetryAutoRefundsResult {
@@ -96,6 +97,8 @@ export interface RetryAutoRefundsResult {
     /** Markers older than two hours, stuck ones included. */
     aged: number;
   };
+  /** The run hit its start deadline with rows left for the next one. */
+  hasMore: boolean;
   timestamp: string;
 }
 
@@ -135,8 +138,14 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
       stuck: [],
       aged: 0,
     },
+    hasMore: false,
     timestamp: now.toISOString(),
   };
+  // One deadline for the run: a slow gateway cuts it between rows, never mid-row.
+  // Auto-refunds stop at half of it, so they never starve the owed markers.
+  const startedAt = Date.now();
+  const outOfTime = startDeadline(startedAt);
+  const autoRefundsOutOfTime = startDeadlineShare(0.5, startedAt);
 
   const due = await prisma.payment.findMany({
     where: {
@@ -167,6 +176,10 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
   const failedIds: string[] = [];
   let firstError: unknown;
   for (const payment of due) {
+    if (autoRefundsOutOfTime()) {
+      result.hasMore = true;
+      break;
+    }
     try {
       await retryOne(payment, result);
     } catch (error) {
@@ -190,7 +203,7 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
       extra: { failed: failedIds.length, sample: failedIds.slice(0, 10) },
     });
   }
-  await retryRefundsOwed(limit, now, result);
+  await retryRefundsOwed(limit, now, result, outOfTime);
   await reportAgedRefundsOwed(now, result);
   result.success = result.errors === 0;
   return result;
@@ -206,6 +219,7 @@ async function retryRefundsOwed(
   limit: number,
   now: Date,
   result: RetryAutoRefundsResult,
+  outOfTime: () => boolean,
 ): Promise<void> {
   const rows = await prisma.payment.findMany({
     where: {
@@ -229,6 +243,10 @@ async function retryRefundsOwed(
   let firstError: unknown;
   const failedIds: string[] = [];
   for (const marker of rows.flatMap((row) => markerFromRow(row) ?? [])) {
+    if (outOfTime()) {
+      result.hasMore = true;
+      break;
+    }
     const outcome = await driveRefundOwed(marker, { initiatedByUserId: null });
     const holdError = await startTrialHoldIfSettled(marker, outcome);
     if (holdError !== undefined) {

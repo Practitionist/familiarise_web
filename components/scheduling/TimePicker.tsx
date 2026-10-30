@@ -266,6 +266,7 @@ export function TimePicker({
       slotIds: releasedOccurrenceIds,
       proposedSlots: named ? picked : undefined,
       preference: named ? undefined : preference(),
+      displayZone: listZone,
     });
   };
 

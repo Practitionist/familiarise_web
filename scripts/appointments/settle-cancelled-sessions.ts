@@ -85,6 +85,8 @@ export interface SettleCancelledSessionsResult {
   stamped: number;
   refunded: number;
   errors: number;
+  /** The run hit its start deadline with due sessions or plans left. */
+  hasMore: boolean;
   timestamp: string;
   /** Where the plan-end pass resumes next run; null starts both cohorts over. */
   checkpoint: string | null;
@@ -137,9 +139,12 @@ async function settleUnlocked(
     stamped: 0,
     refunded: 0,
     errors: 0,
+    hasMore: false,
     timestamp: now.toISOString(),
     checkpoint: await readJobCheckpoint(JOB_NAME),
   };
+  // One deadline for the whole run: a slow gateway cuts it between rows.
+  const outOfTime = startDeadline();
   const due = await prisma.appointmentOccurrence.findMany({
     where: dueWhere(now),
     orderBy: { startsAt: "asc" },
@@ -153,6 +158,10 @@ async function settleUnlocked(
   const failedIds: string[] = [];
   let firstError: unknown;
   for (const session of due) {
+    if (outOfTime()) {
+      result.hasMore = true;
+      break;
+    }
     try {
       await settleAndStamp(session, result);
     } catch (error) {
@@ -177,7 +186,7 @@ async function settleUnlocked(
     });
   }
   result.stamped += await settleVoidsOfEndedPlans(now);
-  await settleEndedPlans(now, limit, result);
+  await settleEndedPlans(now, limit, result, outOfTime);
   runFailures.flush();
   result.success = result.errors === 0;
   return result;
@@ -282,6 +291,7 @@ export async function settleCancelledSessionForOne(
         stamped: 0,
         refunded: 0,
         errors: 0,
+        hasMore: false,
         timestamp: now.toISOString(),
         checkpoint: await readJobCheckpoint(JOB_NAME),
       };
@@ -693,8 +703,8 @@ async function settleEndedPlans(
   now: Date,
   limit: number,
   result: SettleCancelledSessionsResult,
+  outOfTime: () => boolean,
 ): Promise<void> {
-  const outOfTime = startDeadline();
   const live = {
     deletedAt: null,
     status: { in: PLAN_LIVE_STATUSES },
@@ -742,7 +752,10 @@ async function settleEndedPlans(
   ): Promise<PlanKey | null> => {
     let after = from;
     for (let page = 0; page < PLAN_PAGES_PER_RUN; page++) {
-      if (outOfTime()) return after;
+      if (outOfTime()) {
+        result.hasMore = true;
+        return after;
+      }
       const plans = await read(after);
       // Nothing left past the cursor: start the cohort over in this run.
       if (plans.length === 0 && after && page === 0) {
@@ -752,7 +765,10 @@ async function settleEndedPlans(
       const whole = await settlePage(plans, (plan) => {
         after = keyOf(plan);
       });
-      if (!whole) return after;
+      if (!whole) {
+        result.hasMore = true;
+        return after;
+      }
       if (plans.length < limit) return null;
     }
     return after;

@@ -1,6 +1,9 @@
 import type { AppointmentsType } from "@prisma/client";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
-import { supportsProposals } from "@/lib/booking/reschedule-proposals";
+import {
+  RESCHEDULE_MIN_LEAD_HOURS,
+  supportsProposals,
+} from "@/lib/booking/reschedule-proposals";
 
 /**
  * The four surfaces that place slots on a consultant's calendar, expressed as
@@ -68,6 +71,8 @@ export interface TimePickerSubmission {
   proposedSlots?: { startsAt: string; endsAt: string }[];
   /** Only ever set alongside an absent `proposedSlots` — naming a time says it. */
   preference?: SlotPreference;
+  /** The zone the picker showed times in, for naming them back in a refusal. */
+  displayZone?: string;
 }
 
 export interface TimePickerPolicy {
@@ -152,9 +157,6 @@ export interface TimePickerSubject {
    */
   consulteeName?: string;
 }
-
-/** Lead time the reschedule API enforces server-side; mirrored for the UI. */
-const RESCHEDULE_MIN_LEAD_HOURS = 24;
 
 type PolicyHandlers = Pick<TimePickerPolicy, "onSubmit"> &
   Partial<Pick<TimePickerPolicy, "onConflict">>;

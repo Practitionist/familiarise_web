@@ -98,6 +98,18 @@ export class CancelRefusedError extends Error {
   }
 }
 
+/** 409 codes meaning the booking already moved on; any other 409 is a refusal to show. */
+const ALREADY_SETTLED_CODES: ReadonlySet<string> = new Set([
+  "NOT_CANCELLABLE",
+  "BOOKING_CHANGED",
+  "ILLEGAL_TRANSITION",
+]);
+
+/** Whether a 409 cancel answer means "already cancelled or changed — refresh". */
+export function cancelAlreadySettled(code: string | undefined): boolean {
+  return code === undefined || ALREADY_SETTLED_CODES.has(code);
+}
+
 /** The refusal in a preview or cancel answer, or null for any other body. */
 export function cancelRefusalFrom(body: unknown): CancelRefusedError | null {
   const parsed = CancelRefusalSchema.safeParse(body);

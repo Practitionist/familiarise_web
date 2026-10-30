@@ -439,6 +439,31 @@ export const timesJustTaken = (
     .join(", ")}. Your other picks are still selected — choose replacements.`,
 });
 
+/** The taken starts a 409 TIMES_TAKEN names, as valid dates. */
+export function takenStartsFrom(starts: readonly string[] | undefined): Date[] {
+  return (starts ?? [])
+    .map((iso) => new Date(iso))
+    .filter((date) => Number.isFinite(date.getTime()));
+}
+
+/** A reschedule's picked times were taken first; the booking kept its time. */
+export const rescheduleTimesTaken = (
+  starts: readonly Date[],
+  zone?: string,
+): AllocationToast => ({
+  variant: "destructive",
+  title:
+    starts.length === 1
+      ? "This time was just taken"
+      : "These times were just taken",
+  description: `${starts
+    .map(
+      (start) =>
+        `${formatDayLabel(start, { zone })} ${formatClockTime(start, { zone })}`,
+    )
+    .join(", ")}. Your booking keeps its original time — pick another time.`,
+});
+
 /** The request's tentative times moved in another tab; the page reloaded them. */
 export const requestRefreshedInPlace = (): AllocationToast => ({
   variant: "destructive",

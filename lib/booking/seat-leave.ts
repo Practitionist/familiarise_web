@@ -52,6 +52,7 @@ import {
   type SeatLedger,
 } from "./class-series";
 import { liveParticipant, releaseParticipant } from "./participants";
+import { inRetimeFreeLeave } from "./retime-leave";
 
 export type EventKind = "class" | "webinar";
 
@@ -87,14 +88,18 @@ function windowClosed(windowHours: number): BookingRuleError {
   );
 }
 
-/** Refuse inside the window unless the next session was moved on the buyer. */
+/**
+ * Refuse inside the window unless the next session was moved on the buyer; a
+ * re-timed event's free leave is bounded by its retimeBy instead.
+ */
 function assertOutsideWindow(
   next: { startsAt: Date; movedAt: Date | null } | null | undefined,
   joinedAt: Date,
   windowHours: number,
   now: Date,
+  movesForgive = true,
 ): void {
-  if (!next || movedAfter(next.movedAt, joinedAt)) return;
+  if (!next || (movesForgive && movedAfter(next.movedAt, joinedAt))) return;
   if ((next.startsAt.getTime() - now.getTime()) / HOUR_MS < windowHours) {
     throw windowClosed(windowHours);
   }
@@ -180,12 +185,27 @@ export async function planSelfLeave(
     await planWindowHours(tx, kind, eventId),
   );
   if (kind === "webinar") {
-    const next = await findLiveEventSlot(
-      { webinarId: eventId },
-      { order: "asc", startsAtGte: now },
-      tx,
-    );
-    assertOutsideWindow(next, seat.createdAt, windowHours, now);
+    // An order captured after a move still bought the old time.
+    const payment = await seatPayment(tx, kind, eventId, userId);
+    const joinedAt =
+      payment && payment.createdAt < seat.createdAt
+        ? payment.createdAt
+        : seat.createdAt;
+    if (await inRetimeFreeLeave(tx, "webinar", eventId, joinedAt, now)) {
+      return { mode: "full" };
+    }
+    const [next, event] = await Promise.all([
+      findLiveEventSlot(
+        { webinarId: eventId },
+        { order: "asc", startsAtGte: now },
+        tx,
+      ),
+      tx.webinar.findUnique({
+        where: { id: eventId },
+        select: { retimeBy: true },
+      }),
+    ]);
+    assertOutsideWindow(next, joinedAt, windowHours, now, !event?.retimeBy);
     return { mode: "full" };
   }
   const payment = await seatPayment(tx, kind, eventId, userId);
@@ -205,6 +225,14 @@ export async function planSelfLeave(
     now,
   );
   const sessions = ledger.remaining.length + ledger.neverScheduled;
+  // The host moved the class after this purchase: until retimeBy, leaving
+  // refunds every undelivered session in full.
+  if (await inRetimeFreeLeave(tx, "class", eventId, joinedAt, now)) {
+    return {
+      amountPaise: await fullUndeliveredQuote(tx, ledger, payment, now),
+      sessions,
+    };
+  }
   // A session under way when the attendee leaves is theirs to forfeit, so it
   // counts as delivered and the ladder prices only what has not started.
   if (ledger.deliveredHeld + ledger.inProgressHeld === 0) {
@@ -251,6 +279,19 @@ async function planSeriesExit(
     payment.amount,
     now,
   );
+  return {
+    amountPaise: await fullUndeliveredQuote(tx, ledger, payment, now),
+    sessions: ledger.remaining.length + ledger.neverScheduled,
+  };
+}
+
+/** Every undelivered session at its full unit, less what was refunded per session. */
+async function fullUndeliveredQuote(
+  tx: Tx,
+  ledger: SeatLedger,
+  payment: NonNullable<Awaited<ReturnType<typeof seatPayment>>>,
+  now: Date,
+): Promise<number> {
   const quote = quoteClassSeatRefund({
     policy: termsFromPolicyRow(payment.appointment?.cancellationPolicy),
     isConsultantInitiated: true,
@@ -261,10 +302,7 @@ async function planSeriesExit(
     refundablePaise: refundableBalancePaise(Number(payment.amount), payment),
     nowMs: now.getTime(),
   });
-  return {
-    amountPaise: quote.refundPaise,
-    sessions: ledger.remaining.length + ledger.neverScheduled,
-  };
+  return quote.refundPaise;
 }
 
 export type SeatLeaveQuote =

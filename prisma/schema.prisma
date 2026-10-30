@@ -4435,6 +4435,9 @@ model Webinar {
   // single session without touching its siblings.
   maxParticipants Int?
 
+  /// Set by a host re-time: attendees may leave with a full refund until then.
+  retimeBy DateTime? @db.Timestamptz
+
   webinarPlan   WebinarPlan @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarPlanId String
 
@@ -4564,6 +4567,9 @@ model Class {
   maxParticipants Int?
 
   feedbackSummary String? @db.Text
+
+  /// Set by a host re-time: attendees may leave with a full refund until then.
+  retimeBy DateTime? @db.Timestamptz
 
   classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
@@ -5047,6 +5053,10 @@ model RescheduleRequest {
   id String @id @default(uuid())
   /// Released sessions as [{ ordinal, startsAt }] written in the release tx; the durable notice source.
   releasedSessions Json?
+  /// The parent's status just before this release moved it, written in the release tx; restore reads it.
+  originStatus     String? @db.VarChar(32)
+  /// Stamped in the tx that puts the booking back as it was (withdraw, decline, expiry); a restored request costs no reschedule.
+  restoredAt       DateTime? @db.Timestamptz
 
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   appointmentId String

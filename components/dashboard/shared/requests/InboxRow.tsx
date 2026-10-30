@@ -89,7 +89,7 @@ export function answerableProposal(row: InboxRowInput) {
     p?.status !== "PENDING_REVIEW" ||
     p.initiatorRole !== "CONSULTEE" ||
     !row.appointmentId ||
-    p.proposedTimes.filter((t) => t.round === p.round).length === 0
+    p.proposedTimes.length === 0
   ) {
     return null;
   }
@@ -496,9 +496,7 @@ export function InboxRow({
             </p>
           ) : null}
           {row.proposal && (
-            <p className="text-xs text-muted-foreground">
-              Proposed new times · round {row.proposal.round}
-            </p>
+            <p className="text-xs text-muted-foreground">Proposed new times</p>
           )}
           {row.checkoutHold && (
             <p className="text-xs text-muted-foreground">

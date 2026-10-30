@@ -14,7 +14,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { eventUnionStatusBadge } from "@/lib/appointments/status";
+import {
+  eventUnionStatusBadge,
+  isApprovedStatus,
+} from "@/lib/appointments/status";
 import {
   isDeadOccurrence,
   isDeliberateEnd,
@@ -30,6 +33,7 @@ import type {
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import { useZonedFormat } from "@/lib/time/zoned-format";
+import { SUPPORT_PATH } from "@/lib/appointments/new-time-door";
 import { CountdownBadge } from "./CountdownBadge";
 import { KIND_LABEL } from "./AppointmentRow";
 import { RowPrimaryAction } from "./RowPrimaryAction";
@@ -40,9 +44,39 @@ const NO_SESSION_NOTE: Partial<Record<NeedsActionReason, string>> = {
   UNSCHEDULED: "No sessions scheduled yet — set a schedule to get started.",
   AWAITING_SCHEDULING:
     "Awaiting scheduling — the expert places the sessions next.",
-  NEEDS_RESCHEDULING:
-    "Needs rescheduling — this booking has no session time any more. Message the other party or contact support to agree a new one.",
 };
+
+/** A booking with no session left gets its new time from the expert; support is the way to help. */
+function NeedsNewTimeNote({
+  vm,
+  role,
+}: {
+  vm: AppointmentVM;
+  role: AppointmentActionAdapter["role"];
+}) {
+  const requestId =
+    vm.raw.appointment?.consultationId ?? vm.raw.appointment?.subscriptionId;
+  if (role === "consultant" && isApprovedStatus(vm.status) && requestId) {
+    return (
+      <>
+        This booking has no session time any more. Use Place a new time to pick
+        one.
+      </>
+    );
+  }
+  const lead =
+    role === "consultee"
+      ? `${vm.counterpart.name} will place a new time.`
+      : "This booking has no session time any more.";
+  return (
+    <>
+      {lead} Need help?{" "}
+      <Link href={SUPPORT_PATH} className="font-medium underline">
+        Contact support
+      </Link>
+    </>
+  );
+}
 
 function initials(name: string): string {
   return name
@@ -204,11 +238,15 @@ export function AppointmentSheet({
             {/* Timeline (tentative-only / slot-less rows get a note instead) */}
             {(allTentative || vm.occurrences.length === 0) && (
               <p className="text-xs text-muted-foreground rounded-lg bg-muted border border-border p-3">
-                {allTentative
-                  ? "Awaiting schedule confirmation."
-                  : ((vm.needsActionReason &&
-                      NO_SESSION_NOTE[vm.needsActionReason]) ??
-                    "No sessions scheduled yet.")}
+                {allTentative ? (
+                  "Awaiting schedule confirmation."
+                ) : vm.needsActionReason === "NEEDS_RESCHEDULING" ? (
+                  <NeedsNewTimeNote vm={vm} role={adapter.role} />
+                ) : (
+                  ((vm.needsActionReason &&
+                    NO_SESSION_NOTE[vm.needsActionReason]) ??
+                  "No sessions scheduled yet.")
+                )}
               </p>
             )}
             {hasConcreteSessions && (

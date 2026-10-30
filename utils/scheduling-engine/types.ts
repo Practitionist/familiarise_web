@@ -69,6 +69,15 @@ export function isReleasedForReschedule(slot: {
 /**
  * Request structure for slot allocation
  */
+/** What an allocation freed and placed, handed to `inTx` in the same transaction. */
+export interface AllocationMove {
+  consultantProfileId: string;
+  /** Released windows the allocation replaced (a reschedule); empty otherwise. */
+  freedWindows: { startsAt: Date; endsAt: Date }[];
+  /** The occurrences the allocation wrote. */
+  placed: { startsAt: Date; endsAt: Date }[];
+}
+
 export interface AllocationRequest {
   eventType: EventType;
   eventId: string;
@@ -131,7 +140,7 @@ export interface AllocationRequest {
   /** Narrows the request statuses the approval CAS accepts (1:1 events only). */
   approvableFrom?: AppointmentStatus[];
   /** Runs inside the allocator's transaction after the status CAS; a throw rolls the move back. */
-  inTx?: (tx: Tx) => Promise<void>;
+  inTx?: (tx: Tx, moved: AllocationMove) => Promise<void>;
   /**
    * The caller already holds this booking's appointment lock (reschedule
    * accept and auto-confirm): the allocator renews it instead of acquiring it.

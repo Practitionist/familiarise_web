@@ -62,6 +62,13 @@ import {
   CollaboratorUnavailableError,
 } from "@/lib/collaborators/availability";
 import { BookingRuleError } from "./booking-rule-error";
+import {
+  attendeeClashes,
+  extendRetimeLeave,
+  RETIME_TX_OPTIONS,
+  retimeLeaveUntil,
+  splitByClash,
+} from "./retime-leave";
 import { MAKEUP_WINDOW_DAYS, MISS_WHERE, missedAt } from "./misses";
 import {
   exitRightFor,
@@ -129,7 +136,6 @@ const zoned = (d: Date, zone: string): string =>
 export interface ClassActor {
   userId: string;
   consultantProfileId: string | null;
-  isPrivileged: boolean;
 }
 
 const HOSTED_CLASS_SELECT = {
@@ -152,22 +158,15 @@ const HOSTED_CLASS_SELECT = {
   },
 } satisfies Prisma.AppointmentSelect;
 
-/** The class behind an appointment, and whether this actor hosts it. */
-export async function readHostedClass(
-  appointmentId: string,
-  actor: ClassActor,
-) {
+/** The class behind an appointment; who may act on it is the caller's door. */
+export async function readHostedClass(appointmentId: string) {
   const appointment = await prisma.appointment.findUnique({
     where: { id: appointmentId },
     select: HOSTED_CLASS_SELECT,
   });
   const cls = appointment?.class;
   if (!appointment || !cls) return { found: false as const };
-  const isHost =
-    actor.isPrivileged ||
-    (!!actor.consultantProfileId &&
-      cls.classPlan.consultantProfileId === actor.consultantProfileId);
-  return { found: true as const, isHost, appointment, cls };
+  return { found: true as const, appointment, cls };
 }
 
 export type HostedClass = Extract<
@@ -427,7 +426,6 @@ export async function onClassSessionVoided(
   }
   const hosted: HostedClass = {
     found: true,
-    isHost: false,
     appointment,
     cls,
   };
@@ -484,11 +482,12 @@ export async function onClassSessionVoided(
 }
 
 /**
- * Verifies that every ACCEPTED co-instructor on a class plan is free for the
- * proposed make-up window, mapping conflicts to a 409 BookingRuleError.
+ * Verifies that every ACCEPTED co-host on the plan is free for a session the
+ * host is moving, mapping conflicts to a 409 BookingRuleError.
  */
-async function verifyMakeUpCollaboratorsAvailable(
+export async function verifyCohostsFreeForMove(
   tx: Tx,
+  planType: "CLASS" | "WEBINAR",
   planId: string | undefined,
   startsAt: Date,
   endsAt: Date,
@@ -497,7 +496,7 @@ async function verifyMakeUpCollaboratorsAvailable(
   if (!planId || !("collaborator" in tx)) return;
   try {
     await assertCollaboratorsAvailable(tx, {
-      planType: "CLASS",
+      planType,
       planId,
       startsAt,
       endsAt,
@@ -512,11 +511,11 @@ async function verifyMakeUpCollaboratorsAvailable(
 }
 
 /**
- * The host is free for the make-up window by every reader's predicate: live
- * holds, pending requests, unpaid approvals, pending reschedules, co-hosted
- * events and the host's own client bookings all occupy.
+ * The host is free for a moved session's window by every reader's predicate:
+ * live holds, pending requests, unpaid approvals, pending reschedules,
+ * co-hosted events and the host's own client bookings all occupy.
  */
-async function verifyMakeUpHostFree(
+export async function verifyHostFreeForMove(
   tx: Tx,
   args: {
     consultantProfileId: string;
@@ -680,15 +679,16 @@ export async function scheduleClassMakeUp(
             const consultantProfileId =
               source.consultantProfileId ??
               hosted.cls.classPlan.consultantProfileId;
-            await verifyMakeUpCollaboratorsAvailable(
+            await verifyCohostsFreeForMove(
               tx,
+              "CLASS",
               hosted.cls.classPlan.id,
               startsAt,
               endsAt,
               appointmentId,
             );
             if (consultantProfileId) {
-              await verifyMakeUpHostFree(tx, {
+              await verifyHostFreeForMove(tx, {
                 consultantProfileId,
                 consultantUserId: plan.consultantProfile?.user.id ?? "",
                 startsAt,
@@ -711,63 +711,79 @@ export async function scheduleClassMakeUp(
               select: { userId: true },
             });
             const seatUserIds = seats.map((s) => s.userId);
+            // Attendees busy at the new time never block it; they, and every
+            // seat bought before the move, may leave in full until retimeBy.
+            const clashing = new Set(
+              await attendeeClashes(tx, appointmentId, seatUserIds, {
+                startsAt,
+                endsAt,
+              }),
+            );
+            const leaveBy = retimeLeaveUntil(now, startsAt);
+            await extendRetimeLeave(tx, "class", hosted.cls.id, leaveBy);
             const dashboardUrl = goHref("client", "appointments");
-            let bells: StagedTrigger[] = [];
-            let rescheduleEmailArgs: AppointmentRescheduledEmailArgs | null =
-              null;
-            if (seatUserIds.length > 0) {
-              bells = await stageBellsByZone(
-                tx,
-                NOVU_WORKFLOWS.CLASS_MAKEUP_SCHEDULED,
-                seatUserIds,
-                (zone) => ({
-                  planTitle: hosted.cls.classPlan.title,
-                  dateTime: zoned(startsAt, zone),
-                  // #1527 — every seat holder here is a consultee.
-                  dashboardUrl,
-                }),
-                `makeup:${sourceOccurrenceId}`,
+            const groups = splitByClash(seatUserIds, clashing);
+            const bells: StagedTrigger[] = [];
+            for (const group of groups) {
+              bells.push(
+                ...(await stageBellsByZone(
+                  tx,
+                  NOVU_WORKFLOWS.CLASS_MAKEUP_SCHEDULED,
+                  group.userIds,
+                  (zone) => ({
+                    planTitle: hosted.cls.classPlan.title,
+                    dateTime: zoned(startsAt, zone),
+                    leaveBy: zoned(leaveBy, zone),
+                    clash: group.clash,
+                    // #1527 — every seat holder here is a consultee.
+                    dashboardUrl,
+                  }),
+                  `makeup:${sourceOccurrenceId}${group.clash ? ":clash" : ""}`,
+                )),
               );
-              rescheduleEmailArgs = {
+            }
+            const rescheduleEmailArgs: AppointmentRescheduledEmailArgs[] =
+              groups.map((group) => ({
                 appointmentId,
-                userIds: seatUserIds,
+                userIds: group.userIds,
                 outcome: "MOVED",
                 appointmentType: "CLASS",
                 oldStartsAt: source.startsAt,
                 newStartsAt: startsAt,
+                leaveBy,
+                clash: group.clash,
                 proposedBy:
                   hosted.cls.classPlan.consultantProfile?.user.name ??
                   "Your host",
                 dashboardUrl,
-              };
-            }
+              }));
             return {
               occurrenceId: makeUp.id,
               startsAt,
               endsAt,
+              attendeesWithClash: clashing.size,
               bells,
               rescheduleEmailArgs,
             };
-          }),
+          }, RETIME_TX_OPTIONS),
         );
       }),
   );
-  const emails = result.rescheduleEmailArgs
-    ? await stageAppointmentRescheduledEmail(
-        prisma,
-        result.rescheduleEmailArgs,
-      ).catch((err) => {
+  const emails = await Promise.all(
+    result.rescheduleEmailArgs.map((emailArgs) =>
+      stageAppointmentRescheduledEmail(prisma, emailArgs).catch((err) => {
         console.error(
           "[class-sessions.make-up] Failed to stage reschedule emails:",
           err,
         );
         return [];
-      })
-    : [];
+      }),
+    ),
+  );
   await flushNotificationsAfter(
     {
       bells: result.bells,
-      emails: [{ rows: emails, emailType: "APPOINTMENT_RESCHEDULED" }],
+      emails: [{ rows: emails.flat(), emailType: "APPOINTMENT_RESCHEDULED" }],
     },
     "class-sessions.make-up",
   );
@@ -775,6 +791,7 @@ export async function scheduleClassMakeUp(
     occurrenceId: result.occurrenceId,
     startsAt: result.startsAt,
     endsAt: result.endsAt,
+    attendeesWithClash: result.attendeesWithClash,
   };
 }
 

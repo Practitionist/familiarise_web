@@ -304,3 +304,39 @@ export async function stageNoticesForAppointmentHolds(
   }
   return { bells, emails };
 }
+
+/**
+ * A move freed these windows of a host (a reschedule replaced, a session went
+ * back to the plan, a hold lapsed): tell the learners waiting on any window
+ * the move did not take straight back. Staged in the releasing transaction;
+ * the outbox relay delivers what the caller does not flush.
+ */
+export async function stageNoticesForFreedWindows(
+  tx: Tx,
+  consultantProfileId: string,
+  freed: readonly { startsAt: Date; endsAt: Date }[],
+  retaken: readonly { startsAt: Date; endsAt: Date }[] = [],
+  now = new Date(),
+): Promise<StagedBackupInterestNotices> {
+  const bells: StagedTrigger[] = [];
+  const emails: StagedRecipientEmail[] = [];
+  for (const window of freed) {
+    if (window.endsAt <= now) continue;
+    const stillHeld = retaken.some(
+      (row) => row.startsAt < window.endsAt && row.endsAt > window.startsAt,
+    );
+    if (stillHeld) continue;
+    const staged = await stageBackupInterestNotices(
+      tx,
+      {
+        consultantProfileId,
+        windowStart: window.startsAt,
+        windowEnd: window.endsAt,
+      },
+      now,
+    );
+    bells.push(...staged.bells);
+    emails.push(...staged.emails);
+  }
+  return { bells, emails };
+}

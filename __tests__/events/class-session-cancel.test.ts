@@ -84,7 +84,11 @@ jest.mock("../../lib/prisma", () => {
       findUnique: async () => ({
         class: { classPlan: { totalSessions: 12 } },
       }),
+      // The attendee's own calendar is free at the make-up time.
+      findFirst: async () => null,
     },
+    consultantProfile: { findMany: async () => [] },
+    class: { updateMany: async () => ({ count: 1 }) },
     appointmentParticipant: { findMany: async () => [{ userId: "u-1" }] },
     systemEvent: { findFirst: async () => db.flagged },
     user: { findMany: async () => [] },
@@ -117,7 +121,6 @@ import {
 
 const hosted = {
   found: true,
-  isHost: true,
   appointment: { id: "apt-1", organizationId: null },
   cls: {
     id: "cls-1",

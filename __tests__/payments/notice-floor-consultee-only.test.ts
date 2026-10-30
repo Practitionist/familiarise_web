@@ -34,6 +34,7 @@ type Request = {
   createdAt: Date;
   releasedSessions: { ordinal: number; startsAt: string }[] | null;
   releasedOccurrenceIds: string[];
+  restoredAt?: Date | null;
 };
 
 function occurrence(
@@ -78,11 +79,7 @@ function move(
 }
 
 /** One consultation booking: its live occurrences and its reschedule requests. */
-function fakeDb(args: {
-  occurrences: Occ[];
-  requests: Request[];
-  restoredIds?: string[];
-}) {
+function fakeDb(args: { occurrences: Occ[]; requests: Request[] }) {
   const db = {
     appointment: {
       findFirst: jest.fn(async () => ({
@@ -106,22 +103,19 @@ function fakeDb(args: {
         async ({
           where,
         }: {
-          where: { initiatorRole: string; status: { not: string } };
+          where: {
+            initiatorRole: string;
+            status: { not: string };
+            restoredAt: null;
+          };
         }) =>
           args.requests.filter(
             (r) =>
               r.initiatorRole === where.initiatorRole &&
               r.status !== where.status.not &&
+              (r.restoredAt ?? null) === where.restoredAt &&
               r.releasedSessions !== null,
           ),
-      ),
-    },
-    appointmentOccurrence: {
-      findMany: jest.fn(
-        async ({ where }: { where: { id: { in: string[] } } }) =>
-          (args.restoredIds ?? [])
-            .filter((id) => where.id.in.includes(id))
-            .map((id) => ({ id })),
       ),
     },
     refund: { findMany: jest.fn(async () => []) },
@@ -188,9 +182,8 @@ describe("reschedule notice floor", () => {
         occurrences: [occurrence("released-1", 1, 144, "SCHEDULED")],
         requests: [
           move(1, 3, { status: "WITHDRAWN" }),
-          move(1, 4, { status: "DECLINED" }),
+          move(1, 4, { status: "DECLINED", restoredAt: new Date() }),
         ],
-        restoredIds: ["released-1"],
       }),
     );
     expect(ctx.hoursUntilNextSession).toBeGreaterThan(143);

@@ -37,7 +37,7 @@ import {
   termsFromPolicyRow,
 } from "@/lib/payments/operations/cancellation-policy-store";
 import { occurrenceRefundsPaise } from "@/lib/booking/class-series";
-import { ReleasedSessionsSchema } from "@/lib/booking/released-sessions";
+import { countedReleases } from "@/lib/booking/released-sessions";
 import {
   cancelWindowState,
   type SessionWindowState,
@@ -332,68 +332,28 @@ export async function readCancelWindowState(
   return cancelWindowState(occurrences, now);
 }
 
-/** Proposal endings that put the released sessions back where they were. */
-const MAY_HAVE_RESTORED: ReadonlySet<string> = new Set(["DECLINED", "EXPIRED"]);
-
 /**
  * The shortest notice the consultee side gave when it moved this session (its
  * ordinal), read from the release records on its reschedule requests: the
- * original start against the instant of the release. A withdrawn proposal, or
- * a declined or expired one whose sessions were restored, gave no notice.
+ * original start against the instant of the release.
  */
 async function consulteeRescheduleNoticeFloorHours(
   db: Db | Tx,
   args: { appointmentId: string; ordinal: number },
 ): Promise<number | null> {
-  const requests = await db.rescheduleRequest.findMany({
-    where: {
-      appointmentId: args.appointmentId,
-      initiatorRole: "CONSULTEE",
-      status: { not: "WITHDRAWN" },
-      releasedSessions: { not: Prisma.DbNull },
-    },
-    select: {
-      status: true,
-      createdAt: true,
-      releasedSessions: true,
-      releasedOccurrenceIds: true,
-    },
+  const releases = await countedReleases(db, {
+    appointmentId: args.appointmentId,
+    initiatorRole: "CONSULTEE",
   });
-  if (requests.length === 0) return null;
-  const mayHaveRestored = requests
-    .filter((r) => MAY_HAVE_RESTORED.has(r.status))
-    .flatMap((r) => r.releasedOccurrenceIds);
-  const restoredIds = new Set(
-    mayHaveRestored.length === 0
-      ? []
-      : (
-          await db.appointmentOccurrence.findMany({
-            where: {
-              id: { in: mayHaveRestored },
-              deletedAt: null,
-              completionStatus: "SCHEDULED",
-            },
-            select: { id: true },
-          })
-        ).map((o) => o.id),
-  );
-  const notices = requests.flatMap((request) => {
-    if (
-      MAY_HAVE_RESTORED.has(request.status) &&
-      request.releasedOccurrenceIds.some((id) => restoredIds.has(id))
-    ) {
-      return [];
-    }
-    const parsed = ReleasedSessionsSchema.safeParse(request.releasedSessions);
-    if (!parsed.success) return [];
-    return parsed.data
+  const notices = releases.flatMap((release) =>
+    release.sessions
       .filter((session) => session.ordinal === args.ordinal)
       .map(
         (session) =>
-          (new Date(session.startsAt).getTime() - request.createdAt.getTime()) /
+          (new Date(session.startsAt).getTime() - release.createdAt.getTime()) /
           3_600_000,
       )
-      .filter((hours) => hours >= 0);
-  });
+      .filter((hours) => hours >= 0),
+  );
   return notices.length > 0 ? Math.min(...notices) : null;
 }
