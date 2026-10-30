@@ -10,13 +10,13 @@ import {
 /** ₹5,00,000 ceiling on a single file sale. */
 const MAX_PRICE_PAISE = 50_000_000;
 
+/** The cover is written only by /api/plans/image, so it always names a plan-images object. */
 const productFields = {
   title: z.string().trim().min(3).max(120),
   subtitle: z.string().trim().max(200).nullable().optional(),
   description: z.string().trim().min(10).max(10_000),
   category: z.nativeEnum(DigitalProductCategory),
   pricePaise: z.number().int().min(0).max(MAX_PRICE_PAISE),
-  coverImagePath: z.string().trim().max(500).nullable().optional(),
 };
 
 export const createDigitalProductSchema = z.object(productFields).strict();

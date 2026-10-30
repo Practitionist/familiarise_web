@@ -18,6 +18,8 @@ import { differenceInCalendarDays, startOfDay } from "date-fns";
 import { useSession } from "@/lib/auth-client";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
+import { DigitalProductsSection } from "./components/DigitalProductsSection";
+import type { PublicProductCard } from "@/lib/data/digital-products-public";
 import { ConsultantAvailability } from "./components/ConsultantAvailability";
 import { ExperienceSection } from "./components/ExperienceSection";
 import { ExpertPricing } from "./components/ExpertPricing";
@@ -42,6 +44,7 @@ interface ExpertProfileClientProps {
   reviewTracks: TReviewTrackPresence;
   /** Strikes in the last 90 days, only when they reach the public threshold. */
   reliabilityStrikes: number | null;
+  digitalProducts: PublicProductCard[];
 }
 
 export function ExpertProfileClient({
@@ -50,6 +53,7 @@ export function ExpertProfileClient({
   reviews,
   reviewTracks,
   reliabilityStrikes,
+  digitalProducts,
 }: ExpertProfileClientProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -501,10 +505,13 @@ export function ExpertProfileClient({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
           >
-            <ClassesAndWebinars
-              classPlans={consultantDetails.classPlans}
-              webinarPlans={consultantDetails.webinarPlans}
-            />
+            <div className="space-y-8">
+              <ClassesAndWebinars
+                classPlans={consultantDetails.classPlans}
+                webinarPlans={consultantDetails.webinarPlans}
+              />
+              <DigitalProductsSection products={digitalProducts} />
+            </div>
           </motion.div>
           {/* Spacer to match pricing sidebar width */}
           <div className="hidden xl:block w-[450px] 2xl:w-[500px] flex-shrink-0" />
