@@ -92,7 +92,10 @@ jobs:
           persist-credentials: false
 
       - name: Select changed files
-        # Writes /tmp/changed.txt and the outputs `full` (lint everything) and `db`
+        # Writes NUL-delimited lists (never newline text, so any filename survives):
+        # /tmp/changed.z = existing changed files for the linters, /tmp/all.z = every
+        # touched path (deletions, type changes, both sides of renames) for the gates.
+        # Outputs `full` (config changed or no base: also lint everything) and `db`
         # (run the database sidecar guard). Release runs always do both.
         id: changed
         env:
@@ -100,19 +103,21 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}
         run: |
-          : > /tmp/changed.txt
+          : > /tmp/changed.z
+          : > /tmp/all.z
           full=true
           if [ "$RELEASE" != "true" ]; then
             if [ "$EVENT" = pull_request ]; then base="origin/${BASE_REF}"; else base="$BEFORE"; fi
             if [ -n "$base" ] && git cat-file -e "${base}^{commit}" 2>/dev/null; then
-              git diff --name-only --diff-filter=ACMR "${base}...HEAD" > /tmp/changed.txt
+              git diff -z --name-only --diff-filter=ACMR "${base}...HEAD" -- > /tmp/changed.z
+              git diff -z --name-only --no-renames "${base}...HEAD" -- > /tmp/all.z
               full=false
               # Config and lockfile changes alter what every file is checked against.
-              if grep -Eq '^(eslint\.config|\.prettier|package(-lock)?\.json$)' /tmp/changed.txt; then full=true; fi
+              if grep -zEq '^(eslint\.config|\.prettier|package(-lock)?\.json$)' /tmp/all.z; then full=true; fi
             fi
           fi
           db=true
-          if [ "$full" = false ] && ! grep -Eq '^(prisma/|scripts/ci/check-db|jest\.db\.config|__tests__/db/|\.github/workflows/ci\.yaml$)' /tmp/changed.txt; then db=false; fi
+          if [ "$full" = false ] && ! grep -zEq '^(prisma/|scripts/ci/check-db|jest\.db\.config|__tests__/db/|\.github/workflows/ci\.yaml$)' /tmp/all.z; then db=false; fi
           echo "full=$full" >> "$GITHUB_OUTPUT"
           echo "db=$db" >> "$GITHUB_OUTPUT"
 
@@ -215,19 +220,27 @@ jobs:
           if [ "${{ steps.changed.outputs.full }}" = "true" ]; then
             npm run format:check 2>&1 | tee /tmp/prettier.txt; exit "${PIPESTATUS[0]}"
           else
-            tr '\n' '\0' < /tmp/changed.txt | xargs -0 -r ./node_modules/.bin/prettier --check --ignore-unknown 2>&1 | tee /tmp/prettier.txt; exit "${PIPESTATUS[1]}"
+            xargs -0 -r npx prettier --check --ignore-unknown -- < /tmp/changed.z 2>&1 | tee /tmp/prettier.txt; exit "${PIPESTATUS[0]}"
           fi
         continue-on-error: true
 
       - name: ESLint Check
+        # Non-release runs fail on any warning in a changed file; a config change
+        # adds a full pass whose warnings in untouched files stay advisory.
+        # Release runs lint everything with warnings advisory.
         id: eslint
         run: |
-          if [ "${{ steps.changed.outputs.full }}" = "true" ]; then
-            ./node_modules/.bin/eslint . --format stylish 2>&1 | tee /tmp/eslint.txt; exit "${PIPESTATUS[0]}"
-          else
-            grep -E '\.(js|jsx|mjs|cjs|ts|tsx|mts|cts)$' /tmp/changed.txt | tr '\n' '\0' \
-              | xargs -0 -r ./node_modules/.bin/eslint --max-warnings=0 --no-warn-ignored --format stylish 2>&1 | tee /tmp/eslint.txt; exit "${PIPESTATUS[2]}"
+          rc=0
+          if [ "$RELEASE" != "true" ]; then
+            grep -zE '\.(js|jsx|mjs|cjs|ts|tsx|mts|cts)$' /tmp/changed.z > /tmp/changed-src.z || true
+            xargs -0 -r npx eslint --max-warnings=0 --no-warn-ignored --format stylish -- < /tmp/changed-src.z 2>&1 | tee /tmp/eslint.txt
+            rc=${PIPESTATUS[0]}
           fi
+          if [ "${{ steps.changed.outputs.full }}" = "true" ]; then
+            npx eslint . --format stylish 2>&1 | tee -a /tmp/eslint.txt
+            [ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
+          fi
+          exit "$rc"
 
       - name: Lint Summary
         if: always()
