@@ -3,9 +3,9 @@
  */
 
 /**
- * An owed refund always has an exit: an operator's hand refund settles and
- * clears its marker in the refund's own transaction, and the needs-human queue
- * lists a stuck one until it is gone.
+ * An owed refund always has an exit: an operator's hand refund settles it in
+ * the refund's own transaction, a hand refund that fails gives it back once,
+ * and the needs-human queue lists a stuck one until it is gone.
  */
 const mockPaymentFindMany = jest.fn();
 
@@ -15,8 +15,10 @@ jest.mock("@/lib/prisma", () => ({
     payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
   },
 }));
+const mockRecordSystemError = jest.fn();
 jest.mock("@/lib/enterprise/system-events", () => ({
   recordSystemErrorSafe: jest.fn(),
+  recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
 }));
 jest.mock("@/lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: jest.fn(),
@@ -26,6 +28,7 @@ import type { Tx } from "@/lib/prisma";
 import { readStuckOwedRefunds } from "@/lib/backoffice/needs-human";
 import {
   MAX_REFUND_OWED_ATTEMPTS,
+  restoreOwedOnFailedRefund,
   settleOwedByHand,
 } from "@/lib/payments/operations/refund-owed";
 
@@ -128,6 +131,134 @@ describe("settleOwedByHand", () => {
       settleOwedByHand(db, "pay-1", { kind: "credits-part" }),
     ).rejects.toMatchObject({ code: "OWED_RESTORATION_WHOLE" });
     expect(updates).toEqual([]);
+  });
+});
+
+/** A FAILED hand refund on a ₹100 payment and the payment's marker, as one transaction sees them. */
+function failedHandRefund(opts: {
+  settledPaise: number;
+  marker: { key: string; paise: number } | null;
+  refundedElsewherePaise?: number;
+}) {
+  const refund = {
+    paymentId: "pay-1",
+    status: "FAILED",
+    updatedAt: new Date(1),
+    metadata: {
+      source: "app",
+      settledOwed: {
+        key: "cancel:appt-1:pay-1",
+        reason: "cancellation",
+        owedPaise: 5_000,
+        settledPaise: opts.settledPaise,
+        stillOwedPaise: 5_000 - opts.settledPaise,
+        note: "",
+      },
+    } as Record<string, unknown>,
+  };
+  const payment = {
+    amount: 10_000,
+    refundOwedKey: opts.marker?.key ?? null,
+    refundOwedPaise: opts.marker?.paise ?? null,
+    refundOwedAttempts: 1,
+    refundOwedNextAt: null as Date | null,
+    refunds: opts.refundedElsewherePaise
+      ? [{ amountPaise: opts.refundedElsewherePaise, status: "SUCCEEDED" }]
+      : [],
+    disputes: [],
+  };
+  const tx = {
+    refund: {
+      findUnique: jest.fn(async () => ({ ...refund })),
+      updateMany: jest.fn(
+        async (a: {
+          where: { updatedAt: Date };
+          data: { metadata: Record<string, unknown> };
+        }) => {
+          if (a.where.updatedAt.getTime() !== refund.updatedAt.getTime())
+            return { count: 0 };
+          refund.metadata = a.data.metadata;
+          refund.updatedAt = new Date(refund.updatedAt.getTime() + 1);
+          return { count: 1 };
+        },
+      ),
+    },
+    payment: {
+      findUnique: jest.fn(async () => ({ ...payment })),
+      updateMany: jest.fn(
+        async (a: {
+          where: { refundOwedKey: string | null; refundOwedPaise?: number };
+          data: Record<string, unknown>;
+        }) => {
+          if (
+            a.where.refundOwedKey !== payment.refundOwedKey ||
+            ("refundOwedPaise" in a.where &&
+              a.where.refundOwedPaise !== payment.refundOwedPaise)
+          )
+            return { count: 0 };
+          Object.assign(payment, a.data);
+          return { count: 1 };
+        },
+      ),
+    },
+  };
+  return { tx: tx as unknown as Tx, refund, payment };
+}
+
+describe("restoreOwedOnFailedRefund", () => {
+  it("grows a partly reduced marker back by what the hand refund settled", async () => {
+    const { tx, payment, refund } = failedHandRefund({
+      settledPaise: 2_000,
+      marker: { key: "cancel:appt-1:pay-1", paise: 3_000 },
+    });
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    expect(payment).toMatchObject({
+      refundOwedKey: "cancel:appt-1:pay-1",
+      refundOwedPaise: 5_000,
+      refundOwedAttempts: 1,
+    });
+    expect(refund.metadata).toMatchObject({
+      settledOwedRestored: true,
+      settledOwedRestoredPaise: 2_000,
+    });
+  });
+
+  it("re-stamps a cleared marker under a new key, after the grace", async () => {
+    const { tx, payment } = failedHandRefund({
+      settledPaise: 5_000,
+      marker: null,
+    });
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    expect(payment).toMatchObject({
+      refundOwedKey: "cancel:appt-1:pay-1:restored:rf-1",
+      refundOwedPaise: 5_000,
+      refundOwedAttempts: 0,
+    });
+    expect(payment.refundOwedNextAt!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("gives it back once, however often the failure is replayed", async () => {
+    const { tx, payment } = failedHandRefund({
+      settledPaise: 2_000,
+      marker: { key: "cancel:appt-1:pay-1", paise: 3_000 },
+    });
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    expect(payment.refundOwedPaise).toBe(5_000);
+  });
+
+  it("caps the give-back at the refundable balance", async () => {
+    const { tx, payment, refund } = failedHandRefund({
+      settledPaise: 5_000,
+      marker: null,
+      refundedElsewherePaise: 10_000,
+    });
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    expect(payment.refundOwedKey).toBeNull();
+    expect(refund.metadata).toMatchObject({
+      settledOwedRestored: true,
+      settledOwedRestoredPaise: 0,
+    });
   });
 });
 

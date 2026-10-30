@@ -133,7 +133,7 @@ import {
 // Late-bound cycle: refund-owed reaches refundPayment through booking-refund.
 import {
   claimOwedMarker,
-  restoreHandSettledOwed,
+  failRefund,
   stampRefundOwed,
   type HandSettledOwed,
   type OwedMarkerInput,
@@ -664,22 +664,27 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     // A definitive refusal created no gateway refund, so the reservation is
     // FAILED now and frees the balance and the key for a retry. Anything
     // ambiguous stays PENDING for the reconcile cron to resolve by lookup.
-    await prisma.refund
-      .updateMany({
+    const keep = () =>
+      prisma.refund.updateMany({
         where: { id: reserved.id, status: RefundStatus.PENDING },
-        data: isDefinitiveRefundRefusal(err)
-          ? {
-              metadata,
-              status: RefundStatus.FAILED,
-              failureReason: gatewayError,
-              failedAt: new Date(),
-            }
-          : { metadata },
-      })
-      .catch(() => undefined); // best-effort; the reconcile cron is the backstop
-    if (settledOwed && isDefinitiveRefundRefusal(err)) {
-      await restoreHandSettledOwed(input.paymentId, settledOwed);
-    }
+        data: { metadata },
+      });
+    // Best-effort; the reconcile cron is the backstop.
+    await (
+      isDefinitiveRefundRefusal(err)
+        ? failRefund(reserved.id, (tx) =>
+            tx.refund.updateMany({
+              where: { id: reserved.id, status: RefundStatus.PENDING },
+              data: {
+                metadata,
+                status: RefundStatus.FAILED,
+                failureReason: gatewayError,
+                failedAt: new Date(),
+              },
+            }),
+          )
+        : keep()
+    ).catch(() => undefined);
     throw new RefundGatewayError(
       `Gateway refund failed for payment ${input.paymentId}: ${err instanceof Error ? err.message : String(err)}`,
       "GATEWAY_REFUND_FAILED",
@@ -694,32 +699,33 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // id — no heuristic amount+time matching needed.
   if (gateway.status === "FAILED") {
     try {
-      await prisma.refund.updateMany({
-        where: { id: reserved.id, status: RefundStatus.PENDING },
-        data: {
-          refundId: gateway.refundId || reserved.refundId,
-          status: RefundStatus.FAILED,
-          failureReason: "Gateway declined the refund",
-          failedAt: new Date(),
-        },
-      });
+      await failRefund(reserved.id, (tx) =>
+        tx.refund.updateMany({
+          where: { id: reserved.id, status: RefundStatus.PENDING },
+          data: {
+            refundId: gateway.refundId || reserved.refundId,
+            status: RefundStatus.FAILED,
+            failureReason: "Gateway declined the refund",
+            failedAt: new Date(),
+          },
+        }),
+      );
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
       // A gateway event beat us to the real refund id. Keep the placeholder
       // (it still records the decline via the reconciler) and never surface a
       // raw P2002 for a refund whose money state is already correct.
-      await prisma.refund
-        .updateMany({
+      await failRefund(reserved.id, (tx) =>
+        tx.refund.updateMany({
           where: { id: reserved.id, status: RefundStatus.PENDING },
           data: {
             status: RefundStatus.FAILED,
             failureReason: "Gateway declined the refund",
             failedAt: new Date(),
           },
-        })
-        .catch(() => undefined);
+        }),
+      ).catch(() => undefined);
     }
-    if (settledOwed) await restoreHandSettledOwed(input.paymentId, settledOwed);
     const declineErr = new RefundGatewayError(
       `Gateway declined refund for payment ${input.paymentId}`,
       "GATEWAY_REFUND_DECLINED",

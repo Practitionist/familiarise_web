@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import {
+  recordSystemError,
   recordSystemErrorSafe,
   recordSystemEvent,
 } from "@/lib/enterprise/system-events";
@@ -223,41 +224,198 @@ export async function claimOwedMarker(
     : null;
 }
 
+/** A failed hand refund's metadata: what it settled, and whether that was given back. */
+const FAILED_HAND_REFUND = z
+  .object({
+    settledOwed: handSettledOwedSchema,
+    settledOwedRestored: z.boolean().optional(),
+    settledOwedRestoredPaise: z.number().optional(),
+    settledOwedRestoredKey: z.string().optional(),
+    settledOwedResettled: z.boolean().optional(),
+  })
+  .passthrough();
+
+/** A re-stamped marker waits out the sweep's grace like a fresh one. */
+const RESTAMP_GRACE_MS = 15 * 60_000;
+
 /**
- * A hand refund the gateway refused moved no money, so the marker goes back to
- * what it owed before; a failed restore pages, because nothing else holds that debt.
+ * A hand refund that failed gives back the owed refund it settled, in the
+ * transaction that failed it, capped at the refundable balance: a reduced
+ * marker grows back by CAS, a cleared one is re-stamped under a new key.
+ * `settledOwedRestored`, claimed by CAS on the row, makes it once-only.
  */
-export async function restoreHandSettledOwed(
-  paymentId: string,
-  settled: HandSettledOwed,
+export async function restoreOwedOnFailedRefund(
+  tx: Tx,
+  refundRowId: string,
 ): Promise<void> {
-  const restored =
-    settled.stillOwedPaise > 0
-      ? await prisma.payment
-          .updateMany({
-            where: {
-              id: paymentId,
-              refundOwedKey: settled.key,
-              refundOwedPaise: settled.stillOwedPaise,
-            },
-            data: { refundOwedPaise: settled.owedPaise },
-          })
-          .then((r) => r.count === 1)
-          .catch(() => false)
-      : await stampRefundOwed(prisma, {
-          paymentId,
-          amountPaise: settled.owedPaise,
-          key: settled.key,
-          reason: settled.reason,
-        }).catch(() => false);
-  if (restored) return;
-  await recordSystemErrorSafe({
-    organizationId: null,
-    category: "PAYMENT",
-    summary: `A failed hand refund on payment ${paymentId} could not restore the refund it owed (${settled.key}) — refund by hand`,
-    err: new Error("OWED_REFUND_NOT_RESTORED"),
-    context: { paymentId, ...settled },
+  const refund = await tx.refund.findUnique({
+    where: { id: refundRowId },
+    select: { paymentId: true, status: true, metadata: true, updatedAt: true },
   });
+  if (refund?.status !== RefundStatus.FAILED) return;
+  const meta = FAILED_HAND_REFUND.safeParse(refund.metadata);
+  if (!meta.success || meta.data.settledOwedRestored) return;
+  const settled = meta.data.settledOwed;
+  const payment = await tx.payment.findUnique({
+    where: { id: refund.paymentId },
+    select: {
+      amount: true,
+      refundOwedKey: true,
+      refundOwedPaise: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
+  });
+  if (!payment) return;
+  const refundable = refundableBalancePaise(Number(payment.amount), payment);
+  const owedNow =
+    payment.refundOwedPaise === null ? null : Number(payment.refundOwedPaise);
+
+  let restoredPaise = 0;
+  let restoredKey: string | null = null;
+  let write: (() => Promise<{ count: number }>) | null = null;
+  if (payment.refundOwedKey === settled.key && owedNow !== null) {
+    // A full-balance marker (null) already owes everything that is left.
+    restoredPaise = Math.max(
+      0,
+      Math.min(owedNow + settled.settledPaise, refundable) - owedNow,
+    );
+    restoredKey = settled.key;
+    write = () =>
+      tx.payment.updateMany({
+        where: {
+          id: refund.paymentId,
+          refundOwedKey: settled.key,
+          refundOwedPaise: owedNow,
+        },
+        data: { refundOwedPaise: owedNow + restoredPaise },
+      });
+  } else if (payment.refundOwedKey === null) {
+    restoredPaise = Math.max(0, Math.min(settled.settledPaise, refundable));
+    restoredKey = `${settled.key}:restored:${refundRowId}`;
+    const now = new Date();
+    write = () =>
+      tx.payment.updateMany({
+        where: {
+          id: refund.paymentId,
+          refundOwedKey: null,
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          deletedAt: null,
+        },
+        data: {
+          refundOwedKey: restoredKey,
+          refundOwedPaise: restoredPaise,
+          refundOwedReason: settled.reason,
+          refundOwedAt: now,
+          refundOwedAttempts: 0,
+          refundOwedNextAt: new Date(now.getTime() + RESTAMP_GRACE_MS),
+        },
+      });
+  } else if (payment.refundOwedKey !== settled.key) {
+    // Another door's marker holds the payment; one marker cannot carry two debts.
+    await recordSystemError({
+      organizationId: null,
+      category: "PAYMENT",
+      summary: `A failed hand refund on payment ${refund.paymentId} could not give back the ${rupees(settled.settledPaise)} it settled (${settled.key}): another refund is owed — refund by hand`,
+      err: new Error("OWED_REFUND_NOT_RESTORED"),
+      context: { refundRowId, heldKey: payment.refundOwedKey, ...settled },
+      db: tx,
+    });
+  }
+
+  const claimed = await tx.refund.updateMany({
+    where: {
+      id: refundRowId,
+      status: RefundStatus.FAILED,
+      updatedAt: refund.updatedAt,
+    },
+    data: {
+      metadata: {
+        ...meta.data,
+        settledOwedRestored: true,
+        settledOwedRestoredPaise: restoredPaise,
+        ...(restoredKey ? { settledOwedRestoredKey: restoredKey } : {}),
+      } as Prisma.InputJsonValue,
+    },
+  });
+  if (claimed.count === 0) return;
+  if (write && restoredPaise > 0 && (await write()).count !== 1) {
+    throw new Error(
+      `Owed refund on payment ${refund.paymentId} changed while its failed hand refund ${refundRowId} was giving it back`,
+    );
+  }
+}
+
+/**
+ * Moves a refund to FAILED through the caller's CAS and, in the same
+ * transaction, gives back the owed refund it settled by hand.
+ */
+export function failRefund(
+  refundRowId: string,
+  fail: (tx: Tx) => Promise<{ count: number }>,
+): Promise<{ count: number }> {
+  return prisma.$transaction(async (tx) => {
+    const moved = await fail(tx);
+    if (moved.count === 1) await restoreOwedOnFailedRefund(tx, refundRowId);
+    return moved;
+  });
+}
+
+/**
+ * A failed hand refund that later succeeds moved the money after all, so the
+ * owed refund it gave back is taken off the marker again by CAS, once.
+ */
+export async function resettleOwedOnLateSuccess(
+  tx: Tx,
+  refundRowId: string,
+): Promise<void> {
+  const refund = await tx.refund.findUnique({
+    where: { id: refundRowId },
+    select: { paymentId: true, metadata: true, updatedAt: true },
+  });
+  const meta = FAILED_HAND_REFUND.safeParse(refund?.metadata);
+  if (!refund || !meta.success) return;
+  const { settledOwedRestoredPaise: given, settledOwedRestoredKey: key } =
+    meta.data;
+  if (!meta.data.settledOwedRestored || meta.data.settledOwedResettled) return;
+  const claimed = await tx.refund.updateMany({
+    where: { id: refundRowId, updatedAt: refund.updatedAt },
+    data: {
+      metadata: {
+        ...meta.data,
+        settledOwedResettled: true,
+      } as Prisma.InputJsonValue,
+    },
+  });
+  if (claimed.count === 0 || !given || !key) return;
+  const payment = await tx.payment.findUnique({
+    where: { id: refund.paymentId },
+    select: { refundOwedKey: true, refundOwedPaise: true },
+  });
+  const owedNow =
+    payment?.refundOwedPaise === null || payment?.refundOwedPaise === undefined
+      ? null
+      : Number(payment.refundOwedPaise);
+  if (payment?.refundOwedKey !== key || owedNow === null) {
+    await recordSystemError({
+      organizationId: null,
+      category: "PAYMENT",
+      summary: `Hand refund ${refundRowId} on payment ${refund.paymentId} succeeded after its ${rupees(given)} owed refund was given back, and that marker has moved on — check for a double refund`,
+      err: new Error("OWED_REFUND_LATE_SUCCESS"),
+      context: { refundRowId, key, given, heldKey: payment?.refundOwedKey },
+      db: tx,
+    });
+    return;
+  }
+  const where = {
+    id: refund.paymentId,
+    refundOwedKey: key,
+    refundOwedPaise: owedNow,
+  };
+  await tx.payment.updateMany(
+    owedNow <= given
+      ? { where, data: CLEARED_MARKER }
+      : { where, data: { refundOwedPaise: owedNow - given } },
+  );
 }
 
 export const REFUND_OWED_SELECT = {

@@ -392,9 +392,14 @@ transaction checks the marker still holds the payment at that amount
 (`assertOwedMarkerHeld`). A drive whose marker was cleared ends `settled`, and
 one whose marker was reduced ends `blocked`; neither moves money. A partial
 credit return against a whole-restoration marker is refused with
-`OWED_RESTORATION_WHOLE`. If the gateway refuses the hand refund outright,
-`restoreHandSettledOwed` puts the marker back as it was. A hand refund that stays PENDING and later fails is
-a FAILED refund in the ops queue. A seat leave or removal stamps its marker in
+`OWED_RESTORATION_WHOLE`. A hand refund that moves to FAILED, from the front
+door, `reconcile-refunds` or the `refund.failed` webhook, gives back what it
+settled in that same transaction (`failRefund`, `restoreOwedOnFailedRefund`).
+A live marker grows back by CAS, and a cleared one is re-stamped under
+`<key>:restored:<refundId>` with `refundOwedNextAt` 15 minutes out. Both are
+capped at the refundable balance and made once-only by `settledOwedRestored` on
+the refund. A late gateway success on that FAILED row takes it off again
+(`resettleOwedOnLateSuccess`). A seat leave or removal stamps its marker in
 the commit that releases the seat.
 
 **A cancel cannot race a capture into a free cancellation.** The cancel's
