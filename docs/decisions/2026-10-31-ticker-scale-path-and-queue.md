@@ -38,6 +38,7 @@ The ticker stays the only job engine until a trigger in decision 2 fires (AGENTS
 ## Decision 2. The scale path: trial Vercel Pro in Mumbai before about 300 concurrent users
 
 - **What.** Before sustained traffic approaches about 300 concurrent users, trial the web tier on Vercel Pro in `bom1` (Mumbai), with Vercel Cron as the ticker. It calls the same `/api/cleanup/<slug>` routes and the same registry, so no job is rewritten.
+- **Background jobs.** The six recording and Stream jobs dispatch to Netlify background functions (`/.netlify/functions/...`), which the cleanup routes do not replace. Before Vercel Cron takes ownership, those six need equivalent Vercel targets; until they exist, Netlify keeps the ticker.
 - **Standby.** Netlify stays the hot standby (AGENTS.md §2.5). The fleet switch `ops:active_cron_platform` picks which host's scheduler runs, so the two never both fire.
 - **Why Vercel.** Running in Mumbai brings a statement to about 1 to 2 ms. Fluid compute lets one instance serve many requests at once, so connections are shared instead of one per request. That one move removes both causes of the 300 to 500 user ceiling for users and jobs alike.
 - **No QStash.** QStash is not adopted unless a job needs per-message delivery (an exact-time send, or a retry per item). It would be a second scheduler and another vendor in the failback path.

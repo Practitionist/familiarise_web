@@ -97,8 +97,12 @@ real value.
 
 ### Missing — money-critical
 
-Every row here is currently silently degraded in production. These should be
-provisioned before launch, in roughly this order.
+These rows were written when the cron fleet read GitHub secrets. Since every registry job
+runs on the ticker, the jobs named in "Consumers" read the Netlify environment instead, where
+`NOVU_PRODUCTION_KEY` and `NEXT_PUBLIC_APP_URL` are already set; a missing GitHub copy of those two
+no longer affects any job. `SLACK_OPS_WEBHOOK_URL` is still read from GitHub by the three scheduled
+workflows, and `PLATFORM_GSTIN` is a Netlify-only launch decision. Provision what remains, in
+roughly this order.
 
 | Secret                  | Consumers                                                                                                                                                | What is broken without it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -242,7 +246,10 @@ exact value.
 fallback, unlike `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`, and Netlify functions read their env at
 deploy time. Set the new value in Netlify production and **redeploy**: this moves the route and
 the ticker together, since both read from Netlify. A tick that fires during the deploy can see a 401
-from the other side of the swap; the next tick recovers.
+from the other side of the swap; the next tick recovers. When a second host is configured for the
+cron (the standby, or the active host after a switch), set the same new value there before moving
+`ops:active_cron_platform`, and confirm both hosts hold it: a mismatch makes every target answer 401
+on whichever host fires.
 
 Do not set it with `netlify env:set` and expect to read it back: the CLI masks it and the list
 endpoint nulls the top-level `value`. All three Netlify contexts currently hold one identical
