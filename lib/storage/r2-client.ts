@@ -305,9 +305,13 @@ export function createR2PresignedGetUrl(opts: {
   });
 }
 
+/** The header R2 honours on PutObject to refuse writing over an existing key. */
+export const R2_CREATE_ONLY_HEADER = { "If-None-Match": "*" } as const;
+
 /**
  * SigV4 presigned PUT URL that signs `content-type` and `content-length`, so
  * the browser must upload exactly the declared type and byte count.
+ * `createOnly` also signs `If-None-Match: *`: the key can be written once, never overwritten.
  */
 export function createR2PresignedPutUrl(opts: {
   key: string;
@@ -315,6 +319,7 @@ export function createR2PresignedPutUrl(opts: {
   contentType: string;
   contentLength: number;
   expiresInSeconds: number;
+  createOnly?: boolean;
   now?: Date;
 }): string {
   return presignR2Url({
@@ -326,23 +331,39 @@ export function createR2PresignedPutUrl(opts: {
     signedHeaders: {
       "content-type": opts.contentType,
       "content-length": String(opts.contentLength),
+      ...(opts.createOnly ? R2_CREATE_ONLY_HEADER : {}),
     },
   });
 }
 
-/** Bytes [start, endInclusive] of an object through one Range GET; null when the key does not exist. */
+/** An `If-Match` read found the object no longer has the ETag it was inspected under. */
+export class R2PreconditionFailedError extends Error {
+  constructor(key: string) {
+    super(`R2 object ${key} changed since it was read`);
+    this.name = "R2PreconditionFailedError";
+  }
+}
+
+/**
+ * Bytes [start, endInclusive] of an object through one Range GET; null when the
+ * key does not exist. With `ifMatch`, a changed object throws `R2PreconditionFailedError`.
+ */
 export async function getR2ObjectRange(opts: {
   key: string;
   bucket?: string;
   start: number;
   endInclusive: number;
+  ifMatch?: string;
   signal?: AbortSignal;
 }): Promise<Uint8Array | null> {
   const signed = signR2Request({
     method: "GET",
     key: opts.key,
     bucket: opts.bucket,
-    headers: { range: `bytes=${opts.start}-${opts.endInclusive}` },
+    headers: {
+      range: `bytes=${opts.start}-${opts.endInclusive}`,
+      ...(opts.ifMatch ? { "if-match": opts.ifMatch } : {}),
+    },
   });
   const response = await fetch(signed.url, {
     method: "GET",
@@ -350,6 +371,7 @@ export async function getR2ObjectRange(opts: {
     signal: opts.signal,
   });
   if (response.status === 404) return null;
+  if (response.status === 412) throw new R2PreconditionFailedError(opts.key);
   if (!response.ok) {
     const detail = formatR2ErrorDetail(await response.text().catch(() => ""));
     throw new Error(
@@ -664,12 +686,12 @@ export async function streamMultipartToR2(opts: {
   }
 }
 
-/** Stored object size from HeadObject, or null when the key does not exist. */
+/** Stored object size and ETag from HeadObject, or null when the key does not exist. */
 export async function headR2Object(opts: {
   key: string;
   bucket?: string;
   signal?: AbortSignal;
-}): Promise<{ contentLength: number } | null> {
+}): Promise<{ contentLength: number; etag?: string } | null> {
   const signed = signR2Request({
     method: "HEAD",
     key: opts.key,
@@ -690,7 +712,8 @@ export async function headR2Object(opts: {
   if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
     throw new Error("R2 HEAD response missing a valid Content-Length");
   }
-  return { contentLength };
+  const etag = response.headers.get("etag");
+  return etag ? { contentLength, etag } : { contentLength };
 }
 
 /**

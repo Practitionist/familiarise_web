@@ -139,6 +139,7 @@ async function uploadOne(params: {
       file,
       presign.headers["Content-Type"] ?? mimeType,
       params.onProgress,
+      presign.headers,
     );
   } catch {
     throw new Error(`${file.name}: the upload didn't finish. Try again.`);

@@ -5,7 +5,7 @@
 /**
  * Creator doors: only the owning consultant reaches a product, publishing
  * needs a verified file (CAS on status), an upload reserves a PENDING file
- * keyed by MIME, and a replacement bumps the version inside the same folder.
+ * under a fresh key, and a replacement takes the next version of its lineage.
  */
 jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: jest.fn(async () => ({
@@ -21,6 +21,7 @@ const presignPut = jest.fn(
 );
 jest.mock("../../lib/storage/r2-client", () => ({
   createR2PresignedPutUrl: (opts: Record<string, unknown>) => presignPut(opts),
+  R2_CREATE_ONLY_HEADER: { "If-None-Match": "*" },
 }));
 
 const product = {
@@ -33,9 +34,29 @@ const product = {
 const publish = jest.fn();
 const assetCreate = jest.fn(async ({ data }: { data: object }) => data);
 const liveAssets: Array<{ id: string; sizeBytes: number }> = [];
+const assetModel = {
+  findMany: async () => liveAssets,
+  findFirst: async ({ where }: { where: { id?: string } }) =>
+    where.id === "as_1"
+      ? {
+          id: "as_1",
+          lineageId: "lin_1",
+          storageKey: "products/dp_1/lin_1/as_1.pdf",
+          version: 1,
+          order: 3,
+          sizeBytes: 1000,
+        }
+      : where.id
+        ? null
+        : { order: 3 },
+  aggregate: async () => ({ _max: { version: 1 } }),
+  create: (...a: [{ data: object }]) => assetCreate(...a),
+};
+const tx = { digitalProductAsset: assetModel, $executeRaw: async () => 1 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $transaction: (cb: (t: typeof tx) => Promise<unknown>) => cb(tx),
     digitalProduct: {
       findFirst: async ({
         where,
@@ -46,20 +67,6 @@ jest.mock("../../lib/prisma", () => ({
           ? product
           : null,
       updateMany: (...a: unknown[]) => publish(...a),
-    },
-    digitalProductAsset: {
-      findMany: async () => liveAssets,
-      findFirst: async ({ where }: { where: { id?: string } }) =>
-        where.id === "as_1"
-          ? {
-              id: "as_1",
-              storageKey: "products/dp_1/as_1/v1.pdf",
-              version: 1,
-              order: 3,
-              sizeBytes: 1000,
-            }
-          : null,
-      create: (...a: [{ data: object }]) => assetCreate(...a),
     },
   },
 }));
@@ -102,7 +109,7 @@ it("gates on ownership and publishes only with a verified file", async () => {
   });
 });
 
-it("reserves a PENDING file by MIME and versions a replacement in its folder", async () => {
+it("reserves a PENDING file under a fresh key and versions a replacement in its lineage", async () => {
   const mismatch = await uploadUrl(
     json({ fileName: "song.mp3", mimeType: "audio/mpeg", sizeBytes: 10 }),
     params,
@@ -122,12 +129,15 @@ it("reserves a PENDING file by MIME and versions a replacement in its folder", a
     storageKey: string;
     status: string;
   };
-  expect(first.storageKey).toMatch(/^products\/dp_1\/[0-9a-f-]{36}\/v1\.pdf$/);
+  expect(first.storageKey).toMatch(
+    /^products\/dp_1\/([0-9a-f-]{36})\/\1\.pdf$/,
+  );
   expect(first.status).toBe("PENDING");
   expect(presignPut).toHaveBeenCalledWith(
     expect.objectContaining({
       contentType: "application/pdf",
       contentLength: 2048,
+      createOnly: true,
     }),
   );
 
@@ -141,7 +151,10 @@ it("reserves a PENDING file by MIME and versions a replacement in its folder", a
   );
   expect(replaced.status).toBe(201);
   expect(assetCreate.mock.calls[1][0].data).toMatchObject({
-    storageKey: "products/dp_1/as_1/v2.pdf",
+    lineageId: "lin_1",
+    storageKey: expect.stringMatching(
+      /^products\/dp_1\/lin_1\/[0-9a-f-]{36}\.pdf$/,
+    ),
     version: 2,
     order: 3,
     status: "PENDING",

@@ -3,15 +3,13 @@
  * file and presign the browser's PUT to R2; the commit route verifies it.
  */
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
 import { applyRateLimit, digitalProductUploadLimiter } from "@/lib/rate-limit";
 import { assetUploadRequestSchema } from "@/schemas/digital-products";
 import {
-  checkUploadFits,
-  createPendingAsset,
   jsonError,
   parseBody,
   requireOwnedProduct,
+  reservePendingAsset,
   UPLOAD_REFUSAL_MESSAGES,
 } from "@/lib/digital-products/creator";
 
@@ -32,24 +30,18 @@ export async function POST(request: Request, { params }: RouteParams) {
   const body = await parseBody(request, assetUploadRequestSchema);
   if (!body.ok) return body.error;
 
-  const refusal = await checkUploadFits({
+  const reserved = await reservePendingAsset({
     product: owned.product,
-    mimeType: body.data.mimeType,
-    sizeBytes: body.data.sizeBytes,
-  });
-  if (refusal) return jsonError(409, refusal, UPLOAD_REFUSAL_MESSAGES[refusal]);
-
-  const last = await prisma.digitalProductAsset.findFirst({
-    where: { productId },
-    orderBy: { order: "desc" },
-    select: { order: true },
-  });
-  const upload = await createPendingAsset({
-    productId,
     fileName: body.data.fileName,
     mimeType: body.data.mimeType,
     sizeBytes: body.data.sizeBytes,
-    order: (last?.order ?? -1) + 1,
   });
-  return NextResponse.json({ data: upload }, { status: 201 });
+  if (!reserved.ok) {
+    return jsonError(
+      409,
+      reserved.refusal,
+      UPLOAD_REFUSAL_MESSAGES[reserved.refusal],
+    );
+  }
+  return NextResponse.json({ data: reserved.upload }, { status: 201 });
 }

@@ -93,23 +93,21 @@ export function mimePolicy(mimeType: DigitalProductMimeType): AllowedMime {
   return DIGITAL_PRODUCT_MIME_TYPES[mimeType];
 }
 
-/** R2 object key; the extension comes from the MIME, never from the uploader's name. */
+/**
+ * R2 object key, fresh for every upload and written once; the extension comes
+ * from the MIME, never from the uploader's name.
+ */
 export function digitalProductAssetKey(params: {
   productId: string;
+  lineageId: string;
   assetId: string;
-  version: number;
   mimeType: DigitalProductMimeType;
 }): string {
   const { extension } = DIGITAL_PRODUCT_MIME_TYPES[params.mimeType];
-  return `products/${params.productId}/${params.assetId}/v${params.version}.${extension}`;
+  return `products/${params.productId}/${params.lineageId}/${params.assetId}.${extension}`;
 }
 
 export const DIGITAL_PRODUCT_KEY_PREFIX = "products/";
-
-/** The folder a version lineage shares: everything before `v<version>.<ext>`. */
-export function lineageFolder(storageKey: string): string {
-  return storageKey.slice(0, storageKey.lastIndexOf("/") + 1);
-}
 
 const EXTENSION_MIME = new Map<string, DigitalProductMimeType>([
   ["jpeg", "image/jpeg"],

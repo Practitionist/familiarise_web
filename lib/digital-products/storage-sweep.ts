@@ -1,8 +1,8 @@
 /**
  * Keeps the digital products bucket equal to what the rows promise: deletes
  * the objects of versions superseded over 30 days ago (stamping purgedAt),
- * clears REJECTED and abandoned PENDING uploads older than a day, and pages
- * through the bucket deleting objects older than a day that no row names.
+ * retires and clears REJECTED and abandoned PENDING uploads older than a day,
+ * and pages through the bucket deleting objects older than a day no row names.
  */
 import prisma from "@/lib/prisma";
 import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
@@ -86,36 +86,51 @@ async function purgeSuperseded(
   return stamped.count;
 }
 
+/**
+ * Retire abandoned PENDING uploads to REJECTED by CAS before any vendor delete,
+ * so a racing commit can no longer verify them; a REJECTED row keeps naming its
+ * key until R2 confirms the delete, and only then is removed.
+ */
 async function clearDeadUploads(
   bucket: string,
   limit: number,
   now: Date,
   failures: string[],
 ): Promise<number> {
+  const cutoff = new Date(now.getTime() - DAY_MS);
   const rows = await prisma.digitalProductAsset.findMany({
     where: {
       status: { in: ["REJECTED", "PENDING"] },
-      createdAt: { lt: new Date(now.getTime() - DAY_MS) },
+      createdAt: { lt: cutoff },
     },
     orderBy: { createdAt: "asc" },
     take: limit,
     select: { id: true, storageKey: true, status: true },
   });
+  const pendingIds = rows
+    .filter((r) => r.status === "PENDING")
+    .map((r) => r.id);
+  if (pendingIds.length > 0) {
+    await prisma.digitalProductAsset.updateMany({
+      where: { id: { in: pendingIds }, status: "PENDING" },
+      data: { status: "REJECTED", rejectReason: "ABANDONED" },
+    });
+  }
+  const retired = await prisma.digitalProductAsset.findMany({
+    where: { id: { in: rows.map((r) => r.id) }, status: "REJECTED" },
+    select: { id: true, storageKey: true },
+  });
   const deleted = await deleteAll(
     bucket,
-    rows.map((r) => r.storageKey),
+    retired.map((r) => r.storageKey),
     failures,
   );
-  let cleared = 0;
-  for (const row of rows) {
-    if (!deleted.has(row.storageKey)) continue;
-    // Status in WHERE: a commit that verified the upload meanwhile keeps its row.
-    const res = await prisma.digitalProductAsset.deleteMany({
-      where: { id: row.id, status: row.status },
-    });
-    cleared += res.count;
-  }
-  return cleared;
+  const ids = retired.filter((r) => deleted.has(r.storageKey)).map((r) => r.id);
+  if (ids.length === 0) return 0;
+  const res = await prisma.digitalProductAsset.deleteMany({
+    where: { id: { in: ids }, status: "REJECTED" },
+  });
+  return res.count;
 }
 
 async function deleteOrphanPage(

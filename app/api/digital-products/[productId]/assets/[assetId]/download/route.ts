@@ -11,7 +11,6 @@ import {
   digitalProductDownloadLimiter,
 } from "@/lib/rate-limit";
 import { createR2PresignedGetUrl } from "@/lib/storage/r2-client";
-import { findDigitalProductEntitlement } from "@/lib/payments/digital-product-entitlement";
 import { DIGITAL_PRODUCT_DOWNLOAD_URL_TTL_SECONDS } from "@/lib/digital-products/constants";
 import {
   attachmentDisposition,
@@ -52,18 +51,14 @@ export async function GET(_request: Request, { params }: RouteParams) {
     Boolean(user.consultantProfileId) &&
     user.consultantProfileId === asset.product.consultantProfileId;
   if (!isOwner && !operator) {
-    const entitlement = await findDigitalProductEntitlement(
-      prisma,
-      productId,
-      user.id,
-    );
-    if (!entitlement) {
-      return NextResponse.json(
-        { error: "You do not own this product", code: "NOT_ENTITLED" },
-        { status: 403 },
-      );
-    }
-    await prisma.$transaction(async (tx) => {
+    const recorded = await prisma.$transaction(async (tx) => {
+      // Lock the live purchase: a refund committed first leaves no SUCCEEDED row to lock.
+      const [entitlement] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM "DigitalProductPurchase"
+        WHERE "productId" = ${productId} AND "buyerId" = ${user.id}
+          AND status = 'SUCCEEDED'
+        FOR UPDATE`;
+      if (!entitlement) return false;
       // CAS: only the first download stamps the refund-window end.
       await tx.digitalProductPurchase.updateMany({
         where: {
@@ -76,7 +71,14 @@ export async function GET(_request: Request, { params }: RouteParams) {
       await tx.digitalProductDownload.create({
         data: { purchaseId: entitlement.id, assetId: asset.id },
       });
+      return true;
     });
+    if (!recorded) {
+      return NextResponse.json(
+        { error: "You do not own this product", code: "NOT_ENTITLED" },
+        { status: 403 },
+      );
+    }
   }
 
   const url = createR2PresignedGetUrl({

@@ -25,6 +25,7 @@ export async function POST(_request: Request, { params }: RouteParams) {
     select: {
       id: true,
       productId: true,
+      lineageId: true,
       version: true,
       storageKey: true,
       mimeType: true,
@@ -46,6 +47,13 @@ export async function POST(_request: Request, { params }: RouteParams) {
       409,
       "UPLOAD_NOT_FOUND",
       "The upload has not finished yet",
+    );
+  }
+  if (result.status === "CHANGED") {
+    return jsonError(
+      409,
+      "UPLOAD_CHANGED",
+      "The file changed while it was checked; try again",
     );
   }
   const settled = await prisma.digitalProductAsset.findUnique({

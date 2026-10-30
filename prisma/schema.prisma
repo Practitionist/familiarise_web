@@ -5776,8 +5776,10 @@ model DigitalProductAsset {
   id           String                    @id @default(cuid())
   product      DigitalProduct            @relation(fields: [productId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   productId    String
-  // R2 key in R2_DIGITAL_PRODUCTS_BUCKET: products/<productId>/<assetId>/v<version>.<ext>
+  // R2 key in R2_DIGITAL_PRODUCTS_BUCKET: products/<productId>/<lineageId>/<assetId>.<ext>, written once
   storageKey   String                    @unique
+  // Every version of one file shares this; versions are allocated under the product row lock.
+  lineageId    String                    @default(dbgenerated("(gen_random_uuid())::text"))
   originalName String
   mimeType     String
   sizeBytes    BigInt
@@ -5794,6 +5796,7 @@ model DigitalProductAsset {
 
   downloads DigitalProductDownload[]
 
+  @@unique([lineageId, version])
   @@index([productId, status, order])
   @@index([status, supersededAt])
 }

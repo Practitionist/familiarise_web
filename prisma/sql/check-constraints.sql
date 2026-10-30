@@ -1468,3 +1468,8 @@ ALTER TABLE "DigitalProductAsset" DROP CONSTRAINT IF EXISTS "digital_product_ass
 -- SPLIT
 ALTER TABLE "DigitalProductAsset" ADD CONSTRAINT "digital_product_asset_size_cap"
   CHECK ("sizeBytes" >= 0 AND "sizeBytes" <= 262144000);
+-- SPLIT
+-- At most one current version per file lineage; verification retires the old one first.
+CREATE UNIQUE INDEX IF NOT EXISTS "digital_product_asset_one_verified_per_lineage"
+  ON "DigitalProductAsset" ("lineageId")
+  WHERE "status" = 'VERIFIED';
