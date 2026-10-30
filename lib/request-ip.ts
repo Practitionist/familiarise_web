@@ -1,47 +1,40 @@
-/**
- * Client IP headers trusted on the current runtime. Each platform header is
- * honoured only where that platform sets it; elsewhere a client can forge it.
- */
-export type ClientIpHeader =
-  | "x-nf-client-connection-ip"
-  | "x-vercel-forwarded-for"
-  | "fly-client-ip"
-  | "x-forwarded-for";
+// Middleware overwrites this on every request it forwards and Node code trusts only it;
+// safe because the middleware matcher covers every path that reads it.
+export const CLIENT_IP_HEADER = "x-familiarise-client-ip";
 
-/** The runtime environment, where each host sets its platform marker. */
-export type RuntimeEnv = Readonly<Record<string, string | undefined>>;
+type IpHeaders = { get(name: string): string | null };
 
-/** Literal reads, so the build can inline `NETLIFY`, which Netlify sets only at build time. */
-function hostEnv(): RuntimeEnv {
-  return {
-    NETLIFY: process.env.NETLIFY,
-    VERCEL: process.env.VERCEL,
-    FLY_APP_NAME: process.env.FLY_APP_NAME,
-  };
-}
+/** Host markers, read literally so a build that inlines them can replace them. */
+export type EdgeHost = { VERCEL?: string; FLY_APP_NAME?: string };
 
-export function trustedClientIpHeaders(
-  env: RuntimeEnv = hostEnv(),
-): ClientIpHeader[] {
-  if (env.NETLIFY === "true") return ["x-nf-client-connection-ip"];
-  if (env.VERCEL === "1") return ["x-vercel-forwarded-for"];
-  if (env.FLY_APP_NAME) return ["fly-client-ip"];
-  return ["x-forwarded-for"];
-}
-
-/**
- * The caller's IP on this runtime, or `unknown_ip`. A generic container host
- * trusts only the rightmost `x-forwarded-for` hop, which its front end appends.
- */
-export function clientIpFrom(
-  headers: { get(name: string): string | null },
-  env: RuntimeEnv = hostEnv(),
-): string {
-  const [header] = trustedClientIpHeaders(env);
-  const hops = (headers.get(header) ?? "")
+const hops = (value: string | null): string[] =>
+  (value ?? "")
     .split(",")
     .map((hop) => hop.trim())
     .filter(Boolean);
-  const ip = header === "x-forwarded-for" ? hops.at(-1) : hops[0];
-  return ip || "unknown_ip";
+
+/** Literal reads, so the build can inline each host's marker. */
+function currentEdgeHost(): EdgeHost {
+  return { VERCEL: process.env.VERCEL, FLY_APP_NAME: process.env.FLY_APP_NAME };
+}
+
+/** The visitor's IP as edge middleware sees it on this host, or `unknown_ip`. */
+export function edgeClientIp(
+  headers: IpHeaders,
+  host: EdgeHost = currentEdgeHost(),
+): string {
+  if (host.VERCEL === "1") {
+    return hops(headers.get("x-vercel-forwarded-for"))[0] || "unknown_ip";
+  }
+  if (host.FLY_APP_NAME) {
+    return hops(headers.get("fly-client-ip"))[0] || "unknown_ip";
+  }
+  // Netlify's edge sets no client-IP header (docs.netlify.com/build/edge-functions/api);
+  // its proxy, like a generic one, appends the real peer as the last hop.
+  return hops(headers.get("x-forwarded-for")).at(-1) || "unknown_ip";
+}
+
+/** The client IP middleware stamped on this request, or `unknown_ip`. */
+export function stampedClientIp(headers: IpHeaders): string {
+  return headers.get(CLIENT_IP_HEADER)?.trim() || "unknown_ip";
 }
