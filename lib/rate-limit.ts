@@ -214,9 +214,9 @@ export const staffCreateLimiter = makeLimiter(
 /** 5 per 15 minutes per user — POST /api/user/reauthenticate (password and TOTP guesses) */
 export const reauthLimiter = makeLimiter(5, "15 m", "rl:reauth");
 
-/** 30 per minute per creator — digital product upload URLs, commits and replacements */
+/** 60 per minute per creator — upload URL plus commit for a full 20-file product, with retry headroom */
 export const digitalProductUploadLimiter = makeLimiter(
-  30,
+  60,
   "1 m",
   "rl:digital-product-upload",
 );

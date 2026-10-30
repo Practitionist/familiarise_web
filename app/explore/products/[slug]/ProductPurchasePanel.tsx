@@ -147,7 +147,9 @@ export function ProductPurchasePanel({
           "It will appear in your library within a few minutes. You won't be charged twice.",
       });
     } else {
-      failed("The payment was not completed. You have not been charged.");
+      failed(
+        "This payment was refunded, so the product is not in your library. The money goes back to your original payment method.",
+      );
     }
   };
 
