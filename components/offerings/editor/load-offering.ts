@@ -6,6 +6,12 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
+import { z } from "zod";
+import {
+  DigitalProductAssetStatus,
+  DigitalProductCategory,
+  DigitalProductStatus,
+} from "@prisma/client";
 
 import { OFFERING_MANIFESTS } from "./manifests";
 import type { OfferingType } from "./manifest";
@@ -110,6 +116,58 @@ export function useOfferingEvent(
       };
       if (!body.data) return null;
       return wrapPlanAsEvent(type, body.data, instanceId);
+    },
+  });
+}
+
+const ownedAssetSchema = z.object({
+  id: z.string(),
+  originalName: z.string(),
+  mimeType: z.string(),
+  sizeBytes: z.number(),
+  order: z.number(),
+  version: z.number(),
+  status: z.nativeEnum(DigitalProductAssetStatus),
+  rejectReason: z.string().nullable(),
+});
+export type OwnedProductAsset = z.infer<typeof ownedAssetSchema>;
+
+const ownedProductSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  subtitle: z.string().nullable(),
+  slug: z.string(),
+  description: z.string(),
+  category: z.nativeEnum(DigitalProductCategory),
+  pricePaise: z.number(),
+  status: z.nativeEnum(DigitalProductStatus),
+  coverImagePath: z.string().nullable(),
+  takenDownAt: z.string().nullable(),
+  takedownReason: z.string().nullable(),
+  assets: z.array(ownedAssetSchema),
+});
+export type OwnedDigitalProduct = z.infer<typeof ownedProductSchema>;
+
+export const digitalProductQueryKey = (productId: string) =>
+  ["digital-product-edit", productId] as const;
+
+/** The owner's full view of one product, files included; null when it is not theirs. */
+export function useDigitalProduct(productId: string | null) {
+  return useQuery({
+    queryKey: digitalProductQueryKey(productId ?? ""),
+    enabled: !!productId,
+    queryFn: async (): Promise<OwnedDigitalProduct | null> => {
+      const response = await fetch(
+        `/api/digital-products/${encodeURIComponent(productId ?? "")}`,
+      );
+      if (response.status === 404) return null;
+      if (!response.ok) {
+        throw new Error(`Failed to load product (${response.status})`);
+      }
+      const body = z
+        .object({ data: ownedProductSchema })
+        .safeParse(await response.json());
+      return body.success ? body.data.data : null;
     },
   });
 }

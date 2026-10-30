@@ -1,0 +1,506 @@
+"use client";
+
+import { useRef, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import {
+  ArrowDown,
+  ArrowUp,
+  Download,
+  FileText,
+  RefreshCw,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import { z } from "zod";
+import type { DigitalProductCategory } from "@prisma/client";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { useToast } from "@/hooks/use-toast";
+import { putFileWithProgress } from "@/lib/documents/direct-upload";
+import { formatFileSize } from "@/lib/documents/document-utils";
+import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import {
+  DIGITAL_PRODUCT_MAX_FILE_BYTES,
+  DIGITAL_PRODUCT_MAX_FILES,
+  digitalProductAcceptAttr,
+  mimeFitsCategory,
+  resolveDigitalProductMime,
+} from "@/lib/digital-products/constants";
+import type { Tone } from "@/lib/ui/tone";
+import type { OwnedProductAsset } from "./load-offering";
+
+const presignSchema = z.object({
+  data: z.object({
+    assetId: z.string(),
+    uploadUrl: z.string().url(),
+    headers: z.record(z.string()),
+  }),
+});
+const commitSchema = z.object({
+  data: z.object({
+    status: z.enum(["PENDING", "VERIFIED", "REJECTED", "SUPERSEDED"]),
+    reason: z.string().nullable(),
+  }),
+});
+type CommitResult = z.infer<typeof commitSchema>["data"];
+
+const STATUS_CHIP: Record<
+  OwnedProductAsset["status"],
+  { label: string; tone: Tone }
+> = {
+  PENDING: { label: "Not verified", tone: "caution" },
+  VERIFIED: { label: "Verified", tone: "success" },
+  REJECTED: { label: "Rejected", tone: "critical" },
+  SUPERSEDED: { label: "Replaced", tone: "neutral" },
+};
+
+const assetPath = (productId: string, rest = "") =>
+  `/api/digital-products/${encodeURIComponent(productId)}/assets${rest}`;
+
+async function call(url: string, init: RequestInit = {}): Promise<unknown> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      headers: init.body ? { "Content-Type": "application/json" } : undefined,
+    });
+  } catch {
+    throw new Error("Network error. Check your connection and try again.");
+  }
+  const body: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(errorMessageFromBody(body, "Something went wrong"));
+  }
+  return body;
+}
+
+/** Verify an uploaded file; R2 can lag a PUT briefly, so one retry. */
+async function commit(
+  productId: string,
+  assetId: string,
+): Promise<CommitResult> {
+  const url = assetPath(productId, `/${encodeURIComponent(assetId)}/commit`);
+  try {
+    return commitSchema.parse(await call(url, { method: "POST" })).data;
+  } catch {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return commitSchema.parse(await call(url, { method: "POST" })).data;
+  }
+}
+
+/** Presign (new file or a new version), PUT the bytes to R2, then verify. */
+async function uploadOne(params: {
+  productId: string;
+  file: File;
+  category: DigitalProductCategory;
+  replacing?: string;
+  onProgress: (percent: number) => void;
+}): Promise<CommitResult> {
+  const { productId, file, category, replacing } = params;
+  const mimeType = resolveDigitalProductMime(file.name, file.type);
+  if (!mimeType)
+    throw new Error(`${file.name}: this file type isn't supported`);
+  if (!mimeFitsCategory(mimeType, category)) {
+    throw new Error(`${file.name}: this file type doesn't fit the category`);
+  }
+  if (file.size === 0 || file.size > DIGITAL_PRODUCT_MAX_FILE_BYTES) {
+    throw new Error(`${file.name}: files must be between 1 byte and 250 MB`);
+  }
+  const presign = presignSchema.parse(
+    await call(
+      assetPath(
+        productId,
+        replacing ? `/${encodeURIComponent(replacing)}/replace` : "/upload-url",
+      ),
+      {
+        method: "POST",
+        body: JSON.stringify({
+          fileName: file.name,
+          mimeType,
+          sizeBytes: file.size,
+        }),
+      },
+    ),
+  ).data;
+  try {
+    await putFileWithProgress(
+      presign.uploadUrl,
+      file,
+      presign.headers["Content-Type"] ?? mimeType,
+      params.onProgress,
+    );
+  } catch {
+    throw new Error(`${file.name}: the upload didn't finish. Try again.`);
+  }
+  return commit(productId, presign.assetId);
+}
+
+/**
+ * Upload, verify, replace, reorder and remove a digital product's files.
+ * Rows come from the owner's product read; every change refetches it.
+ */
+export function ProductFilesManager({
+  productId,
+  category,
+  isPublished,
+  assets,
+  onChanged,
+}: Readonly<{
+  productId: string;
+  category: DigitalProductCategory;
+  isPublished: boolean;
+  assets: OwnedProductAsset[];
+  onChanged: () => Promise<unknown>;
+}>) {
+  const { toast } = useToast();
+  const addInput = useRef<HTMLInputElement>(null);
+  const replaceInput = useRef<HTMLInputElement>(null);
+  const [replacing, setReplacing] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{
+    name: string;
+    percent: number;
+  } | null>(null);
+  const [deleting, setDeleting] = useState<OwnedProductAsset | null>(null);
+
+  const rows = assets
+    .filter((a) => a.status !== "SUPERSEDED")
+    .sort((a, b) => a.order - b.order);
+  const accept = digitalProductAcceptAttr(category);
+
+  const fail = (error: unknown) => {
+    toast({
+      title: "Couldn't update the files",
+      description: error instanceof Error ? error.message : "Please try again.",
+      variant: "destructive",
+    });
+    void onChanged();
+  };
+  const reportVerdicts = (names: string[], results: CommitResult[]) => {
+    const rejected = results
+      .map((r, i) => ({ ...r, name: names[i] }))
+      .filter((r) => r.status === "REJECTED");
+    if (rejected.length > 0) {
+      toast({
+        title: `${rejected.length} file${rejected.length === 1 ? " was" : "s were"} rejected`,
+        description: rejected
+          .map((r) => `${r.name}: ${r.reason ?? "failed verification"}`)
+          .join(" "),
+        variant: "destructive",
+      });
+    } else {
+      toast({ title: "Files verified" });
+    }
+  };
+
+  const add = useMutation({
+    mutationFn: async (files: File[]) => {
+      if (rows.length + files.length > DIGITAL_PRODUCT_MAX_FILES) {
+        throw new Error(
+          `A product holds at most ${DIGITAL_PRODUCT_MAX_FILES} files.`,
+        );
+      }
+      const results: CommitResult[] = [];
+      for (const file of files) {
+        setProgress({ name: file.name, percent: 0 });
+        results.push(
+          await uploadOne({
+            productId,
+            file,
+            category,
+            onProgress: (percent) => setProgress({ name: file.name, percent }),
+          }),
+        );
+      }
+      return { names: files.map((f) => f.name), results };
+    },
+    onSuccess: ({ names, results }) => {
+      reportVerdicts(names, results);
+      void onChanged();
+    },
+    onError: fail,
+    onSettled: () => setProgress(null),
+  });
+  const replace = useMutation({
+    mutationFn: async (args: { assetId: string; file: File }) => {
+      setProgress({ name: args.file.name, percent: 0 });
+      const result = await uploadOne({
+        productId,
+        file: args.file,
+        category,
+        replacing: args.assetId,
+        onProgress: (percent) => setProgress({ name: args.file.name, percent }),
+      });
+      return { names: [args.file.name], results: [result] };
+    },
+    onSuccess: ({ names, results }) => {
+      reportVerdicts(names, results);
+      void onChanged();
+    },
+    onError: fail,
+    onSettled: () => {
+      setReplacing(null);
+      setProgress(null);
+    },
+  });
+  const verify = useMutation({
+    mutationFn: async (asset: OwnedProductAsset) => ({
+      names: [asset.originalName],
+      results: [await commit(productId, asset.id)],
+    }),
+    onSuccess: ({ names, results }) => {
+      reportVerdicts(names, results);
+      void onChanged();
+    },
+    onError: fail,
+  });
+  const reorder = useMutation({
+    mutationFn: (assetIds: string[]) =>
+      call(assetPath(productId, "/reorder"), {
+        method: "POST",
+        body: JSON.stringify({ assetIds }),
+      }),
+    onSuccess: () => void onChanged(),
+    onError: fail,
+  });
+  const remove = useMutation({
+    mutationFn: (assetId: string) =>
+      call(assetPath(productId, `/${encodeURIComponent(assetId)}`), {
+        method: "DELETE",
+      }),
+    onSuccess: () => {
+      toast({ title: "File removed" });
+      void onChanged();
+    },
+    onError: fail,
+  });
+
+  const busy =
+    add.isPending ||
+    replace.isPending ||
+    verify.isPending ||
+    reorder.isPending ||
+    remove.isPending;
+  const move = (index: number, delta: -1 | 1) => {
+    const ids = rows.map((a) => a.id);
+    const target = index + delta;
+    if (target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target]!, ids[index]!];
+    reorder.mutate(ids);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          Up to {DIGITAL_PRODUCT_MAX_FILES} files, 250 MB each and 1 GB in
+          total. Each file is checked before buyers can download it.
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          disabled={busy}
+          onClick={() => addInput.current?.click()}
+        >
+          <Upload className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+          {add.isPending ? "Uploading…" : "Add files"}
+        </Button>
+        <input
+          ref={addInput}
+          type="file"
+          multiple
+          accept={accept}
+          className="sr-only"
+          aria-label="Add files"
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            e.target.value = "";
+            if (files.length > 0) add.mutate(files);
+          }}
+        />
+        <input
+          ref={replaceInput}
+          type="file"
+          accept={accept}
+          className="sr-only"
+          aria-label="Choose a replacement file"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file && replacing) replace.mutate({ assetId: replacing, file });
+          }}
+        />
+      </div>
+
+      {progress && (
+        <div role="status" className="space-y-1 text-xs text-muted-foreground">
+          <p className="truncate">
+            Uploading {progress.name} · {progress.percent}%
+          </p>
+          <div className="h-1.5 overflow-hidden rounded bg-muted">
+            <div
+              className="h-full bg-primary transition-all"
+              style={{ width: `${progress.percent}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No files yet. Add at least one file before publishing.
+        </p>
+      ) : (
+        <ul className="divide-y rounded-md border">
+          {rows.map((asset, index) => {
+            const chip = STATUS_CHIP[asset.status];
+            return (
+              <li key={asset.id} className="flex items-start gap-3 p-3 text-sm">
+                <FileText
+                  className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                  aria-hidden
+                />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="truncate font-medium">{asset.originalName}</p>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <StatusBadge label={chip.label} tone={chip.tone} />
+                    <span>{formatFileSize(asset.sizeBytes)}</span>
+                    {asset.version > 1 && <span>Version {asset.version}</span>}
+                  </div>
+                  {asset.status === "REJECTED" && asset.rejectReason && (
+                    <p className="text-xs text-destructive">
+                      {asset.rejectReason}
+                    </p>
+                  )}
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-0.5">
+                  {asset.status === "VERIFIED" && (
+                    <Button
+                      asChild
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0"
+                    >
+                      <a
+                        href={assetPath(
+                          productId,
+                          `/${encodeURIComponent(asset.id)}/download`,
+                        )}
+                        aria-label={`Download ${asset.originalName}`}
+                      >
+                        <Download className="h-3.5 w-3.5" aria-hidden />
+                      </a>
+                    </Button>
+                  )}
+                  {asset.status === "PENDING" && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2"
+                      disabled={busy}
+                      onClick={() => verify.mutate(asset)}
+                    >
+                      Verify
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-7 p-0"
+                    aria-label={`Move ${asset.originalName} up`}
+                    disabled={busy || index === 0}
+                    onClick={() => move(index, -1)}
+                  >
+                    <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-7 p-0"
+                    aria-label={`Move ${asset.originalName} down`}
+                    disabled={busy || index === rows.length - 1}
+                    onClick={() => move(index, 1)}
+                  >
+                    <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                  {asset.status === "VERIFIED" && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0"
+                      aria-label={`Replace ${asset.originalName}`}
+                      disabled={busy}
+                      onClick={() => {
+                        setReplacing(asset.id);
+                        replaceInput.current?.click();
+                      }}
+                    >
+                      <RefreshCw
+                        className={`h-3.5 w-3.5 ${replacing === asset.id && replace.isPending ? "animate-spin" : ""}`}
+                        aria-hidden
+                      />
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-7 p-0 text-destructive"
+                    aria-label={`Remove ${asset.originalName}`}
+                    disabled={busy}
+                    onClick={() => setDeleting(asset)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <AlertDialog
+        open={deleting !== null}
+        onOpenChange={(open) => !open && setDeleting(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove {deleting?.originalName}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {isPublished
+                ? "Buyers will no longer see this file. A published product keeps at least one file."
+                : "Buyers will no longer see this file."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deleting) remove.mutate(deleting.id);
+                setDeleting(null);
+              }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}

@@ -19,6 +19,7 @@ const planImageSchema = z.object({
     "class-plans",
     "consultation-plans",
     "subscription-plans",
+    "digital-products",
   ]),
   planId: z.string().min(1),
 });
@@ -170,6 +171,12 @@ async function writePlanImageUrl(
     case "subscription-plans":
       await prisma.subscriptionPlan.update(args);
       return;
+    case "digital-products":
+      await prisma.digitalProduct.update({
+        where: { id: planId },
+        data: { coverImagePath: imageUrl },
+      });
+      return;
   }
 }
 
@@ -202,6 +209,10 @@ async function verifyPlanOwnership(
     case "subscription-plans": {
       const plan = await prisma.subscriptionPlan.findUnique(ownerSelect);
       return plan?.consultantProfile?.userId === userId;
+    }
+    case "digital-products": {
+      const product = await prisma.digitalProduct.findUnique(ownerSelect);
+      return product?.consultantProfile?.userId === userId;
     }
   }
 }

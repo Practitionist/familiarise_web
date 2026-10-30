@@ -38,8 +38,8 @@ export interface OfferingEditorProps<T extends FieldValues = FieldValues> {
   planId?: string;
   /** Absent while creating: there is no offering to attach an image to yet. */
   coverImage?: CoverImageControl;
-  /** Null while creating. DRAFT offerings are not buyable and not discoverable. */
-  status?: "DRAFT" | "PUBLISHED" | null;
+  /** Null while creating. DRAFT and ARCHIVED offerings are not buyable or discoverable. */
+  status?: "DRAFT" | "PUBLISHED" | "ARCHIVED" | null;
   /**
    * Which action is in flight. Per-action rather than one `isSaving`, so the
    * button the user pressed is the only one that reacts — a spinner on Publish
@@ -183,6 +183,9 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
                 )}
                 {status === "PUBLISHED" && (
                   <StatusBadge label="Published" tone="success" />
+                )}
+                {status === "ARCHIVED" && (
+                  <StatusBadge label="Off sale" tone="neutral" />
                 )}
               </span>
             </div>

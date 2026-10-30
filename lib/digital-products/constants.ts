@@ -29,6 +29,17 @@ interface AllowedMime {
   zipContainer?: "archive" | "document";
 }
 
+export const DIGITAL_PRODUCT_CATEGORY_LABEL: Record<
+  DigitalProductCategory,
+  string
+> = {
+  DOCUMENT: "Document",
+  TEMPLATE: "Template",
+  ARCHIVE: "ZIP bundle",
+  IMAGE: "Images",
+  AUDIO: "Audio",
+};
+
 const TEXT_CATEGORIES = ["DOCUMENT", "TEMPLATE"] as const;
 
 /** Every MIME a product file may carry. SVG (executable markup) and video are excluded. */
@@ -98,4 +109,50 @@ export const DIGITAL_PRODUCT_KEY_PREFIX = "products/";
 /** The folder a version lineage shares: everything before `v<version>.<ext>`. */
 export function lineageFolder(storageKey: string): string {
   return storageKey.slice(0, storageKey.lastIndexOf("/") + 1);
+}
+
+const EXTENSION_MIME = new Map<string, DigitalProductMimeType>([
+  ["jpeg", "image/jpeg"],
+]);
+for (const mime of Object.keys(DIGITAL_PRODUCT_MIME_TYPES)) {
+  if (isDigitalProductMime(mime)) {
+    EXTENSION_MIME.set(DIGITAL_PRODUCT_MIME_TYPES[mime].extension, mime);
+  }
+}
+
+/**
+ * The allowed MIME for a browser-picked file: its extension decides, since
+ * browsers report `.md`, `.csv` and `.m4a` inconsistently or not at all.
+ */
+export function resolveDigitalProductMime(
+  fileName: string,
+  browserType: string,
+): DigitalProductMimeType | null {
+  const ext = fileName.includes(".")
+    ? fileName.slice(fileName.lastIndexOf(".") + 1).toLowerCase()
+    : "";
+  const byExtension = EXTENSION_MIME.get(ext);
+  if (byExtension) return byExtension;
+  return isDigitalProductMime(browserType) ? browserType : null;
+}
+
+/** Whether a file of this MIME may go into a product of this category. */
+export function mimeFitsCategory(
+  mimeType: DigitalProductMimeType,
+  category: DigitalProductCategory,
+): boolean {
+  return DIGITAL_PRODUCT_MIME_TYPES[mimeType].categories.some(
+    (c) => c === category,
+  );
+}
+
+/** The file-picker `accept` list for one category. */
+export function digitalProductAcceptAttr(
+  category: DigitalProductCategory,
+): string {
+  return Object.keys(DIGITAL_PRODUCT_MIME_TYPES)
+    .filter(isDigitalProductMime)
+    .filter((mime) => mimeFitsCategory(mime, category))
+    .flatMap((mime) => [mime, `.${DIGITAL_PRODUCT_MIME_TYPES[mime].extension}`])
+    .join(",");
 }
