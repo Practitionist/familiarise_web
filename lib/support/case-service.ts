@@ -89,6 +89,27 @@ const CASE_RELATIONS_INCLUDE = {
   events: { orderBy: { createdAt: "asc" } },
 } as const;
 
+type SupportCaseWithRelations = Prisma.SupportCaseGetPayload<{
+  include: typeof CASE_RELATIONS_INCLUDE;
+}>;
+
+function projectStaffCase(
+  supportCase: SupportCaseWithRelations,
+  viewer: { canReadContact?: boolean; canReadPayments?: boolean },
+) {
+  return {
+    ...supportCase,
+    callbackPhone: viewer.canReadContact ? supportCase.callbackPhone : null,
+    subjects: supportCase.subjects.filter(
+      (subject) =>
+        viewer.canReadPayments ||
+        !["PAYMENT", "REFUND", "INVOICE"].includes(subject.subjectType),
+    ),
+    filedByOrganizationNotice: false as const,
+    viewerIsPresenter: false as const,
+  };
+}
+
 export const SupportCaseStatusSchema = z.enum([
   "OPEN",
   "IN_PROGRESS",
@@ -1970,17 +1991,7 @@ export async function readSupportCaseForViewer(
   if (supportCase.ownershipScope !== "PERSONAL" && !canRead) return null;
 
   if (viewer.isStaff) {
-    return {
-      ...supportCase,
-      callbackPhone: viewer.canReadContact ? supportCase.callbackPhone : null,
-      subjects: supportCase.subjects.filter(
-        (subject) =>
-          viewer.canReadPayments ||
-          !["PAYMENT", "REFUND", "INVOICE"].includes(subject.subjectType),
-      ),
-      filedByOrganizationNotice: false as const,
-      viewerIsPresenter: false as const,
-    };
+    return projectStaffCase(supportCase, viewer);
   }
 
   const publicMessages = supportCase.messages

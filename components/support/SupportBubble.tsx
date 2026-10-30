@@ -48,6 +48,36 @@ function bubbleToneClass(
   return "bg-muted text-foreground";
 }
 
+function formatMessageTime(at?: string) {
+  if (!at) return null;
+  return new Date(at).toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function isOwnMessage(
+  author: BubbleAuthor,
+  perspective: "staff" | "user",
+  presenter: boolean,
+) {
+  if (perspective === "user") return author === "USER";
+  return author === "AGENT" && !presenter;
+}
+
+function senderNameFor(
+  author: BubbleAuthor,
+  authorName: string | null | undefined,
+  internal: boolean,
+  presenter: boolean,
+) {
+  if (internal) return `Private note${authorName ? ` · ${authorName}` : ""}`;
+  if (!presenter) return authorName ?? DEFAULT_NAME[author];
+  return authorName ? `${authorName} · Presenter` : "Presenter";
+}
+
 /**
  * #1527 — one chat bubble for both sides of a support conversation. The
  * viewer's own messages sit on the right; a private note (staff only) is
@@ -84,26 +114,10 @@ export function SupportBubble({
     );
   }
   const presenter = actorKind === "PRESENTER";
-  const own =
-    perspective === "user"
-      ? author === "USER"
-      : author === "AGENT" && !presenter;
+  const own = isOwnMessage(author, perspective, presenter);
   const Icon = presenter ? Presentation : ICON[author];
-  const time = at
-    ? new Date(at).toLocaleString(undefined, {
-        day: "numeric",
-        month: "short",
-        hour: "numeric",
-        minute: "2-digit",
-      })
-    : null;
-  const senderName = internal
-    ? `Private note${authorName ? ` · ${authorName}` : ""}`
-    : presenter
-      ? authorName
-        ? `${authorName} · Presenter`
-        : "Presenter"
-      : (authorName ?? DEFAULT_NAME[author]);
+  const time = formatMessageTime(at);
+  const senderName = senderNameFor(author, authorName, internal, presenter);
   return (
     <div className={cn("flex", own ? "justify-end" : "justify-start")}>
       <div className="max-w-[85%] space-y-1">
