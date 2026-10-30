@@ -35,7 +35,7 @@ Detailed invariants and regime facts live in `references/doctrine.md`; verificat
 - A free digital product claim is a `SUCCEEDED` purchase of 0 paise with no order, Payment, invoice or earnings.
 - Digital product earnings use `DIGITAL_PRODUCT` (168 h hold); the invoice SAC comes from `DIGITAL_PRODUCT_SAC_CODES` in `lib/payments/payouts/constants.ts` (998431 or 998439, pending CA sign-off).
 - Refund a digital product through the existing support and admin doors; the operator checks `firstDownloadedAt`, which no door enforces.
-- Recover a lost capture with `reconcile-standalone-purchases` or the buyer's `purchases/[purchaseId]/verify` route, both through `recoverStandaloneOrder`.
+- Recover a lost capture with `reconcile-standalone-purchases` or the buyer's `purchases/[purchaseId]/verify` route, both through `recoverStandaloneOrder`. Both read `FAILED` purchases under 7 days old, since a declined attempt's order can still capture; neither ever reads `REFUNDED`.
 
 ## Settlement, wallet and operator surfaces
 
