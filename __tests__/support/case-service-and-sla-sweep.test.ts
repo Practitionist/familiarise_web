@@ -92,6 +92,31 @@ const record = (overrides: Record<string, unknown> = {}) => ({
   events: [],
   ...overrides,
 });
+
+const presenterBooking = () => ({
+  id: "appt-1",
+  participants: [],
+  consultation: null,
+  subscription: null,
+  webinar: {
+    webinarPlan: {
+      consultantProfileId: null,
+      collaborators: [{ consultantProfileId: "presenter-profile" }],
+    },
+  },
+  class: null,
+  payment: [],
+});
+
+const mockPresenter = () => {
+  (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce([
+    presenterBooking(),
+  ]);
+  (prisma.consultantProfile.findMany as jest.Mock).mockResolvedValueOnce([
+    { id: "presenter-profile", user: { id: "presenter" } },
+  ]);
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
   (cases.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
@@ -214,25 +239,7 @@ it("rejects a stale public reply instead of overwriting a concurrent resolution"
   );
 });
 it("stores a presenter reply as a provider message without reopening or claiming the case", async () => {
-  (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce([
-    {
-      id: "appt-1",
-      participants: [],
-      consultation: null,
-      subscription: null,
-      webinar: {
-        webinarPlan: {
-          consultantProfileId: null,
-          collaborators: [{ consultantProfileId: "presenter-profile" }],
-        },
-      },
-      class: null,
-      payment: [],
-    },
-  ]);
-  (prisma.consultantProfile.findMany as jest.Mock).mockResolvedValueOnce([
-    { id: "presenter-profile", user: { id: "presenter" } },
-  ]);
+  mockPresenter();
   (cases.findUnique as jest.Mock).mockResolvedValueOnce(
     record({
       status: "RESOLVED",
@@ -299,25 +306,7 @@ it.each([
   expect(prisma.supportCaseMessage.create).not.toHaveBeenCalled();
 });
 it("refuses a presenter reply from someone who does not present the booking", async () => {
-  (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce([
-    {
-      id: "appt-1",
-      participants: [],
-      consultation: null,
-      subscription: null,
-      webinar: {
-        webinarPlan: {
-          consultantProfileId: null,
-          collaborators: [{ consultantProfileId: "presenter-profile" }],
-        },
-      },
-      class: null,
-      payment: [],
-    },
-  ]);
-  (prisma.consultantProfile.findMany as jest.Mock).mockResolvedValueOnce([
-    { id: "presenter-profile", user: { id: "presenter" } },
-  ]);
+  mockPresenter();
   (cases.findUnique as jest.Mock).mockResolvedValueOnce(
     record({ appointmentId: "appt-1" }),
   );
@@ -354,25 +343,7 @@ it("refuses a presenter's private note", async () => {
   expect(prisma.supportCaseMessage.create).not.toHaveBeenCalled();
 });
 it("notifies accepted presenters on staff replies", async () => {
-  (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce([
-    {
-      id: "appt-1",
-      participants: [],
-      consultation: null,
-      subscription: null,
-      webinar: {
-        webinarPlan: {
-          consultantProfileId: null,
-          collaborators: [{ consultantProfileId: "presenter-profile" }],
-        },
-      },
-      class: null,
-      payment: [],
-    },
-  ]);
-  (prisma.consultantProfile.findMany as jest.Mock).mockResolvedValueOnce([
-    { id: "presenter-profile", user: { id: "presenter" } },
-  ]);
+  mockPresenter();
   (cases.findUnique as jest.Mock).mockResolvedValueOnce(
     record({ appointmentId: "appt-1" }),
   );
@@ -389,30 +360,6 @@ it("notifies accepted presenters on staff replies", async () => {
   const recipients = (stageBell as jest.Mock).mock.calls[0][1].recipients;
   expect(recipients).toEqual(expect.arrayContaining(["customer", "presenter"]));
 });
-
-const presenterBooking = () => ({
-  id: "appt-1",
-  participants: [],
-  consultation: null,
-  subscription: null,
-  webinar: {
-    webinarPlan: {
-      consultantProfileId: null,
-      collaborators: [{ consultantProfileId: "presenter-profile" }],
-    },
-  },
-  class: null,
-  payment: [],
-});
-
-const mockPresenter = () => {
-  (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce([
-    presenterBooking(),
-  ]);
-  (prisma.consultantProfile.findMany as jest.Mock).mockResolvedValueOnce([
-    { id: "presenter-profile", user: { id: "presenter" } },
-  ]);
-};
 
 const mockRecipientEmails = () => {
   (prisma.user.findMany as jest.Mock).mockImplementation(
