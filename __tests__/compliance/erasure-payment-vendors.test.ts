@@ -5,6 +5,11 @@
 // #1771 rows 1 and 5 — erasure deletes saved-card tokens, deactivates the
 // RazorpayX objects, nulls the masked bank fields and keeps the rzp ids.
 // Session-document erasure has its own suite; this one pins the vendors.
+// Digital product erasure has its own suite; this scrub owns no products.
+jest.mock("../../lib/digital-products/erasure", () => ({
+  scrubDigitalProductsTx: jest.fn(async () => undefined),
+  purgeErasedCreatorFiles: jest.fn(async () => []),
+}));
 jest.mock("../../lib/documents/document-erasure", () => ({
   eraseUserSessionDocuments: jest.fn(async () => []),
 }));
