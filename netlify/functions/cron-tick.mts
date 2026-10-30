@@ -573,13 +573,13 @@ export async function otherActivePlatform(
 
 const SLOT_MS = 5 * 60_000;
 
-/** The tick's id, derived from its five-minute slot so a second dispatch of the slot carries the same id. */
+/** The tick's id: a custom (version 8) UUID hashed from the five-minute slot, so a second dispatch carries the same id. */
 export function tickIdForSlot(slot: Date): string {
-  const hex = createHash("sha1")
+  const hex = createHash("sha256")
     .update(`cron-tick:${slot.toISOString()}`)
     .digest("hex");
   const variant = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 const TICK_CLAIM_TIMEOUT_MS = 2_500;

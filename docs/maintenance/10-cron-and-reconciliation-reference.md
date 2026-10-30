@@ -121,7 +121,7 @@ For export attempt ownership, exact artifact expiry and transactional expiry-to-
 
 ## The Actions-scheduled jobs
 
-The generated inventory lists registered jobs outside the ticker and operational Actions steps missing registry coverage, with their configured owners and entrypoints. Actions workflows remain the configured automatic owner for their remaining jobs; enablement, budget availability and successful effects require separate verification.
+The generated inventory lists every registered job with its ticker schedule, entrypoint, lease and request bounds, and counts any registered job outside the ticker (none today). No Actions workflow schedules a registry job, so the generator reads no workflow file. Successful effects in the deployed environment still require separate verification.
 
 Moving a job requires a bounded canonical core, restart-safe progress and a controlled deployed check that establishes cadence and backlog-drain capacity. Switch its automatic schedule as one reviewed handoff and preserve unmigrated workflow steps. Do not enable Actions as an additional automatic fallback for an already ticker-owned job.
 
