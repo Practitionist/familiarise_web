@@ -25,6 +25,7 @@ export const PAYOUT_CONSTANTS = {
     WEBINAR: 48, // 48 hours after webinar ends
     SUBSCRIPTION: 168, // 7 days for subscriptions
     CLASS: 24, // 24 hours after class ends
+    DIGITAL_PRODUCT: 168, // 7 days after a digital product sale
   } as const,
 
   /** Maximum retry attempts for failed payouts */

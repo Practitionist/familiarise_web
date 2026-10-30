@@ -1447,3 +1447,24 @@ ALTER TABLE "Meeting"
     ) NOT VALID;
 -- SPLIT
 ALTER TABLE "Meeting" VALIDATE CONSTRAINT "meeting_ended_reason_known";
+-- SPLIT
+-- One live entitlement per buyer and product; failed and refunded attempts stay as history.
+CREATE UNIQUE INDEX IF NOT EXISTS "digital_product_purchase_succeeded_key"
+  ON "DigitalProductPurchase" ("productId", "buyerId")
+  WHERE "status" = 'SUCCEEDED';
+-- SPLIT
+ALTER TABLE "DigitalProduct" DROP CONSTRAINT IF EXISTS "digital_product_price_nonnegative";
+-- SPLIT
+ALTER TABLE "DigitalProduct" ADD CONSTRAINT "digital_product_price_nonnegative" CHECK ("pricePaise" >= 0);
+-- SPLIT
+-- A free claim has no gateway order and a paid purchase always has one.
+ALTER TABLE "DigitalProductPurchase" DROP CONSTRAINT IF EXISTS "digital_product_purchase_free_has_no_order";
+-- SPLIT
+ALTER TABLE "DigitalProductPurchase" ADD CONSTRAINT "digital_product_purchase_free_has_no_order"
+  CHECK ("amountPaise" >= 0 AND ("amountPaise" = 0) = ("gatewayOrderId" IS NULL));
+-- SPLIT
+-- 250 MB per file (DIGITAL_PRODUCT_MAX_FILE_BYTES in lib/digital-products/constants.ts).
+ALTER TABLE "DigitalProductAsset" DROP CONSTRAINT IF EXISTS "digital_product_asset_size_cap";
+-- SPLIT
+ALTER TABLE "DigitalProductAsset" ADD CONSTRAINT "digital_product_asset_size_cap"
+  CHECK ("sizeBytes" >= 0 AND "sizeBytes" <= 262144000);

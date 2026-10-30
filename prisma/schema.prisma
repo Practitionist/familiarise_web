@@ -166,6 +166,8 @@ model User {
   recordingsConsentAttested      Recording[]                      @relation("RecordingConsentAttestor")
   // #366 — replay purchases this user made.
   recordingPurchases             RecordingPurchase[]              @relation("RecordingPurchaseBuyer")
+  digitalProductPurchases        DigitalProductPurchase[]         @relation("DigitalProductPurchaseBuyer")
+  digitalProductReports          DigitalProductReport[]           @relation("DigitalProductReporter")
   // #1499 — cancellation-policy versions this OWNER published, for the audit trail.
   publishedCancellationPolicies  CancellationPolicy[]             @relation("CancellationPolicyPublisher")
   // Verification documents this user uploaded (owner column, #1224).
@@ -1273,6 +1275,7 @@ model Organization {
   // Org-tagged plan materials (mirrored from the owning plan's organizationId)
   // so org dashboards manage handouts without polymorphic joins.
   planMaterialsByOrg      PlanMaterial[]           @relation("PlanMaterialByOrg")
+  digitalProductsByOrg    DigitalProduct[]         @relation("DigitalProductByOrg")
   // Denormalized for org-scoped Stream call audit (#674). See
   // `Meeting.organizationId` for the write-side rationale.
   meetings                Meeting[]                @relation("MeetingByOrg")
@@ -3270,6 +3273,7 @@ model ConsultantProfile {
   subscriptionPlans SubscriptionPlan[]
   webinarPlans      WebinarPlan[]
   classPlans        ClassPlan[]
+  digitalProducts   DigitalProduct[]
 
   // Collaborator relations
   collaborations        Collaborator[] @relation("Collaborator")
@@ -5705,6 +5709,148 @@ model RecordingPurchase {
   @@index([buyerId])
 }
 
+enum DigitalProductStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+// Drives the invoice SAC and the library icon.
+enum DigitalProductCategory {
+  DOCUMENT
+  TEMPLATE
+  ARCHIVE
+  IMAGE
+  AUDIO
+}
+
+enum DigitalProductAssetStatus {
+  PENDING // Presigned, not yet verified
+  VERIFIED // Passed size, magic-byte and archive checks
+  REJECTED // Failed verification; its object is deleted
+  SUPERSEDED // Replaced or removed; its object is kept 30 days
+}
+
+enum DigitalProductPurchaseStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+// A standalone file sale with lifetime access; never an appointment or plan.
+model DigitalProduct {
+  id                  String                 @id @default(cuid())
+  consultantProfile   ConsultantProfile      @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfileId String
+  organization        Organization?          @relation("DigitalProductByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId      String?
+  visibility          OrgPlanVisibility      @default(PUBLIC)
+  title               String
+  subtitle            String?
+  slug                String                 @unique
+  description         String                 @db.Text
+  category            DigitalProductCategory
+  pricePaise          BigInt
+  status              DigitalProductStatus   @default(DRAFT)
+  coverImagePath      String?
+  previewAssetId      String?
+  takenDownAt         DateTime?              @db.Timestamptz
+  takedownReason      String?
+  publishedAt         DateTime?              @db.Timestamptz
+  archivedAt          DateTime?              @db.Timestamptz
+  createdAt           DateTime               @default(now()) @db.Timestamptz
+  updatedAt           DateTime               @updatedAt @db.Timestamptz
+
+  assets    DigitalProductAsset[]
+  purchases DigitalProductPurchase[]
+  reports   DigitalProductReport[]
+
+  @@index([consultantProfileId, status])
+  @@index([organizationId])
+  @@index([status, publishedAt])
+}
+
+// One file of a product. Buyers always get the latest VERIFIED version.
+model DigitalProductAsset {
+  id           String                    @id @default(cuid())
+  product      DigitalProduct            @relation(fields: [productId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  productId    String
+  // R2 key in R2_DIGITAL_PRODUCTS_BUCKET: products/<productId>/<assetId>/v<version>.<ext>
+  storageKey   String                    @unique
+  originalName String
+  mimeType     String
+  sizeBytes    BigInt
+  order        Int                       @default(0)
+  version      Int                       @default(1)
+  status       DigitalProductAssetStatus @default(PENDING)
+  rejectReason String?
+  sha256       String?
+  verifiedAt   DateTime?                 @db.Timestamptz
+  supersededAt DateTime?                 @db.Timestamptz
+  // When the storage sweep deleted this row's object; the row stays as download evidence.
+  purgedAt     DateTime?                 @db.Timestamptz
+  createdAt    DateTime                  @default(now()) @db.Timestamptz
+
+  downloads DigitalProductDownload[]
+
+  @@index([productId, status, order])
+  @@index([status, supersededAt])
+}
+
+// One purchase attempt. Entitlement = a SUCCEEDED row for (productId, buyerId),
+// unique through a partial index in prisma/sql/check-constraints.sql.
+model DigitalProductPurchase {
+  id                String                       @id @default(cuid())
+  product           DigitalProduct               @relation(fields: [productId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  productId         String
+  buyer             User                         @relation("DigitalProductPurchaseBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  buyerId           String
+  // Razorpay order id; null only on a free claim.
+  gatewayOrderId    String?                      @unique
+  gatewayPaymentId  String?
+  payment           Payment?                     @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
+  paymentId         String?                      @unique
+  amountPaise       BigInt
+  status            DigitalProductPurchaseStatus @default(PENDING)
+  // Refundable until the first download stamps this.
+  firstDownloadedAt DateTime?                    @db.Timestamptz
+  createdAt         DateTime                     @default(now()) @db.Timestamptz
+  updatedAt         DateTime                     @updatedAt @db.Timestamptz
+
+  downloads DigitalProductDownload[]
+
+  @@index([productId, buyerId, status])
+  @@index([buyerId])
+  @@index([status, createdAt])
+}
+
+model DigitalProductDownload {
+  id         String                 @id @default(cuid())
+  purchase   DigitalProductPurchase @relation(fields: [purchaseId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  purchaseId String
+  asset      DigitalProductAsset    @relation(fields: [assetId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  assetId    String
+  createdAt  DateTime               @default(now()) @db.Timestamptz
+
+  @@index([purchaseId, createdAt])
+  @@index([assetId])
+}
+
+model DigitalProductReport {
+  id         String         @id @default(cuid())
+  product    DigitalProduct @relation(fields: [productId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  productId  String
+  reporter   User           @relation("DigitalProductReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reporterId String
+  reason     String         @db.Text
+  createdAt  DateTime       @default(now()) @db.Timestamptz
+  resolvedAt DateTime?      @db.Timestamptz
+
+  @@index([productId, resolvedAt])
+  @@index([reporterId])
+}
+
 // Model for storing recording details with dual storage support
 
 model Recording {
@@ -5896,6 +6042,9 @@ model Payment {
 
   // #1365 — the statutory B2C tax invoice for this payment, at most one.
   consumerInvoice ConsumerInvoice?
+
+  // The digital product sale this payment settled, at most one.
+  digitalProductPurchase DigitalProductPurchase?
 
   // Payout relations
   earnings     ConsultantEarnings[]

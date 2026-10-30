@@ -118,6 +118,9 @@ export const moneyResultExtensions = {
     listPricePaise: fn("listPricePaise"),
   },
   recordingPurchase: { amountPaise: f("amountPaise") },
+  digitalProduct: { pricePaise: f("pricePaise") },
+  digitalProductAsset: { sizeBytes: f("sizeBytes") },
+  digitalProductPurchase: { amountPaise: f("amountPaise") },
   payment: {
     amount: f("amount"),
     originalAmount: f("originalAmount"),
