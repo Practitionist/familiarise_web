@@ -2450,9 +2450,7 @@ Deployment docs and the root agent contract describe an Upstash REST key named `
 
 #### 8.7.3. Request IP and cache variation
 
-`lib/rate-limit.ts:getClientIp` currently prefers `req.ip`, then `x-nf-client-connection-ip`, then the first `x-forwarded-for` value; it does not gate the Netlify header by runtime and does not use `x-vercel-forwarded-for`. `lib/auth.ts` supplies an ordered list of Netlify, Vercel, and generic forwarded headers without selecting a header based on the host. This differs from the explicit runtime trust rules in `AGENTS.md`.
-
-**Recommendation:** use one server-only request-IP helper that selects the trusted host header only when its runtime flag is true, with a carefully defined standard-proxy fallback for local and container hosts. Add coverage for spoofed cross-platform headers and multi-hop `X-Forwarded-For`. Do not accept caller-supplied host headers as equivalent to a platform-injected value.
+Edge middleware resolves the client IP once with `edgeClientIp` in `lib/request-ip.ts`: `x-vercel-forwarded-for` on Vercel, `fly-client-ip` on Fly, and otherwise the rightmost `x-forwarded-for` hop, which is the visitor on Netlify's edge and behind a standard proxy. It overwrites `x-familiarise-client-ip` with that address on every request it forwards. `lib/rate-limit.ts:getClientIp`, Better Auth's `ipAddressHeaders` in `lib/auth.ts` and the sign-in throttle read only that header, because inside the Node function every forwarded header names the edge function's egress address. `__tests__/security/client-ip-runtime.test.ts` pins the per-host resolution, the forged-prefix case and the overwrite of a forged stamp.
 
 Public consultant list responses vary by query through `Netlify-Vary`; the public cookie-aware detail branch uses a cookie key in `Netlify-Vary` but does not add standard `Vary: Cookie`. Follow `AGENTS.md` and pair the CDN-specific header with the standard cache variation header wherever the response changes by cookie. Private identity responses should remain `private, no-store`.
 

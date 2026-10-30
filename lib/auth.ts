@@ -9,7 +9,7 @@ import { passkey } from "@better-auth/passkey";
 import bcrypt from "bcrypt";
 import prisma from "@/lib/prisma";
 import { scheduleAfter } from "@/lib/api/after-safe";
-import { trustedClientIpHeaders } from "@/lib/request-ip";
+import { CLIENT_IP_HEADER } from "@/lib/request-ip";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { assertSsoSessionAllowed } from "@/lib/sso/enforce-session";
 import {
@@ -316,10 +316,9 @@ export const auth = betterAuth({
       httpOnly: true,
     },
     ipAddress: {
-      // The rate-limit key and the session's recorded IP, read only from the
-      // header this runtime's edge sets. BetterAuth ignores a multi-hop
-      // `x-forwarded-for` (no trustedProxies), so a client cannot pick its key.
-      ipAddressHeaders: trustedClientIpHeaders(),
+      // The rate-limit key and the session's recorded IP: only the single IP
+      // middleware stamps, which overwrites anything the client sent.
+      ipAddressHeaders: [CLIENT_IP_HEADER],
       // Key IPv6 on the /64. One host usually owns a whole /64, so per-address
       // keys would let it rotate through 2^64 buckets.
       ipv6Subnet: 64,
