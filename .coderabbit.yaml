@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 # AGENTS.md owns shared engineering invariants; path rules add domain risks.
 language: en-US
+# Keep the tone within 250 characters or schema validation rejects the config.
 tone_instructions: >-
   Be concise and evidence-based. Explain the concrete failure and affected
   users. Prioritize correctness, authorization, privacy, money and reliability.
@@ -24,14 +25,13 @@ reviews:
   auto_review:
     enabled: true
     auto_incremental_review: false # one initial review; later reviews on demand
-    auto_pause_after_reviewed_commits: 0
     drafts: false
     # The default target is dev. Other bases, including stacks/prod, are manual.
     base_branches: []
     ignore_title_keywords: ["WIP", "[skip review]", "DO NOT MERGE"]
     labels: ["!do-not-review"]
   path_instructions:
-    - path: "{app,actions,lib,utils,schemas,hooks,providers,components}/**/*.{ts,tsx}"
+    - path: "{app,actions,lib,utils,schemas,hooks,providers,components,scripts}/**/*.{ts,tsx}"
       instructions: |
         Follow AGENTS.md and verify claims against current callers and database
         sidecars. Prioritize concrete bugs over speculative abstractions, flags,
@@ -67,7 +67,7 @@ reviews:
         grant operator privileges. Lazy learner profiles may legitimately be null;
         preserve the existing ensureConsulteeProfile flow. Keep verification
         documents private and enforce ownership on upload and read.
-    - path: "{lib/{booking,appointments,scheduling,trials,offerings,plans,time}/**,utils/{schedule,scheduling-engine}/**,utils/appointmentlock.ts,utils/dateTimeUtils.ts,app/api/{appointments,bookings,scheduling,trials,plans}/**,components/{appointments,booking,planner,plans,schedule,scheduling,events,offerings}/**,hooks/scheduling/**,schemas/{appointments,slots,trials,subscriptions,plans}.ts,schemas/slotAllocation/**,__tests__/{booking,booking-algorithm,appointments,scheduling,schedule,trials}/**}"
+    - path: "{lib/{booking,appointments,scheduling,trials,offerings,plans,time}/**,utils/{schedule,scheduling-engine}/**,utils/appointmentlock.ts,utils/dateTimeUtils.ts,app/api/{appointments,bookings,scheduling,trials,plans}/**,components/{appointments,booking,planner,plans,schedule,scheduling,events,offerings}/**,hooks/scheduling/**,schemas/{appointments,slots,trials,subscriptions,plans}.ts,schemas/slotAllocation/**,scripts/{appointments,trials}/**,__tests__/{booking,booking-algorithm,appointments,scheduling,schedule,trials}/**}"
       instructions: |
         Preserve expected-state CAS transitions and existing lock order, isolation
         and bounded retries. The host overlap exclusion does not protect tentative
@@ -77,7 +77,7 @@ reviews:
         entitlement accounting across allocation, cancellation and rescheduling.
         Preserve payment-linked history and use canonical refund entry points;
         a booking or allocation change must not silently lose meetings or funds.
-    - path: "{lib/payments/**,app/api/{checkout,payments,overage}/**,app/api/admin/{payments,payouts,payout-accounts,refunds}/**,app/checkout/**,components/{billing,payouts}/**,schemas/{checkout,checkout-verify,payouts,wallet}.ts,__tests__/{money,payments}/**}"
+    - path: "{lib/payments/**,app/api/{checkout,payments,overage}/**,app/api/admin/{payments,payouts,payout-accounts,refunds}/**,app/checkout/**,components/{billing,payouts}/**,schemas/{checkout,checkout-verify,payouts,wallet}.ts,scripts/{payments,payouts,refunds,reconcile,disputes,earnings}/**,__tests__/{money,payments}/**}"
       instructions: |
         Money is INR integer paise: BigInt in Postgres, number at the existing
         Prisma boundary. Check safe conversions, rounding and captured/refunded
@@ -98,7 +98,7 @@ reviews:
         do not acknowledge a failed business operation as successful. Test replay,
         invalid signatures and out-of-order events without logging raw secrets or
         PII. Internal handlers must preserve the authenticated ingress boundary.
-    - path: "{lib/stream/**,lib/stream*.ts,actions/stream/**,providers/StreamProvider*.tsx,components/{chat,stream}/**,app/api/stream/**,schemas/stream-*.ts,hooks/useChatUnreadCount.ts,__tests__/{chat,stream}/**}"
+    - path: "{lib/stream/**,lib/stream*.ts,actions/stream/**,providers/StreamProvider*.tsx,components/{chat,stream}/**,app/api/stream/**,schemas/stream-*.ts,hooks/useChatUnreadCount.ts,scripts/stream/**,__tests__/{chat,stream}/**}"
       instructions: |
         Stream Chat and Video share identity but have separate capabilities.
         Tokens are server-issued for the current authorized user; verify channel
@@ -108,7 +108,7 @@ reviews:
         Postgres owns domain state; Stream RPC stays outside transactions. Do not
         grant channel access merely because a client knows an ID or was once a
         member, and do not confuse a provider outage with an authorization denial.
-    - path: "{lib/meeting.ts,lib/meetings/**,lib/stream/{recording-*,video-*,incoming-video,session-handlers,call-*}.ts,app/meetings/**,app/api/{meetings,recordings,participants}/**,app/api/stream/{recordings,meetings}/**,components/{stream,recordings}/**,__tests__/{meetings,recordings}/**}"
+    - path: "{lib/meeting.ts,lib/meetings/**,lib/stream/{recording-*,video-*,incoming-video,session-handlers,call-*}.ts,app/meetings/**,app/api/{meetings,recordings,participants}/**,app/api/stream/{recordings,meetings}/**,components/{stream,recordings}/**,scripts/stream/reconcile-orphaned-recordings.ts,__tests__/{meetings,recordings}/**}"
       instructions: |
         For calls and recordings check join/host/attendee permissions, seat and
         duration limits, consent, recording ownership and paid replay access.
@@ -144,10 +144,12 @@ reviews:
         existing refusal/escalation policy. Moderation, erasure and auto-close
         must preserve refund/payout obligations and durable vendor revocation;
         do not delete financial anchors or infer consent from membership.
-    - path: "{lib/cron/**,lib/maintenance*.ts,app/api/cleanup/**,app/api/admin/system-jobs/**,jobs/**,scripts/maintenance/**,netlify/functions/**,__tests__/maintenance/**}"
+    - path: "{lib/cron/**,lib/maintenance*.ts,app/api/cleanup/**,app/api/admin/system-jobs/**,jobs/**,scripts/**,netlify/functions/**,__tests__/maintenance/**}"
       instructions: |
-        Keep one implementation registered in lib/cron/cleanup-registry.ts, not
-        parallel script/job/route wrappers. Cron leases use Postgres, not Redis.
+        Background jobs keep one core registered in lib/cron/cleanup-registry.ts;
+        CLI/HTTP adapters reuse it instead of parallel script/job/route wrappers.
+        Do not turn one-off or read-only operator tools into scheduled jobs.
+        Cron leases use Postgres, not Redis.
         Preserve active-platform selection and its documented fail-open behavior,
         plus domain idempotency/fencing; a fleet switch is not exactly-once proof.
         Check bounded work, fair continuation, checkpoints, lease ownership and
@@ -179,6 +181,15 @@ reviews:
         safety. Do not propose db push, autonomous DDL or production data writes
         as validation. Review migration compatibility and regenerate the Prisma
         client when schema changes; do not assume Prisma captures sidecar indexes.
+    - path: "{instrumentation*.ts,sentry.*.config.ts,lib/observability/**,lib/logging/**,lib/betterstack.ts,__tests__/observability/**}"
+      instructions: |
+        Preserve expected-refusal classification, alert severity and stable
+        grouping keys. Aggregate sweep failures through the existing run reporter,
+        not per-row Sentry captures, and preserve throttling for repeated outages.
+        Scrub PII, auth tokens, payment details and secrets from events and logs.
+        Keep client/server/edge initialization scoped to its runtime and preserve
+        bounded serverless flushing. Do not suppress unexpected failures or label
+        an admitted job complete merely to reduce telemetry volume.
     - path: "{app/**/*.tsx,components/**/*.tsx,hooks/**/*.{ts,tsx},providers/**/*.tsx}"
       instructions: |
         Check complete effect dependencies, cleanup and stale async results;
