@@ -60,13 +60,14 @@ Every path below exists in `app/`. Public pages are ISR and mostly served from t
 
 ## Pass criteria
 
-All three must hold at the stage under test. A stage that fails any of them fails.
+All four must hold at the stage under test. A stage that fails any of them fails.
 
 1. **Pooler clients under 150.** The Supabase pooler client count, read from the Supabase dashboard's reports for the project, stays below 150 throughout the hold. Micro admits 200, so 150 leaves 25 percent headroom.
 2. **p95 under 5 seconds on each of the ten routes.** Measured per route with a k6 tag, so one slow route cannot hide behind fast ones.
-3. **Zero `CRON_LOCK_UNAVAILABLE` answers.** This is the 503 a job returns when the database cannot grant its lease (`CronLockUnavailableError`, `lib/cron/cron-lock-errors.ts`). It shows that user traffic starved the job path of connections.
+3. **At least 95 % of each route's requests answer without a 429.** Report the 429 rate per route; a stage whose limiters refused more than that measured the limiter, not the database, and is re-run from more source IPs before it counts.
+4. **Zero `CRON_LOCK_UNAVAILABLE` answers.** This is the 503 a job returns when the database cannot grant its lease (`CronLockUnavailableError`, `lib/cron/cron-lock-errors.ts`). It shows that user traffic starved the job path of connections.
 
-Criterion 3 needs one extra step, because a preview now refuses every job (`JOB_RUN_PRODUCTION_ONLY`, a 409 that answers before any lease is requested). A preview therefore cannot show the lock failing. To measure it, run the ticker's own load from a local `next dev` process that points at the dev project, which is allowed to run jobs, while k6 hits the preview. Call the due jobs through `/api/cleanup/<job>` with the local `CRON_SECRET` on the ticker's cadence and count 503 answers whose body has `code: "CRON_LOCK_UNAVAILABLE"`. This approach has not been tried; the owner should confirm it before the first run.
+Criterion 4 needs one extra step, because a preview now refuses every job (`JOB_RUN_PRODUCTION_ONLY`, a 409 that answers before any lease is requested). A preview therefore cannot show the lock failing. To measure it, run the ticker's own load from a local `next dev` process that points at the dev project, which is allowed to run jobs, while k6 hits the preview. Call the due jobs through `/api/cleanup/<job>` with the local `CRON_SECRET` on the ticker's cadence and count 503 answers whose body has `code: "CRON_LOCK_UNAVAILABLE"`. This approach has not been tried; the owner should confirm it before the first run.
 
 ## Tooling
 

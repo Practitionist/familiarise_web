@@ -38,10 +38,16 @@ export async function GET(req: NextRequest) {
     if (status) {
       where.status = status;
     }
-    const environment = metricsEnvironmentSchema.safeParse(
-      searchParams.get("environment"),
-    );
-    if (environment.success) {
+    const environment = metricsEnvironmentSchema
+      .optional()
+      .safeParse(searchParams.get("environment") ?? undefined);
+    if (!environment.success) {
+      return NextResponse.json(
+        { error: "Unknown environment" },
+        { status: 400 },
+      );
+    }
+    if (environment.data) {
       where.result = { path: ["environment"], equals: environment.data };
     }
 
