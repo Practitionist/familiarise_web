@@ -109,6 +109,16 @@ documents/
 - Files are organized by appointment and user to prevent unauthorized access
 - File types and sizes are validated both client-side and server-side
 
+## Postgres queue libraries through the Supabase pooler
+
+This section records what was measured on 2026-10-31 when two Postgres-backed queue libraries were run against the Mumbai poolers, in throwaway `lab_` schemas that were dropped afterwards. Nothing here is installed in the app. The method and the full results are in [Background-job runtime options](../maintenance/14-background-job-runtime-options.md).
+
+- **Both libraries install and run on both poolers.** pg-boss 12.38.0 and DBOS Transact 5.4.0 migrated their own tables and processed jobs through the transaction pooler (port 6543) and the session pooler (port 5432). Enqueueing inside the caller's transaction was correct on both: a rollback left no job.
+- **DBOS needs a pool of about 10.** With `systemDatabasePoolSize: 2` its advisory-lock connection, which has a 5-second idle-in-transaction timeout, was starved and Postgres killed it. The default pool of 10 was stable. The minimum between 2 and 10 was not measured. This is incompatible with `PG_POOL_MAX=1` on Netlify.
+- **LISTEN/NOTIFY needs the session pooler.** DBOS's check failed on 6543 and it fell back to polling; it worked on 5432. A transaction pooler cannot carry LISTEN.
+- **pg-boss can fire one extra cron job** about 30 seconds after the first, in the first minute after `schedule()`. It happened in 2 of 2 runs on both poolers and settled to once a minute. Keep handlers idempotent.
+- **A library that owns its schema sits outside `prisma/schema.prisma`.** The schema-freeze and sidecar rules in `AGENTS.md` section 2.3 apply: adopting one needs an owner decision first.
+
 ---
 
 **Need Help?** Check the browser console for detailed error messages, or contact support with the specific error code and message you're seeing.

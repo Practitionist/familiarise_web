@@ -648,6 +648,8 @@ Stripe → /api/webhooks/stripe → verify signature → respond 200 immediately
 
 **Pricing**: $1 per 100,000 messages. At 10K users with ~1,000 webhooks/month = effectively free.
 
+> **Evidence (2026-10-31).** Inngest and Trigger.dev were tested after this section was written. Neither shortens the database path: Inngest calls a route that still runs on the same host, and Trigger.dev runs code in a region 125 ms or more from the database. See [Background-job runtime options](../maintenance/14-background-job-runtime-options.md). The decided queue is in the [ticker ADR](../decisions/2026-10-31-ticker-scale-path-and-queue.md).
+
 **Alternatives considered**:
 
 | Service         | Cost                | Effort    | Best For                              |
