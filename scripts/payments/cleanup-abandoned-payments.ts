@@ -42,7 +42,7 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import prisma, { type Db, type Tx } from "@/lib/prisma";
+import prisma, { type Tx, type PrismaLike } from "@/lib/prisma";
 import { transitionParticipant } from "@/lib/booking/participants";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
@@ -1522,15 +1522,18 @@ export async function runAllCleanupTasks(): Promise<{
  * due reminders) has a candidate row. Reminder candidates already reminded still count.
  */
 export async function hasAbandonedPaymentWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const appointment = await db.appointment.findFirst({
     where: abandonedAppointmentWhere(lapsedPendingPaymentWhere(now)),
     select: { id: true },
   });
   if (appointment) return true;
   const reminderWindow = reminderPaymentWindowWhere(now);
+  if (outOfTime()) return true;
   const consultation = await db.consultation.findFirst({
     where: {
       OR: [
@@ -1541,6 +1544,7 @@ export async function hasAbandonedPaymentWork(
     select: { id: true },
   });
   if (consultation) return true;
+  if (outOfTime()) return true;
   const subscription = await db.subscription.findFirst({
     where: {
       OR: [

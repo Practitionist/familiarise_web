@@ -13,7 +13,7 @@
  * (ADR 27), as for FailedEmail and OutboundWebhookDelivery.
  */
 
-import prisma, { type Db } from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
@@ -64,9 +64,11 @@ function outboxDueWhere(now: Date): Prisma.NotificationOutboxWhereInput {
 
 /** Ticker idle probe; a skipped tick leaves the outbox gauges at their last value. */
 export async function hasNotificationOutboxWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.notificationOutbox.findFirst({
     where: outboxDueWhere(now),
     select: { id: true },

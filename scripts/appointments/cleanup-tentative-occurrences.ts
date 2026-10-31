@@ -18,7 +18,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import type { Db } from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 import {
   PaymentStatus,
   OccurrenceCompletionStatus,
@@ -88,9 +88,11 @@ const tentativeExpiration = (nowMs: number) =>
   new Date(nowMs - TENTATIVE_EXPIRATION_HOURS * 60 * 60 * 1000);
 
 export async function hasTentativeOccurrenceWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.appointmentOccurrence.findFirst({
     where: staleTentativeWhere(tentativeExpiration(now.getTime())),
     select: { id: true },

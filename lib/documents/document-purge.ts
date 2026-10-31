@@ -6,7 +6,7 @@
  */
 import type { DocumentRemovalReason, Prisma } from "@prisma/client";
 
-import prisma, { type Db } from "@/lib/prisma";
+import prisma, { type Db, type PrismaLike } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 // The marker-free leaf module, so this job can run from a bare Node process.
 import { deleteAppointmentDocument } from "@/lib/supabase-storage-core";
@@ -277,14 +277,17 @@ function graceExpiredWhere(now: Date): Prisma.AppointmentDocumentWhereInput {
 
 /** Ticker idle probe: a retention candidate booking or a purgeable tombstone past grace. */
 export async function hasDocumentPurgeWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const booking = await db.appointment.findFirst({
     where: retentionCandidateWhere(retentionCutoff(now)),
     select: { id: true },
   });
   if (booking) return true;
+  if (outOfTime()) return true;
   const doc = await db.appointmentDocument.findFirst({
     where: purgeableWhere(graceExpiredWhere(now)),
     select: { id: true },

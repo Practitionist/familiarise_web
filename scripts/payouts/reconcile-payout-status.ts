@@ -14,7 +14,7 @@
  * `lastReconciledAt` (see reconcile-cursor.ts).
  */
 
-import prisma, { type Db } from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import { PayoutStatus, PaymentGateway, type Prisma } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import {
@@ -102,11 +102,13 @@ function recentCompletedOrgPayoutWhere(
 
 /** True when the stale pass or either reversal pass has a payout to poll. */
 export async function hasPayoutStatusReconcileWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
   const t = now.getTime();
   const reversalCutoff = new Date(t - COMPLETED_REVERSAL_WINDOW_MS);
+  if (outOfTime()) return true;
   const consultant = await db.consultantPayout.findFirst({
     where: {
       OR: [
@@ -120,6 +122,7 @@ export async function hasPayoutStatusReconcileWork(
     select: { id: true },
   });
   if (consultant) return true;
+  if (outOfTime()) return true;
   const org = await db.organizationPayout.findFirst({
     where: recentCompletedOrgPayoutWhere(reversalCutoff),
     select: { id: true },

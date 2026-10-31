@@ -1,6 +1,6 @@
 import type { AppointmentsType, Prisma } from "@prisma/client";
 
-import prisma, { type Db, type Tx } from "@/lib/prisma";
+import prisma, { type Tx, type PrismaLike } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { LONG_JOB_TTL_MS, withCronLock } from "@/lib/cron/with-cron-lock";
 import { goHref } from "@/lib/dashboard/go";
@@ -685,9 +685,11 @@ const QUALIFYING_REFERRAL_WHERE: Prisma.ReferralWhereInput = {
 
 /** Ticker idle probe: any QUALIFYING referral is examined by the sweep. */
 export async function hasVestReferralWork(
-  db: Db,
+  db: PrismaLike,
   _now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.referral.findFirst({
     where: QUALIFYING_REFERRAL_WHERE,
     select: { id: true },

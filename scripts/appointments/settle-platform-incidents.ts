@@ -11,7 +11,7 @@
 import type { IncidentRemedyKind, Prisma } from "@prisma/client";
 
 import prisma from "../../lib/prisma";
-import type { Db } from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import { withAppointmentLock } from "@/utils/appointmentlock";
@@ -108,14 +108,17 @@ function dueRemedyWhere(now: Date) {
 }
 
 export async function hasPlatformIncidentWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const incident = await db.platformIncident.findFirst({
     where: UNSETTLED_INCIDENT_WHERE,
     select: { id: true },
   });
   if (incident) return true;
+  if (outOfTime()) return true;
   const remedy = await db.incidentRemedy.findFirst({
     where: dueRemedyWhere(now),
     select: { id: true },

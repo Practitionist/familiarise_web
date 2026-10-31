@@ -25,7 +25,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import type { Db } from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 import {
   WebinarStatus,
   ClassStatus,
@@ -218,11 +218,16 @@ function undecidedSlotWhere(bufferTime: Date) {
 }
 
 /** Every pass and the needs-human alert; parents are probed as they stand, before any slot is decided. */
-export async function hasAutoCompleteWork(db: Db, now: Date): Promise<boolean> {
+export async function hasAutoCompleteWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
   const bufferTime = new Date(
     now.getTime() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
   const settled = endedAndSettled(bufferTime);
+  if (outOfTime()) return true;
   const slot = await db.appointmentOccurrence.findFirst({
     where: {
       OR: [undecidedSlotWhere(bufferTime), staleNeedsHumanWhere(now)],
@@ -230,28 +235,36 @@ export async function hasAutoCompleteWork(db: Db, now: Date): Promise<boolean> {
     select: { id: true },
   });
   if (slot) return true;
-  return (
-    (await db.webinar.findFirst({
-      where: completableWebinarWhere(settled),
-      select: { id: true },
-    })) !== null ||
-    (await db.class.findFirst({
-      where: completableClassWhere(settled),
-      select: { id: true },
-    })) !== null ||
-    (await db.consultation.findFirst({
-      where: completableConsultationWhere(bufferTime),
-      select: { id: true },
-    })) !== null ||
-    (await db.subscription.findFirst({
-      where: completableSubscriptionWhere(settled),
-      select: { id: true },
-    })) !== null ||
-    (await db.trial.findFirst({
-      where: completableTrialWhere(bufferTime),
-      select: { id: true },
-    })) !== null
-  );
+  if (outOfTime()) return true;
+  const webinar = await db.webinar.findFirst({
+    where: completableWebinarWhere(settled),
+    select: { id: true },
+  });
+  if (webinar) return true;
+  if (outOfTime()) return true;
+  const cohort = await db.class.findFirst({
+    where: completableClassWhere(settled),
+    select: { id: true },
+  });
+  if (cohort) return true;
+  if (outOfTime()) return true;
+  const consultation = await db.consultation.findFirst({
+    where: completableConsultationWhere(bufferTime),
+    select: { id: true },
+  });
+  if (consultation) return true;
+  if (outOfTime()) return true;
+  const subscription = await db.subscription.findFirst({
+    where: completableSubscriptionWhere(settled),
+    select: { id: true },
+  });
+  if (subscription) return true;
+  if (outOfTime()) return true;
+  const trial = await db.trial.findFirst({
+    where: completableTrialWhere(bufferTime),
+    select: { id: true },
+  });
+  return trial !== null;
 }
 
 /** One bite of a pass; `read` holds every id the bite's cohort read returned. */

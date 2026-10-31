@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import type { Prisma } from "@prisma/client";
-import type { Db, PrismaLike } from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 /**
  * Outbound webhook delivery worker.
  *
@@ -148,9 +148,11 @@ function dueDeliveryWhere(
 
 /** Ticker idle probe; the backlog alert counts a subset of these rows. */
 export async function hasOutboundWebhookWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.outboundWebhookDelivery.findFirst({
     where: dueDeliveryWhere(now, new Date(now.getTime() - IN_FLIGHT_STALE_MS)),
     select: { id: true },

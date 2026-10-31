@@ -33,7 +33,7 @@
 import { createHash } from "node:crypto";
 import { PaymentStatus, RefundStatus, type Prisma } from "@prisma/client";
 
-import prisma, { type Db } from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { parkedReceiptPaise } from "@/lib/payments/ledger/unapplied-receipts";
@@ -154,9 +154,11 @@ function agedRefundOwedWhere(now: Date): Prisma.PaymentWhereInput {
 
 /** True when any arm (auto-refund retry, owed drive, aged-marker report) has a row. */
 export async function hasAutoRefundRetryWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.payment.findFirst({
     where: {
       OR: [

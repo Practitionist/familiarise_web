@@ -4,7 +4,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import type { Db } from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 import { reportStandingFinding } from "../../lib/observability/standing-finding";
 import {
   getCallPresenceEvidence,
@@ -156,9 +156,11 @@ const noShowGraceCutoff = (nowMs: number) =>
   new Date(nowMs - NO_SHOW_GRACE_MINUTES * 60 * 1000);
 
 export async function hasConsultantNoShowWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.consultation.findFirst({
     where: noShowCandidateWhere(noShowGraceCutoff(now.getTime())),
     select: { id: true },

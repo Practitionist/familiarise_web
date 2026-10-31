@@ -28,7 +28,7 @@
  * Sentry report, and an honest success flag.
  */
 
-import prisma, { type Db } from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import { PaymentStatus, RefundStatus, type Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
@@ -64,9 +64,11 @@ function orphanedPaymentAlertWhere(since: Date): Prisma.PaymentWhereInput {
 
 /** True when the alert's query would return a candidate (a superset of the filtered cohort). */
 export async function hasOrphanedPaymentAlertWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.payment.findFirst({
     where: orphanedPaymentAlertWhere(
       new Date(now.getTime() - ALERT_WINDOW_DAYS * 24 * 60 * 60 * 1000),

@@ -21,7 +21,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import prisma, { type Db, type Tx } from "../../lib/prisma";
+import prisma, { type Tx, type PrismaLike } from "../../lib/prisma";
 import {
   RESCHEDULE_OPEN_STATUSES,
   transitionRescheduleRequest,
@@ -115,9 +115,11 @@ function lapsedProposalWhere(now: Date) {
 }
 
 export async function hasRescheduleProposalWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.rescheduleRequest.findFirst({
     where: lapsedProposalWhere(now),
     select: { id: true },

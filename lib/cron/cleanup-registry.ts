@@ -14,7 +14,7 @@ import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
 import type { JobCategory } from "@/lib/cron/job-categories";
 import { reportSentryError } from "@/lib/observability/report";
 import type { FrozenWallet } from "@/lib/payments/wallet-freeze";
-import type { Db } from "@/lib/prisma";
+import type { Tx } from "@/lib/prisma";
 import type {
   Finding,
   ReconcileReport,
@@ -31,10 +31,18 @@ export interface CleanupJobMeta {
 
 /**
  * The ticker's idle probe: `hasWork` reuses the job's own claim predicate, and
- * a false answer skips the due tick. `alwaysRun` says why the job has no probe.
+ * a false answer skips the due tick. It answers true without querying once
+ * `outOfTime()`, checked before every statement. `alwaysRun` says why the job has no probe.
  */
 export type IdleProbe =
-  { hasWork: (db: Db, now: Date) => Promise<boolean> } | { alwaysRun: string };
+  | {
+      hasWork: (
+        db: Tx,
+        now: Date,
+        outOfTime: () => boolean,
+      ) => Promise<boolean>;
+    }
+  | { alwaysRun: string };
 
 export interface CleanupJobEntry {
   meta: CleanupJobMeta;
@@ -133,10 +141,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasDataBreachDeadlineWork } =
           await import("@/lib/compliance/databreach-deadline-alerts");
-        return hasDataBreachDeadlineWork(db, now);
+        return hasDataBreachDeadlineWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -192,10 +200,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasAbandonedOrgTopUpWork } =
           await import("@/scripts/cleanup/cleanup-abandoned-org-top-ups");
-        return hasAbandonedOrgTopUpWork(db, now);
+        return hasAbandonedOrgTopUpWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -234,10 +242,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasAbandonedPaymentWork } =
           await import("@/scripts/payments/cleanup-abandoned-payments");
-        return hasAbandonedPaymentWork(db, now);
+        return hasAbandonedPaymentWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -334,10 +342,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasOrphanedPaymentAlertWork } =
           await import("@/scripts/alerts/alert-orphaned-payments");
-        return hasOrphanedPaymentAlertWork(db, now);
+        return hasOrphanedPaymentAlertWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -370,10 +378,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasAdvanceProgramCyclesWork } =
           await import("@/jobs/billing/advance-program-cycles");
-        return hasAdvanceProgramCyclesWork(db, now);
+        return hasAdvanceProgramCyclesWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -401,10 +409,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasAppointmentReminderWork } =
           await import("@/scripts/appointments/send-appointment-reminders");
-        return hasAppointmentReminderWork(db, now);
+        return hasAppointmentReminderWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -504,10 +512,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasAutoRenewContractsWork } =
           await import("@/jobs/contracts/auto-renew-contracts");
-        return hasAutoRenewContractsWork(db, now);
+        return hasAutoRenewContractsWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -535,10 +543,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasAutoCompleteWork } =
           await import("@/scripts/appointments/auto-complete-appointments");
-        return hasAutoCompleteWork(db, now);
+        return hasAutoCompleteWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -623,10 +631,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasConsultantNoShowWork } =
           await import("@/scripts/appointments/detect-consultant-no-shows");
-        return hasConsultantNoShowWork(db, now);
+        return hasConsultantNoShowWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -662,10 +670,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasOutboundWebhookWork } =
           await import("@/scripts/cleanup/dispatch-outbound-webhooks");
-        return hasOutboundWebhookWork(db, now);
+        return hasOutboundWebhookWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -696,10 +704,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasNotificationOutboxWork } =
           await import("@/jobs/notifications/drain-notification-outbox");
-        return hasNotificationOutboxWork(db, now);
+        return hasNotificationOutboxWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -760,10 +768,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasExpireContractsWork } =
           await import("@/jobs/contracts/expire-contracts");
-        return hasExpireContractsWork(db, now);
+        return hasExpireContractsWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -901,10 +909,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasStaleRequestWork } =
           await import("@/scripts/appointments/expire-stale-requests");
-        return hasStaleRequestWork(db, now);
+        return hasStaleRequestWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -951,10 +959,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasUnpaidTrialWork } =
           await import("@/scripts/trials/expire-unpaid-trials");
-        return hasUnpaidTrialWork(db, now);
+        return hasUnpaidTrialWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1075,10 +1083,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasStuckPayoutWork } =
           await import("@/scripts/payouts/handle-stuck-payouts");
-        return hasStuckPayoutWork(db, now);
+        return hasStuckPayoutWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1193,10 +1201,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasDataExportWork } =
           await import("@/scripts/cleanup/process-data-exports");
-        return hasDataExportWork(db, now);
+        return hasDataExportWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1365,10 +1373,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasDisputeReconcileWork } =
           await import("@/scripts/disputes/reconcile-disputes");
-        return hasDisputeReconcileWork(db, now);
+        return hasDisputeReconcileWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1407,10 +1415,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasDocumentPurgeWork } =
           await import("@/lib/documents/document-purge");
-        return hasDocumentPurgeWork(db, now);
+        return hasDocumentPurgeWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1638,10 +1646,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasOrphanedConfirmationWork } =
           await import("@/scripts/payments/reconcile-orphaned-confirmations");
-        return hasOrphanedConfirmationWork(db, now);
+        return hasOrphanedConfirmationWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1679,10 +1687,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasOrphanedPaymentWork } =
           await import("@/scripts/payments/reconcile-orphaned-confirmations");
-        return hasOrphanedPaymentWork(db, now);
+        return hasOrphanedPaymentWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1773,10 +1781,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasPaymentStatusReconcileWork } =
           await import("@/scripts/payments/reconcile-payment-status");
-        return hasPaymentStatusReconcileWork(db, now);
+        return hasPaymentStatusReconcileWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1812,10 +1820,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasPayoutStatusReconcileWork } =
           await import("@/scripts/payouts/reconcile-payout-status");
-        return hasPayoutStatusReconcileWork(db, now);
+        return hasPayoutStatusReconcileWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1850,10 +1858,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasPendingRefundWork } =
           await import("@/scripts/refunds/reconcile-pending-refunds");
-        return hasPendingRefundWork(db, now);
+        return hasPendingRefundWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1888,10 +1896,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasOrphanedSessionWork } =
           await import("@/lib/meetings/reconcile-orphaned-sessions");
-        return hasOrphanedSessionWork(db, now);
+        return hasOrphanedSessionWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1917,10 +1925,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasReleasableEarningsWork } =
           await import("@/scripts/earnings/release-earnings");
-        return hasReleasableEarningsWork(db, now);
+        return hasReleasableEarningsWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1953,10 +1961,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasRescheduleProposalWork } =
           await import("@/scripts/appointments/expire-reschedule-proposals");
-        return hasRescheduleProposalWork(db, now);
+        return hasRescheduleProposalWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -1989,10 +1997,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasAutoRefundRetryWork } =
           await import("@/scripts/payments/retry-auto-refunds");
-        return hasAutoRefundRetryWork(db, now);
+        return hasAutoRefundRetryWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2030,10 +2038,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasEmailRetryWork } =
           await import("@/jobs/email/retry-failed-emails");
-        return hasEmailRetryWork(db, now);
+        return hasEmailRetryWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2070,10 +2078,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasModerationRetryWork } =
           await import("@/scripts/cleanup/retry-moderation-enforcement");
-        return hasModerationRetryWork(db, now);
+        return hasModerationRetryWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2197,10 +2205,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasSettleCancelledSessionsWork } =
           await import("@/scripts/appointments/settle-cancelled-sessions");
-        return hasSettleCancelledSessionsWork(db, now);
+        return hasSettleCancelledSessionsWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2235,10 +2243,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasMaintenanceRemediationWork } =
           await import("@/lib/maintenance-remediation");
-        return hasMaintenanceRemediationWork(db, now);
+        return hasMaintenanceRemediationWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2264,10 +2272,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasPlatformIncidentWork } =
           await import("@/scripts/appointments/settle-platform-incidents");
-        return hasPlatformIncidentWork(db, now);
+        return hasPlatformIncidentWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2401,10 +2409,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasSupportSlaSweepWork } =
           await import("@/lib/support/sla-sweep");
-        return hasSupportSlaSweepWork(db, now);
+        return hasSupportSlaSweepWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2449,10 +2457,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasAbandonedOverageWork } =
           await import("@/scripts/cleanup/sweep-abandoned-overage-charges");
-        return hasAbandonedOverageWork(db, now);
+        return hasAbandonedOverageWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2478,10 +2486,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasOrphanedTopupCaptureWork } =
           await import("@/scripts/cleanup/sweep-orphaned-topup-captures");
-        return hasOrphanedTopupCaptureWork(db, now);
+        return hasOrphanedTopupCaptureWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2512,10 +2520,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasStuckWebhookEventWork } =
           await import("@/scripts/cleanup/sweep-stuck-webhook-events");
-        return hasStuckWebhookEventWork(db, now);
+        return hasStuckWebhookEventWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2579,10 +2587,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasPaymentEarningsSyncWork } =
           await import("@/scripts/earnings/sync-payment-earnings");
-        return hasPaymentEarningsSyncWork(db, now);
+        return hasPaymentEarningsSyncWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2673,10 +2681,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasTentativeOccurrenceWork } =
           await import("@/scripts/appointments/cleanup-tentative-occurrences");
-        return hasTentativeOccurrenceWork(db, now);
+        return hasTentativeOccurrenceWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2707,10 +2715,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasRecordingTransferWork } =
           await import("@/lib/stream/recording-transfer-service");
-        return hasRecordingTransferWork(db, now);
+        return hasRecordingTransferWork(db, now, outOfTime);
       },
     },
     build: () =>
@@ -2736,9 +2744,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
+      hasWork: async (db, now, outOfTime) => {
         const { hasVestReferralWork } = await import("@/lib/referrals/vesting");
-        return hasVestReferralWork(db, now);
+        return hasVestReferralWork(db, now, outOfTime);
       },
     },
     build: () =>

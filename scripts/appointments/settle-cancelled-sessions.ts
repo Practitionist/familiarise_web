@@ -33,7 +33,7 @@ import {
 
 import { z } from "zod";
 
-import prisma, { type Db, type Tx } from "../../lib/prisma";
+import prisma, { type Tx, type PrismaLike } from "../../lib/prisma";
 import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -798,14 +798,17 @@ function derivedEndPlanWhere(now: Date) {
 }
 
 export async function hasSettleCancelledSessionsWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const session = await db.appointmentOccurrence.findFirst({
     where: { OR: [dueWhere(now), voidOfRefundedPlanWhere()] },
     select: { id: true },
   });
   if (session) return true;
+  if (outOfTime()) return true;
   const plan = await db.subscription.findFirst({
     where: {
       OR: [

@@ -14,7 +14,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import type { Db } from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import redis from "../../lib/redis";
 import {
@@ -788,8 +788,9 @@ export async function sendAppointmentReminders(opts?: {
 
 /** One indexed read: is any live session inside either reminder window? */
 export async function hasAppointmentReminderWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
   const at = now.getTime();
   const offsetWindowWhere = (window: { minMs: number; maxMs: number }) =>
@@ -797,6 +798,7 @@ export async function hasAppointmentReminderWork(
       new Date(at + window.minMs),
       new Date(at + window.maxMs),
     );
+  if (outOfTime()) return true;
   const found = await db.appointmentOccurrence.findFirst({
     where: {
       OR: [offsetWindowWhere(REMINDER_24H), offsetWindowWhere(REMINDER_1H)],
@@ -812,7 +814,7 @@ async function sendAppointmentRemindersUnlocked(
   console.log("🔔 Starting appointment reminders scan...");
   console.log(`   Per-window cap: ${maxPerWindow} slot(s)`);
 
-  if (!(await hasAppointmentReminderWork(prisma, new Date()))) {
+  if (!(await hasAppointmentReminderWork(prisma, new Date(), () => false))) {
     return {
       success: true,
       reminders24h: 0,

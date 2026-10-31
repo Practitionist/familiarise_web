@@ -16,7 +16,7 @@ import {
   compareLeastRecentlyReconciled,
   LEAST_RECENTLY_RECONCILED,
 } from "@/lib/payments/payouts/reconcile-cursor";
-import prisma, { type Db } from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import { failRefund } from "@/lib/payments/operations/refund-owed";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
@@ -111,10 +111,12 @@ function realIdPendingRefundWhere(
 
 /** True when any pass of the run (pending, stranded cascade, failure notice) has a row. */
 export async function hasPendingRefundWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
   const thresholdDate = new Date(now.getTime() - RECONCILIATION_THRESHOLD_MS);
+  if (outOfTime()) return true;
   const refund = await db.refund.findFirst({
     where: {
       OR: [
@@ -126,6 +128,7 @@ export async function hasPendingRefundWork(
     select: { id: true },
   });
   if (refund) return true;
+  if (outOfTime()) return true;
   const stranded = await db.$queryRaw<{ id: string }[]>`
     SELECT id FROM "Refund"
     WHERE ${strandedRefundSqlWhere(new Date(now.getTime() - STRANDED_AFTER_MS))}

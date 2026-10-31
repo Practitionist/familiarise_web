@@ -36,7 +36,7 @@ import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { stageTrialRefundedBell } from "@/lib/trials/refund-bell";
 import prisma from "../../lib/prisma";
-import type { Db } from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 
 // Per-trial failures collapse to one event per op when the run ends.
 const runFailures = createRunFailureReporter("trials");
@@ -328,7 +328,12 @@ const unansweredRetrySince = (now: Date) =>
   new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
 /** Probes every arm; the history arm is a superset of the refund retry. */
-export async function hasUnpaidTrialWork(db: Db, now: Date): Promise<boolean> {
+export async function hasUnpaidTrialWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
   const trial = await db.trial.findFirst({
     where: {
       OR: [
@@ -340,6 +345,7 @@ export async function hasUnpaidTrialWork(db: Db, now: Date): Promise<boolean> {
     select: { id: true },
   });
   if (trial) return true;
+  if (outOfTime()) return true;
   const cancel = await db.bookingStatusHistory.findFirst({
     where: unansweredCancelHistoryWhere(unansweredRetrySince(now)),
     select: { id: true },

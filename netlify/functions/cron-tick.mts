@@ -593,7 +593,7 @@ export function tickIdForSlot(slot: Date): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-/** Covers a cold start plus the app's 2.5 s idle-probe budget. */
+/** Covers a cold start plus the app's idle probes (2.75 s worst case), its commit and the claim insert. */
 const TICK_CLAIM_TIMEOUT_MS = 5_000;
 const tickClaimReply = z.object({
   claimed: z.boolean(),

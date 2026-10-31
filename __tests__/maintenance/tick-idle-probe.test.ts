@@ -5,6 +5,8 @@ const create = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $transaction: (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ $queryRaw: async () => [] }),
     systemJobExecution: { create: (...a: unknown[]) => create(...a) },
   },
 }));

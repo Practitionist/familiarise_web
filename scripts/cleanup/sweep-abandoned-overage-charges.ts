@@ -10,7 +10,7 @@
  * member can still retry later (FAILED→PENDING via the resume-checkout order route).
  */
 import prisma from "@/lib/prisma";
-import type { Db } from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
@@ -50,10 +50,12 @@ function abandonedOverageWhere(cutoff: Date): Prisma.OverageEventWhereInput {
 
 /** Ticker idle probe at the ticker's default grace window. */
 export async function hasAbandonedOverageWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
   const cutoff = new Date(now.getTime() - DEFAULT_AGE_DAYS * 86_400_000);
+  if (outOfTime()) return true;
   const row = await db.overageEvent.findFirst({
     where: abandonedOverageWhere(cutoff),
     select: { id: true },

@@ -10,7 +10,7 @@ import type { Prisma } from "@prisma/client";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
-  type Db,
+  type PrismaLike,
 } from "@/lib/prisma";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import {
@@ -92,7 +92,10 @@ const REVIEW_NOTICE_WHERE: Prisma.SupportCaseChatAccessWhereInput = {
 };
 
 /** The chat arm of the SLA sweep's idle probe: one statement over every step's selector. */
-export async function hasChatAccessWork(db: Db, now: Date): Promise<boolean> {
+export async function hasChatAccessWork(
+  db: PrismaLike,
+  now: Date,
+): Promise<boolean> {
   const row = await db.supportCaseChatAccess.findFirst({
     where: {
       OR: [

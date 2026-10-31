@@ -12,7 +12,7 @@
 
 import { AppointmentsType, BackupInterestStatus, Prisma } from "@prisma/client";
 
-import prisma, { type Db, type Tx } from "@/lib/prisma";
+import prisma, { type Tx, type PrismaLike } from "@/lib/prisma";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -264,7 +264,7 @@ function lapsedBackupInterestWhere(now: Date) {
 }
 
 export async function hasLapsedBackupInterest(
-  db: Db,
+  db: PrismaLike,
   now: Date,
 ): Promise<boolean> {
   const row = await db.windowBackupInterest.findFirst({

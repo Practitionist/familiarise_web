@@ -4,7 +4,7 @@
  */
 
 import prisma from "../../lib/prisma";
-import type { Db } from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { recordSystemError } from "../../lib/enterprise/system-events";
 import { checkConsentBatch } from "../../lib/compliance/dpdp";
@@ -252,12 +252,18 @@ function expiredArtifactWhere(
 }
 
 /** Ticker idle probe: an expired artifact or a claimable export job. */
-export async function hasDataExportWork(db: Db, now: Date): Promise<boolean> {
+export async function hasDataExportWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
   const artifact = await db.orgDataExportArtifact.findFirst({
     where: expiredArtifactWhere(now),
     select: { exportJobId: true },
   });
   if (artifact) return true;
+  if (outOfTime()) return true;
   const job = await db.orgDataExportJob.findFirst({
     where: claimableExportWhere(new Date(now.getTime() - LONG_JOB_TTL_MS)),
     select: { id: true },

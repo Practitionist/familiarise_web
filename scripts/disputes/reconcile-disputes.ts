@@ -11,7 +11,7 @@
  * `/api/cleanup/reconcile-disputes` twin on the Netlify ticker.
  */
 
-import prisma, { type Db } from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import { DisputeStatus, PaymentGateway, Prisma } from "@prisma/client";
 import {
   getRazorpayDispute,
@@ -165,11 +165,13 @@ function staleDisputeWhere(
 
 /** True when the near-deadline or the stale cohort holds a dispute. */
 export async function hasDisputeReconcileWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
   const t = now.getTime();
   const approachingDeadline = new Date(t + APPROACHING_DEADLINE_MS);
+  if (outOfTime()) return true;
   const row = await db.dispute.findFirst({
     where: {
       OR: [

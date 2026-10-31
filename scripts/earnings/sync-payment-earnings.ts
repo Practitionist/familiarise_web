@@ -18,7 +18,7 @@
  * Schedule: Hourly
  */
 
-import prisma, { type Db } from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import { PaymentStatus, AppointmentsType, type Prisma } from "@prisma/client";
 import { AppointmentType } from "../../lib/payments/payouts/constants";
 import {
@@ -90,9 +90,11 @@ const REFUNDED_UNEARNED_PAYMENT_WHERE: Prisma.PaymentWhereInput = {
 
 /** True when the run would accrue a payment or report a refunded unearned one. */
 export async function hasPaymentEarningsSyncWork(
-  db: Db,
+  db: PrismaLike,
   _now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.payment.findFirst({
     where: { OR: [UNEARNED_PAYMENT_WHERE, REFUNDED_UNEARNED_PAYMENT_WHERE] },
     select: { id: true },

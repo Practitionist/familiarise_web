@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual, createHash } from "node:crypto";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import type { Db } from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { freezeAppointments } from "@/actions/maintenance/freeze-appointments";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { assertNotInMaintenance } from "@/lib/maintenance-cron";
@@ -170,9 +170,11 @@ export function confirmRemediation(
 const PENDING_REMEDIATION_ITEM_WHERE = { completedAt: null };
 
 export async function hasMaintenanceRemediationWork(
-  db: Db,
+  db: PrismaLike,
   _now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const item = await db.maintenanceRemediationItem.findFirst({
     where: PENDING_REMEDIATION_ITEM_WHERE,
     select: { id: true },

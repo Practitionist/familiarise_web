@@ -2,8 +2,8 @@ import type { Prisma } from "@prisma/client";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
-  type Db,
   type Tx,
+  type PrismaLike,
 } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -1026,9 +1026,11 @@ function noticeCutoffOf(now: Date): Date {
  * dropped; any live dispute counts, since enough of them make the evidence purge report.
  */
 export async function hasSupportSlaSweepWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const supportCase = await db.supportCase.findFirst({
     where: {
       OR: [
@@ -1041,17 +1043,21 @@ export async function hasSupportSlaSweepWork(
     select: { id: true },
   });
   if (supportCase) return true;
+  if (outOfTime()) return true;
   if (await hasChatAccessWork(db, now)) return true;
+  if (outOfTime()) return true;
   const dispute = await db.dispute.findFirst({
     where: { OR: [disputeDeadlineWhere(now), LIVE_DISPUTE_WHERE] },
     select: { id: true },
   });
   if (dispute) return true;
+  if (outOfTime()) return true;
   const report = await db.moderationReport.findFirst({
     where: moderationDeadlineWhere(now),
     select: { id: true },
   });
   if (report) return true;
+  if (outOfTime()) return true;
   const evidence = await db.supportCaseEvidenceRequest.findFirst({
     where: overdueEvidenceWhere(now),
     select: { id: true },

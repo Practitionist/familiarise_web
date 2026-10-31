@@ -25,7 +25,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import type { Db } from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -137,9 +137,11 @@ function renewalDueWhere(asOf: Date): Prisma.ContractWhereInput {
 
 /** Ticker idle probe: the cohort at `now` covers any window start at or before it. */
 export async function hasAutoRenewContractsWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.contract.findFirst({
     where: renewalDueWhere(now),
     select: { id: true },

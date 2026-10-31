@@ -16,7 +16,7 @@
 import { startDeadline } from "@/lib/cron/run-deadline";
 import { LEAST_RECENTLY_RECONCILED } from "@/lib/payments/payouts/reconcile-cursor";
 import prisma from "../../lib/prisma";
-import type { Db } from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
@@ -42,10 +42,12 @@ function abandonedTopUpWhere(cutoff: Date): Prisma.WalletTopUpWhereInput {
 
 /** Ticker idle probe at the ticker's default grace window. */
 export async function hasAbandonedOrgTopUpWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
   const cutoff = new Date(now.getTime() - DEFAULT_GRACE_HOURS * 60 * 60 * 1000);
+  if (outOfTime()) return true;
   const row = await db.walletTopUp.findFirst({
     where: abandonedTopUpWhere(cutoff),
     select: { id: true },

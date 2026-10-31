@@ -26,7 +26,7 @@ import {
   compareLeastRecentlyReconciled,
   LEAST_RECENTLY_RECONCILED,
 } from "@/lib/payments/payouts/reconcile-cursor";
-import prisma, { type Db } from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import { PaymentStatus, PaymentGateway, Prisma } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
@@ -102,10 +102,12 @@ function orphanPendingCandidateWhere(
 
 /** True when either cohort the run reads holds a payment. */
 export async function hasPaymentStatusReconcileWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
   const t = now.getTime();
+  if (outOfTime()) return true;
   const row = await db.payment.findFirst({
     where: {
       OR: [

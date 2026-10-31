@@ -41,7 +41,7 @@
  * never throws into the cron wrapper.
  */
 
-import prisma, { type Db } from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import type {
   EmailSuppression,
   FailedEmail,
@@ -102,12 +102,18 @@ function retryDueWhere(
 }
 
 /** Ticker idle probe: a due email row or a due batch. */
-export async function hasEmailRetryWork(db: Db, now: Date): Promise<boolean> {
+export async function hasEmailRetryWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.failedEmail.findFirst({
     where: retryDueWhere(now),
     select: { id: true },
   });
   if (row) return true;
+  if (outOfTime()) return true;
   const batch = await db.failedEmailBatch.findFirst({
     where: retryDueWhere(now),
     select: { id: true },

@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import type { Db } from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import {
   getStreamVideoClient,
   isStreamConfigured,
@@ -178,9 +178,11 @@ function overdueOpenMeetingWhere(oneHourAgo: Date) {
 }
 
 export async function hasOrphanedSessionWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.meeting.findFirst({
     where: overdueOpenMeetingWhere(new Date(now.getTime() - 60 * 60 * 1000)),
     select: { id: true },

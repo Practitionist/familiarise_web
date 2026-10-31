@@ -11,7 +11,7 @@
  * those rows and re-runs the (idempotent) confirm to land the credit.
  */
 import type { Prisma } from "@prisma/client";
-import prisma, { type Db } from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { confirmTopUp } from "@/lib/api/organizations/wallet";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -48,9 +48,11 @@ function orphanedTopupCaptureWhere(
 
 /** True when the sweep's default-window query would find at least one top-up. */
 export async function hasOrphanedTopupCaptureWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.walletTopUp.findFirst({
     where: orphanedTopupCaptureWhere(
       new Date(now.getTime() - DEFAULT_GRACE_MINUTES * 60_000),

@@ -26,7 +26,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import type { Db } from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import {
@@ -211,9 +211,11 @@ function dueAssignmentWhere(asOf: Date): Prisma.ProgramAssignmentWhereInput {
 
 /** Ticker idle probe: the cohort at `now` covers any window start at or before it. */
 export async function hasAdvanceProgramCyclesWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.programAssignment.findFirst({
     where: dueAssignmentWhere(now),
     select: { id: true },

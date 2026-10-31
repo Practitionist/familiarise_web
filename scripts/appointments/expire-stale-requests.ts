@@ -1,7 +1,7 @@
 /** Stale-request expiry core, shared by the cleanup registry and admin recovery door. */
 
 import prisma from "../../lib/prisma";
-import type { Db } from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 import {
   AppointmentStatus,
   PaymentStatus,
@@ -317,8 +317,13 @@ function unpaidLapsedSubscriptionWhere(expirationDate: Date) {
 }
 
 /** Every arm, the partial-marker holds and the retained-obligation report included. */
-export async function hasStaleRequestWork(db: Db, now: Date): Promise<boolean> {
+export async function hasStaleRequestWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
   const at = now.getTime();
+  if (outOfTime()) return true;
   const consultation = await db.consultation.findFirst({
     where: {
       OR: [
@@ -333,6 +338,7 @@ export async function hasStaleRequestWork(db: Db, now: Date): Promise<boolean> {
     select: { id: true },
   });
   if (consultation) return true;
+  if (outOfTime()) return true;
   const subscription = await db.subscription.findFirst({
     where: {
       OR: [
@@ -354,6 +360,7 @@ export async function hasStaleRequestWork(db: Db, now: Date): Promise<boolean> {
     select: { id: true },
   });
   if (subscription) return true;
+  if (outOfTime()) return true;
   const slot = await db.appointmentOccurrence.findFirst({
     where: staleRescheduledSlotWhere(
       new Date(at - STALE_RESCHEDULED_HOURS * HOUR_MS),
@@ -361,7 +368,9 @@ export async function hasStaleRequestWork(db: Db, now: Date): Promise<boolean> {
     select: { id: true },
   });
   if (slot) return true;
+  if (outOfTime()) return true;
   if (await hasLapsedBackupInterest(db, now)) return true;
+  if (outOfTime()) return true;
   return unallocatedObligationsRemain(undefined, db);
 }
 
@@ -1351,7 +1360,7 @@ async function stageUnallocatedRefunds(
 /** Retained obligations remain visible even when retired or owned by another refund door. */
 async function unallocatedObligationsRemain(
   subscriptionId?: string,
-  db: Db = prisma,
+  db: PrismaLike = prisma,
 ): Promise<boolean> {
   const rows = await db.$queryRaw<{ id: string }[]>(Prisma.sql`
     SELECT p.id FROM "Payment" p

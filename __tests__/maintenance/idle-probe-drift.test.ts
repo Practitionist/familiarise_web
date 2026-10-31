@@ -255,6 +255,18 @@ describe("ticker idle probes", () => {
         }
       });
       expect(inlineWheres).toEqual([]);
+      // Each statement is admitted by the deadline, so an unfinished probe answers "has work".
+      let awaits = 0;
+      let checks = 0;
+      walk(probe.node, (node) => {
+        if (ts.isAwaitExpression(node)) awaits += 1;
+        if (
+          ts.isCallExpression(node) &&
+          nameOf(node.expression) === "outOfTime"
+        )
+          checks += 1;
+      });
+      expect(checks).toBeGreaterThanOrEqual(Math.max(awaits, 1));
       expect(builders.size).toBeGreaterThan(0);
       for (const builder of [...builders].filter((b) => !locals.has(b))) {
         const definedIn = importedFrom(probe.file, builder);

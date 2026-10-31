@@ -29,7 +29,7 @@ import type {
   ModerationReportType,
   Prisma,
 } from "@prisma/client";
-import prisma, { type Db } from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -117,19 +117,23 @@ function vendorErasureDueWhere(now: Date): Prisma.VendorErasureRetryWhereInput {
 
 /** Ticker idle probe: a failed enforcement, an owed revocation or a vendor erasure due now. */
 export async function hasModerationRetryWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const action = await db.moderationAction.findFirst({
     where: FAILED_ENFORCEMENT_WHERE,
     select: { id: true },
   });
   if (action) return true;
+  if (outOfTime()) return true;
   const revocation = await db.streamRevocationRetry.findFirst({
     where: streamRevocationDueWhere(now),
     select: { id: true },
   });
   if (revocation) return true;
+  if (outOfTime()) return true;
   const erasure = await db.vendorErasureRetry.findFirst({
     where: vendorErasureDueWhere(now),
     select: { id: true },

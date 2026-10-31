@@ -23,7 +23,7 @@
  * paid, still NULL" into an exact work queue — state-as-outbox, no queue table.
  * See ADR 27.
  */
-import prisma, { type Db } from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { PaymentStatus, Prisma, RefundStatus } from "@prisma/client";
 import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
@@ -186,10 +186,12 @@ function unchanneledAppointmentWhere(
 
 /** True when the confirmation pass or the chat-channel pass has a row. */
 export async function hasOrphanedConfirmationWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
   const t = now.getTime();
+  if (outOfTime()) return true;
   const payment = await db.payment.findFirst({
     where: orphanedConfirmationWhere(
       new Date(t - DEFAULT_CONFIRMATION_GRACE_MINUTES * 60_000),
@@ -197,6 +199,7 @@ export async function hasOrphanedConfirmationWork(
     select: { id: true },
   });
   if (payment) return true;
+  if (outOfTime()) return true;
   const appointment = await db.appointment.findFirst({
     where: unchanneledAppointmentWhere(new Date(t - CHANNEL_PASS_WINDOW_MS)),
     select: { id: true },
@@ -493,13 +496,15 @@ function staleOrphanPaymentWhere(windowCutoff: Date) {
  * row stays in the escrow arm, so this is a superset of the run's writes.
  */
 export async function hasOrphanedPaymentWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
   const t = now.getTime();
   const windowCutoff = new Date(
     t - ORPHAN_PAYMENT_WINDOW_DAYS * 24 * 3_600_000,
   );
+  if (outOfTime()) return true;
   const row = await db.payment.findFirst({
     where: {
       OR: [

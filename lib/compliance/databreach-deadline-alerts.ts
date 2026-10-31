@@ -1,6 +1,6 @@
 import { Prisma, UserRole } from "@prisma/client";
 import { z } from "zod";
-import prisma, { type Db, type Tx } from "@/lib/prisma";
+import prisma, { type Tx, type PrismaLike } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { BREACH_REPORTING_DEADLINE_HOURS } from "@/lib/backoffice/queue-predicates";
 import { stage } from "@/lib/email/deliver";
@@ -48,14 +48,17 @@ function deadlineCandidateWhere(now: Date): Prisma.DataBreachWhereInput {
 
 /** Ticker idle probe: a run acts only on an active digest marker or an at-risk breach. */
 export async function hasDataBreachDeadlineWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const breach = await db.dataBreach.findFirst({
     where: deadlineCandidateWhere(now),
     select: { id: true },
   });
   if (breach) return true;
+  if (outOfTime()) return true;
   const marker = await db.failedEmail.findFirst({
     where: ACTIVE_DIGEST_WHERE,
     select: { id: true },

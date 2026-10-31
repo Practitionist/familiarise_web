@@ -15,7 +15,7 @@
  * `lastReconciledAt` (see reconcile-cursor.ts).
  */
 
-import prisma, { type Db } from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import {
   PayoutStatus,
   PaymentGateway,
@@ -83,15 +83,21 @@ function stuckPayoutWhere(stuckThreshold: Date) {
 }
 
 /** True when either payout table holds a stuck PROCESSING row. */
-export async function hasStuckPayoutWork(db: Db, now: Date): Promise<boolean> {
+export async function hasStuckPayoutWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
   const stuckThreshold = new Date(
     now.getTime() - STUCK_THRESHOLD_HOURS * 60 * 60 * 1000,
   );
+  if (outOfTime()) return true;
   const consultant = await db.consultantPayout.findFirst({
     where: stuckPayoutWhere(stuckThreshold),
     select: { id: true },
   });
   if (consultant) return true;
+  if (outOfTime()) return true;
   const org = await db.organizationPayout.findFirst({
     where: stuckPayoutWhere(stuckThreshold),
     select: { id: true },

@@ -28,7 +28,7 @@ import {
   Prisma,
   RefundStatus,
 } from "@prisma/client";
-import prisma, { type Db } from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -146,14 +146,17 @@ function releasableOrgEarningsWhere(
 
 /** True when either earnings table holds a row the run would release. */
 export async function hasReleasableEarningsWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const consultant = await db.consultantEarnings.findFirst({
     where: releasableEarningsWhere(now),
     select: { id: true },
   });
   if (consultant) return true;
+  if (outOfTime()) return true;
   const org = await db.organizationEarnings.findFirst({
     where: releasableOrgEarningsWhere(now),
     select: { id: true },

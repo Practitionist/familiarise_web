@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
-import prisma, { type Db } from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { processNovuWebhookPayload } from "@/lib/webhooks/novu-handler";
 import { processRazorpayWebhookEvent } from "@/app/api/webhooks/razorpay-dispatch";
 import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
@@ -429,9 +429,11 @@ const DEFAULT_GIVE_UP_AFTER_HOURS = 168;
 
 /** True when the sweep's default-window query would find at least one event. */
 export async function hasStuckWebhookEventWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.webhookEvent.findFirst({
     where: stuckWebhookEventWhere(
       new Date(now.getTime() - DEFAULT_STALE_MINUTES * 60_000),

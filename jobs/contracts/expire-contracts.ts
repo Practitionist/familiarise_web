@@ -23,7 +23,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import type { Db } from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -146,9 +146,11 @@ export function expiryCohortWhere(asOf: Date): Prisma.ContractWhereInput {
 
 /** Ticker idle probe: the cohort at `now` covers any window start at or before it. */
 export async function hasExpireContractsWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.contract.findFirst({
     where: expiryCohortWhere(now),
     select: { id: true },

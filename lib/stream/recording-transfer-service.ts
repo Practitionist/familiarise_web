@@ -3,7 +3,7 @@
  * leaves the row READY (still playable from Stream) until the attempt cap.
  */
 
-import prisma, { type Db } from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import {
   RecordingStatus,
   RecordingStorageType,
@@ -464,9 +464,11 @@ function copyCandidateWhere(now: Date): Prisma.RecordingWhereInput {
 
 /** Ticker idle probe: a stale claim, a copy candidate or a source due a risk alarm. */
 export async function hasRecordingTransferWork(
-  db: Db,
+  db: PrismaLike,
   now: Date,
+  outOfTime: () => boolean,
 ): Promise<boolean> {
+  if (outOfTime()) return true;
   const row = await db.recording.findFirst({
     where: {
       OR: [
