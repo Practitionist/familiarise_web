@@ -9,7 +9,7 @@ This report holds the last two experiments of the 2026-10-31 job-runtime series.
 
 ## Part A: lock-hold and interference
 
-Setup: schema `lab_lock` with `account(id int pk, balance bigint, version int)`, 4 rows, on the shared Supabase DB via the Mumbai transaction pooler (port 6543). Trigger.dev task `lock-probe` (Free plan, prod environment, deployed versions 20261031.2 and .3, `region: "eu-central-1"`), pg 8.23.1 over plain `pg.Client`. Laptop baseline is node 26.9.0. The scripts and raw JSON stayed in the scratch directory and are not kept in the repository.
+Setup: schema `lab_lock` with `account(id int pk, balance bigint, version int)`, 4 rows, on the shared Supabase DB via the Mumbai transaction pooler (port 6543). Trigger.dev task `lock-probe` (Free plan, prod environment, deployed versions 20261031.2 and .3, `region: "eu-central-1"`), pg 8.23.1 over plain `pg.Client`. Laptop baseline is node 26.9.0. The scripts are in [source-code.md](./source-code.md) under `lab-lock/`; the raw JSON stayed in the scratch directory.
 
 ### W1 (money-style, READ COMMITTED, FOR UPDATE)
 

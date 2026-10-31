@@ -70,7 +70,7 @@ Corrections: pg-boss and DBOS can be drained from short functions (pg-boss `fetc
 
 ## How to rerun a probe
 
-Scripts live outside the repo; the Inngest, pg-boss, DBOS, Supabase and Trigger.dev ones are stored as text in `docs/maintenance/experiments/2026-10-31-job-runtime/source-code.md`. The second Vercel round is in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-fluid-prisma-qstash-workflows.md` (code not kept). The Vercel probe is described in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-bom1-latency.md`. The lock-hold, Netlify and QStash scripts were not kept.
+Scripts live outside the repo; all of them (Inngest, pg-boss, DBOS, Supabase, Trigger.dev, lock-hold, Netlify, QStash, Vercel) are stored as redacted text in `docs/maintenance/experiments/2026-10-31-job-runtime/source-code.md`. The second Vercel round is in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-fluid-prisma-qstash-workflows.md` (code under `lab-vercel2/` in `source-code.md`). The first Vercel probe is described in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-bom1-latency.md`.
 
 1. Make a scratch directory outside the repo and copy the script out of the markdown.
 2. Pass the database address through an environment variable only. Use a throwaway `lab_` schema on the shared project.

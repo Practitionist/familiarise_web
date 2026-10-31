@@ -1,6 +1,6 @@
 # Experiment source code (2026-10-31)
 
-These are the throwaway scripts behind the three experiment reports in this folder. They are kept as text so that lint, typecheck and the build ignore them. They read credentials from environment variables only. The Trigger.dev probe connects with `ssl: { rejectUnauthorized: false }` because it ran once against a mock database; do not copy that setting, keep certificate verification on.
+These are the throwaway scripts behind the experiment reports in this folder. They are kept as text so that lint, typecheck and the build ignore them. They read credentials from environment variables only. The Trigger.dev probe connects with `ssl: { rejectUnauthorized: false }` because it ran once against a mock database; do not copy that setting, keep certificate verification on.
 
 ## `lab-inngest/app.mjs`
 
@@ -1093,4 +1093,2724 @@ export default defineConfig({
   retries: { enabled: false },
   build: { external: ["pg"] },
 });
+```
+
+The sections below were appended later and cover the lock-hold, Netlify, real-QStash and Vercel experiments. Credentials, the Trigger.dev project reference and local paths are replaced with `<...>` placeholders. Only source files are kept: no lockfiles, build output or environment files.
+
+## `lab-lock/`
+
+### `lab-lock/api.mjs`
+
+```js
+import fs from "fs";
+const cfg = JSON.parse(fs.readFileSync("<trigger-cli-config-path>", "utf8"));
+const prof = cfg.profiles[cfg.currentProfile || "default"];
+export const base = prof.apiUrl;
+export const PAT = prof.accessToken;
+export const REF = "<trigger-project-ref>";
+export async function api(method, path, body, token = PAT) {
+  const r = await fetch(base + path, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const t = await r.text();
+  let j;
+  try {
+    j = JSON.parse(t);
+  } catch {
+    j = t;
+  }
+  return { status: r.status, body: j };
+}
+```
+
+### `lab-lock/cleanup.mjs`
+
+```js
+import pg from "pg";
+import { direct } from "./setup.mjs";
+const c = new pg.Client({
+  connectionString: direct,
+  ssl: { rejectUnauthorized: false },
+});
+await c.connect();
+await c.query("DROP SCHEMA lab_lock CASCADE");
+const r = await c.query(
+  "select nspname from pg_namespace where nspname like 'lab_%'",
+);
+console.log(
+  "select nspname from pg_namespace where nspname like 'lab_%' ->",
+  r.rowCount,
+  "rows",
+  JSON.stringify(r.rows),
+);
+await c.end();
+```
+
+### `lab-lock/envset.mjs`
+
+```js
+import { api, REF } from "./api.mjs";
+import { pooler } from "./setup.mjs";
+const act = process.argv[2];
+if (act === "set") {
+  const r = await api("POST", `/api/v1/projects/${REF}/envvars/prod`, {
+    name: "LOCK_DB_URL",
+    value: pooler,
+  });
+  console.log("set", r.status);
+}
+if (act === "del") {
+  const r = await api(
+    "DELETE",
+    `/api/v1/projects/${REF}/envvars/prod/LOCK_DB_URL`,
+  );
+  console.log("del", r.status);
+}
+const l = await api("GET", `/api/v1/projects/${REF}/envvars/prod`);
+console.log(
+  "names",
+  Array.isArray(l.body) ? l.body.map((e) => e.name) : l.status,
+);
+```
+
+### `lab-lock/package.json`
+
+```json
+{
+  "name": "lab-lock",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@trigger.dev/sdk": "^4.8.3",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/pg": "^8.23.1",
+    "trigger.dev": "^4.8.3",
+    "typescript": "^5.9.3"
+  }
+}
+```
+
+### `lab-lock/reg.mjs`
+
+```js
+import { api, REF } from "./api.mjs";
+const org = await api("GET", "/api/v2/whoami");
+console.log("whoami", org.status, Object.keys(org.body || {}));
+for (const p of [
+  `/api/v1/projects/${REF.replace("proj_", "")}/regions`,
+  `/api/v1/projects/${REF}/regions?projectRef=${REF}`,
+]) {
+  const r = await api("GET", p);
+  console.log(
+    p.replace(REF, "REF"),
+    r.status,
+    typeof r.body === "string"
+      ? "html"
+      : JSON.stringify(r.body)
+          .replace(/\d+\.\d+\.\d+\.\d+/g, "<ip>")
+          .slice(0, 600),
+  );
+}
+```
+
+### `lab-lock/runall.mjs`
+
+```js
+import fs from "fs";
+import { api, REF, base } from "./api.mjs";
+import { pooler } from "./setup.mjs";
+import { w1, w2, userLoop } from "./src/lock.mjs";
+import { configure, tasks, runs } from "@trigger.dev/sdk";
+const pct = (a, p) => {
+  if (!a.length) return null;
+  const s = [...a].sort((x, y) => x - y);
+  return (
+    Math.round(s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)] * 10) / 10
+  );
+};
+const st = (a) => ({
+  n: a.length,
+  median: pct(a, 0.5),
+  p95: pct(a, 0.95),
+  max: pct(a, 1),
+  min: pct(a, 0),
+});
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const out = {};
+function analyse(w1res, rec) {
+  const inHold = [],
+    outHold = [];
+  for (const r of rec)
+    (w1res.some((h) => r.e >= h.t0Epoch - 300 && r.e <= h.t1Epoch)
+      ? inHold
+      : outHold
+    ).push(r.ms);
+  // "affected": update issued during hold window (issue time within [t0,t1])
+  const during = rec
+    .filter((r) => w1res.some((h) => r.e >= h.t0Epoch && r.e <= h.t1Epoch))
+    .map((r) => r.ms);
+  const outside = rec
+    .filter(
+      (r) =>
+        !w1res.some((h) => r.e >= h.t0Epoch - 2000 && r.e <= h.t1Epoch + 500),
+    )
+    .map((r) => r.ms);
+  return {
+    hold: st(w1res.map((h) => h.holdMs)),
+    userDuringHold: st(during),
+    userOutsideHold: st(outside),
+    userAll: st(rec.map((r) => r.ms)),
+  };
+}
+// 1 baseline
+let u = userLoop(pooler);
+await sleep(20000);
+await u.stop();
+out.userBaseline = st(u.rec.map((r) => r.ms));
+console.log("baseline", out.userBaseline);
+// 2 laptop
+u = userLoop(pooler);
+await sleep(1500);
+const lw1 = await w1(pooler, 10);
+await sleep(1000);
+await u.stop();
+out.laptopW1 = analyse(lw1, u.rec);
+out.laptopW1raw = lw1.map((h) => Math.round(h.holdMs));
+console.log("laptopW1", out.laptopW1);
+out.laptopW2 = await w2(pooler, 20);
+console.log("laptopW2", out.laptopW2);
+// 3 trigger
+const jwt = (
+  await api("POST", `/api/v1/projects/${REF}/prod/jwt`, {
+    claims: { scopes: ["write:tasks", "read:runs", "read:tasks"] },
+  })
+).body.token;
+configure({ accessToken: jwt, baseURL: base });
+u = userLoop(pooler);
+await sleep(1500);
+const h = await tasks.trigger("lock-probe", {}, { region: "eu-central-1" });
+let run;
+for (let i = 0; i < 120; i++) {
+  await sleep(2000);
+  run = await runs.retrieve(h.id);
+  if (
+    [
+      "COMPLETED",
+      "FAILED",
+      "CRASHED",
+      "SYSTEM_FAILURE",
+      "CANCELED",
+      "TIMED_OUT",
+      "EXPIRED",
+    ].includes(run.status)
+  )
+    break;
+}
+await u.stop();
+out.triggerStatus = run.status;
+out.triggerError = run.error;
+if (run.output) {
+  out.triggerW1 = analyse(run.output.w1, u.rec);
+  out.triggerW1raw = run.output.w1.map((h) => Math.round(h.holdMs));
+  out.triggerW2 = run.output.w2;
+  // clock-skew sanity: first hold start vs laptop clock not checked
+}
+fs.writeFileSync(
+  `results-${Date.now()}.json`,
+  JSON.stringify({ out, trigRec: u.rec.length }, null, 1),
+);
+console.log(JSON.stringify(out, null, 1));
+```
+
+### `lab-lock/runall2.mjs`
+
+```js
+import fs from "fs";
+import { api, REF, base } from "./api.mjs";
+import { pooler } from "./setup.mjs";
+import { w1, w2, userLoop } from "./src/lock.mjs";
+import { configure, tasks, runs } from "@trigger.dev/sdk";
+const pct = (a, p) => {
+  if (!a.length) return null;
+  const s = [...a].sort((x, y) => x - y);
+  return (
+    Math.round(s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)] * 10) / 10
+  );
+};
+const st = (a) => ({
+  n: a.length,
+  median: pct(a, 0.5),
+  p95: pct(a, 0.95),
+  max: pct(a, 1),
+});
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const out = {};
+function analyse(w, rec) {
+  const issue = (r) => r.dbAt - r.ms + 20;
+  const inWin = (t) => w.some((h) => t >= h.dbLockAt && t <= h.dbLastStmtAt);
+  const during = rec.filter((r) => inWin(issue(r))).map((r) => r.ms);
+  const outside = rec
+    .filter(
+      (r) =>
+        !w.some(
+          (h) =>
+            issue(r) >= h.dbLockAt - 300 && issue(r) <= h.dbLastStmtAt + 300,
+        ),
+    )
+    .map((r) => r.ms);
+  return {
+    hold: st(w.map((h) => h.holdMs)),
+    userIssuedDuringHold: st(during),
+    userIssuedOutside: st(outside),
+    userAll: st(rec.map((r) => r.ms)),
+    blockedOver150ms: rec.filter((r) => r.ms > 150).length,
+  };
+}
+const jwt = (
+  await api("POST", `/api/v1/projects/${REF}/prod/jwt`, {
+    claims: { scopes: ["write:tasks", "read:runs", "read:tasks"] },
+  })
+).body.token;
+configure({ accessToken: jwt, baseURL: base });
+async function trig(mode) {
+  const h = await tasks.trigger(
+    "lock-probe",
+    { mode },
+    { region: "eu-central-1" },
+  );
+  let run;
+  for (let i = 0; i < 120; i++) {
+    await sleep(2000);
+    run = await runs.retrieve(h.id);
+    if (
+      [
+        "COMPLETED",
+        "FAILED",
+        "CRASHED",
+        "SYSTEM_FAILURE",
+        "CANCELED",
+        "TIMED_OUT",
+        "EXPIRED",
+      ].includes(run.status)
+    )
+      break;
+  }
+  return run;
+}
+// baseline
+let u = userLoop(pooler);
+await sleep(20000);
+await u.stop();
+out.userBaseline = st(u.rec.map((r) => r.ms));
+// laptop W1 + user
+u = userLoop(pooler);
+await sleep(1500);
+const lw1 = await w1(pooler, 10);
+await sleep(800);
+await u.stop();
+out.laptopW1 = analyse(lw1, u.rec);
+out.laptopW1raw = lw1.map((h) => Math.round(h.holdMs));
+// trigger W1 + user
+u = userLoop(pooler);
+await sleep(1500);
+let run = await trig("w1");
+await sleep(800);
+await u.stop();
+out.triggerStatus = run.status;
+if (run.output) {
+  out.triggerW1 = analyse(run.output.w1, u.rec);
+  out.triggerW1raw = run.output.w1.map((h) => Math.round(h.holdMs));
+}
+// trigger W2 (no user loop)
+run = await trig("w2");
+out.triggerW2 = run.output?.w2 ?? run.error;
+// laptop W2 again (no user loop), fresh
+out.laptopW2 = await w2(pooler, 20);
+fs.writeFileSync(`results2-${Date.now()}.json`, JSON.stringify(out, null, 1));
+console.log(JSON.stringify(out));
+```
+
+### `lab-lock/setup.mjs`
+
+```js
+import fs from "fs";
+import pg from "pg";
+const env = fs.readFileSync("<path-to-env-file>", "utf8");
+export const get = (k) => env.match(new RegExp(`^${k}="?([^"\\n]*)"?`, "m"))[1];
+export const direct = get("DIRECT_URL");
+export const pooler = get("DATABASE_URL").split("?")[0];
+if (process.argv[2] === "setup") {
+  const c = new pg.Client({
+    connectionString: direct,
+    ssl: { rejectUnauthorized: false },
+  });
+  await c.connect();
+  await c.query("CREATE SCHEMA lab_lock");
+  await c.query(
+    "CREATE TABLE lab_lock.account(id int primary key, balance bigint, version int)",
+  );
+  await c.query(
+    "INSERT INTO lab_lock.account VALUES (1,1000000,0),(2,500,0),(3,700,0),(4,900,0)",
+  );
+  console.log((await c.query("select count(*) from lab_lock.account")).rows[0]);
+  await c.end();
+}
+```
+
+### `lab-lock/trigger.config.ts`
+
+```ts
+import { defineConfig } from "@trigger.dev/sdk";
+
+export default defineConfig({
+  project: "<trigger-project-ref>",
+  dirs: ["./src/trigger"],
+  maxDuration: 300,
+  retries: { enabled: false },
+  build: { external: ["pg"] },
+});
+```
+
+### `lab-lock/src/lock.mjs`
+
+```js
+import pg from "pg";
+const now = () => performance.now();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const mk = (url) =>
+  new pg.Client({
+    connectionString: url,
+    ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: 15000,
+  });
+const STMTS = [
+  ["SELECT balance, version FROM lab_lock.account WHERE id=1"],
+  ["SELECT count(*) FROM lab_lock.account"],
+  ["SELECT balance FROM lab_lock.account WHERE id=2"],
+  [
+    "UPDATE lab_lock.account SET balance=balance-1, version=version+1 WHERE id=1 AND version=$1",
+    "v",
+  ],
+  ["SELECT balance, version FROM lab_lock.account WHERE id=1"],
+  ["SELECT sum(balance) FROM lab_lock.account"],
+  ["SELECT balance FROM lab_lock.account WHERE id=3"],
+  ["SELECT version FROM lab_lock.account WHERE id=1"],
+];
+// one txn; returns {holdMs, t0Epoch, t1Epoch}
+export async function oneTxn(c, iso) {
+  await c.query(iso ? `BEGIN ISOLATION LEVEL SERIALIZABLE` : "BEGIN");
+  const e0 = Date.now(),
+    t0 = now();
+  let v, d0;
+  const r = await c.query(
+    `SELECT balance, version, extract(epoch from clock_timestamp())*1000 AS d FROM lab_lock.account WHERE id=1${iso ? "" : " FOR UPDATE"}`,
+  );
+  v = r.rows[0].version;
+  d0 = Number(r.rows[0].d);
+  let d1;
+  for (const [sql, p] of STMTS) {
+    const x = await c.query(sql, p ? [v] : undefined);
+  }
+  const l = await c.query(
+    "SELECT extract(epoch from clock_timestamp())*1000 AS d",
+  );
+  d1 = Number(l.rows[0].d);
+  await c.query("COMMIT");
+  return {
+    holdMs: now() - t0,
+    t0Epoch: e0,
+    t1Epoch: Date.now(),
+    dbLockAt: d0,
+    dbLastStmtAt: d1,
+  };
+}
+export async function w1(url, n, gapMs = 400) {
+  const c = mk(url);
+  await c.connect();
+  await c.query("SELECT 1");
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(await oneTxn(c, false));
+    await sleep(gapMs);
+  }
+  await c.end();
+  return out;
+}
+export async function w2(url, n) {
+  const mkc = async () => {
+    const c = mk(url);
+    await c.connect();
+    await c.query("SELECT 1");
+    return c;
+  };
+  const cs = [await mkc(), await mkc()];
+  const res = { ok: 0, fail40001: 0, otherErr: [] };
+  for (let i = 0; i < n; i++) {
+    await Promise.all(
+      cs.map(async (c) => {
+        try {
+          await oneTxn(c, true);
+          res.ok++;
+        } catch (e) {
+          try {
+            await c.query("ROLLBACK");
+          } catch {}
+          if (e.code === "40001") res.fail40001++;
+          else res.otherErr.push(String(e.code || e.message).slice(0, 60));
+        }
+      }),
+    );
+  }
+  await Promise.all(cs.map((c) => c.end()));
+  return res;
+}
+// laptop user loop: ~5/s autocommit updates until stop() ; records epoch + latency
+export function userLoop(url) {
+  let stop = false;
+  const rec = [];
+  const p = (async () => {
+    const c = mk(url);
+    await c.connect();
+    await c.query("SELECT 1");
+    while (!stop) {
+      const e = Date.now(),
+        t = now();
+      const r = await c.query(
+        "UPDATE lab_lock.account SET balance=balance+1 WHERE id=1 RETURNING extract(epoch from clock_timestamp())*1000 AS d",
+      );
+      rec.push({ e, ms: now() - t, dbAt: Number(r.rows[0].d) });
+      await sleep(Math.max(0, 200 - (now() - t)));
+    }
+    await c.end();
+  })();
+  return {
+    rec,
+    stop: async () => {
+      stop = true;
+      await p;
+    },
+  };
+}
+```
+
+### `lab-lock/src/trigger/lock.ts`
+
+```ts
+import { task } from "@trigger.dev/sdk";
+import { w1, w2 } from "../lock.mjs";
+export const lockProbe = task({
+  id: "lock-probe",
+  run: async (p: { mode: string }) => {
+    const url = process.env.LOCK_DB_URL!;
+    if (p.mode === "w2") return { w2: await w2(url, 20) };
+    return { w1: await w1(url, 10) };
+  },
+});
+```
+
+## `lab-netlify/`
+
+### `lab-netlify/netlify.toml`
+
+```toml
+[build]
+  publish = "public"
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  external_node_modules = ["pg"]
+```
+
+### `lab-netlify/package.json`
+
+```json
+{
+  "name": "lab-netlify",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@upstash/qstash": "^2.12.1",
+    "@upstash/workflow": "^1.5.0",
+    "inngest": "^4.26.2",
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
+  }
+}
+```
+
+### `lab-netlify/trig.mjs`
+
+```js
+import { Client } from "@upstash/workflow";
+const c = new Client({
+  baseUrl: "http://127.0.0.1:8080",
+  token: "<qstash-dev-server-default-token>",
+});
+const name = process.argv[2];
+console.log(new Date().toISOString(), "trigger", name);
+const r = await c.trigger({
+  url: `https://fw-probe-jobs-27089.netlify.app/api/wf/${name}`,
+  body: {},
+  retries: 0,
+});
+console.log(r);
+```
+
+### `lab-netlify/netlify/functions/db-probe.mjs`
+
+```js
+import pg from "pg";
+
+const med = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.floor(s.length / 2)];
+};
+const p95 = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.ceil(s.length * 0.95) - 1)];
+};
+const now = () => performance.now();
+const r1 = (x) => Math.round(x * 10) / 10;
+let coldFlag = true; // module-level: true only on the first invocation of this container
+
+export default async (req, context) => {
+  const wasCold = coldFlag;
+  coldFlag = false;
+  const t0 = now();
+  const out = {
+    cold: wasCold,
+    awsRegion: process.env.AWS_REGION,
+    ctxRegion: context?.server?.region ?? null,
+    node: process.version,
+    pgVersion: pg.version ?? null,
+  };
+  const url = process.env.PROBE_DB_URL;
+  const c = new pg.Client({
+    connectionString: url,
+    ssl: { rejectUnauthorized: false },
+  });
+  try {
+    let t = now();
+    await c.connect();
+    out.connectMs = r1(now() - t);
+    // SELECT 1 x50
+    const s1 = [];
+    for (let i = 0; i < 50; i++) {
+      t = now();
+      await c.query("SELECT 1");
+      s1.push(now() - t);
+    }
+    out.select1 = {
+      medianMs: r1(med(s1)),
+      p95Ms: r1(p95(s1)),
+      minMs: r1(Math.min(...s1)),
+      maxMs: r1(Math.max(...s1)),
+    };
+    // 20-query mix
+    const mix = [
+      'SELECT id, "paymentStatus" FROM "Payment" ORDER BY "createdAt" DESC LIMIT 50',
+      'SELECT id, "createdAt" FROM "Appointment" ORDER BY "createdAt" DESC LIMIT 50',
+      'SELECT id, "jobName", status FROM "SystemJobExecution" ORDER BY "createdAt" DESC LIMIT 50',
+      'SELECT count(*) FROM "Payment" WHERE "paymentStatus"::text = \'SUCCEEDED\'',
+      'SELECT count(*) FROM "Appointment" WHERE "createdAt" > now() - interval \'90 days\'',
+    ];
+    t = now();
+    for (let i = 0; i < 20; i++) await c.query(mix[i % 5]);
+    out.mix20TotalMs = r1(now() - t);
+    // lock-hold
+    await c.query("CREATE SCHEMA IF NOT EXISTS lab_nlock");
+    await c.query(
+      "CREATE TABLE IF NOT EXISTS lab_nlock.account(id int primary key, balance bigint, version int)",
+    );
+    await c.query(
+      "INSERT INTO lab_nlock.account VALUES (1,1000,0),(2,1000,0) ON CONFLICT DO NOTHING",
+    );
+    const holds = [];
+    for (let i = 0; i < 10; i++) {
+      t = now();
+      await c.query("BEGIN");
+      const r = await c.query(
+        "SELECT id, balance, version FROM lab_nlock.account WHERE id=1 FOR UPDATE",
+      );
+      const v = r.rows[0].version;
+      await c.query("SELECT balance FROM lab_nlock.account WHERE id=2");
+      await c.query("SELECT count(*) FROM lab_nlock.account");
+      await c.query(
+        "UPDATE lab_nlock.account SET balance=balance+1, version=version+1 WHERE id=1 AND version=$1",
+        [v],
+      );
+      await c.query(
+        "UPDATE lab_nlock.account SET balance=balance-1 WHERE id=2",
+      );
+      await c.query("SELECT balance FROM lab_nlock.account WHERE id=1");
+      await c.query("SELECT balance FROM lab_nlock.account WHERE id=2");
+      await c.query("SELECT 1");
+      await c.query("SELECT now()");
+      await c.query("COMMIT");
+      holds.push(now() - t);
+    }
+    out.lockHold = {
+      medianMs: r1(med(holds)),
+      p95Ms: r1(p95(holds)),
+      rawMs: holds.map(r1),
+    };
+  } catch (e) {
+    out.error = String(e.message).replace(/postgresql:\/\/\S+/g, "<url>");
+  } finally {
+    try {
+      await c.end();
+    } catch {}
+  }
+  out.totalMs = r1(now() - t0);
+  return Response.json(out);
+};
+export const config = { path: "/api/db-probe" };
+```
+
+### `lab-netlify/netlify/functions/inngest.mjs`
+
+```js
+import pg from "pg";
+import { Inngest } from "inngest";
+import { serve } from "inngest/edge";
+
+const inngest = new Inngest({ id: "lab-netlify" });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const log = (...a) => console.log(new Date().toISOString(), ...a);
+const db = async () => {
+  const c = new pg.Client({
+    connectionString: process.env.PROBE_DB_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+  await c.connect();
+  return c;
+};
+
+const sweep = inngest.createFunction(
+  { id: "sweep", triggers: [{ event: "lab/sweep" }] },
+  async ({ step }) => {
+    const ids = await step.run("read-batch", async () => {
+      const t = Date.now();
+      const c = await db();
+      const t2 = Date.now();
+      const r = await c.query(
+        'SELECT id, "paymentStatus" FROM "Payment" ORDER BY "createdAt" DESC LIMIT 50',
+      );
+      await c.end();
+      log(
+        `[sweep] read-batch rows=${r.rowCount} connectMs=${t2 - t} totalMs=${Date.now() - t}`,
+      );
+      return r.rows.map((x) => x.id);
+    });
+    const n = await step.run("per-row", async () => {
+      const t = Date.now();
+      const c = await db();
+      const t2 = Date.now();
+      let k = 0;
+      for (const id of ids.slice(0, 5)) {
+        await c.query(
+          'SELECT id, "paymentStatus", "createdAt" FROM "Payment" WHERE id=$1',
+          [id],
+        );
+        k++;
+      }
+      await c.end();
+      log(
+        `[sweep] per-row rows=${k} connectMs=${t2 - t} totalMs=${Date.now() - t}`,
+      );
+      return k;
+    });
+    log(`[sweep] DONE batch=${ids.length} perRow=${n}`);
+    return { batch: ids.length, perRow: n };
+  },
+);
+
+const long30 = inngest.createFunction(
+  { id: "long30", retries: 2, triggers: [{ event: "lab/long30" }] },
+  async ({ step, attempt }) => {
+    await step.run("long", async () => {
+      log(`[long30] step start attempt=${attempt}`);
+      await sleep(30000);
+      log(`[long30] step END after 30s attempt=${attempt}`);
+    });
+    log("[long30] DONE");
+  },
+);
+
+const ten5 = inngest.createFunction(
+  { id: "ten5", retries: 1, triggers: [{ event: "lab/ten5" }] },
+  async ({ step }) => {
+    for (let n = 1; n <= 10; n++)
+      await step.run(`t${n}`, async () => {
+        log(`[ten5] step t${n} start`);
+        await sleep(5000);
+        log(`[ten5] step t${n} end`);
+        return n;
+      });
+    log("[ten5] DONE");
+  },
+);
+
+const handler = serve({ client: inngest, functions: [sweep, long30, ten5] });
+export default async (req, context) => {
+  const u = new URL(req.url);
+  log(
+    `REQ> ${req.method} ${u.search} reqid=${context.requestId} region=${process.env.AWS_REGION}`,
+  );
+  const res = await handler(req, context);
+  log(
+    `REQ< ${req.method} ${u.search} status=${res.status} reqid=${context.requestId}`,
+  );
+  return res;
+};
+export const config = { path: "/api/inngest" };
+```
+
+### `lab-netlify/netlify/functions/qs.mjs`
+
+```js
+import pg from "pg";
+import { Client } from "@upstash/qstash";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const log = (...a) => console.log(new Date().toISOString(), ...a);
+const hdr = (req) =>
+  `msg=${(req.headers.get("upstash-message-id") || "-").slice(0, 12)} retried=${req.headers.get("upstash-retried") ?? "-"} sched=${(req.headers.get("upstash-schedule-id") || "-").slice(0, 12)}`;
+
+export default async (req, context) => {
+  const path = new URL(req.url).pathname;
+  if (path === "/api/qs-target") {
+    log(`QS-TARGET start ${hdr(req)} reqid=${context.requestId}`);
+    await sleep(30000);
+    log(`QS-TARGET side-effect END ${hdr(req)} reqid=${context.requestId}`);
+    return new Response("done");
+  }
+  if (path === "/api/qs-hit") {
+    log(`QS-HIT ${hdr(req)} reqid=${context.requestId}`);
+    return new Response("ok");
+  }
+  if (path === "/api/slow40") {
+    log(`SLOW40 start reqid=${context.requestId}`);
+    await sleep(40000);
+    log(`SLOW40 END reqid=${context.requestId}`);
+    return Response.json({ slow: true });
+  }
+  if (path === "/api/dual") {
+    const fail = new URL(req.url).searchParams.get("fail") === "1";
+    const id = Math.floor(Math.random() * 1e9);
+    const c = new pg.Client({
+      connectionString: process.env.PROBE_DB_URL,
+      ssl: { rejectUnauthorized: false },
+    });
+    await c.connect();
+    try {
+      await c.query(
+        "CREATE TABLE IF NOT EXISTS lab_nlock.dual_demo(id int primary key, note text)",
+      );
+      await c.query("INSERT INTO lab_nlock.dual_demo VALUES ($1,$2)", [
+        id,
+        fail ? "fail-case" : "ok-case",
+      ]);
+      log(`DUAL row ${id} inserted (committed), fail=${fail}`);
+      if (fail)
+        throw new Error("injected failure between DB write and publish");
+      const q = new Client({
+        baseUrl: process.env.QSTASH_URL,
+        token: process.env.QSTASH_TOKEN,
+      });
+      const r = await q.publishJSON({
+        url: `https://${new URL(req.url).host}/api/qs-hit`,
+        body: { id },
+      });
+      log(`DUAL published ${r.messageId.slice(0, 12)}`);
+      return Response.json({ id, published: true });
+    } catch (e) {
+      log(`DUAL error: ${e.message}`);
+      return Response.json(
+        { id, published: false, error: e.message },
+        { status: 500 },
+      );
+    } finally {
+      await c.end();
+    }
+  }
+  return new Response("nf", { status: 404 });
+};
+export const config = {
+  path: ["/api/qs-target", "/api/qs-hit", "/api/slow40", "/api/dual"],
+};
+```
+
+### `lab-netlify/netlify/functions/wf.mjs`
+
+```js
+import { serve } from "@upstash/workflow/nextjs";
+
+const log = (...a) => console.log(new Date().toISOString(), ...a);
+const base = (req) => `https://${new URL(req.url).host}`;
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const routes = {
+  wf3: async (ctx) => {
+    log(`WF wf3 invoke runId=${ctx.workflowRunId.slice(0, 10)}`);
+    const a = await ctx.run("s1", async () => {
+      log("WF wf3 s1 body");
+      return 1;
+    });
+    const b = await ctx.run("s2", async () => {
+      log("WF wf3 s2 body");
+      return a + 1;
+    });
+    await ctx.run("s3", async () => {
+      log("WF wf3 s3 body");
+      return b + 1;
+    });
+  },
+  wflong: async (ctx) => {
+    log(`WF wflong invoke`);
+    await ctx.run("long", async () => {
+      log("WF wflong step START");
+      await sleepMs(30000);
+      log("WF wflong step END after 30s");
+    });
+    await ctx.run("after", async () => {
+      log("WF wflong after body");
+    });
+  },
+  wfsleep: async (ctx) => {
+    log(`WF wfsleep invoke`);
+    await ctx.run("before", async () => {
+      log("WF wfsleep before");
+    });
+    await ctx.sleep("nap", "10s");
+    await ctx.run("after", async () => {
+      log("WF wfsleep after");
+    });
+  },
+  wfcall: async (ctx) => {
+    log(`WF wfcall invoke`);
+    const r = await ctx.call("slow", {
+      url: `${process.env.WF_BASE_URL}/api/slow40`,
+      method: "GET",
+    });
+    await ctx.run("after", async () => {
+      log(`WF wfcall after status=${r.status}`);
+    });
+  },
+};
+
+const handlers = Object.fromEntries(
+  Object.entries(routes).map(([k, fn]) => [
+    k,
+    serve(fn, { baseUrl: process.env.WF_BASE_URL, retries: 0 }).POST,
+  ]),
+);
+
+export default async (req, context) => {
+  const name = new URL(req.url).pathname.split("/").pop();
+  const t = Date.now();
+  log(
+    `WFREQ> ${name} reqid=${context.requestId} callType=${req.headers.get("upstash-workflow-callType") ?? "-"}`,
+  );
+  const res = await handlers[name](req);
+  log(
+    `WFREQ< ${name} status=${res.status} took=${Date.now() - t}ms reqid=${context.requestId}`,
+  );
+  return res;
+};
+export const config = {
+  path: ["/api/wf/wf3", "/api/wf/wflong", "/api/wf/wfsleep", "/api/wf/wfcall"],
+};
+```
+
+## `lab-netlify-qstash/`
+
+### `lab-netlify-qstash/cnt.mjs`
+
+```js
+import { env } from "./db.mjs";
+let cursor = "",
+  all = [];
+for (let p = 0; p < 15; p++) {
+  const r = await (
+    await fetch(
+      `${env.QSTASH_URL}/v2/events?count=100${cursor ? "&cursor=" + cursor : ""}`,
+      { headers: { Authorization: "Bearer " + env.QSTASH_TOKEN } },
+    )
+  ).json();
+  all.push(...(r.events || []));
+  cursor = r.cursor;
+  if (!cursor || !(r.events || []).length) break;
+}
+const mine = all
+  .filter((e) => e.time > 1793446681000 && e.time < 1793446740000)
+  .filter(
+    (e) =>
+      e.url.includes("fw-probe-jobs-9651") && e.path.startsWith("/api/wf/"),
+  );
+const m = {};
+for (const e of mine) {
+  const k = e.path + " " + e.state + " " + (e.responseStatus ?? "");
+  m[k] = (m[k] || 0) + 1;
+}
+console.log(
+  [
+    ...new Set(
+      all
+        .filter((e) => e.time > 1793446681000 && e.time < 1793446740000)
+        .map((e) => e.host + e.path + " " + e.state),
+    ),
+  ].join("\n"),
+);
+console.log(
+  all.length,
+  new Date(all[0].time).toISOString(),
+  new Date(all.at(-1).time).toISOString(),
+  m,
+);
+for (const e of mine.filter((e) => e.state === "DELIVERED").reverse())
+  console.log(
+    new Date(e.time).toISOString().slice(11, 23),
+    e.path,
+    e.duration + "ms",
+  );
+```
+
+### `lab-netlify-qstash/db.mjs`
+
+```js
+import fs from "fs";
+import pg from "pg";
+const env = Object.fromEntries(
+  fs
+    .readFileSync(new URL(".secrets.env", import.meta.url), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+);
+export const connect = async () => {
+  const c = new pg.Client({
+    connectionString: env.PROBE_DB_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+  await c.connect();
+  return c;
+};
+export { env };
+```
+
+### `lab-netlify-qstash/ev.mjs`
+
+```js
+import { env } from "./db.mjs";
+const id = process.argv[2];
+let cursor = "";
+const out = [];
+for (let p = 0; p < 6; p++) {
+  const r = await (
+    await fetch(
+      `${env.QSTASH_URL}/v2/events?count=100${cursor ? "&cursor=" + cursor : ""}${id && id.startsWith("msg_") ? "&messageId=" + id : ""}`,
+      { headers: { Authorization: "Bearer " + env.QSTASH_TOKEN } },
+    )
+  ).json();
+  out.push(...r.events);
+  cursor = r.cursor;
+  if (!cursor) break;
+}
+const ev = out.filter((e) => !id || e.messageId === id).reverse();
+const t0 = ev[0]?.time;
+for (const e of ev)
+  console.log(
+    new Date(e.time).toISOString(),
+    "+" + ((e.time - t0) / 1000).toFixed(1) + "s",
+    e.state,
+    e.responseStatus ?? "",
+    e.duration ?? "",
+    e.nextDeliveryTime
+      ? "next=+" + ((e.nextDeliveryTime - t0) / 1000).toFixed(1)
+      : "",
+    (e.error || e.responseBody || "").slice(0, 100),
+  );
+```
+
+### `lab-netlify-qstash/netlify.toml`
+
+```toml
+[build]
+  publish = "public"
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  external_node_modules = ["pg"]
+```
+
+### `lab-netlify-qstash/package.json`
+
+```json
+{
+  "name": "lab-netlify-qstash",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "dependencies": {
+    "@upstash/qstash": "2.12.1",
+    "@upstash/workflow": "1.5.0",
+    "pg": "^8.23.1"
+  }
+}
+```
+
+### `lab-netlify-qstash/setup.mjs`
+
+```js
+import { connect } from "./db.mjs";
+const c = await connect();
+await c.query("CREATE SCHEMA IF NOT EXISTS lab_nq");
+await c.query(
+  "CREATE TABLE IF NOT EXISTS lab_nq.events(id serial primary key, kind text, msg_id text, retried int, schedule_id text, sent_ms bigint, recv_ms bigint, note text)",
+);
+console.log(
+  (
+    await c.query("select nspname from pg_namespace where nspname like 'lab_%'")
+  ).rows.map((r) => r.nspname),
+);
+await c.end();
+```
+
+### `lab-netlify-qstash/t1.mjs`
+
+```js
+import { Client } from "@upstash/qstash";
+import { env, connect } from "./db.mjs";
+const q = new Client({ baseUrl: env.QSTASH_URL, token: env.QSTASH_TOKEN });
+const T = "https://fw-probe-jobs-9651.netlify.app";
+const pubs = [];
+for (let i = 0; i < 20; i++) {
+  const sent = Date.now();
+  const r = await q.publishJSON({
+    url: `${T}/api/receive?k=t1`,
+    body: { sent, i },
+  });
+  pubs.push({ i, id: r.messageId, apiMs: Date.now() - sent, sent });
+  await new Promise((r) => setTimeout(r, 2000));
+}
+await new Promise((r) => setTimeout(r, 8000));
+const c = await connect();
+const rows = (
+  await c.query(
+    "select msg_id, retried, sent_ms, recv_ms from lab_nq.events where kind='t1' order by id",
+  )
+).rows;
+await c.end();
+const lat = rows.map((r) => Number(r.recv_ms) - Number(r.sent_ms));
+const s = [...lat].sort((a, b) => a - b);
+console.log("n", rows.length, "lat ms", lat.join(","));
+console.log(
+  "median",
+  (s[9] + s[10]) / 2,
+  "p95",
+  s[18],
+  "min",
+  s[0],
+  "max",
+  s[19],
+);
+const a = pubs.map((p) => p.apiMs).sort((x, y) => x - y);
+console.log("publish api ms median", a[10], "min", a[0], "max", a[19]);
+console.log("ids", pubs.map((p) => p.id).join(" "));
+```
+
+### `lab-netlify-qstash/t2.mjs`
+
+```js
+import { Client } from "@upstash/qstash";
+import { env } from "./db.mjs";
+const q = new Client({ baseUrl: env.QSTASH_URL, token: env.QSTASH_TOKEN });
+const r = await q.publishJSON({
+  url: "https://fw-probe-jobs-9651.netlify.app/api/long",
+  body: { t: Date.now() },
+});
+console.log(r.messageId, new Date().toISOString());
+```
+
+### `lab-netlify-qstash/t3.mjs`
+
+```js
+import { Client } from "@upstash/qstash";
+import { env, connect } from "./db.mjs";
+const q = new Client({ baseUrl: env.QSTASH_URL, token: env.QSTASH_TOKEN });
+const T = "https://fw-probe-jobs-9651.netlify.app";
+const sd = await q.schedules.create({
+  destination: `${T}/api/receive?k=sched`,
+  cron: "* * * * *",
+  body: JSON.stringify({ s: 1 }),
+  headers: { "Content-Type": "application/json" },
+});
+console.log("schedule", sd.scheduleId, new Date().toISOString());
+const dl = [];
+for (let i = 0; i < 3; i++) {
+  const sent = Date.now();
+  const r = await q.publishJSON({
+    url: `${T}/api/receive?k=delay`,
+    body: { sent },
+    delay: 30,
+  });
+  dl.push({ id: r.messageId, due: sent + 30000, sent });
+  console.log("delayed", r.messageId, sent);
+  await new Promise((r) => setTimeout(r, 15000));
+}
+await new Promise((r) => setTimeout(r, 190000 - 45000));
+const c = await connect();
+const rows = (
+  await c.query(
+    "select kind,msg_id,sent_ms,recv_ms,schedule_id,retried from lab_nq.events where kind in ('delay','sched') order by id",
+  )
+).rows;
+await c.end();
+for (const r of rows.filter((r) => r.kind === "delay"))
+  console.log(
+    "delay lateness ms",
+    Number(r.recv_ms) - (Number(r.sent_ms) + 30000),
+    "(vs publish-ts+30s)",
+  );
+for (const r of rows.filter((r) => r.kind === "sched")) {
+  const t = Number(r.recv_ms);
+  console.log(
+    "sched",
+    new Date(t).toISOString(),
+    "lateness after minute boundary ms",
+    t % 60000,
+  );
+}
+console.log("sched total", rows.filter((r) => r.kind === "sched").length);
+console.log(JSON.stringify({ sd: sd.scheduleId, dl }));
+```
+
+### `lab-netlify-qstash/t4.mjs`
+
+```js
+import { Client } from "@upstash/workflow";
+import { env } from "./db.mjs";
+const c = new Client({ baseUrl: env.QSTASH_URL, token: env.QSTASH_TOKEN });
+const T = "https://fw-probe-jobs-9651.netlify.app";
+const a = await c.trigger({
+  url: `${T}/api/wf/wf3`,
+  body: "x",
+  workflowRunId: "nq-wf3-" + Date.now(),
+});
+const b = await c.trigger({
+  url: `${T}/api/wf/wfsleep`,
+  body: "x",
+  workflowRunId: "nq-wfsleep-" + Date.now(),
+});
+console.log(JSON.stringify([a, b]));
+```
+
+### `lab-netlify-qstash/netlify/functions/lab.mjs`
+
+```js
+import pg from "pg";
+import { Receiver } from "@upstash/qstash";
+import { serve } from "@upstash/workflow/nextjs";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const log = (...a) => console.log(new Date().toISOString(), ...a);
+const db = async () => {
+  const c = new pg.Client({
+    connectionString: process.env.PROBE_DB_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+  await c.connect();
+  return c;
+};
+async function rec(kind, req, extra = {}) {
+  const c = await db();
+  try {
+    await c.query(
+      "INSERT INTO lab_nq.events(kind,msg_id,retried,schedule_id,sent_ms,recv_ms,note) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [
+        kind,
+        req.headers.get("upstash-message-id"),
+        Number(req.headers.get("upstash-retried") ?? 0),
+        req.headers.get("upstash-schedule-id"),
+        extra.sent ?? null,
+        Date.now(),
+        extra.note ?? null,
+      ],
+    );
+  } finally {
+    await c.end();
+  }
+}
+const receiver = () =>
+  new Receiver({
+    currentSigningKey: process.env.QSTASH_CURRENT_SIGNING_KEY,
+    nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY,
+  });
+async function verified(req) {
+  const body = await req.text();
+  await receiver().verify({
+    signature: req.headers.get("upstash-signature"),
+    body,
+    url: req.url,
+  });
+  return body;
+}
+const base = () => process.env.WF_BASE_URL;
+const wfRoutes = {
+  wf3: async (ctx) => {
+    await rec(
+      "wf_req",
+      ctx.headers ? { headers: new Headers() } : { headers: new Headers() },
+      { note: "wf3 invoke " + ctx.workflowRunId },
+    );
+    const a = await ctx.run("s1", async () => {
+      await rec("wf_step", { headers: new Headers() }, { note: "wf3 s1" });
+      return 1;
+    });
+    const b = await ctx.run("s2", async () => {
+      await rec("wf_step", { headers: new Headers() }, { note: "wf3 s2" });
+      return a + 1;
+    });
+    await ctx.run("s3", async () => {
+      await rec("wf_step", { headers: new Headers() }, { note: "wf3 s3" });
+      return b + 1;
+    });
+  },
+  wfsleep: async (ctx) => {
+    await rec(
+      "wf_req",
+      { headers: new Headers() },
+      { note: "wfsleep invoke " + ctx.workflowRunId },
+    );
+    await ctx.run("before", async () => {
+      await rec(
+        "wf_step",
+        { headers: new Headers() },
+        { note: "wfsleep before" },
+      );
+    });
+    await ctx.sleep("nap", "10s");
+    await ctx.run("after", async () => {
+      await rec(
+        "wf_step",
+        { headers: new Headers() },
+        { note: "wfsleep after" },
+      );
+    });
+  },
+};
+const wfh = Object.fromEntries(
+  Object.entries(wfRoutes).map(([k, fn]) => [
+    k,
+    serve(fn, { baseUrl: base() }),
+  ]),
+);
+
+export default async (req, context) => {
+  const url = new URL(req.url);
+  const p = url.pathname;
+  try {
+    if (p.startsWith("/api/wf/")) {
+      const n = p.split("/").pop();
+      log(`WFREQ ${n} reqid=${context.requestId}`);
+      await rec("wf_http", req, { note: n });
+      const res = await wfh[n].POST(req);
+      log(`WFRES ${n} status=${res.status}`);
+      return res;
+    }
+    const body = await verified(req);
+    const k = url.searchParams.get("k") || "recv";
+    if (p === "/api/receive") {
+      let sent = null;
+      try {
+        sent = JSON.parse(body).sent ?? null;
+      } catch {}
+      await rec(k, req, { sent });
+      log(
+        `RECV k=${k} msg=${req.headers.get("upstash-message-id")} retried=${req.headers.get("upstash-retried")}`,
+      );
+      return new Response("ok");
+    }
+    if (p === "/api/long") {
+      log(
+        `LONG start retried=${req.headers.get("upstash-retried")} reqid=${context.requestId}`,
+      );
+      await rec("long_start", req);
+      await sleep(30000);
+      await rec("long_effect", req);
+      log(`LONG effect written retried=${req.headers.get("upstash-retried")}`);
+      return new Response("done");
+    }
+  } catch (e) {
+    log("ERR", e.message);
+    return new Response("err " + e.message, { status: 500 });
+  }
+  return new Response("nf", { status: 404 });
+};
+export const config = {
+  path: ["/api/receive", "/api/long", "/api/wf/wf3", "/api/wf/wfsleep"],
+};
+```
+
+## `lab-vercel/`
+
+### `lab-vercel/package.json`
+
+```json
+{
+  "name": "lab-vercel-probe",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": { "pg": "^8.13.0" }
+}
+```
+
+### `lab-vercel/vercel.json`
+
+```json
+{
+  "regions": ["bom1"],
+  "functions": {
+    "api/long.js": { "maxDuration": 300 },
+    "api/db-probe.js": { "maxDuration": 60 }
+  }
+}
+```
+
+### `lab-vercel/api/db-probe.js`
+
+```js
+const { Client } = require("pg");
+const now = () => Number(process.hrtime.bigint()) / 1e6;
+const pct = (a, p) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)];
+};
+const r = (x) => Math.round(x * 100) / 100;
+
+module.exports = async (req, res) => {
+  const t0 = now();
+  const url = new URL(process.env.DATABASE_URL);
+  url.search = "";
+  const c = new Client({
+    connectionString: url.toString(),
+    ssl: { rejectUnauthorized: false },
+  });
+  const out = { region: process.env.VERCEL_REGION, node: process.version };
+  try {
+    let t = now();
+    await c.connect();
+    out.connect_ms = r(now() - t);
+
+    const s1 = [];
+    for (let i = 0; i < 50; i++) {
+      t = now();
+      await c.query("SELECT 1");
+      s1.push(now() - t);
+    }
+    out.select1 = { median_ms: r(pct(s1, 0.5)), p95_ms: r(pct(s1, 0.95)) };
+
+    const qs = [
+      'SELECT id, "paymentStatus" FROM "Payment" ORDER BY "createdAt" DESC LIMIT 50',
+      'SELECT id, "createdAt" FROM "Appointment" ORDER BY "createdAt" DESC LIMIT 50',
+      'SELECT id, status FROM "SystemJobExecution" ORDER BY "createdAt" DESC LIMIT 50',
+      `SELECT count(*) FROM "Payment" WHERE "paymentStatus"::text = 'SUCCEEDED'`,
+      `SELECT count(*) FROM "SystemJobExecution" WHERE status::text = 'SUCCEEDED'`,
+    ];
+    t = now();
+    for (let i = 0; i < 20; i++) await c.query(qs[i % qs.length]);
+    out.mix20_total_ms = r(now() - t);
+
+    await c.query("CREATE SCHEMA IF NOT EXISTS lab_vlock");
+    await c.query(
+      "CREATE TABLE IF NOT EXISTS lab_vlock.account(id int primary key, balance bigint, version int)",
+    );
+    await c.query(
+      "INSERT INTO lab_vlock.account VALUES (1,1000,0) ON CONFLICT DO NOTHING",
+    );
+    const holds = [];
+    for (let i = 0; i < 10; i++) {
+      await c.query("BEGIN");
+      const row = (
+        await c.query(
+          "SELECT balance, version FROM lab_vlock.account WHERE id=1 FOR UPDATE",
+        )
+      ).rows[0];
+      t = now();
+      await c.query("SELECT 1");
+      await c.query("SELECT count(*) FROM lab_vlock.account");
+      await c.query("SELECT balance FROM lab_vlock.account WHERE id=1");
+      const u = await c.query(
+        "UPDATE lab_vlock.account SET balance=balance+1, version=version+1 WHERE id=1 AND version=$1",
+        [row.version],
+      );
+      if (u.rowCount !== 1) throw new Error("CAS failed");
+      await c.query("SELECT version FROM lab_vlock.account WHERE id=1");
+      await c.query("SELECT 1");
+      await c.query("SELECT now()");
+      await c.query("SELECT balance FROM lab_vlock.account WHERE id=1");
+      await c.query("COMMIT");
+      holds.push(now() - t);
+    }
+    out.lock_hold = {
+      median_ms: r(pct(holds, 0.5)),
+      p95_ms: r(pct(holds, 0.95)),
+      all_ms: holds.map(r),
+    };
+  } catch (e) {
+    out.error = String(e.message).slice(0, 200);
+    try {
+      await c.query("ROLLBACK");
+    } catch {}
+  } finally {
+    try {
+      await c.end();
+    } catch {}
+  }
+  out.total_ms = r(now() - t0);
+  res.status(200).json(out);
+};
+```
+
+### `lab-vercel/api/long.js`
+
+```js
+module.exports = async (req, res) => {
+  const n = Number(req.query.n || 1);
+  await new Promise((r) => setTimeout(r, n * 1000));
+  res.status(200).json({ slept: n, region: process.env.VERCEL_REGION });
+};
+```
+
+## `lab-vercel2/`
+
+### `lab-vercel2/fluid-off/package.json`
+
+```json
+{
+  "name": "fw-lab-fluid-off",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": { "pg": "^8.13.0" }
+}
+```
+
+### `lab-vercel2/fluid-off/vercel.json`
+
+```json
+{ "regions": ["bom1"], "fluid": false }
+```
+
+### `lab-vercel2/fluid-off/api/work.js`
+
+```js
+const { Pool } = require("pg");
+const crypto = require("crypto");
+const now = () => Number(process.hrtime.bigint()) / 1e6;
+const r = (x) => Math.round(x * 100) / 100;
+
+const instanceId = crypto.randomUUID();
+const bootedAt = Date.now();
+let coldStart = true;
+let served = 0;
+let inflight = 0;
+let maxInflight = 0;
+
+const url = new URL(process.env.DATABASE_URL);
+url.search = "";
+const pool = new Pool({
+  connectionString: url.toString(),
+  ssl: { rejectUnauthorized: false },
+  max: 5,
+  application_name: process.env.LAB_APP,
+});
+
+module.exports = async (req, res) => {
+  const t0 = now();
+  const wasCold = coldStart;
+  coldStart = false;
+  served += 1;
+  inflight += 1;
+  maxInflight = Math.max(maxInflight, inflight);
+  const out = {
+    instanceId,
+    coldStart: wasCold,
+    region: process.env.VERCEL_REGION,
+    servedOnInstance: served,
+    inflightAtStart: inflight,
+  };
+  try {
+    const q = [];
+    for (let i = 0; i < 10; i++) {
+      const t = now();
+      await pool.query("select $1::int as n", [i]);
+      q.push(now() - t);
+    }
+    const t = now();
+    await pool.query("select pg_sleep(0.3)");
+    out.sleepMs = r(now() - t);
+    out.queryMs = q.map(r);
+    out.poolTotal = pool.totalCount;
+  } catch (e) {
+    out.error = String(e.message).slice(0, 200);
+  } finally {
+    inflight -= 1;
+  }
+  out.maxInflightOnInstance = maxInflight;
+  out.instanceAgeMs = Date.now() - bootedAt;
+  out.fnMs = r(now() - t0);
+  res.status(out.error ? 500 : 200).json(out);
+};
+```
+
+### `lab-vercel2/fluid-on/package.json`
+
+```json
+{
+  "name": "fw-lab-fluid-on",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": { "pg": "^8.13.0" }
+}
+```
+
+### `lab-vercel2/fluid-on/vercel.json`
+
+```json
+{ "regions": ["bom1"], "fluid": true }
+```
+
+### `lab-vercel2/fluid-on/api/work.js`
+
+```js
+const { Pool } = require("pg");
+const crypto = require("crypto");
+const now = () => Number(process.hrtime.bigint()) / 1e6;
+const r = (x) => Math.round(x * 100) / 100;
+
+const instanceId = crypto.randomUUID();
+const bootedAt = Date.now();
+let coldStart = true;
+let served = 0;
+let inflight = 0;
+let maxInflight = 0;
+
+const url = new URL(process.env.DATABASE_URL);
+url.search = "";
+const pool = new Pool({
+  connectionString: url.toString(),
+  ssl: { rejectUnauthorized: false },
+  max: 5,
+  application_name: process.env.LAB_APP,
+});
+
+module.exports = async (req, res) => {
+  const t0 = now();
+  const wasCold = coldStart;
+  coldStart = false;
+  served += 1;
+  inflight += 1;
+  maxInflight = Math.max(maxInflight, inflight);
+  const out = {
+    instanceId,
+    coldStart: wasCold,
+    region: process.env.VERCEL_REGION,
+    servedOnInstance: served,
+    inflightAtStart: inflight,
+  };
+  try {
+    const q = [];
+    for (let i = 0; i < 10; i++) {
+      const t = now();
+      await pool.query("select $1::int as n", [i]);
+      q.push(now() - t);
+    }
+    const t = now();
+    await pool.query("select pg_sleep(0.3)");
+    out.sleepMs = r(now() - t);
+    out.queryMs = q.map(r);
+    out.poolTotal = pool.totalCount;
+  } catch (e) {
+    out.error = String(e.message).slice(0, 200);
+  } finally {
+    inflight -= 1;
+  }
+  out.maxInflightOnInstance = maxInflight;
+  out.instanceAgeMs = Date.now() - bootedAt;
+  out.fnMs = r(now() - t0);
+  res.status(out.error ? 500 : 200).json(out);
+};
+```
+
+### `lab-vercel2/qs/package.json`
+
+```json
+{
+  "name": "fw-lab-qs",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": { "postinstall": "prisma generate" },
+  "dependencies": {
+    "pg": "^8.13.0",
+    "@upstash/qstash": "2.12.1",
+    "@upstash/workflow": "1.5.0",
+    "@prisma/client": "7.10.0",
+    "@prisma/adapter-pg": "7.10.0",
+    "prisma": "7.10.0"
+  }
+}
+```
+
+### `lab-vercel2/qs/prisma.config.ts`
+
+```ts
+import { defineConfig } from "prisma/config";
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  datasource: {
+    url:
+      process.env.DATABASE_URL ||
+      "postgresql://placeholder:placeholder@localhost:5432/placeholder",
+  },
+});
+```
+
+### `lab-vercel2/qs/vercel.json`
+
+```json
+{
+  "regions": ["bom1"],
+  "functions": {
+    "api/*.js": { "maxDuration": 300 },
+    "api/*.mjs": { "maxDuration": 300 }
+  }
+}
+```
+
+### `lab-vercel2/qs/api/db-probe.js`
+
+```js
+const { Client } = require("pg");
+const { run, now, r } = require("../lib/workload");
+const { init, url } = require("../lib/db");
+module.exports = async (req, res) => {
+  await init();
+  const c = new Client({
+    connectionString: url,
+    ssl: { rejectUnauthorized: false },
+  });
+  const out = { impl: "raw-pg", region: process.env.VERCEL_REGION };
+  let t = now();
+  await c.connect();
+  out.connect_ms = r(now() - t);
+  await c.query("SELECT 1");
+  const q = async (sql, p, count) => {
+    const x = await c.query(sql, p);
+    return count ? x.rowCount : x.rows;
+  };
+  const tx = async (fn) => {
+    await c.query("BEGIN");
+    try {
+      await fn(q);
+      await c.query("COMMIT");
+    } catch (e) {
+      await c.query("ROLLBACK");
+      throw e;
+    }
+  };
+  try {
+    Object.assign(out, await run(q, tx));
+  } catch (e) {
+    out.error = e.message.slice(0, 200);
+  }
+  await c.end();
+  res.json(out);
+};
+```
+
+### `lab-vercel2/qs/api/dualwrite.js`
+
+```js
+const { Client } = require("@upstash/qstash");
+const { pool, init, ev } = require("../lib/db");
+module.exports = async (req, res) => {
+  await init();
+  const id = req.query.id || `o-${Date.now()}`;
+  const fail = req.query.fail === "1";
+  const out = { id };
+  await pool.query("INSERT INTO lab_v2lock.orders(id) VALUES ($1)", [id]); // step 1: committed
+  out.rowCommitted = true;
+  try {
+    if (fail) throw new Error("injected failure before publish");
+    const q = new Client({
+      baseUrl: process.env.QSTASH_URL,
+      token: process.env.QSTASH_TOKEN,
+    });
+    const r = await q.publish({
+      url: `https://${req.headers.host}/api/receive?tag=dual`,
+      body: JSON.stringify({ id, sentAt: Date.now() }),
+      headers: { "Content-Type": "text/plain" },
+    });
+    out.messageId = r.messageId;
+  } catch (e) {
+    out.publishError = e.message;
+    res.status(500);
+  }
+  await ev("dual", id, out);
+  res.json(out);
+};
+```
+
+### `lab-vercel2/qs/api/long.js`
+
+```js
+const { ev } = require("../lib/db");
+module.exports = async (req, res) => {
+  const s = Number(req.query.s || 1);
+  const key = req.query.k || `s${s}`;
+  const meta = {
+    msgId: req.headers["upstash-message-id"],
+    retried: req.headers["upstash-retried"],
+    s,
+  };
+  await ev("long_start", key, meta);
+  await new Promise((r) => setTimeout(r, s * 1000));
+  await ev("long_end", key, meta);
+  res.status(200).json({ done: true, s });
+};
+```
+
+### `lab-vercel2/qs/api/prisma.js`
+
+```js
+const { PrismaClient } = require("@prisma/client");
+const { PrismaPg } = require("@prisma/adapter-pg");
+const { run, now, r } = require("../lib/workload");
+const { init, url } = require("../lib/db");
+let prisma;
+module.exports = async (req, res) => {
+  await init();
+  const out = {
+    impl: "prisma-7.10-adapter-pg",
+    region: process.env.VERCEL_REGION,
+    cold: !prisma,
+  };
+  let t = now();
+  if (!prisma)
+    prisma = new PrismaClient({
+      adapter: new PrismaPg({
+        connectionString: url,
+        max: 1,
+        ssl: { rejectUnauthorized: false },
+      }),
+    });
+  out.client_ctor_ms = r(now() - t);
+  t = now();
+  await prisma.$queryRaw`SELECT 1`;
+  out.first_query_ms = r(now() - t);
+  const mk = (db) => async (sql, p, count) =>
+    count ? db.$executeRawUnsafe(sql) : db.$queryRawUnsafe(sql);
+  const q = mk(prisma);
+  const tx = (fn) => prisma.$transaction(async (t2) => fn(mk(t2)));
+  try {
+    Object.assign(out, await run(q, tx));
+  } catch (e) {
+    out.error = e.message.slice(0, 300);
+  }
+  res.json(out);
+};
+```
+
+### `lab-vercel2/qs/api/receive.js`
+
+```js
+const { Receiver } = require("@upstash/qstash");
+const { ev } = require("../lib/db");
+const receiver = new Receiver({
+  currentSigningKey: process.env.QSTASH_CURRENT_SIGNING_KEY,
+  nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY,
+});
+module.exports = async (req, res) => {
+  const recvAt = Date.now();
+  const body =
+    typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? "");
+  let ok = false;
+  try {
+    ok = await receiver.verify({
+      signature: req.headers["upstash-signature"],
+      body,
+    });
+  } catch (e) {
+    ok = false;
+  }
+  if (!ok) {
+    await ev("recv_badsig", "-", { recvAt });
+    return res.status(401).json({ ok: false });
+  }
+  let parsed = {};
+  try {
+    parsed = JSON.parse(body);
+  } catch {}
+  const tag = req.query.tag || "msg";
+  await ev("recv", String(parsed.id ?? req.headers["upstash-message-id"]), {
+    tag,
+    sentAt: parsed.sentAt,
+    recvAt,
+    msgId: req.headers["upstash-message-id"],
+    retried: req.headers["upstash-retried"],
+    scheduleId: req.headers["upstash-schedule-id"],
+    region: process.env.VERCEL_REGION,
+  });
+  res.status(200).json({ ok: true, recvAt });
+};
+```
+
+### `lab-vercel2/qs/api/wf-call290.mjs`
+
+```js
+import { serve } from "@upstash/workflow";
+import db from "../lib/db.js";
+const { ev } = db;
+const NAME = "call290";
+const { handler } = serve(
+  async (context) => {
+    const rid = context.workflowRunId;
+    await context.run("before", async () => {
+      await ev("wf_step", rid, { name: NAME, phase: "before" });
+    });
+    const res = await context.call("long", {
+      url: process.env.WF_BASE + "/api/long?s=290&k=wf290",
+      method: "GET",
+      retries: 0,
+    });
+    await context.run("after", async () => {
+      await ev("wf_step", rid, {
+        name: NAME,
+        phase: "after",
+        status: res.status,
+      });
+    });
+  },
+  { baseUrl: process.env.WF_BASE },
+);
+export default {
+  async fetch(req) {
+    await ev("wf_http", NAME, { t: Date.now() });
+    return handler(req);
+  },
+};
+```
+
+### `lab-vercel2/qs/api/wf-call400.mjs`
+
+```js
+import { serve } from "@upstash/workflow";
+import db from "../lib/db.js";
+const { ev } = db;
+const NAME = "call400";
+const { handler } = serve(
+  async (context) => {
+    const rid = context.workflowRunId;
+    await context.run("before", async () => {
+      await ev("wf_step", rid, { name: NAME, phase: "before" });
+    });
+    const res = await context.call("long", {
+      url: process.env.WF_BASE + "/api/long?s=400&k=wf400",
+      method: "GET",
+      retries: 0,
+    });
+    await context.run("after", async () => {
+      await ev("wf_step", rid, {
+        name: NAME,
+        phase: "after",
+        status: res.status,
+      });
+    });
+  },
+  { baseUrl: process.env.WF_BASE },
+);
+export default {
+  async fetch(req) {
+    await ev("wf_http", NAME, { t: Date.now() });
+    return handler(req);
+  },
+};
+```
+
+### `lab-vercel2/qs/api/wf-sleep.mjs`
+
+```js
+import { serve } from "@upstash/workflow";
+import db from "../lib/db.js";
+const { ev } = db;
+const NAME = "sleep";
+const { handler } = serve(
+  async (context) => {
+    const rid = context.workflowRunId;
+    await context.run("before", async () => {
+      await ev("wf_step", rid, { name: NAME, phase: "before" });
+    });
+    await context.sleep("nap", "10s");
+    await context.run("after", async () => {
+      await ev("wf_step", rid, { name: NAME, phase: "after" });
+    });
+  },
+  { baseUrl: process.env.WF_BASE },
+);
+export default {
+  async fetch(req) {
+    await ev("wf_http", NAME, { t: Date.now() });
+    return handler(req);
+  },
+};
+```
+
+### `lab-vercel2/qs/api/wf-slow30.mjs`
+
+```js
+import { serve } from "@upstash/workflow";
+import db from "../lib/db.js";
+const { ev } = db;
+const NAME = "slow30";
+const { handler } = serve(
+  async (context) => {
+    const rid = context.workflowRunId;
+    await context.run("slow", async () => {
+      await ev("wf_step", rid, { name: NAME, phase: "start" });
+      await new Promise((r) => setTimeout(r, 30000));
+      await ev("wf_step", rid, { name: NAME, phase: "end" });
+      return 1;
+    });
+  },
+  { baseUrl: process.env.WF_BASE },
+);
+export default {
+  async fetch(req) {
+    await ev("wf_http", NAME, { t: Date.now() });
+    return handler(req);
+  },
+};
+```
+
+### `lab-vercel2/qs/api/wf-three.mjs`
+
+```js
+import { serve } from "@upstash/workflow";
+import db from "../lib/db.js";
+const { ev } = db;
+const NAME = "three";
+const { handler } = serve(
+  async (context) => {
+    const rid = context.workflowRunId;
+    await context.run("s1", async () => {
+      await ev("wf_step", rid, { name: NAME, step: 1 });
+      return 1;
+    });
+    await context.run("s2", async () => {
+      await ev("wf_step", rid, { name: NAME, step: 2 });
+      return 2;
+    });
+    await context.run("s3", async () => {
+      await ev("wf_step", rid, { name: NAME, step: 3 });
+      return 3;
+    });
+  },
+  { baseUrl: process.env.WF_BASE },
+);
+export default {
+  async fetch(req) {
+    await ev("wf_http", NAME, { t: Date.now() });
+    return handler(req);
+  },
+};
+```
+
+### `lab-vercel2/qs/lib/db.js`
+
+```js
+const { Pool } = require("pg");
+const url = new URL(process.env.DATABASE_URL);
+url.search = "";
+const pool = new Pool({
+  connectionString: url.toString(),
+  ssl: { rejectUnauthorized: false },
+  max: 3,
+  application_name: "fw-lab-qs",
+});
+let ready = null;
+function init() {
+  if (!ready)
+    ready = (async () => {
+      await pool.query("CREATE SCHEMA IF NOT EXISTS lab_v2lock");
+      await pool.query(
+        "CREATE TABLE IF NOT EXISTS lab_v2lock.events(id bigserial primary key, kind text, key text, at timestamptz not null default clock_timestamp(), data jsonb)",
+      );
+      await pool.query(
+        "CREATE TABLE IF NOT EXISTS lab_v2lock.account(id int primary key, balance bigint, version int)",
+      );
+      await pool.query(
+        "INSERT INTO lab_v2lock.account VALUES (1,1000,0) ON CONFLICT DO NOTHING",
+      );
+      await pool.query(
+        "CREATE TABLE IF NOT EXISTS lab_v2lock.orders(id text primary key, created_at timestamptz default now())",
+      );
+    })();
+  return ready;
+}
+async function ev(kind, key, data) {
+  await init();
+  await pool.query(
+    "INSERT INTO lab_v2lock.events(kind,key,data) VALUES ($1,$2,$3)",
+    [kind, key, JSON.stringify(data || {})],
+  );
+}
+module.exports = { pool, init, ev, url: url.toString() };
+```
+
+### `lab-vercel2/qs/lib/workload.js`
+
+```js
+const now = () => Number(process.hrtime.bigint()) / 1e6;
+const pct = (a, p) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)];
+};
+const r = (x) => Math.round(x * 100) / 100;
+const qs = [
+  'SELECT id, "paymentStatus" FROM "Payment" ORDER BY "createdAt" DESC LIMIT 50',
+  'SELECT id, "createdAt" FROM "Appointment" ORDER BY "createdAt" DESC LIMIT 50',
+  'SELECT id, status FROM "SystemJobExecution" ORDER BY "createdAt" DESC LIMIT 50',
+  `SELECT count(*) FROM "Payment" WHERE "paymentStatus"::text = 'SUCCEEDED'`,
+  `SELECT count(*) FROM "SystemJobExecution" WHERE status::text = 'SUCCEEDED'`,
+];
+// q(sql, params) runs one statement; tx(fn) runs fn(q) inside BEGIN..COMMIT and resolves after COMMIT.
+async function run(q, tx) {
+  const out = {};
+  const s1 = [];
+  for (let i = 0; i < 50; i++) {
+    const t = now();
+    await q("SELECT 1");
+    s1.push(now() - t);
+  }
+  out.select1 = { median_ms: r(pct(s1, 0.5)), p95_ms: r(pct(s1, 0.95)) };
+  let t = now();
+  for (let i = 0; i < 20; i++) await q(qs[i % qs.length]);
+  out.mix20_total_ms = r(now() - t);
+  const holds = [];
+  for (let i = 0; i < 10; i++) {
+    let start;
+    await tx(async (q) => {
+      const row = (
+        await q(
+          "SELECT balance, version FROM lab_v2lock.account WHERE id=1 FOR UPDATE",
+        )
+      )[0];
+      start = now();
+      await q("SELECT 1");
+      await q("SELECT count(*) FROM lab_v2lock.account");
+      await q("SELECT balance FROM lab_v2lock.account WHERE id=1");
+      const n = await q(
+        "UPDATE lab_v2lock.account SET balance=balance+1, version=version+1 WHERE id=1 AND version=" +
+          Number(row.version),
+        null,
+        true,
+      );
+      if (n !== 1) throw new Error("CAS failed");
+      await q("SELECT version FROM lab_v2lock.account WHERE id=1");
+      await q("SELECT 1");
+      await q("SELECT now()");
+      await q("SELECT balance FROM lab_v2lock.account WHERE id=1");
+    });
+    holds.push(now() - start);
+  }
+  out.lock_hold = {
+    median_ms: r(pct(holds, 0.5)),
+    p95_ms: r(pct(holds, 0.95)),
+  };
+  return out;
+}
+module.exports = { run, now, r };
+```
+
+### `lab-vercel2/tools/ev.js`
+
+```js
+const { Client } = require("pg");
+const fs = require("fs");
+const env = fs
+  .readFileSync("<path-to-env-file>", "utf8")
+  .split("\n")
+  .find((l) => l.startsWith("DATABASE_URL="));
+const u = new URL(env.slice(13).replace(/^"|"$/g, ""));
+u.search = "";
+(async () => {
+  const c = new Client({
+    connectionString: u.toString(),
+    ssl: { rejectUnauthorized: false },
+  });
+  await c.connect();
+  const r = await c.query(process.argv[2]);
+  console.log(JSON.stringify(r.rows));
+  await c.end();
+})();
+```
+
+### `lab-vercel2/tools/load.js`
+
+```js
+// usage: node load.js <project> <label> <concurrency> <rounds-of-bursts>   (concurrency 1 => sequential series of N)
+const [proj, label, conc, n] = process.argv.slice(2);
+const base = `https://${proj}.vercel.app/api/work`;
+const pct = (a, p) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)];
+};
+(async () => {
+  const total = Number(n);
+  const lat = [];
+  const res = [];
+  let errors = 0;
+  const one = async () => {
+    const t = performance.now();
+    try {
+      const r = await fetch(base);
+      const j = await r.json().catch(() => ({}));
+      lat.push(performance.now() - t);
+      if (r.status !== 200) errors++;
+      res.push({ status: r.status, ...j });
+    } catch (e) {
+      errors++;
+      lat.push(performance.now() - t);
+      res.push({ status: 0, error: String(e) });
+    }
+  };
+  const t0 = Date.now();
+  if (Number(conc) === 1) {
+    for (let i = 0; i < total; i++) await one();
+  } else {
+    await Promise.all(Array.from({ length: total }, one));
+  }
+  const ids = new Set(res.map((r) => r.instanceId).filter(Boolean));
+  const out = {
+    proj,
+    label,
+    startedAt: t0,
+    requests: total,
+    p50: Math.round(pct(lat, 0.5)),
+    p95: Math.round(pct(lat, 0.95)),
+    max: Math.round(Math.max(...lat)),
+    instances: ids.size,
+    cold: res.filter((r) => r.coldStart).length,
+    errors,
+    maxInflightOnAnInstance: Math.max(
+      0,
+      ...res.map((r) => r.maxInflightOnInstance || 0),
+    ),
+    clientPoolSum: (() => {
+      const m = {};
+      res.forEach((r) => {
+        if (r.instanceId)
+          m[r.instanceId] = Math.max(m[r.instanceId] || 0, r.poolTotal || 0);
+      });
+      return Object.values(m).reduce((a, b) => a + b, 0);
+    })(),
+    fnMsMedian: Math.round(
+      pct(
+        res.map((r) => r.fnMs || 0),
+        0.5,
+      ),
+    ),
+  };
+  console.log(JSON.stringify(out));
+  require("fs").appendFileSync(
+    `../results/A.jsonl`,
+    JSON.stringify({ ...out, sample: res.slice(0, 3) }) + "\n",
+  );
+})();
+```
+
+### `lab-vercel2/tools/package.json`
+
+```json
+{
+  "name": "tools",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "pg": "^8.23.1"
+  }
+}
+```
+
+### `lab-vercel2/tools/probe.js`
+
+```js
+const { Client } = require("pg");
+const fs = require("fs");
+const env = fs
+  .readFileSync("<path-to-env-file>", "utf8")
+  .split("\n")
+  .find((l) => l.startsWith("DATABASE_URL="));
+const u = new URL(env.slice(13).replace(/^"|"$/g, ""));
+u.search = "";
+(async () => {
+  const c = new Client({
+    connectionString: u.toString(),
+    ssl: { rejectUnauthorized: false },
+  });
+  await c.connect();
+  for (let i = 0; i < 6; i++) {
+    const r = await c.query(
+      "select application_name a,state,count(*)::int n from pg_stat_activity group by 1,2 order by 3 desc limit 8",
+    );
+    console.log(JSON.stringify(r.rows));
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  await c.end();
+})();
+```
+
+### `lab-vercel2/tools/q.js`
+
+```js
+const fs = require("fs");
+const sec = Object.fromEntries(
+  fs
+    .readFileSync("../.secrets", "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+);
+const BASE = sec.QSTASH_URL,
+  H = { Authorization: "Bearer " + sec.QSTASH_TOKEN };
+const APP = "https://fw-lab-qs.vercel.app";
+const out = (o) => {
+  const s = JSON.stringify(o);
+  console.log(s);
+  fs.appendFileSync("../results/C.jsonl", s + "\n");
+};
+async function publish(path, { body = "", headers = {} } = {}) {
+  const t0 = Date.now();
+  const r = await fetch(`${BASE}/v2/publish/${APP}${path}`, {
+    method: "POST",
+    headers: { ...H, "Content-Type": "text/plain", ...headers },
+    body,
+  });
+  const j = await r.json();
+  return { ...j, status: r.status, t0, t1: Date.now() };
+}
+const cmd = process.argv[2];
+(async () => {
+  if (cmd === "latency") {
+    for (let i = 0; i < 20; i++) {
+      const sentAt = Date.now();
+      const r = await publish("/api/receive?tag=lat", {
+        body: JSON.stringify({ id: "lat" + i, sentAt }),
+      });
+      out({
+        c: "lat",
+        i,
+        status: r.status,
+        publishCallMs: r.t1 - r.t0,
+        sentAt,
+        messageId: r.messageId,
+      });
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  } else if (cmd === "long") {
+    const s = process.argv[3];
+    const r = await publish(`/api/long?s=${s}&k=q${s}`, {
+      headers: { "Upstash-Retries": process.argv[4] || "2" },
+    });
+    out({
+      c: "long",
+      s,
+      status: r.status,
+      publishedAt: r.t0,
+      messageId: r.messageId,
+    });
+  } else if (cmd === "delay") {
+    const sentAt = Date.now();
+    const r = await publish("/api/receive?tag=delay30", {
+      body: JSON.stringify({ id: "delay30", sentAt }),
+      headers: { "Upstash-Delay": "30s" },
+    });
+    out({ c: "delay", sentAt, status: r.status, messageId: r.messageId });
+  } else if (cmd === "sched") {
+    const r = await fetch(`${BASE}/v2/schedules/${APP}/api/receive?tag=sched`, {
+      method: "POST",
+      headers: {
+        ...H,
+        "Content-Type": "text/plain",
+        "Upstash-Cron": "* * * * *",
+      },
+      body: JSON.stringify({ id: "sched", sentAt: 0 }),
+    });
+    const j = await r.json();
+    out({ c: "sched_create", at: Date.now(), status: r.status, ...j });
+  } else if (cmd === "sched_del") {
+    const id = process.argv[3];
+    const r = await fetch(`${BASE}/v2/schedules/${id}`, {
+      method: "DELETE",
+      headers: H,
+    });
+    out({ c: "sched_delete", at: Date.now(), status: r.status });
+    const g = await fetch(`${BASE}/v2/schedules/${id}`, { headers: H });
+    out({ c: "sched_get_after_delete", status: g.status });
+    const l = await (
+      await fetch(`${BASE}/v2/schedules`, { headers: H })
+    ).json();
+    out({ c: "sched_list", count: l.length, ids: l.map((x) => x.scheduleId) });
+  } else if (cmd === "wf") {
+    const name = process.argv[3];
+    const t0 = Date.now();
+    const r = await fetch(`${BASE}/v2/workflows/trigger/${APP}/api/${name}`, {
+      method: "POST",
+      headers: { ...H, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    // fallback to Client below if endpoint unsupported
+    out({
+      c: "wf_trigger_rest",
+      name,
+      status: r.status,
+      t0,
+      body: (await r.text()).slice(0, 200),
+    });
+  } else if (cmd === "wfclient") {
+    const { Client } = require("../qs/node_modules/@upstash/workflow");
+    const c = new Client({ baseUrl: BASE, token: sec.QSTASH_TOKEN });
+    const name = process.argv[3];
+    const t0 = Date.now();
+    const r = await c.trigger({
+      url: `${APP}/api/${name}`,
+      body: {},
+      retries: 0,
+    });
+    out({ c: "wf_trigger", name, t0, runId: r.workflowRunId });
+  }
+})();
+```
+
+### `lab-vercel2/tools/sampler.js`
+
+```js
+// usage: node sampler.js <appname> <outfile> <ms>
+const { Client } = require("<scratch>/lab-vercel2/tools/node_modules/pg");
+const fs = require("fs");
+const [app, out, ms] = process.argv.slice(2);
+const env = fs
+  .readFileSync("<path-to-env-file>", "utf8")
+  .split("\n")
+  .find((l) => l.startsWith("DATABASE_URL="));
+const u = new URL(env.slice(13).replace(/^"|"$/g, ""));
+u.search = "";
+(async () => {
+  const c = new Client({
+    connectionString: u.toString(),
+    ssl: { rejectUnauthorized: false },
+    application_name: "fw-lab-sampler",
+  });
+  await c.connect();
+  const end = Date.now() + Number(ms);
+  const rows = [];
+  while (Date.now() < end) {
+    const t = Date.now();
+    const r = await c.query(
+      "select count(*)::int n from pg_stat_activity where application_name='Supavisor'",
+      [],
+    );
+    rows.push([t, r.rows[0].n]);
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  fs.writeFileSync(out, JSON.stringify(rows));
+  await c.end();
+})();
+```
+
+### `lab-vercel2/wf-d/next.config.ts`
+
+```ts
+import { withWorkflow } from "workflow/next";
+import type { NextConfig } from "next";
+const nextConfig: NextConfig = {};
+export default withWorkflow(nextConfig);
+```
+
+### `lab-vercel2/wf-d/package.json`
+
+```json
+{
+  "name": "fw-lab-vwf",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": { "build": "next build" },
+  "dependencies": {
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "workflow": "5.2.3",
+    "pg": "^8.13.0",
+    "typescript": "^5",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/pg": "^8"
+  }
+}
+```
+
+### `lab-vercel2/wf-d/vercel.json`
+
+```json
+{
+  "regions": ["bom1"],
+  "functions": { "app/.well-known/workflow/**": { "maxDuration": 300 } }
+}
+```
+
+### `lab-vercel2/wf-d/app/layout.tsx`
+
+```tsx
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html>
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+### `lab-vercel2/wf-d/app/page.tsx`
+
+```tsx
+export default function Page() {
+  return <p>fw-lab-vwf: Vercel Workflows lab (bom1)</p>;
+}
+```
+
+### `lab-vercel2/wf-d/app/api/dual/route.ts`
+
+```ts
+import { start } from "workflow/api";
+import { threeSteps } from "@/workflows/lab";
+import { pool, init, ev } from "@/lib/db";
+export const dynamic = "force-dynamic";
+// mode=crash_after_insert: row committed, process fails before start()  => row, no run
+// mode=rollback_after_start: start() succeeds, then txn rolls back       => run, no row
+export async function POST(req: Request) {
+  await init();
+  const mode = new URL(req.url).searchParams.get("mode") ?? "ok";
+  const id = `dual-${mode}-${Date.now()}`;
+  const out: Record<string, unknown> = { id, mode };
+  const c = await pool.connect();
+  try {
+    await c.query("BEGIN");
+    await c.query("INSERT INTO lab_v2lock.d_orders(id) VALUES ($1)", [id]);
+    if (mode === "crash_after_insert") {
+      await c.query("COMMIT");
+      throw new Error("injected failure before start()");
+    }
+    const run = await start(threeSteps, [id]);
+    out.runId = run.runId;
+    if (mode === "rollback_after_start") {
+      await c.query("ROLLBACK");
+      out.txn = "rolled back after start()";
+    } else {
+      await c.query("COMMIT");
+    }
+  } catch (e) {
+    out.error = (e as Error).message;
+    try {
+      await c.query("ROLLBACK");
+    } catch {}
+  } finally {
+    c.release();
+  }
+  await ev("dual", id, out);
+  return Response.json(out);
+}
+```
+
+### `lab-vercel2/wf-d/app/api/start/route.ts`
+
+```ts
+import { start } from "workflow/api";
+import { threeSteps, sleep30Step, durableSleep, crashy } from "@/workflows/lab";
+import { ev } from "@/lib/db";
+export const dynamic = "force-dynamic";
+export async function POST(req: Request) {
+  const name = new URL(req.url).searchParams.get("w") ?? "three";
+  const tag = `${name}-${Date.now()}`;
+  const t0 = Date.now();
+  const fn = {
+    three: threeSteps,
+    sleep30: sleep30Step,
+    dsleep: durableSleep,
+    crash: crashy,
+  }[name];
+  if (!fn) return Response.json({ error: "unknown" }, { status: 400 });
+  const run = await start(fn as typeof threeSteps, [tag]);
+  const t1 = Date.now();
+  await ev("start", tag, {
+    name,
+    startCallMs: t1 - t0,
+    t0,
+    t1,
+    runId: run.runId,
+  });
+  return Response.json({ tag, runId: run.runId, startCallMs: t1 - t0, t0 });
+}
+```
+
+### `lab-vercel2/wf-d/lib/db.ts`
+
+```ts
+import { Pool } from "pg";
+const u = new URL(process.env.DATABASE_URL ?? "postgres://none@localhost/none");
+u.search = "";
+export const pool = new Pool({
+  connectionString: u.toString(),
+  ssl: { rejectUnauthorized: false },
+  max: 3,
+  application_name: "fw-lab-vwf",
+});
+let ready: Promise<unknown> | null = null;
+export function init() {
+  if (!ready)
+    ready = (async () => {
+      await pool.query("CREATE SCHEMA IF NOT EXISTS lab_v2lock");
+      await pool.query(
+        "CREATE TABLE IF NOT EXISTS lab_v2lock.d_events(id bigserial primary key, kind text, key text, at timestamptz not null default clock_timestamp(), t_ms bigint, data jsonb)",
+      );
+      await pool.query(
+        "CREATE TABLE IF NOT EXISTS lab_v2lock.d_orders(id text primary key)",
+      );
+    })();
+  return ready;
+}
+export async function ev(
+  kind: string,
+  key: string,
+  data: Record<string, unknown> = {},
+) {
+  await init();
+  await pool.query(
+    "INSERT INTO lab_v2lock.d_events(kind,key,t_ms,data) VALUES ($1,$2,$3,$4)",
+    [kind, key, Date.now(), JSON.stringify(data)],
+  );
+}
+```
+
+### `lab-vercel2/wf-d/workflows/lab.ts`
+
+```ts
+import { sleep, getStepMetadata, getWorkflowMetadata } from "workflow";
+import { pool, ev } from "@/lib/db";
+
+async function dbStep(label: string, runId: string) {
+  "use step";
+  const t0 = Date.now();
+  const q: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    const t = performance.now();
+    await pool.query("select $1::int", [i]);
+    q.push(Math.round((performance.now() - t) * 100) / 100);
+  }
+  const t1 = Date.now();
+  await ev("step", runId, {
+    label,
+    startMs: t0,
+    endMs: t1,
+    queryMs: q,
+    region: process.env.VERCEL_REGION,
+    attempt: getStepMetadata().attempt,
+  });
+  return { label, startMs: t0, endMs: t1 };
+}
+
+export async function threeSteps(runId: string) {
+  "use workflow";
+  const a = await dbStep("s1", runId);
+  const b = await dbStep("s2", runId);
+  const c = await dbStep("s3", runId);
+  return [a, b, c];
+}
+
+async function sleepyStep(runId: string) {
+  "use step";
+  await ev("sleepy", runId, { phase: "start", t: Date.now() });
+  await new Promise((r) => setTimeout(r, 30000));
+  await ev("sleepy", runId, { phase: "end", t: Date.now() });
+}
+export async function sleep30Step(runId: string) {
+  "use workflow";
+  await sleepyStep(runId);
+}
+
+async function mark(runId: string, phase: string) {
+  "use step";
+  await ev("dsleep", runId, { phase });
+}
+export async function durableSleep(runId: string) {
+  "use workflow";
+  await mark(runId, "before");
+  await sleep("10s");
+  await mark(runId, "after");
+}
+
+async function sideEffect(runId: string, n: number) {
+  "use step";
+  await ev("crash_side_effect", runId, {
+    n,
+    attempt: getStepMetadata().attempt,
+  });
+}
+async function flaky(runId: string) {
+  "use step";
+  const attempt = getStepMetadata().attempt;
+  await ev("crash_flaky_attempt", runId, { attempt, t: Date.now() });
+  if (attempt === 1) throw new Error("injected crash on first attempt");
+}
+export async function crashy(runId: string) {
+  "use workflow";
+  await sideEffect(runId, 1);
+  await flaky(runId);
+  await sideEffect(runId, 3);
+}
 ```
