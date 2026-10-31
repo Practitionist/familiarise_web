@@ -154,11 +154,11 @@ flowchart TD
 
 The owner chose, in this session, to launch on option 4 and to decide between options 1 and 3 later. The table maps the three options to the stacks above. The full record, trade-offs and cost table are in [the evidence and decision record](../decisions/2026-10-31-job-runtime-experiments.md).
 
-| Option                                                         | Stacks     | Status                                       |
-| -------------------------------------------------------------- | ---------- | -------------------------------------------- |
-| 4: Netlify ticker plus Background Functions for jobs over 30 s | S1 plus S3 | Launch choice                                |
-| 1: Vercel Pro `bom1` plus Vercel Workflows                     | S6 and S7  | Candidate, awaiting the real-app `bom1` test |
-| 3: A Mumbai VM with DBOS                                       | S10        | Candidate, awaiting the Mumbai VM test       |
+| Option                                                         | Stacks     | Status                                                                                                             |
+| -------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
+| 4: Netlify ticker plus Background Functions for jobs over 30 s | S1 plus S3 | Launch choice                                                                                                      |
+| 1: Vercel Pro `bom1` plus Vercel Workflows                     | S6 and S7  | Candidate; the first real-app attempt was blocked (code and build changes needed), so the test is still to be done |
+| 3: A Mumbai VM with DBOS                                       | S10        | Candidate, awaiting the Mumbai VM test                                                                             |
 
 The flowchart shows the path. The trigger to revisit is the report of cost and latency from the two tests, or the launch metrics reaching about 300 concurrent users, whichever comes first.
 
