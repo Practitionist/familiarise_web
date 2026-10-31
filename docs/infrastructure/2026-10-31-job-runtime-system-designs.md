@@ -75,7 +75,7 @@ flowchart LR
 flowchart LR
   subgraph VC["Vercel Fluid compute bom1"]
     VCRON["Vercel Cron<br/>calls a route on schedule"]
-    TICK2["/api/cron/tick route<br/>up to 800 s on Pro (UNVERIFIED)"]
+    TICK2["/api/cron/tick route<br/>up to 800 s on Pro (Vercel docs)"]
     API2["/api/cleanup/[job]<br/>shared instances, pool can be greater than 1"]
     WEB2["Next.js pages and APIs"]
   end
