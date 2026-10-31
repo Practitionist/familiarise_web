@@ -17,6 +17,7 @@ import {
   baseRef,
   describeObject,
   isPresent,
+  missingObjects,
   requiredObjects,
   splitClauses,
   type LiveCatalog,
@@ -46,6 +47,28 @@ const MIXED_DIRECTION_PLAN = `
 -- AlterTable
 ALTER TABLE "ConsultationPlan" DROP COLUMN "recordingStoragePolicy", ADD COLUMN     "isFeatured" BOOLEAN NOT NULL DEFAULT false,
 ADD COLUMN     "sortOrder" INTEGER NOT NULL DEFAULT 0;
+`;
+
+/** A table the branch creates; an earlier push of the branch created it without receiptStagedAt. */
+const CREATED_TABLE_PLAN = `
+-- CreateTable
+CREATE TABLE "DigitalProductPurchase" (
+    "id" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "buyerId" TEXT NOT NULL,
+    "gatewayOrderId" TEXT,
+    "gatewayPaymentId" TEXT,
+    "paymentId" TEXT,
+    "amountPaise" BIGINT NOT NULL,
+    "status" "DigitalProductPurchaseStatus" NOT NULL DEFAULT 'PENDING',
+    "firstDownloadedAt" TIMESTAMPTZ,
+    "reconciledAt" TIMESTAMPTZ,
+    "receiptStagedAt" TIMESTAMPTZ,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ NOT NULL,
+
+    CONSTRAINT "DigitalProductPurchase_pkey" PRIMARY KEY ("id")
+);
 `;
 
 describe("the plan reader", () => {
@@ -99,16 +122,17 @@ ALTER TYPE "SupportCaseStatus" ADD VALUE 'ON_HOLD';
     // the ORIGINAL type as well.
     expect(required.map((r) => r.kind)).toEqual([
       "table",
+      "column",
       "enumType",
       "enumValue",
       "enumValue",
       "enumValue",
     ]);
-    expect(required[2].owner).toBe("LedgerAccountKind");
-    expect(required[2].name).toBe("CASH");
-    expect(required[3].name).toBe("WALLET");
-    expect(required[4].owner).toBe("SupportCaseStatus");
-    expect(required[4].name).toBe("ON_HOLD");
+    expect(required[3].owner).toBe("LedgerAccountKind");
+    expect(required[3].name).toBe("CASH");
+    expect(required[4].name).toBe("WALLET");
+    expect(required[5].owner).toBe("SupportCaseStatus");
+    expect(required[5].name).toBe("ON_HOLD");
   });
 
   it("requires every label of a recreated enum, because the plan carries no ADD VALUE", () => {
@@ -128,6 +152,22 @@ ALTER TYPE "SupportCaseStatus" ADD VALUE 'ON_HOLD';
     expect(values.every((r) => r.owner === "SupportCaseStatus")).toBe(true);
     expect(values[2].ddl).toBe(
       `ALTER TYPE "SupportCaseStatus" ADD VALUE IF NOT EXISTS 'ON_HOLD';`,
+    );
+  });
+
+  it("requires each column of a created table, not only the table", () => {
+    const required = requiredObjects(CREATED_TABLE_PLAN);
+    expect(required[0]).toMatchObject({
+      kind: "table",
+      name: "DigitalProductPurchase",
+    });
+    const columns = required.filter((r) => r.kind === "column");
+    expect(columns).toHaveLength(13);
+    expect(columns.every((c) => c.owner === "DigitalProductPurchase")).toBe(
+      true,
+    );
+    expect(columns.find((c) => c.name === "receiptStagedAt")?.ddl).toBe(
+      'ALTER TABLE "DigitalProductPurchase" ADD COLUMN "receiptStagedAt" TIMESTAMPTZ;',
     );
   });
 
@@ -187,6 +227,41 @@ describe("the live catalog comparison", () => {
     const [isFeatured, sortOrder] = requiredObjects(MERCHANDISING_PLAN);
     expect(isPresent(isFeatured, catalog)).toBe(true);
     expect(isPresent(sortOrder, catalog)).toBe(false);
+  });
+
+  it("misses a column a created table lacks when the table already exists", () => {
+    const columns = [
+      "id",
+      "productId",
+      "buyerId",
+      "gatewayOrderId",
+      "gatewayPaymentId",
+      "paymentId",
+      "amountPaise",
+      "status",
+      "firstDownloadedAt",
+      "reconciledAt",
+      "createdAt",
+      "updatedAt",
+    ].map((c) => `DigitalProductPurchase.${c}`);
+    const live: LiveCatalog = {
+      tables: new Set(["DigitalProductPurchase"]),
+      columns: new Set(columns),
+      enumTypes: new Set(),
+      enumValues: new Set(),
+    };
+    const missing = missingObjects(requiredObjects(CREATED_TABLE_PLAN), live);
+    expect(missing.map(describeObject)).toEqual([
+      "DigitalProductPurchase.receiptStagedAt",
+    ]);
+  });
+
+  it("reports a missing created table once, not once per column", () => {
+    const missing = missingObjects(
+      requiredObjects(CREATED_TABLE_PLAN),
+      catalog,
+    );
+    expect(missing.map(describeObject)).toEqual(["DigitalProductPurchase"]);
   });
 
   it("does not require the replacement type Prisma builds for a shrunken enum", () => {

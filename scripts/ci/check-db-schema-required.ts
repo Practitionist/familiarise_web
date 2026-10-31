@@ -122,11 +122,24 @@ export function requiredObjects(plan: string): RequiredObject[] {
   for (const statement of planStatements(plan)) {
     const createdTable = /\bCREATE\s+TABLE\s+"([^"]+)"/i.exec(statement);
     if (createdTable) {
-      out.push({
-        kind: "table",
-        name: createdTable[1],
-        ddl: `${statement.trim()};`,
-      });
+      const table = createdTable[1];
+      out.push({ kind: "table", name: table, ddl: `${statement.trim()};` });
+      // An earlier push of the same branch may have created the table without
+      // a column added since, so each column is required on its own.
+      const open = statement.indexOf("(");
+      const close = statement.lastIndexOf(")");
+      if (open !== -1 && close > open) {
+        for (const clause of splitClauses(statement.slice(open + 1, close))) {
+          const column = /^"([^"]+)"/.exec(clause);
+          if (!column) continue;
+          out.push({
+            kind: "column",
+            owner: table,
+            name: column[1],
+            ddl: `ALTER TABLE "${table}" ADD COLUMN ${clause.replace(/\s+/g, " ")};`,
+          });
+        }
+      }
       continue;
     }
 
@@ -389,6 +402,20 @@ export function isPresent(o: RequiredObject, catalog: LiveCatalog): boolean {
   }
 }
 
+/** What the database lacks; a missing table's CREATE already carries its columns, so they are not listed again. */
+export function missingObjects(
+  required: RequiredObject[],
+  catalog: LiveCatalog,
+): RequiredObject[] {
+  const missing = required.filter((o) => !isPresent(o, catalog));
+  const missingTables = new Set(
+    missing.filter((o) => o.kind === "table").map((o) => o.name),
+  );
+  return missing.filter(
+    (o) => !(o.kind === "column" && o.owner && missingTables.has(o.owner)),
+  );
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const live = argv.includes("--live");
@@ -450,7 +477,7 @@ async function main(): Promise<void> {
   const catalog = await readLiveCatalog(
     (live && process.env.DIRECT_URL) || connectionString,
   );
-  const missing = required.filter((o) => !isPresent(o, catalog));
+  const missing = missingObjects(required, catalog);
 
   if (missing.length === 0) {
     console.log(
