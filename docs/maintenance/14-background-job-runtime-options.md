@@ -22,7 +22,7 @@ Laptop numbers are best-case. They come from an Indian residential line about 40
 
 ### 1.1 Today's system
 
-The picture shows how the jobs run today: one scheduled function fans out HTTP calls to at most 12 job routes per tick, each route takes a lease, claims a few rows with a compare-and-swap, calls the vendor, and talks to Postgres in Mumbai. Long-running jobs are mostly not the problem. Measured p50 durations are 79–490 ms for typical jobs (for example 490 ms for `reconcile-payment-status` and 275 ms for `reconcile-orphaned-confirmations`), and the busiest tick measured 18.5 s. The real issues, in order, are database distance (about 62 ms per statement, so about 700 ms lock holds), one connection per function (`PG_POOL_MAX=1`), ticker capacity (`MAX_TARGETS_PER_TICK`, 12 per tick), and only then the time limits of a few jobs. The enforcers are `withCronLock` in `lib/cron/with-cron-lock.ts` for the lease, CAS-in-WHERE status writes for ordering, and the constraints and triggers in `prisma/sql/` as the final referee.
+The picture shows how the jobs run today: one scheduled function fans out HTTP calls to at most 12 job routes per tick, each route takes a lease, claims a few rows with a compare-and-swap, calls the vendor, and talks to Postgres in Mumbai. Long-running jobs are mostly not the problem. Measured p50 durations are 79–490 ms for typical jobs (for example 490 ms for `reconcile-payment-status` and 275 ms for `reconcile-orphaned-confirmations`), and the busiest tick measured 18.5 s. The real issues, in order, are database distance (about 62 ms per statement, so about 700 ms lock holds), one connection per function (`PG_POOL_MAX=1`), ticker capacity (`MAX_TARGETS_PER_TICK`, 12 per tick), and only then the time limits of a few jobs. Short sweep durations do not prove throughput, though. `transferRecordingsUnlocked` in `lib/stream/recording-transfer-service.ts` selects one recording per run (`take: 1`), and `transfer-recordings` runs every 15 minutes, so scheduled execution admits at most 96 recording attempts a day, with retries using the same slots. Faster SQL or a 900 s Background Function does not raise that bound, and 300 new recordings a day would outrun it with every tick green. Judge a worker pilot on arrival rate, copy duration and bytes, retry rate, the age of the oldest pending item against its source expiry, and recovery headroom, not on user count alone; the same holds for notification, email and export slices, where a fresh run and a successful admission do not prove that owed work is draining (#2492, "Job backlog starvation"). The enforcers are `withCronLock` in `lib/cron/with-cron-lock.ts` for the lease, CAS-in-WHERE status writes for ordering, and the constraints and triggers in `prisma/sql/` as the final referee.
 
 ```text
                       every 5 min
@@ -37,8 +37,8 @@ The picture shows how the jobs run today: one scheduled function fans out HTTP c
         │ /api/cleanup/job-A │  │ /api/cleanup/job-B │  │ …up to 12 per tick │
         │ Netlify Function   │  │ Netlify Function   │  │                    │
         │ ~26–30 s limit     │  │ 1 DB connection    │  │                    │
-        │ withCronLock ──────┼──┼─ lease row ────────┼──┼─► only ONE copy of │
-        │  (lease per job)   │  │                    │  │   a job at a time  │
+        │ withCronLock ──────┼──┼─ lease row ────────┼──┼─► one lease holder │
+        │  (lease per job)   │  │                    │  │   at a time (9.6)  │
         │ claim ≤N rows      │  │                    │  │                    │
         │ UPDATE … WHERE     │  │ ← compare-and-swap │  │                    │
         │  status = 'OLD'    │  │   (CAS)            │  │                    │
@@ -57,7 +57,9 @@ The picture shows how the jobs run today: one scheduled function fans out HTTP c
 
 ### 1.2 The three problems every engine keeps
 
-If latency is acceptable, any engine can run the jobs. The three problems below come from background work itself, not from the tool, and the repo already mitigates all three. The first is the dual write: starting a job is a second step beside the database commit. The second is retries and duplicates: every engine tested ran some side effect two or more times. The third is the time limit per call, which applies only to engines that call Netlify functions. The fixes are the outbox shape (state as the outbox), idempotency keys with CAS-in-WHERE, and small steps or slices.
+If latency is acceptable, any engine can run the jobs. The three problems below come from background work itself, not from the tool. The repo mitigates them on the paths that persist the obligation in the same transaction as the state change, but not everywhere. The first is the dual write: starting a job is a second step beside the database commit. The second is retries and duplicates: every engine tested ran some side effect two or more times. The third is the time limit per call, which applies only to engines that call Netlify functions. The fixes are the outbox shape (state as the outbox), idempotency keys with CAS-in-WHERE, and small steps or slices.
+
+Two known gaps sit outside that guarantee, and no engine choice closes them. In `jobs/billing/dunning.ts` the ISSUED to OVERDUE transition and its audit row commit before the overdue notices are sent, so a process death in between loses the first notice, and the next stage-1 sweep no longer selects that invoice (#2489, "Stage overdue notices atomically with dunning"). In `app/api/admin/system-jobs/run/route.ts` a manual run of a job marked `manualRun: "after"` returns 202 after registering `scheduleAfter`, before any durable record of the request exists, so a lost callback erases the accepted run (#2490, "Durably accept admin background runs before returning 202").
 
 ```text
                      ANY engine (Inngest, Trigger.dev, QStash, Upstash Workflow,
@@ -66,14 +68,15 @@ If latency is acceptable, any engine can run the jobs. The three problems below 
        ①  "start job X" ──────────────────►│  if the start is NOT in the same DB transaction
           (send / publish / start())        │  → DB row without a job, or job without a row
                                             │  FIX: outbox row in the same transaction
-                                            │       (already done: state-as-outbox)
+                                            │       (done where the obligation is persisted
+                                            │        atomically; see the gaps above)
                                             ▼
                                     runs your code somewhere
                                             │
        ②  retries ◄─────────────────────────┤  every engine tested ran some side effect 2–3×
           (504, crash, timeout)             │  (QStash 3×, Inngest 2×, Queues 2×, legacy BG fn 3×,
                                             │   Async Workloads up to 29×)
-                                            │  FIX: idempotency keys + CAS-in-WHERE (already done)
+                                            │  FIX: idempotency keys + CAS-in-WHERE
                                             ▼
                                     talks to Postgres
                                             │
@@ -81,7 +84,7 @@ If latency is acceptable, any engine can run the jobs. The three problems below 
                                             │  Inngest / QStash / Upstash Workflow / Async WL ≈ 30 s
                                             │  per step. BG functions 15 min, Vercel 300–800 s,
                                             │  Trigger.dev / VM / DBOS: none
-                                            │  FIX: small steps or slices (already done)
+                                            │  FIX: small steps or slices
 ```
 
 ## 2. The headline comparison
@@ -132,7 +135,7 @@ Three readings of the matrices matter most.
 
 - **Only one place beats Singapore on distance.** The 1–2 ms round trip needs the code to run in Mumbai. Of the tested rows, only Vercel `bom1` did so, and a self-hosted worker would. Every hosted service that calls our route leaves the code where it was.
 - **Nothing makes a vendor side effect exactly-once.** Every row that was failed on purpose repeated a side effect, except DBOS and Vercel Workflows for steps that had already completed.
-- **The 95 ms figure needs a qualifier.** It is the figure in the ticker decision record, measured through the app's Prisma client at another time. Raw `pg` from Singapore measured 62–64 ms per statement. The gap is not Prisma's per-statement cost: in `bom1`, Prisma 7.10 with its `pg` adapter added 0.1 ms or less per statement, below noise. The gap is unexplained (different time of day, cold paths), so quote 95 ms only as "measured through the app earlier" and never attribute it to Prisma.
+- **The 95 ms figure needs a qualifier.** It is the figure in the ticker decision record, measured through the app's Prisma client at another time. Raw `pg` from Singapore measured 62–64 ms per statement. In `bom1`, a bare Prisma 7.10 client running raw queries through its `pg` adapter added 0.1 ms or less per statement, below noise, but that probe did not exercise the app's extended client, model operations or the Netlify cold path. The gap is unexplained, so quote 95 ms only as "measured through the app earlier" and do not assign it a cause.
 
 ## 3. Where everything sits
 
@@ -795,7 +798,7 @@ The table gives the Fluid compute comparison. The workload was a module-level `p
 
 With Fluid OFF each instance served one request, so every request held its own database connection. With Fluid ON, warm bursts packed onto fewer instances while latency stayed about the same. Supavisor absorbed all 50 client connections: pooled backends stayed flat at 15–16. A first burst on a cold project barely benefits. The `"fluid": false` setting in `vercel.json` did not take effect; only the project API (`resourceConfig.fluid`) flipped it, and the off project never ran two requests on one instance.
 
-**Prisma overhead is below noise.** Prisma 7.10 with `@prisma/adapter-pg` against raw `pg` in the same project, alternated six times: same-mode `SELECT 1` median 2.26 ms against 2.35 ms, and a 10-round-trip lock hold of 22.2 ms against 22.1 ms. Pooler latency is bimodal, about 1 ms or about 2.3 ms, and the mode changes between invocations, so only same-mode runs compare. One-time costs: client construction 1.9 ms and the first query on a cold instance 180–221 ms. This means the gap between the old 95 ms and the raw 62–64 ms from Singapore is not Prisma's per-statement cost. It is unexplained.
+**The raw-query Prisma bridge adds no measurable cost.** A bare Prisma 7.10 client with `@prisma/adapter-pg`, running `$queryRawUnsafe` and `$executeRawUnsafe`, against raw `pg` in the same project, alternated six times: same-mode `SELECT 1` median 2.26 ms against 2.35 ms, and a 10-round-trip lock hold of 22.2 ms against 22.1 ms. Pooler latency is bimodal, about 1 ms or about 2.3 ms, and the mode changes between invocations, so only same-mode runs compare. One-time costs: client construction 1.9 ms and the first query on a cold instance 180–221 ms. The probe did not exercise the app's extended client in `lib/prisma.ts`, model operations and result transformations, the app's query mix or the Netlify pool and cold-request path, so it cannot rule the app's client path out as a contributor to the older Netlify figure. The gap between the old 95 ms and the raw 62–64 ms from Singapore stays unexplained; isolating it needs a paired Netlify run of the same statements through raw `pg` and the app client.
 
 **QStash and Upstash Workflow.** Section 5.9 covers QStash. A schedule fired exactly once a minute. A Workflow run makes N+1 requests (4 for 3 steps, a whole run in 1.9 s). A 30 s step ran inside one invocation. `context.call` to a 290 s endpoint succeeded with Upstash holding the wait, so the function was not running. Above 300 s a successful call is not proven because Hobby cannot host a 400 s endpoint.
 
@@ -839,7 +842,7 @@ The full report is [netlify-background-and-async-workloads](./experiments/2026-1
 - **Concurrency.** Ten simultaneous requests all ran in parallel, with starts spread over 0.51 s.
 - **Retries depend on the handler style.** See section 6.7. A timeout is three attempts of 15 minutes each, with no end row ever.
 - **Visibility.** The only signal is our own run rows (`SystemJobExecution` is the pattern). The CLI log shows one `Duration` line per invocation, lagging by minutes.
-- **Previews.** The runs were on a draft deploy and completed. A PR Deploy Preview was not tested. Environment variables scoped only to `production` produced a run with no database address, so set them for all deploy contexts.
+- **Previews.** The runs were on a draft deploy and completed. A PR Deploy Preview was not tested. Environment variables scoped only to `production` produced a run with no database address, so a lab site needs its own scratch values in the context it deploys to. Do not copy production secrets into every deploy context.
 
 **Async Workloads is MEASURED end to end.** The report is [netlify-async-workloads-measured](./experiments/2026-10-31-job-runtime/12-netlify-async-workloads-measured.md), and the earlier documentation-only attempt is [netlify-async-workloads](./experiments/2026-10-31-job-runtime/11-netlify-async-workloads.md). The extension was already installed team-wide, but a CLI deploy ships without its functions: only a build on Netlify's own servers from a linked repository adds them. Linking worked only through a deploy key with `provider: manual`, because the Netlify GitHub App is not installed on the owner's GitHub account, and every build had to be started with `createSiteBuild` because a deploy key creates no webhook. The table gives the measured results.
 
@@ -857,7 +860,7 @@ The full report is [netlify-background-and-async-workloads](./experiments/2026-1
 | Concurrency             | 10 concurrent events started within 1.65 s                                                                                                            |
 | Visibility              | No per-run dashboard found; state is in Blobs, function logs and the extension API                                                                    |
 
-Verdict: fine for warm fire-and-forget work; weak for anything timed, retried or multi-step. A money flow should not rely on its step memoisation. The owner may still uninstall the extension (Team settings, Extensions, Async Workloads, Uninstall) and watch the next `familiarise` deploy.
+Verdict: usable for warm fire-and-forget work once backlog alerting and a recovery drill for the pending-limit stop exist (below); weak for anything timed, retried or multi-step. A money flow should not rely on its step memoisation. The owner may still uninstall the extension (Team settings, Extensions, Async Workloads, Uninstall) and watch the next `familiarise` deploy.
 
 The table sets what the docs promise beside what was measured, so a reader can see where they differ.
 
@@ -867,9 +870,11 @@ The table sets what the docs promise beside what was measured, so a reader can s
 | Scheduler          | Polls every 60 s by default, 10 s minimum                                | Delays and sleeps landed 50–94 s late                               |
 | Steps              | `step.run` steps are not repeated on a retry; code outside steps re-runs | Steps were repeated many times in a crash run; misuse not ruled out |
 | State              | Stored exclusively as Blobs on the site                                  | Dead letters found in the Blobs store as documented                 |
-| Limits             | Events under 500 KB; chain limit 20; pending limit 2,000                 | Not tested                                                          |
+| Limits             | Events under 500 KB; chain limit 20; pending limit 2,000                 | Not tested live; the pending-limit stop is read from source below   |
 | Pricing            | "Billed as any other provisioned resources", no figures                  | Not measured                                                        |
 | Transactional send | Not documented                                                           | Not transactional                                                   |
+
+The pending limit is a refusal guard, not a drain rate. In the published `@netlify/async-workloads` 0.0.106 package used in these experiments, `PendingProcessor.plan()` in `_internal/chunk-SIDTE6TG.js` lists the due pending keys and throws before building any dispatch plan when their count exceeds `AWL_PENDING_UPPER_LIMIT` (default 2,000, from `DEFAULT_PENDING_UPPER_LIMIT`). This is read from source and was not tested live. The failure mode is that a legitimate backlog that builds up during an outage can stop the pending processor from draining at all until an operator raises the limit or works the events through the event-management APIs; later scheduler ticks do not clear it on their own, and deleting legitimate obligations to get under the threshold is not a recovery. Independent in-flight work may still progress. Backlog and guard alerting plus a recovery drill are prerequisites before relying on Async Workloads even for fire-and-forget work (#2488).
 
 ## 8. Worked example: one refund-owed job on each runtime
 
@@ -933,12 +938,22 @@ Because the function that runs the step is a Netlify function, and Netlify's edg
 
 ### 9.6 Can the ~76 jobs conflict with each other?
 
-They can contend, but a conflict costs wasted work and waiting, not corruption. A lost compare-and-swap is a no-op: the loser updates zero rows and moves on. A lock wait lasts about as long as the other writer holds the lock, so it scales with lock-hold time (about 700 ms from Singapore, about 20 ms from Mumbai as an ESTIMATE, 10.6–19.6 ms measured on `bom1`). Serializable retries happen occasionally (`withSerializableRetry` in `lib/db/serializable-retry.ts`), and a deadlock is detected by Postgres, which aborts one side so the job retries next tick. Engine concurrency controls (Inngest concurrency keys, QStash flow control, DBOS global limits) are a convenience that reduces wasted work. Layers 2 to 4 below, all in Postgres and in the status writes, are the guarantee. The enforcers are `withCronLock` in `lib/cron/with-cron-lock.ts` (a job cannot overlap itself), CAS-in-WHERE status transitions, and the constraints and triggers in the `prisma/sql/` sidecars (`ledger_txn_balanced`, `payment_legs_sum_to_amount`, `occurrence_no_confirmed_overlap`).
+They can contend, but a conflict costs wasted work and waiting, not corruption. A lost compare-and-swap is a no-op: the loser updates zero rows and moves on. A lock wait lasts about as long as the other writer holds the lock, so it scales with lock-hold time (about 700 ms from Singapore, about 20 ms from Mumbai as an ESTIMATE, 10.6–19.6 ms measured on `bom1`). Serializable retries happen occasionally (`withSerializableRetry` in `lib/db/serializable-retry.ts`), and a deadlock is detected by Postgres, which aborts one side so the job retries next tick. Engine concurrency controls (Inngest concurrency keys, QStash flow control, DBOS global limits) are a convenience that reduces wasted work. Layers 2 to 4 below, all in Postgres and in the status writes, are the guarantee. The enforcers are CAS-in-WHERE status transitions and per-entity claims, provider idempotency keys with reconciliation for the vendor side, and the constraints and triggers in the `prisma/sql/` sidecars (`ledger_txn_balanced`, `payment_legs_sum_to_amount`, `occurrence_no_confirmed_overlap`).
+
+`withCronLock` in `lib/cron/with-cron-lock.ts` is admission control, not a fence against an old worker. It admits one lease holder per job at a time, but it cannot stop a run that has lost its lease:
+
+1. On Netlify the lease is capped at 90 s (`NETLIFY_MAX_LEASE_MS`) and renewed every third of that.
+2. If renewals stop reaching the database, the lease expires, and the next caller sweeps the expired RUNNING row and takes a new lease.
+3. When the old run's next renewal matches zero rows, `startLeaseRenewal` only sets `lost`, logs and stops renewing. The old `fn()` keeps executing.
+4. The old run's final CAS on its execution row fails, which protects run history and freshness. It does not undo the business writes or vendor calls the old run made after takeover.
+5. Some non-money jobs deliberately run unlocked when the lock table is unreachable (fail-open, with a warning).
+
+So two copies of a job can overlap during a takeover. Correctness during that overlap comes from the per-row CAS and claims, the database constraints and provider idempotency, which is why every job must already be safe to run twice. The mocked lease test proves the history protection only, not worker cancellation or exactly-once effects. None of this calls for a new reconciler over invariants Postgres already enforces.
 
 ```text
  job A (refunds)          job B (payouts)          a user request
       │                         │                        │
-      │ ① lease: job A can't overlap ITSELF (withCronLock)│
+      │ ① lease admits one holder of job A (withCronLock) │
       ▼                         ▼                        ▼
   UPDATE payment         UPDATE payment            UPDATE payment
   SET status='REFUNDED'  SET status='SETTLED'      SET …
@@ -992,7 +1007,7 @@ Cloudflare's limits (Cron Triggers per account, CPU per invocation, Queues and W
 
 ## 11. How to reproduce
 
-[source-code.md](./experiments/2026-10-31-job-runtime/source-code.md) keeps the scripts for every experiment as text, so lint, typecheck and the build ignore them: the Inngest app, 504 proxy and event sender (`lab-inngest/`), the pg-boss, DBOS and Supabase probes (`lab-pg/`), the Trigger.dev latency probe (`lab-trigger/`), the lock-hold probe (`lab-lock/`), the Netlify probes (`lab-netlify/`, `lab-netlify-qstash/`) and the Vercel projects (`lab-vercel/`, `lab-vercel2/`). Credentials and local paths are redacted to placeholders. The second Vercel round (Fluid on and off, Prisma against raw `pg`, QStash and Upstash Workflow on `bom1`, Vercel Workflows) is in [vercel-fluid-prisma-qstash-workflows](./experiments/2026-10-31-job-runtime/08-vercel-fluid-prisma-qstash-workflows.md) and its code is in the same file under `lab-vercel2/`. The first Vercel `bom1` probe is described in [vercel-bom1-latency](./experiments/2026-10-31-job-runtime/07-vercel-bom1-latency.md) and its code is under `lab-vercel/`. Each probe takes its database address from an environment variable, never from the repository. Run them from a scratch directory outside the repository, against a throwaway schema whose name starts with `lab_`, and drop that schema afterwards. The Netlify and Vercel probes need a throwaway site or project with the function region pinned (`ap-southeast-1` or `bom1`), and the QStash probes need your own QStash token.
+[source-code.md](./experiments/2026-10-31-job-runtime/source-code.md) keeps the scripts for every experiment as text, so lint, typecheck and the build ignore them: the Inngest app, 504 proxy and event sender (`lab-inngest/`), the pg-boss, DBOS and Supabase probes (`lab-pg/`), the Trigger.dev latency probe (`lab-trigger/`), the lock-hold probe (`lab-lock/`), the Netlify probes (`lab-netlify/`, `lab-netlify-qstash/`) and the Vercel projects (`lab-vercel/`, `lab-vercel2/`). Credentials and local paths are redacted to placeholders. The second Vercel round (Fluid on and off, Prisma against raw `pg`, QStash and Upstash Workflow on `bom1`, Vercel Workflows) is in [vercel-fluid-prisma-qstash-workflows](./experiments/2026-10-31-job-runtime/08-vercel-fluid-prisma-qstash-workflows.md) and its code is in the same file under `lab-vercel2/`. The first Vercel `bom1` probe is described in [vercel-bom1-latency](./experiments/2026-10-31-job-runtime/07-vercel-bom1-latency.md) and its code is under `lab-vercel/`. Each probe takes its database address from an environment variable, never from the repository. Run them from a scratch directory outside the repository, against a local disposable Postgres or a separate disposable project with scoped credentials, and drop it afterwards. The probes run DDL (table creation, pg-boss and DBOS schema bootstrap, `DROP SCHEMA ... CASCADE`), which `AGENTS.md` §2.3 forbids an agent to run on the shared dev and production database. The 2026-10-31 measurements used owner-authorised `lab_` schemas on the shared project and are labelled as such; any repeat there is an exception the owner must authorise separately. The Netlify and Vercel probes need a throwaway site or project with the function region pinned (`ap-southeast-1` or `bom1`), and the QStash probes need your own QStash token.
 
 ## 12. How the experiments bear on the existing decisions
 
@@ -1039,7 +1054,7 @@ The second table ranks the runtimes with latency as a factor. A runtime ranks lo
 |    4 | pg-boss drained from `bom1`              | 0.8–1.9 ms per job and transactional enqueue, but you must call `supervise()` each tick.                                              |
 |    5 | Cloudflare pinned plus Hyperdrive        | 4 ms certificate-verified, but only `fetch` handlers pin, so consumers need a service binding.                                        |
 |    6 | Restate Cloud (EU) calling `bom1`        | Steps cost 2–3 ms in `bom1`, but the EU hop adds 92–178 ms per invocation and step, so it ranks below the options that run in Mumbai. |
-|    7 | Netlify ticker plus Background Functions | 62–64 ms and 700 ms lock holds, but correctness is solved and 900 s jobs fit.                                                         |
+|    7 | Netlify ticker plus Background Functions | 62–64 ms and 700 ms lock holds, but the outbox paths and CAS writes already exist and 900 s jobs fit.                                 |
 |    8 | QStash or Upstash Workflow on Netlify    | Same 62–64 ms plus 1.37 s delivery, a 30 s cut and a handler that re-runs per request.                                                |
 |    9 | Inngest on Netlify                       | Same 62–64 ms plus the 30 s cut and a manual sync, with the vendor owning the timers.                                                 |
 |   10 | Async Workloads                          | 63 ms, but a 60 s scheduler makes timed work about 70 s late and steps repeated in a crash run.                                       |
@@ -1047,23 +1062,23 @@ The second table ranks the runtimes with latency as a factor. A runtime ranks lo
 
 The third table ranks the runtimes without latency, judged on correctness, limits, operations, cost and migration effort.
 
-| Rank | Runtime                                  | Reason                                                                                                                                                                                                |
-| ---: | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-|    1 | DBOS                                     | Transactional enqueue and step recovery in about 3 s, with no vendor, but we run the server.                                                                                                          |
-|    2 | Vercel Workflows                         | Managed durable steps with no duration limit, but `start()` is not transactional.                                                                                                                     |
-|    3 | Restate Cloud                            | Durable steps that never re-run, idempotency keys, accurate sleep and a self-hostable open-source engine, but no native cron, no transactional enqueue and a 300 s kill-and-retry loop on long steps. |
-|    4 | Netlify ticker plus Background Functions | Nothing new to migrate, correctness already solved, 900 s jobs fit, but it keeps the most code.                                                                                                       |
-|    5 | pg-boss drain                            | Transactional enqueue and no duplicates, but its cron and expiry need `supervise()` each tick.                                                                                                        |
-|    6 | Upstash Workflow                         | Cheap steps and `context.sleep`, but a handler that re-runs and a 30 s cut on Netlify.                                                                                                                |
-|    7 | Trigger.dev                              | No time cap and checkpoint-resume, but a new vendor, no Asian region and paid-only static IPs.                                                                                                        |
-|    8 | Inngest                                  | Good timers and retries, but the host limit stands, a manual sync and a plan that pauses at 50k.                                                                                                      |
-|    9 | Cloudflare Workflows and Queues          | Capable, but a second platform, a TLS detour through Hyperdrive and no transactional enqueue.                                                                                                         |
-|   10 | QStash alone                             | Reliable delivery, but three side effects from one 504 and an outbox always needed.                                                                                                                   |
-|   11 | Async Workloads                          | Steps repeated in a crash run, retries far from the documented timing and no run dashboard.                                                                                                           |
+| Rank | Runtime                                  | Reason                                                                                                                                                                                                                                          |
+| ---: | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|    1 | DBOS                                     | Transactional enqueue and step recovery in about 3 s, with no vendor, but we run the server.                                                                                                                                                    |
+|    2 | Vercel Workflows                         | Managed durable steps with no duration limit, but `start()` is not transactional.                                                                                                                                                               |
+|    3 | Restate Cloud                            | Completed, durably journaled step results are replayed rather than re-run, idempotency keys, accurate sleep and a self-hostable open-source engine, but no native cron, no transactional enqueue and a 300 s kill-and-retry loop on long steps. |
+|    4 | Netlify ticker plus Background Functions | Nothing new to migrate, the outbox paths and CAS writes already exist, 900 s jobs fit, but it keeps the most code and the two persistence gaps in section 1.2.                                                                                  |
+|    5 | pg-boss drain                            | Transactional enqueue and no duplicates, but its cron and expiry need `supervise()` each tick.                                                                                                                                                  |
+|    6 | Upstash Workflow                         | Cheap steps and `context.sleep`, but a handler that re-runs and a 30 s cut on Netlify.                                                                                                                                                          |
+|    7 | Trigger.dev                              | No time cap and checkpoint-resume, but a new vendor, no Asian region and paid-only static IPs.                                                                                                                                                  |
+|    8 | Inngest                                  | Good timers and retries, but the host limit stands, a manual sync and a plan that pauses at 50k.                                                                                                                                                |
+|    9 | Cloudflare Workflows and Queues          | Capable, but a second platform, a TLS detour through Hyperdrive and no transactional enqueue.                                                                                                                                                   |
+|   10 | QStash alone                             | Reliable at-least-once delivery (one non-idempotent 504 probe wrote three side effects, as any engine can), but an outbox is always needed.                                                                                                     |
+|   11 | Async Workloads                          | Steps repeated in a crash run, retries far from the documented timing and no run dashboard.                                                                                                                                                     |
 
-Without latency, today's ticker and DBOS rank near the top because correctness is already solved. With latency, every option that keeps code outside Mumbai drops below the Mumbai options.
+Without latency, today's ticker and DBOS rank near the top because their outbox and idempotency machinery already exists or comes with the engine; the persistence gaps in section 1.2 apply to every option. With latency, every option that keeps code outside Mumbai drops below the Mumbai options.
 
-Restate is now ranked: with latency below the Mumbai options because of its EU hop, and without latency just below Vercel Workflows because its steps do not re-run, it has idempotency keys and accurate sleep, and it is portable (self-hostable and open source).
+Restate is now ranked: with latency below the Mumbai options because of its EU hop, and without latency just below Vercel Workflows because completed, durably journaled step results are replayed rather than re-run, it has idempotency keys and accurate sleep, and it is portable (self-hostable and open source). That is not exactly-once: failed `ctx.run` steps are retried (a long step here started its effect three times), and an external effect can succeed before its result reaches the journal, so provider idempotency and reconciliation stay for that gap. Invocation-key deduplication stops duplicate starts only within its retention window.
 
 ## 13. Where in code
 
@@ -1092,6 +1107,6 @@ The longer research this page draws on is in [scale path research](../infrastruc
 
 ## Deprecated & Superseded Approaches
 
-- **Hosted-engine triggers as a second scheduler.** An earlier plan in the scaling roadmap listed QStash, Inngest and Trigger.dev as ways to queue webhook work. Adopting one beside the ticker would break the one-scheduler rule and add a commit-then-call gap (section 6.2). The roadmap's queue section is superseded by the Prisma `Job` table decision.
+- **A hosted engine as a second owner of the same cron.** An earlier plan in the scaling roadmap listed QStash, Inngest and Trigger.dev as ways to queue webhook work, and it was not adopted; the roadmap's queue section is superseded by the Prisma `Job` table decision. What the one-scheduler rule forbids is a second clock scheduling the same sweep. Event-driven delivery is a different choice: the ticker can stay the sole owner of periodic reconciliation while a transactional outbox relays per-record work to a queue or workflow engine, which keeps the atomic outbox requirement (section 6.2). Transport, compute and orchestration are separate choices (see [page 15](./15-job-runtime-layer-matrix.md)), so a ticker plus outbox plus suitable worker remains open for a selective pilot (#2488).
 - **Cron by GitHub Actions.** The Actions-based cron fleet that the roadmap describes was deleted when the minutes budget ran out. Jobs run on the ticker.
-- **The 95 ms figure as a settled number.** Older pages quote 95 ms per statement for Netlify. Raw `pg` measured 62–64 ms, and Prisma's own overhead is below noise, so the gap is unexplained and the 95 ms is not attributable to Prisma.
+- **The 95 ms figure as a settled number.** Older pages quote 95 ms per statement for Netlify. Raw `pg` measured 62–64 ms. A bare Prisma client running raw queries measured below noise in `bom1`, which does not cover the app's client path on Netlify, so the gap is unexplained.

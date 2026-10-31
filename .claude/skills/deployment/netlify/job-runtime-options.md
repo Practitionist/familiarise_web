@@ -12,7 +12,7 @@ The real `dev` app did not run on Vercel Hobby without changes: default build OO
 
 ## Netlify (Singapore, `ap-southeast-1`)
 
-- Raw `pg` to the Mumbai pooler: 62-64 ms per statement, connect 371-405 ms, a 10-round-trip lock hold of 676-707 ms. The earlier 95 ms was measured through the app. Prisma's overhead is below noise (0.1 ms or less per statement in `bom1`), so the gap is unexplained; never attribute it to Prisma.
+- Raw `pg` to the Mumbai pooler: 62-64 ms per statement, connect 371-405 ms, a 10-round-trip lock hold of 676-707 ms. The earlier 95 ms was measured through the app. A bare Prisma client running raw queries added 0.1 ms or less per statement in `bom1`; that did not exercise the app's client or the Netlify cold path, so the gap is unexplained.
 - Edge cut: 504 `Inactivity Timeout` after about 30.1 s on a throwaway site (real QStash, 3 attempts), against about 26 s measured on prod. The function keeps running and finishes its side effect after the 504. Design for 26 s. Docs: synchronous 60 s, scheduled 30 s, background 15 min.
 - A hosted scheduler that calls a route here (Inngest, QStash, Upstash Workflow) cannot extend it. `context.call` offloads the caller's wait but not the callee's limit.
 - No static egress outside an Enterprise add-on in `cmh`, `fra`, `lhr` (docs). RazorpayX uses the F1 proxy.
@@ -31,7 +31,7 @@ The real `dev` app did not run on Vercel Hobby without changes: default build OO
 
 - Caller gets a 202 in 0.65-0.85 s. Runs of 60, 300 and 840 s completed; 960 s was killed at exactly 900 s. Database: 63.9 ms per statement, 704 ms lock hold.
 - A v2 default-export handler that throws is never retried; legacy `exports.handler` throws, `process.exit(1)` and timeouts are retried at +1 and +2 minutes (3 attempts, each repeats the side effect). The v2 reason is our inference.
-- Ten concurrent runs ran in parallel. A draft deploy worked; a PR Deploy Preview was not tested. Set env vars for all deploy contexts. Logs lag by minutes.
+- Ten concurrent runs ran in parallel. A draft deploy worked; a PR Deploy Preview was not tested. A variable scoped only to `production` is absent from a draft deploy; give a lab site scratch values in the context it uses, never production secrets in every context. Logs lag by minutes.
 - Async Workloads (measured; team-wide extension, already installed so it also applies to `familiarise`): a CLI deploy lacks its functions, so it needs a build on Netlify's servers from a linked repository. Event latency median 1.21 s warm; retries at +34 s and 5 attempts then a Blobs dead letter; the 60 s scheduler makes delays 50-94 s late; a standard step of 30 s or more fails (background type ran 840 s); steps repeated in a crash run; `send` is not transactional. Fine for warm fire-and-forget work only.
 
 ## Cloudflare
