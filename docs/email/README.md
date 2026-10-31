@@ -173,12 +173,12 @@ Four email types can be aimed at any inbox by a stranger who types an address in
 
 All ops alerts set `Reply-To: connect@practitionist.com` (`SUPPORT_EMAIL` in `lib/company.ts`) so replies reach the one live mailbox rather than looping back to the sender. `familiarisenow.com` is send-only (Resend): it publishes a null MX (`0 .`), so nothing sent to an address on it arrives. Every inbound address is `connect@practitionist.com` through `SUPPORT_EMAIL` in `lib/company.ts`.
 
-| Alert                       | Trigger                                      | Recipient Variable                                       | Slack Mirror (`SLACK_OPS_WEBHOOK_URL`) | Source Path                                     |
-| --------------------------- | -------------------------------------------- | -------------------------------------------------------- | -------------------------------------- | ----------------------------------------------- |
-| Sentry ingest canary alert  | Ingest canary detects discarded errors       | `OBSERVABILITY_ALERT_EMAIL` (fallback: `supportEmail()`) | Yes (5s timeout, after send)           | `lib/observability/ingest-alert.ts`             |
-| Sentry quota alert          | Accepted errors reach 70% monthly quota      | `OBSERVABILITY_ALERT_EMAIL` (fallback: `supportEmail()`) | No                                     | `lib/observability/quota-alert.ts`              |
-| DPDP breach deadline alert  | Unreported breach nears 72h statutory window | `COMPLIANCE_ALERT_EMAIL` (`lib/company.ts`)              | Yes (5s timeout, after send)           | `jobs/compliance/databreach-deadline-alerts.ts` |
-| MSME payment deadline alert | Payouts near Section 43B(h) deadline         | `COMPLIANCE_ALERT_EMAIL` (`lib/company.ts`)              | No                                     | `jobs/compliance/msme-payment-alerts.ts`        |
+| Alert                       | Trigger                                      | Recipient Variable                                       | Slack Mirror (`SLACK_OPS_WEBHOOK_URL`) | Source Path                                    |
+| --------------------------- | -------------------------------------------- | -------------------------------------------------------- | -------------------------------------- | ---------------------------------------------- |
+| Sentry ingest canary alert  | Ingest canary detects discarded errors       | `OBSERVABILITY_ALERT_EMAIL` (fallback: `supportEmail()`) | Yes (5s timeout, after send)           | `lib/observability/ingest-alert.ts`            |
+| Sentry quota alert          | Accepted errors reach 70% monthly quota      | `OBSERVABILITY_ALERT_EMAIL` (fallback: `supportEmail()`) | No                                     | `lib/observability/quota-alert.ts`             |
+| DPDP breach deadline alert  | Unreported breach nears 72h statutory window | `COMPLIANCE_ALERT_EMAIL` (`lib/company.ts`)              | Yes (5s timeout, after send)           | `lib/compliance/databreach-deadline-alerts.ts` |
+| MSME payment deadline alert | Payouts near Section 43B(h) deadline         | `COMPLIANCE_ALERT_EMAIL` (`lib/company.ts`)              | No                                     | `jobs/compliance/msme-payment-alerts.ts`       |
 
 ### Newsletter & Waitlist (`newsletter@news.familiarisenow.com`)
 
@@ -241,7 +241,7 @@ Enforced in `lib/email/delivery-guard.ts` across `stage()`, `attempt()`, `retry-
 
 - **Mode**: Only `EMAIL_DELIVERY_MODE=live` disables the guard; any other value or unset defaults to `allowlist`.
 - **Allowlist Matching**: Permits recipients on `familiarisenow.com` (and its subdomains) or explicit entries in comma-separated `EMAIL_ALLOWLIST` (exact addresses or `@domain`/`domain`). If any recipient in `to`, `cc`, or `bcc` is disallowed, the entire message is held in `FailedEmail` as `DEAD_LETTER` (`lastError = "held:pre-launch"`).
-- **Production Launch Requirement**: Set `EMAIL_DELIVERY_MODE=live` in both Netlify production environment variables AND GitHub repository variables (`cron-intra-day.yml`, `cron-daily.yml`).
+- **Production Launch Requirement**: Set `EMAIL_DELIVERY_MODE=live` in the Netlify production environment variables. Every scheduled job that sends mail runs on the Netlify ticker.
 
 The full zone is in [Domains and DNS records](../deployment/README.md#domains-and-dns-records). In short:
 

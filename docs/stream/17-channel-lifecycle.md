@@ -151,9 +151,9 @@ The thresholds are defined in `lib/stream/channel-lifecycle.ts` —
 `isPastRetention()` — and shared between the expiry job and the dashboard sync
 so the two never drift apart.
 
-The daily job `jobs/stream/expire-event-channels.ts` (an `expire-event-channels`
-step in `.github/workflows/cron-daily.yml`; it has no entry in
-`lib/cron/cleanup-registry.ts` and Actions is budget-blocked, so it does not run on a schedule today) applies two stages:
+The daily job `expire-event-channels` (a registered job in
+`lib/cron/cleanup-registry.ts`, run by the Netlify ticker through the Stream
+lifecycle background worker at :55 in the 08:00 UTC window) applies two stages:
 
 - **Freeze (+7d after the last slot ends).** `updatePartial({ set: { frozen:
 true } })`: history stays readable, nobody can post. After a successful

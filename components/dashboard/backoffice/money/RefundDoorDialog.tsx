@@ -18,9 +18,9 @@ import { callOpsDoor, isProposed, PROPOSED_TOAST } from "./ops-door";
 
 export type RefundDoor = "issue" | "override" | "credits";
 
-/** A stuck refund the hand refund did not cover; it still blocks the booking. */
-const stillOwedAnswer = z.object({
-  markerStillOwed: z.object({ paise: z.number().nullable() }),
+/** What this hand refund did to the payment's owed refund: fully settled, or reduced and still retrying. */
+const settledOwedAnswer = z.object({
+  result: z.object({ settledOwed: z.object({ note: z.string() }) }),
 });
 
 const COPY: Record<
@@ -199,16 +199,13 @@ export function RefundDoorDialog({
             : "/api/admin/refunds/issue",
           { ...body(), idempotencyKey, reason },
         );
-        const stillOwed = stillOwedAnswer.safeParse(result);
+        const settled = settledOwedAnswer.safeParse(result);
         toast({
           title: isProposed(result)
             ? PROPOSED_TOAST
             : "Done — the refund is on its way",
-          ...(stillOwed.success && {
-            description:
-              stillOwed.data.markerStillOwed.paise === null
-                ? "This booking still owes its full balance back, so it stays blocked. Refund the full balance to clear it."
-                : `This booking still owes ${money(stillOwed.data.markerStillOwed.paise)} back, so it stays blocked. Refund the rest to clear it.`,
+          ...(settled.success && {
+            description: settled.data.result.settledOwed.note,
           }),
         });
         for (const key of INVALIDATE)

@@ -61,7 +61,7 @@ The deadline Razorpay reports in `respond_by` (Unix seconds on the wire, stored 
 
 ## 4. Deadlines and alerts
 
-The `support-sla-sweep` job (every 30 minutes) looks at disputes in `NEEDS_RESPONSE` or `WARNING_NEEDS_RESPONSE` whose `dueBy` is from 24 hours ago to 72 hours ahead. For each it stages a notification to administrators keyed `dispute-due:<disputeId>:<72|24>`, the second when 24 hours or fewer remain, so each window alerts once. Any dispute due within 12 hours or past due with no response also raises a standing "critical" Sentry finding once for the batch. This job, not a dispute-specific one, owns the alert.
+The `support-sla-sweep` job (every 30 minutes) looks at disputes in `NEEDS_RESPONSE` or `WARNING_NEEDS_RESPONSE` whose `dueBy` is from 24 hours ago to 72 hours ahead. For each it stages a notification to administrators keyed `dispute-due:<disputeId>:<72|24>`, the second when 24 hours or fewer remain, so each window alerts once. Any dispute due within 12 hours or past due with no response also records one standing `SystemEvent` finding (severity `WARN`, key `dispute-deadline:critical`) and sends one Sentry warning when the batch holds a dispute not paged before, so each dispute pages once. It is a money exception to the escalations-only Sentry policy. This job, not a dispute-specific one, owns the alert.
 
 ## 5. What each verdict does
 

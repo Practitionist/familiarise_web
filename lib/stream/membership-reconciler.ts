@@ -7,6 +7,7 @@ import {
   withCronLock,
 } from "@/lib/cron/with-cron-lock";
 import { startDeadline } from "@/lib/cron/run-deadline";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   getStreamChatClient,
@@ -298,25 +299,30 @@ async function reconcileUnlocked(opts: {
   result.checkpoint = reachedEnd ? null : after;
   result.errors = failureSample;
   result.success = result.failures === 0;
-  // One event per run: removals mean an inline revocation was missed, a brake or failure needs a look.
-  if (
-    result.membersRemoved > 0 ||
-    result.failures > 0 ||
-    result.channelsSkippedSuspicious > 0
-  ) {
+  // Removals and brakes are business findings for the console; only failures page Sentry.
+  if (result.membersRemoved > 0 || result.channelsSkippedSuspicious > 0) {
+    await recordSystemEvent({
+      category: "STREAM",
+      severity: "WARN",
+      message: `Stream membership reconcile removed ${result.membersRemoved} member(s), braked ${result.channelsSkippedSuspicious} channel(s)`,
+      context: {
+        channelsScanned: result.channelsScanned,
+        membersRemoved: result.membersRemoved,
+        channelsSkippedSuspicious: result.channelsSkippedSuspicious,
+      },
+      correlationId: "reconcile-stream-memberships",
+    });
+  }
+  if (result.failures > 0) {
     reportSentryError(
-      new Error(
-        `Stream membership reconcile removed ${result.membersRemoved} member(s), braked ${result.channelsSkippedSuspicious} channel(s), ${result.failures} failure(s)`,
-      ),
+      new Error(`Stream membership reconcile: ${result.failures} failure(s)`),
       {
         subsystem: "stream",
         op: "reconcile-memberships",
-        level: result.failures > 0 ? "error" : "warning",
+        level: "error",
         fingerprint: ["stream", "reconcile-memberships"],
         extra: {
           channelsScanned: result.channelsScanned,
-          membersRemoved: result.membersRemoved,
-          channelsSkippedSuspicious: result.channelsSkippedSuspicious,
           failures: result.failures,
           sample: failureSample,
         },

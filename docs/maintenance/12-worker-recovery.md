@@ -166,8 +166,8 @@ and await bounds; a timeout does not cancel an SDK request or a database effect.
 There is no new polling column or independent queue.
 
 The ticker supplies six opportunities a day, at 03:55, 07:55, 11:55, 15:55,
-19:55 and 23:55 UTC, with a 24-second HTTP abort. Some existing hours already
-occupy all 120 dispatch slots. The four-hour phase fits the ten-target calendar
+19:55 and 23:55 UTC, with a 24-second HTTP abort. An hour offers 144 dispatch slots
+(12 ticks of at most 12 targets), and the busiest tick holds 11. The four-hour phase fits the twelve-target calendar
 bound without weakening existing cadences or moving Stream work. At five rows
 per run, the upper bound is 30 candidate inspections per day, less under slow/error
 conditions. For N continuously eligible invoices, one rotation takes at least

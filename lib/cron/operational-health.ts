@@ -27,7 +27,7 @@ export const OPERATIONAL_COMPLETION_REQUIREMENTS: readonly CompletionRequirement
     { jobName: "retry-auto-refunds", maxAgeMinutes: 45, tier: "paging" },
     {
       jobName: "reconcile-standalone-purchases",
-      maxAgeMinutes: 45,
+      maxAgeMinutes: 150,
       tier: "paging",
     },
     {

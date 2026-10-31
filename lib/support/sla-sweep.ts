@@ -39,6 +39,7 @@ const AUTO_CLOSE_START_BUDGET_MS = 16_000;
 const AUTO_CLOSE_HOLD_SAMPLE_LIMIT = 10;
 const DISPUTE_HORIZON_MS = 72 * HOUR_MS;
 const DISPUTE_CRITICAL_MS = 12 * HOUR_MS;
+const DISPUTE_PAGE_WINDOW_MS = 7 * 24 * HOUR_MS;
 // Past due by more than a day, earlier sweeps already fired both windows; the bound keeps those rows from filling the batch.
 const DISPUTE_LOOKBACK_MS = DAY_MS;
 // Open disputes due within the four-day window; far above any real backlog, it only bounds the read.
@@ -707,7 +708,10 @@ async function autoCloseResolvedRows(
   return result;
 }
 
-/** One page per run for disputes due within 12 h or already past due; new ids re-page, repeats stay quiet for 24 h. */
+/**
+ * A money exception: one Sentry warning per run that holds a dispute not paged
+ * before. The window outlives the sweep's 36 h critical span, so each dispute pages once.
+ */
 async function pageCriticalDisputeDeadlines(
   now: Date,
   disputes: { id: string; disputeId: string; dueBy: Date | null }[],
@@ -724,12 +728,14 @@ async function pageCriticalDisputeDeadlines(
         key: "dispute-deadline:critical",
         ids: critical.map((d) => d.id),
         message,
+        windowMs: DISPUTE_PAGE_WINDOW_MS,
       },
       () =>
         reportSentryMessage(message, {
           subsystem: "payments",
           op: "dispute-deadline-critical",
-          level: "error",
+          level: "warning",
+          fingerprint: ["payments", "dispute-deadline-critical"],
           extra: {
             disputes: critical.map((d) => ({
               id: d.id,

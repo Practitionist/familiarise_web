@@ -406,16 +406,16 @@ model SupportCase {
   callbackPhone  String? @db.VarChar(32)
   callbackWindow String? @db.VarChar(64)
 
-  ackDueAt          DateTime? @db.Timestamptz
-  acknowledgedAt    DateTime? @db.Timestamptz
-  resolutionDueAt   DateTime? @db.Timestamptz
-  resolvedAt        DateTime? @db.Timestamptz
+  ackDueAt               DateTime? @db.Timestamptz
+  acknowledgedAt         DateTime? @db.Timestamptz
+  resolutionDueAt        DateTime? @db.Timestamptz
+  resolvedAt             DateTime? @db.Timestamptz
   autoCloseLastAttemptAt DateTime? @db.Timestamptz
-  closedAt          DateTime? @db.Timestamptz
-  deletedAt         DateTime? @db.Timestamptz
-  firstAgentReplyAt DateTime? @db.Timestamptz
-  awaitingUserSince DateTime? @db.Timestamptz
-  pausedSeconds     Int       @default(0)
+  closedAt               DateTime? @db.Timestamptz
+  deletedAt              DateTime? @db.Timestamptz
+  firstAgentReplyAt      DateTime? @db.Timestamptz
+  awaitingUserSince      DateTime? @db.Timestamptz
+  pausedSeconds          Int       @default(0)
 
   messageSeq    Int       @default(0)
   lastMessageAt DateTime? @db.Timestamptz
@@ -550,18 +550,18 @@ model SupportCaseEvidenceRequest {
 }
 
 model SupportCaseDecision {
-  id               String        @id @default(uuid())
-  caseId           String
-  supportCase      SupportCase   @relation("CaseDecisions", fields: [caseId], references: [id], onDelete: Restrict)
-  decidedById      String
-  decidedBy        User          @relation(fields: [decidedById], references: [id], onDelete: Restrict)
-  clientActionId   String        @db.VarChar(128)
-  outcome          String        @db.VarChar(32)
-  explanation      String        @db.Text
-  privateRationale String?       @db.Text
-  appealUntil      DateTime      @db.Timestamptz
-  createdAt        DateTime      @default(now()) @db.Timestamptz
-  appeals          SupportCase[] @relation("CaseDecisionAppeals")
+  id                   String               @id @default(uuid())
+  caseId               String
+  supportCase          SupportCase          @relation("CaseDecisions", fields: [caseId], references: [id], onDelete: Restrict)
+  decidedById          String
+  decidedBy            User                 @relation(fields: [decidedById], references: [id], onDelete: Restrict)
+  clientActionId       String               @db.VarChar(128)
+  outcome              String               @db.VarChar(32)
+  explanation          String               @db.Text
+  privateRationale     String?              @db.Text
+  appealUntil          DateTime             @db.Timestamptz
+  createdAt            DateTime             @default(now()) @db.Timestamptz
+  appeals              SupportCase[]        @relation("CaseDecisionAppeals")
   /// A correcting decision names the one it replaces; one original per case is a sidecar partial index.
   supersedesDecisionId String?              @unique
   supersedes           SupportCaseDecision? @relation("DecisionSupersedes", fields: [supersedesDecisionId], references: [id], onDelete: Restrict)
@@ -1356,8 +1356,8 @@ model Organization {
   @@index([isPublic, status])
   @@index([dataResidencyRegion])
   @@index([billingAccountId])
-  @@map("organizations")
   @@index([lastAccrualRollupAt, id])
+  @@map("organizations")
 }
 
 model Invitation {
@@ -5054,11 +5054,11 @@ enum CancellationPolicyStatus {
 /// "use the requested times" re-confirmed exactly what the consultee asked to
 /// move away from.
 model RescheduleRequest {
-  id String @id @default(uuid())
+  id               String    @id @default(uuid())
   /// Released sessions as [{ ordinal, startsAt }] written in the release tx; the durable notice source.
   releasedSessions Json?
   /// The parent's status just before this release moved it, written in the release tx; restore reads it.
-  originStatus     String? @db.VarChar(32)
+  originStatus     String?   @db.VarChar(32)
   /// Stamped in the tx that puts the booking back as it was (withdraw, decline, expiry); a restored request costs no reschedule.
   restoredAt       DateTime? @db.Timestamptz
 
@@ -6054,6 +6054,8 @@ model Payment {
   refundOwedReason            String?
   refundOwedAt                DateTime?                    @db.Timestamptz
   refundOwedAttempts          Int                          @default(0)
+  // The sweep's next drive after a failed one (backoff); null = due now.
+  refundOwedNextAt            DateTime?
   // Referrals this payment qualified (at most one in practice).
   qualifyingReferrals         Referral[]                   @relation("ReferralQualifyingPayment")
   firstPaymentOfRelationships ExpertCustomerRelationship[]
@@ -6123,15 +6125,14 @@ model Payment {
   childPayments   Payment[] @relation("OverageSideCharge")
 
   // A6/A7/PM-16 — Timestamptz on the money models (#676).
-  createdAt     DateTime       @default(now()) @db.Timestamptz
-  updatedAt     DateTime       @updatedAt @db.Timestamptz
-  overageEvents OverageEvent[]
+  createdAt        DateTime       @default(now()) @db.Timestamptz
+  updatedAt        DateTime       @updatedAt @db.Timestamptz
+  overageEvents    OverageEvent[]
+  // Polling progress is separate from business modification and aging.
+  lastReconciledAt DateTime?      @db.Timestamptz
 
   // Allow multiple users to pay for same appointment (webinars/classes)
   @@unique([userId, appointmentId])
-  // Polling progress is separate from business modification and aging.
-  lastReconciledAt DateTime? @db.Timestamptz
-
   @@index([expiresAt, paymentStatus])
   @@index([isMockPayment])
   @@index([paymentStatus])
@@ -7664,6 +7665,7 @@ model SystemJobExecution {
   @@index([startedAt])
   @@index([status, startedAt])
   @@index([triggeredBy])
+  @@index([jobName, startedAt(sort: Desc)])
 }
 
 //////////////////////////////////////////////////// ANNOUNCEMENT SYSTEM ////////////////////////////////////////////////////
@@ -8297,14 +8299,14 @@ model OrgDataExportJob {
 /// Exact vendor object ownership for a single immutable export attempt.
 /// Deliberately has no parent FK so erasing an org/job cannot erase deletion work.
 model OrgDataExportArtifact {
-  exportJobId      String
-  attemptStartedAt DateTime @db.Timestamptz(3)
-  bucket           String
-  storagePath      String
-  expiresAt        DateTime @db.Timestamptz(3)
-  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  exportJobId           String
+  attemptStartedAt      DateTime  @db.Timestamptz(3)
+  bucket                String
+  storagePath           String
+  expiresAt             DateTime  @db.Timestamptz(3)
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
   lastDeleteAttemptedAt DateTime? @db.Timestamptz(3)
-  fileSizeBytes    BigInt?
+  fileSizeBytes         BigInt?
 
   @@id([exportJobId, attemptStartedAt])
   @@unique([bucket, storagePath])

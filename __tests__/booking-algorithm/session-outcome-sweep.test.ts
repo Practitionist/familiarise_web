@@ -16,13 +16,13 @@ jest.mock("../../lib/novu/stage-bell", () => ({
   stageBell: (...a: unknown[]) => stageBell(...a),
 }));
 const reportStandingFinding = jest.fn(
-  async (_args: unknown, report: () => void) => {
-    report();
+  async (_args: unknown, report?: () => void) => {
+    report?.();
     return true;
   },
 );
 jest.mock("../../lib/observability/standing-finding", () => ({
-  reportStandingFinding: (a: unknown, r: () => void) =>
+  reportStandingFinding: (a: unknown, r?: () => void) =>
     reportStandingFinding(a, r),
 }));
 const reportSentryError = jest.fn();
@@ -174,7 +174,7 @@ it.each([
   },
 );
 
-it("a needs-human item older than 72 h raises one warning keyed on the queued ids", async () => {
+it("a needs-human item older than 72 h records one finding keyed on the queued ids, not a Sentry event", async () => {
   const db = {
     appointmentOccurrence: {
       count: jest.fn(async () => 2),
@@ -184,10 +184,7 @@ it("a needs-human item older than 72 h raises one warning keyed on the queued id
   await alertStaleNeedsHuman(db as never, at(0));
   expect(reportStandingFinding).toHaveBeenCalledWith(
     expect.objectContaining({ ids: ["o1", "o2", "count:2"] }),
-    expect.any(Function),
+    undefined,
   );
-  expect(reportSentryError).toHaveBeenCalledWith(
-    expect.any(Error),
-    expect.objectContaining({ level: "warning", extra: { stale: 2 } }),
-  );
+  expect(reportSentryError).not.toHaveBeenCalled();
 });

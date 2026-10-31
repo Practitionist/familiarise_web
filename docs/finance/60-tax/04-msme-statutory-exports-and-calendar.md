@@ -95,7 +95,7 @@ TDS deposit, advance tax, the half-yearly MSME-1 return and annual GST returns a
 
 ## Deprecated & Superseded Approaches
 
-- **Compliance jobs run by GitHub Actions** (`cron-daily.yml`, `irp-uploader.yml`, `dunning.yml`). No workflow names a money or compliance job. Everything above runs on the Netlify ticker.
+- **Compliance jobs run by GitHub Actions** (the deleted `cron-daily.yml`, `irp-uploader.yml`, `dunning.yml`). No workflow names a money or compliance job. Everything above runs on the Netlify ticker.
 - **`ENABLE_IRP_UPLOADER`.** The variable exists nowhere in the code. The uploader is gated by the GSTIN and ClearTax settings.
 - **A `quarterly-return-prep` job and a Form 16A generator.** Neither exists.
 - **A hard-coded 03:40 UTC for the MSME digest.** The comment in the job file says so; the slot comes from the ticker and is 03:45.

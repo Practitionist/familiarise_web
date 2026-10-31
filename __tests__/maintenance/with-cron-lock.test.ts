@@ -46,7 +46,23 @@ const delegate = (
 
 const mockRedisSet = (redis as unknown as { set: jest.Mock }).set;
 
+// Either host marker caps the lease, so every test starts off Netlify.
+const priorHost = {
+  NETLIFY: process.env.NETLIFY,
+  SITE_ID: process.env.SITE_ID,
+  NEXT_PUBLIC_SENTRY_ENVIRONMENT: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
+};
+afterAll(() => {
+  for (const [key, value] of Object.entries(priorHost)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
+
 beforeEach(() => {
+  delete process.env.NETLIFY;
+  delete process.env.SITE_ID;
+  process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
   jest.clearAllMocks();
   delegate.findFirst.mockResolvedValue(null);
   delegate.create.mockResolvedValue({ id: "exec-1" });
@@ -64,7 +80,7 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
 
     expect(delegate.findFirst).toHaveBeenCalledWith({
       where: { jobName: "dunning", status: "RUNNING" },
-      select: { id: true, startedAt: true, createdAt: true },
+      select: { id: true, startedAt: true, createdAt: true, result: true },
     });
     expect(delegate.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -73,6 +89,7 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
         jobName: "dunning",
         status: "RUNNING",
         triggeredBy: expect.stringMatching(/^(cron|github-actions)$/),
+        result: { environment: "production" },
       }),
       select: { id: true },
     });
@@ -136,6 +153,7 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
       id: "exec-old",
       startedAt: new Date(Date.now() - ageMs),
       createdAt: new Date(Date.now() - ageMs - 60_000),
+      result: { environment: "preview" },
     });
     delegate.findFirst.mockResolvedValueOnce(
       heartbeat(LONG_JOB_TTL_MS - 5_000),
@@ -175,7 +193,7 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
         result: {
           outcome: "failed",
           reason: "lease-expired",
-          environment: expect.any(String),
+          environment: "preview",
           takenOverBy,
         },
       },
@@ -187,17 +205,14 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
   });
 
   it("caps the lease to 90 s on Netlify and leaves other hosts alone", () => {
-    const prev = process.env.NETLIFY;
-    try {
-      process.env.NETLIFY = "true";
-      expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
-      expect(effectiveLeaseTtlMs(30_000)).toBe(30_000);
-      delete process.env.NETLIFY;
-      expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(LONG_JOB_TTL_MS);
-    } finally {
-      if (prev === undefined) delete process.env.NETLIFY;
-      else process.env.NETLIFY = prev;
-    }
+    process.env.NETLIFY = "true";
+    expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
+    expect(effectiveLeaseTtlMs(30_000)).toBe(30_000);
+    delete process.env.NETLIFY;
+    process.env.SITE_ID = "site";
+    expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
+    delete process.env.SITE_ID;
+    expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(LONG_JOB_TTL_MS);
   });
 
   it("re-arms the lease every third of the TTL while the job runs and computes durationMs from initial acquisition", async () => {

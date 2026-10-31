@@ -1062,6 +1062,8 @@ async function completeIndividualSlots(
       take: maxOutcomes,
     });
     const read = cohort.map((slot) => slot.id);
+    // An idle bite skips the outage read; the parent passes still run.
+    if (cohort.length === 0) return { errors, read };
     // The cohort is ordered by end, so the earliest start is not cohort[0]'s.
     const earliestStart = new Date(
       Math.min(

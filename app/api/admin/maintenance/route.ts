@@ -17,6 +17,8 @@ import {
   type MaintenanceState,
 } from "@/lib/maintenance";
 import { signMaintenanceBypassCookie } from "@/lib/maintenance-edge";
+import { REDIS_KEYS } from "@/lib/maintenance-keys";
+import { mayWriteProductionState } from "@/lib/production-state";
 import prisma from "@/lib/prisma";
 import {
   withCronLock,
@@ -403,6 +405,15 @@ async function control(
 ): Promise<NextResponse> {
   const auth = await requireAdmin();
   if ("error" in auth && auth.error) return auth.error;
+  // Another deploy would flip production: the window, its Redis mirror and the drains are all shared.
+  if (!mayWriteProductionState(REDIS_KEYS.PHASE))
+    return NextResponse.json(
+      {
+        error: "Maintenance changes run only on the production deploy.",
+        code: "MAINTENANCE_PRODUCTION_ONLY",
+      },
+      { status: 409 },
+    );
   try {
     const result = await withCronLock(
       "maintenance-control",

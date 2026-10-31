@@ -165,12 +165,12 @@ async function deleteOrphanPage(
 }
 
 export async function reconcileDigitalProductStorage(
-  opts: { limit?: number; windowStart?: Date } = {},
+  opts: { limit?: number } = {},
 ): Promise<DigitalProductStorageSweepResult> {
   const bucket = process.env.R2_DIGITAL_PRODUCTS_BUCKET?.trim();
   if (!bucket) {
     const skipped: ConfigSkip = "R2_DIGITAL_PRODUCTS_BUCKET not configured";
-    reportConfigSkip(JOB, skipped, opts.windowStart);
+    reportConfigSkip(JOB, skipped);
     return {
       supersededPurged: 0,
       uploadsCleared: 0,

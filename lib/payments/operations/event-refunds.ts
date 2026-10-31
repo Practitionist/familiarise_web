@@ -17,9 +17,12 @@ import { refundBookingPayment } from "./booking-refund";
 import { RefundValidationError } from "./refund";
 import {
   driveRefundOwed,
+  heldInsteadOf,
   markerFromRow,
+  owedAlreadyHeldNote,
   REFUND_OWED_SELECT,
   stampRefundsOwed,
+  type OwedRefundAlreadyHeld,
   type RefundOwedMarker,
 } from "./refund-owed";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
@@ -64,6 +67,8 @@ export type WholeEventRefundSummary = {
   deferred: number;
   /** Every seat was a skip: nothing issued, deferred or failed. */
   alreadyRefunded: boolean;
+  /** Seats whose payment already owed another door's refund, so this added nothing; top up by hand. */
+  alreadyOwed: OwedRefundAlreadyHeld[];
 };
 
 /** Seats refunded inline before the rest is left to the retry sweep. */
@@ -258,12 +263,13 @@ export async function stampWholeEventRefundsOwed(
   args: EventRefundArgs,
 ): Promise<Map<string, EventSeatPlan>> {
   const { plans } = await planEventSeats(tx, args);
-  await stampRefundsOwed(
-    tx,
-    [...plans.values()].flatMap((plan) =>
-      plan.kind === "owe" ? [plan.marker] : [],
-    ),
+  const markers = [...plans.values()].flatMap((plan) =>
+    plan.kind === "owe" ? [plan.marker] : [],
   );
+  // A seat another door already owes keeps that refund (first writer wins); it is recorded here.
+  if ((await stampRefundsOwed(tx, markers)) < markers.length) {
+    await heldInsteadOf(tx, markers);
+  }
   return plans;
 }
 
@@ -290,6 +296,7 @@ export async function refundWholeEventPayments(
     skippedAlreadyRefunded: 0,
     deferred: 0,
     alreadyRefunded: false,
+    alreadyOwed: [],
   };
   const { plans: stamped, ...rest } = opts;
   const args: EventRefundArgs = { kind, eventId, reason, ...rest };
@@ -336,6 +343,22 @@ export async function refundWholeEventPayments(
   ]);
   const disputed = new Map(disputes.map((d) => [d.paymentId, d.status]));
   const markers = rows.flatMap((row) => markerFromRow(row) ?? []);
+  for (const marker of markers) {
+    const plan = plans.get(marker.paymentId);
+    if (plan?.kind === "owe" && plan.marker.key !== marker.key) {
+      summary.alreadyOwed.push({
+        paymentId: marker.paymentId,
+        key: plan.marker.key,
+        heldKey: marker.key,
+        heldPaise: marker.amountPaise,
+        note: owedAlreadyHeldNote(
+          marker.paymentId,
+          marker.key,
+          marker.amountPaise,
+        ),
+      });
+    }
+  }
   // A seat planned owed whose marker is already gone was settled by a racing drive.
   summary.skippedAlreadyRefunded += owing.length - markers.length;
 
