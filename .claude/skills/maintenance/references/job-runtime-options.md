@@ -43,7 +43,7 @@ Compatibility rules:
 4. Only a Postgres-native queue (pg-boss, DBOS) avoids the enqueue dual write. Everything else needs an outbox row in the same transaction.
 5. Layer 6 never changes: CAS-in-WHERE, idempotency keys, ledger triggers and reconcilers stay on every stack.
 
-Stacks (S1 ticker today, S2 Prisma `Job` table, S3 Netlify Background Functions, S4 Async Workloads (measured), S5 QStash or Inngest on Netlify, S6 Vercel Cron in `bom1`, S7 Vercel Workflows in `bom1`, S8 Cloudflare, S9 Trigger.dev, S10 DBOS on a Mumbai VM):
+Stacks (S1 ticker today, S2 Prisma `Job` table, S3 Netlify Background Functions, S4 Async Workloads (measured), S5 QStash or Inngest on Netlify, S6 Vercel Cron in `bom1`, S7 Vercel Workflows in `bom1`, S8 Cloudflare, S9 Trigger.dev, S10 DBOS on a Mumbai VM, S11 Restate Cloud EU calling `bom1`):
 
 | Stack | DB per round trip                                            | Time cap                                 | Double-write safe                                         | Status                              |
 | ----- | ------------------------------------------------------------ | ---------------------------------------- | --------------------------------------------------------- | ----------------------------------- |
@@ -76,11 +76,11 @@ A conflict costs wasted work and waiting, not corruption. Engine concurrency con
 
 ## Rankings (judgement from the evidence, not a decision)
 
-With latency (distance from the Mumbai database counts): 1 Vercel Workflows `bom1`, 2 Vercel Cron plus Functions `bom1`, 3 DBOS on a Mumbai VM (estimate), 4 pg-boss drain from `bom1`, 5 Cloudflare pinned plus Hyperdrive, 6 Netlify ticker plus Background Functions, 7 QStash or Upstash Workflow on Netlify, 8 Inngest on Netlify, 9 Async Workloads, 10 Trigger.dev.
+With latency (distance from the Mumbai database counts): 1 Vercel Workflows `bom1`, 2 Vercel Cron plus Functions `bom1`, 3 DBOS on a Mumbai VM (estimate), 4 pg-boss drain from `bom1`, 5 Cloudflare pinned plus Hyperdrive, 6 Restate Cloud EU calling `bom1`, 7 Netlify ticker plus Background Functions, 8 QStash or Upstash Workflow on Netlify, 9 Inngest on Netlify, 10 Async Workloads, 11 Trigger.dev.
 
-Without latency (correctness, limits, ops, cost, migration effort): 1 DBOS, 2 Vercel Workflows, 3 Netlify ticker plus Background Functions, 4 pg-boss drain, 5 Upstash Workflow, 6 Trigger.dev, 7 Inngest, 8 Cloudflare Workflows and Queues, 9 QStash alone, 10 Async Workloads.
+Without latency (correctness, limits, ops, cost, migration effort): 1 DBOS, 2 Vercel Workflows, 3 Restate, 4 Netlify ticker plus Background Functions, 5 pg-boss drain, 6 Upstash Workflow, 7 Trigger.dev, 8 Inngest, 9 Cloudflare Workflows and Queues, 10 QStash alone, 11 Async Workloads.
 
-Without latency, today's ticker and DBOS rank near the top because correctness is already solved. With latency, every option that keeps code outside Mumbai drops below the Mumbai options. Restate is not ranked yet (results pending). Detail: `docs/maintenance/14-background-job-runtime-options.md` section 12.2.
+Without latency, today's ticker and DBOS rank near the top because correctness is already solved. With latency, every option that keeps code outside Mumbai drops below the Mumbai options. Restate Cloud (EU) calling `bom1` ranks 6th with latency (the EU hop is 92-178 ms per invocation and step) and 3rd without latency, just below Vercel Workflows (steps never re-run, idempotency keys, accurate sleep, self-hostable). Detail: `docs/maintenance/14-background-job-runtime-options.md` section 12.2.
 
 ## What a host move removes
 
@@ -109,6 +109,7 @@ Machinery (`wc -l`): `lib/cron/cleanup-registry.ts` 2,410 (keep), `netlify/funct
 - Netlify Background Functions: a v2 default-export handler that throws is never retried, while a legacy `exports.handler` throw, `process.exit(1)` or a 900 s kill is retried at about +1 min and +2 min (3 attempts, each repeats the side effect). Catch errors and record failure in our own run row, and stay idempotent. The v2 reason is an inference.
 - Set env vars for all deploy contexts. Variables scoped only to `production` left a draft deploy with no database address.
 - Background function logs arrive minutes late and show one `Duration` line per invocation; status lives only in our run rows. The caller gets only a 202.
+- Restate Cloud (measured): only US and EU regions, so every invocation and step pays a 92-178 ms EU hop. The handler replays from the top on each `ctx.run`, so code outside steps re-runs. A step that exceeds the host cap (310 s on Vercel) is killed and retried about every 300 s without limit, so long steps must be idempotent. There is no native cron (self-rescheduling delayed sends drift about 1 s per tick). Triggering a call is not transactional with Postgres; use an outbox. Ingress needs a Full-role API key (Admin gets 403). Request-identity verification needs the environment public key, available only in the UI. The Vercel catch-all route needs a rewrite, and per-deployment URLs are behind Vercel SSO, so register the alias.
 - A publish after commit is a dual write. Use state as the outbox or an in-database enqueue.
 
 ## How to rerun a probe

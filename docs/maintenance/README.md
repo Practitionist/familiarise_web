@@ -19,32 +19,32 @@ Activation never implicitly cancels bookings. Cancellation requires a separate e
 
 ## Reading order
 
-| Reference                                                                        | Purpose                                                                                                      |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| [00 — BetterStack setup](./00-betterstack-setup.md)                              | Existing incident/status-page integration and operator setup                                                 |
-| [01 — Architecture](./01-architecture.md)                                        | Maintenance state, durable remediation and dependency boundaries                                             |
-| [02 — DEGRADED and OFFLINE](./02-degraded-vs-offline.md)                         | Request and job admission policy                                                                             |
-| [03 — Business risks](./03-business-risks.md)                                    | Domain risks to consider before planned work                                                                 |
-| [04 — Generated job inventory](./04-cron-jobs-reference.md)                      | Source-derived roster, schedules, bounds and declared lease policy                                           |
-| [05 — Webhooks](./05-webhook-behavior.md)                                        | Recording external truth during maintenance                                                                  |
-| [06 — Before maintenance](./06-pre-maintenance-checklist.md)                     | Schema/edge bootstrap, activation, active-work checks and confirmed remediation                              |
-| [07 — Recovery](./07-post-maintenance-recovery.md)                               | Explicit reopening, dependency checks and durable recovery                                                   |
-| [08 — SDK updates](./08-sdk-update-guide.md)                                     | Package-specific verification guidance                                                                       |
-| [09 — Further work](./09-future-improvements.md)                                 | Proposals; check current source before treating an item as outstanding                                       |
-| [10 — Cron and reconciliation](./10-cron-and-reconciliation-reference.md)        | Dispatch/status contracts, sidecars, ledger checkpoints and host concerns                                    |
-| [11 — Job machinery and dashboard](./11-job-machinery-catalog.md)                | Current job signals, lease/retry contracts and the operations dashboard design                               |
-| [12 — Worker recovery](./12-worker-recovery.md)                                  | Export attempt ownership, expiry refunds and retained-order recovery                                         |
-| [13 — Readiness gates](./13-readiness-and-operating-gates.md)                    | Source, schema, execution, alert-delivery and recovery evidence                                              |
-| [14 — Background-job runtime options](./14-background-job-runtime-options.md)    | Comparison matrix, diagrams, worked example and official sources for each job runtime tested on 2026-10-31   |
-| [15 — Job-runtime layer matrix](./15-job-runtime-layer-matrix.md)                | The eight layers, the five compatibility rules and ten coherent stacks, with an HLD and a decision flowchart |
-| [16 — Job machinery and portability](./16-job-machinery-and-portability.md)      | Line counts of the job machinery, what a host move removes and ports-and-adapters portability                |
-| [Job-runtime experiment reports](./experiments/2026-10-31-job-runtime/README.md) | Index, method, honesty labels, dashboards and cleanup log for the raw reports                                |
-| [Schedule catalog](./schedule-catalog.md)                                        | Catalog ownership and generated documentation                                                                |
-| [Bounded housekeeping](./housekeeping-bounds.md)                                 | Retention eligibility, per-phase limits and continuation semantics                                           |
-| [Compliance/retention workers](./compliance-retention-workers.md)                | Consent retention, durable breach staging and event history                                                  |
-| [Messaging retention](./messaging-retention.md)                                  | Job-history retention, bounded payload scrubbing and replay races                                            |
-| [Recording worker](../stream/recording-background-worker.md)                     | Narrow background adapter, source expiry and activation evidence                                             |
-| [Deployment/failback](../deployment/README.md)                                   | Runtime differences, one active scheduler and standby recovery                                               |
+| Reference                                                                        | Purpose                                                                                                         |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| [00 — BetterStack setup](./00-betterstack-setup.md)                              | Existing incident/status-page integration and operator setup                                                    |
+| [01 — Architecture](./01-architecture.md)                                        | Maintenance state, durable remediation and dependency boundaries                                                |
+| [02 — DEGRADED and OFFLINE](./02-degraded-vs-offline.md)                         | Request and job admission policy                                                                                |
+| [03 — Business risks](./03-business-risks.md)                                    | Domain risks to consider before planned work                                                                    |
+| [04 — Generated job inventory](./04-cron-jobs-reference.md)                      | Source-derived roster, schedules, bounds and declared lease policy                                              |
+| [05 — Webhooks](./05-webhook-behavior.md)                                        | Recording external truth during maintenance                                                                     |
+| [06 — Before maintenance](./06-pre-maintenance-checklist.md)                     | Schema/edge bootstrap, activation, active-work checks and confirmed remediation                                 |
+| [07 — Recovery](./07-post-maintenance-recovery.md)                               | Explicit reopening, dependency checks and durable recovery                                                      |
+| [08 — SDK updates](./08-sdk-update-guide.md)                                     | Package-specific verification guidance                                                                          |
+| [09 — Further work](./09-future-improvements.md)                                 | Proposals; check current source before treating an item as outstanding                                          |
+| [10 — Cron and reconciliation](./10-cron-and-reconciliation-reference.md)        | Dispatch/status contracts, sidecars, ledger checkpoints and host concerns                                       |
+| [11 — Job machinery and dashboard](./11-job-machinery-catalog.md)                | Current job signals, lease/retry contracts and the operations dashboard design                                  |
+| [12 — Worker recovery](./12-worker-recovery.md)                                  | Export attempt ownership, expiry refunds and retained-order recovery                                            |
+| [13 — Readiness gates](./13-readiness-and-operating-gates.md)                    | Source, schema, execution, alert-delivery and recovery evidence                                                 |
+| [14 — Background-job runtime options](./14-background-job-runtime-options.md)    | Comparison matrix, diagrams, worked example and official sources for each job runtime tested on 2026-10-31      |
+| [15 — Job-runtime layer matrix](./15-job-runtime-layer-matrix.md)                | The eight layers, the five compatibility rules and eleven coherent stacks, with an HLD and a decision flowchart |
+| [16 — Job machinery and portability](./16-job-machinery-and-portability.md)      | Line counts of the job machinery, what a host move removes and ports-and-adapters portability                   |
+| [Job-runtime experiment reports](./experiments/2026-10-31-job-runtime/README.md) | Index, method, honesty labels, dashboards and cleanup log for the raw reports                                   |
+| [Schedule catalog](./schedule-catalog.md)                                        | Catalog ownership and generated documentation                                                                   |
+| [Bounded housekeeping](./housekeeping-bounds.md)                                 | Retention eligibility, per-phase limits and continuation semantics                                              |
+| [Compliance/retention workers](./compliance-retention-workers.md)                | Consent retention, durable breach staging and event history                                                     |
+| [Messaging retention](./messaging-retention.md)                                  | Job-history retention, bounded payload scrubbing and replay races                                               |
+| [Recording worker](../stream/recording-background-worker.md)                     | Narrow background adapter, source expiry and activation evidence                                                |
+| [Deployment/failback](../deployment/README.md)                                   | Runtime differences, one active scheduler and standby recovery                                                  |
 
 Link a worker guide when its implementation is present; keep proposed activation work separate from the current inventory.
 

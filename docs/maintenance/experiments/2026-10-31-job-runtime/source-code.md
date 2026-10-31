@@ -6314,3 +6314,472 @@ export const asyncWorkloadConfig = {
   ],
 };
 ```
+
+## `lab-restate/`
+
+### `lab-restate/package.json`
+
+```json
+{
+  "name": "fw-lab-restate",
+  "private": true,
+  "type": "module",
+  "dependencies": { "@restatedev/restate-sdk": "latest", "pg": "^8.13.0" },
+  "devDependencies": { "@types/pg": "^8", "typescript": "^5" }
+}
+```
+
+### `lab-restate/vercel.json`
+
+```json
+{
+  "regions": ["bom1"],
+  "functions": { "api/restate.ts": { "maxDuration": 300 } },
+  "rewrites": [
+    { "source": "/api/restate/:path*", "destination": "/api/restate" }
+  ]
+}
+```
+
+### `lab-restate/api/restate.ts`
+
+```ts
+import * as restate from "@restatedev/restate-sdk/fetch";
+import pg from "pg";
+
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 1,
+  ssl: { rejectUnauthorized: false },
+});
+const q = (text: string, p: unknown[] = []) => pool.query(text, p);
+const log = (kind: string, run: string, info: Record<string, unknown> = {}) =>
+  q("insert into lab_rst.ev(kind,run,t_ms,info) values ($1,$2,$3,$4)", [
+    kind,
+    run,
+    Date.now(),
+    JSON.stringify(info),
+  ]);
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const lab = restate.service({
+  name: "Lab",
+  handlers: {
+    ping: async (ctx: restate.Context, i: { run: string }) => {
+      const t = Date.now();
+      await log("ping.in", i.run, { t });
+      return { t };
+    },
+    steps: async (ctx: restate.Context, i: { run: string }) => {
+      await log("steps.enter", i.run);
+      for (const s of [1, 2, 3]) {
+        await ctx.run(`step${s}`, async () => {
+          const t0 = Date.now();
+          const per: number[] = [];
+          for (let k = 0; k < 5; k++) {
+            const a = Date.now();
+            await q("select 1");
+            per.push(Date.now() - a);
+          }
+          await log("steps.step", i.run, { s, t0, t1: Date.now(), per });
+          return s;
+        });
+      }
+      await log("steps.exit", i.run);
+      return "ok";
+    },
+    flaky: async (ctx: restate.Context, i: { run: string }) => {
+      await log("flaky.enter", i.run);
+      await ctx.run("s1", async () => {
+        await log("flaky.side", i.run, { s: 1 });
+      });
+      await ctx.run("s2", async () => {
+        const r = await q(
+          "insert into lab_rst.ev(kind,run,t_ms) values ('flaky.attempt',$1,$2) returning (select count(*) from lab_rst.ev where kind='flaky.attempt' and run=$1) c",
+          [i.run, Date.now()],
+        );
+        if (Number(r.rows[0].c) <= 1) throw new Error("first attempt fails");
+        await log("flaky.side", i.run, { s: 2 });
+      });
+      await ctx.run("s3", async () => {
+        await log("flaky.side", i.run, { s: 3 });
+      });
+      return "ok";
+    },
+    sleeper: async (ctx: restate.Context, i: { run: string }) => {
+      await log("sleep.enter", i.run);
+      const before = Date.now();
+      await ctx.sleep({ seconds: 10 });
+      await log("sleep.after", i.run, { before });
+      return "ok";
+    },
+    slow: async (ctx: restate.Context, i: { run: string; secs: number }) => {
+      await log("slow.enter", i.run);
+      await ctx.run("slow", async () => {
+        await log("slow.start", i.run, { secs: i.secs });
+        await sleepMs(i.secs * 1000);
+        await log("slow.end", i.run);
+      });
+      return "ok";
+    },
+    idem: async (ctx: restate.Context, i: { run: string }) => {
+      await ctx.run("w", async () => {
+        await log("idem.exec", i.run);
+      });
+      return "ok";
+    },
+    dual: async (ctx: restate.Context, i: { run: string }) => {
+      const r = await q(
+        "select count(*)::int c from lab_rst.orders where id=$1",
+        [i.run],
+      );
+      await log("dual.seen", i.run, { orderRowVisible: r.rows[0].c });
+    },
+    delayed: async (ctx: restate.Context, i: { run: string }) => {
+      await log("delayed.in", i.run);
+    },
+    cron: async (ctx: restate.Context, i: { run: string; n: number }) => {
+      await log("cron.tick", i.run, { n: i.n });
+      if (i.n < 6)
+        ctx
+          .serviceSendClient<typeof lab>({ name: "Lab" })
+          .cron(
+            { run: i.run, n: i.n + 1 },
+            restate.rpc.sendOpts({ delay: { seconds: 30 } }),
+          );
+    },
+  },
+});
+
+const endpoint = restate.createEndpointHandler({ services: [lab] });
+export const POST = (r: Request) => endpoint(r);
+export const GET = (r: Request) => endpoint(r);
+```
+
+### `lab-restate/lib.mjs`
+
+```js
+import fs from "fs";
+import pg from "pg";
+export const ING = "https://<environment-id>.env.eu.restate.cloud:8080";
+export const TOK = process.env.RESTATE_KEY;
+export const dbUrl = process.env.DATABASE_URL;
+export const db = () =>
+  new pg.Client({
+    connectionString: dbUrl,
+    ssl: { rejectUnauthorized: false },
+  });
+export async function call(path, body, headers = {}) {
+  const t0 = Date.now();
+  const r = await fetch(ING + path, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: "Bearer " + TOK,
+      ...headers,
+    },
+    body: JSON.stringify(body),
+  });
+  const txt = await r.text();
+  return { status: r.status, ms: Date.now() - t0, t0, txt };
+}
+export const med = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.floor(s.length / 2)];
+};
+export const p95 = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.ceil(s.length * 0.95) - 1];
+};
+export async function evs(run) {
+  const c = db();
+  await c.connect();
+  const r = await c.query(
+    "select kind,t_ms::float8 t,info from lab_rst.ev where run=$1 order by id",
+    [run],
+  );
+  await c.end();
+  return r.rows;
+}
+```
+
+### `lab-restate/setup.mjs`
+
+```js
+import pg from "pg";
+import fs from "fs";
+const url = process.env.DATABASE_URL;
+export const c = new pg.Client({
+  connectionString: url,
+  ssl: { rejectUnauthorized: false },
+});
+export const dbUrl = url;
+await c.connect();
+const cmd = process.argv[2];
+if (cmd === "up") {
+  await c.query(
+    "create schema if not exists lab_rst; create table if not exists lab_rst.ev(id bigserial primary key, kind text, run text, t_ms bigint, info jsonb); create table if not exists lab_rst.orders(id text primary key)",
+  );
+}
+if (cmd === "down") {
+  await c.query("drop schema lab_rst cascade");
+  console.log(
+    (
+      await c.query(
+        "select nspname from pg_namespace where nspname like 'lab_rst%'",
+      )
+    ).rowCount,
+    "rows",
+  );
+}
+await c.end();
+```
+
+### `lab-restate/m1.mjs`
+
+```js
+import { call, med, p95, evs } from "./lib.mjs";
+const e2e = [],
+  hop = [];
+await call("/Lab/ping", { run: "warm" });
+for (let i = 0; i < 20; i++) {
+  const run = "p" + i;
+  const r = await call("/Lab/ping", { run });
+  e2e.push(r.ms);
+  const e = await evs(run);
+  hop.push(e[0].t - r.t0);
+  console.log(i, r.status, r.ms, "laptop->fn_entry", e[0].t - r.t0);
+}
+console.log(
+  "e2e median",
+  med(e2e),
+  "p95",
+  p95(e2e),
+  "min",
+  Math.min(...e2e),
+  "max",
+  Math.max(...e2e),
+);
+console.log("laptop->fn entry median", med(hop), "p95", p95(hop));
+// baseline direct to vercel
+const d = [];
+for (let i = 0; i < 20; i++) {
+  const t = Date.now();
+  await fetch("https://fw-lab-restate.vercel.app/api/restate/discover");
+  d.push(Date.now() - t);
+}
+console.log("direct vercel discover median", med(d), "p95", p95(d));
+// baseline direct to restate ingress health
+const h = [];
+for (let i = 0; i < 20; i++) {
+  const t = Date.now();
+  await fetch(
+    "https://<environment-id>.env.eu.restate.cloud:8080/restate/health",
+  );
+  h.push(Date.now() - t);
+}
+console.log("ingress health median", med(h), "p95", p95(h));
+```
+
+### `lab-restate/m2.mjs`
+
+```js
+import { call, db, evs } from "./lib.mjs";
+const show = (rows) =>
+  rows
+    .map(
+      (r) =>
+        `${r.kind} ${r.t}${r.info && Object.keys(r.info).length ? " " + JSON.stringify(r.info) : ""}`,
+    )
+    .join("\n");
+// 2 steps
+let run = "steps" + Date.now();
+let r = await call("/Lab/steps", { run });
+console.log("== M2 steps", r.status, r.ms + "ms");
+let e = await evs(run);
+const t0 = e[0].t;
+for (const x of e)
+  console.log(
+    x.kind,
+    "+" + (x.t - t0),
+    x.info.s
+      ? `step${x.info.s} dur=${x.info.t1 - x.info.t0} per=${x.info.per}`
+      : "",
+  );
+console.log(
+  "fn invocations (enter rows):",
+  e.filter((x) => x.kind === "steps.enter").length,
+);
+// 3 flaky
+run = "flaky" + Date.now();
+r = await call("/Lab/flaky", { run });
+console.log("== M3 flaky", r.status, r.ms + "ms");
+e = await evs(run);
+const f0 = e[0].t;
+for (const x of e)
+  console.log(x.kind, "+" + (x.t - f0), JSON.stringify(x.info));
+console.log(
+  "enters",
+  e.filter((x) => x.kind === "flaky.enter").length,
+  "side rows by step:",
+  JSON.stringify(e.filter((x) => x.kind === "flaky.side").map((x) => x.info.s)),
+);
+// 4 sleep
+run = "sleep" + Date.now();
+r = await call("/Lab/sleeper", { run });
+console.log("== M4 sleep", r.status, r.ms + "ms");
+e = await evs(run);
+const s0 = e[0].t;
+for (const x of e)
+  console.log(x.kind, "+" + (x.t - s0), JSON.stringify(x.info));
+// 6 idempotency
+run = "idem" + Date.now();
+const h = { "idempotency-key": run };
+const a = await call("/Lab/idem", { run }, h),
+  b = await call("/Lab/idem", { run }, h);
+e = await evs(run);
+console.log(
+  "== M6 idem",
+  a.status,
+  a.ms,
+  a.txt,
+  "|",
+  b.status,
+  b.ms,
+  b.txt,
+  "exec rows:",
+  e.filter((x) => x.kind === "idem.exec").length,
+);
+// 7 dual write
+const c = db();
+await c.connect();
+const id1 = "dual-commit-" + Date.now();
+await c.query("insert into lab_rst.orders(id) values ($1)", [id1]);
+console.log(
+  "== M7a committed row",
+  id1,
+  "then simulated crash before calling Restate; invocations for it:",
+  (await evs(id1)).length,
+);
+const id2 = "dual-rollback-" + Date.now();
+await c.query("begin");
+await c.query("insert into lab_rst.orders(id) values ($1)", [id2]);
+const sr = await fetch((await import("./lib.mjs")).ING + "/Lab/dual/send", {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    authorization: "Bearer " + (await import("./lib.mjs")).TOK,
+  },
+  body: JSON.stringify({ run: id2 }),
+});
+console.log("M7b send inside open tx status", sr.status);
+await new Promise((r) => setTimeout(r, 4000));
+await c.query("rollback");
+console.log(
+  "M7b order row after rollback:",
+  (
+    await c.query("select count(*)::int c from lab_rst.orders where id=$1", [
+      id2,
+    ])
+  ).rows[0].c,
+);
+e = await evs(id2);
+console.log(
+  "M7b handler ran:",
+  e.map((x) => x.kind + " " + JSON.stringify(x.info)),
+);
+await c.end();
+```
+
+### `lab-restate/m5.mjs`
+
+```js
+import { ING, TOK } from "./lib.mjs";
+for (const s of [30, 290, 310]) {
+  const run = "slow" + s + "-" + Date.now();
+  const r = await fetch(ING + "/Lab/slow/send", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: "Bearer " + TOK,
+    },
+    body: JSON.stringify({ run, secs: s }),
+  });
+  console.log(run, r.status, Date.now(), await r.text());
+}
+```
+
+### `lab-restate/m8.mjs`
+
+```js
+import { ING, TOK, evs } from "./lib.mjs";
+const run = "delay" + Date.now();
+const t = Date.now();
+const r = await fetch(ING + "/Lab/delayed/send?delay=30s", {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    authorization: "Bearer " + TOK,
+  },
+  body: JSON.stringify({ run }),
+});
+console.log("== M8 send", r.status, Date.now() - t, "ms ack");
+await new Promise((r) => setTimeout(r, 40000));
+const e = await evs(run);
+console.log(
+  "fired at +",
+  e[0] ? e[0].t - t : "never",
+  "ms after send (target 30000)",
+);
+```
+
+### `lab-restate/m9.mjs`
+
+```js
+import { ING, TOK } from "./lib.mjs";
+const run = "cron" + Date.now();
+const t = Date.now();
+const r = await fetch(ING + "/Lab/cron/send", {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    authorization: "Bearer " + TOK,
+  },
+  body: JSON.stringify({ run, n: 1 }),
+});
+console.log("== M9 cron start", r.status, run, t);
+```
+
+### `lab-restate/hop.mjs`
+
+```js
+import fs from "fs";
+import { db, med, p95 } from "./lib.mjs";
+const inv = JSON.parse(fs.readFileSync("ping.json", "utf8")).slice(-20);
+const c = db();
+await c.connect();
+const e = (
+  await c.query(
+    "select run,t_ms::float8 t from lab_rst.ev where kind='ping.in' and run ~ '^p[0-9]+$' order by id",
+  )
+).rows.slice(-20);
+await c.end();
+const hop = inv.map((x, i) => e[i].t - x.r),
+  tot = inv.map((x) => x.d - x.r),
+  ing = inv.map((x) => x.r - x.c);
+console.log(
+  "restate running_at -> fn entry: median",
+  med(hop),
+  "p95",
+  p95(hop),
+  "min",
+  Math.min(...hop),
+);
+console.log(
+  "restate running_at -> completed_at: median",
+  med(tot),
+  "p95",
+  p95(tot),
+);
+console.log("created->running median", med(ing));
+```
