@@ -285,6 +285,7 @@ Live hosting operations on Netlify Pro, multi-platform Mumbai compute evaluation
 - [multi-platform-evaluation.md](./deployment/multi-platform-evaluation.md) - Ranked 10-platform evaluation scorecard (`Cloud Run asia-south1`, `Vercel Pro bom1`, `Fly.io bom`, `Netlify Pro sin`, etc.)
 - [emergency-failback-runbook.md](./deployment/emergency-failback-runbook.md) - `< 90s` hot-standby failback runbook (`Platform X -> Netlify` with zero code reverts)
 - [netlify.md](./deployment/netlify.md) - Full operating handbook for live Netlify Pro (`sin`) deployments, env contexts, and build/cold-start controls
+- [netlify-vs-vercel-product-map.md](./deployment/netlify-vs-vercel-product-map.md) - Netlify and Vercel products by layer, how they map onto each other, and the measured 2026-10-31 facts
 - [google-cloud.md](./deployment/google-cloud.md) - GCP project `familiarise` (`384845845365`), Google OAuth setup, and `gcloud` CLI guide
 
 ## Guides & Developer Resources
