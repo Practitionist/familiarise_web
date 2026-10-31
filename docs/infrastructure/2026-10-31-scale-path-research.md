@@ -17,7 +17,7 @@ The full reports are separate pages:
 2. A costed comparison of hosting in Mumbai.
 3. A Postgres queue prototype for owed refunds (pg-boss vs a hand-written Prisma `Job` table).
 
-### The main finding
+## The main finding
 
 **The scheduler is not the bottleneck; the database path is.**
 
@@ -28,7 +28,7 @@ The full reports are separate pages:
   - Each SQL statement costs about **95 ms**, because Netlify runs our functions in Singapore and the database is in Mumbai.
 - **No job service fixes the 95 ms.** Inngest, Trigger.dev, QStash, Hatchet and Temporal all call back into our code, which still runs on Netlify in Singapore, and none of them hosts compute in India. Only code running in Mumbai removes it.
 
-### How bad is 95 ms per statement?
+## How bad is 95 ms per statement?
 
 - A page that runs its queries one after another pays 95 ms for each one.
 - A light page with 5–10 statements costs about **0.5–1 s** in network time alone.
@@ -37,14 +37,14 @@ The full reports are separate pages:
 - Jobs pay the same tax: the three "idle" sweeps spend about 4.3 s doing almost nothing.
 - Today the cheap levers are fewer statements per page (batching, `relationLoadStrategy: "join"`) and fast-path reads.
 
-### Does Netlify have an Indian region?
+## Does Netlify have an Indian region?
 
 **No.** The self-serve function regions are cmh, dub, fra, gru, iad, lhr, nrt, pdx, sfo, sin, syd and yul. Paris and Milan are available through support, but Mumbai is not listed. Netlify Edge Functions run at Indian points of presence, but they are a Deno runtime that cannot hold a normal Postgres/Prisma connection pool, so they don't help database-heavy pages.
 
 - Docs: https://docs.netlify.com/build/functions/optional-configuration/
 - Region-selection blog post: https://www.netlify.com/blog/netlify-functions-region-selection/
 
-### Options at a glance (USD/month; details in the comments)
+## Options at a glance (USD/month; details in the comments)
 
 The table compares each path by extra cost and by whether it removes the 95 ms per statement for jobs and for users.
 
@@ -61,14 +61,14 @@ The table compares each path by extra cost and by whether it removes the 95 ms p
 
 Not job runners: Blacksmith (CI runners, relevant only to PR D #2471). "Ranos" matched no product; Render and Railway have no India region.
 
-### Serverless vs serverful, in plain words
+## Serverless vs serverful, in plain words
 
 - **Serverless (today):** Netlify starts a short-lived function for each request. You pay per use and there is nothing to maintain. But each instance holds its own database connection, can't stay running, and is capped at 30 s per scheduled run.
 - **Serverful:** one or more always-on processes. They keep a warm pool of database connections and can loop forever (a queue worker). The cost is a fixed monthly bill and some upkeep.
 - **Middle ground:** Vercel Fluid compute is still serverless, but one instance serves many requests at once, so connections are shared.
 - **Recommendation shape:** keep the web tier serverless. Only the jobs need an always-on process, and only once the triggers below fire.
 
-### Triggers for moving the jobs off the Netlify ticker
+## Triggers for moving the jobs off the Netlify ticker
 
 Move when any of these holds:
 
@@ -78,7 +78,7 @@ Move when any of these holds:
 
 Before real customers, upgrade Supabase to Pro ($25: backups, no pausing). Move to Small compute ($15, 400 pooler clients) near about 150 sustained concurrent users.
 
-### Decisions recorded
+## Decisions recorded
 
 The owner recorded these decisions on 2026-10-31. They are repeated in the ADR above.
 
@@ -87,7 +87,7 @@ The owner recorded these decisions on 2026-10-31. They are repeated in the ADR a
 - Next step: a cheap Vercel spike after PRs A–D, preview env only. It measures the Mumbai→Supabase query latency, the real cron limits and duration cap, and the expected monthly bill.
 - Queue design for phase 2: a hand-written Prisma `Job` table.
 
-### Open questions and unverified facts
+## Open questions and unverified facts
 
 - Vercel: the current cron limits on Pro (40 vs 100 per project), the function duration cap, and the Fluid active-CPU pricing in bom1.
 - Whether Netlify support would enable ap-south-1 on request.

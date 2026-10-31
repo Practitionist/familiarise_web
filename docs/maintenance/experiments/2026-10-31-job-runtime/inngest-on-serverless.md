@@ -1,5 +1,7 @@
 # Inngest on a ~26 s edge-timeout host: experiment report
 
+Scope: every timeout result below comes from a synthetic 26 s 504 proxy in front of a plain Node server, so it shows how Inngest reacts to a 504 and not how a real host ends an in-flight function. The real-host duplicate-execution tests are in [netlify-inngest-qstash.md](./netlify-inngest-qstash.md) and [netlify-real-qstash.md](./netlify-real-qstash.md), which corroborate it: a 30 s step on real Netlify got a 504 and ran twice.
+
 ## Versions
 
 - Node v26.9.0 (no incompatibility seen)
@@ -56,7 +58,7 @@ app   09:54:40.097 REQ> POST ... ctx.attempt=1 stack=1 steps=1   -> "[B] DONE" (
 side-effects.log: 1 line (attempt=0)
 ```
 
-Reason: in checkpoint mode the SDK reports the step result to Inngest on a side channel straight from the Lambda, bypassing the proxy. The late result still arrived, so the retry (attempt 1, ~41 s after the 504) found the step memoized and the side effect ran once.
+Likely reason, not measured: in checkpoint mode the SDK may report the step result to Inngest on a side channel that bypasses the proxy. The test server is a plain Node `http` server, not a Lambda runtime. The late result still arrived, so the retry (attempt 1, ~41 s after the 504) found the step memoized and the side effect ran once.
 
 B-off (`checkpointing: false`, the response body is the only carrier of the result):
 

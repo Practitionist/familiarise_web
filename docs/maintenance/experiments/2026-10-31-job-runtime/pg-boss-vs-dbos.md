@@ -17,7 +17,7 @@ Laptop-local: no network latency, so all latencies are best-case.
 
 - DBOS (`DBOS.applySchedules`, both workers): exactly one workflow per minute, id `sched-every-minute-<ISO minute>` (a primary key, so dedupe is structural). 15:27..15:32 all count 1 (winners A,B,A,A,B...).
   - Caveat: my first minute shows 2 rows (09:55 and 09:56 UTC). That was a catch-up backlog from my own app-version mistake (see footguns), not a double fire.
-- Verdict: both fire exactly once per minute with 2 workers.
+- Verdict: both fire exactly once per minute in steady state with 2 workers on local Postgres. This is steady-state behaviour only: on Supabase (Q10 below) pg-boss fired a second job 30 s after `schedule()` in the first minute in 2 of 2 runs, so handlers must stay idempotent.
 
 ## 2. Delayed job (30 s)
 
@@ -101,18 +101,18 @@ Query: `select ... from dbos.workflow_status s join dbos.operation_outputs o usi
 
 ## Summary table
 
-| #                 | pg-boss 12.38                                | DBOS 5.4                                                  |
-| ----------------- | -------------------------------------------- | --------------------------------------------------------- |
-| 1 cron x2 workers | once/minute (7 min)                          | once/minute (6 min)                                       |
-| 2 delayed 30 s    | 11-1422 ms late                              | 461 ms late                                               |
-| 3 tx enqueue      | yes (`db` option), correct                   | yes (`enqueueInTransaction`), correct                     |
-| 4 crash           | whole job reruns, side effect x2, about 65 s | step 1 not rerun, side effect x1, about 3 s after restart |
-| 5 concurrency 2   | 4 with two workers (per node)                | 2 (global)                                                |
-| 6 connections     | 3-5 per worker                               | 3-4 per worker (one idle in transaction)                  |
-| 7 latency median  | about 1000 ms polling, 7 ms with notify      | 203 ms polling                                            |
-| 8 PgBouncer txn   | works (no notify)                            | works, self-test falls back to polling                    |
-| 9 UI              | official dashboard works                     | SQL only                                                  |
-| 10 Supabase       | works on 6543 and 5432 (see Q10)             | works; pool 2 crashes, pool 10 is stable (see Q10)        |
+| #                 | pg-boss 12.38                                                                 | DBOS 5.4                                                  |
+| ----------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------- |
+| 1 cron x2 workers | once/minute in steady state (7 min); first-minute duplicate on Supabase (Q10) | once/minute (6 min)                                       |
+| 2 delayed 30 s    | 11-1422 ms late                                                               | 461 ms late                                               |
+| 3 tx enqueue      | yes (`db` option), correct                                                    | yes (`enqueueInTransaction`), correct                     |
+| 4 crash           | whole job reruns, side effect x2, about 65 s                                  | step 1 not rerun, side effect x1, about 3 s after restart |
+| 5 concurrency 2   | 4 with two workers (per node)                                                 | 2 (global)                                                |
+| 6 connections     | 3-5 per worker                                                                | 3-4 per worker (one idle in transaction)                  |
+| 7 latency median  | about 1000 ms polling, 7 ms with notify                                       | 203 ms polling                                            |
+| 8 PgBouncer txn   | works (no notify)                                                             | works, self-test falls back to polling                    |
+| 9 UI              | official dashboard works                                                      | SQL only                                                  |
+| 10 Supabase       | works on 6543 and 5432 (see Q10)                                              | works; pool 2 crashes, pool 10 is stable (see Q10)        |
 
 ## Surprises and footguns
 
