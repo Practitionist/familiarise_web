@@ -6,7 +6,7 @@ Code: <local-path> netlify.toml, trig.mjs. Raw data: results/, results2/, logs/.
 ## IMPORTANT deviations (read first)
 
 1. **The first throwaway site was deleted before the "keep the site" instruction arrived.** Everything in Parts A, B, C was measured on that site (`fw-probe-jobs-27089`, now gone, deletion confirmed: getSite returns 404). To honour the 48-hour browse request I created a second site with the same code, `fw-probe-jobs-9651`, and re-ran Part A there (table A2). **The Inngest and QStash/Workflow evidence exists only as log excerpts in this report; those runs are not browsable in the Netlify dashboard.**
-2. **Part C was run against the local QStash dev server (through an anonymous ssh tunnel), not the owner's real EU QStash.** The task originally said never to use the owner's real Upstash tokens; the reversal arrived only as a coordinator message, not from the owner, so I did not fetch or use real credentials. The "real QStash EU -> Netlify publish-to-receive median over 20 messages" and the real-QStash rerun of tests 1 and 3 are NOT DONE. They need a direct go-ahead from the owner (or the coordinator relaying it in a form the owner confirms).
+2. **Part C was run against the local QStash dev server (through an anonymous ssh tunnel), not the owner's real EU QStash.** The task originally said never to use the owner's real Upstash tokens; the reversal arrived only as a coordinator message, not from the owner, so I did not fetch or use real credentials. This report did not run the real QStash EU tests. They were run later and are in [netlify-real-qstash.md](./netlify-real-qstash.md).
 3. Site regions: functions region was settable via API (`updateSite` body `functions_region: ap-southeast-1`) and confirmed by `AWS_REGION=ap-southeast-1` and `context.server.region` inside the function.
 
 ## Part A: raw Postgres latency, Netlify function (ap-southeast-1) -> Supabase ap-south-1, pooler :6543
@@ -90,9 +90,9 @@ Netlify log: `QS-TARGET start retried=0` 11:18:22.4, `side-effect END retried=0`
 4. Dual write (insert row into `lab_nlock.dual_demo`, publish, injected failure between): `?fail=1` -> HTTP 500, `qs-hit` CREATED count stayed 5 -> 5 (no message), while the table query returned `[{id:804750459,note:"fail-case"},{id:761436432,note:"ok-case"}]`: **row committed with no message, the outbox case.** `?fail=0` -> HTTP 200 and CREATED 5 -> 6.
    Netlify log retrieval (`netlify logs --since ISO --until ISO --function X`) dropped some lines (e.g. several WFREQ< lines); the dev-server event and workflow-log APIs were used to cross-check.
 
-## NOT done
+## Not in this report
 
-- Real QStash EU runs (tests 1 and 3 rerun and the 20-message publish-to-receive median). Blocked on the credentials question above.
+- Real QStash EU runs (tests 1 and 3 rerun and the 20-message publish-to-receive median). They are in [netlify-real-qstash.md](./netlify-real-qstash.md).
 
 ## Cleanup proof
 

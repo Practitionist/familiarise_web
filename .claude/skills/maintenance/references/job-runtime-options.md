@@ -32,23 +32,25 @@ Layers: 1 Trigger, 2 Dispatch, 3 Durability, 4 Compute, 5 DB access, 6 Correctne
 Compatibility rules:
 
 1. A layer-3 engine is tied to its compute: Vercel Workflows to Vercel, Cloudflare Workflows to Workers, Trigger.dev to its own machines. Inngest and Upstash Workflow work with any HTTP compute.
-2. Durable steps and in-process cron need long-lived compute. Otherwise you only get drain mode.
+2. In-process engines and schedules (Inngest `connect`, DBOS, pg-boss cron) need long-lived compute; hosted durable steps (Vercel and Cloudflare Workflows) do not. Without it you only get drain mode.
 3. Any queue can be drained by a periodic trigger, at the cost of tick latency.
 4. Only a Postgres-native queue (pg-boss, DBOS) avoids the enqueue dual write. Everything else needs an outbox row in the same transaction.
 5. Layer 6 never changes: CAS-in-WHERE, idempotency keys, ledger triggers and reconcilers stay on every stack.
 
 Stacks (S1 ticker today, S2 Prisma `Job` table, S3 Netlify Background Functions, S4 Async Workloads (docs only), S5 QStash or Inngest on Netlify, S6 Vercel Cron in `bom1`, S7 Vercel Workflows in `bom1`, S8 Cloudflare, S9 Trigger.dev, S10 DBOS on a Mumbai VM):
 
-| Stack      | DB per round trip | Time cap               | Double-write safe               | Status             |
-| ---------- | ----------------- | ---------------------- | ------------------------------- | ------------------ |
-| S1         | 62-64 ms          | ~26 s edge             | yes                             | current            |
-| S2         | as S1             | as S1                  | yes                             | decided, not built |
-| S5         | 62-64 ms          | ~30 s                  | no, outbox                      | measured           |
-| S6         | 1.0-2.3 ms        | 300 s Hobby, 800 s Pro | yes                             | decided trial      |
-| S7         | 2.3-3.2 ms        | step 300 s Hobby       | no, `start()` not transactional | measured           |
-| S9         | 125 ms            | none stated            | no, outbox                      | measured           |
-| S10        | 1-2 ms ESTIMATE   | none                   | yes                             | unmeasured on a VM |
-| S3, S4, S8 | pending           | pending                | pending                         | placeholders       |
+| Stack | DB per round trip                                            | Time cap                              | Double-write safe                                         | Status                                        |
+| ----- | ------------------------------------------------------------ | ------------------------------------- | --------------------------------------------------------- | --------------------------------------------- |
+| S1    | 62-64 ms                                                     | ~26 s edge                            | yes                                                       | current                                       |
+| S2    | as S1                                                        | as S1                                 | yes                                                       | decided, not built                            |
+| S5    | 62-64 ms                                                     | ~30 s                                 | no, outbox                                                | measured                                      |
+| S6    | 1.0-2.3 ms                                                   | 300 s Hobby, 800 s Pro                | yes                                                       | decided trial                                 |
+| S7    | 2.3-3.2 ms                                                   | step 300 s Hobby                      | no, `start()` not transactional                           | measured                                      |
+| S9    | 125 ms                                                       | none stated                           | no, outbox                                                | measured                                      |
+| S10   | 1-2 ms ESTIMATE                                              | none                                  | yes                                                       | unmeasured on a VM                            |
+| S3    | 63.9 ms                                                      | 900 s (840 s completed, 960 s killed) | no, outbox; caller gets only a 202                        | measured                                      |
+| S4    | not measured                                                 | 60 s default, 15 min background       | no (inference)                                            | DOCS only, NOT MEASURED (team-wide extension) |
+| S8    | 2-3 ms via a pinned Worker; 125-266 ms direct from consumers | consumer 15 min wall                  | no (Queue send and Workflow `create()` not transactional) | measured                                      |
 
 Corrections: pg-boss and DBOS can be drained from short functions (pg-boss `fetch()`, not run by us, UNVERIFIED); only their own cron, maintenance and fast crash recovery need a long-running process. "Mumbai worker at 1-2 ms" is an estimate; only Vercel `bom1` and a region-pinned Cloudflare Worker were measured. A Background Function avoids the ~30 s cap but the caller gets only a 202.
 

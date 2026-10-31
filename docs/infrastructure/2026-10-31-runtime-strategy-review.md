@@ -34,7 +34,7 @@ This page was moved from a GitHub issue into the docs on 2026-10-31. It is resea
 
 **Related:** #2466 (ticker, Sentry and capacity investigation) · #2472 (scale-path research: job options, Mumbai hosting, queue prototype) · #2460 (runtime assumptions: build-only env vars, edge vs Node client IP) · #2424 (operations console)
 
-A full analysis with the plain-English explainer for the owner follows. This is a read-only review of `origin/dev` at `ebd1a2879`.
+A full analysis with the plain-English explainer for the owner follows. This is a read-only review of `origin/dev` at `ebd1a2879`, the revision current when the research was written. Treat the code claims as historical and re-check them against the current tree.
 
 Labels: **MEASURED** means read from code, git or the linked issues. **VERIFIED** means read on a vendor page on 2026-10-31. **UNVERIFIED** means no primary source was confirmed. **ESTIMATE** means my own arithmetic.
 

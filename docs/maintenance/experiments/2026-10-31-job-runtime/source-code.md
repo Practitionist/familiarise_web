@@ -2370,6 +2370,7 @@ const receiver = () =>
     currentSigningKey: process.env.QSTASH_CURRENT_SIGNING_KEY,
     nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY,
   });
+// Receiver.verify throws SignatureError on an invalid signature: an unsigned request returned 500 and wrote no row.
 async function verified(req) {
   const body = await req.text();
   await receiver().verify({
@@ -3816,6 +3817,8 @@ export async function crashy(runId: string) {
 ```
 
 ## `lab-cloudflare/`
+
+The `/send`, `/wf/start` and `/dual` routes have no authentication and `/send` takes a caller-supplied count. That was acceptable for a 48-hour throwaway; do not deploy them without auth and a bound, and delete the Workers when the retention ends.
 
 ### `lab-cloudflare/package.json`
 

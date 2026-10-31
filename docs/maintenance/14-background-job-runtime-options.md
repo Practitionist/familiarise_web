@@ -9,14 +9,13 @@ This page explains where background jobs can run, who starts them, how far each 
 
 ## 1. How to read the labels
 
-Every number and vendor claim on this page carries one of four labels. The table defines them.
+Every number and vendor claim on this page carries one of these labels. NOT MEASURED marks a product that was researched in documentation only. The table defines them.
 
-| Label       | Meaning                                                                                                                                                           |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| MEASURED    | We ran it on 2026-10-31 and the report in the experiment folder holds the raw log. The cloud region is named where it matters.                                    |
-| DOCS        | An official vendor page says so. [Section 10](#10-official-sources) gives the page and the quote. We did not run it.                                              |
-| UNVERIFIED  | No primary source was read, or the page contradicts itself. Do not decide on it.                                                                                  |
-| PLACEHOLDER | The experiment is still running. The row exists so the matrix is complete once the numbers land. No claim is made about the runtime. No row is a placeholder now. |
+| Label      | Meaning                                                                                                                        |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| MEASURED   | We ran it on 2026-10-31 and the report in the experiment folder holds the raw log. The cloud region is named where it matters. |
+| DOCS       | An official vendor page says so. [Section 10](#10-official-sources) gives the page and the quote. We did not run it.           |
+| UNVERIFIED | No primary source was read, or the page contradicts itself. Do not decide on it.                                               |
 
 Laptop numbers are best-case. They come from an Indian residential line about 40 ms from Mumbai and say nothing about any production host. Every other latency below was measured from a real cloud region.
 
@@ -429,7 +428,7 @@ stateDiagram-v2
 
 ### 6.2 The dual write compared with the transactional outbox
 
-A dual write commits to the database and then calls a separate system as two steps. If the process dies between them, the two stores disagree and nothing repairs it. The outbox writes the intent in the same transaction, so the two cannot diverge. The ticker and the refund-owed marker use the second shape. The demo on real Netlify showed it: with a failure injected between an insert and a QStash publish, the row stayed and the message count did not move.
+A dual write commits to the database and then calls a separate system as two steps. If the process dies between them, the two stores disagree and nothing repairs it. The outbox writes the intent in the same transaction, so the two cannot diverge. The ticker and the refund-owed marker use a close relative of the second shape, state as the outbox: the intent is existing database state that a sweep reads (the refund-owed marker is written in the cancel transaction), not a separate intent row, so the same guarantee holds without an outbox table. The demo on real Netlify showed it: with a failure injected between an insert and a QStash publish, the row stayed and the message count did not move.
 
 ```mermaid
 stateDiagram-v2
