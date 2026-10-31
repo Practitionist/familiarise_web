@@ -6,6 +6,8 @@ Evidence from 2026-10-31, not decisions. Depth, diagrams and sources: `docs/main
 
 Current owner decision (2026-10-31, `docs/decisions/2026-10-31-job-runtime-experiments.md`): launch on option 4, the Netlify ticker plus Background Functions for jobs over 30 s. Decide between option 1 (Vercel Pro `bom1` plus Vercel Workflows) and option 3 (a Mumbai VM with DBOS) after the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency. Revisit when those two tests report, or at about 300 concurrent users, whichever comes first. Do not start either migration before then.
 
+Option 1 is not a config switch: the real `dev` app failed on Vercel (Node 26 middleware ESM load, Node 22 static-generation hang), see `docs/maintenance/experiments/2026-10-31-job-runtime/real-app-vercel-bom1-attempt.md`.
+
 ## Decision-relevant facts
 
 - Only code that runs in Mumbai removes the per-statement cost. Netlify Singapore is 62-64 ms per statement with raw `pg` (about 95 ms measured through the app earlier; Prisma adds 0.1 ms or less per statement, so the gap is unexplained), Trigger.dev Frankfurt 125 ms, `bom1` 1.0-2.1 ms.

@@ -889,7 +889,7 @@ This section reads the evidence against the decisions without changing them.
 
 ### 12.1 The owner decision of 2026-10-31
 
-The owner chose, in this session: launch on option 4 (the Netlify ticker plus Background Functions for jobs that need more than 30 s), and decide between option 1 (Vercel Pro `bom1` plus Vercel Workflows) and option 3 (a Mumbai VM with DBOS) after the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency. The record, the trade-off table and the cost-by-scale table are in [the evidence and decision record](../decisions/2026-10-31-job-runtime-experiments.md). The stacks behind the three options are S1 plus S3, S7 and S10 on [page 15](./15-job-runtime-layer-matrix.md).
+The owner chose, in this session: launch on option 4 (the Netlify ticker plus Background Functions for jobs that need more than 30 s), and decide between option 1 (Vercel Pro `bom1` plus Vercel Workflows) and option 3 (a Mumbai VM with DBOS) after the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency. The record, the trade-off table and the cost-by-scale table are in [the evidence and decision record](../decisions/2026-10-31-job-runtime-experiments.md). The stacks behind the three options are S1 plus S3, S7 and S10 on [page 15](./15-job-runtime-layer-matrix.md). The real `dev` app did not run on Vercel without code and build changes, so option 1's migration is larger than a config switch ([real-app attempt](./experiments/2026-10-31-job-runtime/real-app-vercel-bom1-attempt.md)).
 
 ## 13. Where in code
 

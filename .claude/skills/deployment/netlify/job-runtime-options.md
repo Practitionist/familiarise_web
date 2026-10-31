@@ -6,6 +6,10 @@ Platform facts measured or read on 2026-10-31. The facts about the queue and sch
 
 Current owner decision (2026-10-31, `docs/decisions/2026-10-31-job-runtime-experiments.md`): launch on option 4, the Netlify ticker plus Background Functions for jobs over 30 s. Decide between option 1 (Vercel Pro `bom1` plus Vercel Workflows) and option 3 (a Mumbai VM with DBOS) after the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency. Revisit when those two tests report, or at about 300 concurrent users, whichever comes first. Do not start either migration before then.
 
+## Real app on Vercel
+
+The real `dev` app did not run on Vercel Hobby without changes: default build OOM; `CI_LEAN_BUILD=true` plus a 6144 MB heap built in 14 min, but every route returned 500 `MIDDLEWARE_INVOCATION_FAILED` (`middleware.js` cannot load as an ES module on Node 26); Node 22 builds hung at static generation (cause unverified). Option 1 therefore needs code and build changes, not a config switch. Report: `docs/maintenance/experiments/2026-10-31-job-runtime/real-app-vercel-bom1-attempt.md`.
+
 ## Netlify (Singapore, `ap-southeast-1`)
 
 - Raw `pg` to the Mumbai pooler: 62-64 ms per statement, connect 371-405 ms, a 10-round-trip lock hold of 676-707 ms. The earlier 95 ms was measured through the app. Prisma's overhead is below noise (0.1 ms or less per statement in `bom1`), so the gap is unexplained; never attribute it to Prisma.
