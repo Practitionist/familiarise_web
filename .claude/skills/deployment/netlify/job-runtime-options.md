@@ -19,6 +19,13 @@ Platform facts measured or read on 2026-10-31. The facts about the queue and sch
 - QStash to `bom1`: a 310 s target gets a 504 at 300 s, then the DLQ after 3 attempts.
 - Static IPs: Pro and Enterprise, $100 a month per project plus Private Data Transfer, one IP pair per region (docs). Whether `bom1` can be chosen is UNVERIFIED.
 
+## Netlify Background Functions
+
+- Caller gets a 202 in 0.65-0.85 s. Runs of 60, 300 and 840 s completed; 960 s was killed at exactly 900 s. Database: 63.9 ms per statement, 704 ms lock hold.
+- A v2 default-export handler that throws is never retried; legacy `exports.handler` throws, `process.exit(1)` and timeouts are retried at +1 and +2 minutes (3 attempts, each repeats the side effect). The v2 reason is our inference.
+- Ten concurrent runs ran in parallel. A draft deploy worked; a PR Deploy Preview was not tested. Set env vars for all deploy contexts. Logs lag by minutes.
+- Async Workloads is a team-wide extension (it would also affect `familiarise`); docs only, not measured: 5 attempts, delay up to 1 year, state in Blobs, events under 500 KB.
+
 ## Cloudflare
 
 - A Worker placed with `region = "aws:ap-south-1"` runs in `remote-BOM` and measured 2-3 ms per statement and a 65-75 ms lock hold (36-39 ms with Hyperdrive in-region). Default placement and Smart Placement stayed at about 98 ms from Marseille.

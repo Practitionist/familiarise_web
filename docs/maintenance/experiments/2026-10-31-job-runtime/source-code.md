@@ -1095,7 +1095,7 @@ export default defineConfig({
 });
 ```
 
-The sections below were appended later and cover the lock-hold, Netlify, real-QStash, Vercel and Cloudflare experiments. Credentials, the Trigger.dev project reference and local paths are replaced with `<...>` placeholders. Only source files are kept: no lockfiles, build output or environment files.
+The sections below were appended later and cover the lock-hold, Netlify, real-QStash, Vercel, Cloudflare and Netlify Background Functions experiments. Credentials, the Trigger.dev project reference and local paths are replaced with `<...>` placeholders. Only source files are kept: no lockfiles, build output or environment files.
 
 ## `lab-lock/`
 
@@ -4512,4 +4512,342 @@ enabled = true
 VARIANT = "v7-host"
 [placement]
 host = "<supabase-pooler-host>:6543"
+```
+
+## `lab-netlify-bg/`
+
+The four earlier functions (`db-probe`, `inngest`, `qs`, `wf`) were redeployed unchanged from `lab-netlify/` and are not repeated.
+
+### `lab-netlify-bg/package.json`
+
+```json
+{
+  "name": "lab-netlify",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@upstash/qstash": "^2.12.1",
+    "@upstash/workflow": "^1.5.0",
+    "inngest": "^4.26.2",
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
+  }
+}
+```
+
+### `lab-netlify-bg/netlify.toml`
+
+```toml
+[build]
+  publish = "public"
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  external_node_modules = ["pg"]
+```
+
+### `lab-netlify-bg/setup.mjs`
+
+```js
+import pg from "pg";
+const c = new pg.Client({
+  connectionString: process.env.PROBE_DB_URL,
+  ssl: { rejectUnauthorized: false },
+});
+await c.connect();
+const cmd = process.argv[2];
+if (cmd === "up") {
+  await c.query("CREATE SCHEMA IF NOT EXISTS lab_nbg");
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS lab_nbg.events(id bigserial primary key, run text, kind text, note jsonb, aws_req text, region text, ts timestamptz default clock_timestamp())",
+  );
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS lab_nbg.account(id int primary key, balance bigint, version int)",
+  );
+} else if (cmd === "down") {
+  await c.query("DROP SCHEMA IF EXISTS lab_nbg CASCADE");
+  const r = await c.query(
+    "select nspname from pg_namespace where nspname like 'lab_nbg%'",
+  );
+  console.log("remaining lab_nbg schemas:", r.rowCount);
+} else if (cmd === "q") {
+  const r = await c.query(process.argv[3]);
+  console.table(r.rows);
+}
+await c.end();
+```
+
+### `lab-netlify-bg/trig.mjs`
+
+```js
+import { Client } from "@upstash/workflow";
+const c = new Client({
+  baseUrl: "http://127.0.0.1:8080",
+  token: "<qstash-dev-server-default-token>",
+});
+const name = process.argv[2];
+console.log(new Date().toISOString(), "trigger", name);
+const r = await c.trigger({
+  url: `https://fw-probe-jobs-27089.netlify.app/api/wf/${name}`,
+  body: {},
+  retries: 0,
+});
+console.log(r);
+```
+
+### `lab-netlify-bg/netlify/lib/lab.cjs`
+
+```js
+const pg = require("pg");
+const client = () =>
+  new pg.Client({
+    connectionString: process.env.PROBE_DB_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+async function ev(run, kind, note = {}) {
+  const c = client();
+  await c.connect();
+  try {
+    await c.query(
+      "INSERT INTO lab_nbg.events(run, kind, note, region) VALUES ($1,$2,$3,$4)",
+      [run, kind, JSON.stringify(note), process.env.AWS_REGION],
+    );
+  } finally {
+    await c.end();
+  }
+}
+module.exports = { client, ev };
+```
+
+### `lab-netlify-bg/netlify/lib/lab.mjs`
+
+```js
+import pg from "pg";
+export const client = () =>
+  new pg.Client({
+    connectionString: process.env.PROBE_DB_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+export async function ev(run, kind, note = {}) {
+  const c = client();
+  await c.connect();
+  try {
+    const r = await c.query(
+      "INSERT INTO lab_nbg.events(run, kind, note, aws_req, region) VALUES ($1,$2,$3,$4,$5) RETURNING id, ts",
+      [
+        run,
+        kind,
+        JSON.stringify(note),
+        process.env._X_AMZN_TRACE_ID ?? null,
+        process.env.AWS_REGION,
+      ],
+    );
+    return r.rows[0];
+  } finally {
+    await c.end();
+  }
+}
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+```
+
+### `lab-netlify-bg/netlify/functions/flaky-background.mjs`
+
+```js
+import { ev, client } from "../lib/lab.mjs";
+export default async (req) => {
+  const u = new URL(req.url);
+  const run = u.searchParams.get("run");
+  const mode = u.searchParams.get("mode") ?? "once";
+  const c = client();
+  await c.connect();
+  const { rows } = await c.query(
+    "SELECT count(*)::int n FROM lab_nbg.events WHERE run=$1 AND kind='attempt'",
+    [run],
+  );
+  await c.end();
+  const attempt = rows[0].n + 1;
+  await ev(run, "attempt", { attempt, mode });
+  await ev(run, "side_effect", { attempt });
+  if (mode === "always" || attempt === 1) {
+    await ev(run, "throw", { attempt });
+    throw new Error(`boom attempt ${attempt}`);
+  }
+  await ev(run, "end", { attempt });
+};
+```
+
+### `lab-netlify-bg/netlify/functions/flakyexit-background.mjs`
+
+```js
+import { ev, client } from "../lib/lab.mjs";
+export default async (req) => {
+  const u = new URL(req.url);
+  const run = u.searchParams.get("run");
+  const mode = u.searchParams.get("mode") ?? "once";
+  const c = client();
+  await c.connect();
+  const { rows } = await c.query(
+    "SELECT count(*)::int n FROM lab_nbg.events WHERE run=$1 AND kind='attempt'",
+    [run],
+  );
+  await c.end();
+  const attempt = rows[0].n + 1;
+  await ev(run, "attempt", { attempt, mode });
+  await ev(run, "side_effect", { attempt });
+  if (mode === "always" || attempt === 1) {
+    await ev(run, "throw", { attempt });
+    process.exit(1);
+  }
+  await ev(run, "end", { attempt });
+};
+```
+
+### `lab-netlify-bg/netlify/functions/flakyv1-background.js`
+
+```js
+const { ev, client } = require("../lib/lab.cjs");
+exports.handler = async (event) => {
+  const q = event.queryStringParameters || {};
+  const run = q.run,
+    mode = q.mode || "once";
+  const c = client();
+  await c.connect();
+  const { rows } = await c.query(
+    "SELECT count(*)::int n FROM lab_nbg.events WHERE run=$1 AND kind='attempt'",
+    [run],
+  );
+  await c.end();
+  const attempt = rows[0].n + 1;
+  await ev(run, "attempt", { attempt, mode });
+  await ev(run, "side_effect", { attempt });
+  if (mode === "always" || attempt === 1) {
+    await ev(run, "throw", { attempt });
+    throw new Error("boom v1 " + attempt);
+  }
+  await ev(run, "end", { attempt });
+  return { statusCode: 200 };
+};
+```
+
+### `lab-netlify-bg/netlify/functions/job-background.mjs`
+
+```js
+import { ev, sleep } from "../lib/lab.mjs";
+export default async (req) => {
+  const u = new URL(req.url);
+  const s = Number(u.searchParams.get("s") ?? 10);
+  const run = u.searchParams.get("run") ?? `s${s}-${Date.now()}`;
+  await ev(run, "start", { s });
+  const t0 = Date.now();
+  const hb = Number(u.searchParams.get("hb") ?? 30);
+  let next = hb;
+  while ((Date.now() - t0) / 1000 < s) {
+    await sleep(Math.min(1000, s * 1000 - (Date.now() - t0)));
+    const el = (Date.now() - t0) / 1000;
+    if (el >= next && el < s) {
+      await ev(run, "hb", { el: Math.round(el) });
+      next += hb;
+    }
+  }
+  await ev(run, "end", { s, elapsedMs: Date.now() - t0 });
+};
+```
+
+### `lab-netlify-bg/netlify/functions/probe-background.mjs`
+
+```js
+import pg from "pg";
+import { ev } from "../lib/lab.mjs";
+const med = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.floor(s.length / 2)];
+};
+const p95 = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.ceil(s.length * 0.95) - 1)];
+};
+const now = () => performance.now();
+const r1 = (x) => Math.round(x * 10) / 10;
+export default async (req) => {
+  const run = new URL(req.url).searchParams.get("run") ?? `probe-${Date.now()}`;
+  await ev(run, "start");
+  const out = { awsRegion: process.env.AWS_REGION, node: process.version };
+  const c = new pg.Client({
+    connectionString: process.env.PROBE_DB_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+  const t0 = now();
+  try {
+    let t = now();
+    await c.connect();
+    out.connectMs = r1(now() - t);
+    const s1 = [];
+    for (let i = 0; i < 50; i++) {
+      t = now();
+      await c.query("SELECT 1");
+      s1.push(now() - t);
+    }
+    out.select1 = {
+      medianMs: r1(med(s1)),
+      p95Ms: r1(p95(s1)),
+      minMs: r1(Math.min(...s1)),
+      maxMs: r1(Math.max(...s1)),
+    };
+    const mix = [
+      'SELECT id, "paymentStatus" FROM "Payment" ORDER BY "createdAt" DESC LIMIT 50',
+      'SELECT id, "createdAt" FROM "Appointment" ORDER BY "createdAt" DESC LIMIT 50',
+      'SELECT id, "jobName", status FROM "SystemJobExecution" ORDER BY "createdAt" DESC LIMIT 50',
+      'SELECT count(*) FROM "Payment" WHERE "paymentStatus"::text = \'SUCCEEDED\'',
+      'SELECT count(*) FROM "Appointment" WHERE "createdAt" > now() - interval \'90 days\'',
+    ];
+    t = now();
+    for (let i = 0; i < 20; i++) await c.query(mix[i % 5]);
+    out.mix20TotalMs = r1(now() - t);
+    await c.query(
+      "CREATE TABLE IF NOT EXISTS lab_nbg.account(id int primary key, balance bigint, version int)",
+    );
+    await c.query(
+      "INSERT INTO lab_nbg.account VALUES (1,1000,0),(2,1000,0) ON CONFLICT DO NOTHING",
+    );
+    const holds = [];
+    for (let i = 0; i < 10; i++) {
+      t = now();
+      await c.query("BEGIN");
+      const r = await c.query(
+        "SELECT id, balance, version FROM lab_nbg.account WHERE id=1 FOR UPDATE",
+      );
+      const v = r.rows[0].version;
+      await c.query("SELECT balance FROM lab_nbg.account WHERE id=2");
+      await c.query("SELECT count(*) FROM lab_nbg.account");
+      await c.query(
+        "UPDATE lab_nbg.account SET balance=balance+1, version=version+1 WHERE id=1 AND version=$1",
+        [v],
+      );
+      await c.query("UPDATE lab_nbg.account SET balance=balance-1 WHERE id=2");
+      await c.query("SELECT balance FROM lab_nbg.account WHERE id=1");
+      await c.query("SELECT balance FROM lab_nbg.account WHERE id=2");
+      await c.query("SELECT 1");
+      await c.query("SELECT now()");
+      await c.query("COMMIT");
+      holds.push(now() - t);
+    }
+    out.lockHold = { medianMs: r1(med(holds)), p95Ms: r1(p95(holds)) };
+  } catch (e) {
+    out.error = String(e.message).replace(/postgresql:\/\/\S+/g, "<url>");
+  } finally {
+    try {
+      await c.end();
+    } catch {}
+  }
+  out.totalMs = r1(now() - t0);
+  await ev(run, "end", out);
+};
 ```

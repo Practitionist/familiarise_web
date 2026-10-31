@@ -37,7 +37,7 @@ Compatibility rules:
 4. Only a Postgres-native queue (pg-boss, DBOS) avoids the enqueue dual write. Everything else needs an outbox row in the same transaction.
 5. Layer 6 never changes: CAS-in-WHERE, idempotency keys, ledger triggers and reconcilers stay on every stack.
 
-Stacks (S1 ticker today, S2 Prisma `Job` table, S3 Netlify Background Functions pending, S4 Async Workloads pending, S5 QStash or Inngest on Netlify, S6 Vercel Cron in `bom1`, S7 Vercel Workflows in `bom1`, S8 Cloudflare, S9 Trigger.dev, S10 DBOS on a Mumbai VM):
+Stacks (S1 ticker today, S2 Prisma `Job` table, S3 Netlify Background Functions, S4 Async Workloads (docs only), S5 QStash or Inngest on Netlify, S6 Vercel Cron in `bom1`, S7 Vercel Workflows in `bom1`, S8 Cloudflare, S9 Trigger.dev, S10 DBOS on a Mumbai VM):
 
 | Stack      | DB per round trip | Time cap               | Double-write safe               | Status             |
 | ---------- | ----------------- | ---------------------- | ------------------------------- | ------------------ |
@@ -70,6 +70,9 @@ Corrections: pg-boss and DBOS can be drained from short functions (pg-boss `fetc
 - Cloudflare needs the explicit region hint (2-3 ms). Smart Placement never moved (still about 98 ms after 600 requests) because it needs traffic from multiple locations. Hyperdrive without the hint is worse than direct.
 - `pg` over TLS from Workers hung (error 1101), so the probe ran without TLS. Do not copy that to production.
 - A removed Cloudflare cron keeps firing for about 4 minutes. A Queue retry after a throw writes the side effect twice (3 runs then the DLQ at `max_retries = 2`). Free CPU is 10 ms per request; real jobs need Paid.
+- Netlify Background Functions: a v2 default-export handler that throws is never retried, while a legacy `exports.handler` throw, `process.exit(1)` or a 900 s kill is retried at about +1 min and +2 min (3 attempts, each repeats the side effect). Catch errors and record failure in our own run row, and stay idempotent. The v2 reason is an inference.
+- Set env vars for all deploy contexts. Variables scoped only to `production` left a draft deploy with no database address.
+- Background function logs arrive minutes late and show one `Duration` line per invocation; status lives only in our run rows. The caller gets only a 202.
 - A publish after commit is a dual write. Use state as the outbox or an in-database enqueue.
 
 ## How to rerun a probe
