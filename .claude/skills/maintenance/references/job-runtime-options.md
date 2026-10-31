@@ -60,6 +60,20 @@ Stacks (S1 ticker today, S2 Prisma `Job` table, S3 Netlify Background Functions,
 
 Corrections: pg-boss can be drained from short functions (drain mode, MEASURED); DBOS drain mode was not run. Only their own cron, maintenance and fast crash recovery need a long-running process. "Mumbai worker at 1-2 ms" is an estimate; only Vercel `bom1` and a region-pinned Cloudflare Worker were measured. A Background Function avoids the ~30 s cap but the caller gets only a 202.
 
+## How the jobs avoid corrupting each other
+
+A conflict costs wasted work and waiting, not corruption. Engine concurrency controls (Inngest keys, QStash flow control, DBOS limits) are a convenience; the Postgres layers are the guarantee. Full picture: `docs/maintenance/14-background-job-runtime-options.md` section 9.6.
+
+```text
+ job A            job B            user request
+   | 1 lease: a job cannot overlap ITSELF (withCronLock, lib/cron/with-cron-lock.ts)
+   v                v                v
+ UPDATE ... SET status='REFUNDED' WHERE id=7 AND status='PAID'   <- 2 CAS: one match, loser updates 0 rows
+ 3 row lock: the second writer WAITS (~700 ms Singapore, ~20 ms Mumbai estimate)
+ 4 CHECK / triggers / unique indexes (prisma/sql/*.sql): an invalid state cannot COMMIT
+   (deadlock: Postgres aborts one side, the job retries next tick)
+```
+
 ## Footguns
 
 - DBOS needs a pool of about 10 or more. With `systemDatabasePoolSize: 2` its advisory-lock connection hits the 5 s idle-in-transaction timeout and the process crashes. It cannot run under `PG_POOL_MAX=1`. Pin `DBOS__APPVERSION`, or a non-latest worker stops dequeuing.

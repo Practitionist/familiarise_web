@@ -7,7 +7,7 @@ type: explanation
 
 This page explains where background jobs can run, who starts them, how far each runtime sits from the database and what happens when a request, a worker or a host fails halfway. It rests on throwaway experiments run on 2026-10-31 against the real Supabase Mumbai database and, where the product allows it, the real vendor service. It is evidence for decisions the owner has already taken. It does not take a new one. The decisions are in [Ticker through launch, the scale path, the phase 2 queue and the database plan](../decisions/2026-10-31-ticker-scale-path-and-queue.md) and [Architecture at scale](../decisions/2026-10-30-architecture-at-scale-review.md). The evidence record, with the open questions for the owner, is [Job-runtime experiments](../decisions/2026-10-31-job-runtime-experiments.md). The raw reports are indexed in [the experiment folder](./experiments/2026-10-31-job-runtime/README.md).
 
-## 1. How to read the labels
+## 1. How to read this page
 
 Every number and vendor claim on this page carries one of these labels. NOT MEASURED marks a claim researched in documentation only. The table defines them.
 
@@ -18,6 +18,70 @@ Every number and vendor claim on this page carries one of these labels. NOT MEAS
 | UNVERIFIED | No primary source was read, or the page contradicts itself. Do not decide on it.                                               |
 
 Laptop numbers are best-case. They come from an Indian residential line about 40 ms from Mumbai and say nothing about any production host. Every other latency below was measured from a real cloud region.
+
+### 1.1 Today's system
+
+The picture shows how the jobs run today: one scheduled function fans out HTTP calls to at most 12 job routes per tick, each route takes a lease, claims a few rows with a compare-and-swap, calls the vendor, and talks to Postgres in Mumbai. Long-running jobs are mostly not the problem. Measured p50 durations are 79–490 ms for typical jobs (for example 490 ms for `reconcile-payment-status` and 275 ms for `reconcile-orphaned-confirmations`), and the busiest tick measured 18.5 s. The real issues, in order, are database distance (about 62 ms per statement, so about 700 ms lock holds), one connection per function (`PG_POOL_MAX=1`), ticker capacity (`MAX_TARGETS_PER_TICK`, 12 per tick), and only then the time limits of a few jobs. The enforcers are `withCronLock` in `lib/cron/with-cron-lock.ts` for the lease, CAS-in-WHERE status writes for ordering, and the constraints and triggers in `prisma/sql/` as the final referee.
+
+```text
+                      every 5 min
+ ┌──────────────────────────────────────┐
+ │ Netlify Scheduled Function           │  30 s hard limit for the ticker itself
+ │ cron-tick.mts  (Singapore)           │
+ │  1. which of the ~76 jobs are due?    │  ≤12 jobs per tick, spread by offsets
+ │  2. POST each one in parallel ───────┼──────────┐
+ └──────────────────────────────────────┘          │
+                                                   ▼
+        ┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐
+        │ /api/cleanup/job-A │  │ /api/cleanup/job-B │  │ …up to 12 per tick │
+        │ Netlify Function   │  │ Netlify Function   │  │                    │
+        │ ~26–30 s limit     │  │ 1 DB connection    │  │                    │
+        │ withCronLock ──────┼──┼─ lease row ────────┼──┼─► only ONE copy of │
+        │  (lease per job)   │  │                    │  │   a job at a time  │
+        │ claim ≤N rows      │  │                    │  │                    │
+        │ UPDATE … WHERE     │  │ ← compare-and-swap │  │                    │
+        │  status = 'OLD'    │  │   (CAS)            │  │                    │
+        │ call Razorpay/     │  │                    │  │                    │
+        │  Stream/Resend     │  │                    │  │                    │
+        └─────────┬──────────┘  └─────────┬──────────┘  └─────────┬──────────┘
+                  │ ~62 ms per SQL statement (Singapore → Mumbai)  │
+                  ▼                                                ▼
+        ┌──────────────────────────────────────────────────────────────────┐
+        │ Supabase Postgres (Mumbai)                                       │
+        │  • business rows ARE the to-do list (state-as-outbox)            │
+        │  • CHECK constraints, triggers, unique indexes = final referee   │
+        │  • SystemJobExecution = lease + run history                      │
+        └──────────────────────────────────────────────────────────────────┘
+```
+
+### 1.2 The three problems every engine keeps
+
+If latency is acceptable, any engine can run the jobs. The three problems below come from background work itself, not from the tool, and the repo already mitigates all three. The first is the dual write: starting a job is a second step beside the database commit. The second is retries and duplicates: every engine tested ran some side effect two or more times. The third is the time limit per call, which applies only to engines that call Netlify functions. The fixes are the outbox shape (state as the outbox), idempotency keys with CAS-in-WHERE, and small steps or slices.
+
+```text
+                     ANY engine (Inngest, Trigger.dev, QStash, Upstash Workflow,
+                     Background Functions, Vercel/Cloudflare Workflows, Restate, DBOS…)
+                                            │
+       ①  "start job X" ──────────────────►│  if the start is NOT in the same DB transaction
+          (send / publish / start())        │  → DB row without a job, or job without a row
+                                            │  FIX: outbox row in the same transaction
+                                            │       (already done: state-as-outbox)
+                                            ▼
+                                    runs your code somewhere
+                                            │
+       ②  retries ◄─────────────────────────┤  every engine tested ran some side effect 2–3×
+          (504, crash, timeout)             │  (QStash 3×, Inngest 2×, Queues 2×, legacy BG fn 3×,
+                                            │   Async Workloads up to 29×)
+                                            │  FIX: idempotency keys + CAS-in-WHERE (already done)
+                                            ▼
+                                    talks to Postgres
+                                            │
+       ③  time limit per call ──────────────┤  only for engines that call Netlify functions:
+                                            │  Inngest / QStash / Upstash Workflow / Async WL ≈ 30 s
+                                            │  per step. BG functions 15 min, Vercel 300–800 s,
+                                            │  Trigger.dev / VM / DBOS: none
+                                            │  FIX: small steps or slices (already done)
+```
 
 ## 2. The headline comparison
 
@@ -833,6 +897,28 @@ Yes, and it already is. Live RazorpayX answers only allowlisted IP addresses, up
 ### 9.5 Why does Inngest on Netlify not lift the limit?
 
 Because the function that runs the step is a Netlify function, and Netlify's edge cuts a request that has sent no data after about 26 s on production (about 30 s on a throwaway site, and Netlify support has confirmed a second ceiling near 37–38 s; see `.claude/skills/deployment/netlify/platform-limits.md`). Inngest can split a sequence of short steps across many requests, and a durable `step.sleep` costs no compute, but it cannot make one request outlive the edge. The 504 it sees is also the same 504 QStash sees (section 5.3). Inngest `connect` would avoid the HTTP timeout (DOCS: "Step execution is not bound by platform http timeouts"), but it requires a long-running server and does not support serverless runtimes, so it needs the same long-lived host that pg-boss and DBOS need.
+
+### 9.6 Can the ~76 jobs conflict with each other?
+
+They can contend, but a conflict costs wasted work and waiting, not corruption. A lost compare-and-swap is a no-op: the loser updates zero rows and moves on. A lock wait lasts about as long as the other writer holds the lock, so it scales with lock-hold time (about 700 ms from Singapore, about 20 ms from Mumbai as an ESTIMATE, 10.6–19.6 ms measured on `bom1`). Serializable retries happen occasionally (`withSerializableRetry` in `lib/db/serializable-retry.ts`), and a deadlock is detected by Postgres, which aborts one side so the job retries next tick. Engine concurrency controls (Inngest concurrency keys, QStash flow control, DBOS global limits) are a convenience that reduces wasted work. Layers 2 to 4 below, all in Postgres and in the status writes, are the guarantee. The enforcers are `withCronLock` in `lib/cron/with-cron-lock.ts` (a job cannot overlap itself), CAS-in-WHERE status transitions, and the constraints and triggers in the `prisma/sql/` sidecars (`ledger_txn_balanced`, `payment_legs_sum_to_amount`, `occurrence_no_confirmed_overlap`).
+
+```text
+ job A (refunds)          job B (payouts)          a user request
+      │                         │                        │
+      │ ① lease: job A can't overlap ITSELF (withCronLock)│
+      ▼                         ▼                        ▼
+  UPDATE payment         UPDATE payment            UPDATE payment
+  SET status='REFUNDED'  SET status='SETTLED'      SET …
+  WHERE id=7             WHERE id=7
+    AND status='PAID'      AND status='PAID'   ← ② CAS: only ONE of these matches;
+                                                     the loser updates 0 rows and moves on
+      │                         │
+      ▼                         ▼
+  ③ Postgres row lock: the second writer WAITS (≈ lock-hold time: ~700 ms from Singapore,
+     ~20 ms from Mumbai)
+  ④ CHECK constraints / triggers / unique indexes: an invalid state can't COMMIT
+     (deadlock? Postgres detects it and aborts one; the job retries next tick)
+```
 
 ## 10. Official sources
 
