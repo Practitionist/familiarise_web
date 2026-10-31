@@ -977,6 +977,58 @@ This section reads the evidence against the decisions without changing them.
 
 The owner chose, in this session: launch on option 4 (the Netlify ticker plus Background Functions for jobs that need more than 30 s), and decide between option 1 (Vercel Pro `bom1` plus Vercel Workflows) and option 3 (a Mumbai VM with DBOS) after the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency. The record, the trade-off table and the cost-by-scale table are in [the evidence and decision record](../decisions/2026-10-31-job-runtime-experiments.md). The stacks behind the three options are S1 plus S3, S7 and S10 on [page 15](./15-job-runtime-layer-matrix.md). The real `dev` app did not run on Vercel without code and build changes, so option 1's migration is larger than a config switch ([real-app attempt](./experiments/2026-10-31-job-runtime/real-app-vercel-bom1-attempt.md)).
 
+### 12.2 Rankings with and without latency
+
+This section ranks the runtimes twice. The rankings are our reading of the evidence on this page, not an owner decision, and the owner decision in section 12.1 stands. The first table gives the measured latency of every runtime, so the reader can see what the "with latency" ranking rests on.
+
+| Runtime                                                    | Per statement                 | 10-round-trip lock hold | Trigger or delivery delay   | Label    |
+| ---------------------------------------------------------- | ----------------------------- | ----------------------- | --------------------------- | -------- |
+| Vercel `bom1` functions                                    | 1–2 ms                        | 10.6–19.6 ms            | Cron on Pro, per minute     | MEASURED |
+| Vercel Workflows in `bom1`                                 | 2.3–3.2 ms                    | not run                 | `start()` 57–63 ms warm     | MEASURED |
+| pg-boss drained from `bom1`                                | 0.8–1.9 ms per job            | not run                 | one tick                    | MEASURED |
+| Cloudflare pinned to `aws:ap-south-1`, Hyperdrive with TLS | 4 ms                          | 60–89 ms                | cron about 2.3 s late       | MEASURED |
+| Mumbai VM                                                  | about 1–3 ms                  | about 10–30 ms          | none (in-process)           | ESTIMATE |
+| QStash to `bom1`                                           | 1–2 ms in the function        | as `bom1`               | about 350 ms delivery       | MEASURED |
+| Netlify Singapore                                          | 62–64 ms                      | 676–707 ms              | ticker every 5 min          | MEASURED |
+| QStash to Netlify                                          | 62–64 ms in the function      | 676–707 ms              | 1.37 s delivery             | MEASURED |
+| Netlify Async Workloads                                    | 63 ms                         | about 700 ms            | delays about 70 s late      | MEASURED |
+| Trigger.dev                                                | 125, 185 and 232 ms by region | 1,258 ms (Frankfurt)    | about 250 ms queue to start | MEASURED |
+| Cloudflare unpinned (queues, cron, steps)                  | 125–266 ms                    | not run                 | cron about 2.3 s late       | MEASURED |
+
+The second table ranks the runtimes with latency as a factor. A runtime ranks lower the farther its code runs from the Mumbai database.
+
+| Rank | Runtime                                  | Reason                                                                                          |
+| ---: | ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
+|    1 | Vercel Workflows in `bom1`               | Durable steps at 2.3–3.2 ms per query, but `start()` needs an outbox.                           |
+|    2 | Vercel Cron plus Functions in `bom1`     | The same 1–2 ms path with state as the outbox and no new engine.                                |
+|    3 | DBOS on a Mumbai VM (estimate)           | Likely 1–3 ms with in-database durable steps, but unmeasured on a VM.                           |
+|    4 | pg-boss drained from `bom1`              | 0.8–1.9 ms per job and transactional enqueue, but you must call `supervise()` each tick.        |
+|    5 | Cloudflare pinned plus Hyperdrive        | 4 ms certificate-verified, but only `fetch` handlers pin, so consumers need a service binding.  |
+|    6 | Netlify ticker plus Background Functions | 62–64 ms and 700 ms lock holds, but correctness is solved and 900 s jobs fit.                   |
+|    7 | QStash or Upstash Workflow on Netlify    | Same 62–64 ms plus 1.37 s delivery, a 30 s cut and a handler that re-runs per request.          |
+|    8 | Inngest on Netlify                       | Same 62–64 ms plus the 30 s cut and a manual sync, with the vendor owning the timers.           |
+|    9 | Async Workloads                          | 63 ms, but a 60 s scheduler makes timed work about 70 s late and steps repeated in a crash run. |
+|   10 | Trigger.dev                              | 125–232 ms with no Asian region, so every lock is held about twice as long as on Netlify.       |
+
+The third table ranks the runtimes without latency, judged on correctness, limits, operations, cost and migration effort.
+
+| Rank | Runtime                                  | Reason                                                                                           |
+| ---: | ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
+|    1 | DBOS                                     | Transactional enqueue and step recovery in about 3 s, with no vendor, but we run the server.     |
+|    2 | Vercel Workflows                         | Managed durable steps with no duration limit, but `start()` is not transactional.                |
+|    3 | Netlify ticker plus Background Functions | Nothing new to migrate, correctness already solved, 900 s jobs fit, but it keeps the most code.  |
+|    4 | pg-boss drain                            | Transactional enqueue and no duplicates, but its cron and expiry need `supervise()` each tick.   |
+|    5 | Upstash Workflow                         | Cheap steps and `context.sleep`, but a handler that re-runs and a 30 s cut on Netlify.           |
+|    6 | Trigger.dev                              | No time cap and checkpoint-resume, but a new vendor, no Asian region and paid-only static IPs.   |
+|    7 | Inngest                                  | Good timers and retries, but the host limit stands, a manual sync and a plan that pauses at 50k. |
+|    8 | Cloudflare Workflows and Queues          | Capable, but a second platform, a TLS detour through Hyperdrive and no transactional enqueue.    |
+|    9 | QStash alone                             | Reliable delivery, but three side effects from one 504 and an outbox always needed.              |
+|   10 | Async Workloads                          | Steps repeated in a crash run, retries far from the documented timing and no run dashboard.      |
+
+Without latency, today's ticker and DBOS rank near the top because correctness is already solved. With latency, every option that keeps code outside Mumbai drops below the Mumbai options.
+
+Restate is not ranked yet because its results are still pending.
+
 ## 13. Where in code
 
 The table lists the repository locations that this page's claims rest on.

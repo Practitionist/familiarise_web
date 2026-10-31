@@ -74,6 +74,14 @@ A conflict costs wasted work and waiting, not corruption. Engine concurrency con
    (deadlock: Postgres aborts one side, the job retries next tick)
 ```
 
+## Rankings (judgement from the evidence, not a decision)
+
+With latency (distance from the Mumbai database counts): 1 Vercel Workflows `bom1`, 2 Vercel Cron plus Functions `bom1`, 3 DBOS on a Mumbai VM (estimate), 4 pg-boss drain from `bom1`, 5 Cloudflare pinned plus Hyperdrive, 6 Netlify ticker plus Background Functions, 7 QStash or Upstash Workflow on Netlify, 8 Inngest on Netlify, 9 Async Workloads, 10 Trigger.dev.
+
+Without latency (correctness, limits, ops, cost, migration effort): 1 DBOS, 2 Vercel Workflows, 3 Netlify ticker plus Background Functions, 4 pg-boss drain, 5 Upstash Workflow, 6 Trigger.dev, 7 Inngest, 8 Cloudflare Workflows and Queues, 9 QStash alone, 10 Async Workloads.
+
+Without latency, today's ticker and DBOS rank near the top because correctness is already solved. With latency, every option that keeps code outside Mumbai drops below the Mumbai options. Restate is not ranked yet (results pending). Detail: `docs/maintenance/14-background-job-runtime-options.md` section 12.2.
+
 ## Footguns
 
 - DBOS needs a pool of about 10 or more. With `systemDatabasePoolSize: 2` its advisory-lock connection hits the 5 s idle-in-transaction timeout and the process crashes. It cannot run under `PG_POOL_MAX=1`. Pin `DBOS__APPVERSION`, or a non-latest worker stops dequeuing.
