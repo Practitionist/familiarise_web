@@ -7,6 +7,8 @@ type: explanation
 
 This page was moved from a GitHub issue into the docs on 2026-10-31. It is research evidence, not a decision. The owner decisions are in [Ticker through launch, the scale path, the phase 2 queue and the database plan](../decisions/2026-10-31-ticker-scale-path-and-queue.md) and in the [architecture at scale review](../decisions/2026-10-30-architecture-at-scale-review.md); where this page disagrees with them, they win. The labels VERIFIED (read on a primary source), UNVERIFIED (no primary source was read) and ESTIMATE (arithmetic from stated assumptions) are kept from the source.
 
+**Measurement note (added 2026-10-31).** Every "95 ms per statement" on this page is the Prisma-level figure from the ticker decision record. A later probe with raw `pg` from Netlify Singapore measured 62–64 ms, and a Vercel `bom1` function measured 1.0–2.1 ms. See [Background-job runtime options](../maintenance/14-background-job-runtime-options.md).
+
 - **Status:** Comparison spike for issue #2466 ("a queue prototype on ONE job"). It is never merged. No DDL was applied, no `db push` or `prisma generate` was run, and the TypeScript was not compiled.
 - **Context:** [Architecture at scale review](../decisions/2026-10-30-architecture-at-scale-review.md), phase 2. The queue lives in Postgres, not Redis. It needs the always-on worker from phase 1 (#2095). Until then the Netlify ticker stays the only engine (AGENTS.md rule 4).
 - **Files:** `pg-boss/boss.ts`, `pg-boss/enqueue.ts`, `pg-boss/worker.ts`; `prisma-job/job-model.md`, `prisma-job/queue.ts`, `prisma-job/refund-owed.ts`.

@@ -269,7 +269,8 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [infrastructure/2026-10-31-queue-prototype-owed-refunds.md](./infrastructure/2026-10-31-queue-prototype-owed-refunds.md) - pg-boss against a hand-written Prisma Job table on the owed-refund job
 - [infrastructure/2026-10-31-runtime-strategy-review.md](./infrastructure/2026-10-31-runtime-strategy-review.md) - Unbiased review of job and runtime strategy (a dissenting analysis, not the plan)
 - [infrastructure/2026-10-31-job-runtime-system-designs.md](./infrastructure/2026-10-31-job-runtime-system-designs.md) - Mermaid system designs for each candidate runtime
-- [maintenance/14-background-job-runtime-options.md](./maintenance/14-background-job-runtime-options.md) - What Inngest, Trigger.dev, pg-boss and DBOS do with our code, with the 2026-10-31 measurements and the owner's Q&A
+- [maintenance/14-background-job-runtime-options.md](./maintenance/14-background-job-runtime-options.md) - Comparison matrix, request-flow and state diagrams, worked example, official sources and the owner's Q&A for Netlify, Inngest, QStash, Upstash Workflow, Trigger.dev, pg-boss, DBOS and Vercel `bom1`
+- [maintenance/experiments/2026-10-31-job-runtime/README.md](./maintenance/experiments/2026-10-31-job-runtime/README.md) - Index of the raw experiment reports, the method, the honesty labels, the dashboards to browse and the cleanup log
 - [2026-10-31-job-runtime-experiments.md](./decisions/2026-10-31-job-runtime-experiments.md) - Evidence record (no new decision) for the background-job runtime experiments, with the open questions for the owner
 - [2026-10-26-launch-sweep-observability-and-money-holds.md](./decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) - ADR-01 to ADR-12: money holds, invoice healing, tax identity, auth abuse controls, the three observability layers, ticker escalation and the Sentry quota posture
 

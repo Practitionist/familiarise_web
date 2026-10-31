@@ -64,11 +64,7 @@ Every option with a "Yes" in the third column requires the always-on process tha
 
 ## Measured hosted job runtimes, 2026-10-31
 
-These are evidence for the decided scale path, not a recommendation. Detail is in `docs/maintenance/14-background-job-runtime-options.md`.
-
-- **Inngest does not lift the host limit.** It POSTs to a `serve()` route that runs on the same Netlify function, so the ~26 s edge cut and the ~95 ms per statement still apply. `checkpointing.maxRuntime` (default 10 s) only splits sequences of short steps.
-- **Trigger.dev Cloud runs our code in `eu-central-1`, `us-east-1` or `us-west-2` only.** Median round trip to the Mumbai pooler is ~125, ~185 and ~232 ms; an unset region lands in `us-east-1`. That is worse than Netlify's ~95 ms. Free-plan egress IPs are dynamic, and the static-IP plan tier is unconfirmed.
-- **RazorpayX static egress is already solved on Netlify** by the egress proxy (`RAZORPAYX_EGRESS_PROXY_URL`); the open question for any new host is the proxy's cost and extra hop.
+These are evidence for the decided scale path, not a recommendation. The platform facts are in `job-runtime-options.md` in this folder, the library facts in `.claude/skills/maintenance/references/job-runtime-options.md`, and the depth in `docs/maintenance/14-background-job-runtime-options.md`.
 
 ## Background Functions against the five-minute ticker
 
