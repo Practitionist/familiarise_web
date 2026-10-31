@@ -49,7 +49,7 @@ Raw JSON per run: result-*.json, laptop.json. Run durations are dominated by the
 - Deploy used Trigger's remote builder; `build.external: ["pg"]` worked. No Node issues (runtime 24).
 - ctx has no region field; TRIGGER_REGION env var is not set in the container. Infer region from the egress IP/your own trigger option.
 - No secret-key endpoint found; I minted a short-lived JWT via POST /api/v1/projects/:ref/prod/jwt (scopes write:tasks, read:runs), usable as the SDK accessToken.
-- Env var API: GET /envvars/prod returns values in plain text (isSecret false) - an ad-hoc debug call of mine printed the DB credentials into my own tool transcript once (not in any file). The pooler password for this shared mock DB should be rotated if the transcript is retained.
+- Env var API: GET /envvars/prod returns values in plain text (isSecret false) - an ad-hoc debug call of mine printed the DB credentials into my own tool transcript once (not in any file). Deleting the env vars does not revoke the credential, so the pooler password for this shared mock DB must be rotated. That is an open owner action, not yet recorded as done.
 - Retrieved run `startedAt - createdAt` is only ~250 ms for warm queue; actual cold start is inside the duration (first run ~5-8 s overhead beyond probe time was not separable).
 
 ## Cleanup

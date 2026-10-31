@@ -61,7 +61,7 @@ The picture shows the shape that makes the move a trigger swap. Each platform su
 
 - **Keep portable:** the registry, the handler invocation (the same one the admin Run door uses), leases, compare-and-swap, the outbox and the HTTP route per job.
 - **Keep thin per platform:** the trigger, `lib/runtime-host.ts`, the `next.config.mjs` flags and the cache headers.
-- **Not portable:** Vercel Workflows and Cloudflare Workflows are proprietary to their hosts. For portable durable steps use DBOS, pg-boss or the planned Prisma `Job` table. Whether the Workflow DevKit's pluggable "Worlds" backends make Vercel Workflows portable is UNVERIFIED.
+- **Not portable:** the managed Vercel Workflows backend and Cloudflare Workflows are proprietary to their hosts. For portable durable steps use DBOS, pg-boss or the planned Prisma `Job` table. The Workflow SDK publishes a self-hosted Postgres World (PostgreSQL plus graphile-worker on a long-running server), which Vercel calls a reference implementation needing production hardening; it is DOCS only and untested here, and it does not migrate existing run history, timers or queue state from the managed backend.
 - **Handle limits, regions and egress through configuration**, not code branches: a per-job time budget, the region, and the egress proxy (`RAZORPAYX_EGRESS_PROXY_URL`).
 
 ## Where in code
@@ -77,4 +77,6 @@ The picture shows the shape that makes the move a trigger swap. Each platform su
 
 ## Deprecated & Superseded Approaches
 
+- **GitHub Actions as the job scheduler.** Jobs once ran from Actions cron workflows with per-job wrapper scripts under `jobs/**` and `scripts/**`. The minutes budget ran out, and every job now has one implementation in the registry, triggered by the ticker (`AGENTS.md` rule 1). Delete any surviving wrapper rather than reviving it.
+- **A hosted engine as a second clock for the same sweep.** QStash, Inngest and Trigger.dev were proposed as schedulers beside the ticker. Two owners of one periodic job break `AGENTS.md` rule 4; event-driven delivery from an outbox is a separate choice, covered on [page 14](./14-background-job-runtime-options.md).
 - **Treating the ticker as part of the job logic.** The ticker, its packing and its background adapters exist because of one host's limits. They are the part of the machinery that a move retires; the registry, leases and run records are not.

@@ -34,19 +34,20 @@ Every route, including /api/health, /api/topics, pages and /api/cleanup/prune-sy
 
 Vercel bom1: NOT MEASURED (blocker). Netlify baseline, MEASURED from this laptop, TTFB ms, 12 sequential requests per path: the first 2 are shown as "first two" (cold status not controllable on Netlify, so they are only "first requests"), p50/p95 over the following 10. The laptop address is not recorded.
 
-| Path                                                                                                                                                                                                                                   | HTTP | first two   | p50 | p95  |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ----------- | --- | ---- |
-| /                                                                                                                                                                                                                                      | 200  | 2182 / 384  | 763 | 1127 |
-| /explore/experts                                                                                                                                                                                                                       | 200  | 4285 / 4196 | 600 | 2002 |
-| /explore/experts/<seeded id>                                                                                                                                                                                                           | 200  | 335 / 369   | 339 | 849  |
-| /explore/programs                                                                                                                                                                                                                      | 200  | 3829 / 584  | 681 | 1038 |
-| /pricing                                                                                                                                                                                                                               | 200  | 342 / 353   | 331 | 584  |
-| /api/health                                                                                                                                                                                                                            | 200  | 1863 / 328  | 334 | 608  |
-| /api/topics                                                                                                                                                                                                                            | 200  | 461 / 1106  | 438 | 934  |
-| /api/currency                                                                                                                                                                                                                          | 200  | 314 / 367   | 327 | 723  |
-| /sitemap.xml                                                                                                                                                                                                                           | 200  | 490 / 378   | 331 | 632  |
-| /api/announcements                                                                                                                                                                                                                     | 200  | 3900 / 373  | 332 | 398  |
-| Netlify response headers carry `server: Netlify` and an x-nf-request-id (no region evidence in headers). Vercel evidence: the failing responses carried `x-vercel-id: bom1::...`, confirming bom1 routing only. Raw data was not kept. |
+| Path                         | HTTP | first two   | p50 | p95  |
+| ---------------------------- | ---- | ----------- | --- | ---- |
+| /                            | 200  | 2182 / 384  | 763 | 1127 |
+| /explore/experts             | 200  | 4285 / 4196 | 600 | 2002 |
+| /explore/experts/<seeded id> | 200  | 335 / 369   | 339 | 849  |
+| /explore/programs            | 200  | 3829 / 584  | 681 | 1038 |
+| /pricing                     | 200  | 342 / 353   | 331 | 584  |
+| /api/health                  | 200  | 1863 / 328  | 334 | 608  |
+| /api/topics                  | 200  | 461 / 1106  | 438 | 934  |
+| /api/currency                | 200  | 314 / 367   | 327 | 723  |
+| /sitemap.xml                 | 200  | 490 / 378   | 331 | 632  |
+| /api/announcements           | 200  | 3900 / 373  | 332 | 398  |
+
+Netlify response headers carry `server: Netlify` and an x-nf-request-id (no region evidence in headers). Vercel evidence: the failing responses carried `x-vercel-id: bom1::...`, confirming bom1 routing only. Raw data was not kept.
 
 ## Job duration table
 

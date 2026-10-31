@@ -34,7 +34,7 @@ Findings (MEASURED):
 ## B. Prisma overhead (Prisma 7.10 + adapter-pg vs raw `pg`, same project, alternating 6 times)
 
 - Per-statement latency through the pooler is bimodal (about 0.7–1.0 ms or about 2.3 ms) and the mode changes between invocations, so only same-mode runs compare.
-- Same-mode runs: `SELECT 1` median 2.26 / 2.33 ms (Prisma) vs 2.35 / 2.32 ms (raw); 10-round-trip lock hold median 22.2 / 22.3 ms vs 22.1 / 21.7 ms. Prisma's per-statement overhead is below noise, about 0.1 ms or less. MEASURED.
+- Same-mode runs: `SELECT 1` median 2.26 / 2.33 ms (Prisma) vs 2.35 / 2.32 ms (raw); 10-round-trip lock hold median 22.2 / 22.3 ms vs 22.1 / 21.7 ms. Prisma's per-statement overhead is below noise, about 0.1 ms or less. MEASURED for a bare `PrismaClient` running `$queryRawUnsafe` and `$executeRawUnsafe`; the app's extended client, model operations and the Netlify cold path were not exercised.
 - One-time Prisma costs: client construction 1.9 ms; first query on a cold instance 180–221 ms; the very first call after deploy took 4.7 s for the 20-query mix and did not recur (cause not isolated). MEASURED.
 
 ## C. QStash and Upstash Workflow (EU) to Vercel bom1
@@ -97,6 +97,6 @@ The QStash stats API showed 107 messages that day for the whole EU user (includi
 - `drop schema lab_v2lock cascade`; `select nspname from pg_namespace where nspname like 'lab_v2%'` returned 0 rows.
 - `qstash_list_schedules` (EU) returned `[]`.
 - Removed `DATABASE_URL`, `QSTASH_TOKEN`, both signing keys, `QSTASH_URL`, `LAB_APP` and `WF_BASE` from all 4 projects; `vercel env ls` shows none; each redeployed.
-- Older deployments were built with the env vars and may hold them in their snapshots: delete the projects after 48 h.
+- Older deployments were built with the env vars and may hold them in their snapshots. Removing the variables does not revoke them, so rotate `DATABASE_URL`, `QSTASH_TOKEN` and both signing keys now, or delete the projects now, rather than waiting out the 48 h window. Both are open owner actions.
 - Local secrets files deleted; no lab processes left; no repo changes; no existing Vercel project touched.
 - Left for browsing: 1 QStash DLQ message and 5 Workflow DLQ messages.

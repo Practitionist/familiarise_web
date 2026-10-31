@@ -7,7 +7,7 @@ Date: 2026-10-31. Plan: Hobby (personal scope, no teams).
 - Vercel CLI 65.9.0
 - Function runtime: Node v26.13.0 (project setting 26.x), `pg` ^8.13
 - Region pinned with `"regions": ["bom1"]`. Every response returned `region: "bom1"` (from `process.env.VERCEL_REGION`).
-- Target: Supabase Mumbai pooler, port 6543 (ap-south-1), `rejectUnauthorized:false`, one `pg.Client` per invocation.
+- Target: Supabase Mumbai pooler, port 6543 (ap-south-1), `rejectUnauthorized:false`, one `pg.Client` per invocation. Turning off certificate verification is a lab-only shortcut against a mock database and is not production-safe; production code keeps verification on.
 - Laptop to Vercel was invoked with curl. The client wall time includes laptop to bom1 plus the function's own total.
 
 ## Code

@@ -7,7 +7,7 @@ type: explanation
 
 This page was moved from a GitHub issue into the docs on 2026-10-31. It is research evidence, not a decision. The owner decisions are in [Ticker through launch, the scale path, the phase 2 queue and the database plan](../decisions/2026-10-31-ticker-scale-path-and-queue.md) and in the [architecture at scale review](../decisions/2026-10-30-architecture-at-scale-review.md); where this page disagrees with them, they win. The labels VERIFIED (read on a primary source), UNVERIFIED (no primary source was read) and ESTIMATE (arithmetic from stated assumptions) are kept from the source.
 
-**Measurement note (added 2026-10-31).** Every "95 ms per statement" on this page is the figure in the ticker decision record, measured through the app earlier. A later probe with raw `pg` from Netlify Singapore measured 62–64 ms, and Prisma's own per-statement overhead measured below noise in `bom1`, so the gap is unexplained and should not be attributed to Prisma. A Vercel `bom1` function measured 1.0–2.1 ms. See [Background-job runtime options](../maintenance/14-background-job-runtime-options.md).
+**Measurement note (added 2026-10-31).** Every "95 ms per statement" on this page is the figure in the ticker decision record, measured through the app earlier. A later probe with raw `pg` from Netlify Singapore measured 62–64 ms, and a bare Prisma client running raw queries measured below noise in `bom1`. That probe did not exercise the app's extended client, model queries or the Netlify cold path, so the gap is unexplained. A Vercel `bom1` function measured 1.0–2.1 ms. See [Background-job runtime options](../maintenance/14-background-job-runtime-options.md).
 
 ## Why this page exists
 
@@ -182,7 +182,7 @@ flowchart LR
 
 **What's worse:** job database calls travel even further. It's a second deploy target for the same code, and money jobs still need an outbox.
 
-**Cost:** about $17/mo now and about $170 at 10× — unverified.
+**Cost:** about $17/mo now and about $170 at 10× — unverified. These figures are for this shape, where the job code runs on Trigger.dev machines. The [options page](./03-background-jobs-and-cron-options.md) (row E) costs a different shape, where a Trigger.dev task only calls our Netlify route: about $10 on Hobby now and about $51 on Pro at 10×. Do not compare the two figures as one runtime.
 
 ---
 
@@ -235,8 +235,10 @@ flowchart LR
 | Variant                              | Shape                                                   | Approx. cost now            | Ops load                                 |
 | ------------------------------------ | ------------------------------------------------------- | --------------------------- | ---------------------------------------- |
 | AWS Lightsail VM (#2484 option 1)    | One box runs web, the scheduler and the worker          | ~$24 VM, ~$69 all-in        | You patch the OS, deploy and handle TLS  |
-| GCP Cloud Run + Cloud Scheduler      | A managed container, with the scheduler calling a route | ~$200 (#2484)               | Low; Cloud NAT is needed for a static IP |
+| GCP Cloud Run + Cloud Scheduler      | A managed container, with the scheduler calling a route | ~$200 all-in (#2484)        | Low; Cloud NAT is needed for a static IP |
 | Azure Container Apps (Central India) | A managed container with built-in scheduled jobs        | Not costed yet (unverified) | Low to medium                            |
+
+The two cost scopes differ. "VM" and the [Mumbai hosting comparison](./04-mumbai-hosting-comparison.md) count compute only: one 4 GB Lightsail box is $24, as are two 2 GB boxes for web plus worker, and Cloud Run is about $130 at launch. "All-in" adds the Netlify seat, Supabase Pro, Upstash and, for Cloud Run, Cloud NAT and its IP, as costed in the [runtime strategy review](./02-runtime-strategy-review.md) §5: about $69 for the box and about $200 for Cloud Run. Compare like with like.
 
 **What it deletes:** almost all of the ticker workarounds. The queue lives in Postgres, so money jobs enqueue in the same transaction.
 

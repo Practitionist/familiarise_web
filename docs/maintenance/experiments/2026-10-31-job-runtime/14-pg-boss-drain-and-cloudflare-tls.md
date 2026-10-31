@@ -12,6 +12,8 @@ Code is in this directory: `lib/drain.mjs` (drain), `bench.mjs`, `abandon2.mjs`,
 
 ### Drain function (lib/drain.mjs, core)
 
+Lab only, not production guidance: `rejectUnauthorized: false` below turns off server-certificate verification against a mock database. Production code must keep verification on, with the Supabase CA.
+
 ```js
 const boss = new PgBoss({
   connectionString,
@@ -133,6 +135,6 @@ Hyperdrive costs about +2 ms per round trip over the unencrypted baseline, but i
 
 - `wrangler delete --name fw-lab-tls`: "Successfully deleted fw-lab-tls"; `https://fw-lab-tls.fw-lab-cloudflare.workers.dev/` now returns 404; `wrangler versions list --name fw-lab-tls` errors (script not found). wrangler 4.156 has no Worker list command; no other `fw-lab-tls`/`fw-lab-*` script was created by this lab.
 - `wrangler hyperdrive delete` for both configs, then `wrangler hyperdrive list` returned an empty table. Both uploaded CA certs deleted; `wrangler cert list` shows 0 entries.
-- Vercel: `fw-lab-pgdrain` project kept (up to 48 h); env vars DATABASE_URL and DIRECT_URL removed (`vercel env ls production` count 0); local `.env.local` removed. Its deployment still exists but has no credentials, so it cannot reach the DB. Delete with `vercel project rm fw-lab-pgdrain --scope kaustav-ghoshs-projects` when done.
+- Vercel: `fw-lab-pgdrain` project kept (up to 48 h); env vars DATABASE_URL and DIRECT_URL removed (`vercel env ls production` count 0); local `.env.local` removed. Vercel applies environment-variable changes only to new deployments, so the retained deployment was built with those variables and may still hold them. Cleanup is not complete until the project is deleted (`vercel project rm fw-lab-pgdrain --scope kaustav-ghoshs-projects`) or the database password is rotated; both are open owner actions.
 - `drop schema lab_cftls cascade; drop schema lab_pgdrain cascade;` then `select nspname from pg_namespace where nspname in ('lab_cftls','lab_pgdrain')` returned `[]` (0 rows).
 - Temp file /tmp/direct_url.txt holds a DB URL: removed below.

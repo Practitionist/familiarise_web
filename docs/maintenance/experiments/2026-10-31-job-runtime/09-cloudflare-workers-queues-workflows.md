@@ -111,5 +111,5 @@ All Workers, Queues and the Workflow were deleted on 2026-10-31 at the owner's r
 
 ## Caveats
 
-- The kept Workers listed in this report (`fw-lab-*` other than `fw-lab-tls`, which a later report deleted) are public on workers.dev with no auth, including `/send` and `/wf/start`. They can no longer reach Postgres, but anyone with a URL can enqueue messages or start workflows against the Free quotas (failing into `fw-lab-dlq`).
+- Until their deletion on 2026-10-31, the lab Workers were public on workers.dev with no auth, including `/send` and `/wf/start`, so anyone with a URL could enqueue messages or start workflows against the Free quotas. All of them are now deleted (see above), so no `/send` or `/wf/start` endpoint remains and there is no quota exposure. Only the workers.dev subdomain remains.
 - The first `wrangler deploy` on this account registered the account-wide workers.dev subdomain `fw-lab-cloudflare`; cleanup does not remove it.
