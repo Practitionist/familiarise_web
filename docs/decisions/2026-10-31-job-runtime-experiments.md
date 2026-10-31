@@ -52,7 +52,7 @@ Two conclusions the experiments do not support:
 
 The owner chose, in this session: **launch on option 4 (the Netlify ticker plus Background Functions for jobs that need more than 30 s). Decide between option 1 (Vercel Pro `bom1` plus Vercel Workflows) and option 3 (a Mumbai VM with DBOS) after the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency.**
 
-The option numbers are the owner's. They map onto the options of the [runtime strategy review](../infrastructure/2026-10-31-runtime-strategy-review.md) and the stacks of the [layer matrix](../maintenance/15-job-runtime-layer-matrix.md) as follows.
+The option numbers are the owner's. They map onto the options of the [runtime strategy review](../infrastructure/02-runtime-strategy-review.md) and the stacks of the [layer matrix](../maintenance/15-job-runtime-layer-matrix.md) as follows.
 
 | Owner option | What it is                                                  | Stacks on page 15 | Closest option in the strategy review §5 |
 | ------------ | ----------------------------------------------------------- | ----------------- | ---------------------------------------- |
@@ -60,7 +60,7 @@ The option numbers are the owner's. They map onto the options of the [runtime st
 | 1            | Vercel Pro `bom1` plus Vercel Workflows                     | S6 and S7         | E, Vercel Pro `bom1`                     |
 | 3            | A Mumbai VM running DBOS                                    | S10               | A and C, a Mumbai VM                     |
 
-The Mumbai VM candidate for option 3 is researched in [Mumbai VM provider research](../infrastructure/2026-10-31-mumbai-vm-provider-research.md): AWS Lightsail Mumbai at $24 (4 GB) or $12 (2 GB), with a static IP free while attached and no SLA, is recommended, with EC2 `t4g` and GCP `e2` in `asia-south1` as runners-up. Its latency figures are ESTIMATEs until the Lightsail probe runs, which waits for the owner's AWS login.
+The Mumbai VM candidate for option 3 is researched in [Mumbai VM provider research](../infrastructure/05-mumbai-vm-provider-research.md): AWS Lightsail Mumbai at $24 (4 GB) or $12 (2 GB), with a static IP free while attached and no SLA, is recommended, with EC2 `t4g` and GCP `e2` in `asia-south1` as runners-up. Its latency figures are ESTIMATEs until the Lightsail probe runs, which waits for the owner's AWS login.
 
 ### Trade-offs
 
@@ -75,11 +75,11 @@ The table compares the three options on the evidence in this record.
 | Who runs the server   | Netlify                                                                                                   | Vercel (managed)                                                          | We do: patching, restarts, failback                                              |
 | Main risk             | Keeps the most job machinery and the slow database path                                                   | A second platform, a Pro plan, and the Workflows model                    | Operating a server; a DBOS pool of about 10 and a pinned version                 |
 
-Moving the real app to Vercel needs code and build changes (middleware ESM under Node 26 or a pinned Node 22, and the static-generation step). The migration effort for option 1 is therefore larger than a config switch. Measured by the real-app attempt: the default build ran out of memory; with `CI_LEAN_BUILD=true` and a 6144 MB heap it built in 14 minutes, then every route returned 500 `MIDDLEWARE_INVOCATION_FAILED` because the built `middleware.js` could not load as an ES module under Node 26 (regional routing still worked: `x-vercel-id: bom1`); on Node 22 the build hung at "Generating static pages (0/252)" for more than 17 minutes, twice. The cause of the hang is an unverified hypothesis (prerendering against the live database from a build machine outside India). For comparison, the Netlify baseline on the dev site is 330–760 ms TTFB per route at p50 with p95 up to 2 s, and job durations at p50 of 490 ms for `reconcile-payment-status` and 275 ms for `reconcile-orphaned-confirmations`. Report: [real-app-vercel-bom1-attempt](../maintenance/experiments/2026-10-31-job-runtime/real-app-vercel-bom1-attempt.md).
+Moving the real app to Vercel needs code and build changes (middleware ESM under Node 26 or a pinned Node 22, and the static-generation step). The migration effort for option 1 is therefore larger than a config switch. Measured by the real-app attempt: the default build ran out of memory; with `CI_LEAN_BUILD=true` and a 6144 MB heap it built in 14 minutes, then every route returned 500 `MIDDLEWARE_INVOCATION_FAILED` because the built `middleware.js` could not load as an ES module under Node 26 (regional routing still worked: `x-vercel-id: bom1`); on Node 22 the build hung at "Generating static pages (0/252)" for more than 17 minutes, twice. The cause of the hang is an unverified hypothesis (prerendering against the live database from a build machine outside India). For comparison, the Netlify baseline on the dev site is 330–760 ms TTFB per route at p50 with p95 up to 2 s, and job durations at p50 of 490 ms for `reconcile-payment-status` and 275 ms for `reconcile-orphaned-confirmations`. Report: [real-app-vercel-bom1-attempt](../maintenance/experiments/2026-10-31-job-runtime/15-real-app-vercel-bom1-attempt.md).
 
 ### Cost by scale
 
-All figures are monthly US dollars and are **ESTIMATE**s taken from [the runtime strategy review §5](../infrastructure/2026-10-31-runtime-strategy-review.md) as the coordinator summarised them. None is a bill. The 1,000-user figure for option 1 is highly uncertain.
+All figures are monthly US dollars and are **ESTIMATE**s taken from [the runtime strategy review §5](../infrastructure/02-runtime-strategy-review.md) as the coordinator summarised them. None is a bill. The 1,000-user figure for option 1 is highly uncertain.
 
 | Scale             | Option 1: Vercel `bom1` plus Workflows | Option 3: Mumbai VM plus DBOS | Option 4: ticker plus Background Functions       |
 | ----------------- | -------------------------------------- | ----------------------------- | ------------------------------------------------ |

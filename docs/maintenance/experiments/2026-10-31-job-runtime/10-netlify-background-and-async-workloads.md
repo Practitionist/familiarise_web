@@ -11,7 +11,7 @@ Code: `netlify/functions/{job,probe,flaky,flakyv1,flakyexit}-background.*`, `net
 4. Retries re-run side effects: no idempotency, no dedupe. Each attempt wrote its side-effect row.
 5. The caller can never learn status. Use DB run rows (`SystemJobExecution`).
 6. Concurrency: 10 at once all ran in parallel (start spread 0.51 s).
-7. Async Workloads: this experiment did not install the extension. A later check found it already installed on the team (it is team-level, so it applies to every site on the team including `familiarise`); see [netlify-async-workloads-measured.md](./netlify-async-workloads-measured.md) for the measurements. Docs research only here.
+7. Async Workloads: this experiment did not install the extension. A later check found it already installed on the team (it is team-level, so it applies to every site on the team including `familiarise`); see [12-netlify-async-workloads-measured.md](./12-netlify-async-workloads-measured.md) for the measurements. Docs research only here.
 
 ## A1. Admission and runtime (MEASURED)
 
@@ -73,7 +73,7 @@ DOCS: the background-function page says nothing about deploy previews (https://d
 ### Not installed by this experiment (reason)
 
 It is a **team-level extension** (docs: "install the Async Workloads extension for your team. After you install the extension, all sites on your team will be able to build Async Workloads functions", https://docs.netlify.com/build/async-workloads/get-started/). The team Practitionist-Deploys also owns `familiarise`, so installing would change the build of a site I was told not to touch, and billing is "as any other provisioned resources". I did not try `change-extension-installation`. MCP `get-full-extension-details` shows the extension exists (slug `async-workloads`, UI surfaces: site build-and-deploy configuration and team configuration, sdk 3.0.0) but I could not tell whether it is installed.
-**Owner click path (written before the extension was found installed):** https://app.netlify.com/teams/<team-slug>/extensions -> Async Workloads -> Install (team-wide). A later check found it already installed on the team, so the click path is only needed if it is uninstalled; see [netlify-async-workloads.md](./netlify-async-workloads.md). Then per site: Project configuration > Developer settings > Async Workloads (API key; automatic on non-Starter plans). This team is `orb-pro` (credit-based plan; knowledge-base prerequisite "a project on a credit-based plan").
+**Owner click path (written before the extension was found installed):** https://app.netlify.com/teams/<team-slug>/extensions -> Async Workloads -> Install (team-wide). A later check found it already installed on the team, so the click path is only needed if it is uninstalled; see [11-netlify-async-workloads.md](./11-netlify-async-workloads.md). Then per site: Project configuration > Developer settings > Async Workloads (API key; automatic on non-Starter plans). This team is `orb-pro` (credit-based plan; knowledge-base prerequisite "a project on a credit-based plan").
 
 ### Docs findings (DOCS)
 
@@ -92,7 +92,7 @@ It is a **team-level extension** (docs: "install the Async Workloads extension f
 | limits                          | payload under 500 KB per event (batches of up to 10 within the 6 MB function limit), chain limit 20, pending limit 2000, scheduler interval 60 s (10-900); non-production scheduler runs only on stateful actions                                     | limitations, optional-configuration                                                                  |
 | transactional send / dual write | not documented. `send` is an HTTP call to Netlify, independent of your DB transaction, so commit-then-fail-before-send loses the job unless you add your own outbox (this repo's state-as-outbox sweep is the answer). Inference, not measured.       |                                                                                                      |
 
-Not measured by this experiment: event-to-start latency, backoff timing, delay accuracy, crash-in-step-2 re-run counts, 60 s/300 s steps and the dual-write test. See [netlify-async-workloads-measured.md](./netlify-async-workloads-measured.md).
+Not measured by this experiment: event-to-start latency, backoff timing, delay accuracy, crash-in-step-2 re-run counts, 60 s/300 s steps and the dual-write test. See [12-netlify-async-workloads-measured.md](./12-netlify-async-workloads-measured.md).
 
 ## Dashboard URLs
 

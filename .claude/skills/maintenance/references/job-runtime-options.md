@@ -6,7 +6,7 @@ Evidence from 2026-10-31, not decisions. Depth, diagrams and sources: `docs/main
 
 Current owner decision (2026-10-31, `docs/decisions/2026-10-31-job-runtime-experiments.md`): launch on option 4, the Netlify ticker plus Background Functions for jobs over 30 s. Decide between option 1 (Vercel Pro `bom1` plus Vercel Workflows) and option 3 (a Mumbai VM with DBOS) after the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency. Revisit when those two tests report, or at about 300 concurrent users, whichever comes first. Do not start either migration before then.
 
-Option 1 is not a config switch: the real `dev` app failed on Vercel (Node 26 middleware ESM load, Node 22 static-generation hang), see `docs/maintenance/experiments/2026-10-31-job-runtime/real-app-vercel-bom1-attempt.md`.
+Option 1 is not a config switch: the real `dev` app failed on Vercel (Node 26 middleware ESM load, Node 22 static-generation hang), see `docs/maintenance/experiments/2026-10-31-job-runtime/15-real-app-vercel-bom1-attempt.md`.
 
 ## Decision-relevant facts
 
@@ -114,7 +114,7 @@ Machinery (`wc -l`): `lib/cron/cleanup-registry.ts` 2,410 (keep), `netlify/funct
 
 ## How to rerun a probe
 
-Scripts live outside the repo; all of them (Inngest, pg-boss, DBOS, Supabase, Trigger.dev, lock-hold, Netlify, QStash, Vercel, Cloudflare) are stored as redacted text in `docs/maintenance/experiments/2026-10-31-job-runtime/source-code.md`. The second Vercel round is in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-fluid-prisma-qstash-workflows.md` (code under `lab-vercel2/` in `source-code.md`). The first Vercel probe is described in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-bom1-latency.md`.
+Scripts live outside the repo; all of them (Inngest, pg-boss, DBOS, Supabase, Trigger.dev, lock-hold, Netlify, QStash, Vercel, Cloudflare) are stored as redacted text in `docs/maintenance/experiments/2026-10-31-job-runtime/source-code.md`. The second Vercel round is in `docs/maintenance/experiments/2026-10-31-job-runtime/08-vercel-fluid-prisma-qstash-workflows.md` (code under `lab-vercel2/` in `source-code.md`). The first Vercel probe is described in `docs/maintenance/experiments/2026-10-31-job-runtime/07-vercel-bom1-latency.md`.
 
 1. Make a scratch directory outside the repo and copy the script out of the markdown.
 2. Pass the database address through an environment variable only. Use a throwaway `lab_` schema on the shared project.

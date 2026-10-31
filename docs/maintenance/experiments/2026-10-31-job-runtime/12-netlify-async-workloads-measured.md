@@ -3,7 +3,7 @@
 Site fw-probe-jobs-9651 (site id redacted), functions in ap-southeast-1, runtime nodejs24.x.
 Lab code lived in private repo <owner>/fw-lab-async-workloads (now archived, see Cleanup). A local copy is in this folder (functions in netlify/functions, workload logic in lib/handler.mjs, schema helper dbadmin.mjs). All timestamps are UTC from the Postgres clock (clock_timestamp()), schema lab_naw2.
 
-> The earlier documentation-only report is [netlify-async-workloads.md](./netlify-async-workloads.md), which could not measure anything because a CLI deploy lacks the extension's functions. This report supersedes it for measurements and keeps the docs findings there. The repository name, deploy-key id and deploy ids are redacted.
+> The earlier documentation-only report is [11-netlify-async-workloads.md](./11-netlify-async-workloads.md), which could not measure anything because a CLI deploy lacks the extension's functions. This report supersedes it for measurements and keeps the docs findings there. The repository name, deploy-key id and deploy ids are redacted.
 
 ## Versions
 

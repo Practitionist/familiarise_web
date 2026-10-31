@@ -5,7 +5,7 @@ type: reference
 
 # Always-on VM near Supabase ap-south-1 (Mumbai): provider research
 
-This page is research evidence for owner option 3 (a Mumbai VM with DBOS) in [the job-runtime decision record](../decisions/2026-10-31-job-runtime-experiments.md). It is not a decision. Every latency figure below is an ESTIMATE until the Lightsail probe runs, which is pending the owner's AWS login. The earlier internal comparison is [Mumbai hosting, phase 1: costed comparison](./2026-10-31-mumbai-hosting-comparison.md).
+This page is research evidence for owner option 3 (a Mumbai VM with DBOS) in [the job-runtime decision record](../decisions/2026-10-31-job-runtime-experiments.md). It is not a decision. Every latency figure below is an ESTIMATE until the Lightsail probe runs, which is pending the owner's AWS login. The earlier internal comparison is [Mumbai hosting, phase 1: costed comparison](./04-mumbai-hosting-comparison.md).
 
 **Summary.** Recommended: AWS Lightsail in Mumbai, $24 for 4 GB or $12 for 2 GB, with a static IPv4 that is free while attached, no SLA and 2 TB of egress on the 4 GB plan in Mumbai. Runners-up: EC2 `t4g` and GCP `e2` in `asia-south1`. Ruled out: Hetzner (no India region), Oracle Free, E2E Networks (no small plans) and Azure in Pune (not Mumbai), plus the options whose prices or SLAs could not be verified.
 

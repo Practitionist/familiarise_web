@@ -8,7 +8,7 @@ Current owner decision (2026-10-31, `docs/decisions/2026-10-31-job-runtime-exper
 
 ## Real app on Vercel
 
-The real `dev` app did not run on Vercel Hobby without changes: default build OOM; `CI_LEAN_BUILD=true` plus a 6144 MB heap built in 14 min, but every route returned 500 `MIDDLEWARE_INVOCATION_FAILED` (`middleware.js` cannot load as an ES module on Node 26); Node 22 builds hung at static generation (cause unverified). Option 1 therefore needs code and build changes, not a config switch. Report: `docs/maintenance/experiments/2026-10-31-job-runtime/real-app-vercel-bom1-attempt.md`.
+The real `dev` app did not run on Vercel Hobby without changes: default build OOM; `CI_LEAN_BUILD=true` plus a 6144 MB heap built in 14 min, but every route returned 500 `MIDDLEWARE_INVOCATION_FAILED` (`middleware.js` cannot load as an ES module on Node 26); Node 22 builds hung at static generation (cause unverified). Option 1 therefore needs code and build changes, not a config switch. Report: `docs/maintenance/experiments/2026-10-31-job-runtime/15-real-app-vercel-bom1-attempt.md`.
 
 ## Netlify (Singapore, `ap-southeast-1`)
 
@@ -42,4 +42,4 @@ The real `dev` app did not run on Vercel Hobby without changes: default build OO
 
 ## How to rerun
 
-Use a throwaway site or project with the region pinned, a `lab_` schema, and env vars removed afterwards. Scripts: `docs/maintenance/experiments/2026-10-31-job-runtime/source-code.md` and `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-bom1-latency.md`. Delete the site or project when done. The kept Netlify site `fw-probe-jobs-9651` is for browsing only until 2026-11-02.
+Use a throwaway site or project with the region pinned, a `lab_` schema, and env vars removed afterwards. Scripts: `docs/maintenance/experiments/2026-10-31-job-runtime/source-code.md` and `docs/maintenance/experiments/2026-10-31-job-runtime/07-vercel-bom1-latency.md`. Delete the site or project when done. The kept Netlify site `fw-probe-jobs-9651` is for browsing only until 2026-11-02.

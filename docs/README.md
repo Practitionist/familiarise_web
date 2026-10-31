@@ -263,18 +263,20 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [sentry/07-verifying-end-to-end.md](./observability/sentry/07-verifying-end-to-end.md) - The evidence ladder and the deploy-preview probe procedure
 - [sentry/08-error-telemetry-privacy-reference.md](./observability/sentry/08-error-telemetry-privacy-reference.md) - The privacy and lawful-basis reasoning for sending error data to a hosted vendor
 - [maintenance/11-job-machinery-catalog.md](./maintenance/11-job-machinery-catalog.md) - How every scheduled job runs, what each run records and reports, the observability gaps, and the operations dashboard spec
-- [infrastructure/2026-10-31-scale-path-research.md](./infrastructure/2026-10-31-scale-path-research.md) - Research summary for the jobs and web-tier scale path, the main finding and the recorded owner decisions
-- [infrastructure/2026-10-31-background-jobs-and-cron-options.md](./infrastructure/2026-10-31-background-jobs-and-cron-options.md) - Background jobs and cron: 25 options, what startups do, the cheapest path per stage
-- [infrastructure/2026-10-31-mumbai-vm-provider-research.md](./infrastructure/2026-10-31-mumbai-vm-provider-research.md) - Mumbai VM provider research: Lightsail recommended, EC2 and GCP runners-up, latency figures are estimates until the probe runs
-- [infrastructure/2026-10-31-mumbai-hosting-comparison.md](./infrastructure/2026-10-31-mumbai-hosting-comparison.md) - Costed comparison of hosting in Mumbai
-- [infrastructure/2026-10-31-queue-prototype-owed-refunds.md](./infrastructure/2026-10-31-queue-prototype-owed-refunds.md) - pg-boss against a hand-written Prisma Job table on the owed-refund job
-- [infrastructure/2026-10-31-runtime-strategy-review.md](./infrastructure/2026-10-31-runtime-strategy-review.md) - Unbiased review of job and runtime strategy (a dissenting analysis, not the plan)
-- [infrastructure/2026-10-31-job-runtime-system-designs.md](./infrastructure/2026-10-31-job-runtime-system-designs.md) - Mermaid system designs for each candidate runtime
+- [infrastructure/README.md](./infrastructure/README.md) - Index of the infrastructure roadmap and the 2026-10-31 hosting and job-runtime research, numbered in reading order
+- [infrastructure/01-scale-path-research.md](./infrastructure/01-scale-path-research.md) - Research summary for the jobs and web-tier scale path, the main finding and the recorded owner decisions
+- [infrastructure/03-background-jobs-and-cron-options.md](./infrastructure/03-background-jobs-and-cron-options.md) - Background jobs and cron: 25 options, what startups do, the cheapest path per stage
+- [infrastructure/05-mumbai-vm-provider-research.md](./infrastructure/05-mumbai-vm-provider-research.md) - Mumbai VM provider research: Lightsail recommended, EC2 and GCP runners-up, latency figures are estimates until the probe runs
+- [infrastructure/04-mumbai-hosting-comparison.md](./infrastructure/04-mumbai-hosting-comparison.md) - Costed comparison of hosting in Mumbai
+- [infrastructure/06-queue-prototype-owed-refunds.md](./infrastructure/06-queue-prototype-owed-refunds.md) - pg-boss against a hand-written Prisma Job table on the owed-refund job
+- [infrastructure/02-runtime-strategy-review.md](./infrastructure/02-runtime-strategy-review.md) - Unbiased review of job and runtime strategy (a dissenting analysis, not the plan)
+- [infrastructure/07-job-runtime-system-designs.md](./infrastructure/07-job-runtime-system-designs.md) - Mermaid system designs for each candidate runtime
 - [maintenance/14-background-job-runtime-options.md](./maintenance/14-background-job-runtime-options.md) - Comparison matrix, request-flow and state diagrams, worked example, official sources and the owner's Q&A for Netlify, Inngest, QStash, Upstash Workflow, Trigger.dev, pg-boss, DBOS and Vercel `bom1`
 - [maintenance/15-job-runtime-layer-matrix.md](./maintenance/15-job-runtime-layer-matrix.md) - The eight layers of the jobs subsystem, the five compatibility rules and the eleven coherent stacks, with an HLD and a decision flowchart
 - [maintenance/16-job-machinery-and-portability.md](./maintenance/16-job-machinery-and-portability.md) - Job machinery line counts, what a host move removes, the Netlify-specific surface and portability as ports and adapters
 - [maintenance/experiments/2026-10-31-job-runtime/README.md](./maintenance/experiments/2026-10-31-job-runtime/README.md) - Index of the raw experiment reports, the method, the honesty labels, the dashboards to browse and the cleanup log
-- [2026-10-31-job-runtime-experiments.md](./decisions/2026-10-31-job-runtime-experiments.md) - Evidence record (no new decision) for the background-job runtime experiments, with the open questions for the owner
+- [2026-10-31-job-runtime-experiments.md](./decisions/2026-10-31-job-runtime-experiments.md) - Evidence and the launch runtime decision (ticker plus Background Functions, then a choice between Vercel `bom1` and a Mumbai VM)
+- [2026-10-31-gpt-issue-triage.md](./decisions/2026-10-31-gpt-issue-triage.md) - Triage of the GPT-6.1 durable-jobs issues: org invoice rail off at launch, no second-scheduler pilot, fix order for the owner
 - [2026-10-26-launch-sweep-observability-and-money-holds.md](./decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) - ADR-01 to ADR-12: money holds, invoice healing, tax identity, auth abuse controls, the three observability layers, ticker escalation and the Sentry quota posture
 
 ---

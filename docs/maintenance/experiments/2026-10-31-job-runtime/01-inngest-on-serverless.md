@@ -1,6 +1,6 @@
 # Inngest on a ~26 s edge-timeout host: experiment report
 
-Scope: every timeout result below comes from a synthetic 26 s 504 proxy in front of a plain Node server, so it shows how Inngest reacts to a 504 and not how a real host ends an in-flight function. The real-host duplicate-execution tests are in [netlify-inngest-qstash.md](./netlify-inngest-qstash.md) and [netlify-real-qstash.md](./netlify-real-qstash.md), which corroborate it: a 30 s step on real Netlify got a 504 and ran twice under Inngest, and a 30 s message from real QStash wrote its side effect three times.
+Scope: every timeout result below comes from a synthetic 26 s 504 proxy in front of a plain Node server, so it shows how Inngest reacts to a 504 and not how a real host ends an in-flight function. The real-host duplicate-execution tests are in [05-netlify-inngest-qstash.md](./05-netlify-inngest-qstash.md) and [06-netlify-real-qstash.md](./06-netlify-real-qstash.md), which corroborate it: a 30 s step on real Netlify got a 504 and ran twice under Inngest, and a 30 s message from real QStash wrote its side effect three times.
 
 ## Versions
 
