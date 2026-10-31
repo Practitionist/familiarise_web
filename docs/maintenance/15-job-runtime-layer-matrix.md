@@ -183,6 +183,8 @@ flowchart LR
 | Layer 6 invariants            | `prisma/sql/ledger-triggers.sql`, `prisma/sql/payment-legs-triggers.sql`            |
 | RazorpayX egress              | `apiRequest` in `lib/payments/payouts/razorpay-payouts.ts`                          |
 
+The machinery that a host move would remove, and the portability rules, are on [page 16](./16-job-machinery-and-portability.md).
+
 ## Deprecated & Superseded Approaches
 
 - **Judging a runtime by its scheduler alone.** Earlier pages compared Inngest, QStash and Trigger.dev as if each were a complete system. The layer view shows they differ in which layers they supply, which is why a hosted engine never removes layers 5 and 6.

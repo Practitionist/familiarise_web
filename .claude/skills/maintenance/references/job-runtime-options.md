@@ -82,6 +82,10 @@ Without latency (correctness, limits, ops, cost, migration effort): 1 DBOS, 2 Ve
 
 Without latency, today's ticker and DBOS rank near the top because correctness is already solved. With latency, every option that keeps code outside Mumbai drops below the Mumbai options. Restate is not ranked yet (results pending). Detail: `docs/maintenance/14-background-job-runtime-options.md` section 12.2.
 
+## What a host move removes
+
+Machinery (`wc -l`): `lib/cron/cleanup-registry.ts` 2,410 (keep), `netlify/functions/cron-tick.mts` 881 and `lib/cron/schedule.ts` 655 (exist for the single 30 s ticker; mostly removed on a move), 12 lease and run-record files 1,656 (keep), deadline and background adapters 324 (Netlify time limits). A Vercel move removes about 1,500-2,000 lines (ESTIMATE); leases, CAS, run records, the registry and the outbox stay. Portable core: registry, handler invocation, leases, CAS, outbox, HTTP route per job. Thin per platform: trigger, `lib/runtime-host.ts`, `next.config.mjs` flags, cache headers. Vercel and Cloudflare Workflows are not portable; use DBOS, pg-boss or the planned Prisma `Job` table. Handle limits, regions and egress through config. Detail: `docs/maintenance/16-job-machinery-and-portability.md`.
+
 ## Footguns
 
 - DBOS needs a pool of about 10 or more. With `systemDatabasePoolSize: 2` its advisory-lock connection hits the 5 s idle-in-transaction timeout and the process crashes. It cannot run under `PG_POOL_MAX=1`. Pin `DBOS__APPVERSION`, or a non-latest worker stops dequeuing.
