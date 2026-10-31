@@ -23,7 +23,7 @@
  * paid, still NULL" into an exact work queue — state-as-outbox, no queue table.
  * See ADR 27.
  */
-import prisma from "@/lib/prisma";
+import prisma, { type Db } from "@/lib/prisma";
 import { PaymentStatus, Prisma, RefundStatus } from "@prisma/client";
 import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
@@ -152,6 +152,58 @@ async function ensureChannelForOrphan(
   }
 }
 
+const DEFAULT_CONFIRMATION_GRACE_MINUTES = 15;
+const CHANNEL_PASS_WINDOW_MS = 7 * 24 * 3_600_000;
+
+/** A SUCCEEDED payment whose appointment still holds a live tentative slot. */
+function orphanedConfirmationWhere(
+  updatedBefore: Date,
+): Prisma.PaymentWhereInput {
+  return {
+    paymentStatus: "SUCCEEDED",
+    updatedAt: { lt: updatedBefore },
+    appointmentId: { not: null },
+    // A rescheduled-away row keeps isTentative and would be re-driven every
+    // tick; only a live hold is an orphan.
+    appointment: {
+      occurrences: { some: { isTentative: true, ...liveOccurrenceWhere } },
+    },
+  };
+}
+
+/** A confirmed, paid appointment whose chat channel was never stamped ensured. */
+function unchanneledAppointmentWhere(
+  createdSince: Date,
+): Prisma.AppointmentWhereInput {
+  return {
+    chatChannelEnsuredAt: null,
+    deletedAt: null,
+    createdAt: { gte: createdSince },
+    payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
+    occurrences: { none: { isTentative: true, ...liveOccurrenceWhere } },
+  };
+}
+
+/** True when the confirmation pass or the chat-channel pass has a row. */
+export async function hasOrphanedConfirmationWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const t = now.getTime();
+  const payment = await db.payment.findFirst({
+    where: orphanedConfirmationWhere(
+      new Date(t - DEFAULT_CONFIRMATION_GRACE_MINUTES * 60_000),
+    ),
+    select: { id: true },
+  });
+  if (payment) return true;
+  const appointment = await db.appointment.findFirst({
+    where: unchanneledAppointmentWhere(new Date(t - CHANNEL_PASS_WINDOW_MS)),
+    select: { id: true },
+  });
+  return appointment !== null;
+}
+
 // #476 — fail-closed: re-driving a confirmation twice is guarded by the
 // idempotent slot flip, but the entry must not run unlocked regardless.
 export async function reconcileOrphanedConfirmations(
@@ -167,7 +219,7 @@ export async function reconcileOrphanedConfirmations(
 async function reconcileOrphanedConfirmationsUnlocked(
   opts: { graceMinutes?: number; limit?: number } = {},
 ): Promise<OrphanedConfirmationResult> {
-  const graceMinutes = opts.graceMinutes ?? 15;
+  const graceMinutes = opts.graceMinutes ?? DEFAULT_CONFIRMATION_GRACE_MINUTES;
   const limit = opts.limit ?? 200;
   // #1356 — the channel pass is bounded separately and much lower: each entry
   // is an outbound Stream round trip, and the caller that matters is a Netlify
@@ -181,16 +233,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
   const cutoff = new Date(Date.now() - graceMinutes * 60_000);
 
   const orphans = await prisma.payment.findMany({
-    where: {
-      paymentStatus: "SUCCEEDED",
-      updatedAt: { lt: cutoff },
-      appointmentId: { not: null },
-      // FAMILIARISE_WEB-46 — a rescheduled-away row keeps isTentative and
-      // would be re-driven every tick; only a live hold is an orphan.
-      appointment: {
-        occurrences: { some: { isTentative: true, ...liveOccurrenceWhere } },
-      },
-    },
+    where: orphanedConfirmationWhere(cutoff),
     select: {
       id: true,
       appointmentId: true,
@@ -272,13 +315,9 @@ async function reconcileOrphanedConfirmationsUnlocked(
   // syncUserEventChannels on a dashboard load or is past caring. Oldest first,
   // so a backlog drains in arrival order rather than starving its head.
   const unchanneled = await prisma.appointment.findMany({
-    where: {
-      chatChannelEnsuredAt: null,
-      deletedAt: null,
-      createdAt: { gte: new Date(Date.now() - 7 * 24 * 3_600_000) },
-      payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
-      occurrences: { none: { isTentative: true, ...liveOccurrenceWhere } },
-    },
+    where: unchanneledAppointmentWhere(
+      new Date(Date.now() - CHANNEL_PASS_WINDOW_MS),
+    ),
     select: {
       id: true,
       appointmentType: true,
@@ -428,6 +467,54 @@ function orphanPaymentWhere(graceCutoff: Date, windowCutoff: Date) {
   } satisfies Prisma.PaymentWhereInput;
 }
 
+/** An orphan past the heal window, escrowed for an operator. */
+function staleOrphanPaymentWhere(windowCutoff: Date) {
+  return {
+    paymentStatus: PaymentStatus.SUCCEEDED,
+    appointmentId: null,
+    deletedAt: null,
+    parentPaymentId: null,
+    NOT: { paymentIntent: { startsWith: "overage:" } },
+    AND: [notSettledElsewhereWhere],
+    createdAt: { lt: windowCutoff },
+    refunds: {
+      none: {
+        status: RefundStatus.PENDING,
+      },
+    },
+    disputes: {
+      none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+    },
+  } satisfies Prisma.PaymentWhereInput;
+}
+
+/**
+ * True when the heal arm or the escrow arm has a candidate. An already-escrowed
+ * row stays in the escrow arm, so this is a superset of the run's writes.
+ */
+export async function hasOrphanedPaymentWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const t = now.getTime();
+  const windowCutoff = new Date(
+    t - ORPHAN_PAYMENT_WINDOW_DAYS * 24 * 3_600_000,
+  );
+  const row = await db.payment.findFirst({
+    where: {
+      OR: [
+        orphanPaymentWhere(
+          new Date(t - ORPHAN_PAYMENT_GRACE_MINUTES * 60_000),
+          windowCutoff,
+        ),
+        staleOrphanPaymentWhere(windowCutoff),
+      ],
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 // Fail-closed: this sweep refunds, so concurrent runs must collapse to one.
 export async function reconcileOrphanedPayments(
   opts: { graceMinutes?: number; limit?: number } = {},
@@ -492,23 +579,7 @@ async function reconcileOrphanedPaymentsUnlocked(
   }
 
   const rawStale = await prisma.payment.findMany({
-    where: {
-      paymentStatus: PaymentStatus.SUCCEEDED,
-      appointmentId: null,
-      deletedAt: null,
-      parentPaymentId: null,
-      NOT: { paymentIntent: { startsWith: "overage:" } },
-      AND: [notSettledElsewhereWhere],
-      createdAt: { lt: windowCutoff },
-      refunds: {
-        none: {
-          status: RefundStatus.PENDING,
-        },
-      },
-      disputes: {
-        none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
-      },
-    },
+    where: staleOrphanPaymentWhere(windowCutoff),
     orderBy: { createdAt: "asc" },
     take: limit,
     select: {

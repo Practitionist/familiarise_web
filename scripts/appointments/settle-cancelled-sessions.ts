@@ -33,7 +33,7 @@ import {
 
 import { z } from "zod";
 
-import prisma, { type Tx } from "../../lib/prisma";
+import prisma, { type Db, type Tx } from "../../lib/prisma";
 import { readJobCheckpoint, withCronLock } from "@/lib/cron/with-cron-lock";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -632,14 +632,7 @@ const PLAN_REFUNDED_STATUSES: AppointmentStatus[] = [
  */
 async function settleVoidsOfEndedPlans(now: Date): Promise<number> {
   const { count } = await prisma.appointmentOccurrence.updateMany({
-    where: {
-      completionStatus: OccurrenceCompletionStatus.VOIDED,
-      seatsSettledAt: null,
-      deletedAt: null,
-      appointment: {
-        subscription: { status: { in: PLAN_REFUNDED_STATUSES } },
-      },
-    },
+    where: voidOfRefundedPlanWhere(),
     data: { seatsSettledAt: now },
   });
   return count;
@@ -656,10 +649,7 @@ async function settleVoidsOfCompletedPlans(
   result: SettleCancelledSessionsResult,
 ): Promise<void> {
   const plans = await prisma.subscription.findMany({
-    where: {
-      status: AppointmentStatus.COMPLETED,
-      appointment: { occurrences: { some: UNSETTLED_VOID } },
-    },
+    where: completedPlanWithVoidWhere(),
     orderBy: { id: "asc" },
     take: limit,
     select: { id: true, appointment: { select: { id: true } } },
@@ -766,6 +756,69 @@ const UNSETTLED_VOID = {
   deletedAt: null,
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
+// The run's cohort predicates, shared with the ticker's idle probe.
+function voidOfRefundedPlanWhere() {
+  return {
+    completionStatus: OccurrenceCompletionStatus.VOIDED,
+    seatsSettledAt: null,
+    deletedAt: null,
+    appointment: {
+      subscription: { status: { in: PLAN_REFUNDED_STATUSES } },
+    },
+  } satisfies Prisma.AppointmentOccurrenceWhereInput;
+}
+
+function completedPlanWithVoidWhere() {
+  return {
+    status: AppointmentStatus.COMPLETED,
+    appointment: { occurrences: { some: UNSETTLED_VOID } },
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+const LIVE_PLAN = {
+  deletedAt: null,
+  status: { in: PLAN_LIVE_STATUSES },
+  appointment: { isNot: null },
+} satisfies Prisma.SubscriptionWhereInput;
+
+function storedEndPlanWhere(now: Date) {
+  return {
+    ...LIVE_PLAN,
+    planEndsAt: { lte: now },
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+/** Prefiltered by start; the run checks the derived end per plan. */
+function derivedEndPlanWhere(now: Date) {
+  return {
+    ...LIVE_PLAN,
+    planEndsAt: null,
+    schedulingPeriodStartsAt: { lt: subMonths(now, 1) },
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+export async function hasSettleCancelledSessionsWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const session = await db.appointmentOccurrence.findFirst({
+    where: { OR: [dueWhere(now), voidOfRefundedPlanWhere()] },
+    select: { id: true },
+  });
+  if (session) return true;
+  const plan = await db.subscription.findFirst({
+    where: {
+      OR: [
+        completedPlanWithVoidWhere(),
+        storedEndPlanWhere(now),
+        derivedEndPlanWhere(now),
+      ],
+    },
+    select: { id: true },
+  });
+  return plan !== null;
+}
+
 /** A payment already owes another door's refund; the plan waits behind it. */
 class PlanEndMarkerHeld extends Error {
   constructor(paymentId: string) {
@@ -829,11 +882,6 @@ async function settleEndedPlans(
   result: SettleCancelledSessionsResult,
   outOfTime: () => boolean,
 ): Promise<void> {
-  const live = {
-    deletedAt: null,
-    status: { in: PLAN_LIVE_STATUSES },
-    appointment: { isNot: null },
-  } satisfies Prisma.SubscriptionWhereInput;
   const failedIds: string[] = [];
   let firstError: unknown;
   const cursor = parsePlanCursor(result.checkpoint);
@@ -903,8 +951,7 @@ async function settleEndedPlans(
     (after) =>
       prisma.subscription.findMany({
         where: {
-          ...live,
-          planEndsAt: { lte: now },
+          ...storedEndPlanWhere(now),
           ...afterKey("planEndsAt", after),
         },
         orderBy: [{ planEndsAt: "asc" }, { id: "asc" }],
@@ -919,9 +966,7 @@ async function settleEndedPlans(
     (after) =>
       prisma.subscription.findMany({
         where: {
-          ...live,
-          planEndsAt: null,
-          schedulingPeriodStartsAt: { lt: subMonths(now, 1) },
+          ...derivedEndPlanWhere(now),
           ...afterKey("schedulingPeriodStartsAt", after),
         },
         orderBy: [{ schedulingPeriodStartsAt: "asc" }, { id: "asc" }],

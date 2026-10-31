@@ -6,9 +6,11 @@
  * bounded and commits on its own; failures go to the shared `errors`.
  */
 
+import type { Prisma } from "@prisma/client";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type Db,
 } from "@/lib/prisma";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import {
@@ -37,19 +39,81 @@ export interface ChatAccessSweepResult {
   notices: number;
 }
 
+/** Live grants that expired or whose case is closed or deleted. */
+function dueGrantWhere(now: Date): Prisma.SupportCaseChatAccessWhereInput {
+  return {
+    endedAt: null,
+    OR: [
+      { expiresAt: { lte: now } },
+      { supportCase: { status: { in: [...CLOSED_STATUSES] } } },
+      { supportCase: { deletedAt: { not: null } } },
+    ],
+  };
+}
+
+/** Ended interventions still seated in the Stream channel. */
+const PENDING_LEAVE_WHERE: Prisma.SupportCaseChatAccessWhereInput = {
+  kind: "INTERVENE",
+  endedAt: { not: null },
+  streamJoinedAt: { not: null },
+  streamLeftAt: null,
+};
+
+function recentBoundaryWhere(
+  now: Date,
+): Prisma.SupportCaseChatAccessWhereInput {
+  const since = new Date(now.getTime() - BOUNDARY_RECHECK_MS);
+  return {
+    kind: "INTERVENE",
+    OR: [{ createdAt: { gte: since } }, { endedAt: { gte: since } }],
+  };
+}
+
+/** Live interventions whose Stream join has not landed past the after-commit window. */
+function joinRetryWhere(now: Date): Prisma.SupportCaseChatAccessWhereInput {
+  return {
+    kind: "INTERVENE",
+    endedAt: null,
+    streamJoinedAt: null,
+    expiresAt: { gt: now },
+    createdAt: { lt: new Date(now.getTime() - JOIN_RETRY_AFTER_MS) },
+  };
+}
+
+/** Ended grants on a closed case with no live grant left, not yet noticed. */
+const REVIEW_NOTICE_WHERE: Prisma.SupportCaseChatAccessWhereInput = {
+  endedAt: { not: null },
+  reviewNoticeAt: null,
+  supportCase: {
+    status: { in: [...CLOSED_STATUSES] },
+    deletedAt: null,
+    chatAccess: { none: { endedAt: null } },
+  },
+};
+
+/** The chat arm of the SLA sweep's idle probe: one statement over every step's selector. */
+export async function hasChatAccessWork(db: Db, now: Date): Promise<boolean> {
+  const row = await db.supportCaseChatAccess.findFirst({
+    where: {
+      OR: [
+        dueGrantWhere(now),
+        PENDING_LEAVE_WHERE,
+        recentBoundaryWhere(now),
+        joinRetryWhere(now),
+        REVIEW_NOTICE_WHERE,
+      ],
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 const message = (err: unknown) =>
   err instanceof Error ? err.message : String(err);
 
 async function endDueGrants(limit: number, now: Date, errors: string[]) {
   const due = await prisma.supportCaseChatAccess.findMany({
-    where: {
-      endedAt: null,
-      OR: [
-        { expiresAt: { lte: now } },
-        { supportCase: { status: { in: [...CLOSED_STATUSES] } } },
-        { supportCase: { deletedAt: { not: null } } },
-      ],
-    },
+    where: dueGrantWhere(now),
     orderBy: { expiresAt: "asc" },
     take: limit,
     select: {
@@ -84,12 +148,7 @@ async function endDueGrants(limit: number, now: Date, errors: string[]) {
 
 async function leaveEndedInterventions(limit: number, errors: string[]) {
   const pending = await prisma.supportCaseChatAccess.findMany({
-    where: {
-      kind: "INTERVENE",
-      endedAt: { not: null },
-      streamJoinedAt: { not: null },
-      streamLeftAt: null,
-    },
+    where: PENDING_LEAVE_WHERE,
     orderBy: { endedAt: "asc" },
     take: limit,
     select: { id: true },
@@ -114,12 +173,8 @@ async function syncRecentBoundaries(
   now: Date,
   errors: string[],
 ) {
-  const since = new Date(now.getTime() - BOUNDARY_RECHECK_MS);
   const recent = await prisma.supportCaseChatAccess.findMany({
-    where: {
-      kind: "INTERVENE",
-      OR: [{ createdAt: { gte: since } }, { endedAt: { gte: since } }],
-    },
+    where: recentBoundaryWhere(now),
     orderBy: { createdAt: "asc" },
     take: limit,
     select: { channelType: true, channelId: true },
@@ -145,13 +200,7 @@ async function syncRecentBoundaries(
 
 async function retryJoins(limit: number, now: Date, errors: string[]) {
   const pending = await prisma.supportCaseChatAccess.findMany({
-    where: {
-      kind: "INTERVENE",
-      endedAt: null,
-      streamJoinedAt: null,
-      expiresAt: { gt: now },
-      createdAt: { lt: new Date(now.getTime() - JOIN_RETRY_AFTER_MS) },
-    },
+    where: joinRetryWhere(now),
     orderBy: { createdAt: "asc" },
     take: limit,
     select: { id: true, caseId: true, kind: true },
@@ -192,15 +241,7 @@ async function sendReviewNotices(
   stagedBells: StagedTrigger[],
 ) {
   const pending = await prisma.supportCaseChatAccess.findMany({
-    where: {
-      endedAt: { not: null },
-      reviewNoticeAt: null,
-      supportCase: {
-        status: { in: [...CLOSED_STATUSES] },
-        deletedAt: null,
-        chatAccess: { none: { endedAt: null } },
-      },
-    },
+    where: REVIEW_NOTICE_WHERE,
     orderBy: { endedAt: "asc" },
     take: limit * 4,
     select: { caseId: true },

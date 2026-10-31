@@ -6,7 +6,35 @@ Rechecked 2026-10-23 using getSite and listAccountsForUser: familiarise belongs 
 
 The account explicitly reports background_functions.included=true. Current [general documentation](https://docs.netlify.com/build/functions/usage-and-billing/) restricts legacy-plan background availability, so preserve the account-specific evidence and require deployed manifest/runtime verification. Do not assume availability or impossibility from the general plan name alone.
 
-Netlify distinguishes legacy request billing from credit-based compute and web-request meters. Use actual provider usage and invoices before quoting an overage or changing plans. The [credit model](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/) has multiple meters; fewer function calls need not reduce total credits if compute or bandwidth grows. Current plan price and exact overage are not established by the capability response.
+Netlify distinguishes legacy request billing from credit-based compute and web-request meters (section 1.2). Use actual provider usage and invoices before quoting an overage or changing plans. The [credit model](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/) has multiple meters; fewer function calls need not reduce total credits if compute or bandwidth grows. Current plan price and exact overage are not established by the capability response.
+
+## 1.1 What the bill is made of (legacy Pro)
+
+MEASURED from receipts (team `teetangh`, invoices CFJUKK-00015 to CFJUKK-00020):
+
+- $19 per member per month. A second member (a Developer) was added on 2026-10-05 and billed $18.39 prorated; the next bill is about $63 if invocations stay above 125,000.
+- Function invocations of the `familiarise` site by billing period: May 24,804; June 48,552; August 75,897; September 4 to October 3 282,162. Crossing the 125,000-per-site tier adds a flat $25 (125,000 to 2,000,000), which is why the 2026-10-06 bill was $44.
+- Nothing else is close: bandwidth 1.29, 1.60, 8.26 and 8.36 GB against 1 TB; edge function invocations 52,000 rising to 284,000 against 2,000,000 free; build minutes up to 9,777 of 25,000. Invocations are the only meter that has crossed a line.
+
+DOCS (Netlify support ticket #1112198, 2026-09-17, and [legacy plans](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-legacy-plans/legacy-pricing-plans/)):
+
+- Keep-warm pings bill like real invocations (about 26,000 a month for three pings every five minutes). That keep-warm was retired on 2026-10-03.
+- A cold-start stall bills as duration: 28 seconds at 1,024 MB is about 28 GB-seconds against the 1,000 GB-hour allowance.
+- Legacy Pro has no hard spend cap, only usage alerts at 50, 75, 90 and 100 percent. Overage above 2,000,000 invocations is billed per 500,000.
+
+The ticker used to be the largest controllable source: MEASURED about 94,850 invocations a month on `dev` (8,640 ticks plus 86,210 target calls) plus 8,640 slot-claim calls, with 99.8 percent of runs in a 7-day window processing zero items. After the skip-idle change (ESTIMATE, `docs/decisions/2026-11-01-ticker-skip-idle-targets.md`) the idle state is about 21,200 a month plus one call per due tick that has work. Every new job must declare an idle probe or an `alwaysRun` reason (`lib/cron/cleanup-registry.ts`); a job that always runs is a permanent monthly invocation cost.
+
+Better Stack checks `familiarisenow.com` and `/api/health` every 3 minutes (`docs/maintenance/00-betterstack-setup.md`). The homepage check costs a function invocation each time, about 14,400 a month. RECOMMENDATION, not done: point it at a static or CDN-cached URL.
+
+## 1.2 Credit-based plans (PENDING, not decided)
+
+DOCS ([pricing](https://www.netlify.com/pricing/), [how credits work](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/)):
+
+- Pro is $20 flat with 3,000 credits and unlimited members. Packs are 1,500 credits for $10; auto-recharge is off by default; free-plan sites pause when credits run out.
+- Costs: a production deploy 15 credits; Deploy Previews and branch deploys free; compute 10 credits per GB-hour (Serverless, Scheduled and Background Functions; Edge Functions do not count); web requests 2 credits per 10,000; bandwidth 20 credits per GB; forms free.
+- The switch is permanent: "You cannot revert to a Legacy plan from a Credit-based plan."
+- ESTIMATE at our usage: about 1,000 to 1,300 credits a month.
+- Status: the owner emailed Netlify support (drafted 2026-11-01) to confirm region pinning, Background Functions and seats before switching. Do not recommend the switch as decided.
 
 ## 2. What causes surprise bills or outages
 

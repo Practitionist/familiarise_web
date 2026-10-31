@@ -28,8 +28,8 @@
  * Sentry report, and an honest success flag.
  */
 
-import prisma from "../../lib/prisma";
-import { PaymentStatus, RefundStatus } from "@prisma/client";
+import prisma, { type Db } from "../../lib/prisma";
+import { PaymentStatus, RefundStatus, type Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
@@ -43,6 +43,38 @@ const EVENT_CATEGORY = "PAYMENT";
 
 // Only check payments within the last 7 days
 const ALERT_WINDOW_DAYS = 7;
+
+/** The critical cohort before the refunded-amount filter; shared with the ticker's idle probe. */
+function orphanedPaymentAlertWhere(since: Date): Prisma.PaymentWhereInput {
+  return {
+    paymentStatus: PaymentStatus.SUCCEEDED,
+    appointmentId: null,
+    deletedAt: null,
+    parentPaymentId: null,
+    NOT: { paymentIntent: { startsWith: "overage:" } },
+    AND: [notSettledElsewhereWhere],
+    createdAt: { gte: since },
+    refunds: {
+      none: {
+        status: RefundStatus.PENDING,
+      },
+    },
+  };
+}
+
+/** True when the alert's query would return a candidate (a superset of the filtered cohort). */
+export async function hasOrphanedPaymentAlertWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const row = await db.payment.findFirst({
+    where: orphanedPaymentAlertWhere(
+      new Date(now.getTime() - ALERT_WINDOW_DAYS * 24 * 60 * 60 * 1000),
+    ),
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 export interface OrphanedPaymentsAlertResult {
   success: boolean;
@@ -154,20 +186,7 @@ async function alertOrphanedPaymentsUnlocked(
   // so they are excluded from the critical cohort and counted separately;
   // replay sales and auto-refund markers are settled by their own rails.
   const rawOrphanedPayments = await prisma.payment.findMany({
-    where: {
-      paymentStatus: PaymentStatus.SUCCEEDED,
-      appointmentId: null,
-      deletedAt: null,
-      parentPaymentId: null,
-      NOT: { paymentIntent: { startsWith: "overage:" } },
-      AND: [notSettledElsewhereWhere],
-      createdAt: { gte: sevenDaysAgo },
-      refunds: {
-        none: {
-          status: RefundStatus.PENDING,
-        },
-      },
-    },
+    where: orphanedPaymentAlertWhere(sevenDaysAgo),
     include: {
       user: {
         select: { email: true, name: true },

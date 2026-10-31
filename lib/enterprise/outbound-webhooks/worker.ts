@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
-import type { PrismaLike } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
+import type { Db, PrismaLike } from "@/lib/prisma";
 /**
  * Outbound webhook delivery worker.
  *
@@ -130,6 +131,32 @@ async function maybeAutoDisableEndpoint(
 }
 
 const IN_FLIGHT_STALE_MS = 10 * 60 * 1000;
+
+/** Pending, due-retry and stale in-flight deliveries; shared by the tick and the ticker's idle probe. */
+function dueDeliveryWhere(
+  now: Date,
+  inFlightStaleBefore: Date,
+): Prisma.OutboundWebhookDeliveryWhereInput {
+  return {
+    OR: [
+      { status: "PENDING" },
+      { status: "RETRY", nextRetryAt: { lte: now } },
+      { status: "IN_FLIGHT", updatedAt: { lt: inFlightStaleBefore } },
+    ],
+  };
+}
+
+/** Ticker idle probe; the backlog alert counts a subset of these rows. */
+export async function hasOutboundWebhookWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const row = await db.outboundWebhookDelivery.findFirst({
+    where: dueDeliveryWhere(now, new Date(now.getTime() - IN_FLIGHT_STALE_MS)),
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 /**
  * Backoff slots indexed directly by completed `attemptNumber` (`row.attempts + 1`).
@@ -438,13 +465,7 @@ export async function runDispatchTick(params: {
   const nowDate = new Date(now());
   const inFlightStaleBefore = new Date(now() - IN_FLIGHT_STALE_MS);
   const dueRows = await prisma.outboundWebhookDelivery.findMany({
-    where: {
-      OR: [
-        { status: "PENDING" },
-        { status: "RETRY", nextRetryAt: { lte: nowDate } },
-        { status: "IN_FLIGHT", updatedAt: { lt: inFlightStaleBefore } },
-      ],
-    },
+    where: dueDeliveryWhere(nowDate, inFlightStaleBefore),
     orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],
     take: batchLimit,
     include: {

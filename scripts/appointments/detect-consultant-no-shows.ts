@@ -4,6 +4,7 @@
  */
 
 import prisma from "../../lib/prisma";
+import type { Db } from "../../lib/prisma";
 import { reportStandingFinding } from "../../lib/observability/standing-finding";
 import {
   getCallPresenceEvidence,
@@ -122,6 +123,49 @@ const DECIDED_OR_PARKED = {
   ],
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
+// Shared by the candidate read and the ticker's idle probe.
+function noShowCandidateWhere(graceCutoff: Date) {
+  return {
+    status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
+    appointment: {
+      payment: {
+        some: {
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          // E2E-audit P1 fix — amount > 0 used to exclude fully
+          // credit-funded (free_) bookings, so a consultant no-showing a
+          // credits-paid session silently skipped BOTH the cancellation
+          // and the credit restoration. The front door routes those to the
+          // credits rail on its own.
+          deletedAt: null,
+        },
+      },
+      occurrences: {
+        every: { endsAt: { lt: graceCutoff } },
+        some: {
+          ...LIVE_SLOT_WHERE,
+          endsAt: { lt: graceCutoff },
+          meeting: { isNot: null },
+        },
+        none: DECIDED_OR_PARKED,
+      },
+    },
+  } satisfies Prisma.ConsultationWhereInput;
+}
+
+const noShowGraceCutoff = (nowMs: number) =>
+  new Date(nowMs - NO_SHOW_GRACE_MINUTES * 60 * 1000);
+
+export async function hasConsultantNoShowWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const row = await db.consultation.findFirst({
+    where: noShowCandidateWhere(noShowGraceCutoff(now.getTime())),
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 function findNoShowCandidates(
   graceCutoff: Date,
   maxCandidates: number,
@@ -132,29 +176,7 @@ function findNoShowCandidates(
     take: maxCandidates,
     where: {
       ...(seen.length > 0 ? { id: { notIn: seen } } : {}),
-      status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      appointment: {
-        payment: {
-          some: {
-            paymentStatus: PaymentStatus.SUCCEEDED,
-            // E2E-audit P1 fix — amount > 0 used to exclude fully
-            // credit-funded (free_) bookings, so a consultant no-showing a
-            // credits-paid session silently skipped BOTH the cancellation
-            // and the credit restoration. The front door routes those to the
-            // credits rail on its own.
-            deletedAt: null,
-          },
-        },
-        occurrences: {
-          every: { endsAt: { lt: graceCutoff } },
-          some: {
-            ...LIVE_SLOT_WHERE,
-            endsAt: { lt: graceCutoff },
-            meeting: { isNot: null },
-          },
-          none: DECIDED_OR_PARKED,
-        },
-      },
+      ...noShowCandidateWhere(graceCutoff),
     },
     include: {
       consultationPlan: {
@@ -667,7 +689,7 @@ async function detectConsultantNoShowsUnlocked(
   const { errors } = tally;
   const presence = makePresenceLookup();
 
-  const graceCutoff = new Date(Date.now() - NO_SHOW_GRACE_MINUTES * 60 * 1000);
+  const graceCutoff = noShowGraceCutoff(Date.now());
 
   console.log("🔍 Scanning for consultant no-shows...");
   console.log(

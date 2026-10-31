@@ -3,8 +3,12 @@
  * leaves the row READY (still playable from Stream) until the attempt cap.
  */
 
-import prisma from "@/lib/prisma";
-import { RecordingStatus, RecordingStorageType } from "@prisma/client";
+import prisma, { type Db } from "@/lib/prisma";
+import {
+  RecordingStatus,
+  RecordingStorageType,
+  type Prisma,
+} from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { reportSentryMessage } from "@/lib/observability/report";
@@ -351,10 +355,9 @@ export async function transferRecording(
   }
 }
 
-/** Claims throttle each live source to one alarm per six hours, including manual replays. */
-async function reportTransferRisks(): Promise<number> {
-  const now = new Date();
-  const alertDue = {
+/** A source not alarmed within the six-hour cooldown. */
+function alertDueWhere(now: Date) {
+  return {
     OR: [
       { transferFailureAlertedAt: null },
       {
@@ -364,21 +367,32 @@ async function reportTransferRisks(): Promise<number> {
       },
     ],
   };
-  const atRisk = await prisma.recording.findMany({
-    where: {
-      storageType: RecordingStorageType.STREAM_S3,
-      status: RecordingStatus.READY,
-      streamUrlExpiresAt: { gt: now },
-      AND: [alertDue],
-      OR: [
-        {
-          streamUrlExpiresAt: {
-            lte: new Date(Date.now() + 72 * 60 * 60 * 1000),
-          },
+}
+
+/** Live sources due an alarm: expiring within 72 hours or three attempts consumed. */
+function transferRiskWhere(now: Date): Prisma.RecordingWhereInput {
+  return {
+    storageType: RecordingStorageType.STREAM_S3,
+    status: RecordingStatus.READY,
+    streamUrlExpiresAt: { gt: now },
+    AND: [alertDueWhere(now)],
+    OR: [
+      {
+        streamUrlExpiresAt: {
+          lte: new Date(now.getTime() + 72 * 60 * 60 * 1000),
         },
-        { transferAttempts: { gte: 3 } },
-      ],
-    },
+      },
+      { transferAttempts: { gte: 3 } },
+    ],
+  };
+}
+
+/** Claims throttle each live source to one alarm per six hours, including manual replays. */
+async function reportTransferRisks(): Promise<number> {
+  const now = new Date();
+  const alertDue = alertDueWhere(now);
+  const atRisk = await prisma.recording.findMany({
+    where: transferRiskWhere(now),
     select: {
       id: true,
       transferAttempts: true,
@@ -428,6 +442,44 @@ async function reportTransferRisks(): Promise<number> {
     .length;
 }
 
+/** A claim whose worker crashed: TRANSFERRING with no progress for the stale window. */
+function staleTransferWhere(now: Date) {
+  return {
+    status: RecordingStatus.TRANSFERRING,
+    storageType: RecordingStorageType.STREAM_S3,
+    updatedAt: { lt: new Date(now.getTime() - STALE_TRANSFER_MS) },
+  };
+}
+
+/** A live READY source whose retry backoff has elapsed. */
+function copyCandidateWhere(now: Date): Prisma.RecordingWhereInput {
+  return {
+    status: RecordingStatus.READY,
+    storageType: RecordingStorageType.STREAM_S3,
+    transferAttempts: { lt: MAX_TRANSFER_ATTEMPTS },
+    streamUrlExpiresAt: { gt: now },
+    OR: retryEligibleWhere(now),
+  };
+}
+
+/** Ticker idle probe: a stale claim, a copy candidate or a source due a risk alarm. */
+export async function hasRecordingTransferWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const row = await db.recording.findFirst({
+    where: {
+      OR: [
+        staleTransferWhere(now),
+        copyCandidateWhere(now),
+        transferRiskWhere(now),
+      ],
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 async function transferRecordingsUnlocked(): Promise<TransferRunResult> {
   const startedAt = Date.now();
   const result: TransferRunResult = {
@@ -441,11 +493,7 @@ async function transferRecordingsUnlocked(): Promise<TransferRunResult> {
   };
 
   // A crashed run leaves its claim behind; its consumed attempt keeps R2 keys distinct.
-  const staleWhere = {
-    status: RecordingStatus.TRANSFERRING,
-    storageType: RecordingStorageType.STREAM_S3,
-    updatedAt: { lt: new Date(startedAt - STALE_TRANSFER_MS) },
-  };
+  const staleWhere = staleTransferWhere(new Date(startedAt));
   const staleClaims = await prisma.recording.findMany({
     where: staleWhere,
     orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
@@ -467,13 +515,7 @@ async function transferRecordingsUnlocked(): Promise<TransferRunResult> {
   }
 
   const [candidate] = await prisma.recording.findMany({
-    where: {
-      status: RecordingStatus.READY,
-      storageType: RecordingStorageType.STREAM_S3,
-      transferAttempts: { lt: MAX_TRANSFER_ATTEMPTS },
-      streamUrlExpiresAt: { gt: new Date() },
-      OR: retryEligibleWhere(new Date()),
-    },
+    where: copyCandidateWhere(new Date()),
     orderBy: [{ streamUrlExpiresAt: "asc" }, { id: "asc" }],
     take: 1,
     select: { id: true },

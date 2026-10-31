@@ -10,6 +10,8 @@
  * member can still retry later (FAILED→PENDING via the resume-checkout order route).
  */
 import prisma from "@/lib/prisma";
+import type { Db } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
@@ -22,6 +24,41 @@ export interface OverageSweepResult {
   failed: number;
   /** Rows whose claim threw; each rolled back and stays PENDING for the next run. */
   errored: number;
+}
+
+const DEFAULT_AGE_DAYS = 7;
+
+/** Unpaid, never-started CHARGE_MEMBER side-charges created before `cutoff`; shared with the idle probe. */
+function abandonedOverageWhere(cutoff: Date): Prisma.OverageEventWhereInput {
+  return {
+    chargeStatus: "PENDING",
+    overageBehavior: "CHARGE_MEMBER",
+    createdAt: { lt: cutoff },
+    OR: [
+      { paymentId: null },
+      {
+        payment: {
+          is: {
+            paymentStatus: { not: "SUCCEEDED" },
+            paymentIntent: { startsWith: "overage:" },
+          },
+        },
+      },
+    ],
+  };
+}
+
+/** Ticker idle probe at the ticker's default grace window. */
+export async function hasAbandonedOverageWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const cutoff = new Date(now.getTime() - DEFAULT_AGE_DAYS * 86_400_000);
+  const row = await db.overageEvent.findFirst({
+    where: abandonedOverageWhere(cutoff),
+    select: { id: true },
+  });
+  return row !== null;
 }
 
 // #476 — locked at the core so the GH Actions entry (jobs/**) and the
@@ -41,7 +78,7 @@ async function sweepAbandonedOverageChargesUnlocked(
   opts: { ageDays?: number; limit?: number } = {},
 ): Promise<OverageSweepResult> {
   const failures = createRunFailureReporter("jobs");
-  const ageDays = opts.ageDays ?? 7;
+  const ageDays = opts.ageDays ?? DEFAULT_AGE_DAYS;
   const limit = opts.limit ?? 500;
   const cutoff = new Date(Date.now() - ageDays * 86_400_000);
 
@@ -63,22 +100,7 @@ async function sweepAbandonedOverageChargesUnlocked(
   // manufacture that case). The state machine's allowed-from still skips a
   // charge that paid (→CHARGED) between this read and the transition.
   const abandoned = await prisma.overageEvent.findMany({
-    where: {
-      chargeStatus: "PENDING",
-      overageBehavior: "CHARGE_MEMBER",
-      createdAt: { lt: cutoff },
-      OR: [
-        { paymentId: null },
-        {
-          payment: {
-            is: {
-              paymentStatus: { not: "SUCCEEDED" },
-              paymentIntent: { startsWith: "overage:" },
-            },
-          },
-        },
-      ],
-    },
+    where: abandonedOverageWhere(cutoff),
     select: { id: true },
     take: limit,
   });

@@ -26,6 +26,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import type { Db } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import {
@@ -192,6 +193,34 @@ async function dispatchClosedSeatNotifications(
   }
 }
 
+/** Ended periods on live programs of billable orgs; shared by the run and the ticker's idle probe. */
+function dueAssignmentWhere(asOf: Date): Prisma.ProgramAssignmentWhereInput {
+  return {
+    status: "ACTIVE",
+    rolledAt: null,
+    periodEnd: { lte: asOf },
+    program: {
+      status: "ACTIVE",
+      archivedAt: null,
+      contract: {
+        organization: { status: { in: BILLABLE_ORG_STATUSES } },
+      },
+    },
+  };
+}
+
+/** Ticker idle probe: the cohort at `now` covers any window start at or before it. */
+export async function hasAdvanceProgramCyclesWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const row = await db.programAssignment.findFirst({
+    where: dueAssignmentWhere(now),
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 /** With `windowStart`, only periods ended by it are due, so every slice of a window sees one cohort. */
 export async function runAdvanceProgramCycles(opts: {
   limit?: number;
@@ -222,21 +251,7 @@ async function advanceProgramCycles(opts: {
 
   // Candidates: ended periods on live programs, not yet processed.
   const due = await prisma.programAssignment.findMany({
-    where: {
-      status: "ACTIVE",
-      rolledAt: null,
-      periodEnd: { lte: asOf },
-      // E2E-audit P1 fix — never roll assignments for an org that is no
-      // longer billable (SUSPENDED/DEACTIVATED). A suspended org used to get
-      // fresh successor cycles minted every period end.
-      program: {
-        status: "ACTIVE",
-        archivedAt: null,
-        contract: {
-          organization: { status: { in: BILLABLE_ORG_STATUSES } },
-        },
-      },
-    },
+    where: dueAssignmentWhere(asOf),
     orderBy: { periodEnd: "asc" },
     take: BATCH_SIZE,
     select: {

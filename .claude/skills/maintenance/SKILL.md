@@ -24,9 +24,11 @@ Use one registered implementation per job and keep the required Netlify standby.
 the registry does not define phase or timeout fields. Regenerate the AST-derived
 inventory with `npm run cron:reference` and verify `npm run cron:reference:check`.
 The catalog has no worker, database or environment imports. Its twelve-target figure
-(`MAX_TARGETS_PER_TICK`) is a tested design bound, not a runtime dispatch cap; the
-busiest tick holds 11. No Actions workflow schedules a registry job, so a job with
+(`MAX_TARGETS_PER_TICK`) is a tested design bound; at runtime `capToTick` applies it to the targets left after idle
+skips, and the busiest tick holds 11. No Actions workflow schedules a registry job, so a job with
 no ticker target runs nowhere.
+
+Every registry entry carries a required `idle` field: either `{ hasWork(db, now) }`, a probe exported from the job's own core module that reuses the job's claim predicate, or `{ alwaysRun: "<reason>" }`. The ticker's slot-claim call (`POST /api/health/jobs/tick?due=...`) runs the probes through `idleTargets` (`lib/cron/idle-probe.ts`, 2.5 s budget, one probe at a time on the single connection) and the ticker dispatches only the due targets that were not idle. A throwing probe, an always-run job and a target the budget never reached are dispatched (fail open). The skip writes no `SystemJobExecution` row: the claim row lists it under `result.idle`, and the health readers (`lib/cron/idle-skips.ts`) count it as a finished run that found nothing. `__tests__/maintenance/idle-probe-drift.test.ts` enforces that a probe shares the `...Where` builders with the claim query.
 
 Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion. Its requested fail-closed 15-minute lease is capped on Netlify at 90 seconds, renewed every 30 seconds; renewal loss does not cancel the core, so preserve domain claim and publication fencing. The recording's stale-claim threshold remains 15 minutes. Session recovery runs via HTTP at :10/:40. The five daily lifecycle targets queue the narrow `stream-maintenance-background` worker in staggered daily windows; their Actions steps are removed. All six migrated cores fail closed, and daily completion health has a 27-hour budget. See `docs/stream/09-background-sync.md` for slice bounds and continuation.
 

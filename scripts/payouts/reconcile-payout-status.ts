@@ -14,8 +14,8 @@
  * `lastReconciledAt` (see reconcile-cursor.ts).
  */
 
-import prisma from "../../lib/prisma";
-import { PayoutStatus, PaymentGateway } from "@prisma/client";
+import prisma, { type Db } from "../../lib/prisma";
+import { PayoutStatus, PaymentGateway, type Prisma } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import {
   handlePayoutWebhook,
@@ -61,6 +61,72 @@ export interface PayoutReconciliationResult {
   timestamp: string;
 }
 
+/** COMPLETED payouts this recent are polled for a bank reversal. */
+const COMPLETED_REVERSAL_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Stale PENDING/PROCESSING consultant payouts that carry a gateway reference. */
+function stalePayoutWhere(
+  minAge: Date,
+  maxAge: Date,
+): Prisma.ConsultantPayoutWhereInput {
+  return {
+    status: { in: [PayoutStatus.PENDING, PayoutStatus.PROCESSING] },
+    updatedAt: {
+      lt: minAge,
+      gte: maxAge,
+    },
+    providerPayoutId: { not: null },
+  };
+}
+
+function recentCompletedPayoutWhere(
+  cutoff: Date,
+): Prisma.ConsultantPayoutWhereInput {
+  return {
+    status: PayoutStatus.COMPLETED,
+    providerPayoutId: { not: null },
+    processedAt: { gte: cutoff },
+  };
+}
+
+function recentCompletedOrgPayoutWhere(
+  cutoff: Date,
+): Prisma.OrganizationPayoutWhereInput {
+  return {
+    status: PayoutStatus.COMPLETED,
+    paymentGateway: PaymentGateway.RAZORPAY,
+    gatewayPayoutId: { not: null },
+    processedAt: { gte: cutoff },
+  };
+}
+
+/** True when the stale pass or either reversal pass has a payout to poll. */
+export async function hasPayoutStatusReconcileWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const t = now.getTime();
+  const reversalCutoff = new Date(t - COMPLETED_REVERSAL_WINDOW_MS);
+  const consultant = await db.consultantPayout.findFirst({
+    where: {
+      OR: [
+        stalePayoutWhere(
+          new Date(t - MIN_AGE_HOURS * 60 * 60 * 1000),
+          new Date(t - MAX_AGE_DAYS * 24 * 60 * 60 * 1000),
+        ),
+        recentCompletedPayoutWhere(reversalCutoff),
+      ],
+    },
+    select: { id: true },
+  });
+  if (consultant) return true;
+  const org = await db.organizationPayout.findFirst({
+    where: recentCompletedOrgPayoutWhere(reversalCutoff),
+    select: { id: true },
+  });
+  return org !== null;
+}
+
 /**
  * Reconcile stale PENDING/PROCESSING payouts with gateway status
  */
@@ -95,15 +161,7 @@ async function reconcilePayoutStatusUnlocked(
 
   // Find stale PENDING or PROCESSING payouts
   const stalePayouts = await prisma.consultantPayout.findMany({
-    where: {
-      status: { in: [PayoutStatus.PENDING, PayoutStatus.PROCESSING] },
-      updatedAt: {
-        lt: minAge,
-        gte: maxAge,
-      },
-      // Only payouts with gateway reference
-      providerPayoutId: { not: null },
-    },
+    where: stalePayoutWhere(minAge, maxAge),
     include: {
       consultantProfile: {
         include: {
@@ -275,14 +333,10 @@ async function reconcilePayoutStatusUnlocked(
   );
 
   const completedReversalCutoff = new Date(
-    Date.now() - 14 * 24 * 60 * 60 * 1000,
+    Date.now() - COMPLETED_REVERSAL_WINDOW_MS,
   );
   const recentCompletedPayouts = await prisma.consultantPayout.findMany({
-    where: {
-      status: PayoutStatus.COMPLETED,
-      providerPayoutId: { not: null },
-      processedAt: { gte: completedReversalCutoff },
-    },
+    where: recentCompletedPayoutWhere(completedReversalCutoff),
     select: {
       id: true,
       providerPayoutId: true,
@@ -338,12 +392,7 @@ async function reconcilePayoutStatusUnlocked(
   );
 
   const recentCompletedOrgPayouts = await prisma.organizationPayout.findMany({
-    where: {
-      status: PayoutStatus.COMPLETED,
-      paymentGateway: PaymentGateway.RAZORPAY,
-      gatewayPayoutId: { not: null },
-      processedAt: { gte: completedReversalCutoff },
-    },
+    where: recentCompletedOrgPayoutWhere(completedReversalCutoff),
     select: {
       id: true,
       gatewayPayoutId: true,

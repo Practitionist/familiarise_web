@@ -1,6 +1,7 @@
 /** Stale-request expiry core, shared by the cleanup registry and admin recovery door. */
 
 import prisma from "../../lib/prisma";
+import type { Db } from "../../lib/prisma";
 import {
   AppointmentStatus,
   PaymentStatus,
@@ -31,6 +32,7 @@ import { SLOT_TRANSITION_TX_OPTIONS } from "@/lib/booking/slot-release";
 import {
   expireBackupInterest,
   flushBackupInterestNotices,
+  hasLapsedBackupInterest,
   stageNoticesForAppointmentHolds,
   stageNoticesForFreedWindows,
 } from "@/lib/booking/backup-interest";
@@ -201,6 +203,167 @@ const HAS_SUCCEEDED_PAYMENT = {
     },
   },
 } satisfies Prisma.SubscriptionWhereInput;
+
+// Cohort predicates shared by each arm's read and the ticker's idle probe.
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/** A1: the payment filter splits the cohort into the expirable read and the marker-held read. */
+function stalePendingConsultationWhere(
+  expirationDate: Date,
+  payment?: Prisma.PaymentListRelationFilter,
+) {
+  return {
+    status: AppointmentStatus.PENDING,
+    requestedAt: { lt: expirationDate },
+    // Never reap a booking whose reschedule proposal is still live or
+    // that is parked with an unplaced RESCHEDULED slot awaiting placement.
+    ...NO_UNPLACED_SLOT,
+    appointment: {
+      rescheduleRequests: {
+        none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+      },
+      ...(payment ? { payment } : {}),
+    },
+  } satisfies Prisma.ConsultationWhereInput;
+}
+
+function stalePendingSubscriptionWhere(expirationDate: Date) {
+  return {
+    status: AppointmentStatus.PENDING,
+    requestedAt: { lt: expirationDate },
+    ...noLiveProposal(),
+    // A paid PENDING plan belongs to the 48 h arm.
+    NOT: HAS_SUCCEEDED_PAYMENT,
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+function approvedUnallocatedWhere(cutoff: Date) {
+  return {
+    status: AppointmentStatus.APPROVED,
+    updatedAt: { lt: cutoff },
+    ...NO_LIVE_SESSION,
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+function pendingUnallocatedWhere(
+  cohort: ReturnType<typeof unallocatedCohortWhere>,
+) {
+  return {
+    status: AppointmentStatus.PENDING,
+    ...cohort,
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+/** The 48 h arm's cohort: a paid plan still waiting for cycle 1. */
+function unscheduledPaidPlanWhere(firstStageCutoff: Date) {
+  return {
+    status: AppointmentStatus.PENDING,
+    deletedAt: null,
+    AND: [
+      NO_LIVE_SESSION,
+      noLiveProposal(),
+      paidCapturedBefore(firstStageCutoff),
+    ],
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+/** The release CAS re-states this; the read adds the RESCHEDULED status. */
+function staleRescheduledHoldWhere(cutoff: Date) {
+  return {
+    isTentative: true as const,
+    deletedAt: null,
+    updatedAt: { lt: cutoff },
+    appointment: {
+      subscriptionId: { not: null },
+      subscription: { status: AppointmentStatus.APPROVED },
+    },
+  };
+}
+
+function staleRescheduledSlotWhere(cutoff: Date) {
+  return {
+    ...staleRescheduledHoldWhere(cutoff),
+    completionStatus: OccurrenceCompletionStatus.RESCHEDULED,
+  } satisfies Prisma.AppointmentOccurrenceWhereInput;
+}
+
+// The money predicate is repeated in the lapse core's CAS WHERE, so these
+// read filters are an optimisation rather than the guard.
+function unpaidLapsedConsultationWhere(expirationDate: Date) {
+  return {
+    status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    updatedAt: { lt: expirationDate },
+    appointment: {
+      payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+    },
+  } satisfies Prisma.ConsultationWhereInput;
+}
+
+/** One wrapper per subscription, or none yet: either way no paid payment hangs off it. */
+function unpaidLapsedSubscriptionWhere(expirationDate: Date) {
+  return {
+    status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    updatedAt: { lt: expirationDate },
+    OR: [
+      { appointment: null },
+      {
+        appointment: {
+          payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+        },
+      },
+    ],
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+/** Every arm, the partial-marker holds and the retained-obligation report included. */
+export async function hasStaleRequestWork(db: Db, now: Date): Promise<boolean> {
+  const at = now.getTime();
+  const consultation = await db.consultation.findFirst({
+    where: {
+      OR: [
+        stalePendingConsultationWhere(
+          new Date(at - PENDING_CONSULTATION_EXPIRATION_HOURS * HOUR_MS),
+        ),
+        unpaidLapsedConsultationWhere(
+          new Date(at - PAYMENT_PENDING_EXPIRATION_DAYS * DAY_MS),
+        ),
+      ],
+    },
+    select: { id: true },
+  });
+  if (consultation) return true;
+  const subscription = await db.subscription.findFirst({
+    where: {
+      OR: [
+        stalePendingSubscriptionWhere(
+          new Date(at - PENDING_EXPIRATION_DAYS * DAY_MS),
+        ),
+        approvedUnallocatedWhere(
+          new Date(at - PENDING_EXPIRATION_DAYS * DAY_MS),
+        ),
+        pendingUnallocatedWhere(unallocatedCohortWhere(at)),
+        unscheduledPaidPlanWhere(
+          new Date(at - SUBSCRIPTION_NUDGE_HOURS[0] * HOUR_MS),
+        ),
+        unpaidLapsedSubscriptionWhere(
+          new Date(at - PAYMENT_PENDING_EXPIRATION_DAYS * DAY_MS),
+        ),
+      ],
+    },
+    select: { id: true },
+  });
+  if (subscription) return true;
+  const slot = await db.appointmentOccurrence.findFirst({
+    where: staleRescheduledSlotWhere(
+      new Date(at - STALE_RESCHEDULED_HOURS * HOUR_MS),
+    ),
+    select: { id: true },
+  });
+  if (slot) return true;
+  if (await hasLapsedBackupInterest(db, now)) return true;
+  return unallocatedObligationsRemain(undefined, db);
+}
 
 export interface ExpireStaleRequestsResult {
   success: boolean;
@@ -415,29 +578,12 @@ async function expirePendingConsultations(
   );
 
   try {
-    const cohortWhere = {
-      status: AppointmentStatus.PENDING,
-      requestedAt: { lt: expirationDate },
-      // Never reap a booking whose reschedule proposal is still live or
-      // that is parked with an unplaced RESCHEDULED slot awaiting placement.
-      ...NO_UNPLACED_SLOT,
-    } satisfies Prisma.ConsultationWhereInput;
-    const appointmentWhere = {
-      rescheduleRequests: {
-        none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
-      },
-    } satisfies Prisma.AppointmentWhereInput;
-
     // Find stale PENDING consultations (with their appointment ids so the
     // slot release below can target exactly the expired rows).
     const staleConsultations = await prisma.consultation.findMany({
-      where: {
-        ...cohortWhere,
-        appointment: {
-          ...appointmentWhere,
-          payment: { none: PARTIAL_REFUND_MARKER_PAYMENT },
-        },
-      },
+      where: stalePendingConsultationWhere(expirationDate, {
+        none: PARTIAL_REFUND_MARKER_PAYMENT,
+      }),
       select: {
         id: true,
         appointment: {
@@ -465,13 +611,9 @@ async function expirePendingConsultations(
       take: limits.maxRequests,
     });
     const heldPartialMarker = await prisma.consultation.findMany({
-      where: {
-        ...cohortWhere,
-        appointment: {
-          ...appointmentWhere,
-          payment: { some: PARTIAL_REFUND_MARKER_PAYMENT },
-        },
-      },
+      where: stalePendingConsultationWhere(expirationDate, {
+        some: PARTIAL_REFUND_MARKER_PAYMENT,
+      }),
       select: { id: true },
       take: 1,
     });
@@ -619,13 +761,7 @@ async function expirePendingSubscriptions(
   try {
     // Find stale PENDING subscriptions
     const staleSubscriptions = await prisma.subscription.findMany({
-      where: {
-        status: AppointmentStatus.PENDING,
-        requestedAt: { lt: expirationDate },
-        ...noLiveProposal(),
-        // #1775 C-3 — a paid PENDING plan belongs to the 48 h arm.
-        NOT: HAS_SUCCEEDED_PAYMENT,
-      },
+      where: stalePendingSubscriptionWhere(expirationDate),
       include: {
         requestedBy: {
           include: { user: { select: { email: true, name: true } } },
@@ -764,22 +900,11 @@ async function releaseStaleRescheduledSlots(
     const cutoff = new Date(
       Date.now() - STALE_RESCHEDULED_HOURS * 60 * 60 * 1000,
     );
-    const staleRescheduled = {
-      isTentative: true as const,
-      deletedAt: null,
-      updatedAt: { lt: cutoff },
-      appointment: {
-        subscriptionId: { not: null },
-        subscription: { status: AppointmentStatus.APPROVED },
-      },
-    };
+    const staleRescheduled = staleRescheduledHoldWhere(cutoff);
     // Bounded, oldest first, one transaction per plan; the CAS re-states the
     // cohort's guards.
     const stale = await prisma.appointmentOccurrence.findMany({
-      where: {
-        ...staleRescheduled,
-        completionStatus: OccurrenceCompletionStatus.RESCHEDULED,
-      },
+      where: staleRescheduledSlotWhere(cutoff),
       select: {
         id: true,
         appointmentId: true,
@@ -992,11 +1117,7 @@ async function expireApprovedUnallocatedSubscriptions(
   );
 
   try {
-    const cohortWhere = {
-      status: AppointmentStatus.APPROVED,
-      updatedAt: { lt: cutoff },
-      ...NO_LIVE_SESSION,
-    } satisfies Prisma.SubscriptionWhereInput;
+    const cohortWhere = approvedUnallocatedWhere(cutoff);
 
     const stale = await prisma.subscription.findMany({
       where: {
@@ -1230,22 +1351,28 @@ async function stageUnallocatedRefunds(
 /** Retained obligations remain visible even when retired or owned by another refund door. */
 async function unallocatedObligationsRemain(
   subscriptionId?: string,
+  db: Db = prisma,
 ): Promise<boolean> {
-  const rows = await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+  const rows = await db.$queryRaw<{ id: string }[]>(Prisma.sql`
     SELECT p.id FROM "Payment" p
     JOIN "Appointment" a ON a.id = p."appointmentId"
     JOIN "Subscription" s ON s.id = a."subscriptionId"
-    WHERE s."requestStatus" = 'EXPIRED' AND p."paymentStatus" = 'SUCCEEDED'
+    WHERE ${retainedUnallocatedObligationWhere(subscriptionId)}
+    LIMIT ${1}
+  `);
+  return rows.length > 0;
+}
+
+// Shared by the backlog check and the ticker's idle probe.
+function retainedUnallocatedObligationWhere(subscriptionId?: string) {
+  return Prisma.sql`s."requestStatus" = 'EXPIRED' AND p."paymentStatus" = 'SUCCEEDED'
       ${subscriptionId ? Prisma.sql`AND s.id = ${subscriptionId}` : Prisma.empty}
       AND p."deletedAt" IS NULL AND p."refundOwedKey" IS NOT NULL
       AND EXISTS (
         SELECT 1 FROM "BookingStatusHistory" h
         WHERE h."entityId" = s.id AND h.entity = 'SUBSCRIPTION'
           AND h.reason = 'UNALLOCATED_48H' AND h."toStatus" = 'EXPIRED'
-      )
-    LIMIT ${1}
-  `);
-  return rows.length > 0;
+      )`;
 }
 
 async function driveUnallocatedRefunds(
@@ -1286,8 +1413,8 @@ async function driveUnallocatedRefunds(
 }
 
 /** #1775 C-3 — the 48 h cohort, re-stated in the CAS WHERE (#1423). */
-function unallocatedCohort() {
-  const cutoff = new Date(Date.now() - PAID_UNALLOCATED_HOURS * 60 * 60 * 1000);
+function unallocatedCohortWhere(nowMs = Date.now()) {
+  const cutoff = new Date(nowMs - PAID_UNALLOCATED_HOURS * 60 * 60 * 1000);
   return {
     // Narrowest guard last, and every one of them rides the CAS WHERE as well
     // as this read: a booking whose slot was released between the two matches
@@ -1332,7 +1459,7 @@ async function expireOneUnallocated(
   subscription: Prisma.SubscriptionGetPayload<{
     select: typeof UNALLOCATED_SELECT;
   }>,
-  cohort: ReturnType<typeof unallocatedCohort>,
+  cohort: ReturnType<typeof unallocatedCohortWhere>,
   paymentLimit: number,
   pastDeadline: () => boolean,
   remainingPaymentAllowance = paymentLimit,
@@ -1431,7 +1558,7 @@ export async function expireUnallocatedPaidSubscriptionForOne(
     { failMode: "closed" },
     async () => {
       const pastDeadline = startDeadline();
-      const cohort = unallocatedCohort();
+      const cohort = unallocatedCohortWhere();
       const row = await prisma.subscription.findFirst({
         where: {
           id: subscriptionId,
@@ -1503,11 +1630,11 @@ export async function expireUnallocatedPaidSubscriptionForOne(
 
 async function stageFreshUnallocatedRefunds(
   limits: StaleRequestRunLimits,
-  cohort: ReturnType<typeof unallocatedCohort>,
+  cohort: ReturnType<typeof unallocatedCohortWhere>,
   pastDeadline: () => boolean,
 ) {
   const stale = await prisma.subscription.findMany({
-    where: { status: AppointmentStatus.PENDING, ...cohort },
+    where: pendingUnallocatedWhere(cohort),
     select: UNALLOCATED_SELECT,
     orderBy: [{ requestedAt: "asc" }, { id: "asc" }],
     take: limits.maxRequests + 1,
@@ -1569,7 +1696,7 @@ async function expireUnallocatedPaidSubscriptions(
   // Shared by current expiries and inline drives; this is an
   // admission deadline for this family, not cancellation of work in flight.
   const pastDeadline = startDeadline();
-  const cohort = unallocatedCohort();
+  const cohort = unallocatedCohortWhere();
   const markers: RefundOwedMarker[] = [];
   try {
     if (pastDeadline()) {
@@ -1657,16 +1784,7 @@ async function nudgeUnscheduledSubscriptions(
 
   try {
     const waiting = await prisma.subscription.findMany({
-      // #1775 C-4 — the 48 h arm's cohort: a paid plan still waiting for cycle 1.
-      where: {
-        status: AppointmentStatus.PENDING,
-        deletedAt: null,
-        AND: [
-          NO_LIVE_SESSION,
-          noLiveProposal(),
-          paidCapturedBefore(firstStageCutoff),
-        ],
-      },
+      where: unscheduledPaidPlanWhere(firstStageCutoff),
       select: {
         id: true,
         requestedBy: { select: { user: { select: { name: true } } } },
@@ -1857,35 +1975,11 @@ async function expirePaymentPendingRequests(
     Date.now() - PAYMENT_PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  // The money predicate is repeated in the lapse core's CAS WHERE, so these
-  // read filters are an optimisation rather than the guard.
-  const UNPAID_CONSULTATION = {
-    appointment: {
-      payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
-    },
-  };
-  // #1554 — one wrapper per subscription, or none yet: either way no paid
-  // payment hangs off it. The money predicate is repeated in the CAS WHERE.
-  const UNPAID_SUBSCRIPTION = {
-    OR: [
-      { appointment: null },
-      {
-        appointment: {
-          payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
-        },
-      },
-    ],
-  };
-
   try {
     const staleConsultations = await prisma.consultation.findMany({
       take: limits.maxRequests,
       orderBy: { updatedAt: "asc" },
-      where: {
-        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-        updatedAt: { lt: expirationDate },
-        ...UNPAID_CONSULTATION,
-      },
+      where: unpaidLapsedConsultationWhere(expirationDate),
       select: {
         ...EXPIRY_NOTICE_SELECT,
         consultationPlan: EXPIRY_NOTICE_PLAN_SELECT,
@@ -1937,11 +2031,7 @@ async function expirePaymentPendingRequests(
     const staleSubscriptions = await prisma.subscription.findMany({
       take: limits.maxRequests,
       orderBy: { updatedAt: "asc" },
-      where: {
-        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-        updatedAt: { lt: expirationDate },
-        ...UNPAID_SUBSCRIPTION,
-      },
+      where: unpaidLapsedSubscriptionWhere(expirationDate),
       select: {
         ...EXPIRY_NOTICE_SELECT,
         subscriptionPlan: EXPIRY_NOTICE_PLAN_SELECT,

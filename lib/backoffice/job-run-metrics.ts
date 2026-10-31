@@ -2,6 +2,11 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
+import {
+  newerOf,
+  readIdleCompletions,
+  type IdleCompletion,
+} from "@/lib/cron/idle-skips";
 import { jobEnvironment } from "@/lib/cron/run-outcome";
 import {
   assessOperationalCompletions,
@@ -60,6 +65,8 @@ export interface JobRunMetric {
   held: number;
   /** CANCELLED rows that stood down for another reason: a config skip, a maintenance refusal or a pause. */
   skipped: number;
+  /** Due ticks the idle probe skipped because the job had no work; they write no run row. */
+  idleSkips: number;
   running: number;
   p50Ms: number | null;
   p95Ms: number | null;
@@ -177,6 +184,8 @@ export interface MetricInputs {
   percentiles: { jobName: string; p50: number | null; p95: number | null }[];
   daily: { jobName: string; day: string; runs: number; failures: number }[];
   lastSuccess: { jobName: string; endedAt: Date | null }[];
+  /** Idle skips count as finished runs that found no work. */
+  idle?: IdleCompletion[];
 }
 
 const roundMs = (v: number | null | undefined) =>
@@ -205,8 +214,11 @@ export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
     const cancelled = sum((c) => c.status === "CANCELLED");
     const held = sum((c) => c.status === "CANCELLED" && c.outcome === "held");
     const pct = input.percentiles.find((p) => p.jobName === jobName);
-    const last =
-      input.lastSuccess.find((l) => l.jobName === jobName)?.endedAt ?? null;
+    const idle = input.idle?.find((i) => i.jobName === jobName);
+    const last = newerOf(
+      input.lastSuccess.find((l) => l.jobName === jobName)?.endedAt ?? null,
+      idle?.endedAt,
+    );
     const perDay = new Map(
       input.daily.filter((d) => d.jobName === jobName).map((d) => [d.day, d]),
     );
@@ -221,6 +233,7 @@ export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
       failed: failedRows - partial,
       held,
       skipped: cancelled - held,
+      idleSkips: idle?.skips ?? 0,
       running: sum((c) => c.status === "RUNNING"),
       p50Ms: roundMs(pct?.p50),
       p95Ms: roundMs(pct?.p95),
@@ -272,9 +285,9 @@ const DailyRow = z.object({
 });
 
 /**
- * Seven days of one environment's SystemJobExecution rows per job, in four
- * statements run in turn; the ticker's slot-claim rows are not job runs and are
- * left out. Outcome counts, percentiles and IST-day buckets have no Prisma
+ * Seven days of one environment's SystemJobExecution rows per job, in five
+ * statements run in turn; the ticker's slot-claim rows are not job runs, but
+ * the idle skips they list are read as no-work runs. Outcome counts, percentiles and IST-day buckets have no Prisma
  * groupBy form, so those are parameterised read-only `$queryRaw`; the last
  * finish uses groupBy.
  */
@@ -283,6 +296,9 @@ export async function readJobRunMetrics(
   now = new Date(),
 ): Promise<JobRunMetrics> {
   const since = new Date(now.getTime() - METRICS_DAYS * DAY_MS);
+  const lookback = new Date(
+    now.getTime() - LAST_SUCCESS_LOOKBACK_DAYS * DAY_MS,
+  );
 
   const counts = z.array(CountRow).parse(
     await prisma.$queryRaw(Prisma.sql`
@@ -329,9 +345,7 @@ export async function readJobRunMetrics(
         { status: "COMPLETED" },
         { status: "FAILED", result: { path: ["outcome"], equals: "partial" } },
       ],
-      startedAt: {
-        gte: new Date(now.getTime() - LAST_SUCCESS_LOOKBACK_DAYS * DAY_MS),
-      },
+      startedAt: { gte: lookback },
       result: { path: ["environment"], equals: environment },
     },
     _max: { endedAt: true },
@@ -347,5 +361,6 @@ export async function readJobRunMetrics(
       jobName: l.jobName,
       endedAt: l._max.endedAt,
     })),
+    idle: await readIdleCompletions(prisma, environment, lookback, since),
   });
 }

@@ -21,7 +21,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import prisma, { type Tx } from "../../lib/prisma";
+import prisma, { type Db, type Tx } from "../../lib/prisma";
 import {
   RESCHEDULE_OPEN_STATUSES,
   transitionRescheduleRequest,
@@ -108,6 +108,22 @@ const EXPIRY_SELECT = {
 } as const;
 
 type ExpiryOutcome = "restored" | "unrestored" | "skipped";
+
+// Shared by the cohort read and the ticker's idle probe.
+function lapsedProposalWhere(now: Date) {
+  return { status: { in: RESCHEDULE_OPEN_STATUSES }, expiresAt: { lt: now } };
+}
+
+export async function hasRescheduleProposalWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const row = await db.rescheduleRequest.findFirst({
+    where: lapsedProposalWhere(now),
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 /** The guarded EXPIRED edge, with the cohort's stale-time predicate repeated. */
 function expireProposal(tx: Tx, id: string, now: Date): Promise<void> {
@@ -251,8 +267,7 @@ async function expireRescheduleProposalsUnlocked(
       }
       const stale = await prisma.rescheduleRequest.findMany({
         where: {
-          status: { in: RESCHEDULE_OPEN_STATUSES },
-          expiresAt: { lt: now },
+          ...lapsedProposalWhere(now),
           ...(seen.length > 0 ? { id: { notIn: seen } } : {}),
         },
         orderBy: [{ updatedAt: "asc" }, { id: "asc" }],

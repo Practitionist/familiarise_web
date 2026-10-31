@@ -1,6 +1,6 @@
 import type { AppointmentsType, Prisma } from "@prisma/client";
 
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { LONG_JOB_TTL_MS, withCronLock } from "@/lib/cron/with-cron-lock";
 import { goHref } from "@/lib/dashboard/go";
@@ -678,6 +678,23 @@ export interface VestRunResult {
   failures: { referralId: string; error: string }[];
 }
 
+/** Shared by the vest sweep and the ticker's idle probe. */
+const QUALIFYING_REFERRAL_WHERE: Prisma.ReferralWhereInput = {
+  status: "QUALIFYING",
+};
+
+/** Ticker idle probe: any QUALIFYING referral is examined by the sweep. */
+export async function hasVestReferralWork(
+  db: Db,
+  _now: Date,
+): Promise<boolean> {
+  const row = await db.referral.findFirst({
+    where: QUALIFYING_REFERRAL_WHERE,
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 /** The ticker sweep: least recently examined QUALIFYING first, one transaction per referral. */
 export async function vestQualifyingReferrals(opts: {
   limit: number;
@@ -686,7 +703,7 @@ export async function vestQualifyingReferrals(opts: {
   const now = opts.now ?? new Date();
   const started = Date.now();
   const rows = await prisma.referral.findMany({
-    where: { status: "QUALIFYING" },
+    where: QUALIFYING_REFERRAL_WHERE,
     orderBy: { updatedAt: "asc" },
     take: opts.limit,
     select: { id: true },

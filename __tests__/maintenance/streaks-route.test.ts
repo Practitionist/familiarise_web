@@ -6,6 +6,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     systemJobExecution: { groupBy: (...a: unknown[]) => groupBy(...a) },
+    $queryRaw: async () => [],
   },
 }));
 

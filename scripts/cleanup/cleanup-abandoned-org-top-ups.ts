@@ -16,6 +16,8 @@
 import { startDeadline } from "@/lib/cron/run-deadline";
 import { LEAST_RECENTLY_RECONCILED } from "@/lib/payments/payouts/reconcile-cursor";
 import prisma from "../../lib/prisma";
+import type { Db } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   confirmTopUp,
@@ -24,6 +26,32 @@ import {
 import { readRazorpayOrderHolding } from "@/lib/payments/core/razorpay";
 
 const DEFAULT_GRACE_HOURS = 48; // exceeds Razorpay 24h webhook exponential retry SLA
+
+/** Pending minted top-ups created before `cutoff`; shared by the run and the ticker's idle probe. */
+function abandonedTopUpWhere(cutoff: Date): Prisma.WalletTopUpWhereInput {
+  return {
+    status: "PENDING",
+    providerPaymentId: null,
+    // A captured row whose confirm rolled back belongs to sweep-orphaned-topup-captures.
+    capturedAt: null,
+    createdAt: { lt: cutoff },
+    // Only a minted order can be proven empty; the rest never leave the table.
+    notes: { contains: "razorpay_order=order_" },
+  };
+}
+
+/** Ticker idle probe at the ticker's default grace window. */
+export async function hasAbandonedOrgTopUpWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const cutoff = new Date(now.getTime() - DEFAULT_GRACE_HOURS * 60 * 60 * 1000);
+  const row = await db.walletTopUp.findFirst({
+    where: abandonedTopUpWhere(cutoff),
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 export interface AbandonedOrgTopUpCleanupResult {
   success: boolean;
@@ -103,15 +131,7 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
 
   try {
     const candidates = await prisma.walletTopUp.findMany({
-      where: {
-        status: "PENDING",
-        providerPaymentId: null,
-        // A captured row whose confirm rolled back belongs to sweep-orphaned-topup-captures.
-        capturedAt: null,
-        createdAt: { lt: cutoff },
-        // Only a minted order can be proven empty; the rest never leave the table.
-        notes: { contains: "razorpay_order=order_" },
-      },
+      where: abandonedTopUpWhere(cutoff),
       orderBy: [LEAST_RECENTLY_RECONCILED, { id: "asc" }],
       take: options.limit ?? 25,
       select: {

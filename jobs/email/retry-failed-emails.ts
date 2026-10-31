@@ -41,7 +41,7 @@
  * never throws into the cron wrapper.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Db } from "@/lib/prisma";
 import type {
   EmailSuppression,
   FailedEmail,
@@ -85,6 +85,35 @@ const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export { BACKOFF_MS } from "@/lib/retry/backoff";
+
+/** Rows and batches due a send at `now`; shared by the relay and the ticker's idle probe. */
+function retryDueWhere(
+  now: Date,
+): Prisma.FailedEmailWhereInput & Prisma.FailedEmailBatchWhereInput {
+  return {
+    OR: [
+      {
+        status: "PENDING",
+        OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+      },
+      { status: "RETRY", nextRetryAt: { lte: now } },
+    ],
+  };
+}
+
+/** Ticker idle probe: a due email row or a due batch. */
+export async function hasEmailRetryWork(db: Db, now: Date): Promise<boolean> {
+  const row = await db.failedEmail.findFirst({
+    where: retryDueWhere(now),
+    select: { id: true },
+  });
+  if (row) return true;
+  const batch = await db.failedEmailBatch.findFirst({
+    where: retryDueWhere(now),
+    select: { id: true },
+  });
+  return batch !== null;
+}
 
 export interface EmailRetryRunResult {
   scanned: number;
@@ -161,15 +190,7 @@ export async function runEmailRetryTick(params: {
 
     const nowDate = new Date(now());
     const dueRows = await prisma.failedEmail.findMany({
-      where: {
-        OR: [
-          {
-            status: "PENDING",
-            OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: nowDate } }],
-          },
-          { status: "RETRY", nextRetryAt: { lte: nowDate } },
-        ],
-      },
+      where: retryDueWhere(nowDate),
       orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],
       take: batchLimit,
     });
@@ -393,15 +414,7 @@ async function drainBatches(ctx: {
 }): Promise<void> {
   const { prisma, sender, nowDate, result, alerts } = ctx;
   const dueBatches = await prisma.failedEmailBatch.findMany({
-    where: {
-      OR: [
-        {
-          status: "PENDING",
-          OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: nowDate } }],
-        },
-        { status: "RETRY", nextRetryAt: { lte: nowDate } },
-      ],
-    },
+    where: retryDueWhere(nowDate),
     orderBy: { createdAt: "asc" },
     take: MAX_BATCH_ROWS,
   });

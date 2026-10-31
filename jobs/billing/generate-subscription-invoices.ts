@@ -28,6 +28,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import type { Db } from "@/lib/prisma";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-journal";
@@ -51,6 +52,48 @@ import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 // Reminder fires when nextInvoiceDate is within this many days. Once
 // per cycle (gated by BillingSubscription.renewalReminderSentAt).
 const RENEWAL_REMINDER_WINDOW_DAYS = 7;
+
+/** Subscriptions due by `asOf` on a billable org's ACTIVE, in-term contract. */
+function dueSubscriptionWhere(
+  asOf: Date,
+  now: Date,
+): Prisma.BillingSubscriptionWhereInput {
+  return {
+    nextInvoiceDate: { lte: asOf },
+    contract: {
+      organization: { status: { in: BILLABLE_ORG_STATUSES } },
+      status: "ACTIVE",
+      OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+    },
+  };
+}
+
+/** Unreminded subscriptions renewing within the reminder window after `now`. */
+function renewalReminderWhere(now: Date): Prisma.BillingSubscriptionWhereInput {
+  const horizon = new Date(now);
+  horizon.setDate(horizon.getDate() + RENEWAL_REMINDER_WINDOW_DAYS);
+  return {
+    renewalReminderSentAt: null,
+    nextInvoiceDate: { gt: now, lte: horizon },
+    contract: {
+      organization: { status: { in: BILLABLE_ORG_STATUSES } },
+    },
+  };
+}
+
+/** Ticker idle probe: reminders or invoices due at `now`, which covers any earlier window start. */
+export async function hasSubscriptionInvoiceWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const row = await db.billingSubscription.findFirst({
+    where: {
+      OR: [dueSubscriptionWhere(now, now), renewalReminderWhere(now)],
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 export interface GenerateSubscriptionInvoicesResult {
   generated: number;
@@ -82,19 +125,7 @@ async function generateSubscriptionInvoices(opts: {
   const remindersSent = await sendRenewalReminders(now, opts.limit);
 
   const dueSubs = await prisma.billingSubscription.findMany({
-    where: {
-      nextInvoiceDate: { lte: asOf },
-      contract: {
-        organization: { status: { in: BILLABLE_ORG_STATUSES } },
-        // E2E-audit P0 fix — only bill contracts that are ACTIVE and within
-        // their term. This cron used to filter on org status alone, so a
-        // TERMINATED / EXPIRED / superseded contract kept issuing invoices
-        // every cycle forever (its docstring even claimed the expire cron
-        // enforced this — it doesn't; that cron only stamps contract status).
-        status: "ACTIVE",
-        OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
-      },
-    },
+    where: dueSubscriptionWhere(asOf, now),
     include: {
       contract: {
         include: {
@@ -414,17 +445,8 @@ async function sendRenewalReminders(
   now: Date,
   limit: number | undefined,
 ): Promise<number> {
-  const horizon = new Date(now);
-  horizon.setDate(horizon.getDate() + RENEWAL_REMINDER_WINDOW_DAYS);
-
   const due = await prisma.billingSubscription.findMany({
-    where: {
-      renewalReminderSentAt: null,
-      nextInvoiceDate: { gt: now, lte: horizon },
-      contract: {
-        organization: { status: { in: BILLABLE_ORG_STATUSES } },
-      },
-    },
+    where: renewalReminderWhere(now),
     include: {
       contract: {
         include: {

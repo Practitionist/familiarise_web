@@ -15,8 +15,13 @@
  * `lastReconciledAt` (see reconcile-cursor.ts).
  */
 
-import prisma from "../../lib/prisma";
-import { PayoutStatus, PaymentGateway, EarningStatus } from "@prisma/client";
+import prisma, { type Db } from "../../lib/prisma";
+import {
+  PayoutStatus,
+  PaymentGateway,
+  EarningStatus,
+  type Prisma,
+} from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import {
   recordSystemError,
@@ -66,6 +71,32 @@ export interface StuckPayoutsResult {
   retired: string[];
   errors: string[];
   timestamp: string;
+}
+
+/** PROCESSING past the stuck threshold; the same predicate on both payout tables. */
+function stuckPayoutWhere(stuckThreshold: Date) {
+  return {
+    status: PayoutStatus.PROCESSING,
+    updatedAt: { lt: stuckThreshold },
+  } satisfies Prisma.ConsultantPayoutWhereInput &
+    Prisma.OrganizationPayoutWhereInput;
+}
+
+/** True when either payout table holds a stuck PROCESSING row. */
+export async function hasStuckPayoutWork(db: Db, now: Date): Promise<boolean> {
+  const stuckThreshold = new Date(
+    now.getTime() - STUCK_THRESHOLD_HOURS * 60 * 60 * 1000,
+  );
+  const consultant = await db.consultantPayout.findFirst({
+    where: stuckPayoutWhere(stuckThreshold),
+    select: { id: true },
+  });
+  if (consultant) return true;
+  const org = await db.organizationPayout.findFirst({
+    where: stuckPayoutWhere(stuckThreshold),
+    select: { id: true },
+  });
+  return org !== null;
 }
 
 /**
@@ -129,10 +160,7 @@ async function handleStuckPayoutsUnlocked(
 
   // Find payouts stuck in PROCESSING for too long
   const stuckPayouts = await prisma.consultantPayout.findMany({
-    where: {
-      status: PayoutStatus.PROCESSING,
-      updatedAt: { lt: stuckThreshold },
-    },
+    where: stuckPayoutWhere(stuckThreshold),
     include: {
       consultantProfile: {
         include: {
@@ -492,10 +520,7 @@ async function handleStuckOrgPayouts(
     errors: [],
   };
   const stuck = await prisma.organizationPayout.findMany({
-    where: {
-      status: PayoutStatus.PROCESSING,
-      updatedAt: { lt: stuckThreshold },
-    },
+    where: stuckPayoutWhere(stuckThreshold),
     select: { id: true, gatewayPayoutId: true },
     orderBy: [LEAST_RECENTLY_RECONCILED, { updatedAt: "asc" }],
     take: limit,

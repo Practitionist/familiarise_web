@@ -1,15 +1,15 @@
-import { PayoutStatus } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type Db } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
-import { PAYOUT_CONSTANTS } from "./constants";
 import {
+  APPROVED_PAYOUT_WHERE,
   createPayoutBatchSlice,
   processApprovedPayouts,
   REQUEST_PAYOUT_RUN_BOUNDS,
 } from "./payout-service";
 import {
   createOrgPayoutBatches,
+  hasOrgPayoutProcessingWork,
   processPendingOrgPayouts,
   type OrgBatchResult,
 } from "./org-payout-service";
@@ -92,6 +92,22 @@ export interface ProcessPayoutsRun {
 }
 
 /**
+ * True when either rail has a row to disburse, claim or re-drive. APPROVED rows
+ * parked by the live-payouts freeze still count, so the parked notice keeps running.
+ */
+export async function hasProcessPayoutsWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const consultant = await db.consultantPayout.findFirst({
+    where: APPROVED_PAYOUT_WHERE,
+    select: { id: true },
+  });
+  if (consultant) return true;
+  return hasOrgPayoutProcessingWork(db, now);
+}
+
+/**
  * The scheduled disbursement run, consultant then org, `limit` units per rail.
  * `success` is false only when APPROVED rows wait behind a held lock or a balance hold;
  * row failures are counted in `failed` and `orgErrors`.
@@ -117,10 +133,7 @@ export async function runProcessPayouts(opts: {
     let lockFault = false;
     if (results.length === 0) {
       const waiting = await prisma.consultantPayout.count({
-        where: {
-          status: PayoutStatus.APPROVED,
-          retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
-        },
+        where: APPROVED_PAYOUT_WHERE,
       });
       const verdict = classifyEmptyRun({
         waiting,

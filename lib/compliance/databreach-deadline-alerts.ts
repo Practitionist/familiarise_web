@@ -1,6 +1,6 @@
 import { Prisma, UserRole } from "@prisma/client";
 import { z } from "zod";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { BREACH_REPORTING_DEADLINE_HOURS } from "@/lib/backoffice/queue-predicates";
 import { stage } from "@/lib/email/deliver";
@@ -28,6 +28,40 @@ type BreachDigest = {
   dashboardUrl: string;
   officer: string;
 };
+
+/** An unfinished digest's outbox marker. */
+const ACTIVE_DIGEST_WHERE: Prisma.FailedEmailWhereInput = {
+  entityRef: { startsWith: ACTIVE_PREFIX },
+};
+
+/** Unreported breaches within 12 hours of, or past, the reporting deadline. */
+function deadlineCandidateWhere(now: Date): Prisma.DataBreachWhereInput {
+  return {
+    reportedAt: null,
+    detectedAt: {
+      lte: new Date(
+        now.getTime() - (BREACH_REPORTING_DEADLINE_HOURS - 12) * 3_600_000,
+      ),
+    },
+  };
+}
+
+/** Ticker idle probe: a run acts only on an active digest marker or an at-risk breach. */
+export async function hasDataBreachDeadlineWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const breach = await db.dataBreach.findFirst({
+    where: deadlineCandidateWhere(now),
+    select: { id: true },
+  });
+  if (breach) return true;
+  const marker = await db.failedEmail.findFirst({
+    where: ACTIVE_DIGEST_WHERE,
+    select: { id: true },
+  });
+  return marker !== null;
+}
 
 function hourWindow(now: Date): string {
   return new Date(
@@ -228,7 +262,7 @@ export async function runDataBreachDeadlineAlerts(
       if (timedOut()) return result;
       const now = new Date();
       const active = await prisma.failedEmail.findFirst({
-        where: { entityRef: { startsWith: ACTIVE_PREFIX } },
+        where: ACTIVE_DIGEST_WHERE,
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         select: { entityRef: true },
       });
@@ -250,15 +284,7 @@ export async function runDataBreachDeadlineAlerts(
         return result;
       if (timedOut()) return result;
       const candidates = await prisma.dataBreach.findMany({
-        where: {
-          reportedAt: null,
-          detectedAt: {
-            lte: new Date(
-              now.getTime() -
-                (BREACH_REPORTING_DEADLINE_HOURS - 12) * 3_600_000,
-            ),
-          },
-        },
+        where: deadlineCandidateWhere(now),
         orderBy: [{ detectedAt: "asc" }, { id: "asc" }],
         take: MAX_ROWS + 1,
         select: { id: true, detectedAt: true },

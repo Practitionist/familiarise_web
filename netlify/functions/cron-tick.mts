@@ -29,7 +29,8 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
-  dueTargets,
+  capToTick,
+  scheduledTargets,
   scheduleFor,
   targetRequest,
   isFirstDueTickOfHour,
@@ -59,6 +60,8 @@ interface TickBody {
   /** Failed targets whose fail-closed lease the database could not grant; they write no run row. */
   lockUnavailable: string[];
   failed: { name: string; status: number }[];
+  /** Due targets whose idle probe found no work; recorded on the claim row, never dispatched. */
+  skippedIdle: string[];
   durationMs: number;
 }
 
@@ -590,33 +593,49 @@ export function tickIdForSlot(slot: Date): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-const TICK_CLAIM_TIMEOUT_MS = 2_500;
-const tickClaimReply = z.object({ claimed: z.boolean() });
+/** Covers a cold start plus the app's 2.5 s idle-probe budget. */
+const TICK_CLAIM_TIMEOUT_MS = 5_000;
+const tickClaimReply = z.object({
+  claimed: z.boolean(),
+  idle: z.array(z.string()).optional(),
+});
 
 /**
- * Claims the slot in Postgres through the app. False only when another
- * dispatch already holds it; an unreachable or unreadable claim runs the tick.
+ * Claims the slot in Postgres through the app, which also names the scheduled
+ * targets its probes found idle. `claimed` is false only when another dispatch
+ * holds the slot; an unreachable or unreadable reply runs every target.
  */
-async function claimTickSlot(
+export async function claimTickSlot(
   baseUrl: string,
   secret: string,
   tickId: string,
   slot: Date,
-): Promise<boolean> {
+  scheduled: readonly Target[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ claimed: boolean; idle: ReadonlySet<string> }> {
+  const runAll = { claimed: true, idle: new Set<string>() };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TICK_CLAIM_TIMEOUT_MS);
   try {
-    const query = `tickId=${encodeURIComponent(tickId)}&slot=${encodeURIComponent(slot.toISOString())}`;
-    const res = await fetch(`${baseUrl}/api/health/jobs/tick?${query}`, {
+    const query = `tickId=${encodeURIComponent(tickId)}&slot=${encodeURIComponent(slot.toISOString())}&due=${scheduled.map(encodeURIComponent).join(",")}`;
+    const res = await fetchImpl(`${baseUrl}/api/health/jobs/tick?${query}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${secret}` },
       signal: controller.signal,
     });
-    if (!res.ok) return true;
+    if (!res.ok) return runAll;
     const parsed = tickClaimReply.safeParse(await res.json());
-    return parsed.success ? parsed.data.claimed : true;
+    if (!parsed.success) return runAll;
+    return {
+      claimed: parsed.data.claimed,
+      idle: new Set(
+        (parsed.data.idle ?? []).filter((name) =>
+          scheduled.some((target) => target === name),
+        ),
+      ),
+    };
   } catch {
-    return true;
+    return runAll;
   } finally {
     clearTimeout(timer);
   }
@@ -695,6 +714,7 @@ export default async function cronTick(
           lockHeld: [],
           lockUnavailable: [],
           failed: [],
+          skippedIdle: [],
           durationMs: Date.now() - started,
         },
         error,
@@ -711,13 +731,16 @@ export default async function cronTick(
   // backtracking; strip one slash at a time instead.
   let baseUrl = process.env.CRON_TICK_BASE_URL || process.env.URL || "";
   while (baseUrl.endsWith("/")) baseUrl = baseUrl.slice(0, -1);
-  if (!(await claimTickSlot(baseUrl, secret, tickId, slot))) {
+  const scheduled = scheduledTargets(tickDate);
+  const claim = await claimTickSlot(baseUrl, secret, tickId, slot, scheduled);
+  if (!claim.claimed) {
     console.log(
       JSON.stringify({ event: "cron-tick", duplicate: true, tickId }),
     );
     return jsonResponse({ duplicate: true, tickId }, 200);
   }
-  const targets = dueTargets(tickDate);
+  const skippedIdle = scheduled.filter((name) => claim.idle.has(name));
+  const targets = capToTick(scheduled.filter((name) => !claim.idle.has(name)));
 
   const settled = await Promise.allSettled(
     targets.map((name) =>
@@ -789,6 +812,7 @@ export default async function cronTick(
     lockHeld,
     lockUnavailable,
     failed,
+    skippedIdle,
     durationMs,
   };
   console.log(JSON.stringify(body));
@@ -842,6 +866,7 @@ async function emitTickSummary(body: TickBody, error?: string): Promise<void> {
         lockUnavailableCount: body.lockUnavailable.length,
         lockUnavailable: body.lockUnavailable,
         failed: body.failed,
+        skippedIdleCount: body.skippedIdle.length,
         ...(error ? { error } : {}),
       }),
       signal: controller.signal,

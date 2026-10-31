@@ -1,4 +1,8 @@
-import type { SupportCaseOwnership, SupportCaseStatus } from "@prisma/client";
+import type {
+  Prisma,
+  SupportCaseOwnership,
+  SupportCaseStatus,
+} from "@prisma/client";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
@@ -248,6 +252,14 @@ async function resolveIncidentTx(
   return true;
 }
 
+/** Open incidents whose problem is RESOLVED; shared with the SLA sweep's idle probe. */
+export const CASCADE_INCIDENT_WHERE: Prisma.SupportCaseWhereInput = {
+  caseKind: "INCIDENT",
+  status: { notIn: ["RESOLVED", "CLOSED"] },
+  deletedAt: null,
+  problemCase: { status: "RESOLVED", deletedAt: null },
+};
+
 /**
  * Resolves up to `limit` open incidents whose problem is RESOLVED, oldest first,
  * one short transaction each; failures go to `errors` and retry next run.
@@ -271,12 +283,7 @@ export async function cascadeResolvedProblems({
   let incidents: OpenIncident[];
   try {
     incidents = await prisma.supportCase.findMany({
-      where: {
-        caseKind: "INCIDENT",
-        status: { notIn: ["RESOLVED", "CLOSED"] },
-        deletedAt: null,
-        problemCase: { status: "RESOLVED", deletedAt: null },
-      },
+      where: CASCADE_INCIDENT_WHERE,
       orderBy: { updatedAt: "asc" },
       take: limit * HELD_OPEN_SCAN_FACTOR,
       select: {

@@ -12,7 +12,7 @@
 
 import { AppointmentsType, BackupInterestStatus, Prisma } from "@prisma/client";
 
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, { type Db, type Tx } from "@/lib/prisma";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -255,10 +255,29 @@ export function markBackupInterestBooked(
   });
 }
 
+// Shared by the expiry write and the stale-request sweep's idle probe.
+function lapsedBackupInterestWhere(now: Date) {
+  return {
+    windowEnd: { lt: now },
+    status: { in: OPEN },
+  } satisfies Prisma.WindowBackupInterestWhereInput;
+}
+
+export async function hasLapsedBackupInterest(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const row = await db.windowBackupInterest.findFirst({
+    where: lapsedBackupInterestWhere(now),
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 /** F-4 — rows whose window has passed are EXPIRED (the stale-request sweep). */
 export async function expireBackupInterest(now = new Date()) {
   return prisma.windowBackupInterest.updateMany({
-    where: { windowEnd: { lt: now }, status: { in: OPEN } },
+    where: lapsedBackupInterestWhere(now),
     data: { status: BackupInterestStatus.EXPIRED },
   });
 }

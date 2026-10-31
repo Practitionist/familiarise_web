@@ -36,6 +36,7 @@ import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { stageTrialRefundedBell } from "@/lib/trials/refund-bell";
 import prisma from "../../lib/prisma";
+import type { Db } from "../../lib/prisma";
 
 // Per-trial failures collapse to one event per op when the run ends.
 const runFailures = createRunFailureReporter("trials");
@@ -149,7 +150,7 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
         // Repeat the cohort's predicate inside the CAS: a pay-link re-minted
         // (deadline moved) or a capture (paymentId set) since the read must
         // match zero rows. #1775 C-12 — no money moves in this arm.
-        whereAnd: unpaidLapsed(now),
+        whereAnd: unpaidLapsedWhere(now),
         data: {
           // The link is dead once cancelled; leaving it would let a stale
           // dashboard row send someone to a checkout for a released slot.
@@ -245,12 +246,16 @@ async function tombstoneHeldCall(
  * AWAITING_PAYMENT cohort never revisits it, so this bounded pass does.
  */
 const REPAIR_BATCH_SIZE = 50;
+function untombstonedCancelledTrialWhere(): Prisma.TrialWhereInput {
+  return {
+    status: TrialStatus.CANCELLED,
+    appointment: { deletedAt: null },
+  };
+}
+
 async function repairUntombstonedCancelledTrials(): Promise<number> {
   const stale = await prisma.trial.findMany({
-    where: {
-      status: TrialStatus.CANCELLED,
-      appointment: { deletedAt: null },
-    },
+    where: untombstonedCancelledTrialWhere(),
     orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
     take: REPAIR_BATCH_SIZE,
     select: { id: true, appointmentId: true },
@@ -270,7 +275,7 @@ async function repairUntombstonedCancelledTrials(): Promise<number> {
  * paid trial still PENDING and uncaptured. A free PENDING trial has no
  * deadline and never matches.
  */
-function unpaidLapsed(now: Date): Prisma.TrialWhereInput {
+function unpaidLapsedWhere(now: Date): Prisma.TrialWhereInput {
   return {
     paymentId: null,
     OR: [
@@ -294,6 +299,53 @@ function unpaidLapsed(now: Date): Prisma.TrialWhereInput {
 
 /** #1775 C-12 (ii) — the consultant has 48 h to answer a paid trial. */
 export const TRIAL_ANSWER_HOURS = 48;
+
+const unansweredCutoff = (now: Date) =>
+  new Date(now.getTime() - TRIAL_ANSWER_HOURS * 60 * 60 * 1000);
+
+/** Repeated inside the cancel CAS, so a trial answered since the read matches zero rows. */
+function unansweredTrialWhere(cutoff: Date): Prisma.TrialWhereInput {
+  return { paymentId: { not: null }, requestedAt: { lt: cutoff } };
+}
+
+function pendingUnansweredTrialWhere(cutoff: Date): Prisma.TrialWhereInput {
+  return { status: TrialStatus.PENDING, ...unansweredTrialWhere(cutoff) };
+}
+
+/** Unanswered cancels inside the refund-retry lookback. */
+function unansweredCancelHistoryWhere(
+  since: Date,
+): Prisma.BookingStatusHistoryWhereInput {
+  return {
+    entity: "TRIAL",
+    reason: "TRIAL_UNANSWERED",
+    toStatus: TrialStatus.CANCELLED,
+    createdAt: { gte: since },
+  };
+}
+
+const unansweredRetrySince = (now: Date) =>
+  new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+/** Probes every arm; the history arm is a superset of the refund retry. */
+export async function hasUnpaidTrialWork(db: Db, now: Date): Promise<boolean> {
+  const trial = await db.trial.findFirst({
+    where: {
+      OR: [
+        unpaidLapsedWhere(now),
+        untombstonedCancelledTrialWhere(),
+        pendingUnansweredTrialWhere(unansweredCutoff(now)),
+      ],
+    },
+    select: { id: true },
+  });
+  if (trial) return true;
+  const cancel = await db.bookingStatusHistory.findFirst({
+    where: unansweredCancelHistoryWhere(unansweredRetrySince(now)),
+    select: { id: true },
+  });
+  return cancel !== null;
+}
 
 type UnansweredTrial = LapsedTrial & {
   paymentId: string | null;
@@ -369,14 +421,8 @@ async function refundUnansweredTrial(trial: {
  * keyed refund does not exist are retried; the key makes a repeat a no-op.
  */
 async function retryUnansweredTrialRefunds(now: Date): Promise<number> {
-  const since = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
   const cancelled = await prisma.bookingStatusHistory.findMany({
-    where: {
-      entity: "TRIAL",
-      reason: "TRIAL_UNANSWERED",
-      toStatus: TrialStatus.CANCELLED,
-      createdAt: { gte: since },
-    },
+    where: unansweredCancelHistoryWhere(unansweredRetrySince(now)),
     select: { entityId: true },
     take: 200,
   });
@@ -422,13 +468,10 @@ async function expireUnansweredPaidTrials(
   maxTrials: number,
   errors: string[],
 ): Promise<number> {
-  const cutoff = new Date(now.getTime() - TRIAL_ANSWER_HOURS * 60 * 60 * 1000);
-  const unanswered: Prisma.TrialWhereInput = {
-    paymentId: { not: null },
-    requestedAt: { lt: cutoff },
-  };
+  const cutoff = unansweredCutoff(now);
+  const unanswered = unansweredTrialWhere(cutoff);
   const rows: UnansweredTrial[] = await prisma.trial.findMany({
-    where: { status: TrialStatus.PENDING, ...unanswered },
+    where: pendingUnansweredTrialWhere(cutoff),
     orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
     take: maxTrials,
     select: {
@@ -495,7 +538,7 @@ async function expireUnpaidTrialsUnlocked(
       // A null paymentDueAt on AWAITING_PAYMENT means the pay-link was never
       // minted after acceptance; holding a slot nobody can pay for is the worst case.
       const stale = await prisma.trial.findMany({
-        where: unpaidLapsed(now),
+        where: unpaidLapsedWhere(now),
         orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
         take: Math.min(BATCH_SIZE, maxTrials - processed),
         select: EXPIRY_SELECT,

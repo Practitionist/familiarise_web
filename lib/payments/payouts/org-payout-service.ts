@@ -15,7 +15,7 @@ import {
   recordSystemEventSafe,
 } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
+import prisma, { type Db, type PrismaLike, type Tx } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
@@ -1072,6 +1072,40 @@ export interface OrgProcessingResult {
   errors: string[];
 }
 
+/** Org payouts the processing pass may claim; a platform hold parks the row. */
+function pendingOrgPayoutWhere(): Prisma.OrganizationPayoutWhereInput {
+  return {
+    status: { in: PAYOUT_ALLOWED_FROM.PROCESSING },
+    platformHeldAt: null,
+  };
+}
+
+/** PROCESSING org payouts untouched long enough for the gateway re-drive. */
+function staleProcessingOrgPayoutWhere(
+  staleBefore: Date,
+): Prisma.OrganizationPayoutWhereInput {
+  return { status: "PROCESSING", updatedAt: { lt: staleBefore } };
+}
+
+/** True when processPendingOrgPayouts has a row to claim or re-drive. */
+export async function hasOrgPayoutProcessingWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const row = await db.organizationPayout.findFirst({
+    where: {
+      OR: [
+        pendingOrgPayoutWhere(),
+        staleProcessingOrgPayoutWhere(
+          new Date(now.getTime() - ORG_PROCESSING_REDRIVE_AFTER_MS),
+        ),
+      ],
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 /** `limit` caps the claims plus failures per pass; an unclaimable row does not count. */
 export async function processPendingOrgPayouts(
   opts: { limit?: number; triggeredByUserId?: string } = {},
@@ -1079,10 +1113,7 @@ export async function processPendingOrgPayouts(
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
 
   const pending = await prisma.organizationPayout.findMany({
-    where: {
-      status: { in: PAYOUT_ALLOWED_FROM.PROCESSING },
-      platformHeldAt: null,
-    },
+    where: pendingOrgPayoutWhere(),
     select: { id: true, approvedBy: true, orgApprovedBy: true },
     orderBy: { createdAt: "asc" },
   });
@@ -1223,7 +1254,7 @@ async function redriveStaleProcessingOrgPayouts(
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
   const staleBefore = new Date(Date.now() - ORG_PROCESSING_REDRIVE_AFTER_MS);
   const stale = await prisma.organizationPayout.findMany({
-    where: { status: "PROCESSING", updatedAt: { lt: staleBefore } },
+    where: staleProcessingOrgPayoutWhere(staleBefore),
     select: {
       id: true,
       gatewayPayoutId: true,

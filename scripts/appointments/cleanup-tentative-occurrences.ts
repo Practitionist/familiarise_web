@@ -18,7 +18,12 @@
  */
 
 import prisma from "../../lib/prisma";
-import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
+import type { Db } from "../../lib/prisma";
+import {
+  PaymentStatus,
+  OccurrenceCompletionStatus,
+  type Prisma,
+} from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 
@@ -27,6 +32,71 @@ import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 // margin over Payment.expiresAt and the 2-hourly cron cadence; the parent
 // status guard below still protects requests under consultant review.
 const TENTATIVE_EXPIRATION_HOURS = 24;
+
+const REVIEWING = ["PENDING", "APPROVED_PENDING_PAYMENT"] as const;
+const LIVE_EVENT = ["SCHEDULED", "IN_PROGRESS"] as const;
+
+/**
+ * A live tentative hold with no successful payment whose parent is neither
+ * under review nor a live event; the release CAS re-states it under the row lock.
+ */
+function releasableTentativeWhere() {
+  return {
+    isTentative: true,
+    deletedAt: null,
+    appointment: {
+      payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+      AND: [
+        {
+          OR: [
+            { consultation: null },
+            { consultation: { status: { notIn: [...REVIEWING] } } },
+          ],
+        },
+        {
+          OR: [
+            { subscription: null },
+            { subscription: { status: { notIn: [...REVIEWING] } } },
+          ],
+        },
+        {
+          OR: [
+            { webinar: null },
+            { webinar: { status: { notIn: [...LIVE_EVENT] } } },
+          ],
+        },
+        {
+          OR: [
+            { class: null },
+            { class: { status: { notIn: [...LIVE_EVENT] } } },
+          ],
+        },
+      ],
+    },
+  } satisfies Prisma.AppointmentOccurrenceWhereInput;
+}
+
+/** Grace runs from the last write, so a reschedule that re-holds an old row gets the full window. */
+function staleTentativeWhere(expirationDate: Date) {
+  return {
+    ...releasableTentativeWhere(),
+    updatedAt: { lt: expirationDate },
+  } satisfies Prisma.AppointmentOccurrenceWhereInput;
+}
+
+const tentativeExpiration = (nowMs: number) =>
+  new Date(nowMs - TENTATIVE_EXPIRATION_HOURS * 60 * 60 * 1000);
+
+export async function hasTentativeOccurrenceWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const row = await db.appointmentOccurrence.findFirst({
+    where: staleTentativeWhere(tentativeExpiration(now.getTime())),
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 export interface TentativeSlotCleanupResult {
   success: boolean;
@@ -77,9 +147,7 @@ async function cleanupTentativeSlotsUnlocked(
   let slotsReleased = 0;
   const appointmentsAffected = new Set<string>();
 
-  const expirationDate = new Date(
-    Date.now() - TENTATIVE_EXPIRATION_HOURS * 60 * 60 * 1000,
-  );
+  const expirationDate = tentativeExpiration(Date.now());
 
   console.log("🧹 Starting tentative slot cleanup...");
   console.log(`   Expiration threshold: ${TENTATIVE_EXPIRATION_HOURS} hours`);
@@ -92,76 +160,7 @@ async function cleanupTentativeSlotsUnlocked(
     const staleTentativeSlots = await prisma.appointmentOccurrence.findMany({
       take: maxPerRun,
       orderBy: { updatedAt: "asc" },
-      where: {
-        isTentative: true,
-        // The release is a soft cancel, so the released rows stay in the
-        // table. Without this the cohort read re-collects them every run and
-        // a large backlog would fill the per-run cap with dead rows forever.
-        deletedAt: null,
-        // Grace runs from the LAST write, not creation: a reschedule flips
-        // isTentative on an old row, and measuring from createdAt gave those
-        // slots zero grace before release.
-        updatedAt: { lt: expirationDate },
-        appointment: {
-          payment: {
-            none: {
-              paymentStatus: PaymentStatus.SUCCEEDED,
-            },
-          },
-          // Skip tentative slots whose parent event is still being actively reviewed
-          AND: [
-            {
-              OR: [
-                { consultation: null },
-                {
-                  consultation: {
-                    status: {
-                      notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
-                    },
-                  },
-                },
-              ],
-            },
-            {
-              OR: [
-                { subscription: null },
-                {
-                  subscription: {
-                    status: {
-                      notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
-                    },
-                  },
-                },
-              ],
-            },
-            // Group events: a SCHEDULED/IN_PROGRESS webinar or class with
-            // tentative slots is mid-reschedule awaiting a new time — the
-            // guard set above only covered request-status event types, so
-            // these were swept (dropping attendee links) within the grace
-            // window of any unpaid event.
-            {
-              OR: [
-                { webinar: null },
-                {
-                  webinar: {
-                    status: { notIn: ["SCHEDULED", "IN_PROGRESS"] },
-                  },
-                },
-              ],
-            },
-            {
-              OR: [
-                { class: null },
-                {
-                  class: {
-                    status: { notIn: ["SCHEDULED", "IN_PROGRESS"] },
-                  },
-                },
-              ],
-            },
-          ],
-        },
-      },
+      where: staleTentativeWhere(expirationDate),
       include: {
         appointment: {
           include: {
@@ -243,67 +242,9 @@ async function cleanupTentativeSlotsUnlocked(
       slotsReleased = await transitionSlotsInChunks(
         staleTentativeSlots.map((s) => s.id),
         (idChunk) => ({
-          where: {
-            id: { in: idChunk },
-            // #829 — re-state the tentative + unpaid conditions so a slot whose
-            // capture webhook confirmed it between the findMany above and this
-            // write no longer matches (re-evaluated under the row lock). An
-            // id-only release here destroyed paid bookings.
-            isTentative: true,
-            deletedAt: null,
-            appointment: {
-              payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
-              // The cohort's parent-status guards ride the WHERE too, re-evaluated
-              // under the row lock: a parent back under review or an event that
-              // went live between the scan and this write keeps its hold.
-              AND: [
-                {
-                  OR: [
-                    { consultation: null },
-                    {
-                      consultation: {
-                        status: {
-                          notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
-                        },
-                      },
-                    },
-                  ],
-                },
-                {
-                  OR: [
-                    { subscription: null },
-                    {
-                      subscription: {
-                        status: {
-                          notIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
-                        },
-                      },
-                    },
-                  ],
-                },
-                {
-                  OR: [
-                    { webinar: null },
-                    {
-                      webinar: {
-                        status: { notIn: ["SCHEDULED", "IN_PROGRESS"] },
-                      },
-                    },
-                  ],
-                },
-                {
-                  OR: [
-                    { class: null },
-                    {
-                      class: {
-                        status: { notIn: ["SCHEDULED", "IN_PROGRESS"] },
-                      },
-                    },
-                  ],
-                },
-              ],
-            },
-          },
+          // Re-stated under the row lock: a hold confirmed by a capture, or a
+          // parent back under review or live, since the scan keeps its slot.
+          where: { id: { in: idChunk }, ...releasableTentativeWhere() },
           to: OccurrenceCompletionStatus.CANCELLED,
           data: { deletedAt: new Date() },
           // Default from-set on purpose (SCHEDULED / UNVERIFIED / RESCHEDULED):

@@ -28,7 +28,7 @@ import {
   Prisma,
   RefundStatus,
 } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type Db } from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -122,6 +122,45 @@ const NO_OPEN_REFUND_ORG: Prisma.OrganizationEarningsWhereInput = {
   payment: RELEASABLE_PAYMENT,
 };
 
+/** Consultant earnings past their hold; shared with the ticker's idle probe. */
+function releasableEarningsWhere(
+  now: Date,
+): Prisma.ConsultantEarningsWhereInput {
+  return {
+    status: EarningStatus.PENDING,
+    holdUntil: { lte: now },
+    ...NO_OPEN_REFUND,
+  };
+}
+
+/** Host-organisation earnings past their hold; shared with the ticker's idle probe. */
+function releasableOrgEarningsWhere(
+  now: Date,
+): Prisma.OrganizationEarningsWhereInput {
+  return {
+    status: EarningStatus.PENDING,
+    holdUntil: { lte: now },
+    ...NO_OPEN_REFUND_ORG,
+  };
+}
+
+/** True when either earnings table holds a row the run would release. */
+export async function hasReleasableEarningsWork(
+  db: Db,
+  now: Date,
+): Promise<boolean> {
+  const consultant = await db.consultantEarnings.findFirst({
+    where: releasableEarningsWhere(now),
+    select: { id: true },
+  });
+  if (consultant) return true;
+  const org = await db.organizationEarnings.findFirst({
+    where: releasableOrgEarningsWhere(now),
+    select: { id: true },
+  });
+  return org !== null;
+}
+
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function releaseEarningsFromHold(
@@ -163,11 +202,7 @@ async function releaseEarningsFromHoldUnlocked(
     const { earningsToRelease, releasedCount } = await prisma.$transaction(
       async (tx) => {
         const rows = await tx.consultantEarnings.findMany({
-          where: {
-            status: EarningStatus.PENDING,
-            holdUntil: { lte: now },
-            ...NO_OPEN_REFUND,
-          },
+          where: releasableEarningsWhere(now),
           include: {
             consultantProfile: {
               include: {
@@ -219,11 +254,7 @@ async function releaseEarningsFromHoldUnlocked(
       await prisma.$transaction(
         async (tx) => {
           const rows = await tx.organizationEarnings.findMany({
-            where: {
-              status: EarningStatus.PENDING,
-              holdUntil: { lte: now },
-              ...NO_OPEN_REFUND_ORG,
-            },
+            where: releasableOrgEarningsWhere(now),
             select: {
               id: true,
               orgSharePaise: true,
