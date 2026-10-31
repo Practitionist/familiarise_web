@@ -263,6 +263,12 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [sentry/07-verifying-end-to-end.md](./observability/sentry/07-verifying-end-to-end.md) - The evidence ladder and the deploy-preview probe procedure
 - [sentry/08-error-telemetry-privacy-reference.md](./observability/sentry/08-error-telemetry-privacy-reference.md) - The privacy and lawful-basis reasoning for sending error data to a hosted vendor
 - [maintenance/11-job-machinery-catalog.md](./maintenance/11-job-machinery-catalog.md) - How every scheduled job runs, what each run records and reports, the observability gaps, and the operations dashboard spec
+- [infrastructure/2026-10-31-scale-path-research.md](./infrastructure/2026-10-31-scale-path-research.md) - Research summary for the jobs and web-tier scale path, the main finding and the recorded owner decisions
+- [infrastructure/2026-10-31-background-jobs-and-cron-options.md](./infrastructure/2026-10-31-background-jobs-and-cron-options.md) - Background jobs and cron: 25 options, what startups do, the cheapest path per stage
+- [infrastructure/2026-10-31-mumbai-hosting-comparison.md](./infrastructure/2026-10-31-mumbai-hosting-comparison.md) - Costed comparison of hosting in Mumbai
+- [infrastructure/2026-10-31-queue-prototype-owed-refunds.md](./infrastructure/2026-10-31-queue-prototype-owed-refunds.md) - pg-boss against a hand-written Prisma Job table on the owed-refund job
+- [infrastructure/2026-10-31-runtime-strategy-review.md](./infrastructure/2026-10-31-runtime-strategy-review.md) - Unbiased review of job and runtime strategy (a dissenting analysis, not the plan)
+- [infrastructure/2026-10-31-job-runtime-system-designs.md](./infrastructure/2026-10-31-job-runtime-system-designs.md) - Mermaid system designs for each candidate runtime
 - [maintenance/14-background-job-runtime-options.md](./maintenance/14-background-job-runtime-options.md) - What Inngest, Trigger.dev, pg-boss and DBOS do with our code, with the 2026-10-31 measurements and the owner's Q&A
 - [2026-10-31-job-runtime-experiments.md](./decisions/2026-10-31-job-runtime-experiments.md) - Evidence record (no new decision) for the background-job runtime experiments, with the open questions for the owner
 - [2026-10-26-launch-sweep-observability-and-money-holds.md](./decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) - ADR-01 to ADR-12: money holds, invoice healing, tax identity, auth abuse controls, the three observability layers, ticker escalation and the Sentry quota posture
