@@ -3,7 +3,7 @@
 Versions: pg-boss 12.38.0, @pg-boss/dashboard 1.13.0, @dbos-inc/dbos-sdk 5.4.0, pg 8.23.1, Postgres 16.15 (local, port 54329), Node v26.9.0, PgBouncer 1.26.1.
 Everything ran on Node 26 without install problems. DBOS emits a pg deprecation warning ("client.query() while already executing").
 Code: `boss.mjs` and `dbos.mjs` in this directory (modes `worker`, `send <delayed|immed|crash|conc|tx>`). Databases `boss` and `dbos`, each with `booking`, `side_effect` and `events` tables. Raw logs: `bossA.out`, `dbosA.out`, `pgb.log`, `dash.out`. Cron schedule was `* * * * *`; two worker processes A and B per library.
-Laptop-local: no network latency, so all latencies are best-case.
+Laptop-local: no network latency, so all latencies are best-case. The local runs are evidence only for Node v26.9.0, PostgreSQL 16.15 and local PgBouncer 1.26.1. They do not validate the repository's Node 22 deployment or other database and pooler versions.
 
 **Q10 (Supabase pooler test)** was not run by the original experiment, whose rules forbade connecting to any remote database. The main session ran it afterwards with the user's approval; the results are in the last section of this report.
 

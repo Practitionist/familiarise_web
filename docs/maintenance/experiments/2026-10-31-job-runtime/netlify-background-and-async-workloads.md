@@ -11,7 +11,7 @@ Code: `netlify/functions/{job,probe,flaky,flakyv1,flakyexit}-background.*`, `net
 4. Retries re-run side effects: no idempotency, no dedupe. Each attempt wrote its side-effect row.
 5. The caller can never learn status. Use DB run rows (`SystemJobExecution`).
 6. Concurrency: 10 at once all ran in parallel (start spread 0.51 s).
-7. Async Workloads: NOT installed (team-level, affects every site on the team including `familiarise`); docs research only; owner click path below.
+7. Async Workloads: this experiment did not install the extension. A later check found it already installed on the team (it is team-level, so it applies to every site on the team including `familiarise`); see [netlify-async-workloads-measured.md](./netlify-async-workloads-measured.md) for the measurements. Docs research only here.
 
 ## A1. Admission and runtime (MEASURED)
 
@@ -92,7 +92,7 @@ It is a **team-level extension** (docs: "install the Async Workloads extension f
 | limits                          | payload under 500 KB per event (batches of up to 10 within the 6 MB function limit), chain limit 20, pending limit 2000, scheduler interval 60 s (10-900); non-production scheduler runs only on stateful actions                                     | limitations, optional-configuration                                                                  |
 | transactional send / dual write | not documented. `send` is an HTTP call to Netlify, independent of your DB transaction, so commit-then-fail-before-send loses the job unless you add your own outbox (this repo's state-as-outbox sweep is the answer). Inference, not measured.       |                                                                                                      |
 
-Not measured (needs install): event-to-start latency, backoff timing, delay accuracy, crash-in-step-2 re-run counts, 60 s/300 s steps, dual-write test.
+Not measured by this experiment: event-to-start latency, backoff timing, delay accuracy, crash-in-step-2 re-run counts, 60 s/300 s steps and the dual-write test. See [netlify-async-workloads-measured.md](./netlify-async-workloads-measured.md).
 
 ## Dashboard URLs
 

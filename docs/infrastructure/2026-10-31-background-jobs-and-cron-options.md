@@ -107,7 +107,7 @@ Legend for the "95 ms fixed?" column: **Yes** means the job code runs in Mumbai,
 
 - Facts:
   - Scheduled functions have a 30 s execution limit and run only on published deploys.
-  - Background functions run up to 15 minutes, return `202` immediately, and retry after 1 and then 2 minutes when they throw.
+  - Background functions run up to 15 minutes and return `202` immediately. In the measured environment, v2 default-export handlers that throw were not retried, while legacy `exports.handler` exceptions, `process.exit(1)` and timeout kills were retried after about 1 and then 2 minutes. Record failure explicitly in our own run row and keep the work idempotent.
   - Netlify has no Mumbai function region (sin is the nearest; #2466 §3.2).
 - The pain points, sorted by what fixes each one:
   - **30 s tick cap.** Observed max is 18.5 s. Not hit.
