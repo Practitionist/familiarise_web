@@ -15,7 +15,7 @@ import {
   recordSystemEventSafe,
 } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import prisma, { type Db, type PrismaLike, type Tx } from "@/lib/prisma";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import type { PaymentGateway, PayoutStatus } from "@prisma/client";
 import { acquireLock, releaseLock } from "@/lib/redis";
@@ -1085,25 +1085,6 @@ function staleProcessingOrgPayoutWhere(
   staleBefore: Date,
 ): Prisma.OrganizationPayoutWhereInput {
   return { status: "PROCESSING", updatedAt: { lt: staleBefore } };
-}
-
-/** True when processPendingOrgPayouts has a row to claim or re-drive. */
-export async function hasOrgPayoutProcessingWork(
-  db: Db,
-  now: Date,
-): Promise<boolean> {
-  const row = await db.organizationPayout.findFirst({
-    where: {
-      OR: [
-        pendingOrgPayoutWhere(),
-        staleProcessingOrgPayoutWhere(
-          new Date(now.getTime() - ORG_PROCESSING_REDRIVE_AFTER_MS),
-        ),
-      ],
-    },
-    select: { id: true },
-  });
-  return row !== null;
 }
 
 /** `limit` caps the claims plus failures per pass; an unclaimable row does not count. */

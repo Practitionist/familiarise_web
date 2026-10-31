@@ -1,4 +1,4 @@
-import prisma, { type Db } from "@/lib/prisma";
+import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import {
@@ -9,7 +9,6 @@ import {
 } from "./payout-service";
 import {
   createOrgPayoutBatches,
-  hasOrgPayoutProcessingWork,
   processPendingOrgPayouts,
   type OrgBatchResult,
 } from "./org-payout-service";
@@ -89,22 +88,6 @@ export interface ProcessPayoutsRun {
   orgErrors: number;
   notice: string | null;
   errors: string[];
-}
-
-/**
- * True when either rail has a row to disburse, claim or re-drive. APPROVED rows
- * parked by the live-payouts freeze still count, so the parked notice keeps running.
- */
-export async function hasProcessPayoutsWork(
-  db: Db,
-  now: Date,
-): Promise<boolean> {
-  const consultant = await db.consultantPayout.findFirst({
-    where: APPROVED_PAYOUT_WHERE,
-    select: { id: true },
-  });
-  if (consultant) return true;
-  return hasOrgPayoutProcessingWork(db, now);
 }
 
 /**

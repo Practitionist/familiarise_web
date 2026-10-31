@@ -18,11 +18,11 @@ MEASURED from receipts (team `teetangh`, invoices CFJUKK-00015 to CFJUKK-00020):
 
 DOCS (Netlify support ticket #1112198, 2026-09-17, and [legacy plans](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-legacy-plans/legacy-pricing-plans/)):
 
-- Keep-warm pings bill like real invocations (about 26,000 a month for three pings every five minutes). That keep-warm was retired on 2026-10-03.
+- Keep-warm pings bill like real invocations (about 26,000 a month for three pings every five minutes). That keep-warm was retired on 2026-10-03. Both keep-warm figures were real at different times: 32,400 a month was the 4-minute configuration (three pings every four minutes), and about 26,000 a month is the support ticket's figure for three pings every five minutes.
 - A cold-start stall bills as duration: 28 seconds at 1,024 MB is about 28 GB-seconds against the 1,000 GB-hour allowance.
 - Legacy Pro has no hard spend cap, only usage alerts at 50, 75, 90 and 100 percent. Overage above 2,000,000 invocations is billed per 500,000.
 
-The ticker used to be the largest controllable source: MEASURED about 94,850 invocations a month on `dev` (8,640 ticks plus 86,210 target calls) plus 8,640 slot-claim calls, with 99.8 percent of runs in a 7-day window processing zero items. After the skip-idle change (ESTIMATE, `docs/decisions/2026-11-01-ticker-skip-idle-targets.md`) the idle state is about 21,200 a month plus one call per due tick that has work. Every new job must declare an idle probe or an `alwaysRun` reason (`lib/cron/cleanup-registry.ts`); a job that always runs is a permanent monthly invocation cost.
+The ticker used to be the largest controllable source: MEASURED about 94,850 invocations a month on `dev` (8,640 ticks plus 86,210 target calls) plus 8,640 slot-claim calls, with 99.8 percent of runs in a 7-day window processing zero items. After the skip-idle change (ESTIMATE, `docs/decisions/2026-11-01-ticker-skip-idle-targets.md`) the idle state is about 22,450 a month plus one call per due tick that has work. Every new job must declare an idle probe or an `alwaysRun` reason (`lib/cron/cleanup-registry.ts`); a job that always runs is a permanent monthly invocation cost.
 
 Better Stack checks `familiarisenow.com` and `/api/health` every 3 minutes (`docs/maintenance/00-betterstack-setup.md`). The homepage check costs a function invocation each time, about 14,400 a month. RECOMMENDATION, not done: point it at a static or CDN-cached URL.
 

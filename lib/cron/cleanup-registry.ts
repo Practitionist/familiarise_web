@@ -1045,11 +1045,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      hasWork: async (db, now) => {
-        const { hasSubscriptionInvoiceWork } =
-          await import("@/jobs/billing/generate-subscription-invoices");
-        return hasSubscriptionInvoiceWork(db, now);
-      },
+      alwaysRun:
+        "Surfaces a bad supplier GSTIN on every slot of its daily window.",
     },
     build: () =>
       cleanupRoute({
@@ -1230,11 +1227,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "after",
     },
     idle: {
-      hasWork: async (db, now) => {
-        const { hasProcessPayoutsWork } =
-          await import("@/lib/payments/payouts/scheduled-runs");
-        return hasProcessPayoutsWork(db, now);
-      },
+      alwaysRun:
+        "Surfaces a broken payout lock (Redis) or payout config within the hour.",
     },
     build: () =>
       cleanupRoute({

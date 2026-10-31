@@ -28,7 +28,6 @@
  */
 
 import prisma from "@/lib/prisma";
-import type { Db } from "@/lib/prisma";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-journal";
@@ -79,20 +78,6 @@ function renewalReminderWhere(now: Date): Prisma.BillingSubscriptionWhereInput {
       organization: { status: { in: BILLABLE_ORG_STATUSES } },
     },
   };
-}
-
-/** Ticker idle probe: reminders or invoices due at `now`, which covers any earlier window start. */
-export async function hasSubscriptionInvoiceWork(
-  db: Db,
-  now: Date,
-): Promise<boolean> {
-  const row = await db.billingSubscription.findFirst({
-    where: {
-      OR: [dueSubscriptionWhere(now, now), renewalReminderWhere(now)],
-    },
-    select: { id: true },
-  });
-  return row !== null;
 }
 
 export interface GenerateSubscriptionInvoicesResult {
