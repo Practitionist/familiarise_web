@@ -219,3 +219,10 @@ calendar day of a live session (`lib/stream/search-date.ts`, in the viewer's zon
 from the `tz` parameter). The sidebar narrows its loaded chats from the same term in
 the browser, and the dropdown leaves out rows that list already shows. Message-text
 search is deliberately absent; it is tracked in issue #2469.
+
+Leaving or deleting a thread never ends the connection. `POST /api/stream/channels/open`
+re-adds both people to the pair's existing DM (idempotent for anyone already in), so
+searching for them and clicking restores the same thread with its history; the
+amendment above relies on this as the recovery path. There is no per-user "delete for
+me" or partial history clear, by choice: a thread is one shared record. Blocking is
+separate and not yet reversible or hidden from search (issue #2479).

@@ -60,7 +60,10 @@ import {
   addUserToEventChannel,
   isEventParticipant,
 } from "@/lib/stream/event-channel-service";
-import { getStreamChatClient } from "@/lib/stream-client";
+import {
+  getStreamChatClient,
+  withStreamCircuitBreaker,
+} from "@/lib/stream-client";
 import { getDmChannelId } from "@/lib/stream-utils";
 import { readDmChannel } from "@/lib/stream/dm-channel-read";
 import { streamLogger } from "@/lib/stream-logger";
@@ -260,6 +263,15 @@ async function handleDmChannelOpen(
     userId,
     counterpartyUserId,
     organizationId,
+  );
+
+  // Someone who left or deleted the thread keeps their eligibility, but `create()`
+  // only seeds a channel that is new. Re-adding both is idempotent for anyone
+  // already in, and the history comes back with them.
+  await withStreamCircuitBreaker(() =>
+    getStreamChatClient()
+      .channel("messaging", channelId)
+      .addMembers([userId, counterpartyUserId]),
   );
 
   return NextResponse.json({ channelType: "messaging", channelId });
