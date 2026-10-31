@@ -5,7 +5,7 @@ type: explanation
 
 # The eight layers of the jobs subsystem and the stacks that fit together
 
-[Background-job runtime options](./14-background-job-runtime-options.md) compares the runtimes one by one. This page answers a different question: which parts of a jobs system can be swapped independently, which cannot, and therefore which complete stacks are coherent. It is evidence for decisions the owner has already taken and does not take a new one. The decisions are in [Ticker through launch, the scale path, the phase 2 queue and the database plan](../decisions/2026-10-31-ticker-scale-path-and-queue.md). The labels MEASURED, DOCS, ESTIMATE, UNVERIFIED and PENDING are defined in section 1 of page 14, with ESTIMATE meaning arithmetic or reasoning with no run behind it and PENDING meaning an experiment has not reported.
+[Background-job runtime options](./14-background-job-runtime-options.md) compares the runtimes one by one. This page answers a different question: which parts of a jobs system can be swapped independently, which cannot, and therefore which complete stacks are coherent. It is evidence for decisions the owner has already taken and does not take a new one. The decisions are in [Ticker through launch, the scale path, the phase 2 queue and the database plan](../decisions/2026-10-31-ticker-scale-path-and-queue.md). The labels MEASURED, DOCS, ESTIMATE and UNVERIFIED are defined in section 1 of page 14.
 
 ## 1. The eight layers
 

@@ -27,7 +27,7 @@ A per-job Vercel Cron (Pro allows 100 cron jobs per project, DOCS; we have about
 
 ## 3. The Netlify-specific surface
 
-The Netlify-specific code is small. It is the files in `netlify/functions/`, `next.config.mjs` (the `NETLIFY` build flags), `lib/runtime-host.ts`, `lib/api/cdn-cache.ts` (the `Netlify-Vary` header helper), `lib/cron/schedule.ts`, `netlify/functions/cron-tick.mts`, and the routes that set `Netlify-Vary` (health, currency and the consultant routes). The dual-boot rules in `AGENTS.md` already cover client-IP trust by runtime, `Vary: Cookie`, the `sharp` exclusion and presigned uploads, so the same build runs on Netlify and elsewhere.
+The Netlify-specific code is small. It is the files in `netlify/functions/`, `next.config.mjs` (the `NETLIFY` build flags), `lib/runtime-host.ts`, `lib/api/cdn-cache.ts` (the `Netlify-Vary` header helper), `lib/cron/schedule.ts`, `netlify/functions/cron-tick.mts`, and the routes that set `Netlify-Vary` (health, currency and the consultant routes). The dual-boot rules in `AGENTS.md` already cover client-IP trust by runtime, `Vary: Cookie`, the `sharp` exclusion and presigned uploads, so the build is intended to run on Netlify and elsewhere. That is a portability goal, not a verified fact for Vercel: the real-app attempt below is blocked until the build issues are fixed.
 
 The real work of a move is the ticker replacement plus the build issues the [real-app attempt](./experiments/2026-10-31-job-runtime/real-app-vercel-bom1-attempt.md) found: middleware loading as an ES module under Node 26, the static-generation hang on Node 22, Node pinning and build memory. The estimate is a few hundred changed lines plus build debugging (ESTIMATE). It is not a rewrite, and the jobs and the money logic do not change.
 

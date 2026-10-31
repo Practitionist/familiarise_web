@@ -1,6 +1,6 @@
 # Experiment source code (2026-10-31)
 
-These are the throwaway scripts behind the experiment reports in this folder. They are kept as text so that lint, typecheck and the build ignore them. They read credentials from environment variables only. The Trigger.dev probe connects with `ssl: { rejectUnauthorized: false }` because it ran once against a mock database; do not copy that setting, keep certificate verification on.
+These are the throwaway scripts behind the experiment reports in this folder. They are kept as text so that lint, typecheck and the build ignore them. Most probes read credentials from environment variables, but some read local files: the repository's `.env`, a local `.secrets` file or a Trigger CLI config file (those reads are shown as placeholders where they were replaced). Several probes disable TLS verification (`rejectUnauthorized: false` or TLS off) because they ran once against a mock database: do not copy those settings, keep certificate verification on.
 
 ## `lab-inngest/app.mjs`
 
@@ -5827,7 +5827,7 @@ export default async (req) => {
   const origin = p("src", "fn");
   const client = new AsyncWorkloadsClient();
   const sendOne = async (i) => {
-    const data = { run: `${run}`, i };
+    const data = { run: `${run}`, i, ms: +p("ms", 0) };
     const opts = { data };
     if (ev === "delay") {
       opts.delayUntil = Date.now() + +p("delayMs", 30000);
@@ -6324,7 +6324,7 @@ export const asyncWorkloadConfig = {
   "name": "fw-lab-restate",
   "private": true,
   "type": "module",
-  "dependencies": { "@restatedev/restate-sdk": "latest", "pg": "^8.13.0" },
+  "dependencies": { "@restatedev/restate-sdk": "1.18.0", "pg": "^8.13.0" },
   "devDependencies": { "@types/pg": "^8", "typescript": "^5" }
 }
 ```
