@@ -7,7 +7,7 @@ type: explanation
 
 This page explains where background jobs can run, what each candidate runtime actually does with our code, and what four throwaway experiments measured on 2026-10-31. It is evidence for decisions the owner has already taken. It does not take a new one. The decisions are in [Ticker through launch, the scale path, the phase 2 queue and the database plan](../decisions/2026-10-31-ticker-scale-path-and-queue.md) and [Architecture at scale](../decisions/2026-10-30-architecture-at-scale-review.md). The evidence record, with the open questions for the owner, is [Job-runtime experiments](../decisions/2026-10-31-job-runtime-experiments.md). The raw reports are indexed in [the experiment folder](./experiments/2026-10-31-job-runtime/README.md).
 
-Two experiments are still running and are marked **Pending** below: a lock-hold and interference measurement, and a check of which Trigger.dev plan includes static IPs.
+The last two experiments, a lock-hold and interference measurement and a static-egress check, are in section 4. One detail is still open: which Trigger.dev paid plan includes static IPs.
 
 ## 1. Today: the Netlify ticker
 
@@ -64,7 +64,7 @@ The experiment ran the SDK (`inngest` 4.26.2) against the local Inngest dev serv
 
 Four conclusions follow, and each names its limit.
 
-- **Inngest does not lift the host limit.** One step must fit inside one request. A single step longer than the 26 s edge cut fails on every retry. The SDK setting `checkpointing.maxRuntime` (default 10 s for `serve`) only splits a sequence of short steps into several requests, and it is checked between steps, never in the middle of one. Set it below the host limit minus the longest step.
+- **Inngest does not lift the host limit.** One step must fit inside one request. A single step longer than the 26 s edge cut returns a timeout to Inngest. With checkpointing off it failed on each of three attempts and ran its side effect three times. With checkpointing on, the result reached Inngest on a side channel in the one run measured, so the retry did not repeat the step, but that is not guaranteed. The SDK setting `checkpointing.maxRuntime` (default 10 s for `serve`) only splits a sequence of short steps into several requests, and it is checked between steps, never in the middle of one. Set it below the host limit minus the longest step.
 - **At-least-once still applies.** The host keeps running after the edge answers 504, so a retry can repeat a side effect. Checkpointing can hide this, but it is not a guarantee.
 - **Sleep and cron are Inngest's.** That is what Inngest sells: a durable timer outside our process. It would be a second scheduler beside the ticker, which `AGENTS.md` rule 4 forbids unless it replaces the ticker.
 - **Inngest Connect** is the SDK mode where our process holds an outbound connection to Inngest and receives work over it. The SDK documents a five-minute default for it, but it needs a process that stays alive, which Netlify functions are not. The experiment did not exercise Connect.
@@ -101,7 +101,7 @@ Reading the table:
 - **The best Trigger.dev region is slower than Netlify today.** Frankfurt at about 125 ms is roughly a third worse than Singapore at about 95 ms, and an unset region lands in `us-east-1`, nearly twice as slow. Moving a chatty job to Trigger.dev makes its database time worse.
 - **Connect cost is six to six and a half round trips**, so a task must reuse its connection.
 - **Cost per run** for the probe, which makes over a hundred serial round trips, was 0.035 to 0.124 US cents depending on region and machine size, on a base fee of 0.0025 cents. A `micro` machine ran the same speed at half the price.
-- **Egress IPs are dynamic on the Free plan.** The eu-central-1 runs used `3.40.0.x` addresses and the us-east-1 runs a single address, but nothing guarantees they stay. Trigger.dev's changelog says static IPs are for paid customers. It does not say which plan, so whether the cheapest paid tier includes them is **Pending** (static-IP plan verification). RazorpayX would need the static address, see [section 4](#4-questions-the-owner-asked).
+- **Egress IPs are dynamic on the Free plan and static only on paid plans.** Trigger.dev's changelog says static IPs are "available for paid customers", per region (`us-east-1`, `us-west-2`, `eu-central-1`), and lists them on a dashboard Regions page. Whether Hobby ($10 a month) qualifies or only Pro ($50), how many addresses each region has and whether it costs extra are UNVERIFIED: no official page states them. RazorpayX would need the static address, see [section 4.4](#44-can-razorpayx-static-egress-be-solved-on-netlify).
 
 The vendor facts here were read from Trigger.dev's changelog and pricing page on 2026-10-31. The documentation pages for regions and static IPs returned 404 on that date, so they could not be cross-checked.
 
@@ -149,18 +149,18 @@ Three results deserve plain statements.
 
 The table lists the measured facts and the source report of each, so that a reader can find the log behind a claim.
 
-| Fact                                                                                   | Measured by                           | Source report                                                                          |
-| -------------------------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------- |
-| A 26 s edge 504 fails a 40 s Inngest step on every retry; the side effect runs 3 times | Inngest dev server behind a 504 proxy | [inngest-on-serverless](./experiments/2026-10-31-job-runtime/inngest-on-serverless.md) |
-| `maxRuntime` splits step sequences (7 requests at 10 s, 5 at 20 s)                     | Same                                  | Same                                                                                   |
-| Trigger.dev round trip to the Mumbai pooler: 125, 185, 232 ms by region                | Real Trigger.dev Cloud runs           | [trigger-dev-latency](./experiments/2026-10-31-job-runtime/trigger-dev-latency.md)     |
-| No Asian Trigger.dev region accepted                                                   | Same                                  | Same                                                                                   |
-| pg-boss and DBOS enqueue transactionally and work through the Supabase poolers         | Local plus Supabase Mumbai            | [pg-boss-vs-dbos](./experiments/2026-10-31-job-runtime/pg-boss-vs-dbos.md)             |
-| DBOS pool 2 crashes; pool 10 is stable                                                 | Supabase Mumbai                       | Same                                                                                   |
-| pg-boss first-minute duplicate cron job, 2 of 2 runs                                   | Supabase Mumbai                       | Same                                                                                   |
-| Crash recovery: DBOS about 3 s with one side effect; pg-boss about 65 s with two       | Local                                 | Same                                                                                   |
-| Lock-hold and interference on shared rows                                              | **Pending**                           | To be added                                                                            |
-| Static IP included in which Trigger.dev plan                                           | **Pending**                           | To be added                                                                            |
+| Fact                                                                                                                                          | Measured by                                                 | Source report                                                                              |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| A 26 s edge 504 fails a 40 s Inngest step on every retry; the side effect runs 3 times                                                        | Inngest dev server behind a 504 proxy                       | [inngest-on-serverless](./experiments/2026-10-31-job-runtime/inngest-on-serverless.md)     |
+| `maxRuntime` splits step sequences (7 requests at 10 s, 5 at 20 s)                                                                            | Same                                                        | Same                                                                                       |
+| Trigger.dev round trip to the Mumbai pooler: 125, 185, 232 ms by region                                                                       | Real Trigger.dev Cloud runs                                 | [trigger-dev-latency](./experiments/2026-10-31-job-runtime/trigger-dev-latency.md)         |
+| No Asian Trigger.dev region accepted                                                                                                          | Same                                                        | Same                                                                                       |
+| pg-boss and DBOS enqueue transactionally and work through the Supabase poolers                                                                | Local plus Supabase Mumbai                                  | [pg-boss-vs-dbos](./experiments/2026-10-31-job-runtime/pg-boss-vs-dbos.md)                 |
+| DBOS pool 2 crashes; pool 10 is stable                                                                                                        | Supabase Mumbai                                             | Same                                                                                       |
+| pg-boss first-minute duplicate cron job, 2 of 2 runs                                                                                          | Supabase Mumbai                                             | Same                                                                                       |
+| Crash recovery: DBOS about 3 s with one side effect; pg-boss about 65 s with two                                                              | Local                                                       | Same                                                                                       |
+| A 10-round-trip lock hold is 1,258 ms from Frankfurt and 395 ms from a laptop; a blocked update waits about 1.1 s against 37.6 ms with no job | Real Trigger.dev run plus laptop, scratch table on Supabase | [lock-hold-and-static-ip](./experiments/2026-10-31-job-runtime/lock-hold-and-static-ip.md) |
+| Trigger.dev static IPs are paid-only; which paid plan and how many IPs are UNVERIFIED                                                         | Official changelog and pricing page                         | [lock-hold-and-static-ip](./experiments/2026-10-31-job-runtime/lock-hold-and-static-ip.md) |
 
 Latency numbers measured from a laptop in India are best-case and not representative of any production host. Only the Trigger.dev rows were measured from real cloud regions.
 
@@ -170,17 +170,29 @@ Latency numbers measured from a laptop in India are best-case and not representa
 
 No. A transaction opened by a worker in Frankfurt is still one ACID transaction on one database, and the database enforces it exactly as before: `ledger_txn_balanced`, `payment_legs_sum_to_amount` and `occurrence_no_confirmed_overlap` (all in `prisma/sql/`) are checked at commit regardless of where the client sits. A distributed transaction would need two databases or two resource managers, and none of these options adds one.
 
-What changes is how long the transaction stays open. Every statement waits for a network round trip, so row locks and Serializable snapshots (`withSerializableRetry` in `lib/db/serializable-retry.ts`) are held for longer, and a user request that needs the same rows waits longer or hits a retry. This is arithmetic from the measured round trips, not a measurement of contention:
+What changes is how long the transaction stays open. Every statement waits for a network round trip, so row locks and Serializable snapshots (`withSerializableRetry` in `lib/db/serializable-retry.ts`) are held for longer, and a user request that needs the same rows waits longer or hits a retry. The lock experiment measured this on a scratch table in the shared Supabase project: `SELECT … FOR UPDATE`, eight statements and `COMMIT`, ten round trips in all, at READ COMMITTED. The full report is [lock-hold-and-static-ip](./experiments/2026-10-31-job-runtime/lock-hold-and-static-ip.md). The table gives the time the row lock was held.
 
-| Where the transaction runs                 |   Round trip | Eight-statement transaction holds its locks for at least |
-| ------------------------------------------ | -----------: | -------------------------------------------------------: |
-| Mumbai host, as the scale-path ADR expects | about 1–2 ms |                                            about 8–16 ms |
-| Netlify Singapore, today                   |  about 95 ms |                                             about 760 ms |
-| Trigger.dev `eu-central-1`                 | about 125 ms |                                           about 1,000 ms |
-| Trigger.dev `us-east-1`                    | about 185 ms |                                           about 1,480 ms |
-| Trigger.dev `us-west-2`                    | about 232 ms |                                           about 1,856 ms |
+| Where the transaction runs                 | Per-statement round trip | Lock held for 10 round trips | Status                                  |
+| ------------------------------------------ | -----------------------: | ---------------------------: | --------------------------------------- |
+| Trigger.dev `eu-central-1`                 |                 125.8 ms |         1,258 ms (p95 1,259) | Measured, 10 runs                       |
+| Laptop in India (not representative)       |                  39.5 ms |             395 ms (p95 406) | Measured, 10 runs                       |
+| Netlify Singapore, today                   |              about 95 ms |                 about 950 ms | Extrapolated from a Prisma-level figure |
+| Mumbai host, as the scale-path ADR expects |             about 1–2 ms |                  about 20 ms | ESTIMATE, not measured                  |
 
-**Pending (lock-hold and interference measurement):** the separate experiment will measure how much a held lock delays a competing request on the same row. Until it lands, treat the last column as a lower bound on lock duration, not as a measured delay.
+The hold equals the number of round trips times the round-trip time; database execution time was negligible. The cost to other people is the wait of a competing write. A user, simulated from the laptop, updated the locked row about five times a second:
+
+| Scenario                                          | Updates | Median wait | 95th percentile |
+| ------------------------------------------------- | ------: | ----------: | --------------: |
+| No job running (20 s baseline)                    |      99 |     37.6 ms |         44.1 ms |
+| Update issued while a laptop job held the lock    |      10 |    274.9 ms |        367.9 ms |
+| Update issued while a Frankfurt job held the lock |       6 |  1,110.1 ms |      1,272.2 ms |
+| Update issued outside any hold (Frankfurt runs)   |      72 |     47.5 ms |         53.6 ms |
+
+Each of the ten Frankfurt holds blocked exactly one update for more than 150 ms. The updater was a closed loop with one request in flight, so this under-counts a real open-loop crowd: at five arrivals a second, a 1.26 s hold would queue about six waiting writes. A single arrival lands at a random point in the hold, so its expected wait is about half the hold, roughly 0.6 s from Frankfurt against roughly 0.2 s from the laptop.
+
+**Serializable.** Two concurrent copies of the same transaction, 20 rounds each, ran at SERIALIZABLE isolation. In both locations exactly one of every pair failed with SQLSTATE 40001 (20 commits and 20 failures per location), because both read and update the same row. The failure rate did not depend on distance; what distance changes is how long the survivor's snapshot stays open. `withSerializableRetry` is the existing guard that retries those failures.
+
+A first Trigger.dev interference run used the laptop's wall clock against the container's clock, was skewed, and was discarded. The numbers above come from the second run, which classified updates by the database clock.
 
 ### 4.2 Where does the dual-write risk come from?
 
@@ -201,7 +213,22 @@ No. Razorpay and Stream calls stay at-least-once on every runtime in this page: 
 
 ### 4.4 Can RazorpayX static egress be solved on Netlify?
 
-Yes, and it already is. Live RazorpayX answers only allowlisted IP addresses and Netlify has no static egress address. The earlier finance decision (F1) routes the RazorpayX client alone through a static-IP HTTP proxy, set by `RAZORPAYX_EGRESS_PROXY_URL`. The client refuses live calls without it, with `RAZORPAYX_EGRESS_NOT_CONFIGURED` (`apiRequest` in `lib/payments/payouts/razorpay-payouts.ts`; see [RazorpayX](../finance/40-payouts/04-razorpayx.md)). So the question for any new runtime is cost and added latency, not possibility. The cost and the extra hop of that proxy are not recorded in the repo and were not measured; issue #2484 estimates the proxy at about $20 to $30 a month, which it marks unverified. A runtime with its own static address (a Lightsail VM in Mumbai, or a paid Trigger.dev tier if confirmed) could replace the proxy, but only for the code that runs there.
+Yes, and it already is. Live RazorpayX answers only allowlisted IP addresses and Netlify has no static egress address. The earlier finance decision (F1) routes the RazorpayX client alone through a static-IP HTTP proxy, set by `RAZORPAYX_EGRESS_PROXY_URL`. The client refuses live calls without it, with `RAZORPAYX_EGRESS_NOT_CONFIGURED` (`apiRequest` in `lib/payments/payouts/razorpay-payouts.ts`; see [RazorpayX](../finance/40-payouts/04-razorpayx.md)). So the question for any new runtime is cost and added latency, not possibility. The extra hop of that proxy was not measured, and QuotaGuard documents no latency figure. A runtime with its own static address (a Lightsail VM in Mumbai, or a paid Trigger.dev tier if confirmed) could replace the proxy, but only for the code that runs there.
+
+RazorpayX allows up to 20 allowlisted IPs, set by an Owner or Admin, in Live Mode only. The allowlist covers the payout APIs (including contacts and fund accounts), payout links and fund account validation; vendor payments, payroll and dashboard payouts are exempt (razorpay.com/docs/x/dashboard/allowlist-ip, CONFIRMED). The table gives the verified prices of ways to get a fixed address, each with its verification status. The vendor pages were read on 2026-10-31; the full quotes are in [lock-hold-and-static-ip](./experiments/2026-10-31-job-runtime/lock-hold-and-static-ip.md).
+
+| Way to get a static address                | Price                                                                                                         | Status                                                                                                                                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| QuotaGuard Static proxy (the F1 class)     | $19 a month (10 GB), $49 (50 GB), $89 (200 GB), $219 (1 TB, dedicated IPs); a load-balanced pair of IPs       | Prices CONFIRMED. The pricing page lists a Mumbai location and also says data residency is "US or EU", so Mumbai is UNVERIFIED until sales confirm. Latency: none documented. |
+| Fixie proxy                                | HTTP plans from free (500 requests) to $5, $19 and $49; SOCKS plans from $9                                   | Locations and IP count UNVERIFIED; no India or Singapore location documented.                                                                                                 |
+| AWS Lightsail in Mumbai                    | Plans from $5 a month; a static IP is free while attached, $0.005 an hour if unattached over an hour          | CONFIRMED. Outbound use of the static IP is standard AWS behaviour but not quoted on the page.                                                                                |
+| Vercel Static IPs                          | $100 a month per project on Pro, plus regional Private Data Transfer; one IP pair per region, up to 3 regions | Price and plan CONFIRMED. Whether `bom1` can be selected is UNVERIFIED.                                                                                                       |
+| Vercel Secure Compute                      | Enterprise only, custom pricing                                                                               | CONFIRMED Enterprise-only.                                                                                                                                                    |
+| Netlify Private Connectivity               | Enterprise add-on, no published price; regions Ohio, Frankfurt and London only                                | CONFIRMED. No Singapore or Mumbai region, so it is not on the Free or Pro plan and does not fit.                                                                              |
+| GCP Cloud Run `asia-south1` with Cloud NAT | NAT gateway $0.0014 an hour per VM, $0.045 per GiB, external IP $0.005 an hour (about $3.65 a month)          | CONFIRMED prices. How Cloud Run instances count toward the per-VM row is UNVERIFIED.                                                                                          |
+| Fly.io static egress                       | $3.60 a month per app-scoped IPv4 per region                                                                  | Price CONFIRMED. The regions table fetched had no Mumbai (`bom`) row.                                                                                                         |
+| Trigger.dev paid plans                     | Not stated; Hobby $10 and Pro $50 are the plan prices                                                         | Paid-only CONFIRMED. Which plan, how many IPs and any extra price are UNVERIFIED.                                                                                             |
+| Inngest                                    | Not applicable                                                                                                | In serve mode the function runs on our host and leaves from that host's address. That follows from the model; no page states it, so UNVERIFIED as a quotation.                |
 
 ## 5. How the experiments bear on the existing decisions
 
@@ -226,6 +253,10 @@ This section reads the evidence against the decisions without changing them.
 | Serializable retry                       | `withSerializableRetry` in `lib/db/serializable-retry.ts`                           |
 | Refund-owed marker (state as the outbox) | `lib/payments/operations/refund-owed.ts`, the `retry-auto-refunds` job              |
 | RazorpayX static egress                  | `apiRequest` in `lib/payments/payouts/razorpay-payouts.ts`                          |
+
+## Related research
+
+The longer research this page draws on is in [scale path research](../infrastructure/2026-10-31-scale-path-research.md), [system-design pictures](../infrastructure/2026-10-31-job-runtime-system-designs.md) and [runtime strategy review](../infrastructure/2026-10-31-runtime-strategy-review.md).
 
 ## Related issues
 
