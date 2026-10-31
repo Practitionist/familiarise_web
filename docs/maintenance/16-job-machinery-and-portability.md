@@ -5,7 +5,7 @@ type: explanation
 
 # Job machinery, what a host move removes, and portability
 
-This page answers three questions that the runtime comparison on [page 14](./14-background-job-runtime-options.md) and the layer view on [page 15](./15-job-runtime-layer-matrix.md) leave open. How much code is job machinery? How much of it would a move to another host remove? And what has to stay portable so that a move is a trigger swap and not a rewrite? It is evidence for decisions already taken and does not take a new one. The brief on machinery and portability is also carried by issue #2491. The owner decision is in [the evidence and decision record](../decisions/2026-10-31-job-runtime-experiments.md). Labels follow page 14, and ESTIMATE means arithmetic or reasoning with no run behind it.
+This page answers three questions that the runtime comparison on [page 14](./14-background-job-runtime-options.md) and the layer view on [page 15](./15-job-runtime-layer-matrix.md) leave open. How much code is job machinery? How much of it would a move to another host remove? And what has to stay portable so that a move is a trigger swap and not a rewrite? It is evidence for decisions already taken and does not take a new one. The brief on machinery and portability is also carried by issue #2491, and the post-launch backlog work (recording-transfer throughput, retention-safe checkpoints and a per-job throughput and poison-row audit) is issue #2492. The owner decision is in [the evidence and decision record](../decisions/2026-10-31-job-runtime-experiments.md). Labels follow page 14, and ESTIMATE means arithmetic or reasoning with no run behind it.
 
 ## 1. The machinery
 
