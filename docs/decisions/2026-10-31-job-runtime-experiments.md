@@ -1,6 +1,6 @@
-# ADR: Job-runtime experiments (evidence record)
+# ADR: Job-runtime experiments and the launch runtime decision
 
-- **Status**: Evidence, no new owner decision. Nothing in this record changes a decision taken in the ticker ADR or the at-scale review. Some details are still unverified (see the open questions), and Async Workloads was researched in documentation only.
+- **Status**: Decision recorded (owner, 2026-10-31): launch on option 4, then decide between options 1 and 3 after two tests. The evidence below is unchanged evidence; nothing here overrides the ticker ADR. Some details are still unverified (see the open questions), and Async Workloads was researched in documentation only.
 - **Date**: 2026-10-31
 - **Author**: Platform engineering
 - **Related**: [Ticker through launch, the scale path, the phase 2 queue and the database plan](2026-10-31-ticker-scale-path-and-queue.md), [Architecture at scale review](2026-10-30-architecture-at-scale-review.md), [Background-job runtime options](../maintenance/14-background-job-runtime-options.md), [the raw reports](../maintenance/experiments/2026-10-31-job-runtime/README.md), issues #2472, #2484, #2485
@@ -34,6 +34,8 @@ The table gives each finding, the decision it bears on and which way it points.
 | Vercel Workflows ran steps in our `bom1` functions at 2.3–3.2 ms per query and did not re-run completed steps after a crash, but `start()` followed by a rollback ran a workflow for a missing order.                                                                                                                                                                | Outbox pattern                    | Still needs the outbox.                                                                            |
 | A Cloudflare Worker placed with `region = "aws:ap-south-1"` measured 2–3 ms per statement; Smart Placement never moved; queue consumers, cron and Workflow steps ignore placement (125–266 ms) and need a service binding to a pinned Worker (22–31 ms). A queue retry repeated the side effect and neither a Queue send nor a Workflow `create()` is transactional. | Decisions 2 and 3, outbox pattern | A second host that reaches Mumbai; it does not change the decisions.                               |
 | Netlify Background Functions returned a 202 in 0.65–0.85 s and ran up to 900 s (960 s killed). A v2 handler that throws is never retried; a legacy handler, `process.exit(1)` or a timeout kill is retried at +1 and +2 minutes and repeats the side effect. Status is visible only through our own rows.                                                            | Decision 1, idempotency rules     | Offers a longer slot than the ticker's HTTP workers but needs the same state-as-outbox discipline. |
+| pg-boss drain mode works from short functions: 3 concurrent drainers processed 600 jobs with 0 duplicates, a job cost 0.8–1.9 ms on `bom1`, and `send` with the `db` option was transactional. A plain `fetch()` never redelivers an abandoned job; the tick must call `supervise()`.                                                                                | Decision 4                        | Supports a queue drained by the ticker.                                                            |
+| Cloudflare Workers cannot verify Supabase's private-CA certificate with `pg` or `postgres.js`. Only Hyperdrive with the Supabase CA and `verify-full` gives a verified connection: 4 ms per statement, 60–89 ms lock hold.                                                                                                                                           | Cloudflare option                 | Replaces the TLS-off Cloudflare figures.                                                           |
 | Real QStash EU delivered with a median of 1,366 ms. A 30 s function was retried at about 12 s, 160 s and 33 min and wrote 3 side effects from one message.                                                                                                                                                                                                           | Decision 3                        | Strengthens, and confirms at-least-once.                                                           |
 | Upstash Workflow re-ran its handler on every request (8 executions for 4 requests) while each step body ran once.                                                                                                                                                                                                                                                    | Idempotency rules                 | A footgun for any code outside a step.                                                             |
 | A publish after a committed insert, with a failure between, left the row without a message.                                                                                                                                                                                                                                                                          | Outbox pattern                    | Confirms why state-as-outbox beats a post-commit publish.                                          |
@@ -42,6 +44,49 @@ Two conclusions the experiments do not support:
 
 - That any of these options is faster than Netlify for database-heavy jobs. Only a host in Mumbai removes the per-statement cost, and none of the four tested runtimes supplies one.
 - That a hosted engine removes the need for idempotency keys, compare-and-swap writes and the reconcilers.
+
+## Owner decision (2026-10-31)
+
+The owner chose, in this session: **launch on option 4 (the Netlify ticker plus Background Functions for jobs that need more than 30 s). Decide between option 1 (Vercel Pro `bom1` plus Vercel Workflows) and option 3 (a Mumbai VM with DBOS) after the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency.**
+
+The option numbers are the owner's. They map onto the options of the [runtime strategy review](../infrastructure/2026-10-31-runtime-strategy-review.md) and the stacks of the [layer matrix](../maintenance/15-job-runtime-layer-matrix.md) as follows.
+
+| Owner option | What it is                                                  | Stacks on page 15 | Closest option in the strategy review §5 |
+| ------------ | ----------------------------------------------------------- | ----------------- | ---------------------------------------- |
+| 4            | Netlify ticker plus Background Functions for jobs over 30 s | S1 plus S3        | D, status quo hardened                   |
+| 1            | Vercel Pro `bom1` plus Vercel Workflows                     | S6 and S7         | E, Vercel Pro `bom1`                     |
+| 3            | A Mumbai VM running DBOS                                    | S10               | A and C, a Mumbai VM                     |
+
+### Trade-offs
+
+The table compares the three options on the evidence in this record.
+
+| Aspect                | Option 4: ticker plus Background Functions                                                                | Option 1: Vercel `bom1` plus Workflows                                    | Option 3: Mumbai VM plus DBOS                                                    |
+| --------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Database round trip   | 62–64 ms raw from Singapore (MEASURED); user latency stays as it is                                       | 1.0–2.3 ms from `bom1` (MEASURED); steps 2.3–3.2 ms                       | 1–2 ms (ESTIMATE; no VM was measured)                                            |
+| Job time cap          | Background Function 900 s (MEASURED); the ticker's HTTP workers stay near 26 s                            | Per step 300 s on Hobby, 800 s on Pro; the run is unlimited (DOCS)        | None                                                                             |
+| Crash behaviour       | Legacy handlers retry at +1 and +2 min and repeat the side effect; v2 throws are never retried (MEASURED) | Completed steps do not re-run after a crash (MEASURED)                    | A killed workflow resumed in about 3 s with step 1 not re-run (MEASURED locally) |
+| Transactional enqueue | State is the outbox; no enqueue step                                                                      | No: `start()` is not transactional, so an outbox row is needed (MEASURED) | Yes: `enqueueInTransaction` on the same database (MEASURED locally)              |
+| Who runs the server   | Netlify                                                                                                   | Vercel (managed)                                                          | We do: patching, restarts, failback                                              |
+| Main risk             | Keeps the most job machinery and the slow database path                                                   | A second platform, a Pro plan, and the Workflows model                    | Operating a server; a DBOS pool of about 10 and a pinned version                 |
+
+### Cost by scale
+
+All figures are monthly US dollars and are **ESTIMATE**s taken from [the runtime strategy review §5](../infrastructure/2026-10-31-runtime-strategy-review.md) as the coordinator summarised them. None is a bill. The 1,000-user figure for option 1 is highly uncertain.
+
+| Scale             | Option 1: Vercel `bom1` plus Workflows | Option 3: Mumbai VM plus DBOS | Option 4: ticker plus Background Functions       |
+| ----------------- | -------------------------------------- | ----------------------------- | ------------------------------------------------ |
+| Now               | about $85–165                          | about $57–69                  | about $90–100                                    |
+| About 300 users   | about $100–200                         | about $70–80                  | about $110–140, plus an earlier Supabase upgrade |
+| About 1,000 users | about $900–1,500 (highly uncertain)    | about $125 plus operations    | about $110–140, but user latency gets worse      |
+
+### Architectural simplicity
+
+Option 4 is the simplest to operate because nothing new is added, but it keeps the most code: the ticker fan-out, leases, cursors and the background adapters. Option 1 is managed and moderately simple, but it brings the Workflows model and an outbox for `start()`. Option 3 has the simplest runtime model, one process with in-database durable steps, but we run the server.
+
+### When to revisit
+
+Revisit when the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency, or when launch traffic approaches about 300 concurrent users, whichever comes first. This record does not change the ticker ADR; it narrows its Decision 2 trial into the choice between options 1 and 3.
 
 ## Effect on the existing decisions
 
@@ -52,14 +97,14 @@ Two conclusions the experiments do not support:
 
 ## Open questions for the owner
 
-1. Is the single always-on Mumbai VM in #2484 (about $24 a month, with a static IP) in scope? The ticker ADR rejected the $100 to $440 container plan on cost. It did not consider a VM of this size. The experiments show that Inngest Connect, pg-boss and DBOS all need a long-lived process, which a VM provides.
+1. Answered in part by the owner decision: option 3 (a Mumbai VM with DBOS) stays a candidate, to be decided after the Mumbai VM test. Is the single always-on Mumbai VM in #2484 (about $24 a month, with a static IP) in scope? The ticker ADR rejected the $100 to $440 container plan on cost. It did not consider a VM of this size. The experiments show that Inngest Connect, pg-boss and DBOS all need a long-lived process, which a VM provides.
 2. Is a Trigger.dev sales or support question about static IPs worth asking? Paid-only is confirmed, the plan tier is not. The RazorpayX proxy decision (F1) already covers Netlify, so this matters only if Trigger.dev were ever adopted.
 3. Should the Decision 3 sentence be corrected to say that Trigger.dev runs code on its own machines?
 4. The lock-hold measurement is in, from Frankfurt, a laptop, Netlify Singapore and `bom1`. Should a remote worker (any host more than about 100 ms from the database) be barred from holding locks on booking rows, or kept to short transactions? The existing guards (`withSerializableRetry`, CAS-in-WHERE) are unchanged.
 
 5. Should the 95 ms figure in the ticker ADR be restated as "about 95 ms measured through the app, 62–64 ms raw `pg`"? The older infrastructure pages carry a measurement note instead of an edit.
 6. Is it worth finding why Netlify showed 95 ms through the app and 62–64 ms raw? Prisma is not the cause (0.1 ms or less per statement in `bom1`), so the remaining suspects are time of day and cold paths.
-7. Async Workloads is a team-wide extension, so installing it would also change the `familiarise` site. Is the owner willing to install it to measure it (click path in the Background Functions report)? Until then S4 on page 15 is DOCS only. Vercel Workflows is measured but needs Pro to compare fairly with Hobby limits, and its cost is computed, not billed.
+7. Async Workloads is a team-wide extension and the Netlify MCP reports it already installed on the team, so it already applies to the `familiarise` site. Our CLI deploy lacked its functions, because only a Netlify server-side build from a linked Git repository adds them, so S4 stays NOT MEASURED. Should the owner uninstall it (Team settings, Extensions, Async Workloads) and watch the next `familiarise` deploy, or link a throwaway Git repository to measure it?
 
 ## Unverified claims
 
@@ -67,9 +112,9 @@ Which Trigger.dev paid plan includes static IPs, and how many; whether Vercel St
 
 ## Consequences
 
-- No code or schedule changes follow from this record.
+- No code or schedule changes follow from this record. Production stays on the ticker; the two tests (real-app Vercel `bom1` and the Mumbai VM) are the next work.
 - The raw reports stay in `docs/maintenance/experiments/2026-10-31-job-runtime/`. New measurements are appended there and summarised in the explanation page.
 
 ## Deprecated & Superseded Approaches
 
-None. This record adds evidence only. If an owner decision follows, it supersedes the open questions above.
+None. The owner decision above supersedes only the open question about whether to move at all. The earlier recommendation of a single Mumbai VM in the runtime strategy review is not adopted for launch.

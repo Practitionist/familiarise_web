@@ -2,11 +2,15 @@
 
 Evidence from 2026-10-31, not decisions. Depth, diagrams and sources: `docs/maintenance/14-background-job-runtime-options.md`. Raw logs: `docs/maintenance/experiments/2026-10-31-job-runtime/`. The decisions are in `docs/decisions/2026-10-31-ticker-scale-path-and-queue.md`: keep the ticker through launch, trial Vercel `bom1`, no hosted job service, and a hand-written Prisma `Job` table for phase 2. Do not add a second scheduler beside the ticker (`AGENTS.md` rule 4).
 
+## Current decision
+
+Current owner decision (2026-10-31, `docs/decisions/2026-10-31-job-runtime-experiments.md`): launch on option 4, the Netlify ticker plus Background Functions for jobs over 30 s. Decide between option 1 (Vercel Pro `bom1` plus Vercel Workflows) and option 3 (a Mumbai VM with DBOS) after the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency. Revisit when those two tests report, or at about 300 concurrent users, whichever comes first. Do not start either migration before then.
+
 ## Decision-relevant facts
 
 - Only code that runs in Mumbai removes the per-statement cost. Netlify Singapore is 62-64 ms per statement with raw `pg` (about 95 ms measured through the app earlier; Prisma adds 0.1 ms or less per statement, so the gap is unexplained), Trigger.dev Frankfurt 125 ms, `bom1` 1.0-2.1 ms.
 - Hosted schedulers (Inngest, QStash, Upstash Workflow) call our route. The compute stays on Netlify and keeps its limits. Trigger.dev runs the code itself, but only in `eu-central-1`, `us-east-1` or `us-west-2`.
-- pg-boss and DBOS keep the queue in Postgres and enqueue in the caller's transaction (rollback leaves 0 jobs). They need a long-lived worker, which Netlify functions are not.
+- pg-boss and DBOS keep the queue in Postgres and enqueue in the caller's transaction (rollback leaves 0 jobs). DBOS needs a long-lived worker. pg-boss can be drained from short functions (below).
 - Vendor side effects are at-least-once on every runtime. Idempotency keys, CAS-in-WHERE and the reconcilers stay.
 - Running on a remote host does not make the transaction distributed. It holds locks longer: a 10-round-trip hold is about 690 ms on Netlify, 1,258 ms from Frankfurt, 395 ms from the laptop, 10.6-19.6 ms on `bom1`.
 - Static egress for RazorpayX is solved on Netlify by `RAZORPAYX_EGRESS_PROXY_URL` (`apiRequest` in `lib/payments/payouts/razorpay-payouts.ts`).
@@ -52,11 +56,12 @@ Stacks (S1 ticker today, S2 Prisma `Job` table, S3 Netlify Background Functions,
 | S4    | not measured                                                 | 60 s default, 15 min background       | no (inference)                                            | DOCS only, NOT MEASURED (team-wide extension) |
 | S8    | 2-3 ms via a pinned Worker; 125-266 ms direct from consumers | consumer 15 min wall                  | no (Queue send and Workflow `create()` not transactional) | measured                                      |
 
-Corrections: pg-boss and DBOS can be drained from short functions (pg-boss `fetch()`, not run by us, UNVERIFIED); only their own cron, maintenance and fast crash recovery need a long-running process. "Mumbai worker at 1-2 ms" is an estimate; only Vercel `bom1` and a region-pinned Cloudflare Worker were measured. A Background Function avoids the ~30 s cap but the caller gets only a 202.
+Corrections: pg-boss and DBOS can be drained from short functions (pg-boss drain mode, MEASURED); only their own cron, maintenance and fast crash recovery need a long-running process. "Mumbai worker at 1-2 ms" is an estimate; only Vercel `bom1` and a region-pinned Cloudflare Worker were measured. A Background Function avoids the ~30 s cap but the caller gets only a 202.
 
 ## Footguns
 
 - DBOS needs a pool of about 10 or more. With `systemDatabasePoolSize: 2` its advisory-lock connection hits the 5 s idle-in-transaction timeout and the process crashes. It cannot run under `PG_POOL_MAX=1`. Pin `DBOS__APPVERSION`, or a non-latest worker stops dequeuing.
+- pg-boss drain mode: start with `supervise:false`, `schedule:false`, `registerInstance:false`, then each tick runs `start()`, `boss.supervise()`, `fetch`/`complete` batches, `stop()`. 3 concurrent drainers processed 600 jobs with 0 duplicates; on `bom1` a job cost 0.8-1.9 ms. A plain `fetch()` never redelivers an abandoned job: only `supervise()` does (18.7 s with `monitorIntervalSeconds=5`; `expireInSeconds` defaults to 15 min, so set it just above the handler budget). Drain mode loses pg-boss's own cron, automatic expiry and archiving unless `supervise()` runs, and its monitoring. `send` with the `db` option is transactional.
 - pg-boss can fire a duplicate cron job in the first minute after `schedule()` (2 of 2 Supabase runs). Recovery after `kill -9` takes about 65 s (60 s monitor floor); its concurrency limit is per process; LISTEN/NOTIFY needs both the instance flag and `notify: true` per queue.
 - The Upstash Workflow handler re-runs from the top on every request (4 requests, 8 handler executions for a 3-step run), while each `context.run` body runs once. Keep everything with side effects inside `context.run`.
 - QStash retries a 504 even though the function keeps running. One 30 s message wrote 3 side effects, retries at about 12 s, 160 s and 33 min. Ack fast, verify the signature, make the handler idempotent.
@@ -70,7 +75,8 @@ Corrections: pg-boss and DBOS can be drained from short functions (pg-boss `fetc
 - Vercel Workflows `start()` is not part of our Postgres transaction: `start()` then `ROLLBACK` ran a workflow for a missing order. Use an outbox.
 - Cloudflare placement applies to `fetch` handlers only. Queue consumers, cron handlers and Workflow steps run in random colos at 125-266 ms per statement. Call a Worker pinned with `region = "aws:ap-south-1"` over a service binding (22-31 ms for connect plus 5 queries).
 - Cloudflare needs the explicit region hint (2-3 ms). Smart Placement never moved (still about 98 ms after 600 requests) because it needs traffic from multiple locations. Hyperdrive without the hint is worse than direct.
-- `pg` over TLS from Workers hung (error 1101), so the probe ran without TLS. Do not copy that to production.
+- Cloudflare Workers cannot verify Supabase's private-CA certificate with `pg` or `postgres.js` (the old hang and error 1101). Only Hyperdrive with the Supabase CA uploaded and `verify-full` is certificate-verified: 4 ms per statement, 60-89 ms lock hold. The TLS-off 2-3 ms figures are not production-safe.
+- Netlify Async Workloads: a CLI deploy ships without the extension's router, scheduler and API functions (only a server-side Git build adds them), so `send` returned `failed`. The scheduler polls every 60 s, so delays and retries can be about 60 s late. The extension is already installed team-wide.
 - A removed Cloudflare cron keeps firing for about 4 minutes. A Queue retry after a throw writes the side effect twice (3 runs then the DLQ at `max_retries = 2`). Free CPU is 10 ms per request; real jobs need Paid.
 - Netlify Background Functions: a v2 default-export handler that throws is never retried, while a legacy `exports.handler` throw, `process.exit(1)` or a 900 s kill is retried at about +1 min and +2 min (3 attempts, each repeats the side effect). Catch errors and record failure in our own run row, and stay idempotent. The v2 reason is an inference.
 - Set env vars for all deploy contexts. Variables scoped only to `production` left a draft deploy with no database address.

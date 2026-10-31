@@ -4854,3 +4854,1121 @@ export default async (req) => {
   await ev(run, "end", out);
 };
 ```
+
+The `lab-drain-tls/` and `lab-netlify-aw/` sections below were appended last. The pg-boss drain scripts connect with `ssl: { rejectUnauthorized: false }` against a mock database: do not copy that setting. The Supabase root CA certificate and the Hyperdrive config ids are replaced with placeholders.
+
+## `lab-drain-tls/`
+
+### `lab-drain-tls/abandon.mjs`
+
+```js
+import { makeBoss, drain, QUEUE } from "./lib/drain.mjs";
+import { SESS } from "./lib/env.mjs";
+import { spawnSync } from "node:child_process";
+const seeder = makeBoss(SESS);
+seeder.on("error", () => {});
+await seeder.start();
+await seeder.deleteAllJobs(QUEUE);
+await seeder.insert(
+  QUEUE,
+  Array.from({ length: 5 }, (_, i) => ({ data: { i } })),
+);
+await seeder.stop({ graceful: false });
+// process 1: fetch 5 then die (exit without complete)
+const r = spawnSync(
+  "node",
+  [
+    "-e",
+    `
+import("./lib/drain.mjs").then(async ({makeBoss,QUEUE})=>{const {SESS}=await import("./lib/env.mjs");
+const b=makeBoss(SESS);b.on("error",()=>{});await b.start();const j=await b.fetch(QUEUE,{batchSize:10});console.log("fetched",j.length);process.exit(0)})`,
+  ],
+  { encoding: "utf8" },
+);
+const tDie = Date.now();
+console.log(r.stdout.trim());
+// probe loop: drain with supervise:false (pure fetch) every 3s, up to 40s
+const b = makeBoss(SESS);
+b.on("error", () => {});
+await b.start();
+let redeliveredNoSup = null;
+for (let s = 0; s <= 36; s += 3) {
+  const j = await b.fetch(QUEUE, { batchSize: 10 });
+  console.log(
+    `t+${((Date.now() - tDie) / 1000).toFixed(1)}s fetch(no supervise) -> ${j.length}`,
+  );
+  if (j.length) {
+    redeliveredNoSup = Date.now() - tDie;
+    break;
+  }
+  await new Promise((r) => setTimeout(r, 3000));
+}
+const q = await b.getQueueStats?.(QUEUE).catch?.(() => null);
+console.log("no-supervise redelivered:", redeliveredNoSup);
+let t = performance.now();
+await b.supervise(QUEUE);
+console.log("supervise(queue) ms", (performance.now() - t).toFixed(0));
+const j2 = await b.fetch(QUEUE, { batchSize: 10, includeMetadata: true });
+console.log(
+  `t+${((Date.now() - tDie) / 1000).toFixed(1)}s after supervise fetch ->`,
+  j2.length,
+  "retryCount",
+  j2[0]?.retryCount,
+);
+await b.complete(
+  QUEUE,
+  j2.map((x) => x.id),
+);
+await b.stop({ graceful: false });
+```
+
+### `lab-drain-tls/abandon2.mjs`
+
+```js
+import { makeBoss, QUEUE } from "./lib/drain.mjs";
+import { SESS } from "./lib/env.mjs";
+import { spawnSync } from "node:child_process";
+const mon = +process.argv[2];
+const s = makeBoss(SESS, { monitorIntervalSeconds: mon });
+s.on("error", () => {});
+await s.start();
+await s.deleteAllJobs(QUEUE);
+await s.supervise(QUEUE); // stamps the monitor claim "now"
+await s.insert(
+  QUEUE,
+  Array.from({ length: 5 }, (_, i) => ({ data: { i } })),
+);
+await s.stop({ graceful: false });
+spawnSync("node", [
+  "-e",
+  `import("./lib/drain.mjs").then(async({makeBoss,QUEUE})=>{const {SESS}=await import("./lib/env.mjs");const b=makeBoss(SESS);b.on("error",()=>{});await b.start();await b.fetch(QUEUE,{batchSize:10});process.exit(0)})`,
+]);
+const t0 = Date.now();
+let tick = 0;
+while (Date.now() - t0 < 100000) {
+  tick++;
+  const b = makeBoss(SESS, { monitorIntervalSeconds: mon });
+  b.on("error", () => {});
+  await b.start();
+  const ts = performance.now();
+  await b.supervise(QUEUE);
+  const supMs = performance.now() - ts;
+  const j = await b.fetch(QUEUE, { batchSize: 10, includeMetadata: true });
+  console.log(
+    `mon=${mon} tick ${tick} t+${((Date.now() - t0) / 1000).toFixed(1)}s supervise ${supMs.toFixed(0)}ms fetched ${j.length} retryCount ${j[0]?.retryCount ?? "-"}`,
+  );
+  if (j.length) {
+    await b.complete(
+      QUEUE,
+      j.map((x) => x.id),
+    );
+    await b.stop({ graceful: false });
+    break;
+  }
+  await b.stop({ graceful: false });
+  await new Promise((r) => setTimeout(r, 5000));
+}
+```
+
+### `lab-drain-tls/bench.mjs`
+
+```js
+import { makeBoss, drain, QUEUE } from "./lib/drain.mjs";
+import { SESS, TXN } from "./lib/env.mjs";
+const which = process.argv[2],
+  n = +process.argv[3] || 200,
+  batch = +process.argv[4] || 10;
+const url = which === "txn" ? TXN : SESS;
+const seeder = makeBoss(url);
+seeder.on("error", () => {});
+await seeder.start();
+let t = performance.now();
+await seeder.insert(
+  QUEUE,
+  Array.from({ length: n }, (_, i) => ({ data: { i } })),
+);
+const seedMs = performance.now() - t;
+await seeder.stop({ graceful: false });
+const m = await drain(url, { batchSize: batch, work: async () => {} });
+const sum = (a) => a.reduce((x, y) => x + y, 0);
+console.log(
+  JSON.stringify({
+    which,
+    n,
+    batch,
+    seedMs: +seedMs.toFixed(0),
+    startMs: +m.startMs.toFixed(0),
+    jobs: m.jobs,
+    batches: m.batches,
+    fetchAvgMs: +(sum(m.fetchMs) / m.fetchMs.length).toFixed(1),
+    completeAvgMs: +(
+      sum(m.completeMs) / Math.max(1, m.completeMs.length)
+    ).toFixed(1),
+    stopMs: +m.stopMs.toFixed(0),
+    totalMs: +m.totalMs.toFixed(0),
+    perJobMs: +(
+      (m.totalMs - m.startMs - m.stopMs) /
+      Math.max(1, m.jobs)
+    ).toFixed(1),
+  }),
+);
+```
+
+### `lab-drain-tls/conc1.mjs`
+
+```js
+import { drain } from "./lib/drain.mjs";
+import { SESS } from "./lib/env.mjs";
+import fs from "node:fs";
+const m = await drain(SESS, {
+  batchSize: 10,
+  work: async () => new Promise((r) => setTimeout(r, 5)),
+});
+fs.writeFileSync(process.argv[2], JSON.stringify(m.ids));
+console.log(process.argv[2], "jobs", m.jobs, "total ms", m.totalMs.toFixed(0));
+```
+
+### `lab-drain-tls/package.json`
+
+```json
+{
+  "name": "lab-drain-tls",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "pg": "^8.23.1",
+    "pg-boss": "^12.38.0",
+    "postgres": "^4.0.0"
+  }
+}
+```
+
+### `lab-drain-tls/q.mjs`
+
+```js
+import pg from "pg";
+import { SESS } from "./lib/env.mjs";
+const c = new pg.Client({
+  connectionString: SESS,
+  ssl: { rejectUnauthorized: false },
+});
+await c.connect();
+const r = await c.query(process.argv[2]);
+console.log(JSON.stringify(r.rows));
+await c.end();
+```
+
+### `lab-drain-tls/seed.mjs`
+
+```js
+import { makeBoss, QUEUE } from "./lib/drain.mjs";
+import { SESS } from "./lib/env.mjs";
+const n = +process.argv[2];
+const b = makeBoss(SESS);
+b.on("error", () => {});
+await b.start();
+await b.deleteAllJobs(QUEUE);
+await b.insert(
+  QUEUE,
+  Array.from({ length: n }, (_, i) => ({ data: { i } })),
+);
+await b.stop({ graceful: false });
+console.log("seeded", n);
+```
+
+### `lab-drain-tls/setup.mjs`
+
+```js
+import { makeBoss, QUEUE } from "./lib/drain.mjs";
+import { SESS, TXN } from "./lib/env.mjs";
+const which = process.argv[2] || "sess";
+const url = which === "txn" ? TXN : SESS;
+const t = performance.now();
+const boss = makeBoss(url);
+boss.on("error", (e) => console.log("err", e.message));
+await boss.start();
+console.log(
+  "cold start() ms",
+  (performance.now() - t).toFixed(0),
+  "via",
+  which,
+);
+await boss.createQueue(QUEUE, {
+  expireInSeconds: 15,
+  retryLimit: 3,
+  retryDelay: 0,
+});
+console.log("schemaVersion", await boss.schemaVersion());
+await boss.stop({ graceful: false });
+```
+
+### `lab-drain-tls/sup.mjs`
+
+```js
+import { makeBoss, QUEUE } from "./lib/drain.mjs";
+import { SESS } from "./lib/env.mjs";
+const b = makeBoss(SESS, { monitorIntervalSeconds: +process.argv[2] || 60 });
+b.on("error", () => {});
+await b.start();
+let t = performance.now();
+await b.supervise(QUEUE);
+console.log("supervise ms", (performance.now() - t).toFixed(0));
+const j = await b.fetch(QUEUE, { batchSize: 10, includeMetadata: true });
+console.log(
+  "fetched",
+  j.length,
+  "retryCount",
+  j[0]?.retryCount,
+  "state",
+  j[0]?.state,
+);
+if (j.length)
+  await b.complete(
+    QUEUE,
+    j.map((x) => x.id),
+  );
+await b.stop({ graceful: false });
+```
+
+### `lab-drain-tls/txsend.mjs`
+
+```js
+import pg from "pg";
+import { makeBoss, drain, QUEUE } from "./lib/drain.mjs";
+import { SESS, TXN } from "./lib/env.mjs";
+for (const [label, url] of [
+  ["session:5432", SESS],
+  ["txn:6543", TXN],
+]) {
+  const boss = makeBoss(url);
+  boss.on("error", () => {});
+  await boss.start();
+  await boss.deleteAllJobs(QUEUE);
+  const c = new pg.Client({
+    connectionString: url,
+    ssl: { rejectUnauthorized: false },
+  });
+  await c.connect();
+  await c.query(
+    "create table if not exists lab_pgdrain.biz(id serial primary key, v text)",
+  );
+  const db = { executeSql: (text, values) => c.query(text, values) };
+  // commit case
+  await c.query("begin");
+  await c.query("insert into lab_pgdrain.biz(v) values('commit')");
+  const idC = await boss.send(QUEUE, { v: "commit" }, { db });
+  const visibleOutside = (await boss
+    .getQueueStats?.(QUEUE, { force: true })
+    .catch(() => null))
+    ? "n/a"
+    : "n/a";
+  await c.query("commit");
+  // rollback case
+  await c.query("begin");
+  await c.query("insert into lab_pgdrain.biz(v) values('rollback')");
+  const idR = await boss.send(QUEUE, { v: "rollback" }, { db });
+  await c.query("rollback");
+  await c.end();
+  await boss.stop({ graceful: false });
+  const m = await drain(url, { batchSize: 10 });
+  console.log(
+    label,
+    JSON.stringify({ idCommit: !!idC, idRollback: !!idR, drainedJobs: m.jobs }),
+  );
+}
+```
+
+### `lab-drain-tls/cf/package.json`
+
+```json
+{
+  "name": "cf",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "pg": "^8.23.1",
+    "pg-cloudflare": "^1.4.1",
+    "postgres": "^4.0.0"
+  }
+}
+```
+
+### `lab-drain-tls/cf/wrangler.jsonc`
+
+```jsonc
+{
+  "name": "fw-lab-tls",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "placement": { "region": "aws:ap-south-1" },
+  "workers_dev": true,
+  "hyperdrive": [
+    { "binding": "HD", "id": "<hyperdrive-config-id>" },
+    { "binding": "HD_POOLER", "id": "<hyperdrive-pooler-config-id>" },
+  ],
+}
+```
+
+### `lab-drain-tls/cf/src/index.js`
+
+```js
+import { Client } from "pg";
+import postgres from "postgres";
+const CA = `<supabase-root-2021-ca-pem: download prod-ca-2021.crt from the Supabase SSL page>`;
+const med = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
+const p95 = (a) => [...a].sort((x, y) => x - y)[Math.ceil(a.length * 0.95) - 1];
+const r1 = (n) => +n.toFixed(1);
+
+async function measure(q /* async (sql, params?) => rows */, out) {
+  const lat = [];
+  for (let i = 0; i < 50; i++) {
+    const s = performance.now();
+    await q("select 1");
+    lat.push(performance.now() - s);
+  }
+  out.select1 = { n: 50, medianMs: r1(med(lat)), p95Ms: r1(p95(lat)) };
+  const s = performance.now();
+  await q("begin");
+  await q("create schema if not exists lab_cftls");
+  await q("create table if not exists lab_cftls.t(id int primary key, v int)");
+  await q("insert into lab_cftls.t values (1,0) on conflict (id) do nothing");
+  await q("select * from lab_cftls.t where id=1 for update");
+  for (let i = 0; i < 10; i++)
+    await q("update lab_cftls.t set v=v+1 where id=1");
+  await q("commit");
+  out.lockHold10Ms = r1(performance.now() - s);
+  try {
+    const r = await q(
+      "select ssl, version, cipher from pg_stat_ssl where pid = pg_backend_pid()",
+    );
+    out.pg_stat_ssl = r[0];
+  } catch (e) {
+    out.pg_stat_ssl = "err " + e.message;
+  }
+}
+
+async function viaPg(cfg, out) {
+  const c = new Client(cfg);
+  let s = performance.now();
+  await c.connect();
+  out.connectMs = r1(performance.now() - s);
+  await measure(async (sql) => (await c.query(sql)).rows, out);
+  await c.end();
+}
+async function viaPostgresJs(url, ssl, out) {
+  const sql = postgres(url, {
+    ssl,
+    max: 1,
+    fetch_types: false,
+    prepare: false,
+  });
+  let s = performance.now();
+  await sql.unsafe("select 1");
+  out.connectMs = r1(performance.now() - s); // connect + first query
+  await measure(async (q) => await sql.unsafe(q), out);
+  await sql.end();
+}
+
+export default {
+  async fetch(req, env) {
+    const u = new URL(req.url);
+    const v = u.searchParams.get("v");
+    const out = { variant: v, colo: req.cf?.colo };
+    const t0 = Date.now();
+    try {
+      const sess = new URL(env.SESS_URL);
+      const host = sess.hostname;
+      if (v === "a-default")
+        await viaPg(
+          {
+            connectionString: env.SESS_URL,
+            ssl: { rejectUnauthorized: true, servername: host },
+          },
+          out,
+        );
+      else if (v === "a-ca")
+        await viaPg(
+          {
+            connectionString: env.SESS_URL,
+            ssl: { rejectUnauthorized: true, servername: host, ca: CA },
+          },
+          out,
+        );
+      else if (v === "a-direct-ca")
+        await viaPg(
+          {
+            connectionString: env.DIRECT_HOST_URL,
+            ssl: {
+              rejectUnauthorized: true,
+              servername: new URL(env.DIRECT_HOST_URL).hostname,
+              ca: CA,
+            },
+          },
+          out,
+        );
+      else if (v === "a-noverify")
+        await viaPg(
+          {
+            connectionString: env.SESS_URL,
+            ssl: { rejectUnauthorized: false },
+          },
+          out,
+        );
+      else if (v === "a-notls")
+        await viaPg({ connectionString: env.SESS_URL, ssl: false }, out);
+      else if (v === "b-require")
+        await viaPostgresJs(env.SESS_URL, "require", out);
+      else if (v === "b-verify-ca")
+        await viaPostgresJs(
+          env.SESS_URL,
+          { rejectUnauthorized: true, ca: CA, servername: host },
+          out,
+        );
+      else if (v === "b-verify-default")
+        await viaPostgresJs(
+          env.SESS_URL,
+          { rejectUnauthorized: true, servername: host },
+          out,
+        );
+      else if (v === "c-hd")
+        await viaPg({ connectionString: env.HD.connectionString }, out);
+      else if (v === "c-hd-pooler")
+        await viaPg({ connectionString: env.HD_POOLER.connectionString }, out);
+      else out.error = "unknown variant";
+    } catch (e) {
+      out.error = String((e && e.message) || e);
+      out.errName = e && e.name;
+      out.code = e && e.code;
+    }
+    out.wallMs = Date.now() - t0;
+    return Response.json(out);
+  },
+};
+```
+
+### `lab-drain-tls/lib/drain.mjs`
+
+```js
+import { PgBoss } from "pg-boss";
+
+export const SCHEMA = "lab_pgdrain";
+export const QUEUE = "lab_jobs";
+
+export function makeBoss(url, extra = {}) {
+  return new PgBoss({
+    connectionString: url,
+    ssl: { rejectUnauthorized: false },
+    schema: SCHEMA,
+    max: 2,
+    supervise: false,
+    schedule: false,
+    registerInstance: false,
+    ...extra,
+  });
+}
+
+// work(job) simulates a handler; returns per-run metrics
+export async function drain(
+  url,
+  {
+    budgetMs = 20000,
+    batchSize = 10,
+    work = async () => {},
+    bossExtra = {},
+    abandonAfter = 0,
+  } = {},
+) {
+  const t0 = performance.now();
+  const boss = makeBoss(url, bossExtra);
+  boss.on("error", () => {});
+  const m = {
+    startMs: 0,
+    fetchMs: [],
+    completeMs: [],
+    jobs: 0,
+    batches: 0,
+    ids: [],
+    stopMs: 0,
+  };
+  let s = performance.now();
+  await boss.start();
+  m.startMs = performance.now() - s;
+  const deadline = t0 + budgetMs;
+  while (performance.now() < deadline) {
+    s = performance.now();
+    const jobs = await boss.fetch(QUEUE, { batchSize });
+    m.fetchMs.push(performance.now() - s);
+    if (!jobs.length) break;
+    m.batches++;
+    for (const j of jobs) {
+      if (abandonAfter && m.jobs >= abandonAfter) {
+        m.ids.push(j.id);
+        m.jobs++;
+        continue;
+      } // fetched, never settled
+      try {
+        await work(j);
+      } catch {
+        await boss.fail(QUEUE, j.id);
+        continue;
+      }
+      m.ids.push(j.id);
+    }
+    if (abandonAfter) {
+      process.stdout.write(JSON.stringify({ abandoned: m.ids }) + "\n");
+      process.exit(0);
+    }
+    s = performance.now();
+    await boss.complete(
+      QUEUE,
+      jobs.map((j) => j.id),
+    );
+    m.completeMs.push(performance.now() - s);
+    m.jobs += jobs.length;
+    if (jobs.length < batchSize) {
+      /* keep looping until empty fetch */
+    }
+  }
+  s = performance.now();
+  await boss.stop({ graceful: false, wait: false });
+  m.stopMs = performance.now() - s;
+  m.totalMs = performance.now() - t0;
+  return m;
+}
+```
+
+### `lab-drain-tls/lib/env.mjs`
+
+```js
+import fs from "node:fs";
+const txt = fs.readFileSync("<path-to-env-file>", "utf8");
+function get(k) {
+  const m = txt.match(new RegExp("^" + k + '="?([^"\\n]+)"?', "m"));
+  return m && m[1].replace(/[?&]pgbouncer=true/, "");
+}
+export const TXN = get("DATABASE_URL"); // :6543
+export const SESS = get("DIRECT_URL"); // :5432
+```
+
+### `lab-drain-tls/vercel-app/package.json`
+
+```json
+{
+  "name": "fw-lab-pgdrain",
+  "private": true,
+  "type": "module",
+  "dependencies": { "pg-boss": "12.38.0" }
+}
+```
+
+### `lab-drain-tls/vercel-app/vercel.json`
+
+```json
+{ "regions": ["bom1"], "functions": { "api/*.mjs": { "maxDuration": 60 } } }
+```
+
+### `lab-drain-tls/vercel-app/api/drain.mjs`
+
+```js
+import { PgBoss } from "pg-boss";
+const SCHEMA = "lab_pgdrain",
+  QUEUE = "lab_jobs";
+let coldFlag = true; // module scope survives warm invocations
+const bossFor = (url) =>
+  new PgBoss({
+    connectionString: url,
+    ssl: { rejectUnauthorized: false },
+    schema: SCHEMA,
+    max: 2,
+    supervise: false,
+    schedule: false,
+    registerInstance: false,
+  });
+export default async function handler(req, res) {
+  const t0 = performance.now();
+  const q = new URL(req.url, "http://x").searchParams;
+  const url =
+    q.get("pool") === "txn" ? process.env.DATABASE_URL : process.env.DIRECT_URL;
+  const seedN = +(q.get("seed") || 0),
+    budgetMs = +(q.get("budget") || 20000),
+    doSup = q.get("supervise") === "1";
+  const cold = coldFlag;
+  coldFlag = false;
+  const out = {
+    cold,
+    region: process.env.VERCEL_REGION,
+    pool: q.get("pool") || "session",
+  };
+  const boss = bossFor(url);
+  boss.on("error", (e) => (out.err = e.message));
+  let s = performance.now();
+  await boss.start();
+  out.startMs = Math.round(performance.now() - s);
+  if (seedN) {
+    s = performance.now();
+    await boss.insert(
+      QUEUE,
+      Array.from({ length: seedN }, (_, i) => ({ data: { i } })),
+    );
+    out.seedMs = Math.round(performance.now() - s);
+  }
+  const dStart = performance.now();
+  let jobs = 0,
+    batches = 0;
+  const fetchMs = [],
+    completeMs = [];
+  while (performance.now() - t0 < budgetMs) {
+    s = performance.now();
+    const js = await boss.fetch(QUEUE, { batchSize: 10 });
+    fetchMs.push(performance.now() - s);
+    if (!js.length) break;
+    batches++;
+    s = performance.now();
+    await boss.complete(
+      QUEUE,
+      js.map((j) => j.id),
+    );
+    completeMs.push(performance.now() - s);
+    jobs += js.length;
+  }
+  out.drainMs = Math.round(performance.now() - dStart);
+  out.jobs = jobs;
+  out.batches = batches;
+  const avg = (a) =>
+    a.length ? +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) : 0;
+  out.fetchAvgMs = avg(fetchMs);
+  out.completeAvgMs = avg(completeMs);
+  out.perJobMs = jobs ? +(out.drainMs / jobs).toFixed(1) : null;
+  if (doSup) {
+    s = performance.now();
+    await boss.supervise(QUEUE);
+    out.superviseMs = Math.round(performance.now() - s);
+  }
+  s = performance.now();
+  await boss.stop({ graceful: false });
+  out.stopMs = Math.round(performance.now() - s);
+  out.totalMs = Math.round(performance.now() - t0);
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify(out));
+}
+```
+
+## `lab-netlify-aw/`
+
+### `lab-netlify-aw/dbadmin.mjs`
+
+```js
+import pg from "pg";
+const c = new pg.Client({
+  connectionString: process.env.PROBE_DB_URL,
+  ssl: { rejectUnauthorized: false },
+});
+await c.connect();
+const cmd = process.argv[2];
+if (cmd === "up") {
+  await c.query("CREATE SCHEMA IF NOT EXISTS lab_naw");
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS lab_naw.events(id bigserial primary key, run text, kind text, attempt int, note jsonb, region text, ts timestamptz default clock_timestamp())",
+  );
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS lab_naw.effects(id bigserial primary key, run text, tag text, ts timestamptz default clock_timestamp())",
+  );
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS lab_naw.orders(id bigserial primary key, run text)",
+  );
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS lab_naw.account(id int primary key, balance bigint, version int)",
+  );
+  await c.query(
+    "INSERT INTO lab_naw.account VALUES (1,1000,0),(2,1000,0) ON CONFLICT DO NOTHING",
+  );
+} else if (cmd === "down") {
+  await c.query("DROP SCHEMA IF EXISTS lab_naw CASCADE");
+  const r = await c.query(
+    "select nspname from pg_namespace where nspname like 'lab_naw%'",
+  );
+  console.log("remaining lab_naw schemas:", r.rowCount);
+} else if (cmd === "q") {
+  const r = await c.query(process.argv[3]);
+  console.table(r.rows);
+}
+await c.end();
+```
+
+### `lab-netlify-aw/netlify.toml`
+
+```toml
+[build]
+  publish = "public"
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  external_node_modules = ["pg"]
+```
+
+### `lab-netlify-aw/package.json`
+
+```json
+{
+  "name": "lab-netlify",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@netlify/async-workloads": "^0.0.106",
+    "@netlify/functions": "^6.0.3",
+    "@upstash/qstash": "^2.12.1",
+    "@upstash/workflow": "^1.5.0",
+    "inngest": "^4.26.2",
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
+  }
+}
+```
+
+### `lab-netlify-aw/lib/db.mjs`
+
+```js
+import pg from "pg";
+export const now = () => performance.now();
+export async function connect() {
+  const c = new pg.Client({
+    connectionString: process.env.PROBE_DB_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+  await c.connect();
+  return c;
+}
+export async function log(run, kind, note = {}, attempt = null) {
+  const c = await connect();
+  try {
+    await c.query(
+      "INSERT INTO lab_naw.events(run,kind,attempt,note,region) VALUES ($1,$2,$3,$4,$5)",
+      [run, kind, attempt, JSON.stringify(note), process.env.AWS_REGION],
+    );
+  } finally {
+    await c.end();
+  }
+}
+export async function q(sql, params) {
+  const c = await connect();
+  try {
+    return (await c.query(sql, params)).rows;
+  } finally {
+    await c.end();
+  }
+}
+```
+
+### `lab-netlify-aw/lib/handler.mjs`
+
+```js
+import { log, q, connect, now } from "./db.mjs";
+const med = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.floor(s.length / 2)];
+};
+const p95 = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.ceil(s.length * 0.95) - 1)];
+};
+const r1 = (x) => Math.round(x * 10) / 10;
+
+export async function handle(event) {
+  const { eventName, eventId, eventData = {}, attempt, step } = event;
+  const run = eventData.run;
+  await log(run, "invoke", { eventName, eventId }, attempt);
+  switch (eventName.toLowerCase()) {
+    case "lat":
+      await log(run, "start", { i: eventData.i }, attempt);
+      return;
+    case "conc":
+      await log(run, "start", { i: eventData.i }, attempt);
+      await new Promise((r) => setTimeout(r, 2000));
+      await log(run, "end", { i: eventData.i }, attempt);
+      return;
+    case "delay":
+      await log(run, "start", { target: eventData.target }, attempt);
+      return;
+    case "retry-once":
+    case "retry-always":
+      await log(run, "start", {}, attempt);
+      await q("INSERT INTO lab_naw.effects(run,tag) VALUES ($1,$2)", [
+        run,
+        "side-attempt-" + attempt,
+      ]);
+      if (eventName.toLowerCase() === "retry-always" || attempt === 0)
+        throw new Error("boom attempt " + attempt);
+      await log(run, "done", {}, attempt);
+      return;
+    case "sleep": {
+      await step.run("before", () => log(run, "before-sleep", {}, attempt));
+      await step.sleep("nap", eventData.sleep ?? "10s");
+      await step.run("after", () => log(run, "after-sleep", {}, attempt));
+      return;
+    }
+    case "multistep": {
+      await step.run("s1", async () => {
+        await q("INSERT INTO lab_naw.effects(run,tag) VALUES ($1,'s1')", [run]);
+        await log(run, "s1-body", {}, attempt);
+      });
+      await step.run("s2", async () => {
+        const n = (
+          await q(
+            "INSERT INTO lab_naw.effects(run,tag) VALUES ($1,'s2-try') RETURNING (SELECT count(*) FROM lab_naw.effects WHERE run=$1 AND tag='s2-try') n",
+            [run],
+          )
+        )[0].n;
+        await log(run, "s2-body", { try: Number(n) }, attempt);
+        if (Number(n) === 1) throw new Error("s2 first try crash");
+      });
+      await step.run("s3", async () => {
+        await q("INSERT INTO lab_naw.effects(run,tag) VALUES ($1,'s3')", [run]);
+        await log(run, "s3-body", {}, attempt);
+      });
+      await log(run, "end", {}, attempt);
+      return;
+    }
+    case "db": {
+      const c = await connect();
+      const out = {};
+      try {
+        const s1 = [];
+        for (let i = 0; i < 50; i++) {
+          const t = now();
+          await c.query("SELECT 1");
+          s1.push(now() - t);
+        }
+        out.select1 = {
+          medianMs: r1(med(s1)),
+          p95Ms: r1(p95(s1)),
+          minMs: r1(Math.min(...s1)),
+          maxMs: r1(Math.max(...s1)),
+        };
+        const holds = [];
+        for (let i = 0; i < 10; i++) {
+          const t = now();
+          await c.query("BEGIN");
+          const r = await c.query(
+            "SELECT id, balance, version FROM lab_naw.account WHERE id=1 FOR UPDATE",
+          );
+          const v = r.rows[0].version;
+          await c.query("SELECT balance FROM lab_naw.account WHERE id=2");
+          await c.query("SELECT count(*) FROM lab_naw.account");
+          await c.query(
+            "UPDATE lab_naw.account SET balance=balance+1, version=version+1 WHERE id=1 AND version=$1",
+            [v],
+          );
+          await c.query(
+            "UPDATE lab_naw.account SET balance=balance-1 WHERE id=2",
+          );
+          await c.query("SELECT balance FROM lab_naw.account WHERE id=1");
+          await c.query("SELECT balance FROM lab_naw.account WHERE id=2");
+          await c.query("SELECT 1");
+          await c.query("SELECT now()");
+          await c.query("COMMIT");
+          holds.push(now() - t);
+        }
+        out.lockHold = {
+          medianMs: r1(med(holds)),
+          p95Ms: r1(p95(holds)),
+          rawMs: holds.map(r1),
+        };
+      } finally {
+        await c.end();
+      }
+      await log(run, "dbresult", out, attempt);
+      return;
+    }
+    case "dual": {
+      const rows = await q(
+        "SELECT count(*)::int n FROM lab_naw.orders WHERE run=$1",
+        [run],
+      );
+      await log(run, "start", { orderRowVisible: rows[0].n }, attempt);
+      return;
+    }
+    case "long":
+    case "long-bg": {
+      const ms = eventData.ms;
+      await step.run("long-step", async () => {
+        await log(run, "step-begin", { ms }, attempt);
+        await new Promise((r) => setTimeout(r, ms));
+        await log(run, "step-end", { ms }, attempt);
+      });
+      await log(run, "end", {}, attempt);
+      return;
+    }
+  }
+}
+```
+
+### `lab-netlify-aw/netlify/functions/send.mjs`
+
+```js
+import { AsyncWorkloadsClient } from "@netlify/async-workloads";
+import { connect, log, q } from "../../lib/db.mjs";
+export default async (req) => {
+  const u = new URL(req.url);
+  const p = (k, d) => u.searchParams.get(k) ?? d;
+  const ev = p("ev", "lat");
+  const n = +p("n", 1);
+  const gap = +p("gap", 300);
+  const par = p("par", "0") === "1";
+  const run = p("run", ev + "-" + Date.now());
+  const origin = p("src", "fn");
+  const client = new AsyncWorkloadsClient();
+  const sendOne = async (i) => {
+    const data = { run: `${run}`, i };
+    const opts = { data };
+    if (ev === "delay") {
+      opts.delayUntil = Date.now() + +p("delayMs", 30000);
+      data.target = opts.delayUntil;
+    }
+    await log(run, "sent-before", { i, src: origin });
+    const t = performance.now();
+    const res = await client.send(ev, opts);
+    await log(run, "sent-after", {
+      i,
+      rttMs: Math.round(performance.now() - t),
+      res,
+    });
+  };
+  if (u.searchParams.get("mode") === "dual-a") {
+    await q("INSERT INTO lab_naw.orders(run) VALUES ($1)", [run]); // committed
+    await log(run, "committed-before-send", {});
+    throw new Error("crash before send");
+  }
+  if (u.searchParams.get("mode") === "dual-b") {
+    const c = await connect();
+    try {
+      await c.query("BEGIN");
+      await c.query("INSERT INTO lab_naw.orders(run) VALUES ($1)", [run]);
+      await sendOne(0);
+      await c.query("ROLLBACK");
+      await log(run, "rolled-back", {});
+    } finally {
+      await c.end();
+    }
+    return Response.json({ run, mode: "dual-b" });
+  }
+  if (par) await Promise.all(Array.from({ length: n }, (_, i) => sendOne(i)));
+  else
+    for (let i = 0; i < n; i++) {
+      await sendOne(i);
+      await new Promise((r) => setTimeout(r, gap));
+    }
+  return Response.json({ run, n });
+};
+export const config = { path: "/api/send" };
+```
+
+### `lab-netlify-aw/netlify/functions/wl-long-background.mjs`
+
+```js
+import { asyncWorkloadFn } from "@netlify/async-workloads";
+import { handle } from "../../lib/handler.mjs";
+export default asyncWorkloadFn(handle);
+export const asyncWorkloadConfig = { events: ["long-bg"] };
+```
+
+### `lab-netlify-aw/netlify/functions/wl-main.mjs`
+
+```js
+import { asyncWorkloadFn } from "@netlify/async-workloads";
+import { handle } from "../../lib/handler.mjs";
+export default asyncWorkloadFn(handle);
+export const asyncWorkloadConfig = {
+  events: [
+    "lat",
+    "conc",
+    "delay",
+    "retry-once",
+    "retry-always",
+    "sleep",
+    "multistep",
+    "db",
+    "dual",
+    "long",
+  ],
+};
+```
+
+### `lab-netlify-aw/netlify/lib/lab.cjs`
+
+```js
+const pg = require("pg");
+const client = () =>
+  new pg.Client({
+    connectionString: process.env.PROBE_DB_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+async function ev(run, kind, note = {}) {
+  const c = client();
+  await c.connect();
+  try {
+    await c.query(
+      "INSERT INTO lab_nbg.events(run, kind, note, region) VALUES ($1,$2,$3,$4)",
+      [run, kind, JSON.stringify(note), process.env.AWS_REGION],
+    );
+  } finally {
+    await c.end();
+  }
+}
+module.exports = { client, ev };
+```
+
+### `lab-netlify-aw/netlify/lib/lab.mjs`
+
+```js
+import pg from "pg";
+export const client = () =>
+  new pg.Client({
+    connectionString: process.env.PROBE_DB_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+export async function ev(run, kind, note = {}) {
+  const c = client();
+  await c.connect();
+  try {
+    const r = await c.query(
+      "INSERT INTO lab_nbg.events(run, kind, note, aws_req, region) VALUES ($1,$2,$3,$4,$5) RETURNING id, ts",
+      [
+        run,
+        kind,
+        JSON.stringify(note),
+        process.env._X_AMZN_TRACE_ID ?? null,
+        process.env.AWS_REGION,
+      ],
+    );
+    return r.rows[0];
+  } finally {
+    await c.end();
+  }
+}
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+```

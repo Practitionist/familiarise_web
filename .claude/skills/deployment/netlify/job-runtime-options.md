@@ -2,6 +2,10 @@
 
 Platform facts measured or read on 2026-10-31. The facts about the queue and scheduler libraries are in `.claude/skills/maintenance/references/job-runtime-options.md`. Depth, diagrams and sources: `docs/maintenance/14-background-job-runtime-options.md`.
 
+## Current decision
+
+Current owner decision (2026-10-31, `docs/decisions/2026-10-31-job-runtime-experiments.md`): launch on option 4, the Netlify ticker plus Background Functions for jobs over 30 s. Decide between option 1 (Vercel Pro `bom1` plus Vercel Workflows) and option 3 (a Mumbai VM with DBOS) after the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency. Revisit when those two tests report, or at about 300 concurrent users, whichever comes first. Do not start either migration before then.
+
 ## Netlify (Singapore, `ap-southeast-1`)
 
 - Raw `pg` to the Mumbai pooler: 62-64 ms per statement, connect 371-405 ms, a 10-round-trip lock hold of 676-707 ms. The earlier 95 ms was measured through the app. Prisma's overhead is below noise (0.1 ms or less per statement in `bom1`), so the gap is unexplained; never attribute it to Prisma.
@@ -24,13 +28,13 @@ Platform facts measured or read on 2026-10-31. The facts about the queue and sch
 - Caller gets a 202 in 0.65-0.85 s. Runs of 60, 300 and 840 s completed; 960 s was killed at exactly 900 s. Database: 63.9 ms per statement, 704 ms lock hold.
 - A v2 default-export handler that throws is never retried; legacy `exports.handler` throws, `process.exit(1)` and timeouts are retried at +1 and +2 minutes (3 attempts, each repeats the side effect). The v2 reason is our inference.
 - Ten concurrent runs ran in parallel. A draft deploy worked; a PR Deploy Preview was not tested. Set env vars for all deploy contexts. Logs lag by minutes.
-- Async Workloads is a team-wide extension (it would also affect `familiarise`); docs only, not measured: 5 attempts, delay up to 1 year, state in Blobs, events under 500 KB.
+- Async Workloads is a team-wide extension and is already installed on the team, so it also applies to `familiarise`. Docs only, not measured: a CLI deploy lacks its functions (only a server-side Git build adds them). 5 attempts, scheduler polls every 60 s (10 s minimum), delay up to 1 year, state in Blobs, events under 500 KB.
 
 ## Cloudflare
 
 - A Worker placed with `region = "aws:ap-south-1"` runs in `remote-BOM` and measured 2-3 ms per statement and a 65-75 ms lock hold (36-39 ms with Hyperdrive in-region). Default placement and Smart Placement stayed at about 98 ms from Marseille.
 - Placement applies to `fetch` handlers only. Queue consumers, cron and Workflow steps ran in random colos at 125-266 ms; use a service binding to a pinned Worker (22-31 ms).
-- `pg` over TLS from Workers hung, so the probe ran without TLS. A removed cron kept firing about 4 minutes. Free CPU is 10 ms per request.
+- Workers cannot verify Supabase's private-CA certificate with `pg` or `postgres.js`; only Hyperdrive with the Supabase CA and `verify-full` is certificate-verified (4 ms per statement, 60-89 ms lock hold). The 2-3 ms and 65-75 ms figures ran with TLS off. A removed cron kept firing about 4 minutes. Free CPU is 10 ms per request.
 
 ## How to rerun
 
