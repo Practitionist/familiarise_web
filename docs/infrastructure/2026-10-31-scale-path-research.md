@@ -95,3 +95,7 @@ The owner recorded these decisions on 2026-10-31. They are repeated in the ADR a
 Related: #2466, #2460, #2095, #1010, #2424.
 
 The three full reports are separate pages: [background jobs and cron options](./2026-10-31-background-jobs-and-cron-options.md), [Mumbai hosting comparison](./2026-10-31-mumbai-hosting-comparison.md) and [queue prototype on owed refunds](./2026-10-31-queue-prototype-owed-refunds.md). The follow-on review is [runtime strategy review](./2026-10-31-runtime-strategy-review.md), and the runtime pictures are in [job runtime system designs](./2026-10-31-job-runtime-system-designs.md).
+
+## Deprecated & Superseded Approaches
+
+The phase 1 option of moving web and worker into an always-on Mumbai container ($100 to $440 a month) was rejected on cost and replaced by the Netlify ticker through launch and a Vercel `bom1` trial. Hosted job services were rejected because none removes the 95 ms per statement.

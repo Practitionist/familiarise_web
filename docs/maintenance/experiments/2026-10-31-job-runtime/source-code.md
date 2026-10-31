@@ -1,6 +1,6 @@
 # Experiment source code (2026-10-31)
 
-These are the throwaway scripts behind the three experiment reports in this folder. They are kept as text so that lint, typecheck and the build ignore them. They read credentials from environment variables only.
+These are the throwaway scripts behind the three experiment reports in this folder. They are kept as text so that lint, typecheck and the build ignore them. They read credentials from environment variables only. The Trigger.dev probe connects with `ssl: { rejectUnauthorized: false }` because it ran once against a mock database; do not copy that setting, keep certificate verification on.
 
 ## `lab-inngest/app.mjs`
 
@@ -827,7 +827,7 @@ export async function api(method, path, body, token = PAT) {
 
 ## `lab-trigger/envset.mjs`
 
-This script uploads database URLs as ordinary Trigger.dev environment variables, which the API returns in plain text. That was acceptable only for a disposable mock database and a same-session cleanup. For anything else, mark the variables secret or pass them another way.
+Its response logging redacts only `postgresql://` URLs, so a `postgres://` value would be printed; log only the status and name. This script uploads database URLs as ordinary Trigger.dev environment variables, which the API returns in plain text. That was acceptable only for a disposable mock database and a same-session cleanup. For anything else, mark the variables secret or pass them another way.
 
 ```js
 import { api, REF } from "./api.mjs";

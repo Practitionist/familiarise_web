@@ -393,3 +393,7 @@ Always-on compute:
 - Blacksmith: https://docs.blacksmith.sh/blacksmith-runners/pricing
 
 Startup examples: listed inline in §5 Q2.
+
+## Deprecated & Superseded Approaches
+
+The GitHub Actions cron fleet and its wrapper scripts are superseded by the Netlify ticker; the Actions minutes budget is exhausted. QStash, Inngest, Trigger.dev, Temporal and Hatchet are evaluated here and not adopted.

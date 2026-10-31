@@ -75,7 +75,7 @@ flowchart LR
 flowchart LR
   subgraph VC["Vercel Fluid compute bom1"]
     VCRON["Vercel Cron<br/>calls a route on schedule"]
-    TICK2["/api/cron/tick route<br/>up to 800 s on Pro"]
+    TICK2["/api/cron/tick route<br/>up to 800 s on Pro (UNVERIFIED)"]
     API2["/api/cleanup/[job]<br/>shared instances, pool can be greater than 1"]
     WEB2["Next.js pages and APIs"]
   end
@@ -262,3 +262,7 @@ AWS/GCP/Azure IN India region       ~1-2 ms      in-process + PG queue     same 
 - **Measurements:** the runtime spike prompt from #2484 measures Vercel bom1 with Vercel Cron, Vercel bom1 with Inngest, Netlify with Inngest, and a Netlify baseline, before the owner decides.
 
 Related: #2484, #2472, #2466, #2460.
+
+## Deprecated & Superseded Approaches
+
+None of the pictured alternatives is adopted. The GitHub Actions cron fleet is superseded by the ticker in the first picture.

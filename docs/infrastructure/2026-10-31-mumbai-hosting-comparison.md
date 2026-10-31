@@ -139,3 +139,7 @@ Not recommended for phase 1: Vercel (cost scales linearly with usage, about 3x t
 6. Is the Supabase plan upgrade (off Free) already budgeted? Connection ceilings, not hosting, are the first thing to break.
 7. Approve a 30-minute RTT test (trial instance on the shortlisted host running `SELECT 1` against the pooler) before committing? It needs a vendor sign-up, so I did not run it.
 8. Should the Redis-backed Next cache handler (for ISR/tag revalidation across instances) be scoped into phase 1?
+
+## Deprecated & Superseded Approaches
+
+This research does not supersede an implemented approach. The options it compares are unadopted alternatives, including the Redis-backed Next.js cache handler. The earlier phase 1 plan to move web and worker to a Mumbai container was rejected on cost by the owner; see the ticker decision record.
