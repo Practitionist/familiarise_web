@@ -64,6 +64,8 @@ The picture shows the shape that makes the move a trigger swap. Each platform su
 - **Not portable:** the managed Vercel Workflows backend and Cloudflare Workflows are proprietary to their hosts. For portable durable steps use DBOS, pg-boss or the planned Prisma `Job` table. The Workflow SDK publishes a self-hosted Postgres World (PostgreSQL plus graphile-worker on a long-running server), which Vercel calls a reference implementation needing production hardening; it is DOCS only and untested here, and it does not migrate existing run history, timers or queue state from the managed backend.
 - **Handle limits, regions and egress through configuration**, not code branches: a per-job time budget, the region, and the egress proxy (`RAZORPAYX_EGRESS_PROXY_URL`).
 
+The target design that this portability enables is proposed on [page 17](./17-target-architecture-and-roadmap.md).
+
 ## Where in code
 
 | Concern                | Location                                                                            |

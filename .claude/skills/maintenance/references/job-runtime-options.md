@@ -87,6 +87,14 @@ Without latency, today's ticker and DBOS rank near the top because their outbox 
 
 Machinery (`wc -l`): `lib/cron/cleanup-registry.ts` 2,410 (keep), `netlify/functions/cron-tick.mts` 881 and `lib/cron/schedule.ts` 655 (exist for the single 30 s ticker; mostly removed on a move), 12 lease and run-record files 1,656 (keep), deadline and background adapters 324 (Netlify time limits). A Vercel move removes about 1,500-2,000 lines (ESTIMATE); leases, CAS, run records, the registry and the outbox stay. Portable core: registry, handler invocation, leases, CAS, outbox, HTTP route per job. Thin per platform: trigger, `lib/runtime-host.ts`, `next.config.mjs` flags, cache headers. Vercel and Cloudflare Workflows are not portable; use DBOS, pg-boss or the planned Prisma `Job` table. Handle limits, regions and egress through config. Detail: `docs/maintenance/16-job-machinery-and-portability.md`.
 
+## Clock versus engine, and the target design (proposal)
+
+Rule: an external scheduler used as a clock (it only calls our endpoint) is viable; used as an engine (it runs the job) it keeps the latency and adds a second programming model. `AGENTS.md` rule 4 bans a second scheduler, not replacing the ticker. Correctness holds if the DB guards stay (leases, CAS, constraints, outbox) and exactly one scheduler runs; the tick endpoint must always return 200 with a clock. A `_due` route is planned (issue #2491), not present. Keep the Netlify ticker through launch.
+
+Target design (a proposal, not a decision): Mumbai web tier plus one long-lived worker (2 replicas, DBOS or pg-boss), enqueue in the same transaction as the business write, correctness unchanged in Postgres, the worker's own static IP, heartbeat to Better Stack and errors to Sentry. Deleted: the fan-out ticker, packing in `schedule.ts`, `run-deadline` slicing, background adapters, the fleet switch, the `PG_POOL_MAX=1` workarounds and the proxy. Kept: the registry, leases, CAS, ledger triggers, idempotency keys, run records. Path: launch on the ticker, issue #2491 portable `runJob` and thin triggers, the Mumbai VM probe, move jobs first, then the web tier after a spike. Detail: `docs/maintenance/17-target-architecture-and-roadmap.md`.
+
+Better Stack roles: uptime monitors, the ticker heartbeat (`pingHeartbeat()` in `cron-tick.mts`), telemetry log events from `recordSystemEvent` (gated by `ENABLE_BETTERSTACK_TELEMETRY`), maintenance incidents (`app/api/admin/maintenance/route.ts`), and the health and canary reads. Sentry answers what broke.
+
 ## Footguns
 
 - DBOS needs a pool of about 10 or more. With `systemDatabasePoolSize: 2` its advisory-lock connection hits the 5 s idle-in-transaction timeout and the process crashes. It cannot run under `PG_POOL_MAX=1`. Pin `DBOS__APPVERSION`, or a non-latest worker stops dequeuing.

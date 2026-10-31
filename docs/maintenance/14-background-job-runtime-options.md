@@ -968,6 +968,87 @@ So two copies of a job can overlap during a takeover. Correctness during that ov
      (deadlock? Postgres detects it and aborts one; the job retries next tick)
 ```
 
+### 9.7 Why did you first say external schedulers were not viable? Clock versus engine
+
+Those vendors were first framed as job engines that run the jobs, and on that framing they lost on latency and complexity. Used as a clock, which pokes an existing endpoint every five minutes, they are viable and low-risk. `AGENTS.md` rule 4 bans adding a second scheduler beside the ticker, not replacing the ticker with another. The table compares the replacements.
+
+| Replacement                                                                                            | What changes                                          | Simplicity                                                                                | Verdict                                                                                               |
+| ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| An external clock (QStash schedule, Cloudflare Cron, Trigger.dev schedule) calling one `_due` endpoint | Only the trigger                                      | About as simple as today and more portable; removes the `ops:active_cron_platform` switch | Good later, as the trigger adapter of issue #2491. The `_due` route is planned, not in the repository |
+| A full engine (Inngest functions, Trigger.dev tasks, Upstash Workflow, Vercel Workflows)               | Jobs rewritten as steps, and an outbox is needed      | More complex: a second programming model and a vendor in the money path                   | Only for the few genuinely multi-step jobs, ideally in Mumbai                                         |
+| Netlify Background Functions as executors                                                              | Long jobs run up to 15 minutes; the caller gets a 202 | Simple, and already used for six jobs                                                     | Fine; completion is known through run rows                                                            |
+
+The diagram contrasts the two roles.
+
+```mermaid
+flowchart LR
+  subgraph CLOCK["Clock: the vendor only pokes"]
+    C1["External clock every 5 min"] --> C2["/api/cleanup/_due (planned)"]
+    C2 --> C3["existing /api/cleanup/job routes"]
+    C3 --> C4[("Postgres: lease, CAS, outbox")]
+  end
+  subgraph ENGINE["Engine: the vendor runs the job"]
+    E1["Engine schedules and retries"] --> E2["steps as functions"]
+    E2 --> E3[("Postgres")]
+    E1 -. "state lives in the vendor too" .-> E4["vendor journal"]
+  end
+```
+
+Correctness holds with a clock if two conditions hold: the database guards stay (leases, CAS, constraints and the outbox), and exactly one scheduler runs. The measured caveats:
+
+- QStash fired once a minute, about 1 s late (MEASURED, [page 14 section 5.4](#54-qstash-publish-delivery-and-retry)). At 8,640 ticks a month the Pay-as-you-go price of $1 per 100,000 messages comes to about $0.09 a month (computed from the DOCS price). It retries any non-2xx response, so the tick endpoint must always return 200.
+- Cloudflare Cron fired 13 of 13 times with no duplicates, about 2.3 s late, free within 5 crons on the Free plan (MEASURED, DOCS). After the trigger was removed it kept firing for about 4 minutes.
+- On Netlify there is no billing win, because every call is still a Netlify invocation. The saving comes from the skip-idle pull request.
+- An independent heartbeat (Better Stack) is mandatory with any clock.
+
+The recommendation is to keep the Netlify ticker through launch and switch the trigger to an external clock plus a single `_due` endpoint when the host moves or when issue #2491 lands.
+
+### 9.8 What does Better Stack do here?
+
+Better Stack answers "is anything alive, and who gets paged". Sentry answers "what broke". The table lists each role with the code that does it. The code was checked on the current tree.
+
+| Role                   | How                                                                                                                                                                                                                                                                                            | Code                                                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Uptime monitors        | `familiarisenow.com` and `/api/health` checked every 3 minutes from several regions, with email alerts and a status page                                                                                                                                                                       | [Better Stack setup](./00-betterstack-setup.md)                                                                       |
+| Ticker heartbeat       | Each completed tick pings `BETTERSTACK_HEARTBEAT_URL` (2 s timeout; unset skips it; a failure never fails the tick). An alert fires if ticks stop                                                                                                                                              | `pingHeartbeat()` in `netlify/functions/cron-tick.mts`                                                                |
+| Operational log events | `recordSystemEvent` ships each event to Better Stack Telemetry, so a failed reconcile, stuck payout, webhook backlog or HMAC failure can page; the ticker adds a per-tick summary line. Both are inert unless `ENABLE_BETTERSTACK_TELEMETRY` is on and the source token and ingest URL are set | `lib/observability/betterstack-telemetry.ts`, `lib/enterprise/system-events.ts`, `emitTickSummary` in `cron-tick.mts` |
+| Maintenance incidents  | The admin maintenance route creates a Better Stack incident when the phase becomes OFFLINE, stores its id, and resolves it when the phase leaves OFFLINE                                                                                                                                       | `createIncident` and `resolveIncident` in `lib/betterstack.ts`, called from `app/api/admin/maintenance/route.ts`      |
+| Health and canary      | `/api/health` reads Better Stack monitor status only when called with `?includeBetterStack=1` (cached 60 s per warm instance). The Sentry-ingest canary pages through an email via `deliver()` plus an error-level Better Stack log line, plus an ops chat mirror                              | `app/api/health/route.ts`, `lib/observability/ingest-alert.ts`                                                        |
+
+The billing note is that the homepage monitor hits a server-rendered page and so costs a function invocation each check. The recommendation is to point it at a static or cached URL. The picture shows who watches what.
+
+```text
+   WHAT DIED?                    WHAT BROKE?                  WHAT IS HAPPENING?
+   Better Stack                  Sentry                       Operations console
+   - uptime monitors (3 min)     - exceptions and traces      - SystemJobExecution run rows
+   - ticker heartbeat            - cron check-in per tick     - job metrics and streaks
+   - telemetry log events        - escalations only           - /api/health/jobs
+   - maintenance incidents       - ingest canary (also pages  - entity trace
+   - status page                   by email and Better Stack)
+        |                              |                            |
+        +--------- who gets paged -----+---- where you look next ---+
+```
+
+### 9.9 Can jobs starve each other, and what does the cron lock do?
+
+`withCronLock` is a per-job lease, not a global lock. A partial unique index allows one RUNNING row per job name. The lease renews every ttl/3, expires after its TTL (capped at 90 seconds on Netlify), and then the next tick takes over; meanwhile a second caller gets a 409. Different jobs run in parallel and meet only at the row level, through CAS, row locks and constraints. The ticker calls the six Background Functions directly, so `cron-tick.mts` fans out to `/api/cleanup/*` and to `/.netlify/functions/*-background`. The table lists the kinds of starvation.
+
+| Kind                      | Possible? | Mitigation                                                                                             |
+| ------------------------- | --------- | ------------------------------------------------------------------------------------------------------ |
+| Never getting a tick slot | Unlikely  | Offsets; the calendar test pins at most 12 per tick; `reconcile-ledgers` yields its slot with a cursor |
+| A dead lease              | Bounded   | The TTL                                                                                                |
+| Cross-job blocking        | No        | Row-level waits only                                                                                   |
+| A backlog inside a job    | Yes       | Issue #2492                                                                                            |
+| Poison rows               | Possible  | Dead-letter and attempt caps, audited in issue #2492                                                   |
+
+### 9.10 What about the three Postgres background-work patterns in issue #2493?
+
+Issue #2493 proposes three patterns. The first, long exports timing out, is answered by the request-row, 202 and poll pattern, the same shape as the durable request table chosen for issue #2490 ([triage decision](../decisions/2026-10-31-gpt-issue-triage.md)). The second, one job per update, is already handled by state as the outbox and `SKIP LOCKED` (MEASURED: zero duplicates in drain mode), and cadence is audited in issue #2492. The third, row-level summary triggers, does not apply: every trigger in `prisma/sql/` (11 `CREATE TRIGGER` and `CREATE CONSTRAINT TRIGGER` statements, checked on the current tree) is a guard, an immutability check or a constraint check. The proposed rule is that any summary-rebuilding trigger must be statement-level, or a dirty-mark plus a sweep.
+
+### 9.11 What is the status of the Netlify plan and seat questions?
+
+The skip-idle pull request writes the billing details into `docs/deployment/netlify.md` and the billing-guardrails skill, so they are not duplicated here. The status is this: moving to the credit-based Pro plan is PENDING Netlify support's confirmation of region pinning and Background Functions on that plan, and removing the Developer seat is pending the owner's yes. See [section 4 of page 17](./17-target-architecture-and-roadmap.md#4-netlify-billing-status-only).
+
 ## 10. Official sources
 
 Every vendor claim above is backed by one of these pages. All were fetched on 2026-10-31 unless a row says otherwise. Where a page was not reachable or did not state a claim, the claim is UNVERIFIED.
@@ -1097,7 +1178,7 @@ The table lists the repository locations that this page's claims rest on.
 
 ## Related research
 
-The layered view of the same evidence, with the compatibility rules and eleven coherent stacks, is [the layer matrix](./15-job-runtime-layer-matrix.md), and the job machinery and portability analysis is [page 16](./16-job-machinery-and-portability.md).
+The layered view of the same evidence, with the compatibility rules and eleven coherent stacks, is [the layer matrix](./15-job-runtime-layer-matrix.md), the target architecture proposal is [page 17](./17-target-architecture-and-roadmap.md), and the job machinery and portability analysis is [page 16](./16-job-machinery-and-portability.md).
 
 The longer research this page draws on is in [scale path research](../infrastructure/01-scale-path-research.md), [system-design pictures](../infrastructure/07-job-runtime-system-designs.md) and [runtime strategy review](../infrastructure/02-runtime-strategy-review.md). Agents read the short versions in `.claude/skills/maintenance/references/job-runtime-options.md` and `.claude/skills/deployment/netlify/job-runtime-options.md`.
 

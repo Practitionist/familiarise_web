@@ -38,6 +38,7 @@ Activation never implicitly cancels bookings. Cancellation requires a separate e
 | [14 — Background-job runtime options](./14-background-job-runtime-options.md)    | Comparison matrix, diagrams, worked example and official sources for each job runtime tested on 2026-10-31      |
 | [15 — Job-runtime layer matrix](./15-job-runtime-layer-matrix.md)                | The eight layers, the five compatibility rules and eleven coherent stacks, with an HLD and a decision flowchart |
 | [16 — Job machinery and portability](./16-job-machinery-and-portability.md)      | Line counts of the job machinery, what a host move removes and ports-and-adapters portability                   |
+| [17 — Target architecture and roadmap](./17-target-architecture-and-roadmap.md)  | Executive summary, the target design (a proposal), the path from today and the Netlify billing status           |
 | [Job-runtime experiment reports](./experiments/2026-10-31-job-runtime/README.md) | Index, method, honesty labels, dashboards and cleanup log for the raw reports                                   |
 | [Schedule catalog](./schedule-catalog.md)                                        | Catalog ownership and generated documentation                                                                   |
 | [Bounded housekeeping](./housekeeping-bounds.md)                                 | Retention eligibility, per-phase limits and continuation semantics                                              |

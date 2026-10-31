@@ -91,6 +91,10 @@ All figures are monthly US dollars and are **ESTIMATE**s taken from [the runtime
 
 Option 4 is the simplest to operate because nothing new is added, but it keeps the most code: the ticker fan-out, leases, cursors and the background adapters. Option 1 is managed and moderately simple, but it brings the Workflows model and an outbox for `start()`. Option 3 has the simplest runtime model, one process with in-database durable steps, but we run the server.
 
+### Clarification: clock versus engine, and the target architecture
+
+External schedulers (QStash, Cloudflare Cron, Trigger.dev schedules) were first judged as job engines and lost. As a clock that only calls the existing endpoint they are viable, because `AGENTS.md` rule 4 bans adding a second scheduler, not replacing the ticker. The decision does not change: launch on the Netlify ticker plus Background Functions, then choose between options 1 and 3. The greenfield target architecture on [page 17](../maintenance/17-target-architecture-and-roadmap.md) is a **proposal, not a decision**, and so is the clock-plus-`_due` endpoint (planned with issue #2491).
+
 ### When to revisit
 
 Revisit when the real-app Vercel `bom1` test and the Mumbai VM test report cost and latency, or when launch traffic approaches about 300 concurrent users, whichever comes first. Workload throughput is a separate trigger: recording transfers admit at most one recording per 15-minute tick (96 a day), so a recording arrival rate, copy duration or retry rate near that ceiling calls for a worker pilot regardless of user count (#2492, "Job backlog starvation"). This record does not change the ticker ADR; it narrows its Decision 2 trial into the choice between options 1 and 3.

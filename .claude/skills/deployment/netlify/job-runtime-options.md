@@ -10,6 +10,10 @@ Current owner decision (2026-10-31, `docs/decisions/2026-10-31-job-runtime-exper
 
 The real `dev` app did not run on Vercel Hobby without changes: default build OOM; `CI_LEAN_BUILD=true` plus a 6144 MB heap built in 14 min, but every route returned 500 `MIDDLEWARE_INVOCATION_FAILED` (`middleware.js` cannot load as an ES module on Node 26); Node 22 builds hung at static generation (cause unverified). Option 1 therefore needs code and build changes, not a config switch. Report: `docs/maintenance/experiments/2026-10-31-job-runtime/15-real-app-vercel-bom1-attempt.md`.
 
+## Clock versus engine, and the target design (proposal)
+
+An external scheduler used only as a clock that calls our endpoint is viable; as an engine it keeps the host latency. Keep the Netlify ticker through launch; a `_due` route and thin triggers are planned (issue #2491). The greenfield target (Mumbai web tier plus a long-lived DBOS or pg-boss worker, enqueue in the same transaction, the worker's own static IP) is a proposal, not a decision: `docs/maintenance/17-target-architecture-and-roadmap.md`. Netlify credit-plan and seat details land with the skip-idle PR in `docs/deployment/netlify.md`; status: credit plan PENDING Netlify's confirmation, Developer seat pending the owner.
+
 ## Netlify (Singapore, `ap-southeast-1`)
 
 - Raw `pg` to the Mumbai pooler: 62-64 ms per statement, connect 371-405 ms, a 10-round-trip lock hold of 676-707 ms. The earlier 95 ms was measured through the app. A bare Prisma client running raw queries added 0.1 ms or less per statement in `bom1`; that did not exercise the app's client or the Netlify cold path, so the gap is unexplained.
