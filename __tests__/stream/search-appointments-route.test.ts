@@ -446,3 +446,84 @@ describe("ranking and the cap", () => {
     expect(body).toHaveLength(20);
   });
 });
+
+describe("people mode (the New message picker)", () => {
+  const person = (id: string, name: string) =>
+    consultation({
+      id,
+      consultant: { id: `p-${id}`, name },
+      consultee: VIEWER,
+    });
+
+  it("lists connections with no text, from bookings only and never events", async () => {
+    mockConsultations.mockResolvedValue([
+      person("z", "Zoya"),
+      person("a", "Aaron"),
+    ]);
+    const { status, body } = await search({ mode: "people" });
+
+    expect(status).toBe(200);
+    expect(mockWebinars).not.toHaveBeenCalled();
+    expect(mockClasses).not.toHaveBeenCalled();
+    // Alphabetical, not match-ranked: there is nothing to rank by.
+    expect(
+      body.map((r: { counterpartyName: string }) => r.counterpartyName),
+    ).toEqual(["Aaron", "Zoya"]);
+  });
+
+  it("adds no text arm without text, and reads more candidates than a search", async () => {
+    await search({ mode: "people" });
+    const call = mockConsultations.mock.calls[0][0];
+    // status, trial exclusion, and the caller's own side: nothing else.
+    expect(call.where.AND).toHaveLength(3);
+    expect(call.take).toBe(100);
+  });
+
+  it("treats a one-character term as no text", async () => {
+    await search({ mode: "people", q: "k" });
+    expect(mockConsultations.mock.calls[0][0].where.AND).toHaveLength(3);
+  });
+
+  it("searches the same arms as the main box once there is text", async () => {
+    await search({ mode: "people", q: "kar" });
+    const and = mockConsultations.mock.calls[0][0].where.AND;
+    expect(and).toHaveLength(4);
+    expect(and[0].OR).toHaveLength(3);
+    expect(mockWebinars).not.toHaveBeenCalled();
+  });
+
+  it("keeps the trial exclusion", async () => {
+    await search({ mode: "people" });
+    expect(mockConsultations.mock.calls[0][0].where.AND).toContainEqual({
+      NOT: { appointment: { is: { appointmentType: "TRIAL" } } },
+    });
+  });
+
+  it("returns no email when nothing was typed", async () => {
+    mockConsultations.mockResolvedValue([
+      consultation({
+        id: "c1",
+        consultant: VIEWER,
+        consultee: { id: "asha", name: null, email: "asha@mail.io" },
+      }),
+    ]);
+    const { body } = await search({ mode: "people" });
+    expect(body[0].counterpartyEmail).toBeUndefined();
+  });
+
+  it("returns at most fifty people", async () => {
+    mockConsultations.mockResolvedValue(
+      Array.from({ length: 70 }, (_, i) =>
+        person(`c${i}`, `Person ${String(i).padStart(2, "0")}`),
+      ),
+    );
+    expect((await search({ mode: "people" })).body).toHaveLength(50);
+  });
+
+  it("changes nothing for an ordinary search", async () => {
+    expect((await search({ q: "k" })).body).toEqual([]);
+    expect(mockConsultations).not.toHaveBeenCalled();
+    await search({ q: "karen", mode: "bogus" });
+    expect(mockWebinars).toHaveBeenCalledTimes(1);
+  });
+});

@@ -14,6 +14,7 @@ const mockFindFirst = jest.fn();
 const mockEligible = jest.fn<Promise<boolean>, [string, string, string]>();
 const mockSendMessage = jest.fn(async () => ({}));
 const mockAddMembers = jest.fn(async (_members: string[]) => ({}));
+const mockShow = jest.fn(async (_userId: string) => ({}));
 const mockContexts = jest.fn();
 const mockCreateDm = jest.fn();
 let mockChannelExists = true;
@@ -66,6 +67,7 @@ jest.mock("../../lib/stream-client", () => ({
     channel: () => ({
       sendMessage: mockSendMessage,
       addMembers: mockAddMembers,
+      show: mockShow,
     }),
     upsertUser: jest.fn(),
   }),
@@ -289,5 +291,22 @@ describe("reopening a DM the caller left or deleted", () => {
     });
     expect((await openDm({})).status).toBe(403);
     expect(mockAddMembers).not.toHaveBeenCalled();
+  });
+});
+
+describe("reopening a DM the caller removed from their list", () => {
+  it("shows the thread for the caller once both people are in it", async () => {
+    mockChannelExists = false;
+    expect((await openDm({})).status).toBe(200);
+    expect(mockShow).toHaveBeenCalledWith("consultee-u");
+    expect(mockAddMembers.mock.invocationCallOrder[0]).toBeLessThan(
+      mockShow.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("still opens when showing the thread fails", async () => {
+    mockChannelExists = false;
+    mockShow.mockRejectedValueOnce(new Error("stream down"));
+    expect((await openDm({})).status).toBe(200);
   });
 });

@@ -1,3 +1,9 @@
+import {
+  differenceInCalendarDays,
+  format,
+  isSameDay,
+  isSameYear,
+} from "date-fns";
 import type { Channel, ChannelState } from "stream-chat";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeOrgId } from "@/lib/api/scope/parse";
@@ -209,6 +215,50 @@ export const getTruncatedDisplayName = (
   // Generic truncation
   return displayInfo.displayName.substring(0, maxLength - 3) + "...";
 };
+
+/** When the viewer pinned this channel (ISO), or null. `overrides` holds pins changed since the list loaded. */
+export function channelPinnedAt(
+  channel: Channel,
+  overrides: Readonly<Record<string, string | null>> = {},
+): string | null {
+  if (channel.cid in overrides) return overrides[channel.cid];
+  return channel.state?.membership?.pinned_at ?? null;
+}
+
+/**
+ * Pinned channels first, the most recently pinned on top, then the rest in the
+ * order given (the list is already newest-activity first, and this is stable).
+ * Returns `channels` itself when nothing is pinned.
+ */
+export function pinnedFirst(
+  channels: Channel[],
+  overrides: Readonly<Record<string, string | null>> = {},
+): Channel[] {
+  const pinned = channels.filter((ch) => channelPinnedAt(ch, overrides));
+  if (pinned.length === 0) return channels;
+  pinned.sort(
+    (a, b) =>
+      new Date(channelPinnedAt(b, overrides)!).getTime() -
+      new Date(channelPinnedAt(a, overrides)!).getTime(),
+  );
+  return [...pinned, ...channels.filter((ch) => !pinned.includes(ch))];
+}
+
+/**
+ * The time a list row shows, in the viewer's zone: the clock time today, then
+ * "Yesterday", the weekday within the last week, then the date.
+ */
+export function formatRowTime(
+  when: Date | string,
+  now: Date = new Date(),
+): string {
+  const date = new Date(when);
+  if (isSameDay(date, now) || date > now) return format(date, "h:mm a");
+  const daysAgo = differenceInCalendarDays(now, date);
+  if (daysAgo === 1) return "Yesterday";
+  if (daysAgo < 7) return format(date, "EEE");
+  return format(date, isSameYear(date, now) ? "d MMM" : "d MMM yyyy");
+}
 
 /** Shortest term the chat search acts on, shared by the sidebar filter and the server search. */
 export const MIN_SEARCH_LENGTH = 2;

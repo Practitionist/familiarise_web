@@ -159,6 +159,25 @@ async function handleCollabChannelOpen(
   return NextResponse.json({ channelType: "messaging", channelId });
 }
 
+/** A conversation the caller removed from their list comes back when they open it. */
+async function showForCaller(
+  channelType: "messaging" | "team",
+  channelId: string,
+  userId: string,
+) {
+  try {
+    await withStreamCircuitBreaker(() =>
+      getStreamChatClient().channel(channelType, channelId).show(userId),
+    );
+  } catch (error) {
+    streamLogger.warn("Could not show a reopened conversation", {
+      userId,
+      channelId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function resolveDmOrganizationId(
   requestedOrgId: string | null,
   contexts: Awaited<ReturnType<typeof pairBookingContexts>>,
@@ -273,6 +292,7 @@ async function handleDmChannelOpen(
       .channel("messaging", channelId)
       .addMembers([userId, counterpartyUserId]),
   );
+  await showForCaller("messaging", channelId, userId);
 
   return NextResponse.json({ channelType: "messaging", channelId });
 }
@@ -310,6 +330,7 @@ async function handleEventChannelOpen(
     eventType === "webinar"
       ? `${WEBINAR_PREFIX}${eventId}`
       : `${CLASS_PREFIX}${eventId}`;
+  await showForCaller("team", channelId, userId);
   return NextResponse.json({ channelType: "team", channelId });
 }
 

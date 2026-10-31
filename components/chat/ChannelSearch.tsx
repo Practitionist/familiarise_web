@@ -3,19 +3,21 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import Image from "next/image";
-import { useChatPane } from "./ChatPaneContext";
-import { useChatContext } from "stream-chat-react";
-import { format } from "date-fns";
-import {
-  SearchIcon,
-  UserIcon,
-  VideoIcon,
-  BookOpenIcon,
-  XIcon,
-} from "lucide-react";
+import type { Channel } from "stream-chat";
+import { SearchIcon, VideoIcon, BookOpenIcon, XIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { scopeOrgId, type Scope } from "@/lib/api/scope/parse";
 import type { AppointmentSearchResult } from "@/schemas/stream-search";
+import {
+  ConversationResultRow,
+  formatSessionTime,
+  mergeConversationRow,
+  type GroupedConversation,
+} from "./ConversationResult";
+import {
+  useOpenConversation,
+  type OpenChannelRequest,
+} from "./useOpenConversation";
 import { MIN_SEARCH_LENGTH } from "./utils/channelUtils";
 
 // Type badge configuration for events (webinars/classes)
@@ -38,55 +40,7 @@ type EventSearchResult = AppointmentSearchResult & {
 const isEventResult = (r: AppointmentSearchResult): r is EventSearchResult =>
   r.type === "webinar" || r.type === "class";
 
-/**
- * What `/api/stream/channels/open` accepts.
- *
- * A discriminated union rather than `Record<string, unknown>`: the route parses
- * this with a zod discriminated union, and typing the client side as an open
- * bag meant a wrong `eventType` — `"consultation"` reaching the event arm, say —
- * failed at runtime with a 400 instead of at compile time. The route is the
- * authority on the shape; this mirrors it.
- */
-type OpenChannelRequest =
-  | { kind: "dm"; counterpartyUserId: string; organizationId: string | null }
-  | { kind: "event"; eventType: "webinar" | "class"; eventId: string };
-
-/**
- * One row per conversation: a consultation and a subscription with the same
- * person collapse into a single entry, because they are a single channel.
- * A pair has one DM thread per funding context (#1134 P0-7), so the badges
- * "Consultation & Subscription" describe two reasons to be in one thread, not
- * two threads.
- */
-type GroupedConversation = {
-  counterpartyName: string;
-  counterpartyImage?: string;
-  counterpartyUserId?: string;
-  organizationId?: string | null;
-  hasConsultation: boolean;
-  hasSubscription: boolean;
-  channelId: string;
-  /**
-   * The plan titles behind this row, deduplicated.
-   *
-   * Rendered because the route matches on plan title as well as on names, so a
-   * row could match a query the UI never showed: searching "michael" surfacing
-   * a conversation with Robert Brown is correct if Robert booked a plan called
-   * "Michael's…", but with only the counterparty's name on screen it reads as a
-   * broken search. One row can hold more than one title — a consultation and a
-   * subscription with the same person share a channel.
-   */
-  planTitles: string[];
-  /** The soonest session among this conversation's matched rows (ISO). */
-  startsAt?: string;
-  /** Shown only when the search matched the email rather than the name. */
-  counterpartyEmail?: string;
-};
-
 const DEFAULT_PERSONAL_SCOPE: Scope = { kind: "personal" };
-
-const formatSessionTime = (iso: string) =>
-  format(new Date(iso), "EEE d MMM, h:mm a");
 
 /**
  * The search box over the sidebar.
@@ -101,16 +55,19 @@ export const ChannelSearch = ({
   scope = DEFAULT_PERSONAL_SCOPE,
   onTermChange,
   listedChannelIds,
+  onOpened,
 }: {
   scope?: Scope;
   onTermChange?: (term: string) => void;
   listedChannelIds?: ReadonlySet<string>;
+  /** Called with a conversation opened from a result, so the sidebar can list it. */
+  onOpened?: (channel: Channel) => void;
 } = {}) => {
-  const { client, setActiveChannel } = useChatContext();
-  // Below `md` the conversation pane is `hidden` until this runs — see
-  // ChatLayout. Selecting a channel without it leaves the person staring at
-  // the list they just searched, with the channel silently active behind it.
-  const { openConversation } = useChatPane();
+  const {
+    open: openConversation,
+    openError,
+    setOpenError,
+  } = useOpenConversation({ onOpened });
   const pinnedOrgId = scopeOrgId(scope);
   const scopeParam = pinnedOrgId ? `org:${pinnedOrgId}` : "personal";
   const [query, setQuery] = useState("");
@@ -118,8 +75,6 @@ export const ChannelSearch = ({
   const [searchResults, setSearchResults] = useState<AppointmentSearchResult[]>(
     [],
   );
-  /** Why the last open attempt failed, shown inside the dropdown. */
-  const [openError, setOpenError] = useState<string | null>(null);
   /**
    * The query `searchResults` actually answers.
    *
@@ -154,45 +109,6 @@ export const ChannelSearch = ({
    */
   const requestIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
-
-  // Extracted from the memo below to keep its cognitive complexity under the
-  // threshold SonarCloud enforces. The merge rule is the interesting part
-  // anyway: a consultation and a subscription with the same person are two
-  // reasons to be in ONE thread, not two threads.
-  const mergeConversationRow = (
-    byChannel: Map<string, GroupedConversation>,
-    result: AppointmentSearchResult,
-  ) => {
-    const existing = byChannel.get(result.channelId);
-    if (existing) {
-      existing.hasConsultation ||= result.type === "consultation";
-      existing.hasSubscription ||= result.type === "subscription";
-      if (!existing.planTitles.includes(result.name)) {
-        existing.planTitles.push(result.name);
-      }
-      // ISO timestamps from `toISOString` compare correctly as strings.
-      if (
-        result.startsAt &&
-        (!existing.startsAt || result.startsAt < existing.startsAt)
-      ) {
-        existing.startsAt = result.startsAt;
-      }
-      existing.counterpartyEmail ??= result.counterpartyEmail;
-      return;
-    }
-    byChannel.set(result.channelId, {
-      counterpartyName: result.counterpartyName,
-      counterpartyImage: result.counterpartyImage,
-      counterpartyUserId: result.counterpartyUserId,
-      organizationId: result.organizationId,
-      hasConsultation: result.type === "consultation",
-      hasSubscription: result.type === "subscription",
-      channelId: result.channelId,
-      planTitles: [result.name],
-      startsAt: result.startsAt,
-      counterpartyEmail: result.counterpartyEmail,
-    });
-  };
 
   // Group 1:1 rows by CHANNEL, keep events separate.
   //
@@ -292,7 +208,7 @@ export const ChannelSearch = ({
         if (requestId === requestIdRef.current) setLoading(false);
       }
     },
-    [scopeParam],
+    [scopeParam, setOpenError],
   );
 
   // 300ms, matching the five other search inputs in the app, and now via the
@@ -348,7 +264,7 @@ export const ChannelSearch = ({
     setSearchResults([]);
     setOpenError(null);
     setSearchError(null);
-  }, []);
+  }, [setOpenError]);
 
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
@@ -368,68 +284,12 @@ export const ChannelSearch = ({
     };
   }, [dismiss]);
 
-  /**
-   * Ask the SERVER for the channel, then watch what it hands back.
-   *
-   * The previous implementation called `client.channel(type, id).watch()` on an
-   * id this component had received from search. `watch()` posts to Stream's
-   * channel *query* endpoint, which is the same endpoint `create()` posts to —
-   * so when the id did not exist yet, watching it CREATED it, with this user as
-   * `created_by` and with no members at all. The result was a channel titled
-   * with its own raw id, reporting "No members", that accepted a message and
-   * then disappeared on refresh (the sidebar lists `members: { $in: [me] }`).
-   *
-   * So the client no longer names a channel. It names a person or an event, and
-   * `/api/stream/channels/open` re-derives the id, checks the booking link, and
-   * creates the channel with both members if it is genuinely missing. By the
-   * time `watch()` runs here, the channel is known to exist.
-   */
-  const openResolvedChannel = async (
-    body: OpenChannelRequest,
-  ): Promise<void> => {
-    if (!client) return;
-    setOpenError(null);
-
-    try {
-      const response = await fetch("/api/stream/channels/open", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        const detail = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        // A 403 here is the eligibility gate refusing, which is a legitimate
-        // answer rather than a fault — but it still has to be SAID. This branch
-        // used to `console.error` and return, and because the return skipped the
-        // reset at the bottom of the function, the dropdown stayed open with the
-        // same rows and no explanation. It read as a frozen menu.
-        setOpenError(
-          detail?.error ??
-            "Could not open this conversation. Please try again.",
-        );
-        return;
-      }
-
-      const { channelType, channelId } = (await response.json()) as {
-        channelType: "messaging" | "team";
-        channelId: string;
-      };
-
-      const channel = client.channel(channelType, channelId);
-      await channel.watch();
-      setActiveChannel(channel);
-      openConversation();
-      // Only cleared on the success path. On a refusal the query is kept so the
-      // message below has something to sit under and the person can pick a
-      // different row.
+  // Cleared only once the conversation is open. On a refusal the query is kept so
+  // the message has something to sit under and the person can pick another row.
+  const openResolvedChannel = async (body: OpenChannelRequest) => {
+    if (await openConversation(body)) {
       setQuery("");
       setSearchResults([]);
-    } catch (error) {
-      console.error("Error opening channel:", error);
-      setOpenError("Could not open this conversation. Please try again.");
     }
   };
 
@@ -482,7 +342,7 @@ export const ChannelSearch = ({
         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
           type="text"
-          placeholder="Search people, sessions or dates"
+          placeholder="Search people, plans, dates"
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -542,68 +402,11 @@ export const ChannelSearch = ({
                 </span>
               </div>
               {groupedConversations.map((conversation) => (
-                <button
+                <ConversationResultRow
                   key={conversation.channelId}
-                  type="button"
-                  className="p-3 hover:bg-muted cursor-pointer w-full text-left border-b border-border last:border-b-0"
+                  conversation={conversation}
                   onClick={() => handleConversationClick(conversation)}
-                >
-                  <div className="flex items-center gap-3">
-                    {/* Consultant Image */}
-                    {conversation.counterpartyImage ? (
-                      <Image
-                        src={conversation.counterpartyImage}
-                        alt={conversation.counterpartyName}
-                        width={40}
-                        height={40}
-                        className="w-10 h-10 rounded-full flex-shrink-0"
-                      />
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
-                        <span className="text-muted-foreground font-medium">
-                          {conversation.counterpartyName.charAt(0)}
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="flex-1 min-w-0">
-                      {/* Consultant Name */}
-                      <div className="font-semibold text-foreground truncate">
-                        {conversation.counterpartyName}
-                      </div>
-
-                      {/* Type indicators */}
-                      <div className="flex items-center gap-1 mt-1">
-                        <UserIcon className="w-3 h-3 text-muted-foreground" />
-                        <span className="text-xs text-muted-foreground">
-                          {conversation.hasConsultation &&
-                          conversation.hasSubscription
-                            ? "Consultation & Subscription"
-                            : conversation.hasConsultation
-                              ? "Consultation"
-                              : "Subscription"}
-                        </span>
-                      </div>
-
-                      {/* What matched — see GroupedConversation.planTitles */}
-                      {conversation.planTitles.length > 0 && (
-                        <div className="text-xs text-muted-foreground truncate mt-0.5">
-                          {conversation.planTitles.join(" · ")}
-                        </div>
-                      )}
-                      {conversation.counterpartyEmail && (
-                        <div className="text-xs text-muted-foreground truncate mt-0.5">
-                          {conversation.counterpartyEmail}
-                        </div>
-                      )}
-                      {conversation.startsAt && (
-                        <div className="text-xs text-muted-foreground truncate mt-0.5">
-                          {formatSessionTime(conversation.startsAt)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </button>
+                />
               ))}
             </>
           )}

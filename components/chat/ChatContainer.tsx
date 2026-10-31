@@ -21,6 +21,7 @@ import { BookingTagComposer } from "./BookingTag";
 import { ComposerDraftPersistence } from "./ComposerDraftPersistence";
 import { CustomChannelHeader } from "./CustomChannelHeader";
 import { CustomMessage } from "./CustomMessage";
+import { FrozenChannelNotice } from "./FrozenChannelNotice";
 import { SupportInterventionBanner } from "./SupportInterventionBanner";
 import { SystemMessage } from "./SystemMessage";
 import { StreamChatErrorBoundary } from "@/components/stream/StreamErrorBoundary";
@@ -95,6 +96,25 @@ const VisibleMessageList = ({ virtualized }: { virtualized: boolean }) => {
   );
 };
 
+/** The composer, or the reason there is none when the conversation is frozen. */
+const ComposerArea = ({
+  contextAppointmentId,
+}: {
+  contextAppointmentId: string | null;
+}) => {
+  const { channel } = useChannelStateContext();
+  if (channel?.data?.frozen) {
+    return <FrozenChannelNotice channelType={channel.type} />;
+  }
+  return (
+    <div className="w-full shrink-0">
+      <AppointmentDocumentsHint />
+      <ComposerDraftPersistence />
+      <BookingTagComposer contextAppointmentId={contextAppointmentId} />
+    </div>
+  );
+};
+
 /** `contextAppointmentId` offers the booking chip in a DM both people are parties to. */
 export const ChatContainer = ({
   contextAppointmentId = null,
@@ -155,13 +175,7 @@ export const ChatContainer = ({
                   <span>Chat is temporarily read-only during maintenance.</span>
                 </div>
               ) : (
-                <div className="w-full shrink-0">
-                  <AppointmentDocumentsHint />
-                  <ComposerDraftPersistence />
-                  <BookingTagComposer
-                    contextAppointmentId={contextAppointmentId}
-                  />
-                </div>
+                <ComposerArea contextAppointmentId={contextAppointmentId} />
               )}
             </Window>
           </WithComponents>

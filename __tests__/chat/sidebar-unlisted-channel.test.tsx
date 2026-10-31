@@ -66,6 +66,9 @@ jest.mock("../../components/chat/ChannelSearch", () => ({
 jest.mock("../../components/chat/CreateChannelDialog", () => ({
   CreateChannelDialog: () => null,
 }));
+jest.mock("../../components/chat/NewMessageDialog", () => ({
+  NewMessageDialog: () => null,
+}));
 jest.mock("../../components/chat/InitializeUserChannelsButton", () => ({
   InitializeUserChannelsButton: () => null,
 }));

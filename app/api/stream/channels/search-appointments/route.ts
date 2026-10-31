@@ -36,19 +36,26 @@ import {
  * email is searchable, never the caller's own.
  */
 
+/** The shortest term the search acts on. */
+const MIN_QUERY_LENGTH = 2;
 /** Candidates read per booking kind before ranking; the response is capped below. */
 const CANDIDATES_PER_KIND = 50;
 /** Distinct conversations returned, and rows kept per conversation. */
 const MAX_CHANNELS = 20;
 const MAX_ROWS_PER_CHANNEL = 3;
+/** `mode=people` is the New message picker: more rows, since it lists rather than searches. */
+const PEOPLE_CANDIDATES_PER_KIND = 100;
+const PEOPLE_MAX_CHANNELS = 50;
 /** A cancelled or replaced session is not "on" a date any more. */
 const DEAD_OCCURRENCE = ["CANCELLED", "RESCHEDULED"] as const;
 
 const SearchParamsSchema = z.object({
   // The query is matched against titles, so nothing longer than one can match.
-  q: z.string().trim().toLowerCase().min(2).max(MAX_TITLE_LENGTH),
+  q: z.string().trim().toLowerCase().max(MAX_TITLE_LENGTH),
   // An unusable zone falls back to UTC rather than failing the search.
   tz: z.string().max(MAX_SHORT_FIELD_LENGTH).nullable().catch(null),
+  // People only: the New message picker. Without text it lists recent connections.
+  mode: z.literal("people").nullable().catch(null),
 });
 
 type Party = { id: string; name: string | null; image: string | null };
@@ -216,6 +223,7 @@ function directRow(
   if (hit.consultant.id === hit.consultee.id) return null;
 
   const emailMatched =
+    query !== "" &&
     hit.consultant.id === userId &&
     Boolean(hit.consultee.email?.toLowerCase().includes(query)) &&
     !hit.consultee.name?.toLowerCase().includes(query) &&
@@ -287,12 +295,13 @@ function matchRank(
  */
 function limitByChannel(
   rows: AppointmentSearchResult[],
+  maxChannels: number,
 ): AppointmentSearchResult[] {
   const perChannel = new Map<string, number>();
   const kept: AppointmentSearchResult[] = [];
   for (const row of rows) {
     const count = perChannel.get(row.channelId) ?? 0;
-    if (count === 0 && perChannel.size >= MAX_CHANNELS) continue;
+    if (count === 0 && perChannel.size >= maxChannels) continue;
     if (count >= MAX_ROWS_PER_CHANNEL) continue;
     perChannel.set(row.channelId, count + 1);
     kept.push(row);
@@ -316,18 +325,29 @@ export async function GET(request: NextRequest) {
     const params = SearchParamsSchema.safeParse({
       q: searchParams.get("q") ?? "",
       tz: searchParams.get("tz"),
+      mode: searchParams.get("mode"),
     });
     if (!params.success) {
       return NextResponse.json([]);
     }
-    const { q: query, tz } = params.data;
+    const peopleOnly = params.data.mode === "people";
+    // A term too short to act on lists everyone in people mode and nothing otherwise.
+    const query = params.data.q.length >= MIN_QUERY_LENGTH ? params.data.q : "";
+    if (!query && !peopleOnly) {
+      return NextResponse.json([]);
+    }
+    const candidates = peopleOnly
+      ? PEOPLE_CANDIDATES_PER_KIND
+      : CANDIDATES_PER_KIND;
 
     const now = new Date();
-    const days = parseSearchDays(
-      query,
-      now,
-      resolveViewerZone({ userTimezone: tz }),
-    );
+    const days = query
+      ? parseSearchDays(
+          query,
+          now,
+          resolveViewerZone({ userTimezone: params.data.tz }),
+        )
+      : [];
     const occurrences = occurrenceSelect(days, now);
 
     const consultationScopeWhere = buildBookingOrgScopeWhere(
@@ -356,7 +376,7 @@ export async function GET(request: NextRequest) {
     const consultationsPromise = prisma.consultation.findMany({
       where: {
         AND: [
-          { OR: consultationMatch(query, userId, days) },
+          ...(query ? [{ OR: consultationMatch(query, userId, days) }] : []),
           { status: dmEligibleStatusFilter() },
           // `/open` refuses a trial booking, so offering one is a dead row.
           excludeTrialBooking(),
@@ -382,13 +402,13 @@ export async function GET(request: NextRequest) {
         appointment: { select: { organizationId: true, occurrences } },
       },
       orderBy: newestFirst,
-      take: CANDIDATES_PER_KIND,
+      take: candidates,
     });
 
     const subscriptionsPromise = prisma.subscription.findMany({
       where: {
         AND: [
-          { OR: subscriptionMatch(query, userId, days) },
+          ...(query ? [{ OR: subscriptionMatch(query, userId, days) }] : []),
           { status: dmEligibleStatusFilter() },
           excludeTrialBooking(),
           {
@@ -414,87 +434,97 @@ export async function GET(request: NextRequest) {
         appointment: { select: { organizationId: true, occurrences } },
       },
       orderBy: newestFirst,
-      take: CANDIDATES_PER_KIND,
+      take: candidates,
     });
 
-    const webinarsPromise = prisma.webinar.findMany({
-      where: {
-        AND: [
-          { OR: webinarMatch(query, userId, days) },
-          { status: { in: [...OPENABLE_EVENT_STATUSES] } },
-          {
-            OR: [
-              // Holds a seat, hosts, or is an accepted collaborator.
+    const webinarsPromise = peopleOnly
+      ? Promise.resolve([])
+      : prisma.webinar.findMany({
+          where: {
+            AND: [
+              ...(query ? [{ OR: webinarMatch(query, userId, days) }] : []),
+              { status: { in: [...OPENABLE_EVENT_STATUSES] } },
               {
-                appointment: {
-                  participants: { some: liveParticipant(userId) },
-                },
-              },
-              { webinarPlan: { consultantProfile: { userId } } },
-              {
-                webinarPlan: {
-                  collaborators: {
-                    some: {
-                      consultantProfile: { userId, deletedAt: null },
-                      status: "ACCEPTED",
+                OR: [
+                  // Holds a seat, hosts, or is an accepted collaborator.
+                  {
+                    appointment: {
+                      participants: { some: liveParticipant(userId) },
                     },
                   },
-                },
+                  { webinarPlan: { consultantProfile: { userId } } },
+                  {
+                    webinarPlan: {
+                      collaborators: {
+                        some: {
+                          consultantProfile: { userId, deletedAt: null },
+                          status: "ACCEPTED",
+                        },
+                      },
+                    },
+                  },
+                ],
               },
+              ...(webinarScopeWhere ? [webinarScopeWhere] : []),
             ],
           },
-          ...(webinarScopeWhere ? [webinarScopeWhere] : []),
-        ],
-      },
-      select: {
-        id: true,
-        webinarPlan: {
-          select: { title: true, consultantProfile: PROFILE_WITH_USER_SELECT },
-        },
-        appointment: { select: { occurrences } },
-      },
-      orderBy: newestFirst,
-      take: CANDIDATES_PER_KIND,
-    });
+          select: {
+            id: true,
+            webinarPlan: {
+              select: {
+                title: true,
+                consultantProfile: PROFILE_WITH_USER_SELECT,
+              },
+            },
+            appointment: { select: { occurrences } },
+          },
+          orderBy: newestFirst,
+          take: candidates,
+        });
 
-    const classesPromise = prisma.class.findMany({
-      where: {
-        AND: [
-          { OR: classMatch(query, userId, days) },
-          { status: { in: [...OPENABLE_EVENT_STATUSES] } },
-          {
-            OR: [
+    const classesPromise = peopleOnly
+      ? Promise.resolve([])
+      : prisma.class.findMany({
+          where: {
+            AND: [
+              ...(query ? [{ OR: classMatch(query, userId, days) }] : []),
+              { status: { in: [...OPENABLE_EVENT_STATUSES] } },
               {
-                appointment: {
-                  participants: { some: liveParticipant(userId) },
-                },
-              },
-              { classPlan: { consultantProfile: { userId } } },
-              {
-                classPlan: {
-                  collaborators: {
-                    some: {
-                      consultantProfile: { userId, deletedAt: null },
-                      status: "ACCEPTED",
+                OR: [
+                  {
+                    appointment: {
+                      participants: { some: liveParticipant(userId) },
                     },
                   },
-                },
+                  { classPlan: { consultantProfile: { userId } } },
+                  {
+                    classPlan: {
+                      collaborators: {
+                        some: {
+                          consultantProfile: { userId, deletedAt: null },
+                          status: "ACCEPTED",
+                        },
+                      },
+                    },
+                  },
+                ],
               },
+              ...(classScopeWhere ? [classScopeWhere] : []),
             ],
           },
-          ...(classScopeWhere ? [classScopeWhere] : []),
-        ],
-      },
-      select: {
-        id: true,
-        classPlan: {
-          select: { title: true, consultantProfile: PROFILE_WITH_USER_SELECT },
-        },
-        appointment: { select: { occurrences } },
-      },
-      orderBy: newestFirst,
-      take: CANDIDATES_PER_KIND,
-    });
+          select: {
+            id: true,
+            classPlan: {
+              select: {
+                title: true,
+                consultantProfile: PROFILE_WITH_USER_SELECT,
+              },
+            },
+            appointment: { select: { occurrences } },
+          },
+          orderBy: newestFirst,
+          take: candidates,
+        });
 
     // The four reads are independent, so they are issued together.
     const [consultations, subscriptions, webinars, classes] = await Promise.all(
@@ -582,7 +612,12 @@ export async function GET(request: NextRequest) {
     // Parsed on the way out: the dropdown derives its type from this schema, so
     // a field renamed here fails at the boundary rather than rendering blank.
     return NextResponse.json(
-      AppointmentSearchResultSchema.array().parse(limitByChannel(results)),
+      AppointmentSearchResultSchema.array().parse(
+        limitByChannel(
+          results,
+          peopleOnly ? PEOPLE_MAX_CHANNELS : MAX_CHANNELS,
+        ),
+      ),
     );
   } catch (error) {
     Sentry.captureException(

@@ -10,6 +10,7 @@ let mockPhase: string | null = "NORMAL";
 let mockOverrides: Record<string, React.ComponentType> | undefined;
 let mockMessages: { id: string; user?: { id: string } }[] = [];
 let mockListed: unknown;
+let mockStateChannel: { type: string; data?: { frozen?: boolean } } | undefined;
 
 const mockChannel = {
   type: "messaging",
@@ -48,7 +49,10 @@ jest.mock("stream-chat-react", () => {
       return react.createElement("div", null, children);
     },
     useChatContext: () => ({ channel: mockChannel }),
-    useChannelStateContext: () => ({ messages: mockMessages }),
+    useChannelStateContext: () => ({
+      messages: mockMessages,
+      channel: mockStateChannel,
+    }),
   };
 });
 
@@ -111,6 +115,7 @@ beforeEach(() => {
   mockOverrides = undefined;
   mockMessages = [];
   mockListed = undefined;
+  mockStateChannel = undefined;
 });
 
 describe("ChatContainer", () => {
@@ -170,5 +175,34 @@ describe("ChatContainer", () => {
     expect(
       screen.getByText("Chat is temporarily read-only during maintenance."),
     ).toBeInTheDocument();
+  });
+
+  it("replaces the composer with the reason when the conversation is frozen", () => {
+    mockStateChannel = { type: "messaging", data: { frozen: true } };
+    render(<ChatContainer />);
+
+    expect(screen.queryByTestId("message-composer")).toBeNull();
+    expect(screen.queryByTestId("appointment-documents-hint")).toBeNull();
+    expect(screen.queryByTestId("composer-draft")).toBeNull();
+    expect(screen.getByRole("status").textContent).toMatch(
+      /read-only\. It reopens when you book a session together again/,
+    );
+  });
+
+  it("words a frozen event channel differently from a frozen DM", () => {
+    mockStateChannel = { type: "team", data: { frozen: true } };
+    render(<ChatContainer />);
+
+    expect(screen.getByRole("status").textContent).toMatch(
+      /This channel is read-only\. Its session has ended/,
+    );
+  });
+
+  it("keeps the composer for a channel that is not frozen", () => {
+    mockStateChannel = { type: "messaging", data: { frozen: false } };
+    render(<ChatContainer />);
+
+    expect(screen.getByTestId("message-composer")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });

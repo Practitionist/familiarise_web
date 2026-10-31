@@ -221,8 +221,14 @@ the browser, and the dropdown leaves out rows that list already shows. Message-t
 search is deliberately absent; it is tracked in issue #2469.
 
 Leaving or deleting a thread never ends the connection. `POST /api/stream/channels/open`
-re-adds both people to the pair's existing DM (idempotent for anyone already in), so
-searching for them and clicking restores the same thread with its history; the
-amendment above relies on this as the recovery path. There is no per-user "delete for
-me" or partial history clear, by choice: a thread is one shared record. Blocking is
-separate and not yet reversible or hidden from search (issue #2479).
+re-adds both people to the pair's existing DM (idempotent for anyone already in) and
+shows it again if the caller had hidden it, so searching for them and clicking restores
+the same thread with its history; the amendment above relies on this as the recovery
+path. There is no leaving a 1:1 and no partial history clear, by choice: a thread is one
+shared record. "Remove from list" is a per-user hide that keeps the history and returns
+on the next message, and pinning is per user too. Both run server-side through
+`POST /api/stream/channels/preference`, gated on the caller being a member. Conversations
+are listed above Channels, `+` opens a picker of the people the caller can message
+(`mode=people` on the search route), and a frozen conversation says it is read-only
+instead of failing silently. Blocking is separate and not yet reversible or hidden from
+search (issue #2479).
