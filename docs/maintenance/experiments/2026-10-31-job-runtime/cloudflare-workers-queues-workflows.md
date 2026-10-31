@@ -90,7 +90,9 @@ Five instances completed. All MEASURED unless marked.
 - Queues: Free 10,000 operations/day and fixed 24 h retention; Paid 1 million operations/month then $0.40 per million, retention up to 14 days. Both allow 128 KB messages and 15 min consumer wall time; consumer CPU above 30 s is Paid only.
 - Hyperdrive: Free 100,000 queries/day and about 20 origin connections per config; Paid unlimited queries and about 100 connections.
 
-## Dashboards (kept 48 h from 2026-10-31)
+## Dashboards (deleted on 2026-10-31)
+
+All Workers, Queues and the Workflow were deleted on 2026-10-31 at the owner's request, because the Workers were public with no auth. The URLs below now show empty lists.
 
 - Workers: `https://dash.cloudflare.com/<account-id>/workers/services/view/<name>/production` (add `/observability/logs` or `/metrics`). Names: `fw-lab-jobs`, `fw-lab-v1-direct`, `fw-lab-v2-hd`, `fw-lab-v3-smart`, `fw-lab-v4-smart-hd`, `fw-lab-v5-region`, `fw-lab-v6-region-hd`, `fw-lab-v7-host`.
 - Queues: `https://dash.cloudflare.com/<account-id>/workers/queues` (`fw-lab-q`, `fw-lab-q-fast`, `fw-lab-dlq`).
@@ -100,7 +102,7 @@ Five instances completed. All MEASURED unless marked.
 
 ## Cleanup proof
 
-- Kept for 48 h: 8 Workers, 3 Queues, the `fw-lab-wf` Workflow and its instances.
+- Deleted on 2026-10-31 (owner request): 8 Workers, the `fw-lab-wf` Workflow and its instances, and 3 Queues (consumers removed first). `wrangler queues list` and `wrangler workflows list` show no `fw-lab` resources. The account-wide workers.dev subdomain `fw-lab-cloudflare` remains and can only be renamed in the dashboard.
 - Every Worker shows `secrets: 0`; probe Workers carry only a `VARIANT` variable.
 - Hyperdrive config `fw-lab-hd` deleted; 0 configs.
 - Cron schedules empty; last fire 12:26:58Z, none after 12:29:32Z.
