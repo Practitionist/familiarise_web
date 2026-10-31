@@ -24,7 +24,7 @@ DOCS (Netlify support ticket #1112198, 2026-09-17, and [legacy plans](https://do
 
 The ticker used to be the largest controllable source: MEASURED about 94,850 invocations a month on `dev` (8,640 ticks plus 86,210 target calls) plus 8,640 slot-claim calls, with 99.8 percent of runs in a 7-day window processing zero items. After the skip-idle change (ESTIMATE, `docs/decisions/2026-11-01-ticker-skip-idle-targets.md`) the idle state is about 22,450 a month plus one call per due tick that has work. Every new job must declare an idle probe or an `alwaysRun` reason (`lib/cron/cleanup-registry.ts`); a job that always runs is a permanent monthly invocation cost.
 
-Better Stack checks `familiarisenow.com` and `/api/health` every 3 minutes (`docs/maintenance/00-betterstack-setup.md`). The homepage check costs a function invocation each time, about 14,400 a month. RECOMMENDATION, not done: point it at a static or CDN-cached URL.
+Better Stack checks `familiarisenow.com` and `/api/health` every 3 minutes (`docs/maintenance/00-betterstack-setup.md`). The homepage is ISR (`revalidate = 3600` in `app/page.tsx`) and served from the CDN, so its check is not a function invocation; the `/api/health` check is, at about 14,400 a month per checking region. The owner decided on 2026-11-01 to keep both monitors unchanged.
 
 ## 1.2 Credit-based plans (PENDING, not decided)
 
@@ -34,7 +34,7 @@ DOCS ([pricing](https://www.netlify.com/pricing/), [how credits work](https://do
 - Costs: a production deploy 15 credits; Deploy Previews and branch deploys free; compute 10 credits per GB-hour (Serverless, Scheduled and Background Functions; Edge Functions do not count); web requests 2 credits per 10,000; bandwidth 20 credits per GB; forms free.
 - The switch is permanent: "You cannot revert to a Legacy plan from a Credit-based plan."
 - ESTIMATE at our usage: about 1,000 to 1,300 credits a month.
-- Status: the owner emailed Netlify support (drafted 2026-11-01) to confirm region pinning, Background Functions and seats before switching. Do not recommend the switch as decided.
+- Status: an email asking Netlify support to confirm region pinning, Background Functions and seats before switching was drafted on 2026-11-01 and is not yet sent. Do not recommend the switch as decided.
 
 ## 2. What causes surprise bills or outages
 

@@ -13,19 +13,19 @@ Owner context: the owner is India-based, so cards are INR-billed and a vendor ch
 
 ## Vendor references
 
-| Vendor                                      | Read                                           | Hard-stop behaviour when the meter runs out                                         |
-| ------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------- |
-| GitHub Actions                              | [github-actions](references/github-actions.md) | Jobs are blocked, CI cannot run, merges stall.                                      |
-| Netlify (Pro, legacy plan)                  | [netlify](references/netlify.md)               | No hard cap; a flat $25 step above 125k invocations a site; functions keep running. |
-| Vercel (standby only, not deployed)         | [vercel](references/vercel.md)                 | Not applicable today; read before a cutover.                                        |
-| Cloudflare (R2 recordings, DNS)             | [cloudflare](references/cloudflare.md)         | R2 bills per operation; no hard stop.                                               |
-| Supabase                                    | [supabase](references/supabase.md)             | With the spend cap on, the item is blocked; compute and PITR are not capped.        |
-| Upstash Redis                               | [upstash](references/upstash.md)               | Rate limited at the budget; interactive guards vary; cron leases use Postgres.      |
-| Sentry                                      | [sentry](references/sentry.md)                 | Errors are silently dropped (HTTP 429 on the error item only).                      |
-| Novu                                        | [novu](references/novu.md)                     | Workflow runs beyond the plan are refused or billed.                                |
-| Resend                                      | [resend](references/resend.md)                 | Free plan blocks at 100 per day and 3,000 per month.                                |
-| Stream (chat and video)                     | [stream](references/stream.md)                 | Paid cliff at the MAU and minute caps.                                              |
-| Razorpay (fees as a cost line, not a quota) | [razorpay](references/razorpay.md)             | No quota; every transaction and refund has a fee.                                   |
+| Vendor                                      | Read                                           | Hard-stop behaviour when the meter runs out                                                                                          |
+| ------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| GitHub Actions                              | [github-actions](references/github-actions.md) | Jobs are blocked, CI cannot run, merges stall.                                                                                       |
+| Netlify (Pro, legacy plan)                  | [netlify](references/netlify.md)               | No hard cap; a flat $25 add-on covers 125,000–2,000,000 invocations a site a month, then billed per 500,000; functions keep running. |
+| Vercel (standby only, not deployed)         | [vercel](references/vercel.md)                 | Not applicable today; read before a cutover.                                                                                         |
+| Cloudflare (R2 recordings, DNS)             | [cloudflare](references/cloudflare.md)         | R2 bills per operation; no hard stop.                                                                                                |
+| Supabase                                    | [supabase](references/supabase.md)             | With the spend cap on, the item is blocked; compute and PITR are not capped.                                                         |
+| Upstash Redis                               | [upstash](references/upstash.md)               | Rate limited at the budget; interactive guards vary; cron leases use Postgres.                                                       |
+| Sentry                                      | [sentry](references/sentry.md)                 | Errors are silently dropped (HTTP 429 on the error item only).                                                                       |
+| Novu                                        | [novu](references/novu.md)                     | Workflow runs beyond the plan are refused or billed.                                                                                 |
+| Resend                                      | [resend](references/resend.md)                 | Free plan blocks at 100 per day and 3,000 per month.                                                                                 |
+| Stream (chat and video)                     | [stream](references/stream.md)                 | Paid cliff at the MAU and minute caps.                                                                                               |
+| Razorpay (fees as a cost line, not a quota) | [razorpay](references/razorpay.md)             | No quota; every transaction and refund has a fee.                                                                                    |
 
 ## Cross-vendor rules
 
