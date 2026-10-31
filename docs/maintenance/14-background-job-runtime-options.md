@@ -1015,7 +1015,7 @@ Better Stack answers "is anything alive, and who gets paged". Sentry answers "wh
 | Maintenance incidents  | The admin maintenance route creates a Better Stack incident when the phase becomes OFFLINE, stores its id, and resolves it when the phase leaves OFFLINE                                                                                                                                       | `createIncident` and `resolveIncident` in `lib/betterstack.ts`, called from `app/api/admin/maintenance/route.ts`      |
 | Health and canary      | `/api/health` reads Better Stack monitor status only when called with `?includeBetterStack=1` (cached 60 s per warm instance). The Sentry-ingest canary pages through an email via `deliver()` plus an error-level Better Stack log line, plus an ops chat mirror                              | `app/api/health/route.ts`, `lib/observability/ingest-alert.ts`                                                        |
 
-The billing note is that the homepage monitor hits a server-rendered page and so costs a function invocation each check. The recommendation is to point it at a static or cached URL. The picture shows who watches what.
+The billing note is that the homepage monitor costs no function invocation, because `app/page.tsx` is ISR (`revalidate = 3600`) and is served from the CDN. Only `/api/health` costs invocations: about 14,400 a month per checking region at 3-minute checks (computed). The owner decided on 2026-11-01 to keep both monitors unchanged. The picture shows who watches what.
 
 ```text
    WHAT DIED?                    WHAT BROKE?                  WHAT IS HAPPENING?

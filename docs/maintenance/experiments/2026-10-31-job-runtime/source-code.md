@@ -1,6 +1,6 @@
 # Experiment source code (2026-10-31)
 
-These are the throwaway scripts behind the experiment reports in this folder. They are kept as text so that lint, typecheck and the build ignore them. Most probes read credentials from environment variables, but some read local files: the repository's `.env`, a local `.secrets` file or a Trigger CLI config file (those reads are shown as placeholders where they were replaced). Several probes disable TLS verification (`rejectUnauthorized: false` or TLS off) because they ran once against a mock database: do not copy those settings, keep certificate verification on.
+These are the throwaway scripts behind the experiment reports in this folder. They are kept as text so that lint, typecheck and the build ignore them. They are throwaway scripts, not production code: some create recurring QStash schedules (`lab-pg/q10.mjs`, `lab-netlify-qstash/t3.mjs`) that the original run deleted by hand afterwards, so delete any schedule you create; polling loops may serialise a still-running task as the final result, so check the status field; `lab-lock/runall.mjs` compared clocks across machines and its interference result was discarded in favour of `lab-lock/runall2.mjs`, which uses the database clock; and the Trigger.dev environment-variable helpers upload a database URL as an ordinary variable, which is acceptable only for a disposable mock database. Most probes read credentials from environment variables, but some read local files: the repository's `.env`, a local `.secrets` file or a Trigger CLI config file (those reads are shown as placeholders where they were replaced). Several probes disable TLS verification (`rejectUnauthorized: false` or TLS off) because they ran once against a mock database: do not copy those settings, keep certificate verification on.
 
 ## `lab-inngest/app.mjs`
 
@@ -852,7 +852,7 @@ console.log(
   list.status,
   Array.isArray(list.body)
     ? list.body.map((e) => e.name)
-    : JSON.stringify(list.body).slice(0, 200),
+    : "(response body not logged)",
 );
 if (act === "del") {
   for (const name of ["PROBE_DB_URL", "PROBE_DIRECT_URL"]) {
@@ -860,7 +860,7 @@ if (act === "del") {
       "DELETE",
       `/api/v1/projects/${REF}/envvars/prod/${name}`,
     );
-    console.log("del", name, r.status, JSON.stringify(r.body).slice(0, 100));
+    console.log("del", name, r.status);
   }
   const l2 = await api("GET", `/api/v1/projects/${REF}/envvars/prod`);
   console.log(

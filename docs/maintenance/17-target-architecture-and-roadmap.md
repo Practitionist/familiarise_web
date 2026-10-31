@@ -173,7 +173,7 @@ flowchart LR
 
 ## 4. Netlify billing: status only
 
-The skip-idle pull request (`perf/ticker-skip-idle-targets`) writes the billing details into `docs/deployment/netlify.md` and the billing-guardrails skill, so this page does not duplicate them. The decision status as of 2026-11-01 is this. Moving to the credit-based Pro plan is PENDING Netlify support's confirmation of region pinning and Background Functions on that plan; an email was drafted on 2026-11-01. Removing the second (Developer) seat is pending the owner's yes. The figures behind both are UNVERIFIED here and land with the skip-idle PR.
+The skip-idle pull request (`perf/ticker-skip-idle-targets`) writes the billing details into `docs/deployment/netlify.md` and the billing-guardrails skill, so this page does not duplicate them. The decision status as of 2026-11-01 is this. Moving to the credit-based Pro plan is PENDING Netlify support's confirmation of region pinning and Background Functions on that plan; the email to Netlify support was drafted on 2026-11-01 and is not yet sent. Removing the second (Developer) seat is pending the owner's yes. The figures behind both are UNVERIFIED here and land with the skip-idle PR.
 
 ## 5. Where in code
 

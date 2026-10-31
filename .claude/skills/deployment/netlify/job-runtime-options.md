@@ -34,14 +34,14 @@ An external scheduler used only as a clock that calls our endpoint is viable; as
 ## Netlify Background Functions
 
 - Caller gets a 202 in 0.65-0.85 s. Runs of 60, 300 and 840 s completed; 960 s was killed at exactly 900 s. Database: 63.9 ms per statement, 704 ms lock hold.
-- A v2 default-export handler that throws is never retried; legacy `exports.handler` throws, `process.exit(1)` and timeouts are retried at +1 and +2 minutes (3 attempts, each repeats the side effect). The v2 reason is our inference.
+- In our probe, a v2 default-export handler that threw was not retried (Netlify's docs say a failed invocation is retried after 1 and 2 minutes and do not exclude v2, so treat this as measured on one site, with the cause an inference); legacy `exports.handler` throws, `process.exit(1)` and timeouts are retried at +1 and +2 minutes (3 attempts, each repeats the side effect). The v2 reason is our inference.
 - Ten concurrent runs ran in parallel. A draft deploy worked; a PR Deploy Preview was not tested. A variable scoped only to `production` is absent from a draft deploy; give a lab site scratch values in the context it uses, never production secrets in every context. Logs lag by minutes.
 - Async Workloads (measured; team-wide extension, already installed so it also applies to `familiarise`): a CLI deploy lacks its functions, so it needs a build on Netlify's servers from a linked repository. Event latency median 1.21 s warm; retries at +34 s and 5 attempts then a Blobs dead letter; the 60 s scheduler makes delays 50-94 s late; a standard step of 30 s or more fails (background type ran 840 s); steps repeated in a crash run; `send` is not transactional. Fine for warm fire-and-forget work only.
 
 ## Cloudflare
 
 - A Worker placed with `region = "aws:ap-south-1"` runs in `remote-BOM` and measured 2-3 ms per statement and a 65-75 ms lock hold (36-39 ms with Hyperdrive in-region). Default placement and Smart Placement stayed at about 98 ms from Marseille.
-- Placement applies to `fetch` handlers only. Queue consumers, cron and Workflow steps ran in random colos at 125-266 ms; use a service binding to a pinned Worker (22-31 ms).
+- Placement applies to `fetch` handlers only. Queue consumers, cron and Workflow steps ran in random colocation sites (colos) at 125-266 ms; use a service binding to a pinned Worker (22-31 ms).
 - Workers cannot verify Supabase's private-CA certificate with `pg` or `postgres.js`; only Hyperdrive with the Supabase CA and `verify-full` is certificate-verified (4 ms per statement, 60-89 ms lock hold). The 2-3 ms and 65-75 ms figures ran with TLS off. A removed cron kept firing about 4 minutes. Free CPU is 10 ms per request.
 
 ## How to rerun

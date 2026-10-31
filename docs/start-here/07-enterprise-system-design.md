@@ -2284,9 +2284,9 @@ The active platform ticker owns every registered job, including audit pruning, c
 | Delivery outbox          | outbound webhooks, Resend, Novu                                 | Netlify ticker with target limits                     | pending/retry/dead-letter counts                 |
 | User lifecycle sweeps    | booking reminders/expiry, Stream erasure                        | Netlify ticker at configured interval                 | summary counts and retry rows                    |
 | Data export              | `process-data-exports`                                          | 10m ticker target                                     | `OrgDataExportJob` state and summary             |
-| Statutory monitoring     | breach deadline, MSME risk                                      | breach alerts: Actions; MSME risk: ticker             | structured alert + admin queue                   |
+| Statutory monitoring     | breach deadline, MSME risk                                      | breach alerts and MSME risk: ticker                   | structured alert + admin queue                   |
 | Money batch              | ledger, payout, tax/accounting exports                          | bounded ticker slices or authenticated manual batches | completed report, execution evidence and backlog |
-| Retention                | audit and consent records                                       | daily or weekly Actions schedule                      | deleted/count summary and retention backlog      |
+| Retention                | audit and consent records                                       | ticker target at its configured interval              | deleted/count summary and retention backlog      |
 
 #### 8.2.3. Cron lease and job execution
 
