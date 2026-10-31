@@ -25,6 +25,33 @@ With Fluid compute ON, warm bursts of 20 and 50 requests used 7 and 13 instances
 
 A user update to a row locked from Frankfurt waited about 1.1 s against 37.6 ms with no job. SERIALIZABLE lost one of every concurrent pair (40001) in both places, so keep `withSerializableRetry` (`lib/db/serializable-retry.ts`).
 
+## The eight layers and the stacks that fit together
+
+Layers: 1 Trigger, 2 Dispatch, 3 Durability, 4 Compute, 5 DB access, 6 Correctness, 7 Egress, 8 Observe. Full matrix, HLD and decision flowchart: `docs/maintenance/15-job-runtime-layer-matrix.md`.
+
+Compatibility rules:
+
+1. A layer-3 engine is tied to its compute: Vercel Workflows to Vercel, Cloudflare Workflows to Workers (pending), Trigger.dev to its own machines. Inngest and Upstash Workflow work with any HTTP compute.
+2. Durable steps and in-process cron need long-lived compute. Otherwise you only get drain mode.
+3. Any queue can be drained by a periodic trigger, at the cost of tick latency.
+4. Only a Postgres-native queue (pg-boss, DBOS) avoids the enqueue dual write. Everything else needs an outbox row in the same transaction.
+5. Layer 6 never changes: CAS-in-WHERE, idempotency keys, ledger triggers and reconcilers stay on every stack.
+
+Stacks (S1 ticker today, S2 Prisma `Job` table, S3 Netlify Background Functions pending, S4 Async Workloads pending, S5 QStash or Inngest on Netlify, S6 Vercel Cron in `bom1`, S7 Vercel Workflows in `bom1`, S8 Cloudflare pending, S9 Trigger.dev, S10 DBOS on a Mumbai VM):
+
+| Stack      | DB per round trip | Time cap               | Double-write safe               | Status             |
+| ---------- | ----------------- | ---------------------- | ------------------------------- | ------------------ |
+| S1         | 62-64 ms          | ~26 s edge             | yes                             | current            |
+| S2         | as S1             | as S1                  | yes                             | decided, not built |
+| S5         | 62-64 ms          | ~30 s                  | no, outbox                      | measured           |
+| S6         | 1.0-2.3 ms        | 300 s Hobby, 800 s Pro | yes                             | decided trial      |
+| S7         | 2.3-3.2 ms        | step 300 s Hobby       | no, `start()` not transactional | measured           |
+| S9         | 125 ms            | none stated            | no, outbox                      | measured           |
+| S10        | 1-2 ms ESTIMATE   | none                   | yes                             | unmeasured on a VM |
+| S3, S4, S8 | pending           | pending                | pending                         | placeholders       |
+
+Corrections: pg-boss and DBOS can be drained from short functions (pg-boss `fetch()`, not run by us, UNVERIFIED); only their own cron, maintenance and fast crash recovery need a long-running process. "Mumbai worker at 1-2 ms" is an estimate; only Vercel `bom1` was measured. A Background Function avoids the ~30 s cap but the caller gets only a 202.
+
 ## Footguns
 
 - DBOS needs a pool of about 10 or more. With `systemDatabasePoolSize: 2` its advisory-lock connection hits the 5 s idle-in-transaction timeout and the process crashes. It cannot run under `PG_POOL_MAX=1`. Pin `DBOS__APPVERSION`, or a non-latest worker stops dequeuing.

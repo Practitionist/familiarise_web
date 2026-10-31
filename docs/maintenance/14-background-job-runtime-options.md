@@ -667,6 +667,8 @@ The table lists the repository locations that this page's claims rest on.
 
 ## Related research
 
+The layered view of the same evidence, with the compatibility rules and ten coherent stacks, is [the layer matrix](./15-job-runtime-layer-matrix.md).
+
 The longer research this page draws on is in [scale path research](../infrastructure/2026-10-31-scale-path-research.md), [system-design pictures](../infrastructure/2026-10-31-job-runtime-system-designs.md) and [runtime strategy review](../infrastructure/2026-10-31-runtime-strategy-review.md). Agents read the short versions in `.claude/skills/maintenance/references/job-runtime-options.md` and `.claude/skills/deployment/netlify/job-runtime-options.md`.
 
 ## Related issues
