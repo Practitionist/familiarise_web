@@ -39,12 +39,13 @@ Works through both the session pooler (5432) and the transaction pooler (6543); 
 
 ### Results (200 jobs, batch 10, no-op handler, run from the laptop, about 40 ms RTT to Mumbai)
 
-| Run                                                                                                                                                                                            | start()    | fetch avg | complete avg | per job     | total     |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | --------- | ------------ | ----------- | --------- |
-| session 5432, 3 runs                                                                                                                                                                           | 435-522 ms | 41-52 ms  | 40-48 ms     | 8.3-10.3 ms | 2.1-2.6 s |
-| txn 6543, 2 runs                                                                                                                                                                               | 416-558 ms | 43-68 ms  | 44-60 ms     | 8.9-13.1 ms | 2.2-3.2 s |
-| session, batch 50                                                                                                                                                                              | 521 ms     | 57 ms     | 54 ms        | 2.5 ms      | 1.0 s     |
-| First-ever start() (installs schema, version 46): 1595 ms (MEASURED). Per-job overhead is dominated by round trips: two statements per batch (fetch, complete), so bigger batches amortise it. |
+| Run                  | start()    | fetch avg | complete avg | per job     | total     |
+| -------------------- | ---------- | --------- | ------------ | ----------- | --------- |
+| session 5432, 3 runs | 435-522 ms | 41-52 ms  | 40-48 ms     | 8.3-10.3 ms | 2.1-2.6 s |
+| txn 6543, 2 runs     | 416-558 ms | 43-68 ms  | 44-60 ms     | 8.9-13.1 ms | 2.2-3.2 s |
+| session, batch 50    | 521 ms     | 57 ms     | 54 ms        | 2.5 ms      | 1.0 s     |
+
+First-ever start() (installs schema, version 46): 1595 ms (MEASURED). Per-job overhead is dominated by round trips: two statements per batch (fetch, complete), so bigger batches amortise it.
 
 ### Abandoned (fetched, process exited before complete) jobs (MEASURED, abandon2.mjs)
 
@@ -54,7 +55,8 @@ Queue created with `expireInSeconds:15, retryLimit:3, retryDelay:0`. A process f
 | ---------------------- | ----------------------------------------------------------- | ---------- |
 | 5                      | t+18.7 s (tick 4: first tick after the 15 s expiry)         | 1          |
 | 60 (default)           | t+59.4 s (tick 11: first tick after the 60 s monitor claim) | 1          |
-| Findings:              |
+
+Findings:
 
 - Plain `fetch()` NEVER redelivers an expired active job. With `supervise:false` and no supervise call, after 37 s the 5 jobs were still `active`, and also 45 s later in the table (MEASURED).
 - Redelivery needs `boss.supervise()`, whose expiry step only runs when the per-queue monitor claim is due (`monitorIntervalSeconds`, default 60; DOCS https://pgboss.io/api/constructor, code in dist/boss.js `#monitor`/`trySetQueueMonitorTime`). So redelivery latency = max(`expireInSeconds`, `monitorIntervalSeconds`) rounded up to the next tick.
@@ -72,15 +74,17 @@ Adapter `{executeSql:(text,values)=>client.query(text,values)}` passed as `send(
 
 Each invocation seeds 100 jobs then drains them (batch 10).
 
-| #                                                                                                                                                                                                                                                                | cold | start() | seed 100 | drain  | jobs | per job | fetch avg | complete avg | supervise             | total  |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------- | -------- | ------ | ---- | ------- | --------- | ------------ | --------------------- | ------ |
-| 1                                                                                                                                                                                                                                                                | yes  | 115 ms  | 139 ms   | 188 ms | 100  | 1.9 ms  | 10.9      | 6.9          | -                     | 459 ms |
-| 2                                                                                                                                                                                                                                                                | no   | 17      | 27       | 85     | 100  | 0.8     | 4.2       | 3.8          | -                     | 140    |
-| 3                                                                                                                                                                                                                                                                | no   | 23      | 23       | 90     | 100  | 0.9     | 4.6       | 3.9          | -                     | 147    |
-| 4                                                                                                                                                                                                                                                                | no   | 19      | 19       | 82     | 100  | 0.8     | 4.5       | 3.2          | 249 ms (claim due)    | 380    |
-| 5                                                                                                                                                                                                                                                                | yes  | 54      | 27       | 119    | 100  | 1.2     | 6.4       | 4.9          | 34 ms (claim not due) | 250    |
-| Extra: 2000 jobs in one invocation (warm): drain 3494 ms, 200 batches, 1.7 ms/job, total 3.8 s, far below the 20 s budget. Transaction pooler (6543): start 30 ms, drain 100 jobs 186 ms, supervise 28 ms.                                                       |
-| Local vs Vercel: start() 430-520 ms local vs 17-115 ms in bom1; per job 8-10 ms vs 0.8-1.9 ms. Region proximity, not pg-boss, is the cost. Estimated capacity per 20 s tick at 1.7 ms/job: about 10,000 jobs (extrapolated from the 2000-job run, not measured). |
+| #   | cold | start() | seed 100 | drain  | jobs | per job | fetch avg | complete avg | supervise             | total  |
+| --- | ---- | ------- | -------- | ------ | ---- | ------- | --------- | ------------ | --------------------- | ------ |
+| 1   | yes  | 115 ms  | 139 ms   | 188 ms | 100  | 1.9 ms  | 10.9      | 6.9          | -                     | 459 ms |
+| 2   | no   | 17      | 27       | 85     | 100  | 0.8     | 4.2       | 3.8          | -                     | 140    |
+| 3   | no   | 23      | 23       | 90     | 100  | 0.9     | 4.6       | 3.9          | -                     | 147    |
+| 4   | no   | 19      | 19       | 82     | 100  | 0.8     | 4.5       | 3.2          | 249 ms (claim due)    | 380    |
+| 5   | yes  | 54      | 27       | 119    | 100  | 1.2     | 6.4       | 4.9          | 34 ms (claim not due) | 250    |
+
+Extra: 2000 jobs in one invocation (warm): drain 3494 ms, 200 batches, 1.7 ms/job, total 3.8 s, far below the 20 s budget. Transaction pooler (6543): start 30 ms, drain 100 jobs 186 ms, supervise 28 ms.
+
+Local vs Vercel: start() 430-520 ms local vs 17-115 ms in bom1; per job 8-10 ms vs 0.8-1.9 ms. Region proximity, not pg-boss, is the cost. Estimated capacity per 20 s tick at 1.7 ms/job: about 10,000 jobs (extrapolated from the 2000-job run, not measured).
 
 ### What drain mode loses, and the maintenance tick (MEASURED + DOCS)
 
@@ -112,12 +116,13 @@ Note: the Worker-to-Hyperdrive hop is not TLS-to-DB; the TLS-protected leg is Hy
 
 Performance (MEASURED, caching disabled on the configs, Worker in aws:ap-south-1, 50x SELECT 1 per run):
 
-| Variant                                                                                                                                                                                                                                                                                                                                                                                   | connect  | SELECT 1 median / p95          | 10-round-trip lock hold (begin, FOR UPDATE, 10 updates, commit; 14 statements incl. DDL-if-not-exists) |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| (c) Hyperdrive direct, verify-full (5 runs)                                                                                                                                                                                                                                                                                                                                               | 3-4 ms   | 4 ms / 5-21 ms (typically 5-6) | 60-89 ms (first 89)                                                                                    |
-| (c2) Hyperdrive session pooler, verify-full (2 runs)                                                                                                                                                                                                                                                                                                                                      | 3-4 ms   | 4 ms / 5 ms                    | 68-73 ms                                                                                               |
-| baseline pg TLS off, direct to pooler (4 runs)                                                                                                                                                                                                                                                                                                                                            | 11-42 ms | 2 ms / 3 ms                    | 37-159 ms (typically 40)                                                                               |
-| Hyperdrive costs about +2 ms per round trip over the unencrypted baseline, but its connect is 3-4 ms because the real connection is pooled. A Worker-to-DB path with certificate verification therefore exists, but only via Hyperdrive. Its interaction with transaction-heavy locking (Hyperdrive holds a connection per transaction) was fine for the 14-statement transaction tested. |
+| Variant                                              | connect  | SELECT 1 median / p95          | 10-round-trip lock hold (begin, FOR UPDATE, 10 updates, commit; 14 statements incl. DDL-if-not-exists) |
+| ---------------------------------------------------- | -------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| (c) Hyperdrive direct, verify-full (5 runs)          | 3-4 ms   | 4 ms / 5-21 ms (typically 5-6) | 60-89 ms (first 89)                                                                                    |
+| (c2) Hyperdrive session pooler, verify-full (2 runs) | 3-4 ms   | 4 ms / 5 ms                    | 68-73 ms                                                                                               |
+| baseline pg TLS off, direct to pooler (4 runs)       | 11-42 ms | 2 ms / 3 ms                    | 37-159 ms (typically 40)                                                                               |
+
+Hyperdrive costs about +2 ms per round trip over the unencrypted baseline, but its connect is 3-4 ms because the real connection is pooled. A Worker-to-DB path with certificate verification therefore exists, but only via Hyperdrive. Its interaction with transaction-heavy locking (Hyperdrive holds a connection per transaction) was fine for the 14-statement transaction tested.
 
 ## Verdicts
 

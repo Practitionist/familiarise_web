@@ -28,7 +28,7 @@ Current owner decision (2026-10-31, `docs/decisions/2026-10-31-job-runtime-exper
 - Caller gets a 202 in 0.65-0.85 s. Runs of 60, 300 and 840 s completed; 960 s was killed at exactly 900 s. Database: 63.9 ms per statement, 704 ms lock hold.
 - A v2 default-export handler that throws is never retried; legacy `exports.handler` throws, `process.exit(1)` and timeouts are retried at +1 and +2 minutes (3 attempts, each repeats the side effect). The v2 reason is our inference.
 - Ten concurrent runs ran in parallel. A draft deploy worked; a PR Deploy Preview was not tested. Set env vars for all deploy contexts. Logs lag by minutes.
-- Async Workloads is a team-wide extension and is already installed on the team, so it also applies to `familiarise`. Docs only, not measured: a CLI deploy lacks its functions (only a server-side Git build adds them). 5 attempts, scheduler polls every 60 s (10 s minimum), delay up to 1 year, state in Blobs, events under 500 KB.
+- Async Workloads (measured; team-wide extension, already installed so it also applies to `familiarise`): a CLI deploy lacks its functions, so it needs a build on Netlify's servers from a linked repository. Event latency median 1.21 s warm; retries at +34 s and 5 attempts then a Blobs dead letter; the 60 s scheduler makes delays 50-94 s late; a standard step of 30 s or more fails (background type ran 840 s); steps repeated in a crash run; `send` is not transactional. Fine for warm fire-and-forget work only.
 
 ## Cloudflare
 

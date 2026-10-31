@@ -41,7 +41,7 @@ Schedule `scd_4b5BfoQPhJUhRGWz6AF16t9ixENj`, cron `* * * * *`, created 11:34:21Z
 `wf3`: three `context.run` steps. `wfsleep`: run, `context.sleep("nap","10s")`, run. Triggered via `@upstash/workflow` Client.trigger. Two rounds (first without my request counter, second with):
 
 - **HTTP requests to Netlify per run: 4 for each workflow** (1 init + 3 steps; for wfsleep the sleep is itself one of the 4). Confirmed from `wf_http` rows: wf3=4, wfsleep=4.
-- Workflow body executions: 8 per run (the body is replayed on every request); each step body ran exactly once (wf_step rows = 1 each). Top-level code outside `ctx.run` therefore runs N times.
+- Workflow body executions: 8 per run (a reviewer read this as a 2x overcount against 4 requests per run; the count was not re-verified, but the handler running on every request is the supported claim) (the body is replayed on every request); each step body ran exactly once (wf_step rows = 1 each). Top-level code outside `ctx.run` therefore runs N times.
 - Run states in the Workflow log: all four runs `RUN_SUCCESS`, every step `STEP_SUCCESS` (init, then s1,s2,s3 / before,nap,after).
   - wf3: 9.6 s and 13.2 s end to end (3 trivial steps, about 2-3 s per hop).
   - wfsleep: 19.4 s and 21.8 s end to end (10 s sleep plus about 2 s per hop; the sleep step reports `sleepFor: 10`).

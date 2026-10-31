@@ -70,10 +70,10 @@ DOCS: the background-function page says nothing about deploy previews (https://d
 
 ## B. Async Workloads
 
-### Not installed (reason)
+### Not installed by this experiment (reason)
 
 It is a **team-level extension** (docs: "install the Async Workloads extension for your team. After you install the extension, all sites on your team will be able to build Async Workloads functions", https://docs.netlify.com/build/async-workloads/get-started/). The team Practitionist-Deploys also owns `familiarise`, so installing would change the build of a site I was told not to touch, and billing is "as any other provisioned resources". I did not try `change-extension-installation`. MCP `get-full-extension-details` shows the extension exists (slug `async-workloads`, UI surfaces: site build-and-deploy configuration and team configuration, sdk 3.0.0) but I could not tell whether it is installed.
-**Owner click path:** https://app.netlify.com/teams/<team-slug>/extensions -> Async Workloads -> Install (team-wide). Then per site: Project configuration > Developer settings > Async Workloads (API key; automatic on non-Starter plans). This team is `orb-pro` (credit-based plan; knowledge-base prerequisite "a project on a credit-based plan").
+**Owner click path (written before the extension was found installed):** https://app.netlify.com/teams/<team-slug>/extensions -> Async Workloads -> Install (team-wide). A later check found it already installed on the team, so the click path is only needed if it is uninstalled; see [netlify-async-workloads.md](./netlify-async-workloads.md). Then per site: Project configuration > Developer settings > Async Workloads (API key; automatic on non-Starter plans). This team is `orb-pro` (credit-based plan; knowledge-base prerequisite "a project on a credit-based plan").
 
 ### Docs findings (DOCS)
 
@@ -105,5 +105,5 @@ Not measured (needs install): event-to-start latency, backoff timing, delay accu
 
 - `DROP SCHEMA lab_nbg CASCADE` run; `select nspname from pg_namespace where nspname like 'lab_nbg%'` returned 0 rows (printed `remaining lab_nbg schemas: 0` and an empty table).
 - Site env var `PROBE_DB_URL` unset (`netlify env:list`: "No environment variables set"), production redeployed without secrets.
-- Site kept. The draft deploy alias `bgpreview` still exists. Extension: not installed by me.
+- Site kept. The draft deploy alias `bgpreview` still exists. Extension: not installed by me (a later check found it installed on the team).
 - Note: the third `len960` attempt (started 12:39) was still running at cleanup; it will fail on DB writes (schema gone) and does no harm. No other site was touched. No repo changes, no commits. Earlier-run schema `lab_nlock` (previous task) not touched here.

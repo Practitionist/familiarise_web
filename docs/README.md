@@ -265,6 +265,7 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [maintenance/11-job-machinery-catalog.md](./maintenance/11-job-machinery-catalog.md) - How every scheduled job runs, what each run records and reports, the observability gaps, and the operations dashboard spec
 - [infrastructure/2026-10-31-scale-path-research.md](./infrastructure/2026-10-31-scale-path-research.md) - Research summary for the jobs and web-tier scale path, the main finding and the recorded owner decisions
 - [infrastructure/2026-10-31-background-jobs-and-cron-options.md](./infrastructure/2026-10-31-background-jobs-and-cron-options.md) - Background jobs and cron: 25 options, what startups do, the cheapest path per stage
+- [infrastructure/2026-10-31-mumbai-vm-provider-research.md](./infrastructure/2026-10-31-mumbai-vm-provider-research.md) - Mumbai VM provider research: Lightsail recommended, EC2 and GCP runners-up, latency figures are estimates until the probe runs
 - [infrastructure/2026-10-31-mumbai-hosting-comparison.md](./infrastructure/2026-10-31-mumbai-hosting-comparison.md) - Costed comparison of hosting in Mumbai
 - [infrastructure/2026-10-31-queue-prototype-owed-refunds.md](./infrastructure/2026-10-31-queue-prototype-owed-refunds.md) - pg-boss against a hand-written Prisma Job table on the owed-refund job
 - [infrastructure/2026-10-31-runtime-strategy-review.md](./infrastructure/2026-10-31-runtime-strategy-review.md) - Unbiased review of job and runtime strategy (a dissenting analysis, not the plan)

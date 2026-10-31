@@ -843,14 +843,7 @@ if (act === "set") {
       name,
       value,
     });
-    console.log(
-      "set",
-      name,
-      r.status,
-      JSON.stringify(r.body)
-        .replace(/postgresql:[^"]*/g, "<redacted>")
-        .slice(0, 150),
-    );
+    console.log("set", name, r.status);
   }
 }
 const list = await api("GET", `/api/v1/projects/${REF}/envvars/prod`);
@@ -2106,12 +2099,8 @@ for (const e of mine.filter((e) => e.state === "DELIVERED").reverse())
 import fs from "fs";
 import pg from "pg";
 const env = Object.fromEntries(
-  fs
-    .readFileSync(new URL(".secrets.env", import.meta.url), "utf8")
-    .trim()
-    .split("\n")
-    .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
-);
+  Object.entries(process.env).filter(([k]) => /^(QSTASH_|PROBE_|WF_)/.test(k)),
+); // credentials come from the environment only
 export const connect = async () => {
   const c = new pg.Client({
     connectionString: env.PROBE_DB_URL,
@@ -3408,12 +3397,8 @@ u.search = "";
 ```js
 const fs = require("fs");
 const sec = Object.fromEntries(
-  fs
-    .readFileSync("../.secrets", "utf8")
-    .trim()
-    .split("\n")
-    .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
-);
+  Object.entries(process.env).filter(([k]) => /^(QSTASH_|PROBE_|WF_)/.test(k)),
+); // credentials come from the environment only
 const BASE = sec.QSTASH_URL,
   H = { Authorization: "Bearer " + sec.QSTASH_TOKEN };
 const APP = "https://fw-lab-qs.vercel.app";
@@ -5417,6 +5402,7 @@ export async function drain(
     m.fetchMs.push(performance.now() - s);
     if (!jobs.length) break;
     m.batches++;
+    const okIds = [];
     for (const j of jobs) {
       if (abandonAfter && m.jobs >= abandonAfter) {
         m.ids.push(j.id);
@@ -5425,6 +5411,7 @@ export async function drain(
       } // fetched, never settled
       try {
         await work(j);
+        okIds.push(j.id);
       } catch {
         await boss.fail(QUEUE, j.id);
         continue;
@@ -5436,10 +5423,7 @@ export async function drain(
       process.exit(0);
     }
     s = performance.now();
-    await boss.complete(
-      QUEUE,
-      jobs.map((j) => j.id),
-    );
+    await boss.complete(QUEUE, okIds); // only jobs whose work succeeded
     m.completeMs.push(performance.now() - s);
     m.jobs += jobs.length;
     if (jobs.length < batchSize) {
@@ -5971,4 +5955,362 @@ export async function ev(run, kind, note = {}) {
   }
 }
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+```
+
+## `lab-netlify-aw2/`
+
+The lab repository name and deploy key are not recorded here. Workload logic is in `lib/handler.mjs`.
+
+### `lab-netlify-aw2/dbadmin.mjs`
+
+```js
+import pg from "pg";
+const c = new pg.Client({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+await c.connect();
+const cmd = process.argv[2];
+if (cmd === "up") {
+  await c.query("CREATE SCHEMA IF NOT EXISTS lab_naw2");
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS lab_naw2.events(id bigserial primary key, run text, kind text, attempt int, note jsonb, region text, ts timestamptz default clock_timestamp())",
+  );
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS lab_naw2.effects(id bigserial primary key, run text, tag text, ts timestamptz default clock_timestamp())",
+  );
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS lab_naw2.orders(id bigserial primary key, run text)",
+  );
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS lab_naw2.account(id int primary key, balance bigint, version int)",
+  );
+  await c.query(
+    "INSERT INTO lab_naw2.account VALUES (1,1000,0),(2,1000,0) ON CONFLICT DO NOTHING",
+  );
+} else if (cmd === "down") {
+  await c.query("DROP SCHEMA IF EXISTS lab_naw2 CASCADE");
+  const r = await c.query(
+    "select nspname from pg_namespace where nspname like 'lab_naw2%'",
+  );
+  console.log("remaining lab_naw2 schemas:", r.rowCount);
+} else if (cmd === "q") {
+  const r = await c.query(process.argv[3]);
+  console.table(r.rows);
+}
+await c.end();
+```
+
+### `lab-netlify-aw2/netlify.toml`
+
+```toml
+[build]
+  publish = "public"
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  external_node_modules = ["pg"]
+```
+
+### `lab-netlify-aw2/package.json`
+
+```json
+{
+  "name": "fw-lab-async-workloads",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@netlify/async-workloads": "^0.0.106",
+    "@netlify/functions": "^6.0.3",
+    "pg": "^8.23.1"
+  }
+}
+```
+
+### `lab-netlify-aw2/lib/db.mjs`
+
+```js
+import pg from "pg";
+export const now = () => performance.now();
+export async function connect() {
+  const c = new pg.Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
+  await c.connect();
+  return c;
+}
+export async function log(run, kind, note = {}, attempt = null) {
+  const c = await connect();
+  try {
+    await c.query(
+      "INSERT INTO lab_naw2.events(run,kind,attempt,note,region) VALUES ($1,$2,$3,$4,$5)",
+      [run, kind, attempt, JSON.stringify(note), process.env.AWS_REGION],
+    );
+  } finally {
+    await c.end();
+  }
+}
+export async function q(sql, params) {
+  const c = await connect();
+  try {
+    return (await c.query(sql, params)).rows;
+  } finally {
+    await c.end();
+  }
+}
+```
+
+### `lab-netlify-aw2/lib/handler.mjs`
+
+```js
+import { log, q, connect, now } from "./db.mjs";
+const med = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.floor(s.length / 2)];
+};
+const p95 = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.ceil(s.length * 0.95) - 1)];
+};
+const r1 = (x) => Math.round(x * 10) / 10;
+
+export async function handle(event) {
+  const { eventName, eventId, eventData = {}, attempt, step: rawStep } = event;
+  const step = {
+    sleep: (...a) => rawStep.sleep(...a),
+    run: (id, fn) =>
+      rawStep.run(id, async () => {
+        await fn();
+        return { ok: true };
+      }),
+  };
+  const run = eventData.run;
+  await log(run, "invoke", { eventName, eventId }, attempt);
+  switch (eventName.toLowerCase()) {
+    case "lat":
+      await log(run, "start", { i: eventData.i }, attempt);
+      return;
+    case "conc":
+      await log(run, "start", { i: eventData.i }, attempt);
+      await new Promise((r) => setTimeout(r, 2000));
+      await log(run, "end", { i: eventData.i }, attempt);
+      return;
+    case "delay":
+      await log(run, "start", { target: eventData.target }, attempt);
+      return;
+    case "retry-once":
+    case "retry-always":
+      await log(run, "start", {}, attempt);
+      await q("INSERT INTO lab_naw2.effects(run,tag) VALUES ($1,$2)", [
+        run,
+        "side-attempt-" + attempt,
+      ]);
+      if (eventName.toLowerCase() === "retry-always" || attempt === 0)
+        throw new Error("boom attempt " + attempt);
+      await log(run, "done", {}, attempt);
+      return;
+    case "sleep": {
+      await step.run("before", () => log(run, "before-sleep", {}, attempt));
+      await step.sleep("nap", eventData.sleep ?? "10s");
+      await step.run("after", () => log(run, "after-sleep", {}, attempt));
+      return;
+    }
+    case "multistep": {
+      await step.run("s1", async () => {
+        await q("INSERT INTO lab_naw2.effects(run,tag) VALUES ($1,'s1')", [
+          run,
+        ]);
+        await log(run, "s1-body", {}, attempt);
+      });
+      await step.run("s2", async () => {
+        await q("INSERT INTO lab_naw2.effects(run,tag) VALUES ($1,'s2-try')", [
+          run,
+        ]);
+        const n = (
+          await q(
+            "SELECT count(*)::int n FROM lab_naw2.effects WHERE run=$1 AND tag='s2-try'",
+            [run],
+          )
+        )[0].n;
+        await log(run, "s2-body", { try: Number(n) }, attempt);
+        if (Number(n) === 1) throw new Error("s2 first try crash");
+      });
+      await step.run("s3", async () => {
+        await q("INSERT INTO lab_naw2.effects(run,tag) VALUES ($1,'s3')", [
+          run,
+        ]);
+        await log(run, "s3-body", {}, attempt);
+      });
+      await log(run, "end", {}, attempt);
+      return;
+    }
+    case "db": {
+      const c = await connect();
+      const out = {};
+      try {
+        const s1 = [];
+        for (let i = 0; i < 50; i++) {
+          const t = now();
+          await c.query("SELECT 1");
+          s1.push(now() - t);
+        }
+        out.select1 = {
+          medianMs: r1(med(s1)),
+          p95Ms: r1(p95(s1)),
+          minMs: r1(Math.min(...s1)),
+          maxMs: r1(Math.max(...s1)),
+        };
+        const holds = [];
+        for (let i = 0; i < 10; i++) {
+          const t = now();
+          await c.query("BEGIN");
+          const r = await c.query(
+            "SELECT id, balance, version FROM lab_naw2.account WHERE id=1 FOR UPDATE",
+          );
+          const v = r.rows[0].version;
+          await c.query("SELECT balance FROM lab_naw2.account WHERE id=2");
+          await c.query("SELECT count(*) FROM lab_naw2.account");
+          await c.query(
+            "UPDATE lab_naw2.account SET balance=balance+1, version=version+1 WHERE id=1 AND version=$1",
+            [v],
+          );
+          await c.query(
+            "UPDATE lab_naw2.account SET balance=balance-1 WHERE id=2",
+          );
+          await c.query("SELECT balance FROM lab_naw2.account WHERE id=1");
+          await c.query("SELECT balance FROM lab_naw2.account WHERE id=2");
+          await c.query("SELECT 1");
+          await c.query("SELECT now()");
+          await c.query("COMMIT");
+          holds.push(now() - t);
+        }
+        out.lockHold = {
+          medianMs: r1(med(holds)),
+          p95Ms: r1(p95(holds)),
+          rawMs: holds.map(r1),
+        };
+      } finally {
+        await c.end();
+      }
+      await log(run, "dbresult", out, attempt);
+      return;
+    }
+    case "dual": {
+      const rows = await q(
+        "SELECT count(*)::int n FROM lab_naw2.orders WHERE run=$1",
+        [run],
+      );
+      await log(run, "start", { orderRowVisible: rows[0].n }, attempt);
+      return;
+    }
+    case "long":
+    case "long-bg": {
+      const ms = eventData.ms;
+      await step.run("long-step", async () => {
+        await log(run, "step-begin", { ms }, attempt);
+        await new Promise((r) => setTimeout(r, ms));
+        await log(run, "step-end", { ms }, attempt);
+      });
+      await log(run, "end", {}, attempt);
+      return;
+    }
+  }
+}
+```
+
+### `lab-netlify-aw2/netlify/functions/send.mjs`
+
+```js
+import { AsyncWorkloadsClient } from "@netlify/async-workloads";
+import { connect, log, q } from "../../lib/db.mjs";
+export default async (req) => {
+  const u = new URL(req.url);
+  const p = (k, d) => u.searchParams.get(k) ?? d;
+  const ev = p("ev", "lat");
+  const n = +p("n", 1);
+  const gap = +p("gap", 300);
+  const par = p("par", "0") === "1";
+  const run = p("run", ev + "-" + Date.now());
+  const origin = p("src", "fn");
+  const client = new AsyncWorkloadsClient();
+  const sendOne = async (i) => {
+    const data = {
+      run: `${run}`,
+      i,
+      ms: +p("ms", 0),
+      sleep: p("sleep", "10s"),
+    };
+    const opts = { data };
+    if (ev === "delay") {
+      opts.delayUntil = Date.now() + +p("delayMs", 30000);
+      data.target = opts.delayUntil;
+    }
+    await log(run, "sent-before", { i, src: origin });
+    const t = performance.now();
+    const res = await client.send(ev, opts);
+    await log(run, "sent-after", {
+      i,
+      rttMs: Math.round(performance.now() - t),
+      res,
+    });
+  };
+  if (u.searchParams.get("mode") === "dual-a") {
+    await q("INSERT INTO lab_naw2.orders(run) VALUES ($1)", [run]); // committed
+    await log(run, "committed-before-send", {});
+    throw new Error("crash before send");
+  }
+  if (u.searchParams.get("mode") === "dual-b") {
+    const c = await connect();
+    try {
+      await c.query("BEGIN");
+      await c.query("INSERT INTO lab_naw2.orders(run) VALUES ($1)", [run]);
+      await sendOne(0);
+      await c.query("ROLLBACK");
+      await log(run, "rolled-back", {});
+    } finally {
+      await c.end();
+    }
+    return Response.json({ run, mode: "dual-b" });
+  }
+  if (par) await Promise.all(Array.from({ length: n }, (_, i) => sendOne(i)));
+  else
+    for (let i = 0; i < n; i++) {
+      await sendOne(i);
+      await new Promise((r) => setTimeout(r, gap));
+    }
+  return Response.json({ run, n });
+};
+export const config = { path: "/api/send" };
+```
+
+### `lab-netlify-aw2/netlify/functions/wl-long-background.mjs`
+
+```js
+import { asyncWorkloadFn } from "@netlify/async-workloads";
+import { handle } from "../../lib/handler.mjs";
+export default asyncWorkloadFn(handle);
+export const asyncWorkloadConfig = { events: ["long-bg"] };
+```
+
+### `lab-netlify-aw2/netlify/functions/wl-main.mjs`
+
+```js
+import { asyncWorkloadFn } from "@netlify/async-workloads";
+import { handle } from "../../lib/handler.mjs";
+export default asyncWorkloadFn(handle);
+export const asyncWorkloadConfig = {
+  events: [
+    "lat",
+    "conc",
+    "delay",
+    "retry-once",
+    "retry-always",
+    "sleep",
+    "multistep",
+    "db",
+    "dual",
+    "long",
+  ],
+};
 ```
