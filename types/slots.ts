@@ -14,6 +14,10 @@ export type TIntervalTiming = {
   allocatedTo?: string;
   bookingStatus?: "available" | "partially-booked" | "fully-booked";
   type: "WEEKLY" | "CUSTOM"; // Make type required to distinguish slot source
+  /** Not yet past, but it starts inside the minimum booking lead time. */
+  tooSoon?: boolean;
+  /** The subscription's cycle or per-day cap is already full here. */
+  limitReached?: boolean;
 };
 
 export type TWeeklySlot = {

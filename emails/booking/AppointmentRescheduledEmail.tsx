@@ -21,6 +21,10 @@ export interface AppointmentRescheduledEmailProps {
   proposedBy?: string;
   /** PROPOSED only; when absent the copy says "before it lapses". */
   respondByText?: string;
+  /** MOVED by a host: the free full-refund leave ends then (recipient's zone). */
+  leaveByText?: string;
+  /** MOVED: the recipient already holds another session at the new time. */
+  clash?: boolean;
   dashboardUrl: string;
   unsubscribeUrl?: string | null;
 }
@@ -32,7 +36,15 @@ function informationalBody(props: AppointmentRescheduledEmailProps): string {
   const stays = oldStartsAtText ? `; it stays on ${oldStartsAtText}` : "";
   switch (outcome) {
     case "MOVED":
-      return `Your ${appointmentType} moved from ${oldStartsAtText ?? "its earlier time"} to ${newStartsAtText ?? "a new time"}.`;
+      return [
+        `Your ${appointmentType} moved from ${oldStartsAtText ?? "its earlier time"} to ${newStartsAtText ?? "a new time"}.`,
+        props.clash ? "You already have a session then." : "",
+        props.leaveByText
+          ? `Keep your seat — nothing to do. Can't make it? Leave with a full refund until ${props.leaveByText}.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
     case "RELEASED":
       return `The ${appointmentType}${oldStartsAtText ? ` on ${oldStartsAtText}` : ""} was released. You will be told once a new time is set.`;
     case "DECLINED":

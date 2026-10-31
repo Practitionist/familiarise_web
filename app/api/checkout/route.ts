@@ -23,7 +23,10 @@ import { DomainVerificationRequiredError } from "@/lib/enterprise/governance";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ZodError } from "zod";
 import { Prisma } from "@prisma/client";
-import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-replay";
+import {
+  checkoutRequestFingerprint,
+  replayByIdempotencyKey,
+} from "@/lib/payments/operations/checkout-replay";
 import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
@@ -53,6 +56,7 @@ export async function POST(req: NextRequest) {
   // (already consumed) request body.
   let replayUserId: string | undefined;
   let replayKey: string | undefined;
+  let replayFingerprint: string | undefined;
   try {
     const authResult = await requireApiAuth({ expectUser: true });
     if (authResult.error) return authResult.error;
@@ -80,11 +84,19 @@ export async function POST(req: NextRequest) {
     // column is never null in practice; the NOT NULL flip is staged for the
     // pre-MVP reset.
     validatedData.clientIdempotencyKey ??= globalThis.crypto.randomUUID();
-    replayKey = validatedData.clientIdempotencyKey;
-    if (replayKey) {
-      const replay = await replayByIdempotencyKey(session.user.id, replayKey);
-      if (replay) return replay;
+    replayFingerprint = checkoutRequestFingerprint(validatedData);
+    const replay = await replayByIdempotencyKey(
+      session.user.id,
+      validatedData.clientIdempotencyKey,
+      replayFingerprint,
+    );
+    if (replay === "fingerprint-mismatch") {
+      // A changed price input is a new attempt; order reuse retires the stale order.
+      validatedData.clientIdempotencyKey = globalThis.crypto.randomUUID();
+    } else if (replay) {
+      return replay;
     }
+    replayKey = validatedData.clientIdempotencyKey;
 
     const { buyerCountry } = await resolveCheckoutTaxContext({
       userId: session.user.id,
@@ -172,10 +184,15 @@ export async function POST(req: NextRequest) {
     if (
       isUniqueViolationOn(error, "clientIdempotencyKey") &&
       replayUserId &&
-      replayKey
+      replayKey &&
+      replayFingerprint
     ) {
-      const replay = await replayByIdempotencyKey(replayUserId, replayKey);
-      if (replay) return replay;
+      const replay = await replayByIdempotencyKey(
+        replayUserId,
+        replayKey,
+        replayFingerprint,
+      );
+      if (replay instanceof NextResponse) return replay;
     }
     // ZodError from the request schemas — the first issue's message and field
     if (error instanceof ZodError) {

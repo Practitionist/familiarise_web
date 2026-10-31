@@ -33,7 +33,7 @@ export function DesktopOnlyNotice({
     // Latches: once true it never goes back. Unmounting on a shrink would
     // destroy the calendar's own slot selection while TimePicker keeps its
     // copy, so a resize, a split screen or a browser zoom leaves the footer
-    // claiming "N slots selected" over a grid showing none — and submitting
+    // claiming times are picked over a grid showing none — and submitting
     // sends times the user can no longer see. The CSS gate still hides the
     // subtree below `lg`, which is what the notice is actually for; this only
     // decides whether the fetch-on-mount ever happens.

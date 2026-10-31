@@ -149,6 +149,15 @@ The `.env.sample` file is the canonical reference for what vars are needed. It i
 | `BETTER_AUTH_TRUSTED_ORIGINS` | `https://familiarisenow.com` | `http://localhost:3000` | Comma-separated additional allowed CORS origins                        |
 | `NEXT_PUBLIC_APP_URL`         | `https://familiarisenow.com` | `http://localhost:3000` | Used by auth client + for building absolute URLs (e.g. referral links) |
 
+### Variables that must differ by context
+
+Two variables decide what a non-production deploy may do to the database it shares with production. Check both in the Netlify UI after any context change.
+
+- **`NEXT_PUBLIC_SENTRY_ENVIRONMENT`** is `production` in the production context only. It must stay `preview` on deploy-preview and branch-deploy. Only a `production` deploy runs background jobs and writes production-only shared state (the maintenance window, the discount-code pause and the `cron:heartbeat:last` key); every other deploy refuses jobs with 409 `JOB_RUN_PRODUCTION_ONLY` and skips those writes (`lib/cron/dispatch-refusal.ts`, `lib/production-state.ts`). Netlify's `deploy_context` is a Sentry tag only, so `branch-deploy` and `deploy-preview` both record `preview`.
+- **`CRON_SECRET`** has a separate value per context (set 2026-10-30), so a preview's secret cannot call production's cleanup routes.
+
+Local `next dev` is not a deploy: it still runs jobs, against whatever database `.env` names, but it never toggles maintenance or touches the heartbeat.
+
 ### Optional performance variables
 
 These variables are not required for the app to boot, but they tune runtime behaviour. Leave them unset to accept the defaults.
@@ -1214,7 +1223,7 @@ Unlike Vercel Fluid Compute or an always-on Node server (which share one process
 If your SaaS handles payments, bookings, refunds, emails, or webhooks, you need reliable background sweeps:
 
 1. **Never rely on GitHub Actions `schedule:` for sub-hourly SLAs (`#866`):**
-   ADR 22 measured GitHub Actions `*/15 * * * *` workflows firing roughly once every **~100 minutes** during peak GitHub load — 6× slower than declared. Use GitHub Actions only as an hourly/daily/weekly backstop (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`), and use Netlify Scheduled Functions (`netlify/functions/cron-tick.mts` at `*/5 * * * *`) for latency-sensitive sweeps.
+   ADR 22 measured GitHub Actions `*/15 * * * *` workflows firing roughly once every **~100 minutes** during peak GitHub load — 6× slower than declared. Do not schedule registry jobs from GitHub Actions at all: every job, hourly, daily and weekly included, runs on the Netlify scheduled function (`netlify/functions/cron-tick.mts` at `*/5 * * * *`), and the three fleet workflows are deleted.
 2. **Undocumented Netlify Scheduled Function Trap — Returning `5xx` Triggers 3× Immediate Retries (`#1686`):**
    Netlify's docs state that Scheduled Functions ignore their return body and do not mention retries. In production logs (`2026-09-17`), we proved that **whenever a Scheduled Function returns HTTP `500`, Netlify immediately re-invokes it 3 times within ~10 seconds** (`22:50:18`, `22:50:25`, `22:50:35`), re-firing every downstream job 3×!
    - **Rule:** Scheduled functions must **always return HTTP `200`** (`statusFor` in `cron-tick.mts`) and report target failures via structured logs + Sentry Crons check-in (`sendCheckIn("error", durationMs)`).
@@ -1450,6 +1459,6 @@ The following approaches were previously tested or deployed on Netlify and have 
 - **Scheduled Keep-Warm Pinger (`netlify/functions/keep-warm.mts` & `KEEP_WARM_CONCURRENCY`)**: Previously ran every 4 minutes (3 parallel pings = 32,400 invocations/month against `/api/perf/probe-bare`) to keep 3 Next.js Lambda containers warm while `#1124`'s cold-start stall was misattributed to AWS Lambda `ap-southeast-1` container provisioning. Both `netlify/functions/keep-warm.mts` and `__tests__/maintenance/keep-warm.test.ts` were permanently deleted in PR `#1972` once disabling `preloadEntriesOnStart` reduced cold starts across 12-way bursts to `0.97–1.90s` (guarded by `__tests__/lib/next-config-preload.test.ts`).
 - **2048 MB Per-Function Memory Overrides in `netlify.toml`**: Tested via A/B deployment to mitigate cold-instance stalls; raising Lambda memory to 2048 MB doubled GB-hour billing without preventing `NextNodeServer`'s 606-route preload stall.
 - **Standalone Background Function for Ledger Reconciliation (`netlify/functions/reconcile-ledgers-background.mts`)**: Previously used a 15-minute Netlify Background Function with multi-step database cursors (`advanceReconcileRun`, `ReconcileCursorState`) because row-by-row JS reconciliation timed out at the ~26 s edge cap (and Background Functions silently do not run on deploy previews). Superseded by rewriting `runLedgerReconciliation` (`scripts/reconcile/reconcile-ledgers.ts`) into 5 set-based SQL `GROUP BY` queries that complete in milliseconds inside standard Route Handlers (`/api/cleanup/reconcile-ledgers` and `/api/admin/reconcile-ledgers`).
-- **41 Standalone Per-Job GitHub Actions Cron YAML Files & 50 `/api/cleanup/<job>/route.ts` Route Wrappers**: Previously each scheduled sweep had its own `.github/workflows/<job>.yml` file, `jobs/<domain>/<job>.ts` wrapper, and individual `/api/cleanup/<job>/route.ts` folder. Consolidated into a single dynamic route (`app/api/cleanup/[job]/route.ts` backed by `lib/cron/cleanup-registry.ts`), `netlify/functions/cron-tick.mts` for sub-15-minute phase-staggered sweeps, and 3 tiered GitHub Actions workflows (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`).
+- **41 Standalone Per-Job GitHub Actions Cron YAML Files & 50 `/api/cleanup/<job>/route.ts` Route Wrappers**: Previously each scheduled sweep had its own `.github/workflows/<job>.yml` file, `jobs/<domain>/<job>.ts` wrapper, and individual `/api/cleanup/<job>/route.ts` folder. Consolidated into a single dynamic route (`app/api/cleanup/[job]/route.ts` backed by `lib/cron/cleanup-registry.ts`), and `netlify/functions/cron-tick.mts` for every schedule. (The three tiered GitHub Actions workflows that followed `cron-intra-day.yml`, `cron-daily.yml` and `cron-weekly.yml` were later deleted.)
 
 > **See Also**: [Lighthouse Audit & Core Web Vitals Playbook](../performance/05-lighthouse-audit-and-cwv-playbook.md) for client-side Core Web Vitals (LCP, TBT, CLS), `next/image` `remotePatterns` governance, lazy Sentry client SDK loading (`instrumentation-client.ts`), and application/platform anti-runaway billing guardrails (`#1973`).

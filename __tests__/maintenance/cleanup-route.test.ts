@@ -88,6 +88,7 @@ import {
   CronLockUnavailableError,
 } from "../../lib/cron/with-cron-lock";
 import { resetThrottledCaptureForTesting } from "../../lib/observability/throttled-capture";
+import { BackgroundDispatchRefusedError } from "../../lib/cron/dispatch-refusal";
 import {
   assertNotInMaintenance,
   MaintenanceActiveError,
@@ -246,6 +247,63 @@ describe("cleanupRoute", () => {
     });
 
     expect((await POST(request())).status).toBe(409);
+  });
+
+  it("answers an off-production background dispatch with the typed refusal and a CANCELLED row", async () => {
+    const { POST } = cleanupRoute({
+      job: "expire-event-channels",
+      run: async () => {
+        throw new BackgroundDispatchRefusedError("expire-event-channels");
+      },
+      status: () => 202,
+    });
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(409);
+    expect(res.headers.get("x-run-outcome")).toBe("refused");
+    expect(await res.json()).toMatchObject({
+      code: "BACKGROUND_DISPATCH_PRODUCTION_ONLY",
+    });
+    expect(executions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "CANCELLED",
+          result: expect.objectContaining({
+            outcome: "refused",
+            reason: "background-dispatch-production-only",
+          }),
+        }),
+      }),
+    );
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it("refuses every job on a preview deploy, which shares production's database", async () => {
+    process.env.SITE_ID = "site";
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "preview";
+    const run = jest.fn();
+    const { POST } = cleanupRoute({ job: "process-payouts", run });
+
+    const res = await POST(request());
+
+    expect(run).not.toHaveBeenCalled();
+    expect(res.status).toBe(409);
+    expect(res.headers.get("x-run-outcome")).toBe("refused");
+    expect(await res.json()).toMatchObject({ code: "JOB_RUN_PRODUCTION_ONLY" });
+    expect(executions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "CANCELLED",
+          result: expect.objectContaining({
+            outcome: "refused",
+            reason: "job-run-production-only",
+            environment: "preview",
+          }),
+        }),
+      }),
+    );
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
   // #1822 owner decision — one shared key, 15-min window: two jobs, one capture.

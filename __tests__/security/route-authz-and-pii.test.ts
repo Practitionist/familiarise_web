@@ -48,7 +48,6 @@ describe("consultant statutory PII is never returned by a bare include", () => {
   const ROUTES = [
     "app/api/user/reviews/route.ts",
     "app/api/user/reviews/[id]/route.ts",
-    "app/api/dashboard/consultee/[consulteeId]/route.ts",
     "app/api/admin/earnings/route.ts",
   ];
 

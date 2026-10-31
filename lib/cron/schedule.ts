@@ -70,10 +70,24 @@ export const TARGETS = [
   "reconcile-sessions",
   "prune-system-job-executions",
   "prune-system-events",
+  "databreach-deadline-alerts",
+  "reconcile-occurrence-availability",
+  "auth-tokens",
+  "reconcile-document-storage",
+  "prune-audit-logs",
+  "sweep-verification",
+  "expire-stale-collaborator-invites",
+  "purge-unverified-users",
+  "archive-webhook-events",
+  "consent-retention-sweeper",
+  "expire-onboarding-drafts",
   ...STREAM_LIFECYCLE_JOBS,
 ] as const;
 
 export type Target = (typeof TARGETS)[number];
+
+/** The ticker's per-slot claim rows; bookkeeping, not a job run, so job views exclude it. */
+export const TICK_CLAIM_JOB = "cron-tick";
 
 /**
  * The `SystemJobExecution.jobName` a target's core writes when it differs from the
@@ -88,6 +102,7 @@ const JOB_NAME_OVERRIDES: Partial<Record<Target, string | null>> = {
   "abandoned-org-top-ups": "cleanup-abandoned-org-top-ups",
   "tds-return-draft": "tds-26q-draft-export",
   "reconcile-sessions": "reconcile-orphaned-sessions",
+  "auth-tokens": "cleanup-auth-tokens",
   "sentry-ingest-canary": null,
   "stream-control-plane-drift": null,
 };
@@ -165,6 +180,18 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "reconcile-sessions": 5,
   "prune-system-job-executions": 500,
   "prune-system-events": 500,
+  "databreach-deadline-alerts": 50,
+  "reconcile-occurrence-availability": null,
+  "auth-tokens": null,
+  "reconcile-document-storage": null,
+  "prune-audit-logs": 500,
+  "sweep-verification": null,
+  "expire-stale-collaborator-invites": null,
+  "purge-unverified-users": null,
+  "archive-webhook-events": null,
+  // Count-only: deletion stays behind the route's explicit delete flag.
+  "consent-retention-sweeper": 500,
+  "expire-onboarding-drafts": null,
   "expire-recordings": null,
   "reconcile-orphaned-recordings": null,
   "wind-down-deactivated-orgs": null,
@@ -184,7 +211,7 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "dispatch-outbound-webhooks": 15,
   "drain-notification-outbox": 10,
   "retry-failed-emails": 15,
-  "sentry-ingest-canary": 360,
+  "sentry-ingest-canary": 1440,
   "sync-payment-earnings": 15,
   "release-earnings": 15,
   "reconcile-refunds": 15,
@@ -239,6 +266,17 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-sessions": 30,
   "prune-system-job-executions": 30,
   "prune-system-events": 60,
+  "databreach-deadline-alerts": 60,
+  "reconcile-occurrence-availability": 60,
+  "auth-tokens": 1440,
+  "reconcile-document-storage": 1440,
+  "prune-audit-logs": 1440,
+  "sweep-verification": 1440,
+  "expire-stale-collaborator-invites": 1440,
+  "purge-unverified-users": 1440,
+  "archive-webhook-events": 1440,
+  "consent-retention-sweeper": 1440,
+  "expire-onboarding-drafts": 1440,
   "expire-recordings": 60,
   "reconcile-orphaned-recordings": 60,
   "wind-down-deactivated-orgs": 60,
@@ -313,6 +351,17 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-sessions": 10,
   "prune-system-job-executions": 25,
   "prune-system-events": 10,
+  "databreach-deadline-alerts": 15,
+  "reconcile-occurrence-availability": 30,
+  "auth-tokens": 180,
+  "reconcile-document-storage": 185,
+  "prune-audit-logs": 190,
+  "sweep-verification": 200,
+  "expire-stale-collaborator-invites": 205,
+  "purge-unverified-users": 215,
+  "archive-webhook-events": 20,
+  "consent-retention-sweeper": 25,
+  "expire-onboarding-drafts": 35,
   "expire-recordings": 5,
   "reconcile-orphaned-recordings": 25,
   "wind-down-deactivated-orgs": 55,
@@ -321,7 +370,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
 };
 
 /** Regression ceiling for due work, enforced by the calendar test. */
-export const MAX_TARGETS_PER_TICK = 10;
+export const MAX_TARGETS_PER_TICK = 12;
 
 /**
  * A UTC calendar window. Inside it the target fires on its every/offset slots;
@@ -338,6 +387,12 @@ export interface CalendarWindow {
 }
 const DAILY_0300: CalendarWindow = { startMinuteUtc: 180, windowMinutes: 1020 };
 const DAILY_2330: CalendarWindow = { startMinuteUtc: 1410, windowMinutes: 180 };
+/** Sunday 00:00–01:00 UTC; each weekly target fires once on its own offset inside it. */
+const WEEKLY_SUNDAY: CalendarWindow = {
+  weekdayUtc: 0,
+  startMinuteUtc: 0,
+  windowMinutes: 60,
+};
 /** Retention band between the daytime money window and the 23:30 one. */
 const DAILY_RETENTION: CalendarWindow = {
   startMinuteUtc: 1200,
@@ -395,6 +450,9 @@ export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   "stream-control-plane-drift": { startMinuteUtc: 75, windowMinutes: 60 },
   "prune-system-job-executions": DAILY_RETENTION,
   "prune-system-events": DAILY_RETENTION,
+  "archive-webhook-events": WEEKLY_SUNDAY,
+  "consent-retention-sweeper": WEEKLY_SUNDAY,
+  "expire-onboarding-drafts": WEEKLY_SUNDAY,
 };
 
 /**
@@ -523,6 +581,16 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reconcile-sessions": 24_000,
   "prune-system-job-executions": 24_000,
   "prune-system-events": 20_000,
+  "databreach-deadline-alerts": 20_000,
+  "reconcile-occurrence-availability": 24_000,
+  "auth-tokens": 20_000,
+  "reconcile-document-storage": 24_000,
+  "prune-audit-logs": 20_000,
+  "sweep-verification": 24_000,
+  "purge-unverified-users": 20_000,
+  "archive-webhook-events": 20_000,
+  "consent-retention-sweeper": 20_000,
+  "expire-onboarding-drafts": 20_000,
 };
 
 /**

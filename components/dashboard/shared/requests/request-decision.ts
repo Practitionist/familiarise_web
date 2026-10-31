@@ -60,11 +60,43 @@ export function classifyRequestedConflict(result: {
     case "ALREADY_ALLOCATED":
       return "genuine-conflict";
     case "RESCHEDULE_STATE_CHANGED":
+    case "ILLEGAL_TRANSITION":
+    case "REQUEST_CHANGED_ELSEWHERE":
+    case "NOT_PENDING":
       return "stale";
     default:
-      // Co-host clash, illegal transition, slot taken, lock busy, or a code
-      // this switch does not know: the request is still allocatable.
+      // Co-host clash, slot taken, lock busy, or a code this switch does not
+      // know: the request is still allocatable.
       return "stay-open";
+  }
+}
+
+/**
+ * The proposal-answer twin of `classifyRequestedConflict`: a proposal that is
+ * gone, closed or frozen is stale; an allocator refusal of the proposed times
+ * (taken, lock busy, co-host clash) leaves the request answerable.
+ */
+export function classifyProposalConflict(
+  status: number,
+  code: string | undefined,
+): "stale" | "stay-open" | null {
+  if (status === 404) return "stale";
+  if (status !== 409) return null;
+  switch (code) {
+    case "PROPOSAL_NOT_FOUND":
+    case "PROPOSAL_NOT_OPEN":
+    case "PROPOSAL_EXPIRED":
+    case "RESCHEDULE_NO_LONGER_OPEN":
+    case "DISPUTE_ACTIVE":
+      return "stale";
+    default:
+      return classifyRequestedConflict({
+        success: false,
+        httpStatus: status,
+        errorCode: code,
+      }) === "stay-open"
+        ? "stay-open"
+        : "stale";
   }
 }
 

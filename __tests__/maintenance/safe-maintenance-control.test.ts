@@ -69,6 +69,9 @@ const request = (body: unknown) =>
     method: "POST",
     body: JSON.stringify(body),
   });
+// Maintenance state is production state; other deploys skip the write.
+process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
+
 beforeEach(() => {
   jest.clearAllMocks();
   getState.mockResolvedValue({

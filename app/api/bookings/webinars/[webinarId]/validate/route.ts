@@ -168,18 +168,27 @@ export async function POST(
       const result: SlotConflictResult = {
         conflicts: categorized.conflicts,
         outsideAvailability: categorized.outsideAvailability,
+        tooSoon: categorized.tooSoon,
         validSlots: categorized.validSlots,
       };
 
       return NextResponse.json({ data: result });
     } catch (validationError) {
       // Zod validation errors - return 400 Bad Request
+      // The issue paths are developer detail: logged, never the user copy.
       if (validationError instanceof ZodError) {
-        const errorMessage = validationError.errors
-          .map((err) => `${err.path.join(".")}: ${err.message}`)
-          .join("; ");
-
-        return NextResponse.json({ error: errorMessage }, { status: 400 });
+        console.error(
+          "Validation request refused:",
+          JSON.stringify(validationError.errors),
+        );
+        return NextResponse.json(
+          {
+            error:
+              "This request couldn't be read. Reload the page and try again.",
+            errorCode: "VALIDATION_ERROR",
+          },
+          { status: 400 },
+        );
       }
       throw validationError; // Re-throw non-validation errors
     }
@@ -192,10 +201,8 @@ export async function POST(
     console.error("Webinar validation error:", error);
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to validate webinar slot",
+        error: "Couldn't check these times. Try again in a moment.",
+        errorCode: "UNKNOWN_ERROR",
       },
       { status: 500 },
     );

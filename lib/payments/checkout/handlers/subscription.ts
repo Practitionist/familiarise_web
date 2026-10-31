@@ -10,8 +10,10 @@ import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
   firstCycleWindow,
+  planEndOf,
   sessionsTotalOf,
   subscriptionEntitlement,
+  subscriptionPlanEnd,
 } from "@/lib/booking/entitlement";
 import {
   AppointmentsType,
@@ -22,7 +24,10 @@ import {
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import type { SubscriptionCheckoutResult } from "@/lib/payments/checkout/schema";
-import { resolvePriorSubscriptionForRenewal } from "@/lib/payments/checkout/renewal";
+import {
+  resolvePlanStart,
+  resolvePriorSubscriptionForRenewal,
+} from "@/lib/payments/checkout/renewal";
 
 /**
  * #1766 — the statuses under which a subscription still holds its
@@ -106,37 +111,36 @@ export async function handleSubscriptionCheckout(
   const isSchedulingPeriodRequest = Boolean(
     data.schedulingPeriodStartsAt || data.renewsSubscriptionId,
   );
-  // #1766 — window = first cycle; a client end is clamped/ignored, never
-  // refused. Start from the client (default now), end derived server-side.
-  // #1743 — when renewing a prior subscription, anchor the new cycle start to
-  // max(prior.schedulingPeriodEndsAt, requestedStart, now) so the renewal
-  // starts seamlessly when the prior cycle ends.
+  // The persisted window is the first cycle; a client end is ignored. A
+  // renewal starts no earlier than the prior plan's end, and the plan end is
+  // fixed here once, from the start.
   const schedulingTimezone = resolveSchedulingTimezone(
     plan.consultantProfile?.user?.timezone,
   );
-  const now = new Date();
-  const requestedStart = data.schedulingPeriodStartsAt
-    ? new Date(data.schedulingPeriodStartsAt)
-    : now;
-  const effectiveStart = priorSubscription
-    ? new Date(
-        Math.max(
-          priorSubscription.schedulingPeriodEndsAt.getTime(),
-          requestedStart.getTime(),
-          now.getTime(),
-        ),
-      )
-    : requestedStart;
+  const priorPlanEnd = priorSubscription
+    ? subscriptionPlanEnd(priorSubscription)
+    : null;
   const { start: startDate, end: endDate } =
     precomputedSchedulingPeriod &&
-    (!priorSubscription ||
-      precomputedSchedulingPeriod.startsAt >=
-        priorSubscription.schedulingPeriodEndsAt)
+    (!priorPlanEnd || precomputedSchedulingPeriod.startsAt >= priorPlanEnd)
       ? {
           start: precomputedSchedulingPeriod.startsAt,
           end: precomputedSchedulingPeriod.endsAt,
         }
-      : firstCycleWindow(plan, effectiveStart, schedulingTimezone);
+      : firstCycleWindow(
+          plan,
+          resolvePlanStart(
+            data.schedulingPeriodStartsAt,
+            priorPlanEnd,
+            new Date(),
+          ),
+          schedulingTimezone,
+        );
+  const planEndsAt = planEndOf(
+    startDate,
+    plan.durationInMonths,
+    schedulingTimezone,
+  );
 
   // #1766 — the double-buy guard follows the entitlement, not the window: a
   // live row with sessions left blocks; a spent one is a renewal-as-repurchase.
@@ -153,6 +157,7 @@ export async function handleSubscriptionCheckout(
       sessionsTotal: true,
       schedulingPeriodStartsAt: true,
       schedulingTimezone: true,
+      planEndsAt: true,
       subscriptionPlan: {
         select: {
           totalSessions: true,
@@ -186,6 +191,7 @@ export async function handleSubscriptionCheckout(
           occurrences: row.appointment?.occurrences ?? [],
           schedulingPeriodStartsAt: row.schedulingPeriodStartsAt,
           schedulingTimezone: row.schedulingTimezone,
+          planEndsAt: row.planEndsAt,
         }).remaining,
       ),
     0,
@@ -211,6 +217,7 @@ export async function handleSubscriptionCheckout(
         bookingSource: "DIRECT_CHECKOUT",
         schedulingPeriodStartsAt: startDate,
         schedulingPeriodEndsAt: endDate,
+        planEndsAt,
         // #1076 — caps bucket on the consultant's days, not the column default.
         schedulingTimezone,
         // #1766 — the entitlement is frozen at purchase; plan edits never move it.

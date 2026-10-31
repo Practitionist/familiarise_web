@@ -346,7 +346,7 @@ must still be verified on the published deployment.
 | `stream-sync`                                                     | 08:50, 09:50, 10:50      | Lifecycle background worker                |
 | `expire-event-channels`                                           | 08:55, 09:55, 10:55      | Registered lifecycle background worker     |
 
-The week and 400-day calendar tests enforce at most ten targets on every tick,
+The week and 400-day calendar tests enforce at most eleven targets on every tick (the cap is twelve, leaving one free slot),
 including monthly/quarterly collisions. The resumable ledger job retains its
 crowded-slot yield. Existing Stream membership and control-plane coverage stays
 in the roster. Daily windows run bounded slices rather than an unbounded nightly

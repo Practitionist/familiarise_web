@@ -7,6 +7,7 @@
  * instead of POSTing /assignments once per member.
  *
  * Composition contract (mirrors the single-assign POST exactly):
+ * - Each row passes `checkAssignee`: an ACTIVE LEARNER, never the actor.
  * - programs.assign + canSponsor gate; SUSPENDED org → 409 ORG_NOT_ACTIVE
  *   (DEACTIVATED never reaches the route — requireOrgAccess 403s first,
  *   so the arm deliberately does not exist here).
@@ -41,6 +42,12 @@ import {
   claimProgramAssignment,
   ProgramAssignmentOverlapError,
 } from "@/lib/api/organizations/program-helpers";
+import {
+  ASSIGNEE_SELECT,
+  checkAssignee,
+  SPONSOR_SEAT_MESSAGES,
+  type AssigneeRefusal,
+} from "@/lib/api/organizations/sponsor-seat";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -263,6 +270,14 @@ export async function POST(
   );
 }
 
+/** Per-row copy for a refused enrolment, same rule as the single assign. */
+const ENROLL_REFUSAL: Record<AssigneeRefusal["code"], string> = {
+  FOREIGN: "Membership does not belong to this organization",
+  INACTIVE: "Membership is not ACTIVE",
+  SELF: SPONSOR_SEAT_MESSAGES.SELF,
+  ROLE: SPONSOR_SEAT_MESSAGES.ROLE,
+};
+
 async function enrollOne(params: {
   orgId: string;
   orgName: string;
@@ -290,18 +305,16 @@ async function enrollOne(params: {
   return withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-        const membership = await tx.membership.findFirst({
-          where: { id: membershipId, organizationId: orgId },
-          select: { id: true, status: true, userId: true },
-        });
-        if (!membership) {
-          throw new EnrollRowError(
-            "Membership does not belong to this organization",
-          );
-        }
-        if (membership.status !== "ACTIVE") {
-          throw new EnrollRowError("Membership is not ACTIVE");
-        }
+        const checked = checkAssignee(
+          await tx.membership.findFirst({
+            where: { id: membershipId, organizationId: orgId },
+            select: ASSIGNEE_SELECT,
+          }),
+          membershipId,
+          actorMembershipId,
+        );
+        if (!checked.ok) throw new EnrollRowError(ENROLL_REFUSAL[checked.code]);
+        const { membership } = checked;
 
         const { assignment, created } = await claimProgramAssignment(tx, {
           programId,

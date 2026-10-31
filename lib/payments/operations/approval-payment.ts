@@ -40,6 +40,7 @@ import {
   type ApprovalLock,
 } from "@/utils/appointmentlock";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
+import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 
 // ============================================================================
 // Type Definitions
@@ -88,6 +89,8 @@ export interface ApprovalPaymentResult {
   /** What the buyer is charged: list price plus GST (#1583 C-P0-01). */
   amount: number;
   currency: Currency;
+  /** When the pay-link stops being payable; what the client is told. */
+  expiresAt: Date;
 }
 
 // ============================================================================
@@ -157,6 +160,124 @@ export class ApprovalAlreadyPaidError extends Error {
   }
 }
 
+/** A pay window ends this long before the first session starts. */
+export const PAY_WINDOW_CLOSES_BEFORE_START_MS = 15 * 60_000;
+/** A window shorter than this is not worth minting: the client could not pay in time. */
+export const MIN_PAY_WINDOW_MS = 30 * 60_000;
+
+/** 409 — the first session starts too soon for the client to pay before it. */
+export class ApprovalTooCloseToStartError extends Error {
+  readonly code = "TOO_CLOSE_TO_START";
+  readonly httpStatus = 409;
+  constructor() {
+    super(
+      "This session starts too soon for the client to pay. Pick a later time.",
+    );
+    this.name = "ApprovalTooCloseToStartError";
+  }
+}
+
+/**
+ * The pay window: 24 hours, but never past 15 minutes before the first live
+ * session, so nobody pays for a session that has started. A request with no
+ * placed session yet gets the plain 24 hours.
+ */
+export function payWindowEnd(now: Date, firstSessionStart: Date | null): Date {
+  const window = now.getTime() + APPROVAL_PAYMENT_WINDOW_MS;
+  if (!firstSessionStart) return new Date(window);
+  return new Date(
+    Math.min(
+      window,
+      firstSessionStart.getTime() - PAY_WINDOW_CLOSES_BEFORE_START_MS,
+    ),
+  );
+}
+
+/** The earliest live session start of the request this mint pays for. */
+async function firstSessionStartOf(
+  params: CreateApprovalPaymentParams,
+): Promise<Date | null> {
+  const appointment = params.appointmentId
+    ? { appointmentId: params.appointmentId }
+    : params.consultationId
+      ? { appointment: { consultationId: params.consultationId } }
+      : params.subscriptionId
+        ? { appointment: { subscriptionId: params.subscriptionId } }
+        : null;
+  if (!appointment) return null;
+  const first = await prisma.appointmentOccurrence.findFirst({
+    where: { ...appointment, ...liveOccurrenceWhere },
+    orderBy: { startsAt: "asc" },
+    select: { startsAt: true },
+  });
+  return first?.startsAt ?? null;
+}
+
+/** Whether a payment for the request behind this mint has already succeeded. */
+async function requestAlreadyPaid(
+  params: CreateApprovalPaymentParams,
+): Promise<boolean> {
+  if (params.appointmentType === "TRIAL" && params.trialId) {
+    const trial = await prisma.trial.findUnique({
+      where: { id: params.trialId },
+      select: { paymentId: true },
+    });
+    if (!trial?.paymentId) return false;
+    const payment = await prisma.payment.findUnique({
+      where: { id: trial.paymentId },
+      select: { paymentStatus: true },
+    });
+    return payment?.paymentStatus === PaymentStatus.SUCCEEDED;
+  }
+  const appointment = params.appointmentId
+    ? { appointmentId: params.appointmentId }
+    : params.consultationId
+      ? { appointment: { consultationId: params.consultationId } }
+      : params.subscriptionId
+        ? { appointment: { subscriptionId: params.subscriptionId } }
+        : null;
+  if (!appointment) return false;
+  const paid = await prisma.payment.count({
+    where: {
+      ...appointment,
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      deletedAt: null,
+    },
+  });
+  return paid > 0;
+}
+
+/** Whether the request behind this mint still awaits payment (the same states the reuse guard accepts). */
+async function requestStillPayable(
+  params: CreateApprovalPaymentParams,
+): Promise<boolean> {
+  if (params.appointmentType === "TRIAL" && params.trialId) {
+    const trial = await prisma.trial.findUnique({
+      where: { id: params.trialId },
+      select: { status: true, paymentId: true },
+    });
+    return (
+      trial?.status === TrialStatus.AWAITING_PAYMENT ||
+      (trial?.status === TrialStatus.PENDING && trial.paymentId === null)
+    );
+  }
+  if (params.appointmentType === "CONSULTATION" && params.consultationId) {
+    const row = await prisma.consultation.findUnique({
+      where: { id: params.consultationId },
+      select: { status: true },
+    });
+    return row?.status === AppointmentStatus.APPROVED_PENDING_PAYMENT;
+  }
+  if (params.appointmentType === "SUBSCRIPTION" && params.subscriptionId) {
+    const row = await prisma.subscription.findUnique({
+      where: { id: params.subscriptionId },
+      select: { status: true },
+    });
+    return row?.status === AppointmentStatus.APPROVED_PENDING_PAYMENT;
+  }
+  return false;
+}
+
 export async function createApprovalPaymentIntent(
   params: CreateApprovalPaymentParams,
 ): Promise<ApprovalPaymentResult> {
@@ -201,6 +322,14 @@ export async function createApprovalPaymentIntent(
   );
 
   try {
+    // Re-read under the mint lock: a request cancelled or expired since the
+    // caller decided to mint must never get a payable order.
+    if (!(await requestStillPayable(params))) {
+      // A capture already landed: the request is paid, not lapsed.
+      if (await requestAlreadyPaid(params))
+        throw new ApprovalAlreadyPaidError();
+      throw new ApprovalWindowLapsedError();
+    }
     // BUG-D: Validate user has consultee profile (required for webhook to succeed)
     const user = await prisma.user.findUnique({
       where: { id: params.userId },
@@ -294,12 +423,20 @@ export async function createApprovalPaymentIntent(
           checkoutUrl: existingPayment.paymentIntent,
           amount: existingPayment.amount,
           currency: existingPayment.currency,
+          expiresAt:
+            existingPayment.expiresAt ??
+            payWindowEnd(new Date(), await firstSessionStartOf(params)),
         };
       }
     }
 
-    // #1861 L1 — one deadline for the gateway's capture window and the row.
-    const holdExpiresAt = new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS);
+    // One deadline for the gateway's capture window and the row, clamped to
+    // the first session's start; too short a window is refused.
+    const now = new Date();
+    const holdExpiresAt = payWindowEnd(now, await firstSessionStartOf(params));
+    if (holdExpiresAt.getTime() - now.getTime() < MIN_PAY_WINDOW_MS) {
+      throw new ApprovalTooCloseToStartError();
+    }
     const description = `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`;
     const preMintIntent = `${PRE_MINT_INTENT_PREFIX}${globalThis.crypto.randomUUID()}`;
     const pricing = {
@@ -421,6 +558,7 @@ export async function createApprovalPaymentIntent(
       checkoutUrl: paymentResponse.client_secret,
       amount,
       currency,
+      expiresAt: holdExpiresAt,
     };
   } finally {
     await unlockApproval(lock);
@@ -581,6 +719,7 @@ async function claimRowForRemint(
       paymentIntent: true,
       amount: true,
       currency: true,
+      expiresAt: true,
     },
   });
   if (fresh?.paymentStatus === PaymentStatus.SUCCEEDED) {
@@ -598,6 +737,7 @@ async function claimRowForRemint(
         checkoutUrl: fresh.paymentIntent,
         amount: fresh.amount,
         currency: fresh.currency,
+        expiresAt: fresh.expiresAt ?? fields.holdExpiresAt,
       },
     };
   }

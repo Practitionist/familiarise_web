@@ -10,6 +10,7 @@ import {
   type CleanupRouteHandlers,
 } from "@/lib/cron/cleanup-route";
 import { adminActorId } from "@/lib/cron/run-context";
+import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
 import type { JobCategory } from "@/lib/cron/job-categories";
 import { reportSentryError } from "@/lib/observability/report";
 import type { FrozenWallet } from "@/lib/payments/wallet-freeze";
@@ -957,7 +958,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             await import("@/lib/payments/billing/consumer-invoice-healer");
           return healConsumerInvoices({
             limit: parseLimitParamOrDefault(req, MAX_CONSUMER_INVOICE_HEALS),
-            windowStart: parseWindowStartParam(req),
             startedAt,
           });
         },
@@ -1685,6 +1685,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         summarize: (r) => ({
           proposalsExpired: r.proposalsExpired,
           proposalsExpiredUnrestored: r.proposalsExpiredUnrestored,
+          hasMore: r.hasMore,
         }),
         items: (r) => ({ processed: r.proposalsExpired }),
         failureMessage: "Failed to expire reschedule proposals",
@@ -1717,6 +1718,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           stuck: r.stuck,
           errors: r.errors,
           owed: r.owed,
+          hasMore: r.hasMore,
         }),
         // A failed owed attempt answers 207 too; the summary's `failed` keeps it partial, not attention.
         needsAttention: (r) =>
@@ -1829,7 +1831,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Sentry ingest canary",
       description:
-        "Probe Sentry ingest and quota and email an alert when either fails",
+        "Read Sentry's error outcomes for the last day and alert by email and Better Stack on rejections",
       category: "Alerts",
       manualRun: "inline",
     },
@@ -1837,60 +1839,37 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       cleanupRoute({
         job: "sentry-ingest-canary",
         run: async () => {
-          const { describeIngest, isIngestHealthy, probeSentryIngest } =
+          const token = process.env.SENTRY_STATS_TOKEN;
+          if (!token) {
+            const skipped: ConfigSkip = "SENTRY_STATS_TOKEN not configured";
+            reportConfigSkip("sentry-ingest-canary", skipped);
+            return { healthy: true, skipped };
+          }
+          const { checkSentryIngest, describeIngest, isIngestHealthy } =
             await import("@/lib/observability/ingest-canary");
-          const {
-            sendSentryIngestAlert,
-            canaryAlertNeeded,
-            recordCanaryAlertSent,
-          } = await import("@/lib/observability/ingest-alert");
+          const { sendSentryIngestAlert } =
+            await import("@/lib/observability/ingest-alert");
           const { checkSentryQuota } =
             await import("@/lib/observability/quota-alert");
-          const probe = await probeSentryIngest();
-          const healthy = isIngestHealthy(probe);
-
-          if (!healthy) {
-            const needed = await canaryAlertNeeded(probe.verdict);
-            const alerted = needed
-              ? await sendSentryIngestAlert(probe).catch((err: unknown) => {
-                  console.error(
-                    "[sentry-ingest-canary] alert could not be sent:",
-                    err instanceof Error ? err.message : String(err),
-                  );
-                  return false;
-                })
-              : false;
-            if (alerted) await recordCanaryAlertSent(probe.verdict);
-            // After the ingest alert: the stats fetch and its email
-            // must not spend the function ceiling ahead of the page.
-            const quota = await checkSentryQuota();
-            return {
-              healthy,
-              verdict: probe.verdict,
-              status: probe.status,
-              eventId: probe.eventId,
-              alerted,
-              alertSuppressed: !needed,
-              detail: describeIngest(probe),
-              quota,
-            };
-          }
-
-          // 70% quota warning rides the canary; never throws.
+          const check = await checkSentryIngest(token);
+          const healthy = isIngestHealthy(check);
+          const alerted = healthy ? false : await sendSentryIngestAlert(check);
+          // After the page: the 70% warning must not spend the ceiling ahead of it.
           const quota = await checkSentryQuota();
           return {
-            healthy: true,
-            verdict: probe.verdict,
-            status: probe.status,
-            eventId: probe.eventId,
-            alerted: false,
+            healthy,
+            verdict: check.verdict,
+            accepted: check.accepted,
+            rejections: check.rejections,
+            alerted,
+            detail: describeIngest(check),
             quota,
           };
         },
         status: (result) => (result.healthy ? 200 : 503),
         items: (r) => ({ processed: 1, errors: r.healthy ? 0 : 1 }),
         failureMessage:
-          "The Sentry ingest canary route failed to run. This is a fault in the canary, not a verdict about Sentry — check the log line above.",
+          "The Sentry ingest canary route failed to run. This is a fault in the canary, not a verdict about Sentry.",
       }),
   },
 
@@ -1912,9 +1891,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         },
         summarize: (r) => ({
           scanned: r.scanned,
+          plansScanned: r.plansScanned,
+          plansWaiting: r.plansWaiting,
           stamped: r.stamped,
           refunded: r.refunded,
           errors: r.errors,
+          hasMore: r.hasMore,
+          checkpoint: r.checkpoint,
         }),
         failureMessage: "Failed to settle cancelled class sessions",
       }),

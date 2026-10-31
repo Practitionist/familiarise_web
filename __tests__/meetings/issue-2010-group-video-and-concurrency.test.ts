@@ -29,6 +29,9 @@ import {
   type HostedClass,
 } from "@/lib/booking/class-sessions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { liveParticipant } from "@/lib/booking/participants";
+import { OCCUPYING_OCCURRENCE_WHERE } from "@/utils/scheduling-engine/occupancyPolicy";
+import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import prisma from "@/lib/prisma";
 
 describe("Issue #2010 Part 1 — Webinar & Class Stream Video Settings Contract", () => {
@@ -169,7 +172,9 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
         findMany: jest.fn().mockResolvedValue([
           {
             consultantProfileId: "cp-collab-1",
-            consultantProfile: { user: { name: "Co-Host Alice" } },
+            consultantProfile: {
+              user: { id: "u-collab-1", name: "Co-Host Alice" },
+            },
           },
         ]),
       },
@@ -192,11 +197,18 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
           occurrences: {
             some: {
               consultantProfileId: "cp-collab-1",
-              deletedAt: null,
-              completionStatus: {
-                notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"],
-              },
+              ...OCCUPYING_OCCURRENCE_WHERE,
             },
+          },
+        },
+        // A co-host booked as someone else's client is busy too, unless the
+        // seat is a lapsed hold.
+        {
+          participants: {
+            some: expect.objectContaining({
+              ...liveParticipant("u-collab-1"),
+              NOT: expect.objectContaining({ status: "HELD" }),
+            }),
           },
         },
       ]),
@@ -333,17 +345,31 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
       .mockImplementation(async (fn: unknown) =>
         (fn as (tx: unknown) => Promise<unknown>)(mockTx),
       );
+    // The slot batch's pre-reads (the source's span, the accepted co-hosts)
+    // and the host check run beside the transaction.
+    const spanSpy = jest
+      .spyOn(prisma.appointmentOccurrence, "findFirst")
+      .mockResolvedValue({
+        startsAt: missedStart,
+        endsAt: missedEnd,
+      } as never);
+    const cohostSpy = jest
+      .spyOn(prisma.collaborator, "findMany")
+      .mockResolvedValue([]);
+    const hostCheckSpy = jest
+      .spyOn(ScheduleValidationService.prototype, "revalidateConflicts")
+      .mockResolvedValue({ isValid: true, errors: [], warnings: [] });
 
     const hosted: HostedClass = {
       found: true,
-      isHost: true,
       appointment: { id: "appt-class-1", organizationId: null } as never,
       cls: {
         id: "class-1",
         classPlan: {
           title: "System Design Cohort",
+          id: "plan-class-1",
           consultantProfileId: "cp-host-fallback",
-          consultantProfile: { user: { name: "Host" } },
+          consultantProfile: { user: { id: "u-host", name: "Host" } },
         },
       } as never,
     };
@@ -369,6 +395,9 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
       );
     } finally {
       txSpy.mockRestore();
+      spanSpy.mockRestore();
+      cohostSpy.mockRestore();
+      hostCheckSpy.mockRestore();
     }
   });
 });

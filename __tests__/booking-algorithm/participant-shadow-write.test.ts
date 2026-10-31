@@ -137,7 +137,10 @@ describe("every creation path records the participant edge (#1544 / #1554)", () 
     ],
     ["lib/trials/cancellation.ts", /transitionParticipant\(/],
     ["lib/payments/operations/booking-refund.ts", /transitionParticipant\(/],
-    ["prisma/seedFiles/6a-create-appointments.ts", /participants: \{/],
+    [
+      "prisma/seedFiles/6a-create-appointments.ts",
+      /participants: (\{|requestParticipants\(|eventParticipants\()/,
+    ],
     [
       "scripts/appointments/reconcile-occurrence-availability.ts",
       /participant_drift/,

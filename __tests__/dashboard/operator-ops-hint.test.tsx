@@ -34,7 +34,7 @@ jest.mock(
   () => ({
     useConsultantEventActions: () => ({
       handleCancelConfirm: jest.fn(),
-      handleUnschedule: jest.fn(),
+      handleRetime: jest.fn(),
       isLoading: false,
     }),
   }),
@@ -43,8 +43,8 @@ jest.mock(
   "../../components/appointments/consultee/CancelConfirmationDialog",
   () => ({ CancelConfirmationDialog: () => null }),
 );
-jest.mock("../../components/appointments/UnscheduleConfirmationDialog", () => ({
-  UnscheduleConfirmationDialog: () => null,
+jest.mock("../../components/appointments/RetimeDialog", () => ({
+  RetimeDialog: () => null,
 }));
 jest.mock(
   "../../app/dashboard/organization/[orgId]/appointments/AllocateOrgBookingDialog",

@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { Prisma } from "@prisma/client";
 
-import { isDeadlock } from "@/lib/db/pg-errors";
+import { isDeadlock, isWriteConflict } from "@/lib/db/pg-errors";
 import { noteRunCounter } from "@/lib/cron/run-counters";
 
 const SERIALIZABLE_MAX_RETRIES = 3;
@@ -45,8 +45,9 @@ function reportSerializableRetry(
  * two SQLSTATEs, and both of them are transient here:
  *
  * - 40001 `serialization_failure` — the SSI abort. The driver adapter maps it
- *   to `TransactionWriteConflict`, so Prisma hands it to us already classified
- *   as P2034 and the `instanceof`/`code` check below is the whole test.
+ *   to `TransactionWriteConflict`. Raised by a statement, Prisma hands it to us
+ *   as P2034; raised at COMMIT, it escapes as the raw DriverAdapterError of
+ *   that kind, which `isWriteConflict` also matches.
  * - 40P01 `deadlock_detected` — a row-lock deadlock, the same class of failure
  *   from the caller's point of view: the victim transaction is aborted, so
  *   replaying it is safe. It gets its own predicate because the adapter
@@ -69,8 +70,9 @@ export async function withSerializableRetry<T>(
       return await fn();
     } catch (error) {
       const isSerializationFailure =
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2034";
+        (error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2034") ||
+        isWriteConflict(error);
       const deadlock = !isSerializationFailure && isDeadlock(error);
 
       if (!isSerializationFailure && !deadlock) {

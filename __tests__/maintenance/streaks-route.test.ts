@@ -109,6 +109,7 @@ describe("GET /api/health/jobs/streaks", () => {
     const report = streakReportSchema.parse(await res.json());
     expect(report["abandoned-payments"]).toEqual({
       lastCompletedAt: null,
+      lastFailedAt: now.toISOString(),
       seenRecently: true,
     });
     expect(isRepeatedFailure(15, report["abandoned-payments"], now)).toBe(true);
@@ -143,6 +144,7 @@ describe("GET /api/health/jobs/streaks", () => {
     expect(body).toEqual({
       "abandoned-payments": {
         lastCompletedAt: started.toISOString(),
+        lastFailedAt: expect.any(String),
         seenRecently: true,
       },
     });

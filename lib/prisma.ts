@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { moneyResultExtensions } from "./prisma-extensions";
 import { ssoSecretDecryptExtension } from "./prisma-sso-secret-extension";
+import { onNetlify } from "./runtime-host";
 
 // A saturated Supavisor (txn pooler :6543) made pg hang 5–9.6s on connect
 // (EAUTHTIMEOUT), surfacing to users as "the edge function timed out". The two
@@ -54,7 +55,7 @@ const PG_POOL_MAX = z.coerce
   .int()
   .min(1)
   .safeParse(process.env.PG_POOL_MAX);
-if (process.env.NETLIFY && !IS_NEXT_BUILD && !PG_POOL_MAX.success) {
+if (onNetlify() && !IS_NEXT_BUILD && !PG_POOL_MAX.success) {
   throw new Error(
     `PG_POOL_MAX must be a positive integer on Netlify (got "${process.env.PG_POOL_MAX ?? ""}"). Set PG_POOL_MAX=1 in the site's environment variables.`,
   );

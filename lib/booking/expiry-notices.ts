@@ -1,7 +1,14 @@
 import { notifyAppointmentCancelled } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
 import { EMAIL_BUDGET_MS, sendAppointmentCancelledEmail } from "@/lib/email";
+import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
+import {
+  attemptStaged,
+  type StagedRecipientEmail,
+} from "@/lib/email/send-to-recipients";
+import type { Tx } from "@/lib/prisma";
 
 /**
  * #1703 D2 — the consultee's notice when a request expires without them:
@@ -38,27 +45,12 @@ export async function notifyConsulteeRequestExpired(
 ): Promise<void> {
   const dashboardUrl = notificationHref(notice.organizationId, "appointments");
   try {
-    await notifyAppointmentCancelled([notice.consulteeUserId], {
-      ...notificationScope(notice.organizationId),
-      appointmentId: notice.appointmentId,
-      appointmentType: notice.appointmentType,
-      consultantName: notice.consultantName,
-      consulteeName: notice.consulteeName,
-      planTitle: notice.planTitle,
-      ...(notice.startsAt ? { dateTime: notice.startsAt.toISOString() } : {}),
-      dashboardUrl,
-      cancelledBy: "system",
-      reason: notice.reason,
-    });
+    await notifyAppointmentCancelled(
+      [notice.consulteeUserId],
+      bellPayload(notice, dashboardUrl),
+    );
     await sendAppointmentCancelledEmail(
-      {
-        appointmentId: notice.appointmentId,
-        userIds: [notice.consulteeUserId],
-        startsAt: notice.startsAt,
-        cancelledBy: "Familiarise",
-        reason: notice.reason,
-        dashboardUrl,
-      },
+      emailArgs(notice, dashboardUrl),
       EMAIL_BUDGET_MS.JOB,
     );
   } catch (error) {
@@ -67,4 +59,71 @@ export async function notifyConsulteeRequestExpired(
       error,
     );
   }
+}
+
+export interface StagedRequestExpiredNotice {
+  bells: StagedTrigger[];
+  emails: StagedRecipientEmail[];
+}
+
+/**
+ * The same notice written to the bell and email outboxes inside the caller's
+ * transaction, so it commits with the state change: once committed, the
+ * outbox drain delivers it even if the inline attempt never runs.
+ */
+export async function stageConsulteeRequestExpired(
+  tx: Tx,
+  notice: RequestExpiredNotice,
+): Promise<StagedRequestExpiredNotice> {
+  const dashboardUrl = notificationHref(notice.organizationId, "appointments");
+  const bells = await notifyAppointmentCancelled(
+    [notice.consulteeUserId],
+    bellPayload(notice, dashboardUrl),
+    { tx },
+  );
+  const emails = await stageAppointmentCancelledEmail(
+    tx,
+    emailArgs(notice, dashboardUrl),
+  );
+  return {
+    bells: bells.flatMap((bell) => (bell.staged ? [bell.staged] : [])),
+    emails,
+  };
+}
+
+/** The inline attempt after commit. Never throws: the drain retries a miss. */
+export async function attemptStagedRequestExpired(
+  staged: StagedRequestExpiredNotice,
+  budgetMs: number,
+): Promise<void> {
+  await Promise.allSettled([
+    ...staged.bells.map((bell) => attemptTrigger(bell)),
+    attemptStaged(staged.emails, "APPOINTMENT_CANCELLED", budgetMs),
+  ]);
+}
+
+function bellPayload(notice: RequestExpiredNotice, dashboardUrl: string) {
+  return {
+    ...notificationScope(notice.organizationId),
+    appointmentId: notice.appointmentId,
+    appointmentType: notice.appointmentType,
+    consultantName: notice.consultantName,
+    consulteeName: notice.consulteeName,
+    planTitle: notice.planTitle,
+    ...(notice.startsAt ? { dateTime: notice.startsAt.toISOString() } : {}),
+    dashboardUrl,
+    cancelledBy: "system" as const,
+    reason: notice.reason,
+  };
+}
+
+function emailArgs(notice: RequestExpiredNotice, dashboardUrl: string) {
+  return {
+    appointmentId: notice.appointmentId,
+    userIds: [notice.consulteeUserId],
+    startsAt: notice.startsAt,
+    cancelledBy: "Familiarise",
+    reason: notice.reason,
+    dashboardUrl,
+  };
 }

@@ -1,20 +1,30 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+} from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { AlertTriangle, CalendarX } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { EmptyState } from "@/components/dashboard/DataCard";
+import { ErrorState } from "@/components/dashboard/ErrorState";
 import { Button } from "@/components/ui/button";
 import { AppointmentsShell } from "@/components/appointments/AppointmentsShell";
 import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
-import { CONSULTANT_APPOINTMENTS_WINDOW_MONTHS } from "@/lib/appointments/window";
+import {
+  CONSULTANT_APPOINTMENTS_RECENT_CAP,
+  CONSULTANT_APPOINTMENTS_RECENT_PAST,
+} from "@/lib/appointments/window";
 import { useConsultantAppointmentsAdapter } from "./ConsultantAppointmentsAdapter";
+
+/** The trials side list shows the newest page; older trials live in history. */
+const TRIALS_PAGE = 100;
 
 /** Old HomeTab deep-links carry groupRecurringAppointments keys — map the
  *  non-recurring "single-<appointmentId>" form onto the VM row id. */
@@ -71,19 +81,15 @@ export default function AppointmentsPageClient({
     placeholderData: keepPreviousData,
   });
 
-  // #1703 B12 — the default read stops 12 months back; "Load older" swaps
-  // in the unbounded read once, on demand.
+  // The default read stops 12 months back; "Load older" appends one keyset
+  // page of earlier history per click.
   const [showOlder, setShowOlder] = useState(false);
-  const {
-    data: allAppointments,
-    isFetching: olderLoading,
-    isError: olderError,
-    refetch: refetchOlder,
-  } = useQuery({
-    ...consultantQueries.appointmentsAll,
+  const older = useInfiniteQuery({
+    ...consultantQueries.appointmentsOlder,
     enabled: showOlder,
-    placeholderData: keepPreviousData,
   });
+  const olderLoading = older.isFetching;
+  const olderError = older.isError;
   // A second click after a failed read must start a new request; flipping
   // an already-true flag starts nothing.
   const olderButtonLabel = (loading: boolean, failed: boolean): string => {
@@ -92,11 +98,36 @@ export default function AppointmentsPageClient({
     return "Load older";
   };
   const loadOlder = () => {
-    if (showOlder) void refetchOlder();
-    else setShowOlder(true);
+    if (!showOlder) setShowOlder(true);
+    else if (older.isError) void older.refetch();
+    else void older.fetchNextPage();
   };
-  const appointments =
-    showOlder && allAppointments ? allAppointments : recentAppointments;
+  const olderRows = useMemo(
+    () => older.data?.pages.flatMap((page) => page.rows) ?? [],
+    [older.data],
+  );
+  // A row that ended between two reads can arrive twice; the list keys by id.
+  const appointments = useMemo(
+    () =>
+      recentAppointments
+        ? [
+            ...new Map(
+              [...recentAppointments, ...olderRows].map((row) => [row.id, row]),
+            ).values(),
+          ]
+        : undefined,
+    [recentAppointments, olderRows],
+  );
+  // The recent read caps live rows; say so rather than drop them silently.
+  const liveCapped =
+    (recentAppointments ?? []).filter((row) => {
+      const live = (row.occurrences ?? []).filter((o) => !o.deletedAt);
+      return (
+        live.length === 0 ||
+        live.some((o) => new Date(o.endsAt).getTime() >= Date.now())
+      );
+    }).length >= CONSULTANT_APPOINTMENTS_RECENT_CAP;
+  const historyComplete = showOlder && older.isSuccess && !older.hasNextPage;
 
   // Side queries keep their own state so a slow/failed trials or
   // classes/webinars read degrades to a notice instead of blanking the list.
@@ -109,27 +140,17 @@ export default function AppointmentsPageClient({
     // Side lists change slowly; a short stale window dedupes remount refetches.
     staleTime: 2 * 60_000,
     queryKey: ["trials", consultantId, "ALL"] as const,
-    queryFn: async () => {
-      const allTrials: NonNullable<
+    queryFn: async (): Promise<
+      NonNullable<
         Parameters<typeof mapConsultantAppointments>[0]["scheduledTrials"]
-      > = [];
-      let page = 1;
-      let totalPages = 1;
-      const MAX_PAGES = 10;
-      while (page <= totalPages && page <= MAX_PAGES) {
-        const res = await fetch(
-          `/api/trials?consultantProfileId=${consultantId}&limit=100&page=${page}`,
-        );
-        if (!res.ok) throw new Error("Failed to fetch trials");
-        const json = await res.json();
-        if (Array.isArray(json.data)) {
-          allTrials.push(...json.data);
-        }
-        totalPages =
-          typeof json.meta?.totalPages === "number" ? json.meta.totalPages : 1;
-        page += 1;
-      }
-      return allTrials;
+      >
+    > => {
+      const res = await fetch(
+        `/api/trials?consultantProfileId=${consultantId}&limit=${TRIALS_PAGE}&page=1`,
+      );
+      if (!res.ok) throw new Error("Failed to fetch trials");
+      const json = await res.json();
+      return Array.isArray(json.data) ? json.data : [];
     },
   });
 
@@ -143,13 +164,11 @@ export default function AppointmentsPageClient({
     queryKey: ["consultant-classes", consultantId] as const,
     queryFn: async () => {
       const res = await fetch(
-        `/api/bookings/classes?consultantProfileId=${consultantId}`,
+        `/api/bookings/classes?consultantProfileId=${consultantId}&unscheduled=1`,
       );
       if (!res.ok) throw new Error("Failed to fetch classes");
       const { data } = await res.json();
-      return (data ?? []).filter(
-        (c: { appointment: unknown }) => !c.appointment,
-      );
+      return data ?? [];
     },
   });
 
@@ -163,13 +182,11 @@ export default function AppointmentsPageClient({
     queryKey: ["consultant-webinars-unscheduled", consultantId] as const,
     queryFn: async () => {
       const res = await fetch(
-        `/api/bookings/webinars?consultantProfileId=${consultantId}`,
+        `/api/bookings/webinars?consultantProfileId=${consultantId}&unscheduled=1`,
       );
       if (!res.ok) throw new Error("Failed to fetch webinars");
       const { data } = await res.json();
-      return (data ?? []).filter(
-        (w: { appointment: unknown }) => !w.appointment,
-      );
+      return data ?? [];
     },
   });
 
@@ -226,23 +243,12 @@ export default function AppointmentsPageClient({
       <div className="pt-6">
         {isLoading && !appointments ? (
           <AppointmentsPageSkeleton />
-        ) : error ? (
-          <EmptyState
-            icon={CalendarX}
+        ) : error && !appointments ? (
+          <ErrorState
             title="Couldn't load appointments"
-            description={
-              error instanceof Error
-                ? error.message
-                : "Failed to load appointments. Please try again."
-            }
-            action={
-              <Button
-                variant="outline"
-                onClick={() => void refetchAppointments()}
-              >
-                Retry
-              </Button>
-            }
+            description="Check your connection and try again."
+            error={error}
+            onRetry={() => void refetchAppointments()}
           />
         ) : (
           <AppointmentsShell
@@ -252,14 +258,21 @@ export default function AppointmentsPageClient({
             highlightedId={highlightedId}
             notices={notices}
             footer={
-              <div className="flex items-center justify-center gap-3 py-4 text-xs text-muted-foreground">
-                {showOlder && allAppointments ? (
+              <div className="flex flex-wrap items-center justify-center gap-3 py-4 text-xs text-muted-foreground">
+                {liveCapped && (
+                  <span>
+                    Showing your {CONSULTANT_APPOINTMENTS_RECENT_CAP} most
+                    recent upcoming appointments.
+                  </span>
+                )}
+                {historyComplete ? (
                   <span>Showing your full history.</span>
                 ) : (
                   <>
                     <span>
-                      Showing the last {CONSULTANT_APPOINTMENTS_WINDOW_MONTHS}{" "}
-                      months and everything upcoming.
+                      {showOlder
+                        ? "Showing everything upcoming and earlier history."
+                        : `Showing everything upcoming and your latest ${CONSULTANT_APPOINTMENTS_RECENT_PAST} past appointments.`}
                     </span>
                     <Button
                       variant="outline"

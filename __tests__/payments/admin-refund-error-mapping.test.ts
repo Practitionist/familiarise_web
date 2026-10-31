@@ -22,6 +22,7 @@ jest.mock("../../lib/payments/operations/refund", () => {
     constructor(
       message: string,
       public code: string,
+      public detail?: Record<string, unknown>,
     ) {
       super(message);
       this.name = "RefundValidationError";
@@ -88,7 +89,11 @@ import { POST } from "../../app/api/admin/refunds/route";
 const { RefundValidationError, RefundGatewayError } = jest.requireMock(
   "../../lib/payments/operations/refund",
 ) as {
-  RefundValidationError: new (m: string, c: string) => Error;
+  RefundValidationError: new (
+    m: string,
+    c: string,
+    detail?: Record<string, unknown>,
+  ) => Error;
   RefundGatewayError: new (m: string, c: string) => Error;
 };
 
@@ -186,6 +191,26 @@ describe("a thrown refund answers with its typed code", () => {
     expect(res.status).toBe(409);
     expect(body.code).toBe("REFUND_BLOCKED_BY_DISPUTE");
     expect(body.error).toContain("open dispute");
+  });
+
+  it("keeps ids out of the copy and answers them as detail", async () => {
+    refundPayment.mockRejectedValue(
+      new RefundValidationError(
+        "This payment was not made with credits. Refund an amount instead.",
+        "NOT_CREDIT_FUNDED",
+        { paymentId: "pay_row_1" },
+      ),
+    );
+
+    const res = await POST(refundRequest(SINGLE), ROUTE);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      code: "NOT_CREDIT_FUNDED",
+      error:
+        "This payment was not made with credits. Refund an amount instead.",
+      paymentId: "pay_row_1",
+    });
   });
 
   it("maps RefundGatewayError to 502", async () => {

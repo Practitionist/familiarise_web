@@ -79,6 +79,12 @@ interface RequestedSlotsDialogProps {
    */
   confirmation?: RequestedSlotsConfirmation | null;
   /**
+   * The server refused the last confirm but the request is still allocatable
+   * (a time taken, a busy lock, a co-host clash): its sentence shows here and
+   * each new `attempt` re-checks the times.
+   */
+  refusal?: { message: string; attempt: number } | null;
+  /**
    * A reschedule with no answerable consultee proposal cannot confirm its
    * stored times: those rows still carry the times being moved AWAY from
    * (the reschedule route never rewrites startsAt), so the server's
@@ -144,6 +150,11 @@ const CHIP: Record<
     className:
       "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
   },
+  tooSoon: {
+    label: "Too soon",
+    icon: XCircle,
+    className: "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-200",
+  },
   outsidePeriod: {
     label: "Outside period",
     icon: CalendarRange,
@@ -184,6 +195,7 @@ export function RequestedSlotsDialog({
   schedulingPeriod,
   confirming = false,
   confirmation = null,
+  refusal = null,
   rescheduleNeedsAllocator = false,
   allocateHref,
   appointmentHrefFor,
@@ -277,6 +289,7 @@ export function RequestedSlotsDialog({
       setValidationResult({
         conflicts: validationResponse.data?.conflicts || [],
         outsideAvailability: validationResponse.data?.outsideAvailability || [],
+        tooSoon: validationResponse.data?.tooSoon || [],
         outsidePeriod: outsidePeriodSlots,
         validSlots: validationResponse.data?.validSlots || [],
       });
@@ -295,12 +308,20 @@ export function RequestedSlotsDialog({
     }
   }, [requestType, requestedSlots, requestId, schedulingPeriod]);
 
-  // Validate on open — not while the success state is showing.
+  // Validate on open and after a refused confirm — not while the success state is showing.
+  const refusalAttempt = refusal?.attempt ?? 0;
   useEffect(() => {
     if (open && !confirmation) {
       validateSlots();
     }
-  }, [open, confirmation, requestId, requestedSlots, validateSlots]);
+  }, [
+    open,
+    confirmation,
+    requestId,
+    requestedSlots,
+    validateSlots,
+    refusalAttempt,
+  ]);
 
   const verdicts = requestedSlots.map((slot) =>
     verdictFor(slot, validationResult),
@@ -312,11 +333,14 @@ export function RequestedSlotsDialog({
   const outsideHours = verdicts.filter(
     (v) => v.kind === "outsideAvailability",
   ).length;
-  // Conflicts and out-of-period slots cannot be overridden; out-of-hours can.
-  const blocked = conflicts > 0 || outsidePeriod > 0;
+  const tooSoon = verdicts.filter((v) => v.kind === "tooSoon").length;
+  // Conflicts, too-soon and out-of-period slots cannot be overridden; out-of-hours can.
+  const blocked = conflicts > 0 || outsidePeriod > 0 || tooSoon > 0;
   const firstBlockedSlot = requestedSlots.find((slot, index) => {
     const kind = verdicts[index].kind;
-    return kind === "conflict" || kind === "outsidePeriod";
+    return (
+      kind === "conflict" || kind === "outsidePeriod" || kind === "tooSoon"
+    );
   });
 
   // Mirrors the decline dialog: while the confirm is in flight the dialog
@@ -427,6 +451,14 @@ export function RequestedSlotsDialog({
 
     return (
       <div className="flex flex-col gap-3">
+        {refusal && (
+          <p
+            role="alert"
+            className="rounded-md bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-100"
+          >
+            {refusal.message}
+          </p>
+        )}
         {/* One sentence, not a 2×2 of counters (#1703 F5). */}
         <p className="text-sm font-medium" aria-live="polite">
           {summarizeVerdicts(verdicts)}

@@ -25,6 +25,8 @@ type Store = {
 
 const mockStore: Store = {} as Store;
 const mockStreamUpdate = jest.fn();
+const mockExtendSlotInterval = jest.fn();
+const mockUnlockSlotInterval = jest.fn();
 
 function resetStore() {
   mockStore.meeting = {
@@ -150,6 +152,15 @@ jest.mock("../../lib/stream-client", () => ({
   }),
 }));
 
+jest.mock("../../utils/appointmentlock", () => {
+  const actual = jest.requireActual("../../utils/appointmentlock");
+  return {
+    ...actual,
+    extendSlotInterval: (...a: unknown[]) => mockExtendSlotInterval(...a),
+    unlockSlotInterval: (...a: unknown[]) => mockUnlockSlotInterval(...a),
+  };
+});
+
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
@@ -159,6 +170,8 @@ jest.mock("../../lib/observability/report", () => ({
 
 import { POST as extendPOST } from "../../app/api/meetings/[meetingId]/extend/route";
 import { classifySessionOutcome } from "../../lib/booking/session-outcome";
+import { getMockRedis } from "../../lib/redis-mock";
+import { tryLockSlotBatch } from "../../utils/appointmentlock";
 
 const extend = () =>
   extendPOST({} as never, {
@@ -168,7 +181,23 @@ const extend = () =>
 beforeEach(() => {
   resetStore();
   mockStreamUpdate.mockReset();
+  const locks = jest.requireActual("../../utils/appointmentlock");
+  mockExtendSlotInterval
+    .mockReset()
+    .mockImplementation(locks.extendSlotInterval);
+  mockUnlockSlotInterval
+    .mockReset()
+    .mockImplementation(locks.unlockSlotInterval);
+  getMockRedis().clear();
 });
+
+const extraMinutes = () => [
+  {
+    consultantProfileId: "cp-host",
+    startsAt: BOOKED_END,
+    endsAt: new Date(BOOKED_END.getTime() + 15 * MIN),
+  },
+];
 
 describe("POST /api/meetings/[meetingId]/extend — immutable booked end", () => {
   it("leaves the booked end alone, so a session that ends on time after an extension is delivered", async () => {
@@ -226,5 +255,66 @@ describe("POST /api/meetings/[meetingId]/extend — immutable booked end", () =>
     expect(again.status).toBe(409);
     expect(await again.json()).toMatchObject({ alreadyExtended: true });
     expect(mockStore.stream.cap).toBe(7200);
+  });
+
+  it("keeps the extra minutes' host atoms held, so no booking lands in them", async () => {
+    expect((await extend()).status).toBe(200);
+
+    const booking = await tryLockSlotBatch(extraMinutes());
+    expect(booking.ok).toBe(false);
+  });
+
+  it("refuses before saving anything when the extra minutes' atoms cannot be retained", async () => {
+    mockExtendSlotInterval.mockResolvedValueOnce(false);
+
+    const res = await extend();
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      extended: false,
+      code: "SESSION_NOT_EXTENDABLE",
+    });
+    expect(mockStore.meeting).toMatchObject({
+      extendedSeconds: 0,
+      extensionsUsed: 0,
+    });
+    expect(mockStore.stream.updates).toBe(0);
+    expect(mockStreamUpdate).not.toHaveBeenCalled();
+    expect(mockUnlockSlotInterval).toHaveBeenCalledTimes(1);
+    expect((await tryLockSlotBatch(extraMinutes())).ok).toBe(true);
+  });
+
+  it("releases the retained atoms when another request already claimed the extension", async () => {
+    mockStore.meeting.extensionsUsed = 1;
+    mockStore.meeting.extendedSeconds = 900;
+    const meetingRead = {
+      ...mockStore.meeting,
+      extensionsUsed: 0,
+      extendedSeconds: 0,
+    };
+    const prisma = jest.requireMock("../../lib/prisma").default as {
+      meeting: { findUnique: () => Promise<unknown> };
+    };
+    const realFindUnique = prisma.meeting.findUnique;
+    let reads = 0;
+    prisma.meeting.findUnique = async () => {
+      reads += 1;
+      // The first read predates the winning claim; the post-loss read sees it.
+      return reads === 1
+        ? { ...meetingRead, occurrence: { ...mockStore.occurrence } }
+        : realFindUnique();
+    };
+    try {
+      const res = await extend();
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ alreadyExtended: true });
+    } finally {
+      prisma.meeting.findUnique = realFindUnique;
+    }
+
+    expect(mockExtendSlotInterval).toHaveBeenCalledTimes(1);
+    expect(mockUnlockSlotInterval).toHaveBeenCalledTimes(1);
+    expect(mockStore.stream.updates).toBe(0);
+    expect((await tryLockSlotBatch(extraMinutes())).ok).toBe(true);
   });
 });

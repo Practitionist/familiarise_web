@@ -188,7 +188,11 @@ function makeMockTx(appointment: unknown) {
       create: jest.fn().mockResolvedValue({}),
       groupBy: jest.fn().mockResolvedValue([]),
     },
-    rescheduleRequest: { create: jest.fn() },
+    rescheduleRequest: {
+      create: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    payment: { count: jest.fn().mockResolvedValue(0) },
   };
 }
 

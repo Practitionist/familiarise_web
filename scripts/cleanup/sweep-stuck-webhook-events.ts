@@ -2,7 +2,6 @@
  * Background recovery sweeper that re-drives inbound webhook events left unprocessed
  * or transiently failed across Razorpay, Stream, and Novu handlers.
  */
-import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { processNovuWebhookPayload } from "@/lib/webhooks/novu-handler";
@@ -152,30 +151,12 @@ async function emitBatchWarningsIfNeeded(
       const message =
         `sweep-stuck-webhook-events: ${stalling.length} webhook event(s) still unprocessed ` +
         `(deferCount >= ${DEFER_ALERT_THRESHOLD} or older than ${ALERT_AGE_HOURS}h)`;
-      await reportStandingFinding(
-        {
-          key: "sweep-stuck-webhook-events:stalling",
-          ids: stalling.map((ev) => ev.eventId),
-          message,
-        },
-        () =>
-          Sentry.captureMessage(message, {
-            level: "warning",
-            tags: { subsystem: "payments", job: "sweep-stuck-webhook-events" },
-            contexts: {
-              stuckWebhooks: {
-                count: stalling.length,
-                events: stalling.slice(0, 20).map((ev) => ({
-                  eventId: ev.eventId,
-                  provider: ev.provider,
-                  eventType: ev.eventType,
-                  deferCount: ev.deferCount,
-                  receivedAt: ev.receivedAt.toISOString(),
-                })),
-              },
-            },
-          }),
-      );
+      // A queue for the console, not Sentry; a re-drive that throws still pages below.
+      await reportStandingFinding({
+        key: "sweep-stuck-webhook-events:stalling",
+        ids: stalling.map((ev) => ev.eventId),
+        message,
+      });
     }
   }
 }

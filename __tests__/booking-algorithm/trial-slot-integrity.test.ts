@@ -21,45 +21,23 @@
 import fs from "fs";
 import path from "path";
 
-// Functional in-memory SET NX / eval fake so lockSlotInterval can be exercised
-// end-to-end (acquisition, re-arm, rollback) without a real Redis.
+// The repository's in-memory Redis (it runs the slot-batch scripts), wrapped so
+// a test can count round trips and fail closed.
 jest.mock("../../lib/redis", () => {
-  const store = new Map<string, { value: string; expiresAt: number }>();
-  const pexpireCalls: string[] = [];
-  const failPexpire = new Set<string>();
-  const client = {
-    set: async (
-      key: string,
-      value: string,
-      opts: { nx?: boolean; px?: number },
-    ) => {
-      const existing = store.get(key);
-      if (existing && existing.expiresAt > Date.now()) return null;
-      store.set(key, {
-        value,
-        expiresAt: Date.now() + (opts.px ?? 60000),
-      });
-      return "OK";
-    },
-    eval: async (script: string, keys: string[], args: string[]) => {
-      const entry = store.get(keys[0]);
-      if (!entry || entry.value !== args[0]) return 0;
-      if (script.includes("pexpire")) {
-        if (failPexpire.has(keys[0])) return 0;
-        pexpireCalls.push(keys[0]);
-        entry.expiresAt = Date.now() + Number(args[1]);
-        return 1;
-      }
-      store.delete(keys[0]);
-      return 1;
-    },
+  const { MockRedis } = jest.requireActual("../../lib/redis-mock");
+  const client = new MockRedis();
+  const evalCalls: string[][] = [];
+  const realEval = client.eval.bind(client);
+  client.eval = async (script: string, keys: string[], args: string[]) => {
+    evalCalls.push(keys);
+    return realEval(script, keys, args);
   };
   return {
     __esModule: true,
     default: client,
     withCircuitBreaker: jest.fn(async (fn: () => unknown) => fn()),
     checkRedisHealth: jest.fn(async () => true),
-    __test: { store, pexpireCalls, failPexpire },
+    __test: { client, evalCalls },
   };
 });
 
@@ -67,9 +45,13 @@ import {
   slotAtomStarts,
   lockSlotInterval,
   lockSlotBooking,
+  extendSlotInterval,
+  unlockSlotInterval,
+  tryLockSlotBatch,
   BookingLockUnavailableError,
 } from "../../utils/appointmentlock";
 import { SlotLockError } from "../../utils/errors/SlotLockError";
+import type { MockRedis } from "../../lib/redis-mock";
 import {
   getWebinarCapacity,
   getClassCapacity,
@@ -77,11 +59,7 @@ import {
 
 const redisMock = jest.requireMock("../../lib/redis") as {
   checkRedisHealth: jest.Mock;
-  __test: {
-    store: Map<string, { value: string; expiresAt: number }>;
-    pexpireCalls: string[];
-    failPexpire: Set<string>;
-  };
+  __test: { client: MockRedis; evalCalls: string[][] };
 };
 const redisTest = redisMock.__test;
 
@@ -149,7 +127,7 @@ describe("trial route source contract (#1093 §1)", () => {
   });
 
   it("locks under the shared slot-booking namespace, not a trial-only one", () => {
-    expect(routeSource).toContain("lockSlotBooking");
+    expect(routeSource).toContain("lockSlotBatch");
     expect(routeSource).not.toContain("trial-slot-booking");
     expect(routeSource).not.toContain("lockTrialSlot");
   });
@@ -159,12 +137,20 @@ describe("trial route source contract (#1093 §1)", () => {
     expect(routeSource).toMatch(/validateSlotAvailability\(\s*tx,/);
   });
 
+  it("checks both calendars with checkout's own predicates and locks the buyer's own atoms", () => {
+    expect(routeSource).toContain("buildConsultantOccupancyWhere(");
+    expect(routeSource).toContain("consulteeHasOverlappingSession(");
+    expect(routeSource).toMatch(
+      /lockSlotBatch\(\s*\[existingTrial\.consultantProfileId, buyerProfile\?\.id\]/,
+    );
+  });
+
   it("takes the consultee lock before the slot lock (checkout's global order, #898)", () => {
     // The GiST net and the slot atoms are both consultant-keyed; only the
     // consultee lock stops two trials for the same consultee booking through
     // two different consultants concurrently (#1170 review).
     const consulteeAt = routeSource.search(/await lockConsulteeBooking\(/);
-    const slotAt = routeSource.search(/await lockSlotBooking\(/);
+    const slotAt = routeSource.search(/await lockSlotBatch\(/);
     expect(consulteeAt).toBeGreaterThan(-1);
     expect(slotAt).toBeGreaterThan(-1);
     expect(consulteeAt).toBeLessThan(slotAt);
@@ -206,22 +192,21 @@ async function settleWithTimers<T>(p: Promise<T>): Promise<T | Error> {
   return r.ok ? r.v : r.e;
 }
 
-describe("lockSlotInterval — all-or-nothing acquisition semantics", () => {
+describe("lockSlotInterval — one atomic batch over every atom", () => {
   const CID = "consultant-1";
   const key = (iso: string) => `slot-booking:${CID}:${iso}`;
   const START = "2026-09-01T10:00:00.000Z";
 
   beforeEach(() => {
-    redisTest.store.clear();
-    redisTest.pexpireCalls.length = 0;
-    redisTest.failPexpire.clear();
+    redisTest.client.clear();
+    redisTest.evalCalls.length = 0;
   });
 
   afterEach(() => {
     jest.useRealTimers();
   });
 
-  it("acquires every atom and re-arms all of them to a fresh shared deadline", async () => {
+  it("takes every atom in one round trip under one shared value", async () => {
     const locks = await lockSlotInterval(
       CID,
       new Date(START),
@@ -232,40 +217,18 @@ describe("lockSlotInterval — all-or-nothing acquisition semantics", () => {
       key("2026-09-01T10:00:00.000Z"),
       key("2026-09-01T10:30:00.000Z"),
     ]);
-    // Every atom is owned in Redis under the lock's own value.
     for (const lock of locks) {
-      expect(redisTest.store.get(lock.key)?.value).toBe(lock.value);
+      expect(await redisTest.client.get(lock.key)).toBe(lock.value);
+      expect(await redisTest.client.pttl(lock.key)).toBeGreaterThan(50_000);
     }
-    // #1170 review — sequential backoff erodes early atoms' TTLs, so the
-    // final step re-arms EVERY atom (pexpire) to one fresh deadline.
-    expect(redisTest.pexpireCalls).toEqual(locks.map((l) => l.key));
-    const deadlines = locks.map((l) => redisTest.store.get(l.key)!.expiresAt);
-    expect(Math.abs(deadlines[0] - deadlines[1])).toBeLessThan(2000);
-    for (const d of deadlines) {
-      expect(d).toBeGreaterThan(Date.now() + 50_000);
-    }
+    expect(redisTest.evalCalls).toHaveLength(1);
   });
 
-  it("skips the re-arm roundtrip for a single-atom interval (no erosion possible)", async () => {
-    const locks = await lockSlotInterval(
-      CID,
-      new Date(START),
-      new Date("2026-09-01T10:30:00.000Z"),
-    );
-
-    expect(locks).toHaveLength(1);
-    expect(redisTest.store.get(locks[0].key)?.value).toBe(locks[0].value);
-    expect(redisTest.pexpireCalls).toEqual([]);
-  });
-
-  it("rolls back every held atom on contention and names the conflicting atom", async () => {
+  it("sets nothing on contention and names the held atom", async () => {
     jest.useFakeTimers();
     // A foreign writer holds the MIDDLE atom of 10:00–11:30.
     const heldISO = "2026-09-01T10:30:00.000Z";
-    redisTest.store.set(key(heldISO), {
-      value: "someone-else",
-      expiresAt: Date.now() + 3_600_000,
-    });
+    await redisTest.client.set(key(heldISO), "someone-else", { px: 3_600_000 });
 
     const err = await settleWithTimers(
       lockSlotBooking(CID, START, "2026-09-01T11:30:00.000Z"),
@@ -277,12 +240,15 @@ describe("lockSlotInterval — all-or-nothing acquisition semantics", () => {
       slotTime: heldISO,
       retryAfterSeconds: 60,
     });
-    // All-or-nothing: the first atom was taken then ROLLED BACK, the atom
-    // after the conflict was never attempted, the foreign hold is untouched.
-    expect(redisTest.store.has(key("2026-09-01T10:00:00.000Z"))).toBe(false);
-    expect(redisTest.store.has(key("2026-09-01T11:00:00.000Z"))).toBe(false);
-    expect(redisTest.store.get(key(heldISO))?.value).toBe("someone-else");
-    expect(redisTest.pexpireCalls).toEqual([]);
+    // The copy names neither the profile nor the instant (either may be the buyer's own).
+    expect((err as Error).message).not.toContain(CID);
+    expect((err as Error).message).not.toContain(heldISO);
+    // All-or-nothing: no atom around the held one was ever set.
+    expect(await redisTest.client.get(key(START))).toBeNull();
+    expect(
+      await redisTest.client.get(key("2026-09-01T11:00:00.000Z")),
+    ).toBeNull();
+    expect(await redisTest.client.get(key(heldISO))).toBe("someone-else");
   });
 
   it("fails CLOSED with a typed 503 when Redis is unhealthy, before taking any atom", async () => {
@@ -299,24 +265,57 @@ describe("lockSlotInterval — all-or-nothing acquisition semantics", () => {
     expect((err as BookingLockUnavailableError).code).toBe(
       "BOOKING_LOCK_UNAVAILABLE",
     );
-    // Fail closed means NO partial state: nothing was written to Redis.
-    expect(redisTest.store.size).toBe(0);
+    expect(redisTest.client.size()).toBe(0);
   });
 
-  it("aborts and rolls back when a re-arm fails (ownership already lost)", async () => {
-    redisTest.failPexpire.add(key("2026-09-01T10:00:00.000Z"));
+  it("gives back a batch whose acquire landed after the timeout", async () => {
+    jest.useFakeTimers();
+    const realEval = redisTest.client.eval;
+    // The acquire reaches Redis only after the caller has given up on it.
+    redisTest.client.eval = (async (
+      script: string,
+      keys: string[],
+      args: string[],
+    ) => {
+      redisTest.client.eval = realEval;
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      return realEval(script, keys, args);
+    }) as typeof realEval;
 
-    const err = await lockSlotInterval(
+    const err = await settleWithTimers(
+      tryLockSlotBatch([
+        {
+          consultantProfileId: CID,
+          startsAt: START,
+          endsAt: "2026-09-01T11:00:00.000Z",
+        },
+      ]),
+    );
+
+    expect(err).toBeInstanceOf(BookingLockUnavailableError);
+    // The late acquire set both atoms; the follow-up release removed them.
+    expect(await redisTest.client.get(key(START))).toBeNull();
+    expect(
+      await redisTest.client.get(key("2026-09-01T10:30:00.000Z")),
+    ).toBeNull();
+  });
+
+  it("renews only while every atom is still ours", async () => {
+    const locks = await lockSlotInterval(
       CID,
       START,
       "2026-09-01T11:00:00.000Z",
-    ).catch((e: unknown) => e);
+    );
+    expect(await extendSlotInterval(locks, 90_000)).toBe(true);
 
-    // A lost re-arm means the interval is NOT protected — the acquisition
-    // must surface as retryable contention, never return partially-armed locks.
-    expect(err).toBeInstanceOf(SlotLockError);
-    expect(redisTest.store.has(key("2026-09-01T10:00:00.000Z"))).toBe(false);
-    expect(redisTest.store.has(key("2026-09-01T10:30:00.000Z"))).toBe(false);
+    await redisTest.client.del(locks[1].key);
+    await redisTest.client.set(locks[1].key, "thief", { px: 60_000 });
+    expect(await extendSlotInterval(locks, 90_000)).toBe(false);
+
+    await unlockSlotInterval(locks);
+    // Release is compare-value: the thief's atom survives, ours is gone.
+    expect(await redisTest.client.get(locks[0].key)).toBeNull();
+    expect(await redisTest.client.get(locks[1].key)).toBe("thief");
   });
 });
 

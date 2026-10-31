@@ -1,13 +1,16 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { z } from "zod";
 
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
+import { callOpsDoor } from "./ops-door";
 import { RefundDoorDialog, type RefundDoor } from "./RefundDoorDialog";
 
 const NeedsHumanList = z.object({
@@ -17,13 +20,20 @@ const NeedsHumanList = z.object({
       message: z.string(),
       createdAt: z.string(),
       paymentId: z.string().nullable(),
-      /** A credit seat gets the credit door, a held paid seat the refund door, a support remedy its case. */
+      /** A credit seat gets the credit door, a held paid seat or a stuck owed refund the refund door, a support remedy its case. */
       kind: z
-        .enum(["credit", "held-paid-seat", "support-recommendation"])
+        .enum([
+          "credit",
+          "held-paid-seat",
+          "stuck-owed-refund",
+          "support-recommendation",
+        ])
         .optional(),
       occurrenceId: z.string().nullish(),
       unitPaise: z.number().nullish(),
       caseId: z.string().nullish(),
+      /** An ended credit plan: ops may answer that no credit is owed. */
+      creditPlan: z.boolean().optional(),
     }),
   ),
 });
@@ -38,6 +48,10 @@ async function fetchNeeds(): Promise<{ items: NeedsHuman[] }> {
 /** #1834 — a held seat opens the refund door keyed to its session, at its unit. */
 function doorFor(item: NeedsHuman) {
   const paymentId = item.paymentId ?? undefined;
+  // A hand refund settles a stuck owed marker and unblocks the cancel.
+  if (item.kind === "stuck-owed-refund") {
+    return { door: "issue" as const, paymentId };
+  }
   if (item.kind !== "held-paid-seat") {
     return { door: "credits" as const, paymentId };
   }
@@ -71,6 +85,10 @@ export function RefundDoorsPanel() {
       ? { door: "issue", paymentId: linkedPayment }
       : null,
   );
+  // The credit plan an operator is answering "no credit owed" for.
+  const [closing, setClosing] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
   const { data } = useQuery({
     queryKey: ["money-refund-needs"],
     queryFn: fetchNeeds,
@@ -126,9 +144,19 @@ export function RefundDoorsPanel() {
                       variant="outline"
                       onClick={() => setOpen(doorFor(item))}
                     >
-                      {item.kind === "held-paid-seat"
+                      {item.kind === "held-paid-seat" ||
+                      item.kind === "stuck-owed-refund"
                         ? "Issue refund"
                         : "Return credits"}
+                    </Button>
+                  )}
+                  {item.creditPlan && item.paymentId && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setClosing(item.paymentId)}
+                    >
+                      No credit owed
                     </Button>
                   )}
                 </li>
@@ -145,6 +173,27 @@ export function RefundDoorsPanel() {
         presetAmountRupees={open?.amountRupees}
         onClose={() => setOpen(null)}
       />
+      {closing !== null && (
+        <ConfirmDialog
+          open
+          onOpenChange={(o) => !o && setClosing(null)}
+          title="No credit owed"
+          description="Nothing goes back to the buyer. The expert's earnings for this plan are released on the usual hold."
+          confirmLabel="Close without credit"
+          requireReason={{}}
+          onConfirm={async ({ reason }) => {
+            await callOpsDoor("/api/admin/refunds/credits/close", {
+              paymentId: closing,
+              reason,
+            });
+            toast({ title: "Closed — no credit owed" });
+            void queryClient.invalidateQueries({
+              queryKey: ["money-refund-needs"],
+            });
+            setClosing(null);
+          }}
+        />
+      )}
     </Card>
   );
 }

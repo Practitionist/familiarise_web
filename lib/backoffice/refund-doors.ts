@@ -3,6 +3,8 @@
  * goes through `refundBookingPayment`; this only prices a ladder override.
  */
 
+import { z } from "zod";
+
 import prisma from "@/lib/prisma";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import { fundingRailForIntent } from "@/lib/payments/funding-rail";
@@ -11,6 +13,7 @@ import {
   findDedupedRefund,
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
+import { handSettledOwedSchema } from "@/lib/payments/operations/refund-owed";
 import { OpsRefusal } from "./ops-refusal-error";
 import { LIVE_PARTICIPANT_STATUSES } from "@/lib/booking/participants";
 import {
@@ -79,6 +82,7 @@ export async function ladderOverrideAmount(
     sessionsTotal: ctx.sessionsTotal,
     sessionsCompleted: ctx.sessionsCompleted,
     scheduledStarts: ctx.scheduledStarts,
+    alreadyRefundedPaise: ctx.alreadyRefundedPaise,
     isSubscription: !!appointment.subscriptionId,
     isConsultantInitiated: true,
     isFreeCreditFunded: false,
@@ -90,6 +94,8 @@ export async function ladderOverrideAmount(
     proratedBasePaise: quote.proratedBasePaise,
   };
 }
+
+const SETTLED_OWED_METADATA = z.object({ settledOwed: handSettledOwedSchema });
 
 /**
  * A gateway refund whose call threw after its keyed row was reserved is in
@@ -106,11 +112,17 @@ export async function refundInFlightOr(err: unknown, dedupeKey: string) {
       502,
     );
   }
+  // A hand refund still in flight has already settled the owed refund it took over.
+  const recorded = await prisma.refund
+    .findUnique({ where: { id: row.refundId }, select: { metadata: true } })
+    .then((r) => SETTLED_OWED_METADATA.safeParse(r?.metadata))
+    .catch(() => null);
   return {
     refundId: row.refundId,
     amountRefundedPaise: row.amountRefundedPaise,
     rail: "GATEWAY" as const,
     status: row.status,
+    ...(recorded?.success ? { settledOwed: recorded.data.settledOwed } : {}),
   };
 }
 

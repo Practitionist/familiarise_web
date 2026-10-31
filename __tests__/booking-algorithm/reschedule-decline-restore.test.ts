@@ -95,6 +95,8 @@ function matchSlots(where: SlotCas["where"]): SlotRow[] {
 
 function makeTx() {
   return {
+    // The restore re-anchors the payout hold; these bookings carry no earnings.
+    appointment: { findUnique: jest.fn(async () => null) },
     bookingStatusHistory: {
       create: jest.fn().mockResolvedValue({}),
       // #1589 R-P1-01 — the origin read: the row the reschedule route wrote.
@@ -581,11 +583,11 @@ describe("the propose response's outcome code", () => {
   it("does not claim the consultant will confirm a time we already refused", () => {
     // The fixed sentence asserted a human action for a refusal the server had
     // just detected — a taken slot, no availability, a stale tentative count.
+    // SLOT_TAKEN withdraws the request before an outcome is worded, and a
+    // stale read keeps the proposal for the consultant.
     for (const reason of [
-      "SLOT_TAKEN",
       "NO_AVAILABILITY",
       "SLOT_SHORTAGE",
-      "RESCHEDULE_STATE_CHANGED",
       "VALIDATION_FAILED",
     ]) {
       const out = rescheduleProposeOutcome({

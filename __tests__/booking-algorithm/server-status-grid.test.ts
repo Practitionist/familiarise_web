@@ -8,10 +8,6 @@
  * Covers the PURE aggregation helpers extracted for the consultant
  * Allocate-Slots calendar's server-side move:
  *
- *  - computeWeeklyConfirmedCallCounts (lib/booking/weekly-call-counts.ts):
- *    Phase 3's per-week confirmed-call aggregate, parity-checked against
- *    ScheduleCalculationService.weekKey — the SAME key the interactive weekly-
- *    limit guard and the server validator (SubscriptionValidationService) use.
  *  - buildOverlapMetaIndex / overlapMetaCandidatesFor / extractOverlapTitleAndParticipant
  *    (availability-with-allocation route): Phase 2's per-interval tooltip
  *    metadata, bucketed the same way isSlotAllocated/getSlotBookingStatus
@@ -31,114 +27,12 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(),
 }));
 
-import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
-import { computeWeeklyConfirmedCallCounts } from "@/lib/booking/weekly-call-counts";
 import {
   buildOverlapMetaIndex,
   overlapMetaCandidatesFor,
   extractOverlapTitleAndParticipant,
   type OverlapAppointmentMeta,
 } from "@/lib/booking/overlap-meta";
-
-// ─── computeWeeklyConfirmedCallCounts (Phase 3) ─────────────────────────────
-
-describe("computeWeeklyConfirmedCallCounts", () => {
-  const SUB_ID = "sub-1";
-
-  /** #1554 — one 1-hour call is ONE occurrence row on the subscription's wrapper. */
-  function call(startsAtIso: string, extra: Record<string, unknown> = {}) {
-    return {
-      startsAt: new Date(startsAtIso),
-      isTentative: false,
-      completionStatus: "SCHEDULED",
-      deletedAt: null,
-      ...extra,
-    };
-  }
-  function wrapper(
-    occurrences: ReturnType<typeof call>[],
-    opts?: { tz?: string; subId?: string },
-  ) {
-    return {
-      appointmentType: "SUBSCRIPTION",
-      subscription: { id: opts?.subId ?? SUB_ID, schedulingTimezone: opts?.tz },
-      occurrences,
-    };
-  }
-
-  it("counts one confirmed call per occurrence, bucketed by week key", () => {
-    const appts = [
-      wrapper([
-        call("2025-01-06T10:00:00.000Z"), // Monday
-        call("2025-01-08T10:00:00.000Z"), // Wednesday, same week
-        call("2025-01-13T10:00:00.000Z"), // next week
-      ]),
-    ];
-    const counts = computeWeeklyConfirmedCallCounts(appts, SUB_ID);
-    const week1 = ScheduleCalculationService.weekKey(
-      new Date("2025-01-06T10:00:00.000Z"),
-    );
-    const week2 = ScheduleCalculationService.weekKey(
-      new Date("2025-01-13T10:00:00.000Z"),
-    );
-    expect(counts[week1]).toBe(2);
-    expect(counts[week2]).toBe(1);
-  });
-
-  it("parity: buckets by the SAME key as ScheduleCalculationService.weekKey per appointment's own schedulingTimezone", () => {
-    const tz = "America/Los_Angeles";
-    const startIso = "2025-01-06T10:00:00.000Z";
-    const counts = computeWeeklyConfirmedCallCounts(
-      [wrapper([call(startIso)], { tz })],
-      SUB_ID,
-    );
-    const expectedKey = ScheduleCalculationService.weekKey(
-      new Date(startIso),
-      tz,
-    );
-    expect(counts[expectedKey]).toBe(1);
-    expect(Object.keys(counts)).toEqual([expectedKey]);
-  });
-
-  it("skips a tentative or dead row WITHOUT hiding its siblings (#1554)", () => {
-    // The old shape skipped the whole appointment when any row was tentative;
-    // on a one-wrapper subscription that emptied every week's count and let a
-    // third call into a capped week. Only the row itself drops out.
-    const counts = computeWeeklyConfirmedCallCounts(
-      [
-        wrapper([
-          call("2025-01-06T10:00:00.000Z"),
-          call("2025-01-08T10:00:00.000Z", { isTentative: true }),
-          call("2025-01-09T10:00:00.000Z", { completionStatus: "RESCHEDULED" }),
-          call("2025-01-10T10:00:00.000Z", { deletedAt: new Date() }),
-        ]),
-      ],
-      SUB_ID,
-    );
-    const weekKey = ScheduleCalculationService.weekKey(
-      new Date("2025-01-06T10:00:00.000Z"),
-    );
-    expect(counts).toEqual({ [weekKey]: 1 });
-  });
-
-  it("excludes other subscriptions and other appointment types", () => {
-    const otherSub = wrapper([call("2025-01-06T10:00:00.000Z")], {
-      subId: "sub-other",
-    });
-    const consultation = {
-      appointmentType: "CONSULTATION",
-      subscription: undefined,
-      occurrences: [call("2025-01-06T10:00:00.000Z")],
-    };
-    expect(
-      computeWeeklyConfirmedCallCounts([otherSub, consultation], SUB_ID),
-    ).toEqual({});
-  });
-
-  it("returns {} for an empty appointment list", () => {
-    expect(computeWeeklyConfirmedCallCounts([], SUB_ID)).toEqual({});
-  });
-});
 
 // ─── Overlap metadata index (Phase 2) ───────────────────────────────────────
 

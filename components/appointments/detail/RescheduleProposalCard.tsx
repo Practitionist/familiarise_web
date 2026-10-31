@@ -14,15 +14,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
-import {
-  currentRoundProposedSlots,
-  type OpenRescheduleProposal,
-} from "@/lib/appointments/consultee-affordances";
+import { type OpenRescheduleProposal } from "@/lib/appointments/consultee-affordances";
 import type { RescheduleRespondCode } from "@/lib/booking/reschedule-proposals";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 /**
  * The open reschedule proposal on an appointment, with its answers (#1163).
@@ -67,7 +64,7 @@ async function postAnswer(
     kind === "withdraw"
       ? `/api/appointments/${appointmentId}/reschedule/withdraw`
       : `/api/appointments/${appointmentId}/reschedule/respond`;
-  const res = await fetch(url, {
+  const res = await fetchWithIdentity(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     ...(kind === "withdraw" ? {} : { body: JSON.stringify({ action: kind }) }),
@@ -127,7 +124,7 @@ export function RescheduleProposalCard({
 
   const viewerId = session?.user?.id;
   const isInitiator = !!viewerId && viewerId === proposal.initiatedById;
-  const slots = currentRoundProposedSlots(proposal);
+  const slots = proposal.proposedTimes;
 
   const mutation = useMutation({
     mutationFn: (kind: ProposalAnswer) => postAnswer(appointmentId, kind),
@@ -190,14 +187,6 @@ export function RescheduleProposalCard({
           <CalendarClock className="h-4 w-4 text-muted-foreground" />
           {heading}
         </span>
-        {proposal.round > 1 && (
-          <Badge
-            variant="outline"
-            className="border-border px-1.5 py-0 text-[10px] font-medium uppercase tracking-wide"
-          >
-            Counter-offer
-          </Badge>
-        )}
       </div>
 
       {slots.length > 0 ? (

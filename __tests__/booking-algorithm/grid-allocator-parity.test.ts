@@ -20,6 +20,8 @@ import "./setup";
 import {
   buildCohostCommitmentFilter,
   buildConsultantOccupancyWhere,
+  buildDeadHoldFilter,
+  buildDeadSeatFilter,
   buildOccupiedAppointmentFilter,
   OCCUPIED_REQUEST_STATUSES,
   OCCUPYING_OCCURRENCE_WHERE,
@@ -28,6 +30,7 @@ import { isOccupiedByLiveAppointment } from "../../utils/scheduling-engine/Sched
 
 const PROFILE = "consultant-profile-1";
 const USER = "consultant-user-1";
+const NOW = new Date("2026-06-01T00:00:00Z");
 
 type WhereShape = ReturnType<typeof buildConsultantOccupancyWhere>;
 
@@ -40,17 +43,19 @@ function reachArms(where: WhereShape) {
 
 describe("buildConsultantOccupancyWhere", () => {
   it("matches on slot participation as well as plan ownership", () => {
-    const arms = reachArms(buildConsultantOccupancyWhere(PROFILE, USER));
+    const arms = reachArms(buildConsultantOccupancyWhere(PROFILE, USER, NOW));
 
     expect(arms).toHaveLength(3);
 
-    // Participation: the consultant holds a live seat, whatever plan the
-    // appointment belongs to, on a row that still holds its time.
+    // Participation: the consultant holds a seat that still holds its time
+    // (a lapsed seat hold holds nothing), whatever plan the appointment
+    // belongs to, on a row that still holds its time.
     expect(arms[0]).toEqual({
       participants: {
         some: {
           userId: USER,
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+          NOT: buildDeadSeatFilter(NOW),
         },
       },
       occurrences: { some: OCCUPYING_OCCURRENCE_WHERE },
@@ -93,10 +98,12 @@ describe("buildConsultantOccupancyWhere", () => {
   });
 
   it("still constrains to active parent statuses", () => {
-    const where = buildConsultantOccupancyWhere(PROFILE, USER);
+    const where = buildConsultantOccupancyWhere(PROFILE, USER, NOW);
     const and = (where.AND ?? []) as Record<string, unknown>[];
 
     expect(and[0]).toEqual({ OR: buildOccupiedAppointmentFilter() });
+    // A lapsed checkout hold occupies nothing, for every caller.
+    expect(and[2]).toEqual({ NOT: buildDeadHoldFilter(NOW) });
     // Sanity-check the policy itself hasn't quietly widened.
     expect(OCCUPIED_REQUEST_STATUSES).toEqual(
       expect.arrayContaining([
@@ -109,7 +116,7 @@ describe("buildConsultantOccupancyWhere", () => {
   });
 
   it("falls back to participation alone when no profile id is known", () => {
-    const arms = reachArms(buildConsultantOccupancyWhere(undefined, USER));
+    const arms = reachArms(buildConsultantOccupancyWhere(undefined, USER, NOW));
 
     expect(arms).toHaveLength(1);
     expect(arms[0]).toEqual({
@@ -117,6 +124,7 @@ describe("buildConsultantOccupancyWhere", () => {
         some: {
           userId: USER,
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+          NOT: buildDeadSeatFilter(NOW),
         },
       },
       occurrences: { some: OCCUPYING_OCCURRENCE_WHERE },
@@ -126,8 +134,8 @@ describe("buildConsultantOccupancyWhere", () => {
   it("is the same predicate whichever caller builds it", () => {
     // Grid and allocator pass the same pair, so the objects must be identical —
     // this is the invariant that broke.
-    expect(buildConsultantOccupancyWhere(PROFILE, USER)).toEqual(
-      buildConsultantOccupancyWhere(PROFILE, USER),
+    expect(buildConsultantOccupancyWhere(PROFILE, USER, NOW)).toEqual(
+      buildConsultantOccupancyWhere(PROFILE, USER, NOW),
     );
   });
 });

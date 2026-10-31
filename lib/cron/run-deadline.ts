@@ -12,6 +12,15 @@ export function startDeadline(startedAt: number = Date.now()): () => boolean {
   return () => Date.now() >= until;
 }
 
+/** True once `share` of the run's start budget is spent, leaving the rest for a later loop. */
+export function startDeadlineShare(
+  share: number,
+  startedAt: number = Date.now(),
+): () => boolean {
+  const until = startedAt + SWEEP_START_DEADLINE_MS * share;
+  return () => Date.now() >= until;
+}
+
 /** Preserve committed deletes even when the continuation probe fails. */
 export async function deleteBoundedPage({
   outOfTime,

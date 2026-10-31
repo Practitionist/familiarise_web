@@ -1,7 +1,7 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
-import { createElement, type ReactElement } from "react";
+import { createElement, useCallback, useRef, type ReactElement } from "react";
 import { ToastAction } from "@/components/ui/toast";
 import { DATA_CONSENT_ANCHOR } from "@/lib/dashboard/account-href";
 import { useToast } from "@/hooks/use-toast";
@@ -124,10 +124,37 @@ export function createHandleApiError(
 // and network retries within a mount; a fresh mount = a fresh attempt). The
 // server CASes on Payment.clientIdempotencyKey and replays the original
 // response instead of minting a duplicate order.
-export function mintClientIdempotencyKey(): string {
+function mintClientIdempotencyKey(): string {
   return globalThis.crypto?.randomUUID
     ? `ck_${globalThis.crypto.randomUUID().replace(/-/g, "")}`
     : `ck_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * The key for this attempt: double-clicks and retries reuse it, and a changed
+ * priced input (window, coupon, credits, org) mints a fresh one, so the server
+ * never replays an order minted at another price.
+ */
+export function useCheckoutAttemptKey(): (input: CheckoutInput) => string {
+  const last = useRef<{ priced: string; key: string } | null>(null);
+  return useCallback((input: CheckoutInput) => {
+    const priced = JSON.stringify([
+      input.appointmentType,
+      input.planId,
+      input.eventId ?? null,
+      input.startsAt ?? null,
+      input.endsAt ?? null,
+      input.schedulingPeriodStartsAt ?? null,
+      input.discountCode ?? null,
+      input.useReferralCredits === true,
+      input.organizationId ?? null,
+      input.renewsSubscriptionId ?? null,
+    ]);
+    if (last.current?.priced !== priced) {
+      last.current = { priced, key: mintClientIdempotencyKey() };
+    }
+    return last.current.key;
+  }, []);
 }
 
 // Common API request logic for checkout
@@ -166,6 +193,8 @@ const BUSY_ERROR_TYPES = new Set([
   // #1592 A-P1-06 — exhausted Serializable retries; the server already
   // ships `retryAfter: 2` for it (app/api/checkout/route.ts).
   "SERIALIZATION_CONFLICT",
+  // A replay while this checkout's seat order is still being minted.
+  "CHECKOUT_IN_PROGRESS",
 ]);
 
 /** Never wait longer than this server-advised pause (function-ceiling friendly). */
@@ -176,46 +205,49 @@ interface BusyBody {
   retryAfter?: number;
 }
 
+/** Automatic retries after the first BUSY answer; the idempotency key keeps each one dedupe-safe. */
+const MAX_BUSY_RETRIES = 3;
+
 /**
  * Runs one checkout attempt; on a structured BUSY 409, tells the user what is
- * happening, waits the advised pause (capped), and retries EXACTLY ONCE.
- *
- * The single-retry discipline matters: the same clientIdempotencyKey rides
- * both attempts and the server CASes on it, so the retry can never mint a
- * duplicate order — but hammering the endpoint would, so no exponential loop.
- * The caller's `attempt` closure supplies its own headers/key unchanged.
+ * happening, waits the advised pause (capped, with jitter so a crowd does not
+ * return in step) and retries, at most MAX_BUSY_RETRIES times. The same
+ * clientIdempotencyKey rides every attempt, so a retry can never mint a
+ * duplicate order. The caller's `attempt` closure supplies its own headers/key.
  */
 export async function fetchCheckoutWithBusyRetry(
   attempt: () => Promise<Response>,
   notifyBusy: (waitSeconds: number) => void,
 ): Promise<Response> {
-  const response = await attempt();
-  if (response.status !== 409) return response;
-
-  let body: BusyBody;
-  try {
-    body = (await response.clone().json()) as BusyBody;
-  } catch {
-    return response;
+  let response = await attempt();
+  for (let retry = 0; retry < MAX_BUSY_RETRIES; retry++) {
+    if (response.status !== 409) return response;
+    let body: BusyBody;
+    try {
+      body = (await response.clone().json()) as BusyBody;
+    } catch {
+      return response;
+    }
+    const retryAfter = Number(body?.retryAfter);
+    if (
+      !body?.errorType ||
+      !BUSY_ERROR_TYPES.has(body.errorType) ||
+      !Number.isFinite(retryAfter)
+    ) {
+      return response;
+    }
+    const waitSeconds = Math.min(
+      Math.max(1, Math.round(retryAfter)),
+      MAX_BUSY_WAIT_SECONDS,
+    );
+    notifyBusy(waitSeconds);
+    const jitterMs = Math.random() * 1000;
+    await new Promise((resolve) =>
+      setTimeout(resolve, waitSeconds * 1000 + jitterMs),
+    );
+    response = await attempt();
   }
-  const retryAfter = Number(body?.retryAfter);
-  if (
-    !body?.errorType ||
-    !BUSY_ERROR_TYPES.has(body.errorType) ||
-    !Number.isFinite(retryAfter)
-  ) {
-    return response;
-  }
-
-  const waitSeconds = Math.min(
-    Math.max(1, Math.round(retryAfter)),
-    MAX_BUSY_WAIT_SECONDS,
-  );
-  notifyBusy(waitSeconds);
-  await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
-
-  // One automatic retry — the idempotency key in `attempt` makes this safe.
-  return attempt();
+  return response;
 }
 
 /** Shared copy for the during-wait notice so all four surfaces sound alike. */

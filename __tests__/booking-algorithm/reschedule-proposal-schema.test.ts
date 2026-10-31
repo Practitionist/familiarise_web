@@ -17,7 +17,10 @@ describe("RescheduleProposalSchema", () => {
   it("accepts a 30-minute proposal", () => {
     const parsed = RescheduleProposalSchema.safeParse({
       proposedSlots: [
-        { startsAt: at("2026-09-01T09:00:00Z"), endsAt: at("2026-09-01T09:30:00Z") },
+        {
+          startsAt: at("2026-09-01T09:00:00Z"),
+          endsAt: at("2026-09-01T09:30:00Z"),
+        },
       ],
     });
     expect(parsed.success).toBe(true);
@@ -26,8 +29,14 @@ describe("RescheduleProposalSchema", () => {
   it("accepts consecutive atoms — a 1-hour session is two rows, not one long one", () => {
     const parsed = RescheduleProposalSchema.safeParse({
       proposedSlots: [
-        { startsAt: at("2026-09-01T09:00:00Z"), endsAt: at("2026-09-01T09:30:00Z") },
-        { startsAt: at("2026-09-01T09:30:00Z"), endsAt: at("2026-09-01T10:00:00Z") },
+        {
+          startsAt: at("2026-09-01T09:00:00Z"),
+          endsAt: at("2026-09-01T09:30:00Z"),
+        },
+        {
+          startsAt: at("2026-09-01T09:30:00Z"),
+          endsAt: at("2026-09-01T10:00:00Z"),
+        },
       ],
     });
     expect(parsed.success).toBe(true);
@@ -36,7 +45,10 @@ describe("RescheduleProposalSchema", () => {
   it("rejects a 60-minute row, which would book 30", () => {
     const parsed = RescheduleProposalSchema.safeParse({
       proposedSlots: [
-        { startsAt: at("2026-09-01T09:00:00Z"), endsAt: at("2026-09-01T10:00:00Z") },
+        {
+          startsAt: at("2026-09-01T09:00:00Z"),
+          endsAt: at("2026-09-01T10:00:00Z"),
+        },
       ],
     });
     expect(parsed.success).toBe(false);
@@ -45,7 +57,10 @@ describe("RescheduleProposalSchema", () => {
   it("rejects a row shorter than an atom", () => {
     const parsed = RescheduleProposalSchema.safeParse({
       proposedSlots: [
-        { startsAt: at("2026-09-01T09:00:00Z"), endsAt: at("2026-09-01T09:15:00Z") },
+        {
+          startsAt: at("2026-09-01T09:00:00Z"),
+          endsAt: at("2026-09-01T09:15:00Z"),
+        },
       ],
     });
     expect(parsed.success).toBe(false);
@@ -54,7 +69,9 @@ describe("RescheduleProposalSchema", () => {
   it("still rejects an end at or before its start", () => {
     for (const endsAt of ["2026-09-01T09:00:00Z", "2026-08-01T09:00:00Z"]) {
       const parsed = RescheduleProposalSchema.safeParse({
-        proposedSlots: [{ startsAt: at("2026-09-01T09:00:00Z"), endsAt: at(endsAt) }],
+        proposedSlots: [
+          { startsAt: at("2026-09-01T09:00:00Z"), endsAt: at(endsAt) },
+        ],
       });
       expect(parsed.success).toBe(false);
     }

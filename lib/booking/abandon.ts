@@ -21,16 +21,12 @@
  * committing between the read and the write matches zero rows instead of
  * cancelling a paid booking.
  */
-import { Prisma, type PaymentGateway } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { reportSentryError } from "@/lib/observability/report";
-import { reverseCreditsForPayment } from "@/lib/referrals/service";
-import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { softCancelTrialAppointmentInTx } from "@/lib/trials/cancellation";
-import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-payments";
 import {
   renewAppointmentLock,
   withAppointmentLock,
@@ -42,6 +38,11 @@ import {
   type StagedBackupInterestNotices,
 } from "./backup-interest";
 import { releaseParticipant } from "./participants";
+import {
+  cancelGatewayOrders,
+  expirePendingPaymentsInTx,
+  type GatewayCancel,
+} from "./pending-payment-expiry";
 import { declineOpenReschedules } from "./reschedule-decline";
 import {
   SLOT_RESCHEDULABLE_FROM,
@@ -92,11 +93,6 @@ const NO_CAPTURED_WRAPPER = {
   ],
 } satisfies Prisma.ConsultationWhereInput & Prisma.SubscriptionWhereInput;
 
-interface GatewayCancel {
-  paymentIntent: string;
-  gateway: PaymentGateway;
-}
-
 interface AbandonTarget {
   appointmentId: string;
   userId: string;
@@ -117,56 +113,6 @@ type TxOutcome =
       gatewayCancels: GatewayCancel[];
       holdNotices?: StagedBackupInterestNotices | null;
     };
-
-/**
- * Expire the caller's PENDING payment on this booking and give back what the
- * checkout consumed. PENDING → EXPIRED is a CAS, so a capture racing it keeps
- * its SUCCEEDED; the Serializable isolation around the whole body makes that
- * race one winner and one retry.
- */
-async function expireCallerPendingPayments(
-  tx: Tx,
-  target: AbandonTarget,
-): Promise<{ expired: number; gatewayCancels: GatewayCancel[] }> {
-  const pending = await tx.payment.findMany({
-    where: {
-      appointmentId: target.appointmentId,
-      userId: target.userId,
-      paymentStatus: "PENDING",
-    },
-    select: {
-      id: true,
-      paymentIntent: true,
-      paymentGateway: true,
-      isMockPayment: true,
-    },
-  });
-  const gatewayCancels: GatewayCancel[] = [];
-  let expired = 0;
-  for (const payment of pending) {
-    const claimed = await tx.payment.updateMany({
-      where: { id: payment.id, paymentStatus: "PENDING" },
-      data: { paymentStatus: "EXPIRED" },
-    });
-    if (claimed.count === 0) continue;
-    expired += 1;
-    // The same two give-backs the checkout-hold DELETE and the cleanup sweep
-    // perform: referral credits spent at checkout, and the org engagement
-    // checkout debited before capture (#1003). Both are idempotent.
-    await reverseCreditsForPayment(payment.id, tx);
-    await reverseBookingUtilization(tx, {
-      paymentId: payment.id,
-      reason: ABANDON_NOTE,
-    });
-    if (!payment.isMockPayment) {
-      gatewayCancels.push({
-        paymentIntent: payment.paymentIntent,
-        gateway: payment.paymentGateway,
-      });
-    }
-  }
-  return { expired, gatewayCancels };
-}
 
 /** Consultation or subscription: the request itself ends CANCELLED. */
 async function abandonRequest(
@@ -210,10 +156,11 @@ async function abandonRequest(
     throw err;
   }
 
-  const { expired, gatewayCancels } = await expireCallerPendingPayments(
-    tx,
-    target,
-  );
+  const { expired, gatewayCancels } = await expirePendingPaymentsInTx(tx, {
+    appointmentId: target.appointmentId,
+    userId: target.userId,
+    reason: ABANDON_NOTE,
+  });
   // Anyone waiting on these times hears they are free (#1778), read before the
   // release below stops them counting as held.
   const holdNotices = await stageNoticesForAppointmentHolds(
@@ -272,10 +219,11 @@ async function abandonTrial(
     }
     throw err;
   }
-  const { expired, gatewayCancels } = await expireCallerPendingPayments(
-    tx,
-    target,
-  );
+  const { expired, gatewayCancels } = await expirePendingPaymentsInTx(tx, {
+    appointmentId: target.appointmentId,
+    userId: target.userId,
+    reason: ABANDON_NOTE,
+  });
   const slotsReleased = await softCancelTrialAppointmentInTx(
     tx,
     target.appointmentId,
@@ -305,10 +253,11 @@ async function abandonSeat(tx: Tx, target: AbandonTarget): Promise<TxOutcome> {
   if (released === 0) {
     return { ok: false, code: await refusalFor(tx, target) };
   }
-  const { expired, gatewayCancels } = await expireCallerPendingPayments(
-    tx,
-    target,
-  );
+  const { expired, gatewayCancels } = await expirePendingPaymentsInTx(tx, {
+    appointmentId: target.appointmentId,
+    userId: target.userId,
+    reason: ABANDON_NOTE,
+  });
   return {
     ok: true,
     paymentsExpired: expired,
@@ -432,21 +381,10 @@ export async function abandonBooking(args: {
   if (!outcome.ok) return outcome;
   await flushBackupInterestNotices(outcome.holdNotices);
 
-  // Best-effort and post-commit, as in cancel-pending: a gateway that refuses
-  // to cancel never un-abandons the booking. A capture that still lands is
-  // refunded by the capture-after-release path in the webhook's Phase 2.
-  for (const cancel of outcome.gatewayCancels) {
-    try {
-      await cancelPaymentIntent(cancel.paymentIntent, cancel.gateway);
-    } catch (error) {
-      reportSentryError(error, {
-        subsystem: "bookings",
-        op: "abandon.gateway-cancel",
-        expected: true,
-        extra: { appointmentId: target.appointmentId },
-      });
-    }
-  }
+  await cancelGatewayOrders(outcome.gatewayCancels, {
+    op: "abandon.gateway-cancel",
+    appointmentId: target.appointmentId,
+  });
 
   return {
     ok: true,

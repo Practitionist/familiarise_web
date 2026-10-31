@@ -75,6 +75,8 @@ export function findPriorSeatPayment(
         where: { status: "SUCCEEDED" },
         select: { amountPaise: true },
       },
+      // The seat this payment funded; a released one means the buyer left.
+      appointmentParticipants: { select: { status: true } },
     },
   });
 }
@@ -105,6 +107,14 @@ export function assertSeatRemintable(
     throw new BookingRuleError(
       "SEAT_REBUY_UNSUPPORTED",
       "Your earlier seat here was refunded, and a refunded seat can't be bought again yet. Contact support if you'd like to rejoin.",
+    );
+  }
+  // Left with a partial or no refund: the seat is gone, not still held.
+  const seats = prior.appointmentParticipants ?? [];
+  if (seats.length > 0 && seats.every((seat) => seat.status === "CANCELLED")) {
+    throw new BookingRuleError(
+      "SEAT_REBUY_UNSUPPORTED",
+      "You left this event earlier, and a seat you've left can't be bought again yet. Contact support if you'd like to rejoin.",
     );
   }
   throw alreadyHeldSeatError(kind);
