@@ -4,7 +4,7 @@ Evidence from 2026-10-31, not decisions. Depth, diagrams and sources: `docs/main
 
 ## Decision-relevant facts
 
-- Only code that runs in Mumbai removes the per-statement cost. Netlify Singapore is 62-64 ms per statement with raw `pg` (about 95 ms through Prisma), Trigger.dev Frankfurt 125 ms, `bom1` 1.0-2.1 ms.
+- Only code that runs in Mumbai removes the per-statement cost. Netlify Singapore is 62-64 ms per statement with raw `pg` (about 95 ms measured through the app earlier; Prisma adds 0.1 ms or less per statement, so the gap is unexplained), Trigger.dev Frankfurt 125 ms, `bom1` 1.0-2.1 ms.
 - Hosted schedulers (Inngest, QStash, Upstash Workflow) call our route. The compute stays on Netlify and keeps its limits. Trigger.dev runs the code itself, but only in `eu-central-1`, `us-east-1` or `us-west-2`.
 - pg-boss and DBOS keep the queue in Postgres and enqueue in the caller's transaction (rollback leaves 0 jobs). They need a long-lived worker, which Netlify functions are not.
 - Vendor side effects are at-least-once on every runtime. Idempotency keys, CAS-in-WHERE and the reconcilers stay.
@@ -21,6 +21,8 @@ Evidence from 2026-10-31, not decisions. Depth, diagrams and sources: `docs/main
 | Laptop India                                     | 39.5 ms                                        | 395 ms               | best case only                       |
 | QStash EU to Netlify                             | publish-to-receive median 1,366 ms (p95 2,115) | n/a                  | 30 s function: 504, 3 side effects   |
 
+With Fluid compute ON, warm bursts of 20 and 50 requests used 7 and 13 instances where OFF used 20 and 50 (one request per instance), at the same latency. Vercel Workflows steps run in our `bom1` functions at 2.3-3.2 ms per query. QStash EU to `bom1`: publish-ack to handler about 350 ms.
+
 A user update to a row locked from Frankfurt waited about 1.1 s against 37.6 ms with no job. SERIALIZABLE lost one of every concurrent pair (40001) in both places, so keep `withSerializableRetry` (`lib/db/serializable-retry.ts`).
 
 ## Footguns
@@ -33,11 +35,15 @@ A user update to a row locked from Frankfurt waited about 1.1 s against 37.6 ms 
 - Inngest `connect` is unsupported on serverless runtimes (official docs).
 - The Netlify real edge cut is about 30 s on a throwaway site but about 26 s measured on prod. Design for 26 s.
 - Trigger.dev Free uses dynamic egress IPs. Static IPs are paid-only; the plan tier is UNVERIFIED.
+- Vercel `"fluid": false` in `vercel.json` did not take effect; only `PATCH /v9/projects/<name>` with `resourceConfig.fluid` flipped it.
+- Upstash Workflow `context.call` to an endpoint that returns 504 still ends the step `STEP_SUCCESS` and the run `RUN_SUCCESS`. Always check `res.status`.
+- QStash to Vercel: a 310 s target gets a 504 at 300 s, retries after 11 s and about 141 s, then the DLQ. A function that already returned 504 still finishes its write (zombie), so handlers must be idempotent.
+- Vercel Workflows `start()` is not part of our Postgres transaction: `start()` then `ROLLBACK` ran a workflow for a missing order. Use an outbox.
 - A publish after commit is a dual write. Use state as the outbox or an in-database enqueue.
 
 ## How to rerun a probe
 
-Scripts live outside the repo; the Inngest, pg-boss, DBOS, Supabase and Trigger.dev ones are stored as text in `docs/maintenance/experiments/2026-10-31-job-runtime/source-code.md`. The Vercel probe is described in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-bom1-latency.md`. The lock-hold, Netlify and QStash scripts were not kept.
+Scripts live outside the repo; the Inngest, pg-boss, DBOS, Supabase and Trigger.dev ones are stored as text in `docs/maintenance/experiments/2026-10-31-job-runtime/source-code.md`. The second Vercel round is in `vercel-fluid-prisma-qstash-workflows.md` (code not kept). The Vercel probe is described in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-bom1-latency.md`. The lock-hold, Netlify and QStash scripts were not kept.
 
 1. Make a scratch directory outside the repo and copy the script out of the markdown.
 2. Pass the database address through an environment variable only. Use a throwaway `lab_` schema on the shared project.

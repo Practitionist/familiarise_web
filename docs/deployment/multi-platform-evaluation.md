@@ -95,12 +95,12 @@ Weights reflect our actual runtime bottlenecks (`India / Mumbai DB Latency 20%` 
 
 The scorecard ranks places to run the web tier. Hosted job services were also measured, and none of them is a place to run it. The table gives the median `SELECT 1` round trip to the Mumbai Supabase pooler from each Trigger.dev Cloud region, next to the Netlify figure that the rest of this document uses.
 
-| Compute                                | Median round trip to `ap-south-1` |
-| :------------------------------------- | --------------------------------: |
-| Netlify Pro (`sin`), raw `pg` measured | 62–64 ms (about 95 ms via Prisma) |
-| Trigger.dev Cloud `eu-central-1`       |                      about 125 ms |
-| Trigger.dev Cloud `us-east-1`          |                      about 185 ms |
-| Trigger.dev Cloud `us-west-2`          |                      about 232 ms |
+| Compute                                |                       Median round trip to `ap-south-1` |
+| :------------------------------------- | ------------------------------------------------------: |
+| Netlify Pro (`sin`), raw `pg` measured | 62–64 ms (about 95 ms measured earlier through the app) |
+| Trigger.dev Cloud `eu-central-1`       |                                            about 125 ms |
+| Trigger.dev Cloud `us-east-1`          |                                            about 185 ms |
+| Trigger.dev Cloud `us-west-2`          |                                            about 232 ms |
 
 Trigger.dev offered no Asian region to the account tested. Inngest runs no compute: it calls a route we host. A Vercel `bom1` function measured 1.0–2.1 ms. See [Background-job runtime options](../maintenance/14-background-job-runtime-options.md) for the method, the diagrams and the static-IP check, and [the experiment index](../maintenance/experiments/2026-10-31-job-runtime/README.md) for the raw reports.
 
