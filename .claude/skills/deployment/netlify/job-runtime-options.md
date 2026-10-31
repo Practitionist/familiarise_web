@@ -19,6 +19,12 @@ Platform facts measured or read on 2026-10-31. The facts about the queue and sch
 - QStash to `bom1`: a 310 s target gets a 504 at 300 s, then the DLQ after 3 attempts.
 - Static IPs: Pro and Enterprise, $100 a month per project plus Private Data Transfer, one IP pair per region (docs). Whether `bom1` can be chosen is UNVERIFIED.
 
+## Cloudflare
+
+- A Worker placed with `region = "aws:ap-south-1"` runs in `remote-BOM` and measured 2-3 ms per statement and a 65-75 ms lock hold (36-39 ms with Hyperdrive in-region). Default placement and Smart Placement stayed at about 98 ms from Marseille.
+- Placement applies to `fetch` handlers only. Queue consumers, cron and Workflow steps ran in random colos at 125-266 ms; use a service binding to a pinned Worker (22-31 ms).
+- `pg` over TLS from Workers hung, so the probe ran without TLS. A removed cron kept firing about 4 minutes. Free CPU is 10 ms per request.
+
 ## How to rerun
 
 Use a throwaway site or project with the region pinned, a `lab_` schema, and env vars removed afterwards. Scripts: `docs/maintenance/experiments/2026-10-31-job-runtime/source-code.md` and `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-bom1-latency.md`. Delete the site or project when done. The kept Netlify site `fw-probe-jobs-9651` is for browsing only until 2026-11-02.

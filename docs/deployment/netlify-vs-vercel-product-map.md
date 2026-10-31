@@ -1,6 +1,6 @@
-# Netlify and Vercel product map
+# Netlify, Vercel and Cloudflare product map
 
-This page lists the products each host offers, layer by layer, and maps the two catalogues onto each other. It exists because the background-job research of 2026-10-31 kept mixing up product names (a "cron ticker" is a pattern this repo built, not a product), and a side-by-side map makes the options easier to reason about.
+This page lists the products each host offers, layer by layer, and maps the three catalogues onto each other. The file keeps its original name so existing links work. It exists because the background-job research of 2026-10-31 kept mixing up product names (a "cron ticker" is a pattern this repo built, not a product), and a side-by-side map makes the options easier to reason about.
 
 > **Verification status.** The product lists come from general knowledge and were not re-checked against each vendor's pages on 2026-10-31. Rows marked **MEASURED** were observed in the 2026-10-31 experiments; everything else should be checked on the vendor's current docs and pricing before a decision relies on it. Measured evidence lives in [the experiments folder](../maintenance/experiments/2026-10-31-job-runtime/README.md), and the job-runtime comparison is in [page 14](../maintenance/14-background-job-runtime-options.md) and [page 15](../maintenance/15-job-runtime-layer-matrix.md).
 
@@ -49,23 +49,36 @@ The table lists Vercel's products by layer, with the measured facts from the 202
 | Observability      | Logs, Observability, Web Analytics, Speed Insights, Drains                                                                |                                                                                                                                                                                                                                                                                                                                      |
 | Tooling            | Vercel CLI, Vercel MCP, Vercel plugin for agents                                                                          | All three were installed on 2026-10-31.                                                                                                                                                                                                                                                                                              |
 
-## How the two map onto each other
+## Cloudflare
 
-The table pairs each concern with the product that covers it on each host.
+The table lists the Cloudflare products the 2026-10-31 experiment used, with the measured facts. Everything ran on the Workers Free plan. The full report is [cloudflare-workers-queues-workflows](../maintenance/experiments/2026-10-31-job-runtime/cloudflare-workers-queues-workflows.md).
 
-| Concern                  | Netlify                           | Vercel                                  |
-| ------------------------ | --------------------------------- | --------------------------------------- |
-| Short serverless         | Functions                         | Vercel Functions                        |
-| Cron                     | Scheduled Functions               | Cron Jobs                               |
-| Long-running             | Background Functions (15 min)     | Longer functions (800 s on Pro)         |
-| Durable multi-step       | Async Workloads (unverified)      | Vercel Workflows (+ Queues)             |
-| Edge logic               | Edge Functions                    | Middleware / Edge Functions             |
-| KV / blobs               | Netlify Blobs                     | Blob, Edge Config                       |
-| Postgres                 | Netlify DB (Neon)                 | Marketplace (Neon, Supabase and others) |
-| Static egress IP         | Private Connectivity (Enterprise) | Static IPs (Pro, $100 per month)        |
-| Region for this database | Singapore (no Mumbai)             | `bom1` Mumbai available                 |
+| Layer              | Product                                    | Notes                                                                                                                                                                                                                                                                           |
+| ------------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Serverless compute | Workers (`fetch` handler)                  | MEASURED: with `region = "aws:ap-south-1"` the Worker ran in `remote-BOM` and reached the Supabase Mumbai pooler in 2–3 ms per statement. Default placement and Smart Placement stayed at about 98 ms from Marseille; Smart Placement never relocated after about 600 requests. |
+| Scheduling         | Cron Triggers                              | MEASURED: 13 fires in 13 minutes, no duplicates, about 2.3 s late, each in a different colo at 147–266 ms per statement. A removed schedule kept firing for about 4 minutes. DOCS: 5 triggers per account on Free, 250 on Paid.                                                 |
+| Queues             | Cloudflare Queues with a dead-letter queue | MEASURED: a throw redelivered after about 2.4 s and wrote the side effect twice; `max_retries = 2` gave 3 runs then the DLQ; a 300 s consumer ran to the end. Consumers run in random colos at 125–266 ms per statement. A send is not transactional with Postgres.             |
+| Durable execution  | Workflows                                  | MEASURED: completed steps did not re-run after a retry, a 30 s step ran once, and `create()` is not transactional with Postgres. Steps ran near the creating request, not near the database.                                                                                    |
+| Data access        | Hyperdrive                                 | MEASURED: lock hold 36–39 ms in-region against 65–75 ms direct, but worse than direct without the region hint. Pointed at the session pooler, which deviates from the vendor's guidance.                                                                                        |
+| Observability      | Workers Logs, Queues and Workflows pages   | Enabled with `[observability] enabled = true`.                                                                                                                                                                                                                                  |
 
-The last row explains most of the measured latency difference: about 62 ms per statement from Netlify Singapore against 1–2 ms from Vercel `bom1`, both MEASURED with raw `pg` against the Supabase Mumbai transaction pooler.
+## How the three map onto each other
+
+The table pairs each concern with the product that covers it on each host. Cloudflare cells are MEASURED only where the Cloudflare section says so.
+
+| Concern                  | Netlify                           | Vercel                                  | Cloudflare                                       |
+| ------------------------ | --------------------------------- | --------------------------------------- | ------------------------------------------------ |
+| Short serverless         | Functions                         | Vercel Functions                        | Workers                                          |
+| Cron                     | Scheduled Functions               | Cron Jobs                               | Cron Triggers                                    |
+| Long-running             | Background Functions (15 min)     | Longer functions (800 s on Pro)         | Queue consumers and cron (15 min wall)           |
+| Durable multi-step       | Async Workloads (unverified)      | Vercel Workflows (+ Queues)             | Workflows (+ Queues)                             |
+| Edge logic               | Edge Functions                    | Middleware / Edge Functions             | Workers                                          |
+| KV / blobs               | Netlify Blobs                     | Blob, Edge Config                       | Not covered here                                 |
+| Postgres                 | Netlify DB (Neon)                 | Marketplace (Neon, Supabase and others) | Hyperdrive (a pooler in front of our Postgres)   |
+| Static egress IP         | Private Connectivity (Enterprise) | Static IPs (Pro, $100 per month)        | Not measured                                     |
+| Region for this database | Singapore (no Mumbai)             | `bom1` Mumbai available                 | `fetch` handlers pinned to Mumbai; others random |
+
+The last row explains most of the measured latency difference: about 62 ms per statement from Netlify Singapore against 1–2 ms from Vercel `bom1`, and 2–3 ms from a Cloudflare Worker pinned to Mumbai, all MEASURED with raw `pg` against the Supabase Mumbai transaction pooler.
 
 ```
              Supabase Postgres (Mumbai, ap-south-1)

@@ -1095,7 +1095,7 @@ export default defineConfig({
 });
 ```
 
-The sections below were appended later and cover the lock-hold, Netlify, real-QStash and Vercel experiments. Credentials, the Trigger.dev project reference and local paths are replaced with `<...>` placeholders. Only source files are kept: no lockfiles, build output or environment files.
+The sections below were appended later and cover the lock-hold, Netlify, real-QStash, Vercel and Cloudflare experiments. Credentials, the Trigger.dev project reference and local paths are replaced with `<...>` placeholders. Only source files are kept: no lockfiles, build output or environment files.
 
 ## `lab-lock/`
 
@@ -3813,4 +3813,703 @@ export async function crashy(runId: string) {
   await flaky(runId);
   await sideEffect(runId, 3);
 }
+```
+
+## `lab-cloudflare/`
+
+### `lab-cloudflare/package.json`
+
+```json
+{
+  "name": "fw-lab-cloudflare",
+  "private": true,
+  "type": "module",
+  "dependencies": { "pg": "^8.13.0" }
+}
+```
+
+### `lab-cloudflare/src/jobs.js`
+
+```js
+import pg from "pg";
+import { WorkflowEntrypoint } from "cloudflare:workers";
+const { Client } = pg;
+const now = () => performance.now();
+const r = (x) => Math.round(x * 100) / 100;
+const median = (a) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.floor(s.length / 2)];
+};
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+async function db(env) {
+  const u = new URL(env.DATABASE_URL);
+  u.search = "";
+  const c = new Client({ connectionString: u.toString(), ssl: false });
+  await Promise.race([
+    c.connect(),
+    new Promise((_, rej) =>
+      setTimeout(() => rej(new Error("connect timeout")), 10000),
+    ),
+  ]);
+  return c;
+}
+async function colo() {
+  try {
+    const t = await (
+      await fetch("https://www.cloudflare.com/cdn-cgi/trace")
+    ).text();
+    return (t.match(/colo=(\w+)/) || [])[1];
+  } catch {
+    return null;
+  }
+}
+async function rtt(c, n = 5) {
+  const a = [];
+  for (let i = 0; i < n; i++) {
+    const t = now();
+    await c.query("SELECT 1");
+    a.push(now() - t);
+  }
+  return r(median(a));
+}
+async function ev(c, kind, key, extra = {}) {
+  await c.query(
+    "INSERT INTO lab_cflock.events(kind,key,data) VALUES ($1,$2,$3)",
+    [kind, key, JSON.stringify(extra)],
+  );
+}
+async function setup(c) {
+  await c.query("CREATE SCHEMA IF NOT EXISTS lab_cflock");
+  await c.query(
+    "CREATE TABLE IF NOT EXISTS lab_cflock.events(id bigserial primary key, kind text, key text, at timestamptz default clock_timestamp(), data jsonb)",
+  );
+}
+
+export class LabWorkflow extends WorkflowEntrypoint {
+  async run(event, step) {
+    const env = this.env;
+    const id = event.instanceId;
+    const stepDb = (name, extra) =>
+      step.do(
+        name,
+        { retries: { limit: 3, delay: "2 seconds" } },
+        async (ctx) => {
+          const t0 = Date.now();
+          const c = await db(env);
+          try {
+            const tc = Date.now();
+            const lat = [];
+            for (let i = 0; i < 5; i++) {
+              const t = now();
+              await c.query('SELECT count(*) FROM "SystemJobExecution"');
+              lat.push(now() - t);
+            }
+            const out = {
+              colo: await colo(),
+              step: name,
+              attempt: ctx.attempt,
+              start_ms: t0,
+              end_ms: Date.now(),
+              connect_ms: tc - t0,
+              q_median_ms: r(median(lat)),
+              q_all: lat.map(r),
+            };
+            await ev(c, "wf_step_run", id, {
+              step: name,
+              attempt: ctx.attempt,
+              ...out,
+            });
+            if (extra && extra.failFirst && ctx.attempt === 1)
+              throw new Error("injected failure on attempt 1");
+            return out;
+          } finally {
+            await c.end();
+          }
+        },
+      );
+    const s1 = await stepDb("step1");
+    const s2 = await stepDb("step2");
+    const flaky = await stepDb("flaky", { failFirst: true });
+    const s3 = await stepDb("step3");
+    const t_sleep0 = Date.now();
+    await step.sleep("nap", "10 seconds");
+    const slept_ms = Date.now() - t_sleep0;
+    const long = await step.do("long30", async (ctx) => {
+      const t0 = Date.now();
+      await sleep(30000);
+      const c = await db(env);
+      try {
+        await ev(c, "wf_long_run", id, {
+          attempt: ctx.attempt,
+          start_ms: t0,
+          end_ms: Date.now(),
+        });
+      } finally {
+        await c.end();
+      }
+      return { attempt: ctx.attempt, start_ms: t0, end_ms: Date.now() };
+    });
+    const sb = await step.do("via_service_binding", async () => {
+      const rr = await env.DBW.fetch("https://probe/light");
+      const j = await rr.json();
+      return {
+        colo_ingress: j.colo,
+        connect_ms: j.connect_ms,
+        total_ms: j.total_ms,
+        placement: rr.headers.get("cf-placement"),
+      };
+    });
+    const c = await db(env);
+    try {
+      await ev(c, "wf_sb", id, sb);
+      await ev(c, "wf_done", id, { s1, s2, flaky, s3, slept_ms, long });
+    } finally {
+      await c.end();
+    }
+    return { ok: true };
+  }
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const p = url.pathname;
+    try {
+      if (p === "/setup") {
+        const c = await db(env);
+        try {
+          await setup(c);
+          await c.query(
+            "CREATE TABLE IF NOT EXISTS lab_cflock.orders(id text primary key, created timestamptz default now())",
+          );
+          return Response.json({ ok: true });
+        } finally {
+          await c.end();
+        }
+      }
+      if (p === "/send") {
+        // /send?q=main|fast&type=latency&n=20&gap=1500&secs=0
+        const n = +(url.searchParams.get("n") || 1);
+        const type = url.searchParams.get("type") || "latency";
+        const q = url.searchParams.get("q") === "fast" ? env.Q_FAST : env.Q;
+        const tag =
+          url.searchParams.get("tag") || crypto.randomUUID().slice(0, 8);
+        const secs = +(url.searchParams.get("secs") || 0);
+        const batch = url.searchParams.get("batch") === "1";
+        const msgs = [];
+        for (let i = 0; i < n; i++)
+          msgs.push({
+            body: {
+              type,
+              tag,
+              i,
+              secs,
+              it: +(url.searchParams.get("it") || 0),
+              sent_ms: 0,
+            },
+          });
+        if (batch) {
+          const t = Date.now();
+          msgs.forEach((m) => (m.body.sent_ms = t));
+          await q.sendBatch(msgs);
+        } else {
+          for (const m of msgs) {
+            m.body.sent_ms = Date.now();
+            await q.send(m.body);
+            if (n > 1) await sleep(+(url.searchParams.get("gap") || 1000));
+          }
+        }
+        return Response.json({ sent: n, tag });
+      }
+      if (p === "/dual") {
+        // insert row, fail before send
+        const id = "ord-" + crypto.randomUUID().slice(0, 8);
+        const c = await db(env);
+        try {
+          await c.query("INSERT INTO lab_cflock.orders(id) VALUES ($1)", [id]);
+          if (url.searchParams.get("fail") === "1")
+            throw new Error("injected failure before queue.send");
+          await env.Q.send({
+            type: "latency",
+            tag: "dual",
+            i: 0,
+            order: id,
+            sent_ms: Date.now(),
+          });
+          return Response.json({ id, sent: true });
+        } catch (e) {
+          const row = await c.query(
+            "SELECT id FROM lab_cflock.orders WHERE id=$1",
+            [id],
+          );
+          return Response.json({
+            id,
+            error: e.message,
+            row_exists: row.rowCount === 1,
+            message_enqueued: false,
+          });
+        } finally {
+          await c.end();
+        }
+      }
+      if (p === "/wf/start") {
+        const inst = await env.WF.create({
+          params: { tag: url.searchParams.get("tag") || "t" },
+        });
+        return Response.json({ id: inst.id });
+      }
+      if (p === "/wf/status") {
+        const inst = await env.WF.get(url.searchParams.get("id"));
+        return Response.json(await inst.status());
+      }
+      if (p === "/wf/dual") {
+        // BEGIN; insert; create workflow; ROLLBACK
+        const c = await db(env);
+        try {
+          await c.query("BEGIN");
+          const oid = "wford-" + crypto.randomUUID().slice(0, 8);
+          await c.query("INSERT INTO lab_cflock.orders(id) VALUES ($1)", [oid]);
+          const inst = await env.WF.create({ params: { tag: "dual" } });
+          await c.query("ROLLBACK");
+          const row = await c.query(
+            "SELECT id FROM lab_cflock.orders WHERE id=$1",
+            [oid],
+          );
+          const st = await inst.status();
+          return Response.json({
+            oid,
+            wf: inst.id,
+            row_exists_after_rollback: row.rowCount === 1,
+            workflow_status: st.status,
+          });
+        } finally {
+          await c.end();
+        }
+      }
+      if (p === "/viasb") {
+        const rr = await env.DBW.fetch("https://probe/light");
+        return Response.json({
+          placement: rr.headers.get("cf-placement"),
+          body: await rr.json(),
+        });
+      }
+      if (p === "/cpu") {
+        const it = +(url.searchParams.get("it") || 1e6);
+        let x = 0;
+        for (let i = 0; i < it; i++) x += Math.sqrt(i);
+        return Response.json({ it, x: x > 0 });
+      }
+      if (p === "/events") {
+        const c = await db(env);
+        try {
+          const res = await c.query(
+            `SELECT id,kind,key,(extract(epoch from at)*1000)::bigint AS at_ms,data FROM lab_cflock.events WHERE ($1::text IS NULL OR kind=$1) AND ($2::text IS NULL OR key=$2) ORDER BY id`,
+            [url.searchParams.get("kind"), url.searchParams.get("key")],
+          );
+          return Response.json(res.rows);
+        } finally {
+          await c.end();
+        }
+      }
+      return Response.json({
+        routes: [
+          "/setup",
+          "/send",
+          "/dual",
+          "/wf/start",
+          "/wf/status",
+          "/wf/dual",
+          "/events",
+        ],
+      });
+    } catch (e) {
+      return Response.json({ error: String(e.message) }, { status: 500 });
+    }
+  },
+
+  async queue(batch, env) {
+    const t_start = Date.now();
+    const c = await db(env);
+    try {
+      const rt = await rtt(c, 3);
+      const cl = await colo();
+      for (let idx = 0; idx < batch.messages.length; idx++) {
+        const m = batch.messages[idx];
+        const b = m.body;
+        if (batch.queue.endsWith("dlq")) {
+          await ev(c, "dlq", b.tag, {
+            i: b.i,
+            attempts: m.attempts,
+            orig: b.type,
+            at_ms: Date.now(),
+          });
+          m.ack();
+          continue;
+        }
+        const base = {
+          colo: cl,
+          i: b.i,
+          attempts: m.attempts,
+          batch_size: batch.messages.length,
+          batch_idx: idx,
+          sent_ms: b.sent_ms,
+          consumed_ms: Date.now(),
+          invoke_start_ms: t_start,
+          rtt_ms: rt,
+          queue: batch.queue,
+        };
+        if (b.type === "latency") {
+          await ev(c, "q_latency", b.tag, base);
+          m.ack();
+        } else if (b.type === "retry_once") {
+          await ev(c, "q_retry", b.tag, base);
+          if (m.attempts === 1)
+            throw new Error("injected first attempt failure");
+          await ev(c, "q_retry_ok", b.tag, base);
+          m.ack();
+        } else if (b.type === "always_fail") {
+          await ev(c, "q_alwaysfail", b.tag, base);
+          throw new Error("always fail");
+        } else if (b.type === "long") {
+          await ev(c, "q_long_start", b.tag, base);
+          await sleep(b.secs * 1000);
+          const c2 = await db(env);
+          try {
+            await ev(c2, "q_long_end", b.tag, { ...base, end_ms: Date.now() });
+          } finally {
+            await c2.end();
+          }
+          m.ack();
+        } else if (b.type === "sb") {
+          const rr = await env.DBW.fetch("https://probe/light");
+          const j = await rr.json();
+          await ev(c, "q_sb", b.tag, {
+            ...base,
+            sb: j,
+            placement: rr.headers.get("cf-placement"),
+          });
+          m.ack();
+        } else if (b.type === "cpu") {
+          await ev(c, "q_cpu_start", b.tag, base);
+          let x = 0;
+          for (let i = 0; i < b.it; i++) x += Math.sqrt(i);
+          const c2 = await db(env);
+          try {
+            await ev(c2, "q_cpu_end", b.tag, { ...base, end_ms: Date.now() });
+          } finally {
+            await c2.end();
+          }
+          m.ack();
+        }
+      }
+    } finally {
+      try {
+        await c.end();
+      } catch {}
+    }
+  },
+
+  async scheduled(controller, env) {
+    const c = await db(env);
+    try {
+      const rt = await rtt(c, 3);
+      await ev(c, "cron", controller.cron, {
+        colo: await colo(),
+        scheduled_ms: controller.scheduledTime,
+        fired_ms: Date.now(),
+        rtt_ms: rt,
+      });
+    } finally {
+      await c.end();
+    }
+  },
+};
+```
+
+### `lab-cloudflare/src/probe.js`
+
+```js
+import pg from "pg";
+const { Client } = pg;
+const now = () => performance.now();
+const pct = (a, p) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)];
+};
+const r = (x) => Math.round(x * 100) / 100;
+let coldFlag = true;
+const born = Date.now();
+
+export default {
+  async fetch(request, env) {
+    const cold = coldFlag;
+    coldFlag = false;
+    const url = new URL(request.url);
+    const out = {
+      worker: env.VARIANT,
+      colo: request.cf && request.cf.colo,
+      country: request.cf && request.cf.country,
+      placement_hdr: request.headers.get("cf-placement"),
+      ray: null,
+      cold,
+    };
+    if (url.pathname === "/ping") return Response.json(out);
+    const t0 = now();
+    let cfg, c;
+    const ID = parseInt((env.VARIANT || "v0").slice(1), 10);
+    const light = url.pathname === "/light";
+    try {
+      if (env.HYPERDRIVE)
+        cfg = { connectionString: env.HYPERDRIVE.connectionString };
+      else {
+        const u = new URL(env.DATABASE_URL);
+        u.search = "";
+        cfg = { connectionString: u.toString(), ssl: false };
+      }
+      c = new Client(cfg);
+      let t = now();
+      await Promise.race([
+        c.connect(),
+        new Promise((_, rej) =>
+          setTimeout(() => rej(new Error("connect timeout 10s")), 10000),
+        ),
+      ]);
+      out.connect_ms = r(now() - t);
+      if (light) {
+        for (let i = 0; i < 5; i++) await c.query("SELECT 1");
+        out.total_ms = r(now() - t0);
+        return Response.json(out);
+      }
+      const s1 = [];
+      for (let i = 0; i < 50; i++) {
+        t = now();
+        await c.query("SELECT 1");
+        s1.push(now() - t);
+      }
+      out.select1 = {
+        median_ms: r(pct(s1, 0.5)),
+        p95_ms: r(pct(s1, 0.95)),
+        min_ms: r(Math.min(...s1)),
+      };
+      const qs = [
+        'SELECT id, "paymentStatus" FROM "Payment" ORDER BY "createdAt" DESC LIMIT 50',
+        'SELECT id, "createdAt" FROM "Appointment" ORDER BY "createdAt" DESC LIMIT 50',
+        'SELECT id, status FROM "SystemJobExecution" ORDER BY "createdAt" DESC LIMIT 50',
+        `SELECT count(*) FROM "Payment" WHERE "paymentStatus"::text = 'SUCCEEDED'`,
+        `SELECT count(*) FROM "SystemJobExecution" WHERE status::text = 'SUCCEEDED'`,
+      ];
+      t = now();
+      for (let i = 0; i < 20; i++) await c.query(qs[i % qs.length]);
+      out.mix20_total_ms = r(now() - t);
+      await c.query("CREATE SCHEMA IF NOT EXISTS lab_cflock");
+      await c.query(
+        "CREATE TABLE IF NOT EXISTS lab_cflock.account(id int primary key, balance bigint, version int)",
+      );
+      await c.query(
+        `INSERT INTO lab_cflock.account VALUES (${ID},1000,0) ON CONFLICT DO NOTHING`,
+      );
+      const holds = [];
+      for (let i = 0; i < 10; i++) {
+        await c.query("BEGIN");
+        const row = (
+          await c.query(
+            `SELECT balance, version FROM lab_cflock.account WHERE id=${ID} FOR UPDATE`,
+          )
+        ).rows[0];
+        t = now();
+        await c.query("SELECT 1");
+        await c.query("SELECT count(*) FROM lab_cflock.account");
+        await c.query(`SELECT balance FROM lab_cflock.account WHERE id=${ID}`);
+        const u = await c.query(
+          `UPDATE lab_cflock.account SET balance=balance+1, version=version+1 WHERE id=${ID} AND version=$1`,
+          [row.version],
+        );
+        if (u.rowCount !== 1) throw new Error("CAS failed");
+        await c.query(`SELECT version FROM lab_cflock.account WHERE id=${ID}`);
+        await c.query("SELECT 1");
+        await c.query("SELECT now()");
+        await c.query(`SELECT balance FROM lab_cflock.account WHERE id=${ID}`);
+        await c.query("COMMIT");
+        holds.push(now() - t);
+      }
+      out.lock_hold = {
+        median_ms: r(pct(holds, 0.5)),
+        p95_ms: r(pct(holds, 0.95)),
+      };
+    } catch (e) {
+      out.error = String(e && e.message).slice(0, 300);
+      try {
+        await c.query("ROLLBACK");
+      } catch {}
+    } finally {
+      try {
+        await c.end();
+      } catch {}
+    }
+    out.total_ms = r(now() - t0);
+    return Response.json(out);
+  },
+};
+```
+
+### `lab-cloudflare/cfg/jobs.toml`
+
+```toml
+name = "fw-lab-jobs"
+main = "../src/jobs.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+[observability]
+enabled = true
+[triggers]
+crons = []
+[[queues.producers]]
+binding = "Q"
+queue = "fw-lab-q"
+[[queues.producers]]
+binding = "Q_FAST"
+queue = "fw-lab-q-fast"
+[[queues.consumers]]
+queue = "fw-lab-q"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 2
+dead_letter_queue = "fw-lab-dlq"
+[[queues.consumers]]
+queue = "fw-lab-q-fast"
+max_batch_size = 1
+max_batch_timeout = 0
+max_retries = 2
+dead_letter_queue = "fw-lab-dlq"
+[[queues.consumers]]
+queue = "fw-lab-dlq"
+[[workflows]]
+name = "fw-lab-wf"
+binding = "WF"
+class_name = "LabWorkflow"
+
+[[services]]
+binding = "DBW"
+service = "fw-lab-v5-region"
+```
+
+### `lab-cloudflare/cfg/plantest.toml`
+
+```toml
+name = "fw-lab-plantest"
+main = "../src/probe.js"
+compatibility_date = "2026-10-01"
+workers_dev = false
+[limits]
+cpu_ms = 60000
+```
+
+### `lab-cloudflare/cfg/v1-direct.toml`
+
+```toml
+name = "fw-lab-v1-direct"
+main = "../src/probe.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+[observability]
+enabled = true
+[vars]
+VARIANT = "v1-direct"
+```
+
+### `lab-cloudflare/cfg/v2-hd.toml`
+
+```toml
+name = "fw-lab-v2-hd"
+main = "../src/probe.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+[observability]
+enabled = true
+[vars]
+VARIANT = "v2-hd"
+```
+
+### `lab-cloudflare/cfg/v3-smart.toml`
+
+```toml
+name = "fw-lab-v3-smart"
+main = "../src/probe.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+[observability]
+enabled = true
+[vars]
+VARIANT = "v3-smart"
+[placement]
+mode = "smart"
+```
+
+### `lab-cloudflare/cfg/v4-smart-hd.toml`
+
+```toml
+name = "fw-lab-v4-smart-hd"
+main = "../src/probe.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+[observability]
+enabled = true
+[vars]
+VARIANT = "v4-smart-hd"
+[placement]
+mode = "smart"
+```
+
+### `lab-cloudflare/cfg/v5-region.toml`
+
+```toml
+name = "fw-lab-v5-region"
+main = "../src/probe.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+[observability]
+enabled = true
+[vars]
+VARIANT = "v5-region"
+[placement]
+region = "aws:ap-south-1"
+```
+
+### `lab-cloudflare/cfg/v6-region-hd.toml`
+
+```toml
+name = "fw-lab-v6-region-hd"
+main = "../src/probe.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+[observability]
+enabled = true
+[vars]
+VARIANT = "v6-region-hd"
+[placement]
+region = "aws:ap-south-1"
+```
+
+### `lab-cloudflare/cfg/v7-host.toml`
+
+```toml
+name = "fw-lab-v7-host"
+main = "../src/probe.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+[observability]
+enabled = true
+[vars]
+VARIANT = "v7-host"
+[placement]
+host = "<supabase-pooler-host>:6543"
 ```

@@ -31,13 +31,13 @@ Layers: 1 Trigger, 2 Dispatch, 3 Durability, 4 Compute, 5 DB access, 6 Correctne
 
 Compatibility rules:
 
-1. A layer-3 engine is tied to its compute: Vercel Workflows to Vercel, Cloudflare Workflows to Workers (pending), Trigger.dev to its own machines. Inngest and Upstash Workflow work with any HTTP compute.
+1. A layer-3 engine is tied to its compute: Vercel Workflows to Vercel, Cloudflare Workflows to Workers, Trigger.dev to its own machines. Inngest and Upstash Workflow work with any HTTP compute.
 2. Durable steps and in-process cron need long-lived compute. Otherwise you only get drain mode.
 3. Any queue can be drained by a periodic trigger, at the cost of tick latency.
 4. Only a Postgres-native queue (pg-boss, DBOS) avoids the enqueue dual write. Everything else needs an outbox row in the same transaction.
 5. Layer 6 never changes: CAS-in-WHERE, idempotency keys, ledger triggers and reconcilers stay on every stack.
 
-Stacks (S1 ticker today, S2 Prisma `Job` table, S3 Netlify Background Functions pending, S4 Async Workloads pending, S5 QStash or Inngest on Netlify, S6 Vercel Cron in `bom1`, S7 Vercel Workflows in `bom1`, S8 Cloudflare pending, S9 Trigger.dev, S10 DBOS on a Mumbai VM):
+Stacks (S1 ticker today, S2 Prisma `Job` table, S3 Netlify Background Functions pending, S4 Async Workloads pending, S5 QStash or Inngest on Netlify, S6 Vercel Cron in `bom1`, S7 Vercel Workflows in `bom1`, S8 Cloudflare, S9 Trigger.dev, S10 DBOS on a Mumbai VM):
 
 | Stack      | DB per round trip | Time cap               | Double-write safe               | Status             |
 | ---------- | ----------------- | ---------------------- | ------------------------------- | ------------------ |
@@ -50,7 +50,7 @@ Stacks (S1 ticker today, S2 Prisma `Job` table, S3 Netlify Background Functions 
 | S10        | 1-2 ms ESTIMATE   | none                   | yes                             | unmeasured on a VM |
 | S3, S4, S8 | pending           | pending                | pending                         | placeholders       |
 
-Corrections: pg-boss and DBOS can be drained from short functions (pg-boss `fetch()`, not run by us, UNVERIFIED); only their own cron, maintenance and fast crash recovery need a long-running process. "Mumbai worker at 1-2 ms" is an estimate; only Vercel `bom1` was measured. A Background Function avoids the ~30 s cap but the caller gets only a 202.
+Corrections: pg-boss and DBOS can be drained from short functions (pg-boss `fetch()`, not run by us, UNVERIFIED); only their own cron, maintenance and fast crash recovery need a long-running process. "Mumbai worker at 1-2 ms" is an estimate; only Vercel `bom1` and a region-pinned Cloudflare Worker were measured. A Background Function avoids the ~30 s cap but the caller gets only a 202.
 
 ## Footguns
 
@@ -66,11 +66,15 @@ Corrections: pg-boss and DBOS can be drained from short functions (pg-boss `fetc
 - Upstash Workflow `context.call` to an endpoint that returns 504 still ends the step `STEP_SUCCESS` and the run `RUN_SUCCESS`. Always check `res.status`.
 - QStash to Vercel: a 310 s target gets a 504 at 300 s, retries after 11 s and about 141 s, then the DLQ. A function that already returned 504 still finishes its write (zombie), so handlers must be idempotent.
 - Vercel Workflows `start()` is not part of our Postgres transaction: `start()` then `ROLLBACK` ran a workflow for a missing order. Use an outbox.
+- Cloudflare placement applies to `fetch` handlers only. Queue consumers, cron handlers and Workflow steps run in random colos at 125-266 ms per statement. Call a Worker pinned with `region = "aws:ap-south-1"` over a service binding (22-31 ms for connect plus 5 queries).
+- Cloudflare needs the explicit region hint (2-3 ms). Smart Placement never moved (still about 98 ms after 600 requests) because it needs traffic from multiple locations. Hyperdrive without the hint is worse than direct.
+- `pg` over TLS from Workers hung (error 1101), so the probe ran without TLS. Do not copy that to production.
+- A removed Cloudflare cron keeps firing for about 4 minutes. A Queue retry after a throw writes the side effect twice (3 runs then the DLQ at `max_retries = 2`). Free CPU is 10 ms per request; real jobs need Paid.
 - A publish after commit is a dual write. Use state as the outbox or an in-database enqueue.
 
 ## How to rerun a probe
 
-Scripts live outside the repo; all of them (Inngest, pg-boss, DBOS, Supabase, Trigger.dev, lock-hold, Netlify, QStash, Vercel) are stored as redacted text in `docs/maintenance/experiments/2026-10-31-job-runtime/source-code.md`. The second Vercel round is in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-fluid-prisma-qstash-workflows.md` (code under `lab-vercel2/` in `source-code.md`). The first Vercel probe is described in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-bom1-latency.md`.
+Scripts live outside the repo; all of them (Inngest, pg-boss, DBOS, Supabase, Trigger.dev, lock-hold, Netlify, QStash, Vercel, Cloudflare) are stored as redacted text in `docs/maintenance/experiments/2026-10-31-job-runtime/source-code.md`. The second Vercel round is in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-fluid-prisma-qstash-workflows.md` (code under `lab-vercel2/` in `source-code.md`). The first Vercel probe is described in `docs/maintenance/experiments/2026-10-31-job-runtime/vercel-bom1-latency.md`.
 
 1. Make a scratch directory outside the repo and copy the script out of the markdown.
 2. Pass the database address through an environment variable only. Use a throwaway `lab_` schema on the shared project.
