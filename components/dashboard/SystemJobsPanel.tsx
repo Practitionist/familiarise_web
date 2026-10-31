@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/utils/tailwind";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import {
   type SystemJobCard,
 } from "@/lib/cron/job-categories";
 import type { Tone } from "@/lib/ui/tone";
+import type { MetricsEnvironment } from "@/lib/backoffice/job-run-metrics";
 import {
   formatDuration,
   isStandDownOutcome,
@@ -194,37 +195,44 @@ interface SystemJobsPanelProps {
   className?: string;
   /** Built on the server from the cleanup registry. */
   jobs: SystemJobCard[];
+  /** Recent executions list only this environment's runs. */
+  environment: MetricsEnvironment;
 }
 
 export function SystemJobsPanel({
   className,
   jobs,
+  environment,
 }: Readonly<SystemJobsPanelProps>) {
   const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set());
   const [executions, setExecutions] = useState<JobExecution[]>([]);
   const [loadingExecutions, setLoadingExecutions] = useState(true);
   const { toast } = useToast();
 
-  // Fetch recent executions
-  const fetchExecutions = async () => {
+  // Only the latest request may set state, so a slower answer for a previous environment is dropped.
+  const latestExecutionsRequest = useRef(0);
+  const fetchExecutions = useCallback(async () => {
+    const request = ++latestExecutionsRequest.current;
     try {
       setLoadingExecutions(true);
       const response = await fetch(
-        "/api/staff/system-jobs/executions?limit=10",
+        `/api/staff/system-jobs/executions?limit=10&environment=${environment}`,
       );
       if (!response.ok) throw new Error("Failed to fetch executions");
       const data = await response.json();
-      setExecutions(data.executions || []);
+      if (request === latestExecutionsRequest.current)
+        setExecutions(data.executions || []);
     } catch (error) {
       console.error("Error fetching executions:", error);
     } finally {
-      setLoadingExecutions(false);
+      if (request === latestExecutionsRequest.current)
+        setLoadingExecutions(false);
     }
-  };
+  }, [environment]);
 
   useEffect(() => {
     fetchExecutions();
-  }, []);
+  }, [fetchExecutions]);
 
   // #1527 Q10 — every "Run now" asks for a reason (the route writes it to the
   // audit log); a money job also needs a typed confirmation.
@@ -323,7 +331,9 @@ export function SystemJobsPanel({
                 <History className="h-5 w-5" />
                 Recent Executions
               </CardTitle>
-              <CardDescription>Last 10 job executions</CardDescription>
+              <CardDescription>
+                Last 10 job executions in {environment}
+              </CardDescription>
             </div>
             <Button
               variant="ghost"

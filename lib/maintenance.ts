@@ -13,6 +13,7 @@ import redis from "@/lib/redis";
 import { recordOpsAction } from "@/lib/backoffice/ops-action-log";
 import { REDIS_KEYS } from "@/lib/maintenance-keys";
 import { invalidateMaintenancePhaseCache } from "@/lib/maintenance-cron";
+import { mayWriteProductionState } from "@/lib/production-state";
 
 export interface MaintenanceState {
   phase: MaintenancePhase;
@@ -50,7 +51,8 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
 }
 
 /**
- * Set maintenance state in Redis and persist to Prisma.
+ * Set maintenance state in Redis and persist to Prisma. The window row and its
+ * Redis mirror are production state, so another deploy writes neither.
  */
 export async function setMaintenanceState(
   phase: MaintenancePhase,
@@ -64,6 +66,7 @@ export async function setMaintenanceState(
     auditReason?: string;
   } = {},
 ): Promise<void> {
+  if (!mayWriteProductionState(REDIS_KEYS.PHASE)) return;
   const estimatedEndDate =
     config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
       ? new Date(config.estimatedEnd)

@@ -149,6 +149,15 @@ The `.env.sample` file is the canonical reference for what vars are needed. It i
 | `BETTER_AUTH_TRUSTED_ORIGINS` | `https://familiarisenow.com` | `http://localhost:3000` | Comma-separated additional allowed CORS origins                        |
 | `NEXT_PUBLIC_APP_URL`         | `https://familiarisenow.com` | `http://localhost:3000` | Used by auth client + for building absolute URLs (e.g. referral links) |
 
+### Variables that must differ by context
+
+Two variables decide what a non-production deploy may do to the database it shares with production. Check both in the Netlify UI after any context change.
+
+- **`NEXT_PUBLIC_SENTRY_ENVIRONMENT`** is `production` in the production context only. It must stay `preview` on deploy-preview and branch-deploy. Only a `production` deploy runs background jobs and writes production-only shared state (the maintenance window, the discount-code pause and the `cron:heartbeat:last` key); every other deploy refuses jobs with 409 `JOB_RUN_PRODUCTION_ONLY` and skips those writes (`lib/cron/dispatch-refusal.ts`, `lib/production-state.ts`). Netlify's `deploy_context` is a Sentry tag only, so `branch-deploy` and `deploy-preview` both record `preview`.
+- **`CRON_SECRET`** has a separate value per context (set 2026-10-30), so a preview's secret cannot call production's cleanup routes.
+
+Local `next dev` is not a deploy: it still runs jobs, against whatever database `.env` names, but it never toggles maintenance or touches the heartbeat.
+
 ### Optional performance variables
 
 These variables are not required for the app to boot, but they tune runtime behaviour. Leave them unset to accept the defaults.

@@ -85,16 +85,16 @@ This path covers the whole surface and the regulatory rails the money flows must
 
 The table below lists every band in reading order, with the documents each one contains.
 
-| Band folder                  | Section                                          | Docs                                                                                                                                            |
-| ---------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `00-foundations/`            | **Foundations**                                  | overview, org types, funding & programs, roles, lifecycle, scheduling glossary                                                                  |
-| `docs/finance/`              | **Money & ledger** (moved)                       | the money story: checkout, ledger, refunds, payouts, organisation funding, tax and operations                                                   |
-| `20-iam-and-security/`       | **IAM / SSO / security**                         | SSO, JIT, rate-limiting, security headers                                                                                                       |
-| `30-programs-and-lifecycle/` | **Programs / dashboard / discovery / lifecycle** | concurrency & idempotency, programs, experts, dashboard, discovery, feature flags, contract lifecycle, cycle engine & rollover                  |
-| `40-compliance-and-data/`    | **Compliance / integrations / data**             | compliance map, deletion, data export, outbound webhooks, workspace prefs, cross-cutting integrations, RBI payment aggregator posture           |
-| `50-operations/`             | **Operations**                                   | API reference, non-money runbooks, monitoring, system events, chaos test, required secrets, capacity ladder, load gate, Novu console conditions |
-| `60-scenarios-and-verdicts/` | **Scenarios**                                    | worked end-to-end scenarios                                                                                                                     |
-| `70-design-decisions/`       | **Design decisions (ADRs)**                      | why the ledger, money representation, payouts, auth, and webhook designs are what they are                                                      |
+| Band folder                  | Section                                          | Docs                                                                                                                                                            |
+| ---------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `00-foundations/`            | **Foundations**                                  | overview, org types, funding & programs, roles, lifecycle, scheduling glossary                                                                                  |
+| `docs/finance/`              | **Money & ledger** (moved)                       | the money story: checkout, ledger, refunds, payouts, organisation funding, tax and operations                                                                   |
+| `20-iam-and-security/`       | **IAM / SSO / security**                         | SSO, JIT, rate-limiting, security headers                                                                                                                       |
+| `30-programs-and-lifecycle/` | **Programs / dashboard / discovery / lifecycle** | concurrency & idempotency, programs, experts, dashboard, discovery, feature flags, contract lifecycle, cycle engine & rollover                                  |
+| `40-compliance-and-data/`    | **Compliance / integrations / data**             | compliance map, deletion, data export, outbound webhooks, workspace prefs, cross-cutting integrations, RBI payment aggregator posture                           |
+| `50-operations/`             | **Operations**                                   | API reference, non-money runbooks, monitoring, system events, chaos test, required secrets, capacity ladder, load gate, Novu console conditions, load test plan |
+| `60-scenarios-and-verdicts/` | **Scenarios**                                    | worked end-to-end scenarios                                                                                                                                     |
+| `70-design-decisions/`       | **Design decisions (ADRs)**                      | why the ledger, money representation, payouts, auth, and webhook designs are what they are                                                                      |
 
 ---
 
@@ -189,6 +189,7 @@ This band is the on-call surface: every route, cron, alert, and go-live runbook.
 | 08  | [capacity-ladder](50-operations/08-capacity-ladder.md)                         | infrastructure scaling thresholds                                                                                |
 | 09  | [load-gate-runbook](50-operations/09-load-gate-runbook.md)                     | k6 load gate verification                                                                                        |
 | 10  | [novu-console-conditions](50-operations/10-novu-console-conditions.md)         | Novu workflow step conditions                                                                                    |
+| 11  | [load-test-plan](50-operations/11-load-test-plan.md)                           | staged 100 / 300 / 1,000 user load test, run only after the database split                                       |
 
 ### Scenarios — `60-scenarios-and-verdicts/`
 

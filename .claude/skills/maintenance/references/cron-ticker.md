@@ -34,7 +34,9 @@ error only when the operation tolerates replay.
 
 Completion uses `updateMany` with the execution id and `status: RUNNING`; a worker
 whose execution was expired cannot overwrite that history. Only an owned,
-successful finish refreshes `cron:heartbeat:last`. This shared timestamp is a
+successful finish on production refreshes `cron:heartbeat:last` (`touchRedisHeartbeat`
+skips the write off production through `mayWriteProductionState`, so a preview
+cannot mask a dead production ticker). This shared timestamp is a
 liveness hint, not evidence that every capability completed.
 
 The typed outcome in `lib/cron/job-outcome.ts` classifies a result as success,
@@ -46,7 +48,10 @@ report with summary status RUNNING is continuation, not failed reconciliation.
 Remaining work by itself is never a failure. Execution history stores the
 outcome: partial failures and failures are FAILED, intentional holds are
 CANCELLED, and successes are COMPLETED. Results also record the Sentry deployment
-environment, so shared-database preview runs can be told apart.
+environment, stamped when `withCronLock` opens the `RUNNING` row, so the job
+console can filter every read by it. A preview or branch deploy never reaches
+the job body: `cleanupRoute` refuses with 409 `JOB_RUN_PRODUCTION_ONLY` (see
+`lib/cron/dispatch-refusal.ts`).
 
 HTTP responses carry `X-Job-Outcome`. When a registry entry supplies a `status`
 callback, that status is authoritative and the header follows it: 4xx or 5xx is

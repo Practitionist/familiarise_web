@@ -2318,7 +2318,7 @@ Use correlation IDs to join a job execution to the domain row and, where availab
 
 `app/api/cleanup/[job]/route.ts` resolves a slug through `getCleanupJobHandlers`. The shared `cleanupRoute` factory validates `CRON_SECRET` (or supported Vercel cron secret), checks maintenance, parses and clamps `limit`, emits run logs, and maps results to HTTP status. A lock loser is 409; maintenance is a deliberate refusal; real callback failure is 500; a successful run with an operator-attention condition can be 207.
 
-`/api/admin/system-jobs/run` provides a staff-controlled execution path for registered jobs; `/api/staff/system-jobs/executions` exposes job history. Both routes should dispatch the same core used by the scheduled endpoint. Permission checks and the job's lock remain in force for manual runs. Do not add a separate admin-only implementation or bypass the lease for convenience.
+`/api/admin/system-jobs/run` provides a staff-controlled execution path for registered jobs; `/api/staff/system-jobs/executions` exposes job history. Both routes should dispatch the same core used by the scheduled endpoint. Permission checks and the job's lock remain in force for manual runs, and off production the run refuses with 409 `JOB_RUN_PRODUCTION_ONLY`. Do not add a separate admin-only implementation or bypass the lease for convenience.
 
 For cleanups that use `?limit=`, the shared parser rejects malformed present values, clamps to a maximum, and lets jobs set a bounded default. Bounded work is especially important on a serverless host: a large database cohort or slow vendor could otherwise outlive the function timeout. Ensure oldest-first work can drain over successive runs and that retry rows keep their own due time.
 

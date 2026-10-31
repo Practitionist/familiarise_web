@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as Sentry from "@sentry/core";
+import { z } from "zod";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
@@ -21,6 +22,7 @@ import {
   type RunOutcome,
 } from "@/lib/cron/run-outcome";
 import { onNetlify } from "@/lib/runtime-host";
+import { mayWriteProductionState } from "@/lib/production-state";
 
 // Postgres leases prevent overlap; each worker must independently tolerate replay.
 
@@ -46,6 +48,11 @@ export interface CronLockOpts {
 const ERROR_LOG_MAX_CHARS = 8_000;
 
 const LEASE_EXPIRED_SWEEP_MESSAGE = "Lease expired (stale RUNNING row swept)";
+
+const runEnvironmentSchema = z.object({ environment: z.string() });
+
+/** `/api/health` reads it as production's dead-man signal. */
+const HEARTBEAT_KEY = "cron:heartbeat:last";
 
 type SystemJobExecutionDelegate = Awaited<
   ReturnType<typeof getExecutionDelegate>
@@ -96,9 +103,10 @@ async function getExecutionDelegate() {
 }
 
 async function touchRedisHeartbeat(): Promise<void> {
+  if (!mayWriteProductionState(HEARTBEAT_KEY)) return;
   try {
     const { default: redis } = await import("@/lib/redis");
-    await redis.set("cron:heartbeat:last", new Date().toISOString());
+    await redis.set(HEARTBEAT_KEY, new Date().toISOString());
   } catch {
     // Execution history remains authoritative when Redis is unavailable.
   }
@@ -197,12 +205,14 @@ export async function withCronLock<T>(
     // The partial unique index allows at most one RUNNING row per job.
     const running = await delegate.findFirst({
       where: { jobName, status: "RUNNING" },
-      select: { id: true, startedAt: true, createdAt: true },
+      select: { id: true, startedAt: true, createdAt: true, result: true },
     });
     if (running && running.startedAt > cutoff) {
       throw new CronLockHeldError(jobName, running.id);
     }
     if (running) {
+      // The swept row keeps its owner's environment, not the taker's.
+      const owner = runEnvironmentSchema.safeParse(running.result);
       const swept = await delegate.updateMany({
         where: {
           id: running.id,
@@ -217,7 +227,7 @@ export async function withCronLock<T>(
           result: {
             outcome: "failed",
             reason: "lease-expired",
-            environment: jobEnvironment(),
+            ...(owner.success ? owner.data : {}),
             takenOverBy: newId,
           },
         },
@@ -232,6 +242,7 @@ export async function withCronLock<T>(
         jobName,
         status: "RUNNING",
         triggeredBy: currentRun()?.triggeredBy ?? schedulerTrigger(),
+        result: { environment: jobEnvironment() },
       },
       select: { id: true },
     });

@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
+import { jobEnvironment } from "@/lib/cron/run-outcome";
 import {
   assessOperationalCompletions,
   OPERATIONAL_COMPLETION_REQUIREMENTS,
@@ -15,6 +16,19 @@ import {
 } from "@/lib/cron/schedule";
 
 export const METRICS_DAYS = 7;
+
+/** The environments a run row records in `result.environment`, one per deploy kind. */
+export const metricsEnvironmentSchema = z.enum([
+  "production",
+  "preview",
+  "development",
+]);
+export type MetricsEnvironment = z.infer<typeof metricsEnvironmentSchema>;
+
+/** This deploy's own environment, which the console shows unless another is picked. */
+export function defaultMetricsEnvironment(): MetricsEnvironment {
+  return metricsEnvironmentSchema.catch("production").parse(jobEnvironment());
+}
 /** The execution trail's retention, so the last success is always in reach. */
 const LAST_SUCCESS_LOOKBACK_DAYS = 90;
 const MINUTE_MS = 60_000;
@@ -58,8 +72,8 @@ export interface JobRunMetric {
 
 export interface JobRunMetrics {
   days: string[];
-  /** Last success and the missed flag count only this environment's runs. */
-  environment: string | null;
+  /** Every count, percentile and window check reads only this environment's runs. */
+  environment: MetricsEnvironment;
   jobs: JobRunMetric[];
 }
 
@@ -151,7 +165,7 @@ export function assessMissedWindow(args: {
 
 export interface MetricInputs {
   now: Date;
-  environment: string | null;
+  environment: MetricsEnvironment;
   counts: {
     jobName: string;
     status: string;
@@ -258,19 +272,17 @@ const DailyRow = z.object({
 });
 
 /**
- * Seven days of SystemJobExecution per job, in four statements run in turn;
- * the ticker's slot-claim rows are not job runs and are left out.
- * Outcome counts, percentiles and IST-day buckets have no Prisma groupBy form,
- * so those are parameterised read-only `$queryRaw`; the last finish uses groupBy.
+ * Seven days of one environment's SystemJobExecution rows per job, in four
+ * statements run in turn; the ticker's slot-claim rows are not job runs and are
+ * left out. Outcome counts, percentiles and IST-day buckets have no Prisma
+ * groupBy form, so those are parameterised read-only `$queryRaw`; the last
+ * finish uses groupBy.
  */
 export async function readJobRunMetrics(
+  environment: MetricsEnvironment,
   now = new Date(),
 ): Promise<JobRunMetrics> {
   const since = new Date(now.getTime() - METRICS_DAYS * DAY_MS);
-  const environment =
-    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT ??
-    process.env.SENTRY_ENVIRONMENT ??
-    null;
 
   const counts = z.array(CountRow).parse(
     await prisma.$queryRaw(Prisma.sql`
@@ -280,6 +292,7 @@ export async function readJobRunMetrics(
       FROM "SystemJobExecution"
       WHERE "startedAt" >= ${since}
         AND "jobName" <> ${TICK_CLAIM_JOB}
+        AND "result"->>'environment' = ${environment}
       GROUP BY 1, 2, 3`),
   );
   const percentiles = z.array(PercentileRow).parse(
@@ -290,6 +303,7 @@ export async function readJobRunMetrics(
       FROM "SystemJobExecution"
       WHERE "startedAt" >= ${since}
         AND "jobName" <> ${TICK_CLAIM_JOB}
+        AND "result"->>'environment' = ${environment}
         AND "durationMs" IS NOT NULL
         AND "status" IN ('COMPLETED', 'FAILED')
       GROUP BY "jobName"`),
@@ -303,6 +317,7 @@ export async function readJobRunMetrics(
       FROM "SystemJobExecution"
       WHERE "startedAt" >= ${since}
         AND "jobName" <> ${TICK_CLAIM_JOB}
+        AND "result"->>'environment' = ${environment}
       GROUP BY 1, 2`),
   );
   // A partial run ran to the end, the same freshness rule the SLOs use.
@@ -317,9 +332,7 @@ export async function readJobRunMetrics(
       startedAt: {
         gte: new Date(now.getTime() - LAST_SUCCESS_LOOKBACK_DAYS * DAY_MS),
       },
-      ...(environment
-        ? { result: { path: ["environment"], equals: environment } }
-        : {}),
+      result: { path: ["environment"], equals: environment },
     },
     _max: { endedAt: true },
   });
