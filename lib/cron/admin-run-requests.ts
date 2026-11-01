@@ -124,7 +124,7 @@ export function auditStatusOf(outcome: RunOutcome | null): AdminRunAuditStatus {
  * Applies a fenced status write and, when it settles the request, moves its audit
  * row (same id) to the run's outcome in the same transaction.
  */
-async function writeSettlement(
+function writeSettlement(
   where: Prisma.AdminRunRequestWhereInput,
   id: string,
   data: Prisma.AdminRunRequestUpdateManyMutationInput & {
