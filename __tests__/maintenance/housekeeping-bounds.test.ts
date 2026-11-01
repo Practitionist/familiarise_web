@@ -97,7 +97,13 @@ beforeEach(() => {
   db.$transaction.mockImplementation(
     async (work: (tx: Tx) => Promise<unknown>) =>
       work(
-        txDouble({ invitation: db.invitation, orgAuditLog: db.orgAuditLog }),
+        txDouble({
+          invitation: db.invitation,
+          orgAuditLog: db.orgAuditLog,
+          session: db.session,
+          $executeRaw: db.$executeRaw,
+          $queryRaw: db.$queryRaw,
+        }),
       ),
   );
   db.$queryRaw.mockResolvedValue([{ ready: true }]);
@@ -152,11 +158,15 @@ const expiredSession = {
   expiresAt: new Date(NOW.getTime() - DAY),
 };
 
-it("stamps an expired session EXPIRED into the access log before deleting it, and keeps it when the stamp fails", async () => {
-  db.session.findMany.mockResolvedValue([expiredSession]);
+it("deletes expired sessions and stamps them EXPIRED in one transaction, which a failed stamp rolls back", async () => {
+  db.session.findMany.mockResolvedValueOnce([expiredSession]);
   db.session.deleteMany.mockResolvedValue({ count: 1 });
   db.$executeRaw.mockResolvedValueOnce(1);
   expect(await cleanupAuthTokens()).toMatchObject({ sessionsDeleted: 1 });
+  expect(db.$transaction).toHaveBeenCalled();
+  expect(db.session.deleteMany).toHaveBeenCalledWith({
+    where: { expiresAt: { lt: NOW }, id: { in: ["expired-session"] } },
+  });
   expect(db.$executeRaw.mock.calls[0][1].values).toEqual(
     expect.arrayContaining([
       "expired-session",
@@ -164,18 +174,32 @@ it("stamps an expired session EXPIRED into the access log before deleting it, an
       "EXPIRED",
     ]),
   );
-  expect(db.session.deleteMany).toHaveBeenCalledWith({
-    where: { expiresAt: { lt: NOW }, id: { in: ["expired-session"] } },
-  });
+  expect(db.$executeRaw.mock.calls[0][1].sql).not.toContain("FOR SHARE");
 
-  db.session.deleteMany.mockClear();
+  db.session.findMany.mockResolvedValueOnce([expiredSession]);
   db.$executeRaw.mockRejectedValueOnce(new Error("relation is locked"));
   expect(await cleanupAuthTokens()).toMatchObject({
     success: false,
     sessionsDeleted: 0,
     hasMore: true,
   });
-  expect(db.session.deleteMany).not.toHaveBeenCalled();
+});
+
+it("stamps only the sessions the delete removed, never one refreshed after the read", async () => {
+  const refreshed = { ...expiredSession, id: "refreshed-session" };
+  db.session.findMany
+    .mockResolvedValueOnce([expiredSession, refreshed])
+    .mockResolvedValueOnce([{ id: "refreshed-session" }]);
+  db.session.deleteMany.mockResolvedValue({ count: 1 });
+  db.$executeRaw.mockResolvedValueOnce(1);
+  expect(await cleanupAuthTokens()).toMatchObject({ sessionsDeleted: 1 });
+  expect(db.session.findMany).toHaveBeenLastCalledWith({
+    where: { id: { in: ["expired-session", "refreshed-session"] } },
+    select: { id: true },
+  });
+  const values = db.$executeRaw.mock.calls[0][1].values;
+  expect(values).toContain("expired-session");
+  expect(values).not.toContain("refreshed-session");
 });
 
 it("prunes access-log rows 180 days after their end, or after start plus a session length when never stamped", async () => {

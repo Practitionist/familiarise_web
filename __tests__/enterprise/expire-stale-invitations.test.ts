@@ -84,6 +84,9 @@ const mockedPrisma = prisma as unknown as {
     updateMany: jest.Mock;
   };
   orgAuditLog: { create: jest.Mock };
+  session: { findMany: jest.Mock; deleteMany: jest.Mock };
+  $queryRaw: jest.Mock;
+  $executeRaw: jest.Mock;
   $transaction: jest.Mock;
 };
 
@@ -92,6 +95,9 @@ function wireTxShim() {
     const tx = {
       invitation: mockedPrisma.invitation,
       orgAuditLog: mockedPrisma.orgAuditLog,
+      session: mockedPrisma.session,
+      $queryRaw: mockedPrisma.$queryRaw,
+      $executeRaw: mockedPrisma.$executeRaw,
     };
     return (fn as (tx: unknown) => unknown)(tx);
   });

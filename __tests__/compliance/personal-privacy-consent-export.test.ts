@@ -333,6 +333,9 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
           userAgent: "Firefox",
         },
       ]);
+      expect(
+        payload.personalDataSummary.activitySummary.sessionAccessLogTruncated,
+      ).toBe(false);
       expect(payload.sharedWithDataProcessors).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

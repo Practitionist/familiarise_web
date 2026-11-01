@@ -144,14 +144,15 @@ describe("DPDP erasure flips collaborator rows", () => {
       db.$transaction.mock.invocationCallOrder[0],
     );
     // The stamp drops the user link, as the in-transaction detach did.
-    const values = (
+    const { values, sql } = (
       mockLogDb.$executeRaw.mock.calls[0] as unknown as [
         unknown,
-        { values: unknown[] },
+        { values: unknown[]; sql: string },
       ]
-    )[1].values;
-    expect(values).toEqual(expect.arrayContaining(["s1", null]));
+    )[1];
+    expect(values).toContain("s1");
     expect(values).not.toContain("u1");
+    expect(sql).not.toContain("users");
   });
 
   it("writes the outbox row inside the transaction and settles it after the attempt (#1593)", async () => {

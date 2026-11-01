@@ -367,7 +367,8 @@ export async function GET() {
           consumerInvoices,
           ...support,
           dpdpGrievances: grievances,
-          sessionAccessLog,
+          sessionAccessLog: sessionAccessLog.rows,
+          sessionAccessLogTruncated: sessionAccessLog.truncated,
         },
       },
       processingActivities: PURPOSE_CODE_META,
@@ -383,7 +384,7 @@ export async function GET() {
         securityLogRetention:
           "Pseudonymous security and processing logs are retained for at least 1 year under Rule 8(3) of the DPDP Rules, 2025.",
         sessionAccessLogRetention:
-          "Each sign-in session's IP address, device (user agent), start and end are kept for 180 days after the session ends, as the CERT-In Directions of 28 April 2022 require. Erasing your account unlinks these rows from you; they are deleted when the 180 days pass.",
+          "Each sign-in session's IP address, device (user agent), start and end are kept for 180 days after the session ends, as the CERT-In Directions of 28 April 2022 require. Erasing your account unlinks these rows from you; they are deleted when the 180 days pass. This export lists your newest 500 sessions; sessionAccessLogTruncated is true when older ones exist.",
         grievanceAndBoardAppeal:
           "You may file a grievance in Settings -> Account -> Data protection grievance (resolved within 90 days per Rule 14(3)) and escalate unresolved complaints to the Data Protection Board of India under DPDP §13(3) and §27.",
       },

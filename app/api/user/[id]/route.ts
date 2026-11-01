@@ -463,8 +463,9 @@ async function executeUserHardDeleteOrFallbackScrub(
       },
     });
     endedSessions = (await revokeAllUserSessions(tx, id)).ended;
-    await detachSessionAccessLogs(tx, id);
+    // The user row goes first: a concurrent end stamp then waits on it and links nothing.
     await tx.user.delete({ where: { id } });
+    await detachSessionAccessLogs(tx, id);
     return removed;
   });
   // After commit, so a failed access-log write never fails the deletion.

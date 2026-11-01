@@ -119,39 +119,63 @@ type LoggedSession = Omit<SessionSnapshot, "userId"> & {
   userId: string | null;
 };
 
+/** Rows per end-stamp INSERT: 8 binds each, well under Postgres's 65,535. */
+const END_STAMP_CHUNK = 1000;
+
 /**
- * Stamps the end of each session in one statement, creating the row if its
- * start was never logged. A row already past `expiresAt` ended then, as EXPIRED
- * unless Better Auth removed it on cookie presentation. The first stamp wins.
- * Returns false only when the write failed.
+ * The link a created row carries: NULL once the account is erased or gone. The
+ * share lock orders the stamp against a concurrent erasure, which detaches only
+ * after it has locked the user row.
+ */
+function liveUserId(userId: string | null, lockUser: boolean) {
+  if (userId === null) return Prisma.sql`NULL`;
+  return Prisma.sql`(SELECT u."id" FROM users u
+    WHERE u."id" = ${userId} AND u."erasedAt" IS NULL
+    ${lockUser ? Prisma.sql`FOR SHARE` : Prisma.empty})`;
+}
+
+/**
+ * Stamps the end of each session, creating the row if its start was never
+ * logged. A row already past `expiresAt` ended then, as EXPIRED unless Better
+ * Auth removed it on cookie presentation. The first stamp wins. Returns false
+ * when any chunk failed. `sessionsLocked`: the caller's transaction holds these
+ * sessions' row locks, which already orders it against erasure, so the user row
+ * is read without a lock that would invert erasure's lock order.
  */
 export async function recordSessionEnds(
   db: PrismaLike,
   sessions: readonly LoggedSession[],
   reason: SessionEndReason,
   now: Date = new Date(),
+  { sessionsLocked = false }: { sessionsLocked?: boolean } = {},
 ): Promise<boolean> {
   if (sessions.length === 0) return true;
   if (!(await sessionAccessLogReady(db))) return false;
-  const rows = sessions.map((s) => {
-    const expired = s.expiresAt <= now;
-    const endReason: SessionEndReason =
-      expired && reason !== "EXPIRED_COOKIE" ? "EXPIRED" : reason;
-    return Prisma.sql`(${randomUUID()}, ${s.id}, ${s.userId}, ${s.ipAddress},
-      ${s.userAgent}, ${s.createdAt}, ${expired ? s.expiresAt : now},
-      ${endReason}::"SessionEndReason")`;
-  });
-  return guarded(
-    "end",
-    () =>
-      db.$executeRaw`
-      INSERT INTO session_access_logs
-        ("id", "sessionId", "userId", "ipAddress", "userAgent", "startedAt", "endedAt", "endReason")
-      VALUES ${Prisma.join(rows)}
-      ON CONFLICT ("sessionId") DO UPDATE
-        SET "endedAt" = EXCLUDED."endedAt", "endReason" = EXCLUDED."endReason"
-        WHERE session_access_logs."endedAt" IS NULL`,
-  );
+  let ok = true;
+  for (let i = 0; i < sessions.length; i += END_STAMP_CHUNK) {
+    const rows = sessions.slice(i, i + END_STAMP_CHUNK).map((s) => {
+      const expired = s.expiresAt <= now;
+      const endReason: SessionEndReason =
+        expired && reason !== "EXPIRED_COOKIE" ? "EXPIRED" : reason;
+      return Prisma.sql`(${randomUUID()}, ${s.id},
+        ${liveUserId(s.userId, !sessionsLocked)}, ${s.ipAddress},
+        ${s.userAgent}, ${s.createdAt}, ${expired ? s.expiresAt : now},
+        ${endReason}::"SessionEndReason")`;
+    });
+    const written = await guarded(
+      "end",
+      () =>
+        db.$executeRaw`
+        INSERT INTO session_access_logs
+          ("id", "sessionId", "userId", "ipAddress", "userAgent", "startedAt", "endedAt", "endReason")
+        VALUES ${Prisma.join(rows)}
+        ON CONFLICT ("sessionId") DO UPDATE
+          SET "endedAt" = EXCLUDED."endedAt", "endReason" = EXCLUDED."endReason"
+          WHERE session_access_logs."endedAt" IS NULL`,
+    );
+    ok &&= written;
+  }
+  return ok;
 }
 
 /** Sessions a write deleted, waiting for `stampSessionEnds` once it is durable. */
@@ -214,13 +238,17 @@ export async function detachSessionAccessLogs(db: PrismaLike, userId: string) {
   });
 }
 
-/** The user's access-log rows for the DPDP self-serve export. */
+const EXPORT_ROWS = 500;
+
+/** The user's newest access-log rows for the DPDP export, and whether older ones were left out. */
 export async function readSessionAccessLog(userId: string) {
-  if (!(await sessionAccessLogReady(prisma))) return [];
-  return prisma.sessionAccessLog.findMany({
+  if (!(await sessionAccessLogReady(prisma))) {
+    return { rows: [], truncated: false };
+  }
+  const rows = await prisma.sessionAccessLog.findMany({
     where: { userId },
     orderBy: { startedAt: "desc" },
-    take: 500,
+    take: EXPORT_ROWS + 1,
     select: {
       startedAt: true,
       endedAt: true,
@@ -229,4 +257,8 @@ export async function readSessionAccessLog(userId: string) {
       userAgent: true,
     },
   });
+  return {
+    rows: rows.slice(0, EXPORT_ROWS),
+    truncated: rows.length > EXPORT_ROWS,
+  };
 }

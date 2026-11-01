@@ -174,25 +174,49 @@ async function drain(
   }
 }
 
-/** Expired sessions: stamp EXPIRED (ended at `expiresAt`) into the access log, then delete. */
+/**
+ * Expired sessions: delete, then stamp EXPIRED (ended at `expiresAt`) only the
+ * rows the delete removed, in one transaction. A session refreshed after the
+ * read fails the delete's expiry check and stays unstamped; a failed stamp
+ * rolls the delete back for the next run.
+ */
 function pruneSessions(now: Date, limit: number, outOfTime: () => boolean) {
   const where = { expiresAt: { lt: now } };
-  return drain("Session", limit, outOfTime, async () => {
-    const rows = await prisma.session.findMany({
-      where,
-      select: SESSION_SNAPSHOT,
-      orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
-      take: limit,
-    });
-    if (rows.length === 0) return { picked: 0, deleted: 0 };
-    if (!(await recordSessionEnds(prisma, rows, "EXPIRED", now))) {
-      throw new Error("access-log stamp failed; expired sessions kept");
-    }
-    const { count } = await prisma.session.deleteMany({
-      where: { ...where, id: { in: rows.map((row) => row.id) } },
-    });
-    return { picked: rows.length, deleted: count };
-  });
+  return drain("Session", limit, outOfTime, () =>
+    prisma.$transaction(async (tx) => {
+      const rows = await tx.session.findMany({
+        where,
+        select: SESSION_SNAPSHOT,
+        orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
+        take: limit,
+      });
+      if (rows.length === 0) return { picked: 0, deleted: 0 };
+      const ids = rows.map((row) => row.id);
+      const { count } = await tx.session.deleteMany({
+        where: { ...where, id: { in: ids } },
+      });
+      const kept =
+        count === rows.length
+          ? new Set<string>()
+          : new Set(
+              (
+                await tx.session.findMany({
+                  where: { id: { in: ids } },
+                  select: { id: true },
+                })
+              ).map((row) => row.id),
+            );
+      const ended = rows.filter((row) => !kept.has(row.id));
+      if (
+        !(await recordSessionEnds(tx, ended, "EXPIRED", now, {
+          sessionsLocked: true,
+        }))
+      ) {
+        throw new Error("access-log stamp failed; expired sessions kept");
+      }
+      return { picked: rows.length, deleted: count };
+    }),
+  );
 }
 
 /**

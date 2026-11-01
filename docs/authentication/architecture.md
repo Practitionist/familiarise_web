@@ -229,7 +229,8 @@ outlives the `Session`), `userId`, the raw `ipAddress` and `userAgent`,
   account deletion, ban, staff 2FA reset, SSO sweeps, org member suspension
   and removal), so a log failure can never roll back the revoke. The operator
   lifetime policy passes `EXPIRED` when it ends a session on refresh.
-- `auth-tokens` stamps natural expiry as `EXPIRED` before deleting the row.
+- `auth-tokens` deletes expired rows and stamps the ones it removed `EXPIRED`
+  in the same transaction, so a session refreshed mid-sweep is never stamped.
 
 A row already past `expiresAt` ends at `expiresAt` as `EXPIRED`, whatever
 deletes it, except the expired-cookie delete. The end write upserts in one

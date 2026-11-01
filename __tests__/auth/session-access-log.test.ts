@@ -17,7 +17,7 @@ const db = {
   $queryRaw: jest.fn(),
   $executeRaw: jest.fn(),
   session: { findMany: jest.fn(), deleteMany: jest.fn() },
-  sessionAccessLog: { createMany: jest.fn() },
+  sessionAccessLog: { createMany: jest.fn(), findMany: jest.fn() },
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -31,6 +31,7 @@ import { memoryAdapter } from "better-auth/adapters/memory";
 import {
   endReasonForPath,
   recordSessionEnds,
+  readSessionAccessLog,
   recordSessionStart,
   stampSessionEnds,
   type SessionSnapshot,
@@ -146,6 +147,71 @@ describe("session access log writes", () => {
     expect(db.$executeRaw).not.toHaveBeenCalled();
     await expect(stampSessionEnds(ended)).resolves.toBe(0);
     expect(stamped()).toEqual(expect.arrayContaining(["u1", "REVOKED"]));
+  });
+});
+
+describe("end stamps at scale and after erasure", () => {
+  type Joined = { values: unknown[]; sql: string };
+  const joined = (call: number) => db.$executeRaw.mock.calls[call][1] as Joined;
+
+  it("chunks a large sweep into 1,000-row statements and reports a failed chunk", async () => {
+    const many = Array.from({ length: 2001 }, (_, i) => ({
+      ...live,
+      id: `s-${i}`,
+    }));
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    db.$executeRaw
+      .mockResolvedValueOnce(1000)
+      .mockRejectedValueOnce(new Error("bind limit"))
+      .mockResolvedValueOnce(1);
+    await expect(recordSessionEnds(client, many, "REVOKED", NOW)).resolves.toBe(
+      false,
+    );
+    expect(db.$executeRaw).toHaveBeenCalledTimes(3);
+    expect(joined(0).values).toContain("s-999");
+    expect(joined(0).values).not.toContain("s-1000");
+    expect(joined(2).values).toContain("s-2000");
+  });
+
+  it("links a created row only to a live, unerased user, under a share lock", async () => {
+    await recordSessionEnds(client, [live], "REVOKED", NOW);
+    expect(joined(0).sql).toMatch(
+      /SELECT u\."id" FROM users u\s+WHERE u\."id" = \? AND u\."erasedAt" IS NULL\s+FOR SHARE/,
+    );
+    expect(joined(0).values).toContain("u1");
+  });
+
+  it("writes a NULL link for an erased account and skips the lock under held session locks", async () => {
+    await stampSessionEnds(
+      [{ sessions: [live], reason: "REVOKED", endedAt: NOW }],
+      { forgetUser: true },
+    );
+    expect(joined(0).sql).not.toContain("users");
+    expect(joined(0).values).not.toContain("u1");
+
+    await recordSessionEnds(client, [live], "EXPIRED", NOW, {
+      sessionsLocked: true,
+    });
+    expect(joined(1).sql).toContain('u."erasedAt" IS NULL');
+    expect(joined(1).sql).not.toContain("FOR SHARE");
+  });
+});
+
+describe("DPDP export read", () => {
+  it("returns the newest 500 rows and flags the older ones it left out", async () => {
+    const rows = Array.from({ length: 501 }, (_, i) => ({ startedAt: i }));
+    db.sessionAccessLog.findMany.mockResolvedValueOnce(rows);
+    const read = await readSessionAccessLog("u1");
+    expect(db.sessionAccessLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: "u1" }, take: 501 }),
+    );
+    expect(read.rows).toHaveLength(500);
+    expect(read.truncated).toBe(true);
+
+    db.sessionAccessLog.findMany.mockResolvedValueOnce(rows.slice(0, 500));
+    await expect(readSessionAccessLog("u1")).resolves.toMatchObject({
+      truncated: false,
+    });
   });
 });
 
