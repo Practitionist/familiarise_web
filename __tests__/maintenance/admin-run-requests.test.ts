@@ -135,6 +135,17 @@ it.each([
   });
 });
 
+it("leaves the row REQUESTED for the drain when the dispatch fails before its claim lands", async () => {
+  mockDb.adminRunRequest.updateMany.mockRejectedValueOnce(
+    new Error("connection lost"),
+  );
+  await expect(runAdminRunRequest(request())).rejects.toThrow(
+    "connection lost",
+  );
+  expect(mockInvoke).not.toHaveBeenCalled();
+  expect(mockDb.adminRunRequest.updateMany).toHaveBeenCalledTimes(1);
+});
+
 it("never runs a request whose claim another worker won", async () => {
   mockDb.adminRunRequest.updateMany.mockResolvedValueOnce({ count: 0 });
   await expect(runAdminRunRequest(request())).resolves.toBe("LOST_CLAIM");

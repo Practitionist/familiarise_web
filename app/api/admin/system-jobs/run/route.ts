@@ -215,7 +215,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         windowStart: windowStart ?? null,
       });
       if (created) {
-        scheduleAfter(
+        // scheduleAfter never rejects: it reports a failed dispatch, and the committed row waits for the drain.
+        void scheduleAfter(
           () => runAdminRunRequest(request),
           "admin.system-job.dispatch",
         );
