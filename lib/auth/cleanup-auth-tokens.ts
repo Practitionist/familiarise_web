@@ -21,6 +21,7 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const SESSION_LOG_RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
 const cleanupLimit = z.number().int().min(1).max(500).default(100);
 const START_BUDGET_MS = 16_000;
 
@@ -60,6 +61,10 @@ async function cleanupAuthTokensUnlocked(
     orderBy: [{ expiresAt: "asc" as const }, { id: "asc" as const }],
     take: limit,
   };
+  // CERT-In access log: a lapsed session's IP and user agent stay 180 days; Better Auth rejects it on read.
+  const sessionWhere = {
+    expiresAt: { lt: new Date(now.getTime() - SESSION_LOG_RETENTION_MS) },
+  };
   const prune = async (
     label: string,
     pick: () => Promise<{ id: string }[]>,
@@ -87,10 +92,13 @@ async function cleanupAuthTokensUnlocked(
   );
   sessionsDeleted = await prune(
     "Session",
-    () => prisma.session.findMany(selection),
+    () => prisma.session.findMany({ ...selection, where: sessionWhere }),
     (ids) =>
-      prisma.session.deleteMany({ where: { ...where, id: { in: ids } } }),
-    () => prisma.session.findFirst({ where, select: { id: true } }),
+      prisma.session.deleteMany({
+        where: { ...sessionWhere, id: { in: ids } },
+      }),
+    () =>
+      prisma.session.findFirst({ where: sessionWhere, select: { id: true } }),
   );
   // An expired idempotency row may be refreshed in place after selection.
   idempotencyRecordsDeleted = await prune(

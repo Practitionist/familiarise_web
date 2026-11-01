@@ -32,6 +32,10 @@ jest.mock("../../lib/prisma", () => {
       outboundWebhookDelivery: delegate(),
       orgAuditLog: delegate(),
       onboardingDraft: delegate(),
+      opsActionLog: delegate(),
+      opsActionProposal: delegate(),
+      bookingStatusHistory: delegate(),
+      ledgerReconciliationReport: delegate(),
       $transaction: jest.fn(),
     },
   };
@@ -49,7 +53,11 @@ type Model =
   | "webhookEvent"
   | "outboundWebhookDelivery"
   | "orgAuditLog"
-  | "onboardingDraft";
+  | "onboardingDraft"
+  | "opsActionLog"
+  | "opsActionProposal"
+  | "bookingStatusHistory"
+  | "ledgerReconciliationReport";
 const { default: db } = jest.requireMock<{
   default: Record<Model, Delegate> & { $transaction: jest.Mock };
 }>("../../lib/prisma");
@@ -62,6 +70,10 @@ const models: Model[] = [
   "outboundWebhookDelivery",
   "orgAuditLog",
   "onboardingDraft",
+  "opsActionLog",
+  "opsActionProposal",
+  "bookingStatusHistory",
+  "ledgerReconciliationReport",
 ];
 const NOW = new Date("2026-10-23T12:00:00Z");
 const DAY = 86_400_000;
@@ -114,10 +126,12 @@ it.each(["verification", "session", "idempotencyRecord"] as const)(
       totalCleaned: 0,
       hasMore: false,
     });
+    const lapsed =
+      model === "session" ? new Date(NOW.getTime() - 180 * DAY) : NOW;
     expect(db[model].deleteMany).toHaveBeenCalledWith({
       where: {
+        expiresAt: { lt: lapsed },
         id: { in: ["refreshed"] },
-        expiresAt: { lt: NOW },
       },
     });
   },
@@ -255,7 +269,7 @@ it("rechecks webhook processing/error and terminal delivery state at deletion", 
       id: { in: ["processed"] },
       processed: true,
       error: null,
-      receivedAt: { lt: new Date(NOW.getTime() - 30 * DAY) },
+      receivedAt: { lt: new Date(NOW.getTime() - 365 * DAY) },
     },
   });
   expect(db.outboundWebhookDelivery.deleteMany).toHaveBeenCalledWith({
@@ -267,7 +281,7 @@ it("rechecks webhook processing/error and terminal delivery state at deletion", 
   });
 });
 
-it("preserves webhook retention windows and bounds every archive arm", async () => {
+it("keeps every webhook event a year and bounds every archive arm", async () => {
   await archiveWebhookEvents();
   expect(db.webhookEvent.findMany).toHaveBeenCalledTimes(3);
   for (const [args] of db.webhookEvent.findMany.mock.calls)
@@ -275,7 +289,7 @@ it("preserves webhook retention windows and bounds every archive arm", async () 
   expect(db.webhookEvent.findMany.mock.calls[2][0].where).toEqual({
     processed: false,
     error: { not: null },
-    receivedAt: { lt: new Date(NOW.getTime() - 90 * DAY) },
+    receivedAt: { lt: new Date(NOW.getTime() - 365 * DAY) },
   });
   expect(db.outboundWebhookDelivery.findMany).toHaveBeenCalledWith(
     expect.objectContaining({ take: 100 }),
@@ -318,7 +332,7 @@ it("bounds the global audit cohort and commits each org's summary with its delet
   expect(result).toMatchObject({
     success: true,
     scanned: 2,
-    deleted7y: 2,
+    deleted8y: 2,
     deleted2y: 0,
     perOrgSummaries: 2,
     hasMore: true,
@@ -328,7 +342,7 @@ it("bounds the global audit cohort and commits each org's summary with its delet
     id: { in: ["a"] },
     organizationId: "org-a",
     category: { in: ["INVOICE", "PAYOUT", "WALLET", "CONTRACT", "CONSENT"] },
-    createdAt: { lt: new Date(NOW.getTime() - 7 * 365 * DAY) },
+    createdAt: { lt: new Date(NOW.getTime() - 8 * 365 * DAY) },
   });
 });
 
@@ -347,7 +361,7 @@ it("counts only committed audit summaries after a commit failure and continues a
   expect(await pruneAuditLogs()).toMatchObject({
     success: false,
     scanned: 2,
-    deleted7y: 1,
+    deleted8y: 1,
     deleted2y: 1,
     perOrgSummaries: 1,
     hasMore: true,
@@ -378,5 +392,23 @@ it("retains committed auth deletes when the continuation probe fails", async () 
     totalCleaned: 1,
     hasMore: true,
     errors: [expect.stringContaining("probe unavailable")],
+  });
+});
+
+it("keeps money-surface console actions eight years and the rest two", async () => {
+  await pruneAuditLogs();
+  const [money, other] = db.opsActionLog.findMany.mock.calls.map(
+    ([args]) => args.where,
+  );
+  expect(money).toEqual({
+    surface: { notIn: expect.not.arrayContaining(["refunds.manage"]) },
+    createdAt: { lt: new Date(NOW.getTime() - 8 * 365 * DAY) },
+  });
+  expect(other.surface.in).toEqual(
+    expect.arrayContaining(["systemJobs.manage", "users.read"]),
+  );
+  expect(other.surface.in).not.toContain("payments.manage");
+  expect(other.createdAt).toEqual({
+    lt: new Date(NOW.getTime() - 2 * 365 * DAY),
   });
 });
