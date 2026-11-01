@@ -98,12 +98,12 @@ Sentry is escalation-only, as decided in [Sentry escalations only](../decisions/
 Nothing in this section is built yet. It is labelled PLANNED everywhere it appears.
 
 1. **Current state lives on the entity row.** Attempts, last error and age stay on the refund, payout, invoice or outbox row, updated in place. Enforcer: the row itself, written with the usual CAS-in-WHERE transitions.
-2. **History goes to Better Stack, one batched event per item per run.** The run collects one event per item and posts them in a single request at the end, reusing the tick-summary approach, so there is no network call per row. The schema is `{run_id, job, entity_id, outcome, reason, attempt}`. It carries identifiers only, never names or email addresses, and the log source is in the EU region. The full schema is in the [skill reference](../../.claude/skills/observability/references/ownership-and-telemetry.md).
+2. **History goes to Better Stack, one batched event per item per run.** The run collects one event per item and posts them in a single request at the end, reusing the tick-summary approach, so there is no network call per row. The schema is `{run_id, job, entity_id, outcome, reason, attempt}`. It carries identifiers only, never names or email addresses, and the log source is in the EU region. Ids only minimises what leaves the app but does not anonymise it: a payment id leads back to a customer (`Payment.userId` references `User`, and `readRootPayments()` in `lib/backoffice/entity-trace.ts` reads the customer's name), so the events are pseudonymous personal data under [DPDP §2(t)](https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf), as [Sentry identity and triage](./sentry/05-identity-and-triage.md) already says of the Sentry cuid. The full schema is in the [skill reference](../../.claude/skills/observability/references/ownership-and-telemetry.md).
 3. **The Entity trace links out.** The trace shows a "Better Stack events" link built from `entity_id`, or queries history through the Better Stack Query API, which is read-only SQL over HTTP.
 4. **The oldest-pending-age gauge is computed once per tick in Postgres.** One cheap aggregate per capability produces `{metric: "oldest_pending_age_s", capability, value}` as a log line, and a Better Stack SQL threshold alert pages when a limit is breached.
 5. **No `SystemJobRunItem` table and no warehouse.**
 
-Worked example, in the planned design. Priya cancels a booking and is owed ₹1,180 (118,000 paise) back. The refund is stamped on her `Payment` row as an owed marker (`refundOwedPaise`, `refundOwedAttempts`), and a sweep drives it. At 10:05 IST the Razorpay call times out for the third time. The row now says `refundOwedAttempts = 3`, and the run posts one event to Better Stack: `{run_id: run_8f2, job: <sweep name>, entity_id: <payment id>, outcome: failed, reason: GATEWAY_TIMEOUT, attempt: 3}`. When someone asks "where is Priya's refund?", the Entity trace shows the row's current state, and the Better Stack link shows all three attempts across the last runs. If the oldest pending refund is older than its limit, Better Stack has already paged. The event names the payment by id only, never by Priya's name or email.
+Worked example, in the planned design. Priya cancels a booking and is owed ₹1,180 (118,000 paise) back. The refund is stamped on her `Payment` row as an owed marker (`refundOwedPaise`, `refundOwedAttempts`), and a sweep drives it. At 10:05 IST the Razorpay call times out for the third time. The row now says `refundOwedAttempts = 3`, and the run posts one event to Better Stack: `{run_id: run_8f2, job: <sweep name>, entity_id: <payment id>, outcome: failed, reason: GATEWAY_TIMEOUT, attempt: 3}`. When someone asks "where is Priya's refund?", the Entity trace shows the row's current state, and the Better Stack link shows all three attempts across the last runs. If the oldest pending refund is older than its limit, Better Stack has already paged. The event names the payment by id only, never by Priya's name or email, but anyone with the back office can turn that id into Priya, so the event is still about her.
 
 ## 4. Options considered
 
@@ -166,9 +166,9 @@ The owner asked that every option be recorded with what was chosen and why. In t
 | Better Stack Telemetry   | SELECTED               | Already integrated, SQL-queryable, alertable, EU region, cheap at our volume.                     |
 | Sentry                   | SELECTED (errors only) | Best-in-class Next.js errors, already wired.                                                      |
 | Axiom                    | REJECTED               | Free tier is generous, but it adds a third vendor for no new capability.                          |
-| Grafana Cloud            | REJECTED               | Capable, but a new vendor and query language for a problem already solved.                        |
+| Grafana Cloud            | REJECTED               | Capable, and lists India (AWS `ap-south-1`), but a new vendor and query language for now.         |
 | Honeycomb                | REJECTED               | Strong for wide events, but paid plans start at $150 a month.                                     |
-| SigNoz Cloud             | DEFERRED               | The only candidate with an India region, from $49 a month; not justified yet.                     |
+| SigNoz Cloud             | DEFERRED               | Lists an India region, from $49 a month; not justified yet.                                       |
 | OpenObserve Cloud        | REJECTED               | Trial only, with no stated free allowance.                                                        |
 | Highlight (LaunchDarkly) | REJECTED               | Its pricing page redirects to LaunchDarkly and the product is reportedly shut down; do not adopt. |
 | Datadog                  | REJECTED               | Host-based pricing fits serverless badly, and the free tier lists no logs.                        |
@@ -206,9 +206,17 @@ flowchart TD
 | Better Stack logs                      | $0, 3-day retention                  | 30-day EU bundle, about $30 a month                                | DOCS  |
 | One responder licence for phone paging | not bought; email alerts             | about $34 a month                                                  | DOCS  |
 
-The total is about $0 today and about $5 to $65 a month at launch (ESTIMATE). Neither vendor has an India region: Better Stack offers EU, US and Singapore, and Sentry offers US and EU. Only SigNoz lists India. Because the data crosses a border, events carry identifiers only and no personal data, and the source is created in the EU region; this is an engineering rule, not legal advice. Highlight redirects to LaunchDarkly and is reportedly shut down, so do not adopt it.
+The total is about $0 today and about $5 to $65 a month at launch (ESTIMATE). Neither vendor has an India region: Better Stack offers EU, US and Singapore, and Sentry offers US and EU. Grafana Cloud (AWS `ap-south-1` direct, GCP `asia-south1` through Marketplace) and SigNoz Cloud both list India; the research page compares them. Events carry identifiers only and the source is created in the EU region, but the events remain pseudonymous personal data and the EU placement does not change that. The Better Stack rollout therefore needs a processor, disclosure, access and erasure, and retention assessment, recorded in the processor inventory of [DPDP and privacy](../compliance/02-dpdp-and-privacy.md) (it has no sub-processor register yet, Gap #11). This is an engineering position, not legal advice. Highlight redirects to LaunchDarkly and is reportedly shut down, so do not adopt it.
 
 ## 6. Gaps and the order they will be built
+
+**Prerequisite for both gaps PRs: observable ingest.** Better Stack's ingest API answers 402 once the free quota or spending limit is reached (403 for a bad source token). A cutoff stops the per-item history and the backlog gauge events together, while the ticker heartbeat and the uptime monitors, which are separate requests, stay green. Today `emitTelemetryLog` awaits `fetch` and never reads the status, so a rejection is invisible. Before either gaps PR relies on ingest:
+
+- record and surface 402, 403 and 5xx answers (a counted rejection in the run result, not a Sentry call per event);
+- add a freshness check that fires through a channel independent of ingest, for example a heartbeat or health assertion that fails when no gauge event has arrived for N minutes;
+- write a per-capability missing-data policy saying what an absent gauge means for each money and compliance backlog.
+
+Business work stays best-effort with respect to telemetry: a rejected or timed-out POST never fails the job.
 
 1. **Gaps PR 1:** a Needs-attention inbox in the console, plus the oldest-pending-age alerts. No schema change.
 2. **Gaps PR 2:** per-item Better Stack events plus the Entity trace link.
