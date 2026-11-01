@@ -105,12 +105,9 @@ export async function sendSentryIngestAlert(r: IngestCheck): Promise<boolean> {
       level: "error",
       message: "sentry-ingest-canary unhealthy",
       category: "OBSERVABILITY",
-      context: {
-        verdict: r.verdict,
-        accepted: r.accepted,
-        rejections: r.rejections,
-        detail: r.detail,
-      },
+      verdict: r.verdict,
+      accepted: r.accepted,
+      rejected: r.rejections.reduce((sum, x) => sum + x.count, 0),
     }),
   ]);
   if (email.success) await postOpsChat(buildAlertChatText(r));

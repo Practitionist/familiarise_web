@@ -17,9 +17,9 @@
  * wraps its core in `withCronLock`, so overlapping runs answer 409 from the
  * loser — expected, not an error.
  *
- * Deliberately light: no `@netlify/functions` import, only `zod`,
- * `process.env` and the global `fetch`/`AbortController` the Netlify
- * Functions runtime already provides. `@sentry/node` and the shared error
+ * Deliberately light: no `@netlify/functions` import, only `zod`, the
+ * Sentry-free Better Stack emitter, `process.env` and the global
+ * `fetch`/`AbortController` the Netlify Functions runtime already provides. `@sentry/node` and the shared error
  * budget are imported lazily, only for the missing-secret fatal and for
  * {@link alertFailedTargets}.
  *
@@ -47,6 +47,7 @@ import {
 } from "../../lib/cron/failure-streak";
 import { jobOutcomeSchema, type JobOutcome } from "../../lib/cron/job-outcome";
 import { offProductionDeploy } from "../../lib/cron/deploy-context";
+import { emitTelemetryLog } from "../../lib/observability/betterstack-telemetry";
 
 export const config = { schedule: "*/5 * * * *" };
 
@@ -833,57 +834,26 @@ export default async function cronTick(
   return jsonResponse(body, statusFor(failed));
 }
 
-/**
- * One Better Stack Telemetry line per tick, independent of Sentry. Inline
- * because `lib/observability/betterstack-telemetry` pulls `@sentry/nextjs`
- * into the function bundle; same env contract, never throws.
- */
+/** One Better Stack summary per tick, the event the freshness alert keys on; never throws. */
 async function emitTickSummary(body: TickBody, error?: string): Promise<void> {
-  const token = process.env.BETTERSTACK_SOURCE_TOKEN;
-  const url = process.env.BETTERSTACK_INGEST_URL;
-  if (process.env.ENABLE_BETTERSTACK_TELEMETRY !== "true" || !token || !url) {
-    return;
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 2_000);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        dt: new Date().toISOString(),
-        level: error || body.failed.length > 0 ? "error" : "info",
-        message: "cron-tick summary",
-        category: "CRON",
-        tickId: body.tickId,
-        durationMs: body.durationMs,
-        okCount: body.ok.length,
-        acceptedCount: body.accepted.length,
-        lockHeld: body.lockHeld,
-        lockUnavailableCount: body.lockUnavailable.length,
-        lockUnavailable: body.lockUnavailable,
-        failed: body.failed,
-        skippedIdleCount: body.skippedIdle.length,
-        ...(error ? { error } : {}),
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      console.error(
-        JSON.stringify({
-          event: "betterstack-summary-rejected",
-          status: res.status,
-        }),
-      );
-    }
-  } catch {
-    // Telemetry is best effort.
-  } finally {
-    clearTimeout(timer);
-  }
+  await emitTelemetryLog(
+    {
+      level: error || body.failed.length > 0 ? "error" : "info",
+      message: "cron-tick summary",
+      category: "CRON",
+      tickId: body.tickId,
+      durationMs: body.durationMs,
+      okCount: body.ok.length,
+      acceptedCount: body.accepted.length,
+      lockHeld: body.lockHeld,
+      lockUnavailableCount: body.lockUnavailable.length,
+      lockUnavailable: body.lockUnavailable,
+      failed: body.failed,
+      skippedIdleCount: body.skippedIdle.length,
+      ...(error ? { error } : {}),
+    },
+    fetch,
+  );
 }
 
 async function boundedAlert(
