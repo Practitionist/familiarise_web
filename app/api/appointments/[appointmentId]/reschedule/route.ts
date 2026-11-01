@@ -45,7 +45,6 @@ import { stageAppointmentRescheduledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
-import { logActivity } from "@/lib/activity/log-activity";
 import {
   dropRefusedProposalTimes,
   tryAutoConfirmProposal,
@@ -804,16 +803,8 @@ export async function POST(
               rescheduleType === "entire_booking"
                 ? "All sessions marked for rescheduling. Please select new times."
                 : `${sessionsAffected} session(s) marked for rescheduling. Please select new time(s).`,
-            // B14 — context for the post-tx activity log (appointment is only
-            // in scope inside this callback).
+            // The parent ids the post-commit proposal read needs; appointment is only in scope here.
             logContext: {
-              cpId:
-                appointment.consultation?.consultationPlan
-                  ?.consultantProfileId ??
-                appointment.subscription?.subscriptionPlan
-                  ?.consultantProfileId ??
-                null,
-              appointmentType: appointment.appointmentType,
               consultationId: appointment.consultation?.id,
               subscriptionId: appointment.subscription?.id,
             },
@@ -911,20 +902,6 @@ export async function POST(
           }),
         );
       }
-    }
-
-    // B14 — reschedule now leaves an activity-log entry (cancel always did).
-    if (result.logContext.cpId) {
-      await logActivity({
-        activityType: "APPOINTMENT_RESCHEDULED",
-        description: `Appointment reschedule requested (${result.logContext.appointmentType.toLowerCase()})`,
-        actorId: session.user.id,
-        actorName: session.user.name || "User",
-        actorImage: session.user.image,
-        consultantProfileId: result.logContext.cpId,
-        consultationId: result.logContext.consultationId,
-        subscriptionId: result.logContext.subscriptionId,
-      });
     }
 
     // Fire-and-forget: notify both parties about reschedule

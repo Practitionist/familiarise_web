@@ -848,7 +848,7 @@ async function completeTrials(
       consulteeProfile: {
         include: {
           user: {
-            select: { id: true, name: true, image: true },
+            select: { id: true, name: true },
           },
         },
       },
@@ -893,27 +893,6 @@ async function completeTrials(
         if (!(error instanceof IllegalTransitionError)) throw error;
         console.log(`   ⏭️ Skipped — status changed since the sweep read`);
         continue;
-      }
-
-      // Log activity for trial completion
-      try {
-        await prisma.activityLog.create({
-          data: {
-            activityType: "TRIAL_COMPLETED",
-            description: `Completed trial session with ${trial.consulteeProfile.user.name}: ${trial.subscriptionPlan.title}`,
-            actorId: trial.consulteeProfile.user.id,
-            actorName: trial.consulteeProfile.user.name,
-            actorImage: trial.consulteeProfile.user.image,
-            consultantProfileId: trial.consultantProfileId,
-            trialId: trial.id,
-            metadata: {
-              planTitle: trial.subscriptionPlan.title,
-              autoCompleted: true,
-            },
-          },
-        });
-      } catch (activityError) {
-        console.warn(`   ⚠️ Failed to log activity: ${activityError}`);
       }
 
       console.log(`   ✅ Marked as COMPLETED`);

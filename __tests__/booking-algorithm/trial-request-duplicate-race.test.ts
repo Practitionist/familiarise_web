@@ -29,11 +29,6 @@ jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: jest.fn(async () => null),
 }));
 
-jest.mock("../../lib/activity/log-activity", () => ({
-  __esModule: true,
-  logTrialRequested: jest.fn(async () => undefined),
-}));
-
 jest.mock("../../lib/novu", () => ({
   __esModule: true,
   notifyTrialRequested: jest.fn(async () => undefined),
