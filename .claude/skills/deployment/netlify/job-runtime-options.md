@@ -1,6 +1,6 @@
 # Hosting facts for background-job runtimes
 
-Platform facts measured or read on 2026-10-31. The facts about the queue and scheduler libraries are in `.claude/skills/maintenance/references/job-runtime-options.md`. Depth, diagrams and sources: `docs/maintenance/14-background-job-runtime-options.md`.
+Platform facts measured or read on 2026-10-31 to 2026-11-01. The facts about the queue and scheduler libraries are in `.claude/skills/maintenance/references/job-runtime-options.md`. Depth, diagrams and sources: `docs/maintenance/14-background-job-runtime-options.md`.
 
 ## Current decision
 
@@ -41,8 +41,10 @@ An external scheduler used only as a clock that calls our endpoint is viable; as
 ## Cloudflare
 
 - A Worker placed with `region = "aws:ap-south-1"` runs in `remote-BOM` and measured 2-3 ms per statement and a 65-75 ms lock hold (36-39 ms with Hyperdrive in-region). Default placement and Smart Placement stayed at about 98 ms from Marseille.
-- Placement applies to `fetch` handlers only. Queue consumers, cron and Workflow steps ran in random colocation sites (colos) at 125-266 ms; use a service binding to a pinned Worker (22-31 ms).
+- Placement applies to `fetch` handlers only. Queue consumers, cron and Workflow steps ran in random colocation sites (colos) at 125-266 ms; use a service binding to a pinned Worker over `fetch` (connect plus 5 queries: 22-31 ms in the first round, 22-109 ms with a median of about 29 ms in the Workflows round). RPC through a service binding is NOT pinned (167-264 ms per query), and each Workflow step pays a hop of about 180 ms. Running the whole app on Cloudflare (OpenNext) is the largest migration of any option; the ranking is Vercel `bom1` or a Mumbai DBOS worker, then Netlify, then Cloudflare. Report: `docs/maintenance/experiments/2026-10-31-job-runtime/16-cloudflare-workflows-pinned-hyperdrive.md`.
 - Workers cannot verify Supabase's private-CA certificate with `pg` or `postgres.js`; only Hyperdrive with the Supabase CA and `verify-full` is certificate-verified (4 ms per statement, 60-89 ms lock hold). The 2-3 ms and 65-75 ms figures ran with TLS off. A removed cron kept firing about 4 minutes. Free CPU is 10 ms per request.
+- A removed Cloudflare cron kept firing for about 4 minutes in one round and about 9 in another; delete the Worker to stop it for sure.
+- Cloudflare Workflows step writes are at-least-once (a write in the failing step ran twice), and `create()` is not transactional with Postgres, so keep the outbox.
 
 ## How to rerun
 

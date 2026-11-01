@@ -34,15 +34,15 @@ Fourteen setups were deployed and measured against the Mumbai database ([experim
 
 The table lists each contender with its measured database cost and the reason for and against it.
 
-| Option                                           | DB per statement                    | Why                                                                         | Why not                                                                                                                                                            |
-| ------------------------------------------------ | ----------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Netlify ticker plus Background Functions (today) | 62–64 ms (MEASURED)                 | Correct, no migration                                                       | Slow database path, a pool of one, heavy machinery                                                                                                                 |
-| Vercel `bom1` plus Workflows                     | 1–2 ms, Workflows 2–3 ms (MEASURED) | About 40 times faster database path, managed, completed steps do not re-run | The real app did not run on Vercel without code changes; a static IP costs $100 a month or needs the proxy; cost at about 1,000 users is highly uncertain; lock-in |
-| Mumbai VM plus DBOS                              | about 1–3 ms (ESTIMATE)             | Cheapest, free static IP, transactional enqueue, step recovery              | We run the server; the Lightsail probe is blocked on the owner's AWS login                                                                                         |
-| Cloudflare pinned plus Hyperdrive                | 4 ms (MEASURED)                     | Fast `fetch` handlers                                                       | Queues, cron and Workflows ignore placement; certificate-verified TLS only through Hyperdrive                                                                      |
-| Restate Cloud (EU)                               | 348 ms end to end (MEASURED)        | Good step semantics                                                         | US and EU regions only                                                                                                                                             |
-| Inngest, QStash, Upstash Workflow, Trigger.dev   | 62–125 ms (MEASURED)                | UIs and retries                                                             | The same latency or worse                                                                                                                                          |
-| Async Workloads                                  | 63 ms (MEASURED)                    | Native to Netlify                                                           | Ruled out: steps ran up to 29 times and delays landed about 70 s late                                                                                              |
+| Option                                           | DB per statement                    | Why                                                                         | Why not                                                                                                                                                                                                                                                |
+| ------------------------------------------------ | ----------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Netlify ticker plus Background Functions (today) | 62–64 ms (MEASURED)                 | Correct, no migration                                                       | Slow database path, a pool of one, heavy machinery                                                                                                                                                                                                     |
+| Vercel `bom1` plus Workflows                     | 1–2 ms, Workflows 2–3 ms (MEASURED) | About 40 times faster database path, managed, completed steps do not re-run | The real app did not run on Vercel without code changes; a static IP costs $100 a month or needs the proxy; cost at about 1,000 users is highly uncertain; lock-in                                                                                     |
+| Mumbai VM plus DBOS                              | about 1–3 ms (ESTIMATE)             | Cheapest, free static IP, transactional enqueue, step recovery              | We run the server; the Lightsail probe is blocked on the owner's AWS login                                                                                                                                                                             |
+| Cloudflare pinned plus Hyperdrive                | 4 ms (MEASURED)                     | Fast `fetch` handlers                                                       | Queues, cron and Workflows ignore placement, so a step pays about 180 ms to reach the pinned Worker ([report 16](./experiments/2026-10-31-job-runtime/16-cloudflare-workflows-pinned-hyperdrive.md)); certificate-verified TLS only through Hyperdrive |
+| Restate Cloud (EU)                               | 348 ms end to end (MEASURED)        | Good step semantics                                                         | US and EU regions only                                                                                                                                                                                                                                 |
+| Inngest, QStash, Upstash Workflow, Trigger.dev   | 62–125 ms (MEASURED)                | UIs and retries                                                             | The same latency or worse                                                                                                                                                                                                                              |
+| Async Workloads                                  | 63 ms (MEASURED)                    | Native to Netlify                                                           | Ruled out: steps ran up to 29 times and delays landed about 70 s late                                                                                                                                                                                  |
 
 ## 2. The target design (proposal)
 
@@ -171,13 +171,72 @@ flowchart LR
   D -.->|"fail back to the ticker"| A
 ```
 
-## 4. Netlify billing: status only
-
-The skip-idle pull request (`perf/ticker-skip-idle-targets`) writes the billing details into `docs/deployment/netlify.md` and the billing-guardrails skill, so this page does not duplicate them. The decision status as of 2026-11-01 is this. Moving to the credit-based Pro plan is PENDING Netlify support's confirmation of region pinning and Background Functions on that plan; the email to Netlify support was drafted on 2026-11-01 and is not yet sent. Removing the second (Developer) seat is pending the owner's yes. The figures behind both are UNVERIFIED here and land with the skip-idle PR (#2494), which owns `docs/deployment/netlify.md` and the billing skill. Status of the Netlify ticket (#1159326) on 2026-11-01: the first reply was automated and answered none of the questions, the owner sent a follow-up asking for a human and that answer is pending, and the Developer member was changed to Reviewer through the API, so the team is now an Owner plus two Reviewers. Whether the Reviewer seat is free is still to be confirmed.
-
 ### 3.1 Merge order
 
-The merge order agreed on 2026-11-01 is this. First this documentation pull request (#2486). Second the skip-idle ticker pull request with the Netlify billing docs (#2494), rebased after #2486 because both touch `.claude/skills/maintenance/SKILL.md`. Third the dunning fix (PR A, issue #2489). Fourth the manual-run durable request table (PR B, issue #2490), which needs the human-run `db:push` preflight. After launch: issue #2491 (portable `runJob` and thin triggers), issue #2492 (job backlog starvation), issue #2493 (Postgres background-work patterns) and issues #2424 and #2453 (the per-item run log and the console).
+The merge order agreed on 2026-11-01, with the status in section 3.4. First this documentation (#2486, merged). Second the skip-idle ticker change with the Netlify billing docs (#2494, merged). Third the observability ownership documentation (#2497). Fourth the dunning fix (PR A, issue #2489). Fifth the manual-run durable request table (PR B, issue #2490), which needs the human-run `db:push` preflight. Then the two observability gap PRs, and after launch issue #2491 (portable `runJob` and thin triggers), issue #2492 (job backlog starvation), issue #2493 (Postgres background-work patterns) and issue #2496 (retention audit for log-like tables).
+
+### 3.2 Design options and their outcomes
+
+The table lists every design option weighed in the 2026-10-31 and 2026-11-01 sessions and what happened to it. SELECTED means it is the choice for now, REJECTED means do not build or adopt it, and DEFERRED means it stays open until the named trigger. The `SystemJobRunItem` table was proposed first and later rejected, so it appears as REJECTED with that history. The evidence for each option is on [page 14](./14-background-job-runtime-options.md) and the reports it links.
+
+| Option                                                                               | Outcome  | Reason and trigger                                                                                                                                                      |
+| ------------------------------------------------------------------------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Netlify ticker plus Background Functions, with the skip-idle change                  | SELECTED | Correct today, no migration. Launches as is (#2494).                                                                                                                    |
+| Per-item history as current state on the entity row plus Better Stack events         | SELECTED | Bounded retention, no DDL ([section 6 of page 18](./18-monitoring-and-tracing-failures.md#6-decision-no-systemjobrunitem-table-2026-11-01)).                            |
+| Needs-attention inbox plus oldest-pending-age alerts (gaps PR 1)                     | SELECTED | Closes the starvation and poison-row gap with no DDL.                                                                                                                   |
+| Vercel `bom1` plus Workflows                                                         | DEFERRED | Decide after the real-app test; about 40 times faster database path, but the real app did not run on Vercel without code changes.                                       |
+| Mumbai VM plus a DBOS worker                                                         | DEFERRED | Decide after the Mumbai VM probe, which is blocked on the owner's AWS login.                                                                                            |
+| An external clock calling one `_due` endpoint (QStash, Cloudflare Cron, Trigger.dev) | DEFERRED | Viable as a clock, not an engine. Lands as the trigger adapter of issue #2491, or when the host moves.                                                                  |
+| Switching to the credit-based Netlify Pro plan                                       | DEFERRED | Pending Netlify support's answer on region pinning and Background Functions (section 4).                                                                                |
+| A warehouse, or a read replica and nightly Parquet exports                           | DEFERRED | Not needed; add a read replica first if a trigger fires. Retention audit is issue #2496.                                                                                |
+| A `SystemJobRunItem` Postgres table (issue #2424 Phase 3, #2453)                     | REJECTED | Proposed, then rejected on 2026-11-01: unbounded growth and a warehouse concern, plus 2–4k extra lines across about 40 job modules.                                     |
+| OpenTelemetry spans per item                                                         | REJECTED | The messaging conventions are still at Development status, and Sentry span sampling can drop rare entities.                                                             |
+| Highlight                                                                            | REJECTED | The product reportedly redirects to LaunchDarkly (UNVERIFIED).                                                                                                          |
+| Cloudflare Workflows with a pinned Hyperdrive Worker, or the whole app on Cloudflare | REJECTED | Fast pinned `fetch` but a hop on every step and the largest migration ([report 16](./experiments/2026-10-31-job-runtime/16-cloudflare-workflows-pinned-hyperdrive.md)). |
+| Netlify Async Workloads                                                              | REJECTED | Steps ran up to 29 times and delays landed about 70 s late.                                                                                                             |
+| Restate Cloud (EU)                                                                   | REJECTED | US and EU regions only, 348 ms end to end.                                                                                                                              |
+| Inngest, QStash, Upstash Workflow or Trigger.dev as the engine for all jobs          | REJECTED | The same latency or worse, and a second programming model in the money path. Possible for a few genuinely multi-step flows later.                                       |
+
+### 3.3 Build order
+
+The flowchart shows the order. The two green boxes are merged, and the rest are open or planned.
+
+```mermaid
+flowchart LR
+  A["#2486 docs (merged)"] --> B["#2494 skip-idle ticker (merged)"]
+  B --> C["#2497 observability ownership docs"]
+  C --> D["PR A #2489 dunning"]
+  D --> E["PR B #2490 durable run requests (db:push preflight)"]
+  E --> F["Gaps PR 1: needs-attention inbox plus oldest-pending alerts"]
+  F --> G["Gaps PR 2: per-item Better Stack events plus Entity trace link"]
+  G --> H["Post-launch: #2491 portable runJob, #2492 backlog starvation, #2493 Postgres patterns, #2496 retention audit"]
+  classDef merged fill:#d4edda,stroke:#2e7d32
+  class A,B merged
+```
+
+The table gives the same order with what each step changes. Nothing after #2494 is on `dev` yet (planned).
+
+| Step | Change                                                             | Status on 2026-11-01                               |
+| ---: | ------------------------------------------------------------------ | -------------------------------------------------- |
+|    1 | #2486 job-runtime documentation                                    | Merged                                             |
+|    2 | #2494 the ticker dispatches only targets that have work            | Merged                                             |
+|    3 | #2497 observability ownership documentation                        | Open pull request                                  |
+|    4 | PR A (issue #2489) stage overdue notices atomically with dunning   | Planned, issue open                                |
+|    5 | PR B (issue #2490) durable acceptance of admin background runs     | Planned, issue open, needs the `db:push` preflight |
+|    6 | Gaps PR 1: needs-attention inbox plus oldest-pending alerts        | Planned, built after steps 1–5 merge               |
+|    7 | Gaps PR 2: per-item Better Stack events plus the Entity trace link | Planned, after gaps PR 1                           |
+|    8 | Post-launch: #2491, #2492, #2493 and #2496                         | Planned, after launch                              |
+
+### 3.4 Merge-train status and the post-release check
+
+On 2026-11-01 the first two steps are merged: #2486 at 14:56 IST and #2494 at 15:06 IST. #2497 is open, and PR A and PR B are issues with no pull request yet. Two things to watch once #2494 is released to production:
+
+- **`skippedIdle` in the tick logs.** The console line and the tick body carry `skippedIdle` (`netlify/functions/cron-tick.mts`), and the Better Stack summary carries `skippedIdleCount`. Idle ticks should list the probed jobs there. If it is always empty, the probe is failing open and dispatching everything.
+- **Netlify usage after about a week.** In the idle state the ticker should make about 22,450 invocations a month, against about 94,850 before the change ([the decision record](../decisions/2026-11-01-ticker-skip-idle-targets.md)). Read the invocation meter on the Netlify usage page after about seven days and compare. Real runs add to the idle floor.
+
+## 4. Netlify billing: status only
+
+The skip-idle change (#2494, merged) wrote the billing details into `docs/deployment/netlify.md` and the billing-guardrails skill, so this page does not duplicate them. The decision status as of 2026-11-01 is this. Moving to the credit-based Pro plan is PENDING Netlify support's confirmation of region pinning and Background Functions on that plan; the email to Netlify support was drafted on 2026-11-01 and is not yet sent. Removing the second (Developer) seat is pending the owner's yes. The figures behind both are in `docs/deployment/netlify.md`, which owns them. Status of the Netlify ticket (#1159326) on 2026-11-01: the first reply was automated and answered none of the questions, the owner sent a follow-up asking for a human and that answer is pending, and the Developer member was changed to Reviewer through the API, so the team is now an Owner plus two Reviewers. Whether the Reviewer seat is free is still to be confirmed.
 
 ## 5. Where in code
 
