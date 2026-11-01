@@ -47,7 +47,11 @@ import {
 } from "../../lib/cron/failure-streak";
 import { jobOutcomeSchema, type JobOutcome } from "../../lib/cron/job-outcome";
 import { offProductionDeploy } from "../../lib/cron/deploy-context";
-import { emitTelemetryLog } from "../../lib/observability/betterstack-telemetry";
+import {
+  emitTelemetryLog,
+  pendingAgesSchema,
+  type PendingAges,
+} from "../../lib/observability/betterstack-telemetry";
 
 export const config = { schedule: "*/5 * * * *" };
 
@@ -64,6 +68,8 @@ interface TickBody {
   /** Due targets whose idle probe found no work; recorded on the claim row, never dispatched. */
   skippedIdle: string[];
   durationMs: number;
+  /** Queue gauges from the slot claim; absent when the claim could not read them. */
+  oldestPendingAgeS?: PendingAges;
 }
 
 /**
@@ -594,17 +600,19 @@ export function tickIdForSlot(slot: Date): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-/** Covers a cold start plus the app's idle probes (2.75 s worst case), its commit and the claim insert. */
+/** Covers a cold start plus the app's idle probes and queue gauges (2.75 s worst case), its commit and the claim insert. */
 const TICK_CLAIM_TIMEOUT_MS = 5_000;
 const tickClaimReply = z.object({
   claimed: z.boolean(),
   idle: z.array(z.string()).optional(),
+  pendingAges: pendingAgesSchema.optional(),
 });
 
 /**
  * Claims the slot in Postgres through the app, which also names the scheduled
- * targets its probes found idle. `claimed` is false only when another dispatch
- * holds the slot; an unreachable or unreadable reply runs every target.
+ * targets its probes found idle and the queue gauges. `claimed` is false only
+ * when another dispatch holds the slot; an unreachable or unreadable reply runs
+ * every target and carries no gauges.
  */
 export async function claimTickSlot(
   baseUrl: string,
@@ -613,7 +621,11 @@ export async function claimTickSlot(
   slot: Date,
   scheduled: readonly Target[],
   fetchImpl: typeof fetch = fetch,
-): Promise<{ claimed: boolean; idle: ReadonlySet<string> }> {
+): Promise<{
+  claimed: boolean;
+  idle: ReadonlySet<string>;
+  pendingAges?: PendingAges;
+}> {
   const runAll = { claimed: true, idle: new Set<string>() };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TICK_CLAIM_TIMEOUT_MS);
@@ -634,6 +646,9 @@ export async function claimTickSlot(
           scheduled.some((target) => target === name),
         ),
       ),
+      ...(parsed.data.pendingAges
+        ? { pendingAges: parsed.data.pendingAges }
+        : {}),
     };
   } catch {
     return runAll;
@@ -815,6 +830,7 @@ export default async function cronTick(
     failed,
     skippedIdle,
     durationMs,
+    ...(claim.pendingAges ? { oldestPendingAgeS: claim.pendingAges } : {}),
   };
   console.log(JSON.stringify(body));
   // Check-in and alert waiting share the remaining ticker budget; aborts do not cancel target work.
@@ -850,6 +866,9 @@ async function emitTickSummary(body: TickBody, error?: string): Promise<void> {
       lockUnavailable: body.lockUnavailable,
       failed: body.failed,
       skippedIdleCount: body.skippedIdle.length,
+      ...(body.oldestPendingAgeS
+        ? { oldestPendingAgeS: body.oldestPendingAgeS }
+        : {}),
       ...(error ? { error } : {}),
     },
     fetch,

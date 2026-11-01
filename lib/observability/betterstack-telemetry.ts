@@ -23,6 +23,20 @@ const id = z.string().regex(ENTITY_ID_PATTERN);
 const count = z.number().int().nonnegative();
 const targetNames = z.array(z.string().max(64)).max(100);
 
+/** Seconds the oldest item in each queue has waited past its due point; 0 means none is waiting. */
+export const pendingAgesSchema = z
+  .object({
+    refundsOwed: count,
+    payoutsStuck: count,
+    dunningNotices: count,
+    disputesDue: count,
+    webhookEvents: count,
+    emailRetries: count,
+    notificationRetries: count,
+  })
+  .strict();
+export type PendingAges = z.infer<typeof pendingAgesSchema>;
+
 const telemetryEventSchema = z
   .object({
     dt: z.string().datetime(),
@@ -51,6 +65,7 @@ const telemetryEventSchema = z
       .optional(),
     skippedIdleCount: count.optional(),
     error: z.string().max(MESSAGE_MAX_CHARS).optional(),
+    oldestPendingAgeS: pendingAgesSchema.optional(),
   })
   .strict();
 

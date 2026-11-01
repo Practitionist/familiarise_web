@@ -45,7 +45,7 @@ jest.mock("../../lib/cron/cleanup-registry", () => {
 import {
   IDLE_PROBE_BUDGET_MS,
   IDLE_PROBE_STATEMENT_TIMEOUT_MS,
-  idleTargets,
+  probeTick,
 } from "../../lib/cron/idle-probe";
 
 const TICK_CLAIM_TIMEOUT_MS = 5_000;
@@ -113,7 +113,7 @@ describe("idle probe deadline", () => {
     // release-earnings: two 950 ms reads, idle at 1.9 s. auto-complete: 600 ms reads.
     const db = fakeDb((model) => (earnings.has(model) ? 950 : 600));
 
-    const idle = await idleTargets(due, db as never, new Date());
+    const { idle } = await probeTick(due, db as never, new Date());
 
     expect(idle).toEqual(["release-earnings"]);
     expect(starts.map((s) => s.model)).toEqual([
@@ -146,7 +146,7 @@ describe("idle probe deadline", () => {
           : 100,
     );
 
-    const idle = await idleTargets(due, db as never, new Date());
+    const { idle } = await probeTick(due, db as never, new Date());
 
     expect(idle).toEqual(["release-earnings"]);
     // The aborted transaction runs nothing more; support-sla-sweep is dispatched unprobed.
@@ -156,7 +156,7 @@ describe("idle probe deadline", () => {
   it("marks every probe idle when all finish inside the budget", async () => {
     const db = fakeDb(() => 10);
 
-    const idle = await idleTargets(due, db as never, new Date());
+    const { idle } = await probeTick(due, db as never, new Date());
 
     expect(idle).toEqual(due);
     expect(clock).toBeLessThan(IDLE_PROBE_BUDGET_MS);
