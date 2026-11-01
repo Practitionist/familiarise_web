@@ -21,7 +21,7 @@ The method was the same for every experiment.
 
 ## 2. Honesty labels
 
-- **MEASURED** means a run on 2026-10-31 produced the number, and the report holds the log.
+- **MEASURED** means a run between 2026-10-31 and 2026-11-01 produced the number, and the report holds the log.
 - **DOCS** means an official vendor page says so. The pages and quotes are in section 10 of the explanation page.
 - **UNVERIFIED** means no primary source was read, or the vendor page contradicts itself.
 - **Laptop numbers are best-case.** The laptop is about 40 ms from Mumbai. It is not a prediction for any production host.

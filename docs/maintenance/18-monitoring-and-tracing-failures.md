@@ -124,4 +124,4 @@ Rejected on the way: OpenTelemetry spans per item (the messaging conventions are
 ## Deprecated & Superseded Approaches
 
 - **A `SystemJobRunItem` Postgres table** (issue #2424 Phase 3, issue #2453) was proposed as the per-item run log and rejected on 2026-11-01. Do not create it, and delete any stub that appears; use the entity row for current state and Better Stack events for history (section 6).
-- Reading the `recordSystemEvent` table alone as monitoring was replaced by shipping its events to Better Stack Telemetry, because a table nobody watches pages nobody (`lib/observability/betterstack-telemetry.ts`).
+- Reading the `recordSystemEvent` table alone as monitoring was replaced by shipping its events to Better Stack Telemetry, because a table nobody watches pages nobody (`lib/observability/betterstack-telemetry.ts`). Forwarding is best-effort and runs only when `ENABLE_BETTERSTACK_TELEMETRY` is on and `BETTERSTACK_SOURCE_TOKEN` and `BETTERSTACK_INGEST_URL` are set; the `SystemEvent` row stays the source of truth.

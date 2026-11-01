@@ -68,13 +68,14 @@ Caveat: the laptop/trigger enters at MRS, so steps ran in Europe. A trigger arri
 
 ## 2. Lock-hold workload inside one dbw call (begin, select for update, 10 updates, commit; 13 statements), MEASURED
 
-| Path                                                                                                                                                                                                     | n   | median   | p95      | min–max     |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | -------- | -------- | ----------- |
-| dbw `fetch` `/lock` (pinned BOM)                                                                                                                                                                         | 30  | 67 ms    | 89 ms    | 57–96       |
-| dbw `fetch` `/lock`                                                                                                                                                                                      | 50  | 70 ms    | 83 ms    | 62–123      |
-| dbw `fetch` `/lock`                                                                                                                                                                                      | 50  | 67 ms    | 78 ms    | 55–106      |
-| dbw via RPC from wf2 (unpinned, Europe)                                                                                                                                                                  | 10  | 1,941 ms | 2,299 ms | 1,914–2,299 |
-| Matches the earlier Hyperdrive-in-BOM lab (60–89 ms). A transaction must run entirely inside one dbw call (a Hyperdrive connection is held per transaction; you cannot span a transaction across steps). |
+| Path                                    | n   | median   | p95      | min–max     |
+| --------------------------------------- | --- | -------- | -------- | ----------- |
+| dbw `fetch` `/lock` (pinned BOM)        | 30  | 67 ms    | 89 ms    | 57–96       |
+| dbw `fetch` `/lock`                     | 50  | 70 ms    | 83 ms    | 62–123      |
+| dbw `fetch` `/lock`                     | 50  | 67 ms    | 78 ms    | 55–106      |
+| dbw via RPC from wf2 (unpinned, Europe) | 10  | 1,941 ms | 2,299 ms | 1,914–2,299 |
+
+Matches the earlier Hyperdrive-in-BOM lab (60–89 ms). A transaction must run entirely inside one dbw call (a Hyperdrive connection is held per transaction; you cannot span a transaction across steps).
 
 ## 3. Throwing step, retry timing and re-run check, MEASURED
 
@@ -107,28 +108,29 @@ Cron `* * * * *` in the same Worker; `scheduled()` calls `env.WF.create({ id: "c
 
 Billing for steps applies from 2026-08-10 (DOCS: https://developers.cloudflare.com/workflows/reference/pricing/ ). Free: 3,000 steps/day (~90k/month). Paid: 500k steps/month included, then $0.80 per 100k (retries not counted). Paid plan base fee ($5/month) not included. Each step in this design is also one dbw request (Workers requests: Free 100k/day; Paid 10M/month included) and Hyperdrive queries (Free 100k/day; Paid unlimited).
 
-| N steps per run                                                                                                                                                                         | steps/month | steps/day | Free (3,000/day)         | Paid overage                  |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------- | ------------------------ | ----------------------------- |
-| 1                                                                                                                                                                                       | 91k         | 3,033     | borderline (over by ~1%) | $0 (inside 500k)              |
-| 3                                                                                                                                                                                       | 273k        | 9,100     | exceeded 3x              | $0                            |
-| 5                                                                                                                                                                                       | 455k        | 15,200    | exceeded 5x              | $0                            |
-| 6                                                                                                                                                                                       | 546k        | 18,200    | exceeded                 | (46k) x $0.80/100k = $0.37    |
-| 10                                                                                                                                                                                      | 910k        | 30,300    | exceeded 10x             | (410k) x $0.80/100k = $3.28   |
-| 20                                                                                                                                                                                      | 1.82M       | 60,700    | exceeded                 | (1.32M) x $0.80/100k = $10.56 |
-| So Free covers at most about 1 step per run at this volume; Paid steps are cheap (single-digit dollars). The real cost is complexity and the hop latency, not the step meter. ESTIMATE. |
+| N steps per run | steps/month | steps/day | Free (3,000/day)         | Paid overage                  |
+| --------------- | ----------- | --------- | ------------------------ | ----------------------------- |
+| 1               | 91k         | 3,033     | borderline (over by ~1%) | $0 (inside 500k)              |
+| 3               | 273k        | 9,100     | exceeded 3x              | $0                            |
+| 5               | 455k        | 15,200    | exceeded 5x              | $0                            |
+| 6               | 546k        | 18,200    | exceeded                 | (46k) x $0.80/100k = $0.37    |
+| 10              | 910k        | 30,300    | exceeded 10x             | (410k) x $0.80/100k = $3.28   |
+| 20              | 1.82M       | 60,700    | exceeded                 | (1.32M) x $0.80/100k = $10.56 |
+
+So Free covers at most about 1 step per run at this volume; Paid steps are cheap (single-digit dollars). The real cost is complexity and the hop latency, not the step meter. ESTIMATE.
 
 ## Verdict
 
 Technically viable, not attractive.
 
 - Works: a Workflow step can reach Mumbai-speed DB access (4–6 ms per statement, TLS verify-full via Hyperdrive, ~30 ms DB time per 5-query step) ONLY by calling the pinned worker over `fetch` (HTTP) through a service binding. RPC does not get placement and silently gives 170 ms per statement. Durability survives: completed steps do not re-run, retries are timed as configured, the 4-step workflows and cron-started workflows all completed, and 3 s+ sleeps from the earlier lab were accurate.
-- Cost per step: a flat 144–289 ms (median ~180 ms) cross-region hop, so a step with one or two queries gains nothing; it wins only when a step batches roughly 3+ statements or a whole transaction (a 13-statement lock transaction takes about 67 ms, versus about 2 s unpinned).
+- Cost per step: a flat 144–289 ms (median ~180 ms) cross-region hop, so a one-query step gains nothing; it wins from 2 statements per step (about 190 ms versus 340 ms), and most when a step batches a whole transaction (a 13-statement lock transaction takes about 67 ms, versus about 2 s unpinned).
 - Still needed: an outbox row plus a ticker/cron to start workflows (create() is not transactional), idempotent step writes (at-least-once), and a cron that keeps firing for up to about 9 minutes after removal.
 - Complexity compared with Vercel Workflows in `bom1` (2–3 ms per statement, steps are your own functions in the same region as the DB, no extra hop): Cloudflare needs three moving parts (workflow Worker, pinned DB Worker with a fetch API that you must design as coarse-grained "transaction scripts", Hyperdrive config plus uploaded CA cert), an HTTP serialisation boundary for every DB interaction, no interactive transactions across steps, and a 10 ms CPU limit on Free. Vercel Workflows needs none of that: app code runs in `bom1` and queries Postgres directly. Recommendation: do not choose Cloudflare Workflows for a DB-heavy job engine here unless something else (price, an existing Cloudflare footprint) forces it; if used, keep every step a single coarse call to the pinned worker.
 
 ## Where this lands in the ranking
 
-Cloudflare beats Netlify on raw HTTP latency (2–4 ms when pinned) and on price, but it loses overall, for three reasons. Running the Next.js app there needs the OpenNext Workers runtime (Node API gaps, bundle limits, Prisma driver adapters, TLS to Supabase only through Hyperdrive), which makes it the largest migration of any option; an earlier evaluation scored it 60 out of 100 and eliminated it. Jobs pay a `fetch` hop on every step. And a removed cron kept firing for about 9 minutes. The ranking is Vercel `bom1` with Workflows or a Mumbai DBOS worker first, then Netlify, then Cloudflare. Page 14 section 9.12 holds the owner-facing version of this answer.
+Cloudflare beats Netlify on raw HTTP latency (2–4 ms when pinned); it also looks cheaper, but that is owner judgment, because section 7 estimates only Cloudflare's cost and sets no Netlify figure beside it. It loses overall, for three reasons. Running the Next.js app there needs the OpenNext Workers runtime (Node API gaps, bundle limits, Prisma driver adapters, TLS to Supabase only through Hyperdrive), which makes it the largest migration of any option; an earlier evaluation scored it 60 out of 100 and eliminated it. Jobs pay a `fetch` hop on every step. And a removed cron kept firing for about 9 minutes. The ranking is Vercel `bom1` with Workflows or a Mumbai DBOS worker first, then Netlify, then Cloudflare. Page 14 section 9.12 holds the owner-facing version of this answer.
 
 ## Cleanup proof (MEASURED, 2026-11-01 07:38–07:40Z)
 
