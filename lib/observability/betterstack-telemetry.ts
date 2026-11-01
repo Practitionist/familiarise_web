@@ -13,14 +13,7 @@ import { ENTITY_ID_PATTERN } from "@/lib/observability/entity-id";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 
 /** Ingest answers a run counts: 402 quota spent, 403 bad source token, 5xx, no answer, any other non-2xx. */
-export const INGEST_REJECTIONS = [
-  "402",
-  "403",
-  "5xx",
-  "network",
-  "other",
-] as const;
-export type IngestRejection = (typeof INGEST_REJECTIONS)[number];
+export type IngestRejection = "402" | "403" | "5xx" | "network" | "other";
 export type TelemetryOutcome = "sent" | "skipped" | IngestRejection;
 
 const SEND_TIMEOUT_MS = 2_000;
