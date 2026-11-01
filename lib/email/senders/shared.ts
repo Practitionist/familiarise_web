@@ -129,6 +129,29 @@ export async function stageSpecGuarded(
   });
 }
 
+/** Stages `spec` in `tx`; a render failure throws so the caller's claim rolls back with it. */
+export async function stageSpecRequired(
+  tx: StagingTx,
+  spec: RecipientEmailSpec,
+  userIds: string[],
+): Promise<StagedRecipientEmail[]> {
+  const recipients = await loadEmailRecipients(userIds, spec.category, tx);
+  const prepared = await prepareRecipientEmails({
+    recipients,
+    emailType: spec.emailType,
+    from: spec.from ?? SENDERS.notifications,
+    subject: spec.subject,
+    render: spec.render,
+    entityRef: spec.entityRef,
+  });
+  if (prepared.failed > 0) {
+    throw new Error(
+      `${spec.emailType} render failed for ${prepared.failed} recipient(s)`,
+    );
+  }
+  return stagePreparedEmails(tx, prepared);
+}
+
 /** One `IdempotencyRecord` per (scope, key, recipient) makes a staged email at-most-once. */
 export interface RecipientClaim {
   scope: string;
