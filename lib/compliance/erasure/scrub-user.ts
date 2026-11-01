@@ -17,6 +17,8 @@
  *
  *   BetterAuth Session + Account rows → hard-deleted (forces sign-out
  *   across every device immediately; SSO accounts are dropped too).
+ *   SessionAccessLog.userId → NULL; IP, user agent and times stay until the
+ *   180-day prune (CERT-In Directions, a legal obligation under DPDP s.17).
  *
  *   PayoutAccount holder name, bank name, last-4, IFSC and UPI id → NULL;
  *   the RazorpayX fund account and contact are deactivated, and the
@@ -59,6 +61,7 @@ import type { Prisma } from "@prisma/client";
 import type { Db } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
+import { detachSessionAccessLogs } from "@/lib/auth/session-access-log";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
 import {
@@ -1005,6 +1008,7 @@ export async function scrubUser(
     // Hard-delete sessions + accounts so SSO and password-based logins
     // both break immediately.
     await revokeAllUserSessions(tx, userId);
+    await detachSessionAccessLogs(tx, userId);
     await tx.account.deleteMany({ where: { userId } });
 
     // Withdraw all active DPDP ConsentArtifact rows while preserving their

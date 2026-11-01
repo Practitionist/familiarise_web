@@ -67,6 +67,18 @@ jest.mock("../../lib/prisma", () => ({
     appointmentParticipant: {
       findMany: jest.fn(),
     },
+    sessionAccessLog: {
+      findMany: jest.fn(async () => [
+        {
+          startedAt: new Date("2026-11-01T10:00:00Z"),
+          endedAt: new Date("2026-11-01T12:00:00Z"),
+          endReason: "SIGN_OUT",
+          ipAddress: "203.0.113.7",
+          userAgent: "Firefox",
+        },
+      ]),
+    },
+    $queryRaw: jest.fn(async () => [{ ready: true }]),
     $transaction: jest.fn(),
   },
 }));
@@ -310,6 +322,17 @@ describe("Personal DPDP Consent & §11 Data Export Routes", () => {
         payload.personalDataSummary.activitySummary.consumerInvoices[0]
           .totalPaise,
       ).toBe(150000);
+      expect(
+        payload.personalDataSummary.activitySummary.sessionAccessLog,
+      ).toEqual([
+        {
+          startedAt: "2026-11-01T10:00:00.000Z",
+          endedAt: "2026-11-01T12:00:00.000Z",
+          endReason: "SIGN_OUT",
+          ipAddress: "203.0.113.7",
+          userAgent: "Firefox",
+        },
+      ]);
       expect(payload.sharedWithDataProcessors).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

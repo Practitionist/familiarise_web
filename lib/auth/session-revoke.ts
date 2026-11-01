@@ -1,4 +1,6 @@
+import type { SessionEndReason } from "@prisma/client";
 import { type PrismaLike } from "@/lib/prisma";
+import { endSessions } from "@/lib/auth/session-access-log";
 
 /**
  * The single choke point for ending auth sessions (#1856).
@@ -15,7 +17,8 @@ import { type PrismaLike } from "@/lib/prisma";
  * `session:["revoke"]` permission check against the CALLING admin's
  * session. A system-initiated revoke (moderation tx, erasure)
  * has no caller session and runs inside a transaction the plugin cannot
- * join, so direct deletes are the correct primitive.
+ * join, so direct deletes are the correct primitive. Each one stamps the
+ * ended sessions into the CERT-In access log (`session-access-log.ts`).
  */
 
 export interface RevokeResult {
@@ -32,8 +35,7 @@ export async function revokeAllUserSessions(
   db: PrismaLike,
   userId: string,
 ): Promise<RevokeResult> {
-  const { count } = await db.session.deleteMany({ where: { userId } });
-  return { revoked: count };
+  return { revoked: await endSessions(db, { userId }, "REVOKED") };
 }
 
 /** End every session for several users (an org-wide SSO enforcement flip). */
@@ -42,10 +44,9 @@ export async function revokeSessionsForUsers(
   userIds: readonly string[],
 ): Promise<RevokeResult> {
   if (userIds.length === 0) return { revoked: 0 };
-  const { count } = await db.session.deleteMany({
-    where: { userId: { in: [...userIds] } },
-  });
-  return { revoked: count };
+  return {
+    revoked: await endSessions(db, { userId: { in: [...userIds] } }, "REVOKED"),
+  };
 }
 
 /**
@@ -56,8 +57,7 @@ export async function revokeSessionByToken(
   db: PrismaLike,
   token: string,
 ): Promise<RevokeResult> {
-  const { count } = await db.session.deleteMany({ where: { token } });
-  return { revoked: count };
+  return { revoked: await endSessions(db, { token }, "REVOKED") };
 }
 
 /**
@@ -71,10 +71,13 @@ export async function revokeUserSessionsExcept(
   userId: string,
   keepSessionId: string,
 ): Promise<RevokeResult> {
-  const { count } = await db.session.deleteMany({
-    where: { userId, id: { not: keepSessionId } },
-  });
-  return { revoked: count };
+  return {
+    revoked: await endSessions(
+      db,
+      { userId, id: { not: keepSessionId } },
+      "REVOKED",
+    ),
+  };
 }
 
 /**
@@ -83,17 +86,17 @@ export async function revokeUserSessionsExcept(
  * nothing, so callers never need a separate read-then-check. Uses
  * `deleteMany` (not `delete`) so a concurrent second revoke of the
  * same row is a 0-count success, not a P2025 throw — revocation is
- * idempotent by construction.
+ * idempotent by construction. `reason` is EXPIRED when the lifetime policy ends it.
  */
 export async function revokeSessionById(
   db: PrismaLike,
   userId: string,
   sessionId: string,
+  reason: SessionEndReason = "REVOKED",
 ): Promise<RevokeResult> {
-  const { count } = await db.session.deleteMany({
-    where: { id: sessionId, userId },
-  });
-  return { revoked: count };
+  return {
+    revoked: await endSessions(db, { id: sessionId, userId }, reason),
+  };
 }
 
 /**
@@ -106,11 +109,14 @@ export async function revokeEmailDomainSessions(
   domain: string,
   keepSessionId?: string,
 ): Promise<RevokeResult> {
-  const { count } = await db.session.deleteMany({
-    where: {
-      user: { email: { endsWith: `@${domain}`, mode: "insensitive" } },
-      ...(keepSessionId ? { id: { not: keepSessionId } } : {}),
-    },
-  });
-  return { revoked: count };
+  return {
+    revoked: await endSessions(
+      db,
+      {
+        user: { email: { endsWith: `@${domain}`, mode: "insensitive" } },
+        ...(keepSessionId ? { id: { not: keepSessionId } } : {}),
+      },
+      "REVOKED",
+    ),
+  };
 }

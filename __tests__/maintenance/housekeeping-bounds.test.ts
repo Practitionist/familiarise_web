@@ -30,6 +30,7 @@ jest.mock("../../lib/prisma", () => {
     default: {
       verification: delegate(),
       session: delegate(),
+      sessionAccessLog: delegate(),
       idempotencyRecord: delegate(),
       invitation: delegate(),
       orgAuditLog: delegate(),
@@ -40,6 +41,7 @@ jest.mock("../../lib/prisma", () => {
       ledgerReconciliationReport: delegate(),
       $transaction: jest.fn(),
       $executeRaw: jest.fn(),
+      $queryRaw: jest.fn(),
     },
   };
 });
@@ -51,6 +53,7 @@ type Delegate = Record<
 type Model =
   | "verification"
   | "session"
+  | "sessionAccessLog"
   | "idempotencyRecord"
   | "invitation"
   | "orgAuditLog"
@@ -63,11 +66,13 @@ const { default: db } = jest.requireMock<{
   default: Record<Model, Delegate> & {
     $transaction: jest.Mock;
     $executeRaw: jest.Mock;
+    $queryRaw: jest.Mock;
   };
 }>("../../lib/prisma");
 const models: Model[] = [
   "verification",
   "session",
+  "sessionAccessLog",
   "idempotencyRecord",
   "invitation",
   "orgAuditLog",
@@ -95,6 +100,7 @@ beforeEach(() => {
         txDouble({ invitation: db.invitation, orgAuditLog: db.orgAuditLog }),
       ),
   );
+  db.$queryRaw.mockResolvedValue([{ ready: true }]);
   jest.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => {
@@ -102,7 +108,7 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-it.each(["verification", "session", "idempotencyRecord"] as const)(
+it.each(["verification", "idempotencyRecord"] as const)(
   "preserves a %s row refreshed between selection and deletion",
   async (model) => {
     let expiry = new Date(NOW.getTime() - DAY);
@@ -128,16 +134,67 @@ it.each(["verification", "session", "idempotencyRecord"] as const)(
       totalCleaned: 0,
       hasMore: false,
     });
-    const lapsed =
-      model === "session" ? new Date(NOW.getTime() - 180 * DAY) : NOW;
     expect(db[model].deleteMany).toHaveBeenCalledWith({
       where: {
-        expiresAt: { lt: lapsed },
+        expiresAt: { lt: NOW },
         id: { in: ["refreshed"] },
       },
     });
   },
 );
+
+const expiredSession = {
+  id: "expired-session",
+  userId: "u1",
+  ipAddress: "203.0.113.7",
+  userAgent: "Firefox",
+  createdAt: new Date(NOW.getTime() - 31 * DAY),
+  expiresAt: new Date(NOW.getTime() - DAY),
+};
+
+it("stamps an expired session EXPIRED into the access log before deleting it, and keeps it when the stamp fails", async () => {
+  db.session.findMany.mockResolvedValue([expiredSession]);
+  db.session.deleteMany.mockResolvedValue({ count: 1 });
+  db.$executeRaw.mockResolvedValueOnce(1);
+  expect(await cleanupAuthTokens()).toMatchObject({ sessionsDeleted: 1 });
+  expect(db.$executeRaw.mock.calls[0][1].values).toEqual(
+    expect.arrayContaining([
+      "expired-session",
+      expiredSession.expiresAt,
+      "EXPIRED",
+    ]),
+  );
+  expect(db.session.deleteMany).toHaveBeenCalledWith({
+    where: { expiresAt: { lt: NOW }, id: { in: ["expired-session"] } },
+  });
+
+  db.session.deleteMany.mockClear();
+  db.$executeRaw.mockRejectedValueOnce(new Error("relation is locked"));
+  expect(await cleanupAuthTokens()).toMatchObject({
+    success: false,
+    sessionsDeleted: 0,
+    hasMore: true,
+  });
+  expect(db.session.deleteMany).not.toHaveBeenCalled();
+});
+
+it("prunes access-log rows 180 days after their end, or after start plus a session length when never stamped", async () => {
+  db.sessionAccessLog.findMany.mockResolvedValue([{ id: "old" }]);
+  db.sessionAccessLog.deleteMany.mockResolvedValue({ count: 1 });
+  expect(await cleanupAuthTokens()).toMatchObject({ accessLogsDeleted: 1 });
+  expect(db.sessionAccessLog.deleteMany).toHaveBeenCalledWith({
+    where: {
+      OR: [
+        { endedAt: { lt: new Date(NOW.getTime() - 180 * DAY) } },
+        {
+          endedAt: null,
+          startedAt: { lt: new Date(NOW.getTime() - 210 * DAY) },
+        },
+      ],
+      id: { in: ["old"] },
+    },
+  });
+});
 
 it("caps each auth arm and reports eligible rows remaining after the slice", async () => {
   const rows = [{ id: "a" }, { id: "b" }, { id: "c" }];
@@ -173,7 +230,7 @@ it("shares the auth start budget across phases, including selection time", async
 
 it("isolates auth-arm failures and never calls the backlog drained", async () => {
   db.verification.findMany.mockRejectedValue(new Error("unavailable"));
-  db.session.findMany.mockResolvedValue([{ id: "expired-session" }]);
+  db.session.findMany.mockResolvedValue([expiredSession]);
   db.session.deleteMany.mockResolvedValue({ count: 1 });
   expect(await cleanupAuthTokens()).toMatchObject({
     success: false,

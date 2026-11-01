@@ -49,7 +49,12 @@ const tx = {
       { collaboratorType: "WEBINAR", webinarPlanId: "wp-1", classPlanId: null },
     ]),
   },
-  session: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+  session: {
+    findMany: jest.fn(async () => []),
+    deleteMany: jest.fn(async () => ({ count: 0 })),
+  },
+  sessionAccessLog: { updateMany: jest.fn(async () => ({ count: 2 })) },
+  $queryRaw: jest.fn(async () => [{ ready: true }]),
   account: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   // #1593 — the outbox: the request being processed and the rows the scrub
   // writes for it inside the transaction.
@@ -92,6 +97,15 @@ describe("DPDP erasure flips collaborator rows", () => {
       "u1",
       { notify: false },
     );
+  });
+
+  it("unlinks the CERT-In access log in the transaction and keeps its rows for the prune", async () => {
+    await scrubUser(db as never, "u1");
+
+    expect(tx.sessionAccessLog.updateMany).toHaveBeenCalledWith({
+      where: { userId: "u1" },
+      data: { userId: null },
+    });
   });
 
   it("writes the outbox row inside the transaction and settles it after the attempt (#1593)", async () => {

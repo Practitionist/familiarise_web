@@ -8,7 +8,8 @@
  *   1. `personalDataSummary` (§11(1)(a)): The user's account profile, role
  *      profiles, professional background, booking history, payments/invoices,
  *      support tickets, staff access to their booking chats, DPDP grievances,
- *      and notification/cookie preferences.
+ *      notification/cookie preferences, and the sign-in access log (start, end,
+ *      end reason, IP address and user agent of each session).
  *   2. `processingActivities` (§11(1)(a)): Itemised purposes and legal bases
  *      under which Familiarise processes the user's personal data.
  *   3. `sharedWithDataProcessors` (§11(1)(b)): Identities of all Data
@@ -30,6 +31,7 @@ import { getSession } from "@/lib/auth-server";
 import { resolveSentryUserId } from "@/lib/observability/identity";
 import { PURPOSE_CODE_META } from "@/lib/compliance/purpose-codes";
 import { readSupportExport } from "@/lib/support/privacy-export";
+import { readSessionAccessLog } from "@/lib/auth/session-access-log";
 
 export async function GET() {
   const session = await getSession();
@@ -47,6 +49,7 @@ export async function GET() {
       rawConsumerInvoices,
       support,
       participations,
+      sessionAccessLog,
     ] = await Promise.all([
       prisma.user.findUnique({
         where: { id: userId },
@@ -230,6 +233,7 @@ export async function GET() {
           createdAt: true,
         },
       }),
+      readSessionAccessLog(userId),
     ]);
 
     if (!user) {
@@ -363,6 +367,7 @@ export async function GET() {
           consumerInvoices,
           ...support,
           dpdpGrievances: grievances,
+          sessionAccessLog,
         },
       },
       processingActivities: PURPOSE_CODE_META,
@@ -377,6 +382,8 @@ export async function GET() {
           "Financial ledger rows, tax invoices, consultant payouts, and TDS/GST records are retained for 7-8 years under the Income Tax Act, 1961 (§44AA / Rule 6F) and CGST Act, 2017 (§36), as required by DPDP §12(3) and §8(7)(b).",
         securityLogRetention:
           "Pseudonymous security and processing logs are retained for at least 1 year under Rule 8(3) of the DPDP Rules, 2025.",
+        sessionAccessLogRetention:
+          "Each sign-in session's IP address, device (user agent), start and end are kept for 180 days after the session ends, as the CERT-In Directions of 28 April 2022 require. Erasing your account unlinks these rows from you; they are deleted when the 180 days pass.",
         grievanceAndBoardAppeal:
           "You may file a grievance in Settings -> Account -> Data protection grievance (resolved within 90 days per Rule 14(3)) and escalate unresolved complaints to the Data Protection Board of India under DPDP §13(3) and §27.",
       },

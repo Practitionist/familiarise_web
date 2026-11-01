@@ -7,6 +7,7 @@ import { Gender } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
+import { detachSessionAccessLogs } from "@/lib/auth/session-access-log";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import {
   derivePseudonym,
@@ -457,6 +458,7 @@ async function executeUserHardDeleteOrFallbackScrub(
       },
     });
     await revokeAllUserSessions(tx, id);
+    await detachSessionAccessLogs(tx, id);
     await tx.user.delete({ where: { id } });
     return removed;
   });

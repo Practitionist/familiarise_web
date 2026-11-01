@@ -1081,6 +1081,33 @@ model Verification {
   @@map("verifications")
 }
 
+// CERT-In access log: one row per session, kept 180 days after it ends.
+// No foreign keys, so the row outlives its Session; erasure nulls userId.
+model SessionAccessLog {
+  id        String            @id @default(uuid())
+  sessionId String            @unique
+  userId    String?
+  ipAddress String?
+  userAgent String?
+  startedAt DateTime          @db.Timestamptz
+  endedAt   DateTime?         @db.Timestamptz
+  endReason SessionEndReason?
+
+  // The 180-day prune (ended rows, then never-stamped rows by start).
+  @@index([endedAt, startedAt])
+  // Erasure detach and the DPDP export.
+  @@index([userId, startedAt])
+  @@map("session_access_logs")
+}
+
+enum SessionEndReason {
+  EXPIRED
+  EXPIRED_COOKIE
+  SIGN_OUT
+  REVOKED
+  UNKNOWN
+}
+
 ////////////////////////////////////////////////////
 // ENTERPRISE LAYER — Arch 4-Modified (Issue #681)
 ////////////////////////////////////////////////////

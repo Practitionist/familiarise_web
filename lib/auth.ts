@@ -46,6 +46,7 @@ import {
   isQaOperatorExemptFrom2fa,
 } from "@/lib/auth/qa-accounts";
 import {
+  SESSION_EXPIRES_IN_SECONDS,
   authenticationStart,
   cappedSessionFields,
   refreshSessionLifetime,
@@ -67,6 +68,12 @@ import {
   revokeAllUserSessions,
   revokeSessionById,
 } from "@/lib/auth/session-revoke";
+import {
+  endReasonForPath,
+  recordSessionEnds,
+  recordSessionStart,
+  sessionSnapshot,
+} from "@/lib/auth/session-access-log";
 import { socialProviderConfig } from "@/lib/auth/social-providers";
 import {
   assertOperatorMayEnableTwoFactor,
@@ -331,7 +338,7 @@ export const auth = betterAuth({
   },
 
   session: {
-    expiresIn: 30 * 24 * 60 * 60, // 30 days
+    expiresIn: SESSION_EXPIRES_IN_SECONDS,
     updateAge: 24 * 60 * 60, // 24 hours
     // Off: every session read hits the database, so a revoke, ban or role
     // change applies on the very next request. Lifetime caps for operators
@@ -503,6 +510,23 @@ export const auth = betterAuth({
             data: cappedSessionFields(session.expiresAt, authStart, maxAgeMs),
           };
         },
+        after: async (session, ctx) => {
+          await recordSessionStart(
+            sessionSnapshot(session),
+            ctx?.headers ?? ctx?.request?.headers,
+          );
+        },
+      },
+      // Every Better Auth delete (sign-out, an expired cookie, its revoke
+      // routes) lands here; the app's own deletes stamp in session-revoke.ts.
+      delete: {
+        after: async (session, ctx) => {
+          await recordSessionEnds(
+            prisma,
+            [sessionSnapshot(session)],
+            endReasonForPath(ctx?.path),
+          );
+        },
       },
       update: {
         // Only get-session's sliding refresh writes `expiresAt`, and it has
@@ -523,6 +547,7 @@ export const auth = betterAuth({
               prisma,
               current.session.userId,
               current.session.id,
+              "EXPIRED",
             );
             return false;
           }
