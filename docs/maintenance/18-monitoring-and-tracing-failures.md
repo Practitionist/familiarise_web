@@ -74,7 +74,7 @@ The table reads the same signals.
 
 ## 4. Gaps (filed, not built)
 
-- A per-item run log, `SystemJobRunItem` (issue #2424 Phase 3 and issue #2453). It does not exist yet.
+- Per-item run history as batched Better Stack events (planned; see the [2026-11-01 observability ownership decision](../decisions/2026-11-01-observability-ownership.md)). A Postgres per-item table was rejected.
 - A "needs attention" inbox with Retry buttons (issue #2424 Phase 2).
 - Oldest-pending-age alerts (issue #2492).
 - Charts beyond the Run metrics card. Every run is already a row, so SQL views in the back office or Better Stack are cheaper than Grafana.

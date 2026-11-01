@@ -194,7 +194,7 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
     - Retry failed items, which requeues specific owed items and is not a blind re-run.
     - There is no hard Stop, because a running serverless invocation cannot be killed from outside.
   - **Integrity panel:** it shows the reconcilers' latest findings. Each run also records counters for lost compare-and-swap claims, serialization retries, deadlock and lock timeouts, pool timeouts and lease takeovers, and a spike appears in Needs attention. Postgres constraints and CAS transitions keep preventing bad states; the panel only shows evidence.
-  - **Per-item run log:** a new `SystemJobRunItem` table holds one row for each entity whose state a run changed or that a run failed on, with the outcome, a reason code, the attempt number and a short error. Rows are kept for 90 days.
+  - **Per-item run log (superseded 2026-11-01, not built):** a new `SystemJobRunItem` table holds one row for each entity whose state a run changed or that a run failed on, with the outcome, a reason code, the attempt number and a short error. Rows are kept for 90 days.
     - An entity becomes STUCK, a computed state that is not stored, after it fails in consecutive runs or after its owed marker ages out.
     - Raw log lines stay in Better Stack, tagged with the run id.
   - **Delivery order:**
@@ -218,7 +218,8 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
   - **The inbox is registry-driven (planned).** An "owed-work source" registry declares, per source, its stuck-item query, its reason field, its age limit and its remediation door, in the same way `lib/cron/cleanup-registry.ts` drives jobs. Adding a source is one registry entry, never a hand-coded panel per job.
   - **Job health table.** Each job shows its last real outcome, its age, its backlog, its SLO tier, Run and Pause. **Drain is dropped**: Run now plus Pause and Resume cover the need. The p50 and p95 durations move to a collapsed Performance tab.
   - **Sub-tabs.** The console uses sub-tabs, in the same pattern as the support inbox: Overview (the inbox), Jobs, Runs, Integrity and Performance. This replaces the "four levels" navigation above for Phase 2; the Run detail page arrives in Phase 3.
-  - **Phase 3 (DDL)** is unchanged: `SystemJobRunItem` and Run detail give the attempt history for each item. Phase 1 already records the outcomes, summaries, item counts and run ids that these views read.
+  - **Phase 3 (DDL)** (superseded 2026-11-01, not built) was unchanged here: `SystemJobRunItem` and Run detail give the attempt history for each item. Phase 1 already records the outcomes, summaries, item counts and run ids that these views read.
+- **Superseded 2026-11-01:** the per-item run log (`SystemJobRunItem`) and Phase 3 DDL are rejected. Per-item history goes to batched Better Stack events instead; see the [2026-11-01 observability ownership decision](2026-11-01-observability-ownership.md).
 
 ## References
 
@@ -238,3 +239,4 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
 | Undocumented hourly `rl:mail` caps in `lib/auth.ts`           | One per-recipient daily check now applies to every auth send (ADR-05)      | Delete the old limiters when the pull request merges                                     |
 | A Sentry error for every failing ticker target                | Noise and email per new issue (ADR-08)                                     | Use the grouped warning and the streak test                                              |
 | A Drain control and a percentile-first Overview (ADR-13)      | The console answers "which item failed", not "how fast" (amendment)        | Do not build Drain; keep p50 and p95 on the Performance tab                              |
+| The `SystemJobRunItem` per-item run log (ADR-13 Phase 3)      | Rejected by the 2026-11-01 observability ownership decision                | Do not create it; per-item history goes to batched Better Stack events                   |
