@@ -13,7 +13,7 @@ Jobs run from one Netlify ticker and each run leaves a thin trail: a `SystemJobE
 
 ### Selected
 
-1. **Per-item history.** Current state (attempts, last error, age) lives on the entity row. History goes to batched Better Stack log events, one POST per run with `{run_id, job, entity_id, outcome, reason, attempt}` (all required; `tick_id`, `entity_kind` and `duration_ms` optional), identifiers only, EU region. There is no `SystemJobRunItem` table and no warehouse. (PLANNED)
+1. **Per-item history.** Current state (attempts, last error, age) lives on the entity row. History goes to batched Better Stack log events, one POST per run with `{run_id, job, entity_id, outcome, reason, attempt}` (all required; `tick_id` and `duration_ms` optional), identifiers only, EU region. There is no `SystemJobRunItem` table and no warehouse. (PLANNED)
 2. **Ownership split.** Sentry owns grouped errors, the `cron-tick` check-in and sampled traces. Better Stack owns per-item events, heartbeats and uptime, paging, and SQL threshold alerts.
 3. **Backlog breaches page through Better Stack, not Sentry.** The oldest pending age per capability is computed once per tick in Postgres, emitted as a gauge log line, and alerted by a Better Stack SQL threshold. (PLANNED)
 4. **Paging.** Email now. One Better Stack responder licence (about $34 a month) at launch.

@@ -32,7 +32,7 @@ Read this before adding a log event, an alert, a Postgres log table, or a Sentry
 | `reason`    | A short code such as `GATEWAY_TIMEOUT` or `LOST_CAS`.                        |
 | `attempt`   | The attempt number read from the entity row.                                 |
 
-The six fields above are required on every event. `tick_id`, `entity_kind` and `duration_ms` (suggested by the research) are optional extras; the decision record and the research page use the same split.
+The six fields above are required on every event. `tick_id` and `duration_ms` (suggested by the research) are optional extras; the decision record and the research page use the same split.
 
 ## Links
 
