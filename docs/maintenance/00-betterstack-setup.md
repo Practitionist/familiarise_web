@@ -616,6 +616,45 @@ When `ENABLE_BETTERSTACK_TELEMETRY` is `true` and the Better Stack source token 
 
 On Netlify (`onNetlify()` in `lib/runtime-host.ts`: the build-inlined `NETLIFY=true`, or the runtime `SITE_ID` that functions see) `withCronLock` caps every lease at 90 seconds. A synchronous Netlify function stops at 60 seconds, but a background function (such as the recording transfer) may run for 15 minutes, so the cap is safe only because `startLeaseRenewal` refreshes a live run's lease every third of the TTL (30 seconds). The cap therefore never expires a run that is still alive; it only bounds how long a killed run's `RUNNING` row blocks the next ticks, so a killed run recovers within one 90-second lease window. Other hosts keep the per-job TTL. The ticker still files a 409 under `lockHeld`, a distinct field in the tick body and summary line, never under `ok`.
 
+### Owner step: the tick-summary freshness alert
+
+The heartbeat and the uptime monitors are separate requests from log ingest, so they stay green when Better Stack refuses log events (402 once the free quota or spending limit is spent, 403 for a bad source token). The freshness alert closes that gap: it fires when no `cron-tick summary` event has arrived for 15 minutes, which is three missed five-minute ticks. A rejected summary, a stopped ticker, telemetry switched off and a revoked token all look the same to it, and that is the point: it is the one catch-all for missing telemetry. Configure it in Better Stack by hand; no code creates vendor resources.
+
+1. Open **Telemetry**, then **Dashboards**, create a dashboard named `Jobs`, and add a chart with **+**.
+2. Choose an SQL query on the production logs source and paste:
+
+   ```sql
+   SELECT {{time}} AS time, count(*) AS value
+   FROM {{source}}
+   WHERE time BETWEEN {{start_time}} AND {{end_time}}
+     AND JSONExtract(raw, 'message', 'Nullable(String)') = 'cron-tick summary'
+   GROUP BY time
+   ```
+
+3. In the chart's sidebar open **Alerts** and add a **Threshold** alert named `Ticker telemetry stale`: trigger when `value` is **below 1**, run it every 5 minutes on data from the last 15 minutes, and set **If data is missing** to **Start an incident**. Keep the confirmation period at 1 minute.
+4. Route it to email (the default) and to the ops Slack channel through the Better Stack Slack integration. Leave call, SMS and push off: they need the responder seat, which is bought at launch.
+5. Prove it: unset `ENABLE_BETTERSTACK_TELEMETRY` on a branch deploy for 20 minutes, or pause the source, and confirm an incident opens and resolves.
+
+The summary is sent only by the active platform's ticker (`ops:active_cron_platform`). After a fleet switch the new host's ticker must emit the same `cron-tick summary` event, or this alert fires; that is the intended reading.
+
+### Missing-data policy per capability
+
+A Better Stack alert must say what an absent value means. The rule: a money queue that cannot be seen is treated as a money queue in trouble, while a non-money gauge that is missing is left to the freshness alert above, so one telemetry outage opens one incident rather than seven.
+
+| Capability                            | Signal                                         | If data is missing (Better Stack setting) | Why                                                                                         |
+| ------------------------------------- | ---------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Ticker telemetry                      | `cron-tick summary` count                      | Start an incident                         | It is the catch-all: absence is the only symptom of a refused or stopped ingest.            |
+| Refunds the bookings owe              | `oldestPendingAgeS.refundsOwed`                | Start an incident                         | A customer is owed money; not knowing is as bad as a breach.                                |
+| Payouts in flight or approved         | `oldestPendingAgeS.payoutsStuck`               | Start an incident                         | An expert or organisation is owed money.                                                    |
+| Overdue invoice notices (dunning)     | `oldestPendingAgeS.dunningNotices`             | Start an incident                         | A missed notice delays collection and the suspension clock.                                 |
+| Disputes inside their response window | `oldestPendingAgeS.disputesDue`                | Start an incident                         | A missed evidence deadline loses the dispute by default.                                    |
+| Unprocessed gateway webhooks          | `oldestPendingAgeS.webhookEvents`              | Do not start an incident                  | Covered by the freshness alert; the reconcile sweeps are a second path for the money.       |
+| Email retries                         | `oldestPendingAgeS.emailRetries`               | Do not start an incident                  | Covered by the freshness alert.                                                             |
+| Notification (bell) retries           | `oldestPendingAgeS.notificationRetries`        | Do not start an incident                  | Covered by the freshness alert.                                                             |
+| Ingest rejections inside job runs     | `SystemJobExecution.result.telemetry.rejected` | Not alerted                               | Postgres evidence for diagnosis; a rejected tick summary already trips the freshness alert. |
+
+The gauges themselves, their thresholds and the alert query for each are in the next section.
+
 ### Failure escalation
 
 Every failing target appears in the per-tick summary line. A one-off failure stays out of Sentry: the ticker writes a `cron-tick.target-failed-once` log line (with `class: platform` when the body is Netlify's own `Internal Server Error - Request ID` page). It becomes an error issue fingerprinted per target only after it has gone three of its own cadences without a `COMPLETED` run. The ticker reads that history from `GET /api/health/jobs/streaks?targets=a,b` (bearer `CRON_SECRET`, read-only), which resolves each target to the `jobName` its core writes (`jobNameFor` in `lib/cron/schedule.ts`; most match the target name, eight differ, for example `abandoned-payments` writes `cleanup-abandoned-payments`) and returns that job's last `COMPLETED` start time from `SystemJobExecution`; it asks only for targets that are about to be reported, and an unreachable endpoint or a job with no recent rows counts as a one-off, so it is logged only. The history comes from Postgres because the ticker keeps no state and a Redis failure counter is outside the allowed Redis uses. A platform 5xx leaves no execution row, which is why the test is the absence of a recent `COMPLETED` run rather than a run of `FAILED` rows. Reports remain limited to one per target per hour, and the `cron-tick` monitor check-in is unchanged: it reports `error` on any tick with a failed target and the monitor's threshold of three consecutive failed check-ins does the escalation.
