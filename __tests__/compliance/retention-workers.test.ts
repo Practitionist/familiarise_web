@@ -13,10 +13,8 @@ jest.mock("../../lib/prisma", () => ({
       findMany: (...a: unknown[]) => findConsent(...a),
       deleteMany: (...a: unknown[]) => deleteConsent(...a),
     },
-    systemEvent: {
-      findMany: (...a: unknown[]) => findEvents(...a),
-      deleteMany: (...a: unknown[]) => deleteEvents(...a),
-    },
+    $queryRaw: (...a: unknown[]) => findEvents(...a),
+    $executeRaw: (...a: unknown[]) => deleteEvents(...a),
   },
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
@@ -82,27 +80,22 @@ it("drains25 expired consents in three bounded slices while preserving a concurr
 });
 it("caps event history and rechecks the existing400day cutoff in the mutation", async () => {
   let ids = Array.from({ length: 25 }, (_, i) => String(i));
-  findEvents.mockImplementation(async (q: { take: number }) =>
-    ids.slice(0, q.take).map((id) => ({ id })),
+  findEvents.mockImplementation(async (q: { values: unknown[] }) =>
+    ids.slice(0, Number(q.values.at(-1))).map((id) => ({ id })),
   );
-  deleteEvents.mockImplementation(
-    async (q: { where: { id: { in: string[] }; createdAt: { lt: Date } } }) => {
-      expect(q.where.createdAt.lt.getTime()).toBeLessThan(
-        Date.now() - 399 * 86400000,
-      );
-      const n = ids.length;
-      ids = ids.filter((id) => !q.where.id.in.includes(id));
-      return { count: n - ids.length };
-    },
-  );
+  deleteEvents.mockImplementation(async (q: { values: unknown[] }) => {
+    const cutoff = q.values.find((v): v is Date => v instanceof Date);
+    expect(cutoff?.getTime()).toBeLessThan(Date.now() - 399 * 86400000);
+    const n = ids.length;
+    ids = ids.filter((id) => !q.values.includes(id));
+    return n - ids.length;
+  });
   let total = 0;
   for (let i = 0; i < 3; i++)
     total += (await pruneSystemEvents({ limit: 10 })).pruned;
   expect(total).toBe(25);
   expect(ids).toEqual([]);
-  expect(findEvents).toHaveBeenCalledWith(
-    expect.objectContaining({ take: 11 }),
-  );
+  expect(findEvents.mock.calls[0][0].values.at(-1)).toBe(11);
 });
 
 it("does not start either retention selection after the caller deadline", async () => {

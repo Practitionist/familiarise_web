@@ -111,7 +111,7 @@ a failed activation does not establish accepted check-ins or alert delivery.
 
 ## Retention
 
-Both retention jobs are ticker targets in the 20:00 to 23:30 UTC band, 500 rows per slice: `prune-system-job-executions` (every 30 minutes, offset 25; 90-day run retention, stranded `RUNNING` rows closed after 6 hours without a heartbeat, messaging cleanup) and `prune-system-events` (hourly, offset 10; 400-day `SystemEvent` cutoff in `lib/observability/system-event-retention.ts`, which carries the caller deadline through lease admission). The daily Actions steps and `jobs/cleanup/prune-system-*.ts` wrappers are deleted. See [compliance and event-retention workers](../../../../docs/maintenance/compliance-retention-workers.md) for operator recovery.
+Both retention jobs are ticker targets in the 20:00 to 23:30 UTC band, 500 rows per slice: `prune-system-job-executions` (every 30 minutes, offset 25; 14-day retention for no-op runs and 180 days for every other finished run, stranded `RUNNING` rows closed after 6 hours without a heartbeat, messaging cleanup) and `prune-system-events` (hourly, offset 10; 400-day `SystemEvent` cutoff in `lib/observability/system-event-retention.ts`, which carries the caller deadline through lease admission). The daily Actions steps and `jobs/cleanup/prune-system-*.ts` wrappers are deleted. See [compliance and event-retention workers](../../../../docs/maintenance/compliance-retention-workers.md) for operator recovery.
 
 ## Manual runs
 

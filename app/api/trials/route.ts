@@ -12,7 +12,6 @@ import { recordParticipants } from "@/lib/booking/participants";
 import { persistTrialPayLink } from "@/lib/trials/pay-link";
 import { reportSentryError } from "@/lib/observability/report";
 import { NextRequest, NextResponse } from "next/server";
-import { logTrialRequested } from "@/lib/activity/log-activity";
 import { stageTrialLifecycleEmail } from "@/lib/email/senders/booking";
 import { notifyTrialRequested } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -570,18 +569,6 @@ export async function POST(request: NextRequest) {
           planId: subscriptionPlanId,
         })
       : null;
-
-    // Log the activity
-    await logTrialRequested(
-      consultantProfileId,
-      trial.id,
-      {
-        id: consulteeProfile.user.id,
-        name: consulteeProfile.user.name,
-        image: consulteeProfile.user.image,
-      },
-      subscriptionPlan.title,
-    );
 
     const consultantUserId = trial.consultantProfile.user.id;
     const consultantName = trial.consultantProfile.user.name || "Consultant";

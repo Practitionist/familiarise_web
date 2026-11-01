@@ -75,7 +75,7 @@ The table reads the same signals.
 ## 4. Gaps: what is built and what is filed
 
 - **Built:** a read-only Stuck work page (`/dashboard/admin/stuck-work`, issue #2424 Phase 2 without Retry buttons) and seven oldest-pending-age gauges on the tick summary, alerted by Better Stack SQL thresholds that the owner configures. Ingest rejections (402/403/5xx) are counted on the run row, and a freshness alert fires when no tick summary arrives for 15 minutes. See the [2026-11-01 gaps decision](../decisions/2026-11-01-observability-gaps-and-launch-posture.md).
-- **Built, as a free-tier bridge:** per-item history across runs is the run row's `result.failures` (at most 50 `{ entityId, reason, attempt }` per run, kept 90 days). There is **no** `SystemJobRunItem` table (section 6 explains why).
+- **Built, as a free-tier bridge:** per-item history across runs is the run row's `result.failures` (at most 50 `{ entityId, reason, attempt }` per run, kept 180 days). There is **no** `SystemJobRunItem` table (section 6 explains why).
 - **Deferred to traction:** batched per-item Better Stack events (issue #2424 Phase 3 and issue #2453), once known as gaps PR 2.
 - **Filed:** Retry buttons on the inbox (payouts: #2433), and charts beyond the Run metrics card. Every run is already a row, so SQL views in the back office or Better Stack are cheaper than Grafana.
 
@@ -91,7 +91,7 @@ The `retry-auto-refunds` job (`lib/cron/cleanup-registry.ts`) runs every 15 minu
 | run_8f2 | pay_456 | FAILED    | GATEWAY_TIMEOUT | 3       |
 | run_8f2 | pay_789 | SKIPPED   | LOST_CAS        |         |
 
-`LOST_CAS` means another door settled the payment between the read and the write (the compare-and-swap in `WHERE` matched zero rows), so the skip is correct and needs no action. `GATEWAY_TIMEOUT` is the interesting row. The support question "where is the refund for `pay_456`?" is answered by the history of that one entity across runs. Today that is a read-only query over the last 90 days of run rows (later, a query on `entity_id = pay_456` in Better Stack):
+`LOST_CAS` means another door settled the payment between the read and the write (the compare-and-swap in `WHERE` matched zero rows), so the skip is correct and needs no action. `GATEWAY_TIMEOUT` is the interesting row. The support question "where is the refund for `pay_456`?" is answered by the history of that one entity across runs. Today that is a read-only query over the run rows still kept (180 days) (later, a query on `entity_id = pay_456` in Better Stack):
 
 ```sql
 SELECT s."startedAt", s.id AS run, f->>'reason' AS reason, f->>'attempt' AS attempt

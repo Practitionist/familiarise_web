@@ -167,7 +167,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Prune system events",
       description:
-        "Remove one oldest-first slice of system events past the 400-day retention",
+        "Remove one oldest-first slice of system events past 400 days, keeping each state-bearing key's newest event",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -441,7 +441,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
   "archive-webhook-events": {
     meta: {
       title: "Archive webhook events",
-      description: "Delete processed webhook events past retention",
+      description:
+        "Delete webhook events past one calendar year and terminal outbound deliveries past 30 days",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -451,19 +452,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     build: () =>
       cleanupRoute({
         job: "archive-webhook-events",
-        run: async (req, { startedAt }) => {
+        run: async (_req, { startedAt }) => {
           const { archiveWebhookEvents } =
             await import("@/scripts/cleanup/archive-webhook-events");
-          return archiveWebhookEvents({
-            limit: parseLimitParam(req),
-            startedAt,
-          });
+          return archiveWebhookEvents({ startedAt });
         },
+        items: (r) => ({ processed: r.totalDeleted }),
         summarize: (r) => ({
           hasMore: r.hasMore,
-          processedEventsDeleted: r.processedEventsDeleted,
-          terminalUnprocessedDeleted: r.terminalUnprocessedDeleted,
-          failedEventsDeleted: r.failedEventsDeleted,
+          webhookEventsDeleted: r.webhookEventsDeleted,
           outboundDeliveriesDeleted: r.outboundDeliveriesDeleted,
           totalDeleted: r.totalDeleted,
         }),
@@ -476,7 +473,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Auth token cleanup",
       description:
-        "Delete expired sessions, verification tokens and stale invitations",
+        "Delete expired verification tokens, sessions 180 days after expiry and stale invitations",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -1299,7 +1296,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
   "prune-audit-logs": {
     meta: {
       title: "Prune audit logs",
-      description: "Remove audit log rows past retention",
+      description:
+        "Remove organisation and console audit rows (8 years money, 2 years other), booking history 3 years after a terminal booking and ledger reports past 2 years",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -1314,6 +1312,17 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             await import("@/scripts/cleanup/prune-audit-logs");
           return pruneAuditLogs({ limit: parseLimitParam(req), startedAt });
         },
+        items: (r) => ({
+          processed:
+            r.deleted8y +
+            r.deleted2y +
+            r.opsActionsDeleted8y +
+            r.opsActionsDeleted2y +
+            r.opsProposalsDeleted +
+            r.bookingHistoryDeleted +
+            r.ledgerReportsDeleted,
+          errors: r.errors.length,
+        }),
         failureMessage: "Audit prune failed",
       }),
   },
@@ -1323,7 +1332,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Prune job history",
       description:
-        "Remove job runs past 90 days and settled admin run requests past 30, close stranded runs and prune messaging retention tables",
+        "Remove no-op job runs past 14 days and other runs past 180, close stranded runs, and prune admin run requests, messaging, export, cookie and meeting presence rows",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -1344,6 +1353,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         },
         summarize: (r) => ({
           pruned: r.pruned,
+          noOpRunsPruned: r.noOpRunsPruned,
           stranded: r.stranded,
           adminRunRequestsPruned: r.adminRunRequestsPruned,
           failedEmailsBodyScrubbed: r.failedEmailsBodyScrubbed,
@@ -1352,6 +1362,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           failedEmailBatchesPruned: r.failedEmailBatchesPruned,
           notificationOutboxPruned: r.notificationOutboxPruned,
           emailEventsPruned: r.emailEventsPruned,
+          dataExportJobsPruned: r.dataExportJobsPruned,
+          cookiePreferencesPruned: r.cookiePreferencesPruned,
+          meetingPresencePruned: r.meetingPresencePruned,
+          meetingAttendancePruned: r.meetingAttendancePruned,
           hasMore: r.hasMore,
         }),
         items: (r) => ({
@@ -1361,7 +1375,11 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             r.failedEmailsPruned +
             r.failedEmailBatchesPruned +
             r.notificationOutboxPruned +
-            r.emailEventsPruned,
+            r.emailEventsPruned +
+            r.dataExportJobsPruned +
+            r.cookiePreferencesPruned +
+            r.meetingPresencePruned +
+            r.meetingAttendancePruned,
         }),
         failureMessage: "System job execution prune failed",
       }),

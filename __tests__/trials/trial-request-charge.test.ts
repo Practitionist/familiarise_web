@@ -33,9 +33,6 @@ jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: async () => null,
   trialRequestLimiter: {},
 }));
-jest.mock("../../lib/activity/log-activity", () => ({
-  logTrialRequested: jest.fn(),
-}));
 jest.mock("../../lib/novu", () => ({ notifyTrialRequested: jest.fn() }));
 jest.mock("../../utils/appointmentlock", () => ({
   lockRequestCap: jest.fn(async () => ({ key: "request-cap" })),

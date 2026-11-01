@@ -25,7 +25,6 @@ jest.mock("../../lib/prisma", () => ({
       aggregate: jest.fn(),
     },
     consultantReview: { aggregate: jest.fn() },
-    activityLog: { findMany: jest.fn() },
     rescheduleRequest: { findMany: jest.fn() },
     appointmentDocument: { count: jest.fn() },
     bookingStatusHistory: { findMany: jest.fn() },
@@ -74,7 +73,6 @@ beforeEach(() => {
     trial: { count: 0, groupBy: [] },
     consultantEarnings: { count: 0, groupBy: [], aggregate: {} },
     consultantReview: { aggregate: {} },
-    activityLog: { findMany: [] },
     rescheduleRequest: { findMany: [] },
     appointmentDocument: { count: 0 },
     bookingStatusHistory: { findMany: [] },
@@ -110,7 +108,6 @@ describe("consultant Home loader", () => {
 
   it("never runs the reads nobody renders", async () => {
     await getConsultantDashboard("cp-1", NOW);
-    expect(m.activityLog.findMany).not.toHaveBeenCalled();
     expect(m.consultantReview.aggregate).not.toHaveBeenCalled();
     expect(m.consultantEarnings.aggregate).not.toHaveBeenCalled();
     expect(m.trial.groupBy).not.toHaveBeenCalled();
