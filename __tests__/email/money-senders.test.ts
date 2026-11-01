@@ -38,6 +38,7 @@ import {
   stageRefundProcessedEmail,
 } from "@/lib/email/senders/money";
 import { renderEmail } from "@/lib/email/render";
+import * as Sentry from "@sentry/nextjs";
 
 function user(
   id: string,
@@ -123,7 +124,7 @@ it("sendOrgWalletLowEmail delivers once when one of two roster members opted out
   );
 });
 
-it("stageOrgInvoiceOverdueEmail stages through tx and throws when a render fails", async () => {
+it("stageOrgInvoiceOverdueEmail stages through tx and throws, without a per-recipient Sentry event, when a render fails", async () => {
   const tx = {
     user: {
       findMany: jest.fn().mockResolvedValue([user("own_1"), user("own_2")]),
@@ -154,9 +155,12 @@ it("stageOrgInvoiceOverdueEmail stages through tx and throws when a render fails
   );
 
   mockStage.mockClear();
+  jest.mocked(Sentry.captureException).mockClear();
+  jest.spyOn(console, "error").mockImplementation(() => {});
   jest.mocked(renderEmail).mockRejectedValueOnce(new Error("render boom"));
   await expect(stageOrgInvoiceOverdueEmail(tx as never, args)).rejects.toThrow(
     "ORG_INVOICE_OVERDUE render failed for 1 recipient(s)",
   );
   expect(mockStage).not.toHaveBeenCalled();
+  expect(Sentry.captureException).not.toHaveBeenCalled();
 });
