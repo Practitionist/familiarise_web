@@ -11,11 +11,26 @@ import {
   REMINDER_INTERVAL_MS,
 } from "@/lib/payments/billing/dunning-policy";
 
+const HOUR_MS = 60 * 60 * 1000;
+
+/** Alert and inbox limit per gauge, past its due point; the cadence behind each is in the Better Stack setup doc. */
+export const PENDING_AGE_LIMITS_MS: Readonly<
+  Record<keyof PendingAges, number>
+> = {
+  refundsOwed: HOUR_MS,
+  payoutsStuck: 4 * HOUR_MS,
+  dunningNotices: 26 * HOUR_MS,
+  disputesDue: 0,
+  webhookEvents: HOUR_MS,
+  emailRetries: HOUR_MS,
+  notificationRetries: HOUR_MS,
+};
+
 /** A dispute is due for attention this long before its evidence deadline. */
-export const DISPUTE_RESPONSE_LEAD_MS = 48 * 60 * 60 * 1000;
+export const DISPUTE_RESPONSE_LEAD_MS = 48 * HOUR_MS;
 
 /** The stuck-webhook sweep stops re-driving an event after this; older unprocessed rows are given up. */
-const WEBHOOK_GIVE_UP_MS = 168 * 60 * 60 * 1000;
+const WEBHOOK_GIVE_UP_MS = 168 * HOUR_MS;
 
 const ageOf = (oldestDuePoint: Prisma.Sql, now: Date) =>
   Prisma.sql`GREATEST(0, COALESCE(EXTRACT(EPOCH FROM ${now}::timestamptz - (${oldestDuePoint})), 0))::int`;
