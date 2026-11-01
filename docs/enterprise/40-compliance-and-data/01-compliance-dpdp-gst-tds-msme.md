@@ -238,10 +238,10 @@ Note two structural facts the diagram encodes: `DataBreach` has **no foreign key
 
 ## 5. Compliance crons
 
-Each cron runs as a GitHub Action (`.github/workflows/*.yml`) calling a thin shim in `jobs/compliance/*`; each also exposes a `CRON_SECRET`-gated manual trigger at `POST /api/cleanup/*`.
+Each job is one implementation registered in `lib/cron/cleanup-registry.ts` and run by the Netlify ticker through `/api/cleanup/<job>`, which is also the `CRON_SECRET`-gated manual trigger.
 
 - `irp-uploader` performs e-invoice IRN generation (env-gated, see §1).
-- `consent-retention-sweeper` purges `ConsentArtifact` rows past `auditRetainedUntil`.
+- `consent-retention-sweeper` counts `ConsentArtifact` rows past `auditRetainedUntil`; deleting them needs its `?delete=1` gate, which stays off until the hash-only consent archive exists.
 - `databreach-deadline-alerts` runs the 72-hour DPDP breach-reporting clock hourly.
 - `msme-payment-alerts` warns finance before the 15/45-day deadline a default would lock.
 

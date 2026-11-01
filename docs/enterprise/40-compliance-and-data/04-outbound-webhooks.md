@@ -346,26 +346,28 @@ The fastest path to a green receiver:
 ## Rate limits
 
 - `orgWebhookLimiter` — 5 per minute per org for POST/PATCH/rotate-secret. Org-keyed.
-- Worker batch ceiling is `MAX_BATCH = 50` in `worker.ts`, drained on a 1-minute tick. A single tick processes at most 50 due deliveries platform-wide; per-endpoint volume is bounded by the same tick cadence.
+- Worker batch ceiling is `MAX_BATCH = 50` in `worker.ts`, drained on the ticker every 15 minutes. A single tick processes at most 50 due deliveries platform-wide; per-endpoint volume is bounded by the same tick cadence.
 
 ## Jobs & schedule
 
-Three GitHub Actions crons touch the webhook surface — and two of them
-are about a **different** table, which is a common source of confusion:
+Three registry jobs touch the webhook surface, all run by the Netlify
+ticker — and two of them are about a **different** table, which is a
+common source of confusion:
 
-| Job (GH Actions wrapper → `scripts/cleanup/*`)   | Table                         | What it does                                                                                                                                                                                                       | Cadence       |
-| ------------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- |
-| `dispatch-outbound-webhooks` → `runDispatchTick` | **`OutboundWebhookDelivery`** | Drains the delivery queue: signs, POSTs, walks the backoff schedule. The delivery table IS the queue. Emits a `WEBHOOK` SystemEvent warning if the due-backlog exceeds 200.                                        | every 1 min   |
-| `sweep-stuck-webhook-events`                     | **`WebhookEvent`** (inbound)  | Re-drives **inbound** Razorpay gateway events left `processed=false` after an `after()`-callback crash, so money side-effects (invoice paid, wallet credited) actually land. Nothing to do with outbound delivery. | every ~10 min |
-| `archive-webhook-events`                         | **`WebhookEvent`** (inbound)  | Prunes processed and failed inbound gateway events after 1 year (calendar) (outbound deliveries after 30 days).                                                                                                    | weekly        |
+| Job (registry target → `scripts/cleanup/*`)      | Table                         | What it does                                                                                                                                                                                                       | Cadence         |
+| ------------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- |
+| `dispatch-outbound-webhooks` → `runDispatchTick` | **`OutboundWebhookDelivery`** | Drains the delivery queue: signs, POSTs, walks the backoff schedule. The delivery table IS the queue. Emits a `WEBHOOK` SystemEvent warning if the due-backlog exceeds 200.                                        | every 15 min    |
+| `sweep-stuck-webhook-events`                     | **`WebhookEvent`** (inbound)  | Re-drives **inbound** Razorpay gateway events left `processed=false` after an `after()`-callback crash, so money side-effects (invoice paid, wallet credited) actually land. Nothing to do with outbound delivery. | every 15 min    |
+| `archive-webhook-events`                         | **`WebhookEvent`** (inbound)  | Prunes processed and failed inbound gateway events after 1 year (calendar) (outbound deliveries after 30 days).                                                                                                    | weekly (Sunday) |
 
 So: **`dispatch` is the outbound delivery worker; `sweep`/`archive`
 operate on the inbound gateway-event ledger** (`WebhookEvent`), which
 backs Razorpay/RazorpayX webhook idempotency and is documented with the
-payments webhook handlers, not here. The canonical scheduler is GitHub
-Actions (`.github/workflows/*.yml`); each `jobs/cleanup/*.ts` wrapper
-is a thin GH-Actions shim, and `POST /api/cleanup/<job>` is a
-`CRON_SECRET`-gated manual trigger for the same logic.
+payments webhook handlers, not here. Each job is one implementation
+registered in `lib/cron/cleanup-registry.ts`; the ticker
+(`netlify/functions/cron-tick.mts`, cadence in `lib/cron/schedule.ts`)
+calls it through `/api/cleanup/<job>`, and the same `CRON_SECRET`-gated
+route is the manual trigger.
 
 ## Audit trail
 

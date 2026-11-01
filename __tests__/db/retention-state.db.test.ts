@@ -4,6 +4,7 @@ import prisma from "../../lib/prisma";
 import { isWalletFrozen } from "../../lib/payments/wallet-freeze";
 import { pruneSystemEvents } from "../../lib/observability/system-event-retention";
 import { pruneAuditLogs } from "../../scripts/cleanup/prune-audit-logs";
+import { pruneSystemJobExecutions } from "../../scripts/cleanup/prune-system-job-executions";
 import { seedConsultee, seedHost, seedOneToOne } from "./booking/harness";
 
 const DAY = 86_400_000;
@@ -80,4 +81,44 @@ it("prunes a terminal booking's history after three years but never a live one's
     select: { id: true },
   });
   expect(left.map((row) => row.id)).toEqual([liveOrigin.id]);
+});
+
+it("prunes only plain old no-op runs, keeping checkpoint, idle, admin and newest runs", async () => {
+  const jobName = `retention-noop-${randomUUID()}`;
+  const run = (
+    days: number,
+    extra: { result?: object; triggeredBy?: string } = {},
+  ) =>
+    prisma.systemJobExecution.create({
+      data: {
+        jobId: jobName,
+        jobName,
+        status: "COMPLETED",
+        startedAt: daysAgo(days),
+        endedAt: daysAgo(days),
+        itemsProcessed: 0,
+        errorCount: 0,
+        ...extra,
+      },
+    });
+  const plain = await run(20, { result: { outcome: "completed" } });
+  const checkpoint = await run(19, { result: { checkpoint: { cursor: "c" } } });
+  const idle = await run(18, { result: { idle: ["some-target"] } });
+  const admin = await run(17, { triggeredBy: "admin:operator" });
+  const newest = await run(16);
+
+  await pruneSystemJobExecutions({ limit: 500 });
+
+  const left = await prisma.systemJobExecution.findMany({
+    where: { jobName },
+    orderBy: { startedAt: "asc" },
+    select: { id: true },
+  });
+  expect(left.map((row) => row.id)).toEqual([
+    checkpoint.id,
+    idle.id,
+    admin.id,
+    newest.id,
+  ]);
+  expect(left.map((row) => row.id)).not.toContain(plain.id);
 });

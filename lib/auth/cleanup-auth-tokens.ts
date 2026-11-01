@@ -61,7 +61,8 @@ async function cleanupAuthTokensUnlocked(
     orderBy: [{ expiresAt: "asc" as const }, { id: "asc" as const }],
     take: limit,
   };
-  // CERT-In access log: a lapsed session's IP and user agent stay 180 days; Better Auth rejects it on read.
+  // CERT-In access log: a lapsed row's IP and user agent stay 180 days. It never authenticates;
+  // Better Auth's getSession deletes it if a browser still presents its cookie.
   const sessionWhere = {
     expiresAt: { lt: new Date(now.getTime() - SESSION_LOG_RETENTION_MS) },
   };

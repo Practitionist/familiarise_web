@@ -700,7 +700,7 @@ The `completeTrials()` function in the auto-complete cron does more than other e
 2. Updates status to COMPLETED
 3. Sets `completedAt` timestamp (used for analytics -- how long ago did the trial complete?)
 
-Trials get this treatment because the conversion funnel tracking depends on knowing exactly when the trial completed. The `ActivityLog` model and its writers, which once fed a per-consultant activity feed, are removed from the code because nothing read them, and the table goes at the owner's next `db:push` preflight ([retention decision](../decisions/2026-11-01-data-retention-windows.md)); the booking's transitions are recorded in `BookingStatusHistory`.
+Trials get this treatment because the conversion funnel tracking depends on knowing exactly when the trial completed. The `ActivityLog` model and its writers, which once fed a per-consultant activity feed, are removed from the code because nothing read them, and the table is dropped once that release is on production ([retention decision](../decisions/2026-11-01-data-retention-windows.md)); the booking's transitions are recorded in `BookingStatusHistory`.
 
 #### Source References
 
