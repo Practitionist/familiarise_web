@@ -589,12 +589,12 @@ This section is the specification for the Operations console, the staff Operatio
 
 ### 5.0 Console structure and the principle behind it
 
-Sentry and Better Stack fix the system: one grouped issue per failure class, with a sample of ids. The console fixes the customer: for one user's stuck refund, payout or dispute, an operator sees the specific item, why it failed and what was tried, then remediates through the audited money doors and the linked support case. A cron failure in Sentry has no user identity (identity exists only on request-scoped events), its `extra.sample` holds at most ten ids, and Better Stack receives one aggregate line per tick. Per-entity truth lives in Postgres, so the console reads domain columns now and `SystemJobRunItem` later. The run id (the `job_run_id` tag and `SystemEvent.context.jobRunId`) links the three.
+Sentry and Better Stack fix the system: one grouped issue per failure class, with a sample of ids. The console fixes the customer: for one user's stuck refund, payout or dispute, an operator sees the specific item, why it failed and what was tried, then remediates through the audited money doors and the linked support case. A cron failure in Sentry has no user identity (identity exists only on request-scoped events), its `extra.sample` holds at most ten ids, and Better Stack receives one aggregate line per tick. Per-entity truth lives in Postgres, so the console reads domain columns, and the attempt history will come from batched per-item Better Stack events (planned; the `SystemJobRunItem` table was rejected on 2026-11-01). The run id (the `job_run_id` tag and `SystemEvent.context.jobRunId`) links the three.
 
 The console is a set of sub-tabs, built the way the support inbox builds its views: a `Tabs` strip in the shell component whose selected value lives in a URL query parameter and whose default is omitted from the URL (`SupportInboxShell` with `useListParams`). The tabs are **Overview** (the inbox below), **Jobs**, **Runs**, **Integrity** and **Performance** (collapsed by default; p50 and p95 live here). These sub-tabs are planned; none is built.
 
 - **Overview, Phase 2, no DDL (planned).** A "Needs attention" inbox of failed or stuck items, built from the backlog queries in 5.2. Each row shows the reason, the attempts, the age, a Retry door where one is allowed (payouts: #2433) and a link to the Entity trace. A job health table sits beside it with each job's last real outcome, age, backlog, SLO tier, Run and Pause. Drain is not built.
-- **Runs, Phase 3, DDL (planned).** `SystemJobRunItem` and a Run detail page give the attempt history for each item.
+- **Per-item history (planned, no DDL).** Batched per-item Better Stack events, linked from the Entity trace, give the attempt history for each item; see the [2026-11-01 observability ownership decision](../decisions/2026-11-01-observability-ownership.md).
 
 ### 5.1 Panels, ranked by value
 
