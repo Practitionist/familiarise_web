@@ -138,6 +138,9 @@ Every session delete goes through `lib/auth/session-revoke.ts`:
 | `revokeSessionsForUsers`   | The sweep when an org turns SSO enforcement on               |
 | `revokeSessionByToken`     | `supersededSessionRevocation`: signing in over a live cookie |
 
+- Each returns `{ revoked, ended }`. The caller stamps `ended` into the CERT-In
+  access log with `stampSessionEnds` once its write commits, so a log failure
+  never rolls back a ban or an erasure.
 - Direct Prisma is the right primitive. BetterAuth's admin `revokeUserSessions`
   checks the calling admin's session and cannot join a transaction, and
   system-initiated revokes have neither.

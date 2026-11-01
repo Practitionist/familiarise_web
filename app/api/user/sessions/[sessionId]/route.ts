@@ -4,6 +4,7 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, sessionMgmtUserLimiter } from "@/lib/rate-limit";
 import { sessionRouteError } from "@/lib/auth/session-response";
 import { revokeSessionById } from "@/lib/auth/session-revoke";
+import { stampSessionEnds } from "@/lib/auth/session-access-log";
 
 interface RouteParams {
   params: Promise<{ sessionId: string }>;
@@ -38,7 +39,12 @@ export async function DELETE(_req: Request, { params }: RouteParams) {
     );
     if (limited) return limited;
 
-    const { revoked } = await revokeSessionById(prisma, userId, sessionId);
+    const { revoked, ended } = await revokeSessionById(
+      prisma,
+      userId,
+      sessionId,
+    );
+    await stampSessionEnds(ended);
     const currentSessionEnded = sessionId === currentSessionId;
 
     return NextResponse.json({ revoked, currentSessionEnded }, { status: 200 });

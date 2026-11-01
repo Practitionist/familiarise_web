@@ -73,6 +73,7 @@ import {
   recordSessionEnds,
   recordSessionStart,
   sessionSnapshot,
+  stampSessionEnds,
 } from "@/lib/auth/session-access-log";
 import { socialProviderConfig } from "@/lib/auth/social-providers";
 import {
@@ -442,7 +443,8 @@ export const auth = betterAuth({
         // device's new one.
         after: async (user, ctx) => {
           if (isTwoFactorEnrolment(user, ctx?.path)) {
-            await revokeAllUserSessions(prisma, user.id);
+            const { ended } = await revokeAllUserSessions(prisma, user.id);
+            await stampSessionEnds(ended);
             await sendSecurityEventEmail(user, { kind: "authenticator-added" });
           }
         },
@@ -518,7 +520,7 @@ export const auth = betterAuth({
         },
       },
       // Every Better Auth delete (sign-out, an expired cookie, its revoke
-      // routes) lands here; the app's own deletes stamp in session-revoke.ts.
+      // routes) lands here; the app's own revokes stamp via stampSessionEnds.
       delete: {
         after: async (session, ctx) => {
           await recordSessionEnds(
@@ -543,12 +545,13 @@ export const auth = betterAuth({
             new Date(),
           );
           if (decision.kind === "end") {
-            await revokeSessionById(
+            const { ended } = await revokeSessionById(
               prisma,
               current.session.userId,
               current.session.id,
               "EXPIRED",
             );
+            await stampSessionEnds(ended);
             return false;
           }
           if (decision.expiresAt) {

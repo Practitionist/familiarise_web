@@ -222,9 +222,13 @@ outlives the `Session`), `userId`, the raw `ipAddress` and `userAgent`,
   browser presented is `EXPIRED_COOKIE`, any other path is `REVOKED`, and a
   delete with no endpoint context is `UNKNOWN`.
 - The app's own deletes bypass those hooks, so every helper in
-  `lib/auth/session-revoke.ts` goes through `endSessions`: read the rows,
-  delete with the caller's predicate, stamp `REVOKED`. The operator lifetime
-  policy passes `EXPIRED` when it ends a session on refresh.
+  `lib/auth/session-revoke.ts` goes through `endSessions`: read the rows and
+  delete with the caller's predicate, returning them as `ended`. The caller
+  stamps them `REVOKED` with `stampSessionEnds` once its write is durable:
+  straight away outside a transaction, after commit inside one (erasure,
+  account deletion, ban, staff 2FA reset, SSO sweeps, org member suspension
+  and removal), so a log failure can never roll back the revoke. The operator
+  lifetime policy passes `EXPIRED` when it ends a session on refresh.
 - `auth-tokens` stamps natural expiry as `EXPIRED` before deleting the row.
 
 A row already past `expiresAt` ends at `expiresAt` as `EXPIRED`, whatever
@@ -234,7 +238,9 @@ and the first stamp wins. A failed write is logged and reported to Sentry once
 per process and never fails the sign-in, sign-out or revoke. While the table
 does not exist yet, `sessionAccessLogReady` (a `to_regclass` probe, safe
 inside a transaction) skips every write and `auth-tokens` keeps expired
-sessions. Erasure sets `userId` to null and keeps the rest for the 180 days;
+sessions. Erasure sets `userId` to null inside its transaction and stamps the
+ended sessions without the user link after commit, keeping the rest for the
+180 days;
 the self-serve DPDP export lists the user's rows. Retention and the reasons
 are in the
 [retention decision record, section 7](../decisions/2026-11-01-data-retention-windows.md#7-the-session-access-log-amended-2026-11-02).

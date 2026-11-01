@@ -114,6 +114,11 @@ export async function recordSessionStart(
   );
 }
 
+/** A session row as the log stores it; erasure stamps without the user link. */
+type LoggedSession = Omit<SessionSnapshot, "userId"> & {
+  userId: string | null;
+};
+
 /**
  * Stamps the end of each session in one statement, creating the row if its
  * start was never logged. A row already past `expiresAt` ended then, as EXPIRED
@@ -122,7 +127,7 @@ export async function recordSessionStart(
  */
 export async function recordSessionEnds(
   db: PrismaLike,
-  sessions: readonly SessionSnapshot[],
+  sessions: readonly LoggedSession[],
   reason: SessionEndReason,
   now: Date = new Date(),
 ): Promise<boolean> {
@@ -149,21 +154,52 @@ export async function recordSessionEnds(
   );
 }
 
+/** Sessions a write deleted, waiting for `stampSessionEnds` once it is durable. */
+export interface EndedSessions {
+  sessions: SessionSnapshot[];
+  reason: SessionEndReason;
+  endedAt: Date;
+}
+
 /**
- * Deletes the sessions matching `where` and stamps their ends. The delete keeps
- * the caller's predicate, so a row created after the read is still revoked.
+ * Deletes the sessions matching `where` and returns them for the access log
+ * without touching it, so a transaction caller stamps only after it commits.
+ * The delete keeps the caller's predicate, so a row created after the read is still revoked.
  */
 export async function endSessions(
   db: PrismaLike,
   where: Prisma.SessionWhereInput,
   reason: SessionEndReason,
-): Promise<number> {
-  const ended = (await sessionAccessLogReady(db))
+): Promise<{ count: number; ended: EndedSessions }> {
+  const endedAt = new Date();
+  const sessions = (await sessionAccessLogReady(db))
     ? await db.session.findMany({ where, select: SESSION_SNAPSHOT })
     : [];
   const { count } = await db.session.deleteMany({ where });
-  await recordSessionEnds(db, ended, reason);
-  return count;
+  return { count, ended: { sessions, reason, endedAt } };
+}
+
+/**
+ * Stamps ended sessions on the global client, after the deleting write has
+ * committed; never throws. `forgetUser` drops the link for an erased account.
+ * Returns how many went unstamped; the prune ages those rows from their start.
+ */
+export async function stampSessionEnds(
+  ended: readonly EndedSessions[],
+  { forgetUser = false }: { forgetUser?: boolean } = {},
+): Promise<number> {
+  let unstamped = 0;
+  for (const batch of ended) {
+    const sessions = forgetUser
+      ? batch.sessions.map((s) => ({ ...s, userId: null }))
+      : batch.sessions;
+    if (
+      !(await recordSessionEnds(prisma, sessions, batch.reason, batch.endedAt))
+    ) {
+      unstamped += sessions.length;
+    }
+  }
+  return unstamped;
 }
 
 /**

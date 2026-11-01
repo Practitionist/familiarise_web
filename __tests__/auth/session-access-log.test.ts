@@ -32,6 +32,7 @@ import {
   endReasonForPath,
   recordSessionEnds,
   recordSessionStart,
+  stampSessionEnds,
   type SessionSnapshot,
 } from "../../lib/auth/session-access-log";
 import { revokeSessionById } from "../../lib/auth/session-revoke";
@@ -132,18 +133,19 @@ describe("session access log writes", () => {
     });
   });
 
-  it("an app revoke reads, deletes and stamps with the caller's predicate", async () => {
+  it("an app revoke reads and deletes with the caller's predicate, then stamps on request", async () => {
     db.session.findMany.mockResolvedValue([live]);
     db.session.deleteMany.mockResolvedValue({ count: 1 });
-    await expect(revokeSessionById(client, "u1", "s-live")).resolves.toEqual({
-      revoked: 1,
-    });
+    const { revoked, ended } = await revokeSessionById(client, "u1", "s-live");
     const where = { id: "s-live", userId: "u1" };
+    expect(revoked).toBe(1);
     expect(db.session.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where }),
     );
     expect(db.session.deleteMany).toHaveBeenCalledWith({ where });
-    expect(stamped()).toContain("REVOKED");
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    await expect(stampSessionEnds(ended)).resolves.toBe(0);
+    expect(stamped()).toEqual(expect.arrayContaining(["u1", "REVOKED"]));
   });
 });
 

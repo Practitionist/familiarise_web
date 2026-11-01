@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
+import { stampSessionEnds } from "@/lib/auth/session-access-log";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import { sendOperatorSetupLink } from "@/lib/auth/operators";
 import { sendSecurityEventEmail } from "@/lib/auth/security-email";
@@ -78,7 +79,7 @@ export const DELETE = withOpsAction(
         where: { userId, providerId: "credential" },
         data: { password },
       });
-      const { revoked } = await revokeAllUserSessions(tx, userId);
+      const { revoked, ended } = await revokeAllUserSessions(tx, userId);
 
       return {
         target: { kind: "User", id: userId },
@@ -95,6 +96,7 @@ export const DELETE = withOpsAction(
         response: { userId, sessionsRevoked: revoked },
         // Independent sends: a failed setup link must not suppress the security notice.
         afterCommit: async () => {
+          await stampSessionEnds(ended);
           const results = await Promise.allSettled([
             sendOperatorSetupLink(target.email),
             sendSecurityEventEmail(target, {

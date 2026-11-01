@@ -7,7 +7,8 @@
  * ModerationAction row, so a report can never read ACTION_TAKEN while the
  * target's account state didn't move.
  *
- * Phase 2 (applyBestEffortEffects) runs after commit: bulk cancel + refunds
+ * Phase 2 (applyBestEffortEffects) runs after commit: the revoked sessions'
+ * access-log stamps, bulk cancel + refunds
  * (refundPayment owns its own Serializable tx), Stream revocation, Novu.
  * Each step is individually try/caught — one failure never blocks the next —
  * and the outcome lands in ModerationAction.sideEffects for staff visibility.
@@ -41,6 +42,10 @@ import {
   type StagedTrigger,
 } from "@/lib/novu";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
+import {
+  stampSessionEnds,
+  type EndedSessions,
+} from "@/lib/auth/session-access-log";
 import { stageVerificationDecidedEmail } from "@/lib/email/senders/onboarding";
 import {
   stageAccountModerationEmail,
@@ -93,6 +98,8 @@ export interface TransactionalEffectResult {
   collaborationsRemoved?: CollaborationRef[];
   stagedBells?: StagedTrigger[];
   stagedEmails?: StagedEmailBundleEntry[];
+  /** Revoked sessions for the access log; phase 2 stamps them, never persisted. */
+  stagedSessionEnds?: EndedSessions[];
 }
 
 export type StepStatus = "ok" | "failed" | "skipped" | "gave_up";
@@ -346,6 +353,7 @@ async function banOrSuspendUser(
   // cannot join this tx.
   const revoked = await revokeAllUserSessions(tx, report.targetUserId);
   result.sessionsRevoked = revoked.revoked;
+  result.stagedSessionEnds = revoked.ended;
 
   if (actionType === "USER_BANNED") {
     const earningsHeld = await holdBannedConsultantEarnings(
@@ -532,8 +540,11 @@ export async function applyBestEffortEffects(
   transactional: TransactionalEffectResult,
 ): Promise<SideEffectSummary> {
   const { actionType } = input;
+  const { stagedSessionEnds = [], ...committed } = transactional;
+  // The ban or suspension has committed; a failed log write cannot undo it.
+  await stampSessionEnds(stagedSessionEnds);
   const summary: SideEffectSummary = {
-    ...transactional,
+    ...committed,
     stagedBells: [...(transactional.stagedBells ?? [])],
     stagedEmails: [...(transactional.stagedEmails ?? [])],
   };

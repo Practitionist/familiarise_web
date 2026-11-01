@@ -1,9 +1,9 @@
-import type { SessionEndReason } from "@prisma/client";
+import type { Prisma, SessionEndReason } from "@prisma/client";
 import { type PrismaLike } from "@/lib/prisma";
-import { endSessions } from "@/lib/auth/session-access-log";
+import { endSessions, type EndedSessions } from "@/lib/auth/session-access-log";
 
 /**
- * The single choke point for ending auth sessions (#1856).
+ * The single choke point for ending auth sessions.
  *
  * Three callers, one function each — ban/suspend (`lib/moderation/
  * side-effects.ts`), staff support (`app/api/admin/users/...`), and the
@@ -17,13 +17,24 @@ import { endSessions } from "@/lib/auth/session-access-log";
  * `session:["revoke"]` permission check against the CALLING admin's
  * session. A system-initiated revoke (moderation tx, erasure)
  * has no caller session and runs inside a transaction the plugin cannot
- * join, so direct deletes are the correct primitive. Each one stamps the
- * ended sessions into the CERT-In access log (`session-access-log.ts`).
+ * join, so direct deletes are the correct primitive. Each returns the ended
+ * sessions; the caller passes them to `stampSessionEnds` once its write commits.
  */
 
 export interface RevokeResult {
   /** Sessions rows actually removed. */
   revoked: number;
+  /** For the CERT-In access log, stamped after commit. */
+  ended: EndedSessions[];
+}
+
+async function end(
+  db: PrismaLike,
+  where: Prisma.SessionWhereInput,
+  reason: SessionEndReason = "REVOKED",
+): Promise<RevokeResult> {
+  const { count, ended } = await endSessions(db, where, reason);
+  return { revoked: count, ended: [ended] };
 }
 
 /**
@@ -35,7 +46,7 @@ export async function revokeAllUserSessions(
   db: PrismaLike,
   userId: string,
 ): Promise<RevokeResult> {
-  return { revoked: await endSessions(db, { userId }, "REVOKED") };
+  return end(db, { userId });
 }
 
 /** End every session for several users (an org-wide SSO enforcement flip). */
@@ -43,10 +54,8 @@ export async function revokeSessionsForUsers(
   db: PrismaLike,
   userIds: readonly string[],
 ): Promise<RevokeResult> {
-  if (userIds.length === 0) return { revoked: 0 };
-  return {
-    revoked: await endSessions(db, { userId: { in: [...userIds] } }, "REVOKED"),
-  };
+  if (userIds.length === 0) return { revoked: 0, ended: [] };
+  return end(db, { userId: { in: [...userIds] } });
 }
 
 /**
@@ -57,7 +66,7 @@ export async function revokeSessionByToken(
   db: PrismaLike,
   token: string,
 ): Promise<RevokeResult> {
-  return { revoked: await endSessions(db, { token }, "REVOKED") };
+  return end(db, { token });
 }
 
 /**
@@ -71,13 +80,7 @@ export async function revokeUserSessionsExcept(
   userId: string,
   keepSessionId: string,
 ): Promise<RevokeResult> {
-  return {
-    revoked: await endSessions(
-      db,
-      { userId, id: { not: keepSessionId } },
-      "REVOKED",
-    ),
-  };
+  return end(db, { userId, id: { not: keepSessionId } });
 }
 
 /**
@@ -94,9 +97,7 @@ export async function revokeSessionById(
   sessionId: string,
   reason: SessionEndReason = "REVOKED",
 ): Promise<RevokeResult> {
-  return {
-    revoked: await endSessions(db, { id: sessionId, userId }, reason),
-  };
+  return end(db, { id: sessionId, userId }, reason);
 }
 
 /**
@@ -109,14 +110,8 @@ export async function revokeEmailDomainSessions(
   domain: string,
   keepSessionId?: string,
 ): Promise<RevokeResult> {
-  return {
-    revoked: await endSessions(
-      db,
-      {
-        user: { email: { endsWith: `@${domain}`, mode: "insensitive" } },
-        ...(keepSessionId ? { id: { not: keepSessionId } } : {}),
-      },
-      "REVOKED",
-    ),
-  };
+  return end(db, {
+    user: { email: { endsWith: `@${domain}`, mode: "insensitive" } },
+    ...(keepSessionId ? { id: { not: keepSessionId } } : {}),
+  });
 }
