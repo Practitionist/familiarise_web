@@ -158,6 +158,49 @@ describe("ticker execution outcomes", () => {
     expect(body.failed).toEqual([]);
   });
 
+  it("skips only the due targets the claim names idle, and dispatches all when the probe is unreadable", async () => {
+    const due = dueTargets(new Date());
+    const idleName = due.find((name) => name !== "transfer-recordings");
+    const dispatched: string[] = [];
+    const ticker = (claim: () => Response) =>
+      load(
+        jest.fn(async (input: string | URL | Request) => {
+          const url = new URL(String(input));
+          if (url.pathname === "/api/health/jobs/tick") return claim();
+          if (
+            url.pathname.startsWith("/api/cleanup/") ||
+            url.pathname.startsWith("/.netlify/functions/")
+          ) {
+            dispatched.push(url.pathname.split("/").pop() ?? "");
+          }
+          return new Response("{}", {
+            status: url.pathname.includes("-background") ? 202 : 200,
+          });
+        }),
+      );
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    const skipping = await (
+      await ticker(
+        () =>
+          new Response(
+            JSON.stringify({ claimed: true, idle: [idleName, "not-due"] }),
+          ),
+      ).default(new Request("https://tick.test"))
+    ).json();
+    expect(skipping.skippedIdle).toEqual([idleName]);
+    expect(dispatched).not.toContain(idleName);
+    expect(dispatched).toHaveLength(due.length - 1);
+
+    dispatched.length = 0;
+    const failOpen = await (
+      await ticker(() => {
+        throw new TypeError("fetch failed");
+      }).default(new Request("https://tick.test"))
+    ).json();
+    expect(failOpen.skippedIdle).toEqual([]);
+    expect(dispatched).toHaveLength(due.length);
+  });
+
   it("keeps the first failure when the retry meets the crashed call's lease", async () => {
     // A repeat tick of the hour, so the failure skips the Sentry alert path.
     jest.setSystemTime(new Date("2026-10-22T06:30:00Z"));

@@ -512,10 +512,10 @@ export function latestWindowStart(name: Target, at: Date): Date | null {
   return null;
 }
 
-/** The targets due on this tick; exported so a test can pin the cadence. */
-export function dueTargets(now: Date): Target[] {
+/** Every target whose slot falls on this tick, before idle skips and the cap. */
+export function scheduledTargets(now: Date): Target[] {
   const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const due = TARGETS.filter((name) => {
+  return TARGETS.filter((name) => {
     if (name in TARGET_WINDOWS && windowStartFor(name, now) === null) {
       return false;
     }
@@ -524,10 +524,18 @@ export function dueTargets(now: Date): Target[] {
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
     return (((minuteOfDay - offset) % every) + every) % every < 5;
   });
-  // The ledger report persists its cursor and yields past the cap; other jobs keep their slots.
-  return due.length > MAX_TARGETS_PER_TICK
-    ? due.filter((name) => name !== "reconcile-ledgers")
-    : due;
+}
+
+/** The cap on dispatched targets: the ledger report persists its cursor and yields past it. */
+export function capToTick(targets: readonly Target[]): Target[] {
+  return targets.length > MAX_TARGETS_PER_TICK
+    ? targets.filter((name) => name !== "reconcile-ledgers")
+    : [...targets];
+}
+
+/** The targets due on this tick with no idle skips; exported so a test can pin the cadence. */
+export function dueTargets(now: Date): Target[] {
+  return capToTick(scheduledTargets(now));
 }
 
 /** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */

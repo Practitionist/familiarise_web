@@ -26,7 +26,7 @@ import {
   compareLeastRecentlyReconciled,
   LEAST_RECENTLY_RECONCILED,
 } from "@/lib/payments/payouts/reconcile-cursor";
-import prisma from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import { PaymentStatus, PaymentGateway, Prisma } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
@@ -72,6 +72,58 @@ const reconcilableIntentWhere = {
     { paymentIntent: { startsWith: PRE_MINT_INTENT_PREFIX } },
   ],
 } satisfies Prisma.PaymentWhereInput;
+
+/** The stale-window cohort; shared with the ticker's idle probe. */
+function stalePendingPaymentWhere(
+  minAge: Date,
+  maxAge: Date,
+): Prisma.PaymentWhereInput {
+  return {
+    paymentStatus: PaymentStatus.PENDING,
+    paymentGateway: PaymentGateway.RAZORPAY,
+    createdAt: {
+      lt: minAge,
+      gte: maxAge,
+    },
+    AND: [reconcilableIntentWhere, notManualRecoveryWhere],
+  };
+}
+
+/** PENDING rows past the orphan age; shared with the ticker's idle probe. */
+function orphanPendingCandidateWhere(
+  orphanCutoff: Date,
+): Prisma.PaymentWhereInput {
+  return {
+    paymentStatus: PaymentStatus.PENDING,
+    createdAt: { lt: orphanCutoff },
+    AND: [reconcilableIntentWhere, notManualRecoveryWhere],
+  };
+}
+
+/** True when either cohort the run reads holds a payment. */
+export async function hasPaymentStatusReconcileWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const t = now.getTime();
+  if (outOfTime()) return true;
+  const row = await db.payment.findFirst({
+    where: {
+      OR: [
+        stalePendingPaymentWhere(
+          new Date(t - MIN_AGE_MINUTES * 60 * 1000),
+          new Date(t - MAX_AGE_DAYS * 24 * 60 * 60 * 1000),
+        ),
+        orphanPendingCandidateWhere(
+          new Date(t - DEFAULT_ORPHAN_PENDING_MAX_AGE_MS),
+        ),
+      ],
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 export interface PaymentReconciliationResult {
   success: boolean;
@@ -287,15 +339,7 @@ async function reconcilePaymentStatusUnlocked(
 
   // Find stale PENDING payments
   const stalePendingPayments = await prisma.payment.findMany({
-    where: {
-      paymentStatus: PaymentStatus.PENDING,
-      paymentGateway: PaymentGateway.RAZORPAY,
-      createdAt: {
-        lt: minAge,
-        gte: maxAge,
-      },
-      AND: [reconcilableIntentWhere, notManualRecoveryWhere],
-    },
+    where: stalePendingPaymentWhere(minAge, maxAge),
     include: {
       user: { select: { email: true, name: true } },
       appointment: { select: { id: true, appointmentType: true } },
@@ -307,11 +351,7 @@ async function reconcilePaymentStatusUnlocked(
   // #1757 — the terminal cohort: PENDING rows older than the orphan age, which
   // the window above never reaches. Only an unknown-id answer acts on them.
   const orphanCandidates = await prisma.payment.findMany({
-    where: {
-      paymentStatus: PaymentStatus.PENDING,
-      createdAt: { lt: orphanCutoff },
-      AND: [reconcilableIntentWhere, notManualRecoveryWhere],
-    },
+    where: orphanPendingCandidateWhere(orphanCutoff),
     include: {
       user: { select: { email: true, name: true } },
       appointment: { select: { id: true, appointmentType: true } },

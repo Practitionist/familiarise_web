@@ -949,6 +949,12 @@ export const REQUEST_PAYOUT_RUN_BOUNDS = {
   lockTtlMs: 2 * 60_000,
 } as const;
 
+/** APPROVED consultant payouts still under the retry cap; the disbursement run's cohort. */
+export const APPROVED_PAYOUT_WHERE = {
+  status: PayoutStatus.APPROVED,
+  retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
+} satisfies Prisma.ConsultantPayoutWhereInput;
+
 export async function processApprovedPayouts(
   opts: {
     budgetMs?: number;
@@ -988,10 +994,7 @@ export async function processApprovedPayouts(
 
   try {
     const approvedPayouts = await prisma.consultantPayout.findMany({
-      where: {
-        status: PayoutStatus.APPROVED,
-        retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
-      },
+      where: APPROVED_PAYOUT_WHERE,
       include: APPROVED_PAYOUT_INCLUDE,
       orderBy: [{ approvedAt: "asc" }, { createdAt: "asc" }],
     });

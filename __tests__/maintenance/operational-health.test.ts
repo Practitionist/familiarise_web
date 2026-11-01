@@ -17,6 +17,7 @@ jest.mock("../../lib/prisma", () => ({
       groupBy: jest.fn(),
       findMany: jest.fn(async () => []),
     },
+    $queryRaw: async () => [],
   },
 }));
 import prisma from "../../lib/prisma";

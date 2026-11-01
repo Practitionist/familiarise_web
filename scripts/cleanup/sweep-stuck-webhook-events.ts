@@ -3,7 +3,8 @@
  * or transiently failed across Razorpay, Stream, and Novu handlers.
  */
 import { z } from "zod";
-import prisma from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { processNovuWebhookPayload } from "@/lib/webhooks/novu-handler";
 import { processRazorpayWebhookEvent } from "@/app/api/webhooks/razorpay-dispatch";
 import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
@@ -397,12 +398,58 @@ async function processOneStuckEvent(
   return true;
 }
 
+/** Shared by the sweep's batch query and the ticker's idle probe. */
+function stuckWebhookEventWhere(
+  staleBefore: Date,
+  giveUpOlderThan: Date,
+): Prisma.WebhookEventWhereInput {
+  return {
+    provider: { in: ["razorpay", "stream", "novu"] },
+    receivedAt: { lt: staleBefore },
+    AND: [
+      {
+        OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }],
+      },
+    ],
+    OR: [
+      { processed: false, error: null },
+      {
+        error: { not: null },
+        receivedAt: { gte: giveUpOlderThan },
+        AND: TERMINAL_ERROR_PREFIXES.map((prefix) => ({
+          NOT: { error: { startsWith: prefix } },
+        })),
+      },
+    ],
+  };
+}
+
+const DEFAULT_STALE_MINUTES = 6;
+const DEFAULT_GIVE_UP_AFTER_HOURS = 168;
+
+/** True when the sweep's default-window query would find at least one event. */
+export async function hasStuckWebhookEventWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const row = await db.webhookEvent.findFirst({
+    where: stuckWebhookEventWhere(
+      new Date(now.getTime() - DEFAULT_STALE_MINUTES * 60_000),
+      new Date(now.getTime() - DEFAULT_GIVE_UP_AFTER_HOURS * 3_600_000),
+    ),
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 async function sweepStuckWebhookEventsUnlocked(
   opts: SweepOptions = {},
 ): Promise<SweepResult> {
-  const staleMinutes = opts.staleMinutes ?? 6;
+  const staleMinutes = opts.staleMinutes ?? DEFAULT_STALE_MINUTES;
   const warnAgeHours = opts.maxAgeHours ?? 72;
-  const giveUpAfterHours = opts.giveUpAfterHours ?? 168;
+  const giveUpAfterHours = opts.giveUpAfterHours ?? DEFAULT_GIVE_UP_AFTER_HOURS;
   const BATCH_SIZE = opts.limit ?? 200;
   const startMs = Date.now();
   const staleBefore = new Date(startMs - staleMinutes * 60_000);
@@ -423,25 +470,7 @@ async function sweepStuckWebhookEventsUnlocked(
 
   while (Date.now() - startMs < 15_000) {
     const stuck = await prisma.webhookEvent.findMany({
-      where: {
-        provider: { in: ["razorpay", "stream", "novu"] },
-        receivedAt: { lt: staleBefore },
-        AND: [
-          {
-            OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }],
-          },
-        ],
-        OR: [
-          { processed: false, error: null },
-          {
-            error: { not: null },
-            receivedAt: { gte: giveUpOlderThan },
-            AND: TERMINAL_ERROR_PREFIXES.map((prefix) => ({
-              NOT: { error: { startsWith: prefix } },
-            })),
-          },
-        ],
-      },
+      where: stuckWebhookEventWhere(staleBefore, giveUpOlderThan),
       orderBy: [
         { claimedAt: { sort: "asc", nulls: "first" } },
         { receivedAt: "asc" },
