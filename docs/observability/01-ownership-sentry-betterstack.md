@@ -20,7 +20,7 @@ Each question an operator asks has exactly one owner. The table below gives the 
 | Is it alive? Who gets paged?     | Better Stack          | Uptime monitors, the ticker heartbeat, the status page, maintenance incidents, the tick summary and log events, the freshness and backlog alerts. |
 | Which code broke?                | Sentry                | Exceptions, grouped issues, escalations, the `job_run_id` tag, the `cron-tick` check-in, sampled traces.                                          |
 | What happened (the truth)?       | Postgres              | Run rows (`SystemJobExecution`, with ingest rejections and up to 50 failed ids each), owed markers, and the current state on each entity row.     |
-| What do I do about it?           | Back-office console   | System Jobs, the Run metrics card, the Entity trace, and the read-only Needs attention inbox.                                                     |
+| What do I do about it?           | Back-office console   | System Jobs, the Run metrics card, the Entity trace, and the read-only Stuck work inbox.                                                          |
 | What did the function print?     | Netlify function logs | Raw stdout and stderr of each invocation.                                                                                                         |
 | What does the outside world say? | Vendor dashboards     | Razorpay, Stream, Resend and Supabase own their side of any reconciliation.                                                                       |
 
@@ -36,7 +36,7 @@ A backlog breach is not a bug. A payment that has waited three hours is a sympto
    a job threw, or failed 3x     ----> Sentry (one grouped issue,  ----> read the stack trace, then
                                        up to ten sample contexts,         open the run row via the
                                        tag job_run_id)                    job_run_id tag
-   work is ageing in a queue     ----> gauge on the tick summary   ----> Needs attention page,
+   work is ageing in a queue     ----> gauge on the tick summary   ----> Stuck work page,
                                        + Better Stack SQL alert           Entity trace
    telemetry stops arriving      ----> Better Stack freshness alert ---> check ingest (402/403)
    one payment looks wrong       ----> nobody pages; an operator   ----> Entity trace in the console,
@@ -55,7 +55,7 @@ flowchart TD
     SE --> RR[Open the run row in Postgres]
     Q2 -- no --> Q3{Is work ageing past its limit?}
     Q3 -- yes --> BG[Better Stack SQL threshold alert on the gauge]
-    BG --> INB[Needs attention page]
+    BG --> INB[Stuck work page]
     Q3 -- no --> Q4{One payment or booking looks wrong?}
     Q4 -- yes --> ET[Entity trace in the console]
     Q4 -- no --> NL[Netlify logs or the vendor dashboard]
@@ -93,7 +93,7 @@ Sentry is escalation-only, as decided in [Sentry escalations only](../decisions/
 
 ### 2.3 Postgres and the console
 
-`SystemJobExecution` holds one row per run with status, outcome, `itemsProcessed`, `errorCount`, a `result` JSON, `errorLog` and `durationMs`. `result.telemetry` counts the run's Better Stack sends and rejections, and `result.failures` lists up to 50 `{ entityId, reason, attempt }` entries (ids only) with `result.failuresOverflow` for the rest; both are written by `recordRouteRun` and bounded by the 90-day prune. The read-only Needs attention page (`lib/backoffice/needs-attention.ts`) lists the stuck items of the seven gauge queues with their age, attempts and last error, linked to the pages that hold the actions. The Entity trace (`lib/backoffice/entity-trace.ts`) joins money, booking, support and audit tables for one payment or booking, and the Run metrics card (`lib/backoffice/job-run-metrics.ts`) derives p50, p95 and missed windows from the same rows. Both are read-only. See [three-layers.md](./three-layers.md) for a worked missing-refund trace.
+`SystemJobExecution` holds one row per run with status, outcome, `itemsProcessed`, `errorCount`, a `result` JSON, `errorLog` and `durationMs`. `result.telemetry` counts the run's Better Stack sends and rejections, and `result.failures` lists up to 50 `{ entityId, reason, attempt }` entries (ids only) with `result.failuresOverflow` for the rest; both are written by `recordRouteRun` and bounded by the 90-day prune. The read-only Stuck work page (`lib/backoffice/needs-attention.ts`) lists the stuck items of the seven gauge queues with their age, attempts and last error, linked to the pages that hold the actions. Each queue shows its total and, past 25 items, its oldest and newest 25, so today's failure is never hidden behind an old backlog. The Entity trace (`lib/backoffice/entity-trace.ts`) joins money, booking, support and audit tables for one payment or booking, and the Run metrics card (`lib/backoffice/job-run-metrics.ts`) derives p50, p95 and missed windows from the same rows. Both are read-only. See [three-layers.md](./three-layers.md) for a worked missing-refund trace.
 
 ## 3. Per-item history: the free-tier bridge
 
@@ -105,7 +105,7 @@ The owner's 2026-11-01 gaps decision changed how history is kept until there is 
 4. **The oldest-pending-age gauges are built** and page through Better Stack, never Sentry.
 5. **No `SystemJobRunItem` table and no warehouse.**
 
-Worked example. Priya cancels a booking and is owed ₹1,180 (118,000 paise) back. The refund is stamped on her `Payment` row as an owed marker (`refundOwedPaise`, `refundOwedAttempts`), and `retry-auto-refunds` drives it. At 10:05 IST the Razorpay call times out for the third time. The row now says `refundOwedAttempts = 3`, and the run row of that sweep lists `{ entityId: <payment id>, reason: <failure class>, attempt: 3 }` in `result.failures`. The next tick's `oldestPendingAgeS.refundsOwed` is far past 3,600 seconds, so the Better Stack alert has already emailed. The Needs attention page lists the payment with its attempts and reason and links to its Entity trace. Nothing in Better Stack names Priya, but her payment id is still personal data.
+Worked example. Priya cancels a booking and is owed ₹1,180 (118,000 paise) back. The refund is stamped on her `Payment` row as an owed marker (`refundOwedPaise`, `refundOwedAttempts`), and `retry-auto-refunds` drives it. At 10:05 IST the Razorpay call times out for the third time. The row now says `refundOwedAttempts = 3`, and the run row of that sweep lists `{ entityId: <payment id>, reason: <failure class>, attempt: 3 }` in `result.failures`. The next tick's `oldestPendingAgeS.refundsOwed` is far past 3,600 seconds, so the Better Stack alert has already emailed. The Stuck work page lists the payment with its attempts and reason and links to its Entity trace. Nothing in Better Stack names Priya, but her payment id is still personal data.
 
 ## 4. Options considered
 
@@ -218,7 +218,7 @@ Gaps PR 1 built the prerequisites and the alerts together, with no schema change
 - **Observable ingest.** `emitTelemetryLog` reads the status; 402 (quota or spending limit), 403 (bad source token), 5xx, other non-2xx and network failures are counted on the run row, never sent to Sentry. A rejected send never fails the job.
 - **Freshness.** A Better Stack alert on the `cron-tick summary` event fires when none arrives for 15 minutes, which catches a refused ingest that the heartbeat and uptime monitors cannot see.
 - **Missing-data policy.** Money queues open an incident on a missing gauge; non-money gauges leave it to the freshness alert.
-- **Oldest-pending gauges and the Needs attention page**, described above.
+- **Oldest-pending gauges and the Stuck work page**, described above.
 
 The alert definitions are owner steps in the [Better Stack setup guide](../maintenance/00-betterstack-setup.md#owner-step-the-tick-summary-freshness-alert). What comes next, in the owner's post-launch order: #2496 (retention audit of log-like tables), then #2492 (job backlog and throughput, with the long-route audit #2493 folded in), then #2491 (a portable `runJob`). Per-item Better Stack events and the Entity trace link to them wait for traction. Related issues: #2424 (operations console), #2453 (per-item run log specification, superseded in part).
 
@@ -227,7 +227,7 @@ The alert definitions are owner steps in the [Better Stack setup guide](../maint
 - `lib/observability/betterstack-telemetry.ts`: `emitTelemetryLog`, the fixed event schema and the rejection buckets.
 - `lib/cron/run-telemetry.ts`, `lib/cron/run-record.ts`: `result.telemetry` and `result.failures` on the run row.
 - `lib/cron/pending-ages.ts`, `lib/cron/idle-probe.ts`, `app/api/health/jobs/tick/route.ts`: the gauges and their limits.
-- `lib/backoffice/needs-attention.ts`, `app/dashboard/(backoffice)/[tree]/attention/page.tsx`: the Needs attention page.
+- `lib/backoffice/needs-attention.ts`, `app/dashboard/(backoffice)/[tree]/stuck-work/page.tsx`: the Stuck work page.
 - `netlify/functions/cron-tick.mts`: `pingHeartbeat`, `emitTickSummary`, the `cron-tick` check-in.
 - `lib/betterstack.ts`: `createIncident`, `resolveIncident`.
 - `lib/observability/ingest-alert.ts`: the canary's email and Better Stack event.

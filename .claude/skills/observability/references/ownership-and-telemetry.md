@@ -9,7 +9,7 @@ Read this before adding a log event, an alert, a Postgres log table, or a Sentry
 | Alive? Who is paged?     | Better Stack (monitors, `pingHeartbeat()` in `netlify/functions/cron-tick.mts`, the tick summary and its freshness alert, the backlog gauges, `emitTelemetryLog`, maintenance incidents) | Sentry         |
 | Which code broke?        | Sentry (grouped issue, `job_run_id` tag, `cron-tick` check-in)                                                                                                                           | Better Stack   |
 | What is the truth?       | Postgres (`SystemJobExecution` with `result.telemetry` and `result.failures`, owed markers, entity rows)                                                                                 | a log store    |
-| What do I do about it?   | The back-office console (System Jobs, Run metrics, Entity trace, the read-only Needs attention page)                                                                                     | Sentry samples |
+| What do I do about it?   | The back-office console (System Jobs, Run metrics, Entity trace, the read-only Stuck work page)                                                                                          | Sentry samples |
 | Raw prints, vendor truth | Netlify logs, vendor dashboards                                                                                                                                                          |                |
 
 ## Rules

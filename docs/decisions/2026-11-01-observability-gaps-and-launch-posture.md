@@ -38,7 +38,7 @@ The [ownership decision](2026-11-01-observability-ownership.md) made Better Stac
 
    All seven alert by email and Slack now. The four money gauges move to phone at launch with the responder seat.
 
-8. **The Needs attention inbox is read-only.** One console page, `/dashboard/admin/attention`, behind `systemJobs.manage` like System Jobs, lists the stuck items of the same seven queues with the age past due, the attempts and the last error, linked to the Entity trace and the existing money, invoice, compliance and System Jobs pages where the actions already live. It adds no mutation path and reads eight bounded statements in sequence (`lib/backoffice/needs-attention.ts`). This is #2424 Phase 2 without the Retry buttons.
+8. **The Stuck work inbox is read-only.** One console page, `/dashboard/admin/stuck-work`, behind `systemJobs.manage` like System Jobs, lists the stuck items of the same seven queues with the age past due, the attempts and the last error, linked to the Entity trace and the existing money, invoice, compliance and System Jobs pages where the actions already live. Each queue shows its total and, when it holds more than 25 items, the oldest 25 and the newest 25 with a count of those in between, so a failure from today shows beside a backlog of 131 dead letters. Disputes are measured from `Dispute.dueBy` itself ("due in 5 h", "overdue by 42 d"); only their listing opens 48 hours early, matching the `disputesDue` gauge. It adds no mutation path. It reads eight bounded statements in sequence while every table fits on the page, and two more (the newest rows and a count) for each table that overflows (`lib/backoffice/needs-attention.ts`). It is named Stuck work because the admin Home page is already titled Needs attention. The totals, the newest items, the deadline-based dispute label and the name were approved by the owner on 2026-11-01 after deploy-preview QA. This is #2424 Phase 2 without the Retry buttons.
 
 ### Launch posture (no code)
 
@@ -52,15 +52,17 @@ The [ownership decision](2026-11-01-observability-ownership.md) made Better Stac
 
 ## Alternatives rejected
 
-| Option                                         | Why it was rejected                                                                                                     |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Per-item Better Stack events now               | Three days of free retention cannot answer a customer's question; the run row keeps 90 days at no cost.                 |
-| A new `SystemJobRunItem` table or column       | Still rejected; the run row's `result` Json carries the bridge with no DDL.                                             |
-| Report ingest rejections to Sentry             | One Better Stack outage across about 91,000 runs a month would spend the 5,000-error quota.                             |
-| A new ticker target or job for the gauges      | The tick cap of 12 is full; the slot claim already runs a bounded probe transaction.                                    |
-| One Prisma aggregate per queue                 | About eleven statements at about 62 ms each inside the claim's 5-second budget; one raw statement costs one round trip. |
-| Retry buttons on the inbox now                 | No new mutation paths; the existing pages already hold the audited doors.                                               |
-| Buy the responder seat and the Nano bundle now | Cost before there is real money to protect.                                                                             |
+| Option                                          | Why it was rejected                                                                                                     |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Per-item Better Stack events now                | Three days of free retention cannot answer a customer's question; the run row keeps 90 days at no cost.                 |
+| A new `SystemJobRunItem` table or column        | Still rejected; the run row's `result` Json carries the bridge with no DDL.                                             |
+| Report ingest rejections to Sentry              | One Better Stack outage across about 91,000 runs a month would spend the 5,000-error quota.                             |
+| A new ticker target or job for the gauges       | The tick cap of 12 is full; the slot claim already runs a bounded probe transaction.                                    |
+| One Prisma aggregate per queue                  | About eleven statements at about 62 ms each inside the claim's 5-second budget; one raw statement costs one round trip. |
+| Retry buttons on the inbox now                  | No new mutation paths; the existing pages already hold the audited doors.                                               |
+| A count and a newest read for every inbox table | Three statements per table on every load; reading them only when a table overflows keeps a quiet console at eight.      |
+| Aging disputes from 48 hours before `dueBy`     | Overstates how late a dispute is by two days; only the gauge keeps that lead, so its alert fires early.                 |
+| Buy the responder seat and the Nano bundle now  | Cost before there is real money to protect.                                                                             |
 
 ## Consequences
 
@@ -74,3 +76,4 @@ The [ownership decision](2026-11-01-observability-ownership.md) made Better Stac
 - **Per-item Better Stack events as the history store** (the ownership decision's selected option (a), "gaps PR 2") are deferred, not built. Until traction, per-item history is `SystemJobExecution.result.failures`.
 - **`Sentry.captureException` on a failed Better Stack send** and the **`context` spread into every event** were removed; any code that sends free-form context to Better Stack is left over from that approach.
 - **The ticker's inline summary emitter** was replaced by the shared emitter.
+- **The first inbox build** was titled Needs attention, listed each queue oldest-first capped at 25 with no total, and aged disputes from 48 hours before `dueBy`. With 131 dead-lettered emails a new failure never showed, so it gained totals and the newest items and was renamed Stuck work, at `/stuck-work`.
