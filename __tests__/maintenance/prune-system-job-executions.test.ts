@@ -11,6 +11,8 @@ const findNotifications = jest.fn();
 const deleteNotifications = jest.fn();
 const findEvents = jest.fn();
 const deleteEvents = jest.fn();
+const findRequests = jest.fn();
+const deleteRequests = jest.fn();
 const executeRaw = jest.fn();
 const acquire = jest.fn();
 
@@ -44,6 +46,10 @@ jest.mock("../../lib/prisma", () => ({
       findMany: (...args: unknown[]) => findEvents(...args),
       deleteMany: (...args: unknown[]) => deleteEvents(...args),
     },
+    adminRunRequest: {
+      findMany: (...args: unknown[]) => findRequests(...args),
+      deleteMany: (...args: unknown[]) => deleteRequests(...args),
+    },
     $executeRaw: (...args: unknown[]) => executeRaw(...args),
     $disconnect: jest.fn(),
   },
@@ -51,6 +57,7 @@ jest.mock("../../lib/prisma", () => ({
 
 import { Prisma } from "@prisma/client";
 import {
+  adminRunRequestRetentionCutoff,
   retentionCutoff,
   sentOutboxRetentionCutoff,
   failedEmailBodyScrubCutoff,
@@ -74,6 +81,7 @@ beforeEach(() => {
     findBatches,
     findNotifications,
     findEvents,
+    findRequests,
   ]) {
     find.mockResolvedValue([]);
   }
@@ -84,6 +92,7 @@ beforeEach(() => {
     deleteBatches,
     deleteNotifications,
     deleteEvents,
+    deleteRequests,
   ]) {
     mutate.mockResolvedValue({ count: 0 });
   }
@@ -107,6 +116,9 @@ it("preserves every existing retention window", () => {
   );
   expect(strandedCutoff(NOW)).toEqual(
     new Date(NOW.getTime() - 6 * 60 * 60 * 1000),
+  );
+  expect(adminRunRequestRetentionCutoff(NOW)).toEqual(
+    new Date(NOW.getTime() - 30 * DAY),
   );
 });
 

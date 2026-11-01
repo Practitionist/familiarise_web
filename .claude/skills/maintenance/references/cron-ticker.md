@@ -4,7 +4,7 @@
 
 `lib/cron/cleanup-registry.ts` supplies the single implementation dispatch for
 `/api/cleanup/[job]`. Its bearer check uses `CRON_SECRET`. The Netlify scheduled
-adapter runs every five minutes and schedules every registered job (76 targets);
+adapter runs every five minutes and schedules every registered job (77 targets);
 no Actions workflow schedules a registry job. Check executable target metadata
 rather than assuming a registered job is scheduled.
 
@@ -67,7 +67,7 @@ admitted slices resume the report. It answers 200 with summary status RUNNING wh
 remains and 207 once a completed audit has discrepancies; it is listed in
 `PARTIAL_FAILURE_TARGETS`, so that 207 counts as failed.
 
-No GitHub Actions workflow schedules a registry job: every registered job, including the former daily, weekly and hourly housekeeping batch, runs on the ticker (76 targets, at most 12 per tick). The three fleet workflows `cron-daily.yml`, `cron-intra-day.yml` and `cron-weekly.yml` and their `tsx` wrappers are deleted; run a job by hand through the admin Run door or `POST /api/cleanup/<slug>` with the `CRON_SECRET` bearer. The weekly `consent-retention-sweeper` is count-only from the ticker, which never sends the delete flag. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. A 503 carrying an explicit `DEGRADED`/`OFFLINE` phase is a planned maintenance hold; an unreadable-state 503 remains `failed`.
+No GitHub Actions workflow schedules a registry job: every registered job, including the former daily, weekly and hourly housekeeping batch, runs on the ticker (77 targets, at most 12 per tick). The three fleet workflows `cron-daily.yml`, `cron-intra-day.yml` and `cron-weekly.yml` and their `tsx` wrappers are deleted; run a job by hand through the admin Run door or `POST /api/cleanup/<slug>` with the `CRON_SECRET` bearer. The weekly `consent-retention-sweeper` is count-only from the ticker, which never sends the delete flag. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. A 503 carrying an explicit `DEGRADED`/`OFFLINE` phase is a planned maintenance hold; an unreadable-state 503 remains `failed`.
 
 A per-job lease does not serialize different jobs touching the same payment or
 payout. Conditional state transitions, transactionally staged obligations and

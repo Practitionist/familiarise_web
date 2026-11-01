@@ -11,6 +11,7 @@
 | Dead-letter email, batch and notification rows     | Delete after 90 days                            | Selected ID, still `DEAD_LETTER`, `updatedAt` still old                        |
 | Sent `NotificationOutbox` rows                     | Delete after 30 days                            | Selected ID, still `SENT`, `updatedAt` still old                               |
 | `EmailEvent` history                               | Delete after 30 days                            | Selected ID, `receivedAt` still old                                            |
+| Settled `AdminRunRequest` rows                     | Delete `DONE`/`FAILED` after 30 days            | Selected ID, still `DONE` or `FAILED`, `finishedAt` still old                  |
 
 For sent email/batch rows, the delivery timestamp is `sentAt`, falling back to `updatedAt` only for legacy rows without `sentAt`. Parameterized SQL scrubs the body/payload without updating either timestamp. `htmlBody` becomes an empty string, `textBody` becomes null, and batch payload becomes an empty JSON array. A scrub must not postpone deletion of a legacy row by restarting its age.
 
@@ -18,7 +19,7 @@ For sent email/batch rows, the delivery timestamp is `sentAt`, falling back to `
 
 Every call has a positive integer row limit: default 100, maximum 500. The HTTP route accepts `?limit=N`, uses the shared parser, rejects malformed limits with 400, and clamps values above 500. The core also validates direct callers. The limit applies **per phase**, rather than across the whole job.
 
-There are eight phases: stale-heartbeat closure, history deletion, two payload scrubs, three outbox deletions, and email-event deletion. Each reads at most `limit + 1` IDs and mutates at most `limit` selected rows. Results include each mutation count and `hasMore`. The extra row detects another page; it is never mutated by that slice. A successful slice with `hasMore: true` does not establish a drained backlog.
+There are nine phases: stale-heartbeat closure, history deletion, settled admin run request deletion, two payload scrubs, three outbox deletions, and email-event deletion. Open (`REQUESTED` or `CLAIMED`) admin run requests are never retention candidates. Each reads at most `limit + 1` IDs and mutates at most `limit` selected rows. Results include each mutation count and `hasMore`. The extra row detects another page; it is never mutated by that slice. A successful slice with `hasMore: true` does not establish a drained backlog.
 
 A fixed 16-second start budget is passed from the HTTP request or batch driver
 through the core, including setup and lease admission. Every batch slice reuses

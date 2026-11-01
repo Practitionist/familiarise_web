@@ -81,6 +81,7 @@ export const TARGETS = [
   "archive-webhook-events",
   "consent-retention-sweeper",
   "expire-onboarding-drafts",
+  "drain-admin-run-requests",
   ...STREAM_LIFECYCLE_JOBS,
 ] as const;
 
@@ -192,6 +193,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   // Count-only: deletion stays behind the route's explicit delete flag.
   "consent-retention-sweeper": 500,
   "expire-onboarding-drafts": null,
+  // One open request per after-mode job.
+  "drain-admin-run-requests": 2,
   "expire-recordings": null,
   "reconcile-orphaned-recordings": null,
   "wind-down-deactivated-orgs": null,
@@ -277,6 +280,8 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "archive-webhook-events": 1440,
   "consent-retention-sweeper": 1440,
   "expire-onboarding-drafts": 1440,
+  // Backstop only: the admin route dispatches at once; every shorter cadence breaks the tick cap.
+  "drain-admin-run-requests": 60,
   "expire-recordings": 60,
   "reconcile-orphaned-recordings": 60,
   "wind-down-deactivated-orgs": 60,
@@ -362,6 +367,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "archive-webhook-events": 20,
   "consent-retention-sweeper": 25,
   "expire-onboarding-drafts": 35,
+  "drain-admin-run-requests": 40,
   "expire-recordings": 5,
   "reconcile-orphaned-recordings": 25,
   "wind-down-deactivated-orgs": 55,
@@ -599,6 +605,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "archive-webhook-events": 20_000,
   "consent-retention-sweeper": 20_000,
   "expire-onboarding-drafts": 20_000,
+  "drain-admin-run-requests": 24_000,
 };
 
 /**

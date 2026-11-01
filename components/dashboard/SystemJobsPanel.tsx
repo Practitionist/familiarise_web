@@ -20,6 +20,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { AdminRunRequests } from "@/components/dashboard/AdminRunRequests";
 import {
   JOB_CATEGORIES,
   type JobCategory,
@@ -207,6 +208,7 @@ export function SystemJobsPanel({
   const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set());
   const [executions, setExecutions] = useState<JobExecution[]>([]);
   const [loadingExecutions, setLoadingExecutions] = useState(true);
+  const [requestsKey, setRequestsKey] = useState(0);
   const { toast } = useToast();
 
   // Only the latest request may set state, so a slower answer for a previous environment is dropped.
@@ -267,6 +269,7 @@ export function SystemJobsPanel({
 
       // #1846 N6 — the payout jobs answer 202 and finish after the response.
       if (result.dispatched) {
+        if (result.requestId) setRequestsKey((key) => key + 1);
         toast({
           title: `${job.title} ${result.accepted ? "queued" : "started"}`,
           description: result.message,
@@ -322,6 +325,8 @@ export function SystemJobsPanel({
 
   return (
     <div className={cn("space-y-8", className)}>
+      <AdminRunRequests refreshKey={requestsKey} />
+
       {/* Recent Executions */}
       <Card>
         <CardHeader>

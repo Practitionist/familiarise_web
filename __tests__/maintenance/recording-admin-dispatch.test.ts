@@ -17,13 +17,24 @@ const authorize = jest.fn();
 const maintenance = jest.fn();
 const guard = jest.fn();
 const after = jest.fn();
+const create = jest.fn();
+const findOpen = jest.fn();
+const statusWrite = jest.fn();
+const runRequest = jest.fn();
+const tx = { adminRunRequest: { create } };
+const db = {
+  $transaction: jest.fn<Promise<unknown>, [(client: typeof tx) => unknown]>(
+    async (fn) => fn(tx),
+  ),
+  adminRunRequest: { findFirst: findOpen, updateMany: statusWrite },
+};
 let post: typeof import("../../app/api/admin/system-jobs/run/route").POST;
 let registry: typeof import("../../lib/cron/cleanup-registry");
 let schedule: typeof import("../../lib/cron/schedule");
 
 beforeAll(async () => {
   const dependencies = new Map<string, unknown>([
-    ["@/lib/prisma", { __esModule: true, default: {} }],
+    ["@/lib/prisma", { __esModule: true, default: db }],
     ["@/lib/auth-helpers", { requireBackofficeSurface: authorize }],
     [
       "@/lib/backoffice/ops-action-log",
@@ -58,6 +69,11 @@ beforeAll(async () => {
     ],
   ]);
   for (const [name, mock] of dependencies) jest.doMock(name, () => mock);
+  // Lazy, so the actual module loads behind the mocks above.
+  jest.doMock("@/lib/cron/admin-run-requests", () => ({
+    ...jest.requireActual("@/lib/cron/admin-run-requests"),
+    runAdminRunRequest: runRequest,
+  }));
   post = (await import("../../app/api/admin/system-jobs/run/route")).POST;
   registry = await import("../../lib/cron/cleanup-registry");
   schedule = await import("../../lib/cron/schedule");
@@ -97,7 +113,7 @@ it("runs the registry handler in-process without the cron secret and records ACC
   expect(guard).toHaveBeenCalledWith("transfer-recordings");
   expect(audit).toHaveBeenCalledTimes(1);
   expect(audit).toHaveBeenCalledWith(
-    {},
+    expect.anything(),
     expect.objectContaining({
       id: expect.any(String),
       targetId: "transfer-recordings",
@@ -115,21 +131,65 @@ it("records FAILED with the route's stable message when worker admission fails",
   expect(response.status).toBe(500);
   expect(JSON.stringify(await response.json())).not.toContain("diagnostic");
   expect(audit).toHaveBeenCalledWith(
-    {},
+    expect.anything(),
     expect.objectContaining({ after: { status: "FAILED", httpStatus: 500 } }),
   );
 });
 
-it("defers the payout run past the response and refuses ids outside the registry", async () => {
-  const deferred = await post(request("process-payouts"));
-  expect(deferred.status).toBe(202);
+it("commits the payout request and its audit row before the 202, then dispatches after it", async () => {
+  create.mockImplementationOnce(async ({ data }) => ({
+    ...data,
+    status: "REQUESTED",
+    attempts: 0,
+  }));
+  const response = await post(request("process-payouts"));
+  expect(response.status).toBe(202);
+  const body = await response.json();
+  expect(body).toMatchObject({ status: "REQUESTED", existing: false });
+  expect(create).toHaveBeenCalledWith({
+    data: expect.objectContaining({
+      id: body.requestId,
+      job: "process-payouts",
+      requestedBy: "admin",
+    }),
+  });
+  expect(audit).toHaveBeenCalledWith(
+    tx,
+    expect.objectContaining({
+      id: body.requestId,
+      after: { status: "REQUESTED", requestId: body.requestId },
+    }),
+  );
+  // The 202 has gone out with the row committed and still REQUESTED; a lost callback leaves it so.
   expect(after).toHaveBeenCalledTimes(1);
-  expect(audit).not.toHaveBeenCalled();
+  expect(create.mock.invocationCallOrder[0]).toBeLessThan(
+    after.mock.invocationCallOrder[0],
+  );
+  expect(statusWrite).not.toHaveBeenCalled();
+  expect(runRequest).not.toHaveBeenCalled();
+  await after.mock.calls[0][0]();
+  expect(runRequest).toHaveBeenCalledWith(
+    expect.objectContaining({ id: body.requestId, job: "process-payouts" }),
+  );
 
   for (const legacy of ["cleanup-approval-payments", "constructor"]) {
     expect((await post(request(legacy))).status).toBe(400);
   }
-  expect(audit).not.toHaveBeenCalled();
+});
+
+it("returns the job's open request on a unique conflict and dispatches nothing", async () => {
+  db.$transaction.mockRejectedValueOnce(
+    Object.assign(new Error("unique"), { code: "P2002" }),
+  );
+  findOpen.mockResolvedValueOnce({ id: "open-1", status: "CLAIMED" });
+  const response = await post(request("process-payouts"));
+  expect(response.status).toBe(202);
+  expect(await response.json()).toMatchObject({
+    requestId: "open-1",
+    status: "CLAIMED",
+    existing: true,
+  });
+  expect(after).not.toHaveBeenCalled();
 });
 
 it("does not dispatch when authentication or maintenance refuses the request", async () => {
@@ -188,7 +248,7 @@ it.each([
   );
   await post(request("reconcile-refunds"));
   expect(audit).toHaveBeenCalledWith(
-    {},
+    expect.anything(),
     expect.objectContaining({
       after: { status: auditStatus, httpStatus },
     }),

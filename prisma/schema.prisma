@@ -7508,6 +7508,39 @@ model SystemJobExecution {
   @@index([jobName, startedAt(sort: Desc)])
 }
 
+/// An admin "Run now" for a job that answers before its run finishes; the ticker
+/// retries it until DONE or FAILED. One open request per job via the prisma/sql sidecar.
+model AdminRunRequest {
+  /// Also the id of the request's OpsActionLog row, which every run of it records.
+  id          String                @id @default(uuid())
+  /// The cleanup registry slug.
+  job         String
+  status      AdminRunRequestStatus @default(REQUESTED)
+  /// The admin user id; each attempt runs as `admin:<requestedBy>`.
+  requestedBy String
+  /// Each claim increments it; terminal writes match on it so a stale claimant loses.
+  attempts    Int                   @default(0)
+  lastError   String?               @db.Text
+  /// The calendar window fixed at admission, so a late attempt repeats the same slice.
+  windowStart DateTime?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  claimedAt   DateTime?
+  finishedAt  DateTime?
+  /// The SystemJobExecution row of the attempt that settled it.
+  runId       String?
+
+  @@index([status, updatedAt])
+  @@index([createdAt])
+}
+
+enum AdminRunRequestStatus {
+  REQUESTED
+  CLAIMED
+  DONE
+  FAILED
+}
+
 //////////////////////////////////////////////////// ANNOUNCEMENT SYSTEM ////////////////////////////////////////////////////
 
 model Announcement {
