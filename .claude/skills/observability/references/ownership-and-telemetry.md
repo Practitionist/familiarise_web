@@ -1,30 +1,33 @@
 # Ownership and per-item telemetry
 
-Read this before adding a log event, an alert, a Postgres log table, or a Sentry call for something that is not a bug. The reasoning is in `docs/observability/01-ownership-sentry-betterstack.md` and `docs/decisions/2026-11-01-observability-ownership.md`.
+Read this before adding a log event, an alert, a Postgres log table, or a Sentry call for something that is not a bug. The reasoning is in `docs/observability/01-ownership-sentry-betterstack.md`, `docs/decisions/2026-11-01-observability-ownership.md` and its amendment `docs/decisions/2026-11-01-observability-gaps-and-launch-posture.md`.
 
 ## Decision table
 
-| Question                 | Owner                                                                                                                                    | Not            |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| Alive? Who is paged?     | Better Stack (monitors, `pingHeartbeat()` in `netlify/functions/cron-tick.mts`, tick summary, `emitTelemetryLog`, maintenance incidents) | Sentry         |
-| Which code broke?        | Sentry (grouped issue, `job_run_id` tag, `cron-tick` check-in)                                                                           | Better Stack   |
-| What is the truth?       | Postgres (`SystemJobExecution`, owed markers, entity rows)                                                                               | a log store    |
-| What do I do about it?   | The back-office console (System Jobs, Run metrics, Entity trace, inbox (PLANNED))                                                        | Sentry samples |
-| Raw prints, vendor truth | Netlify logs, vendor dashboards                                                                                                          |                |
+| Question                 | Owner                                                                                                                                                                                    | Not            |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| Alive? Who is paged?     | Better Stack (monitors, `pingHeartbeat()` in `netlify/functions/cron-tick.mts`, the tick summary and its freshness alert, the backlog gauges, `emitTelemetryLog`, maintenance incidents) | Sentry         |
+| Which code broke?        | Sentry (grouped issue, `job_run_id` tag, `cron-tick` check-in)                                                                                                                           | Better Stack   |
+| What is the truth?       | Postgres (`SystemJobExecution` with `result.telemetry` and `result.failures`, owed markers, entity rows)                                                                                 | a log store    |
+| What do I do about it?   | The back-office console (System Jobs, Run metrics, Entity trace, the read-only Needs attention page)                                                                                     | Sentry samples |
+| Raw prints, vendor truth | Netlify logs, vendor dashboards                                                                                                                                                          |                |
 
 ## Rules
 
-- **A backlog breach pages via Better Stack, not Sentry.** Ageing work is not a bug and Sentry quota is capped.
-- **Do not add a Postgres per-item log table.** No `SystemJobRunItem`. Current state lives on the row; per-item history lives in the log store. Existing `SystemEvent` rows stay the record for business and system events.
-- **Per-item history is one batched Better Stack POST per run**, never a call per row. PLANNED; not built yet. Use the `emitTelemetryLog` conventions: best-effort, never throws, bounded timeout.
-- **Ids only, and the events are still personal data.** Events carry ids only, never names, emails or free text from users. That minimises disclosure but does not anonymise: a payment id resolves to a person (`Payment.userId` references `User`, and `readRootPayments()` in `lib/backoffice/entity-trace.ts` reads the customer's name), so the events are pseudonymous personal data under [DPDP §2(t)](https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf), the same position `docs/observability/sentry/05-identity-and-triage.md` takes for the Sentry cuid. Creating the source in the EU region does not make them non-personal. Nothing in code enforces ids-only yet: `emitTelemetryLog` spreads `log.context` into the payload (overriding `dt`, `level` and `message` on a clash) and `recordSystemEvent` mirrors every `SystemEvent` context through it, so build per-item events from the fixed schema below and audit or allowlist `SystemEvent` context keys before claiming ids-only for all Better Stack events.
-- **The Better Stack rollout needs a privacy assessment first.** Before per-item events ship, settle the processor entry, the privacy-notice disclosure, access and erasure handling, and retention, using the processor inventory in `docs/compliance/02-dpdp-and-privacy.md` (Data inventory, Gap #11) and the `compliance` skill.
+- **Every Better Stack event goes through `emitTelemetryLog` and its fixed schema.** `telemetryEventSchema` in `lib/observability/betterstack-telemetry.ts` is a strict Zod object; a new field is added there, never spread in from a caller's context. Messages, correlation ids and errors are scrubbed of email addresses. A `SystemEvent` mirror sends only its entity id (`entityIdOf` in `lib/observability/entity-id.ts`) and the run id.
+- **A send never throws and never reaches Sentry.** It resolves to `sent`, `skipped`, `402` (quota or spending limit), `403` (bad source token), `5xx`, `network` or `other`, with a 2-second timeout. Inside a job run the outcomes are counted on the run row as `result.telemetry`; the ticker's own summary rejection is a log line and trips the freshness alert. At about 91,000 runs a month, one ingest outage reported to Sentry would spend the 5,000-error quota.
+- **A backlog breach pages via Better Stack, not Sentry.** The seven oldest-pending-age gauges ride on the tick summary as `oldestPendingAgeS` (`lib/cron/pending-ages.ts`, one statement inside the slot claim's probe transaction and budget). Their limits are `PENDING_AGE_LIMITS_MS`; the alert definitions and the missing-data policy (money queues alert on missing data, the rest rely on the freshness alert) are owner steps in `docs/maintenance/00-betterstack-setup.md`. Never add a ticker target or a job for a gauge: the tick cap of 12 is full.
+- **Do not add a Postgres per-item log table.** No `SystemJobRunItem`. Current state lives on the entity row.
+- **Per-item history is the run row until traction.** `createRunFailureReporter().add()` also lists the failure in `result.failures` (`{ entityId, reason, attempt }`, at most 50, then `failuresOverflow`), validated in `lib/cron/run-telemetry.ts` and bounded by the 90-day prune. Put the entity id in the failure context as an `id` or `*Id` key and the attempt as `attempt`, `attempts` or `retryCount`; never a name or an email. Batched per-item Better Stack events are deferred by owner decision (a cost decision, revisited at traction).
+- **Ids only, and the ids are still personal data.** A payment id resolves to a person (`Payment.userId` references `User`, and `readRootPayments()` in `lib/backoffice/entity-trace.ts` reads the customer's name), so events and failure lists are pseudonymous personal data under [DPDP §2(t)](https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf), the same position `docs/observability/sentry/05-identity-and-triage.md` takes for the Sentry cuid. The EU region does not make them non-personal.
+- **Per-item Better Stack events need a privacy assessment first.** When they are built, settle the processor entry, the privacy-notice disclosure, access and erasure handling, and retention, using the processor inventory in `docs/compliance/02-dpdp-and-privacy.md` (Data inventory, Gap #11) and the `compliance` skill.
 - **India region.** Neither Better Stack (EU, US, Singapore) nor Sentry (US, EU) has one. If in-country telemetry is ever required, Grafana Cloud (AWS `ap-south-1`) and SigNoz Cloud both list India; compare them in section 7 of the research page.
-- **Ingest rejection is silent today.** Better Stack's ingest API answers 402 once the free quota or spending limit is reached and 403 for a bad token, which stops per-item events and backlog gauges alike while the separate uptime heartbeat stays green. `emitTelemetryLog` awaits `fetch` but never reads the status. Before gaps PR 1 and PR 2, record and surface 402, 403 and 5xx answers, add a freshness check on a channel independent of ingest, and write a per-capability missing-data policy. Business work stays best-effort with respect to telemetry.
+- **Plans.** Better Stack stays on the free plan (3-day logs, email and Slack alerts) until launch; the responder seat and the Telemetry Nano bundle are a go-live checklist item.
 - **Never send per-item events to Sentry** (Logs or spans). Quota and sampling make it wrong.
-- **The oldest-pending-age gauge is computed in Postgres once per tick**, one aggregate per capability, and alerted by a Better Stack SQL threshold. PLANNED.
 
-## Event schema (PLANNED)
+## Per-item event schema (DEFERRED)
+
+When per-item Better Stack events are built, each carries these six fields, added to the fixed schema:
 
 | Field       | Meaning                                                                      |
 | ----------- | ---------------------------------------------------------------------------- |
@@ -35,11 +38,12 @@ Read this before adding a log event, an alert, a Postgres log table, or a Sentry
 | `reason`    | A short code such as `GATEWAY_TIMEOUT` or `LOST_CAS`.                        |
 | `attempt`   | The attempt number read from the entity row.                                 |
 
-The six fields above are required on every event. `tick_id` and `duration_ms` (suggested by the research) are optional extras; the decision record and the research page use the same split.
+`tick_id` and `duration_ms` are optional extras.
 
 ## Links
 
 - `docs/observability/01-ownership-sentry-betterstack.md` and `docs/observability/02-research-per-item-history-and-vendors.md`
-- `docs/decisions/2026-11-01-observability-ownership.md`
+- `docs/decisions/2026-11-01-observability-ownership.md`, `docs/decisions/2026-11-01-observability-gaps-and-launch-posture.md`
+- `docs/maintenance/00-betterstack-setup.md` (freshness alert, missing-data policy, gauge thresholds)
 - `references/job-telemetry.md`, `references/entity-trace-and-console.md`
 - Issues #2424, #2453, #2492, #2496

@@ -1,6 +1,6 @@
 # ADR: Observability ownership, per-item history and backlog alerting
 
-- **Status**: Accepted (owner decisions of 2026-11-01). The ownership split describes what is built; the per-item events, the inbox and the oldest-pending alerts are PLANNED.
+- **Status**: Accepted (owner decisions of 2026-11-01), amended the same day by [observability gaps and launch posture](2026-11-01-observability-gaps-and-launch-posture.md). The ownership split, the oldest-pending gauges, the inbox and observable ingest are built; per-item Better Stack events are deferred until traction, and until then per-item history is `SystemJobExecution.result.failures`.
 - **Date**: 2026-11-01
 - **Author**: Platform engineering
 - **Related**: [Ownership of Sentry and Better Stack](../observability/01-ownership-sentry-betterstack.md), [the research](../observability/02-research-per-item-history-and-vendors.md), [Sentry escalations only](2026-10-31-sentry-escalations-only.md), issues #2424, #2453, #2492 and #2496
@@ -13,12 +13,12 @@ Jobs run from one Netlify ticker and each run leaves a thin trail: a `SystemJobE
 
 ### Selected
 
-1. **Per-item history.** Current state (attempts, last error, age) lives on the entity row. History goes to batched Better Stack log events, one POST per run with `{run_id, job, entity_id, outcome, reason, attempt}` (all required; `tick_id` and `duration_ms` optional), identifiers only, EU region. Identifiers only minimises disclosure, but a payment id resolves to a customer, so the events are pseudonymous personal data under [DPDP §2(t)](https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf) and the rollout carries a processor, disclosure, access and erasure, and retention assessment (see [DPDP and privacy](../compliance/02-dpdp-and-privacy.md)). There is no `SystemJobRunItem` table and no warehouse. (PLANNED)
+1. **Per-item history.** Current state (attempts, last error, age) lives on the entity row. History goes to batched Better Stack log events, one POST per run with `{run_id, job, entity_id, outcome, reason, attempt}` (all required; `tick_id` and `duration_ms` optional), identifiers only, EU region. Identifiers only minimises disclosure, but a payment id resolves to a customer, so the events are pseudonymous personal data under [DPDP §2(t)](https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf) and the rollout carries a processor, disclosure, access and erasure, and retention assessment (see [DPDP and privacy](../compliance/02-dpdp-and-privacy.md)). There is no `SystemJobRunItem` table and no warehouse. (DEFERRED to traction by the [gaps decision](2026-11-01-observability-gaps-and-launch-posture.md); the run row's `result.failures` is the free-tier bridge.)
 2. **Ownership split.** Sentry owns grouped errors, the `cron-tick` check-in and sampled traces. Better Stack owns per-item events, heartbeats and uptime, paging, and SQL threshold alerts.
-3. **Backlog breaches page through Better Stack, not Sentry.** The oldest pending age per capability is computed once per tick in Postgres, emitted as a gauge log line, and alerted by a Better Stack SQL threshold. (PLANNED)
-4. **Paging.** Email now. One Better Stack responder licence (about $34 a month) at launch.
-5. **Retention.** Free three-day logs now; the 30-day EU bundle (about $30 a month) at launch.
-6. **Build order.** Gaps PR 1 (inbox plus oldest-pending alerts), then gaps PR 2 (per-item events plus the Entity trace link), both after #2486, #2494 and the two booking PRs merge. Both depend on observable ingest first: Better Stack answers 402 at the free quota or spending limit, which silently stops per-item events and gauges while heartbeats stay green, and `emitTelemetryLog` never reads the response status. So record and surface 402, 403 and 5xx answers, add a gauge freshness check through a channel independent of ingest, and write a per-capability missing-data policy. Business work stays best-effort with respect to telemetry. The retention audit of log-like tables is #2496.
+3. **Backlog breaches page through Better Stack, not Sentry.** The oldest pending age per capability is computed once per tick in Postgres, emitted on the tick summary as `oldestPendingAgeS`, and alerted by a Better Stack SQL threshold. (Built; the alerts are owner steps.)
+4. **Paging.** Email and Slack now. One Better Stack responder licence (about $29 to $34 a month) at launch.
+5. **Retention.** Free three-day logs now; the Telemetry Nano bundle (30 days, EU, about $25 a month billed yearly) at launch.
+6. **Build order.** Gaps PR 1 (inbox plus oldest-pending alerts) is built; gaps PR 2 (per-item events plus the Entity trace link) is deferred to traction by the gaps decision. Both depend on observable ingest first: Better Stack answers 402 at the free quota or spending limit, which silently stops per-item events and gauges while heartbeats stay green, and `emitTelemetryLog` never reads the response status. So record and surface 402, 403 and 5xx answers, add a gauge freshness check through a channel independent of ingest, and write a per-capability missing-data policy. Business work stays best-effort with respect to telemetry. The retention audit of log-like tables is #2496.
 7. **Warehouse.** None. Postgres with retention is enough pre-launch.
 
 ### Rejected
@@ -49,7 +49,7 @@ Jobs run from one Netlify ticker and each run leaves a thin trail: a `SystemJobE
 - Better Stack logs are best-effort: a function killed before the flush loses that run's events. Crash evidence stays in the `SystemJobExecution` row.
 - Neither Better Stack (EU, US, Singapore) nor Sentry (US, EU) has an India region. Events carry ids only, never names or emails, yet remain pseudonymous personal data; EU placement does not make them non-personal.
 - A Better Stack quota cutoff drops telemetry without failing any job, so coverage must never silently assume unlimited ingest.
-- The per-item table in #2424 Phase 3 and #2453 is superseded; the inbox and its Retry buttons are unchanged.
+- The per-item table in #2424 Phase 3 and #2453 is superseded. The inbox is built read-only; Retry stays on the existing pages.
 
 ## Deprecated & Superseded Approaches
 

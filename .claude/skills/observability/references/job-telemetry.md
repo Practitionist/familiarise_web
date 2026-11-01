@@ -37,7 +37,7 @@ A failing ticker target that fails once is a log line only (`cron-tick.target-fa
 
 ## Better Stack
 
-The ticker writes one summary line per tick (with `tickId`, `lockUnavailable` and `lockUnavailableCount`) when `ENABLE_BETTERSTACK_TELEMETRY` is `true` and `BETTERSTACK_SOURCE_TOKEN` and `BETTERSTACK_INGEST_URL` are set. The function inlines this because `lib/observability/betterstack-telemetry.ts` imports `@sentry/nextjs`, which must stay out of the function bundle. Every `SystemEvent` insert is mirrored through `emitTelemetryLog` under the same flag, not awaited. Better Stack's uptime monitors poll `/api/health` and the bearer-protected `/api/health/jobs`. Setup and the alert drill are in `docs/maintenance/00-betterstack-setup.md`.
+The ticker writes one `cron-tick summary` line per tick (with `tickId`, `lockUnavailable`, `lockUnavailableCount` and the `oldestPendingAgeS` gauges from the slot claim) when `ENABLE_BETTERSTACK_TELEMETRY` is `true` and `BETTERSTACK_SOURCE_TOKEN` and `BETTERSTACK_INGEST_URL` are set. It uses the shared `emitTelemetryLog` (`lib/observability/betterstack-telemetry.ts`), which is Sentry-free, passing its own `fetch`. A freshness alert on that line (none for 15 minutes) is the catch-all for a refused or stopped ingest, because the heartbeat stays green through a 402. Every `SystemEvent` insert is mirrored through `emitTelemetryLog` with fixed fields only, not awaited; inside a run the send outcomes land in `result.telemetry`. Better Stack's uptime monitors poll `/api/health` and the bearer-protected `/api/health/jobs`. Setup and the alert drill are in `docs/maintenance/00-betterstack-setup.md`.
 
 ## The missed-run drill
 

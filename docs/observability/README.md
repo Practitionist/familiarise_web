@@ -20,10 +20,10 @@ This folder explains how the platform learns that something went wrong and how a
 
 ## Ownership and research
 
-| Document                                                                                     | Type        | Read it when                                                                                                                    |
-| -------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| [01-ownership-sentry-betterstack.md](./01-ownership-sentry-betterstack.md)                   | explanation | You need to know which tool answers which question, what is planned for per-item history, and every option that was considered. |
-| [02-research-per-item-history-and-vendors.md](./02-research-per-item-history-and-vendors.md) | reference   | You need the vendor comparison, the warehouse triggers or the log-table inventory behind those decisions.                       |
+| Document                                                                                     | Type        | Read it when                                                                                                                  |
+| -------------------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| [01-ownership-sentry-betterstack.md](./01-ownership-sentry-betterstack.md)                   | explanation | You need to know which tool answers which question, where per-item history lives today, and every option that was considered. |
+| [02-research-per-item-history-and-vendors.md](./02-research-per-item-history-and-vendors.md) | reference   | You need the vendor comparison, the warehouse triggers or the log-table inventory behind those decisions.                     |
 
 ## The Sentry set
 
@@ -40,10 +40,11 @@ This folder explains how the platform learns that something went wrong and how a
 
 ## Related documents elsewhere
 
-| Document                                                                                                   | Why it belongs next to this folder                                                                                      |
-| ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| [Job machinery catalog](../maintenance/11-job-machinery-catalog.md)                                        | What every scheduled job records and reports, the observability gaps, and the specification for the operations console. |
-| [Better Stack setup and the ticker missed-run drill](../maintenance/00-betterstack-setup.md)               | How the "did it run" monitors are configured and proven.                                                                |
-| [2026-10-26 launch sweep decisions](../decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) | ADR-06 (three layers), ADR-08 (ticker escalation), ADR-09 (Sentry quota posture) and ADR-13 (the operations console).   |
+| Document                                                                                                             | Why it belongs next to this folder                                                                                                          |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Job machinery catalog](../maintenance/11-job-machinery-catalog.md)                                                  | What every scheduled job records and reports, the observability gaps, and the specification for the operations console.                     |
+| [Better Stack setup and the ticker missed-run drill](../maintenance/00-betterstack-setup.md)                         | How the "did it run" monitors are configured and proven.                                                                                    |
+| [2026-10-26 launch sweep decisions](../decisions/2026-10-26-launch-sweep-observability-and-money-holds.md)           | ADR-06 (three layers), ADR-08 (ticker escalation), ADR-09 (Sentry quota posture) and ADR-13 (the operations console).                       |
+| [2026-11-01 observability gaps and launch posture](../decisions/2026-11-01-observability-gaps-and-launch-posture.md) | Ingest rejections on the run row, fixed-field events, the freshness alert, the gauges and the Needs attention page, and the launch posture. |
 
 The agent-facing rules for this subsystem are in `.claude/skills/observability/SKILL.md`.

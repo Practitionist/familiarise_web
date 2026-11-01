@@ -19,6 +19,9 @@ BetterStack provides two things:
 - Alert methods: email only (push/SMS/call require paid plan at $29/month)
 - Escalation policies: paid only
 - Status pages: 1 free, additional are billable
+- Logs (Telemetry): 3-day retention on the free plan
+
+The owner decided on 2026-11-01 to stay on the free plan until launch, alerting by email and Slack, and to buy the responder seat (phone and SMS) and the Telemetry Nano bundle (30-day retention, EU) at launch; see [the decision](../decisions/2026-11-01-observability-gaps-and-launch-posture.md) and the [money go-live checklist](../finance/70-operations/07-go-live-checklist.md).
 
 ---
 
@@ -612,7 +615,7 @@ and [monitor update semantics](https://github.com/getsentry/sentry/blob/master/s
 
 ### Per-tick summary line and lease ceiling
 
-When `ENABLE_BETTERSTACK_TELEMETRY` is `true` and the Better Stack source token and ingest URL are set, each tick posts one `cron-tick summary` log line (category `CRON`, level `error` when any target failed, else `info`) carrying the duration, the ok and accepted counts, the held target names and the failed targets with their statuses. It is a second sink that does not depend on Sentry, it is sent once per tick rather than per target, and a send failure never affects the tick. The ticker reads `SENTRY_DSN` and falls back to `NEXT_PUBLIC_SENTRY_DSN`.
+When `ENABLE_BETTERSTACK_TELEMETRY` is `true` and the Better Stack source token and ingest URL are set, each tick posts one `cron-tick summary` log line (category `CRON`, level `error` when any target failed, else `info`) carrying the duration, the ok and accepted counts, the held target names, the failed targets with their statuses and the `oldestPendingAgeS` gauges. It goes through the same emitter as every other event, `emitTelemetryLog` in `lib/observability/betterstack-telemetry.ts`, which validates a fixed set of fields with Zod and never throws. A 402, 403, 5xx, other non-2xx or network failure is logged as `betterstack-ingest-rejected` or `betterstack-ingest-unreachable` with the status and never reaches Sentry; a send never affects the tick. Inside a job run the same outcomes are counted on the run row as `result.telemetry`. The ticker reads `SENTRY_DSN` and falls back to `NEXT_PUBLIC_SENTRY_DSN`.
 
 On Netlify (`onNetlify()` in `lib/runtime-host.ts`: the build-inlined `NETLIFY=true`, or the runtime `SITE_ID` that functions see) `withCronLock` caps every lease at 90 seconds. A synchronous Netlify function stops at 60 seconds, but a background function (such as the recording transfer) may run for 15 minutes, so the cap is safe only because `startLeaseRenewal` refreshes a live run's lease every third of the TTL (30 seconds). The cap therefore never expires a run that is still alive; it only bounds how long a killed run's `RUNNING` row blocks the next ticks, so a killed run recovers within one 90-second lease window. Other hosts keep the per-job TTL. The ticker still files a 409 under `lockHeld`, a distinct field in the tick body and summary line, never under `ok`.
 
@@ -653,7 +656,38 @@ A Better Stack alert must say what an absent value means. The rule: a money queu
 | Notification (bell) retries           | `oldestPendingAgeS.notificationRetries`        | Do not start an incident                  | Covered by the freshness alert.                                                             |
 | Ingest rejections inside job runs     | `SystemJobExecution.result.telemetry.rejected` | Not alerted                               | Postgres evidence for diagnosis; a rejected tick summary already trips the freshness alert. |
 
-The gauges themselves, their thresholds and the alert query for each are in the next section.
+The gauges themselves, their thresholds and the alert query for each are in the next section, [the oldest-pending-age alerts](#owner-step-the-oldest-pending-age-alerts).
+
+### Owner step: the oldest-pending-age alerts
+
+Every tick's `cron-tick summary` event carries `oldestPendingAgeS`, an object of seven gauges. Each gauge is the number of seconds the oldest item in one queue has waited past its due point, and 0 means nothing is waiting. The tick's slot claim (`POST /api/health/jobs/tick`) reads all seven in one SQL statement (`readPendingAges` in `lib/cron/pending-ages.ts`) inside the transaction that already runs the idle probes, and only while the probes' 2-second budget lasts, so the claim's worst case stays 2.75 s and costs one extra round trip of about 62 ms from Netlify Singapore. A gauge fault never changes which targets run; the event then simply has no `oldestPendingAgeS`, which the missing-data policy above handles. There is no new ticker target and no new job.
+
+The thresholds live in one place in code, `PENDING_AGE_LIMITS_MS` in `lib/cron/pending-ages.ts`, which the Needs attention page also uses. Each is set from the cadence of the job that drains the queue in `lib/cron/schedule.ts`.
+
+| Gauge (`oldestPendingAgeS.*`) | Due point                                                                                                                   | Alert when over | Draining job and cadence                                                                                                                            | Why this threshold                                                                                                                                                                                                                    |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refundsOwed`                 | `Payment.refundOwedAt`                                                                                                      | 3,600 s (1 h)   | `retry-auto-refunds`, every 15 min at :10, after a 15-minute grace                                                                                  | A healthy owed refund is first tried within 30 minutes (grace plus one slot). After one failed attempt the marker backs off for 1 h, so a marker older than 1 h has failed at least once or its sweep has stopped.                    |
+| `payoutsStuck`                | `updatedAt` of an `APPROVED` or `PROCESSING` expert or organisation payout                                                  | 14,400 s (4 h)  | `process-payouts` hourly at :00; `reconcile-payout-status` every 2 h (01:40, 03:40 UTC and so on); `handle-stuck-payouts` every 2 h, acting at 24 h | Four hours is four send slots for an approved payout and two status polls for one in flight. Instant transfer modes usually settle within minutes, so this pages long before the 24-hour stuck sweep acts.                            |
+| `dunningNotices`              | `dueDate` for an `ISSUED` invoice not yet marked overdue; the last reminder (or the overdue stamp) plus 7 days for the next | 93,600 s (26 h) | `dunning`, in the 23:30–02:30 UTC window at 00:10, 01:10 and 02:10                                                                                  | The job uses the window's start as its cut-off, so a notice that falls due just after 23:30 UTC waits about 24 h 40 min for the next night's first slot. Twenty-six hours means a whole nightly window has passed without the notice. |
+| `disputesDue`                 | 48 hours before `Dispute.dueBy`, for `NEEDS_RESPONSE` and `WARNING_NEEDS_RESPONSE`                                          | 0 s             | `reconcile-disputes` hourly                                                                                                                         | Evidence is submitted by a person. Any dispute inside 48 hours of its deadline needs one now, which matches the 48-hour line in the job machinery catalog.                                                                            |
+| `webhookEvents`               | `WebhookEvent.receivedAt` of an unprocessed event younger than the sweep's 7-day give-up                                    | 3,600 s (1 h)   | `sweep-stuck-webhook-events`, every 15 min, re-driving events stale for 6 minutes                                                                   | Four sweep slots, and the sweep's own alert age (`ALERT_AGE_HOURS = 1`).                                                                                                                                                              |
+| `emailRetries`                | `FailedEmail.nextRetryAt` (or `createdAt`) of a `PENDING` or `RETRY` row                                                    | 3,600 s (1 h)   | `retry-failed-emails`, every 15 min at :05                                                                                                          | Four relay slots past the row's own retry time.                                                                                                                                                                                       |
+| `notificationRetries`         | The later of `nextRetryAt` (or `createdAt`) and `notBefore`, for a `PENDING` or `RETRY` outbox row                          | 3,600 s (1 h)   | `drain-notification-outbox`, every 10 min at :05                                                                                                    | Six relay slots past the row's own retry time.                                                                                                                                                                                        |
+
+Create one chart and one Threshold alert per gauge on the `Jobs` dashboard. The query is the same for each; replace `refundsOwed` with the gauge name:
+
+```sql
+SELECT {{time}} AS time,
+  max(JSONExtract(raw, 'oldestPendingAgeS', 'refundsOwed', 'Nullable(Int64)')) AS value
+FROM {{source}}
+WHERE time BETWEEN {{start_time}} AND {{end_time}}
+  AND JSONExtract(raw, 'message', 'Nullable(String)') = 'cron-tick summary'
+GROUP BY time
+```
+
+Name each alert `Backlog: <gauge>`, trigger it when `value` is above the threshold in the table, run it every 5 minutes on data from the last 15 minutes, and set **If data is missing** from the missing-data policy table above. Route every alert to email and the ops Slack channel now. At launch, once the responder seat is bought, add phone and SMS to the four money gauges (`refundsOwed`, `payoutsStuck`, `dunningNotices`, `disputesDue`) through an escalation policy; the other three stay on email and Slack.
+
+On the shared development and production database the money gauges are not zero today: seeded and QA rows (an owed refund about 15 days old, payouts approved or in flight for days, two disputes past their deadline) would fire the money alerts as soon as they are created. Clear or close those rows, or create the alerts muted until launch. The **Needs attention** page in the console lists the same items, plus `FAILED` payouts, which need a person but are not part of `payoutsStuck` (that gauge covers only `APPROVED` and `PROCESSING` payouts).
 
 ### Failure escalation
 

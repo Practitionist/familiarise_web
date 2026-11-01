@@ -219,7 +219,7 @@ The owner took these decisions on 2026-10-26 while sweeping the launch-blocking 
   - **Job health table.** Each job shows its last real outcome, its age, its backlog, its SLO tier, Run and Pause. **Drain is dropped**: Run now plus Pause and Resume cover the need. The p50 and p95 durations move to a collapsed Performance tab.
   - **Sub-tabs.** The console uses sub-tabs, in the same pattern as the support inbox: Overview (the inbox), Jobs, Runs, Integrity and Performance. This replaces the "four levels" navigation above for Phase 2; the Run detail page arrives in Phase 3.
   - **Phase 3 (DDL)** (superseded 2026-11-01, not built) was unchanged here: `SystemJobRunItem` and Run detail give the attempt history for each item. Phase 1 already records the outcomes, summaries, item counts and run ids that these views read.
-- **Superseded 2026-11-01:** the per-item run log (`SystemJobRunItem`) and Phase 3 DDL are rejected. Per-item history goes to batched Better Stack events instead; see the [2026-11-01 observability ownership decision](2026-11-01-observability-ownership.md).
+- **Superseded 2026-11-01:** the per-item run log (`SystemJobRunItem`) and Phase 3 DDL are rejected. Per-item history goes to batched Better Stack events instead; see the [2026-11-01 observability ownership decision](2026-11-01-observability-ownership.md). Until traction it is `SystemJobExecution.result.failures`, and the Needs attention inbox is built read-only ([2026-11-01 gaps decision](2026-11-01-observability-gaps-and-launch-posture.md)).
 
 ## References
 
