@@ -59,6 +59,8 @@ let clock = 0;
 let starts: { model: string; at: number }[] = [];
 let settings: unknown[] = [];
 let txOptions: unknown;
+let gaugeRows: () => unknown[] = () => [];
+let gaugeReads = 0;
 
 /** A fake transaction whose every `findFirst` finds nothing after `costOf(model)` ms of fake time. */
 function fakeDb(costOf: (model: string) => number | Error) {
@@ -67,7 +69,11 @@ function fakeDb(costOf: (model: string) => number | Error) {
     {
       get: (_target, model: string) => {
         if (model === "$queryRaw") {
-          return async (_sql: TemplateStringsArray, ...values: unknown[]) => {
+          return async (sql: unknown, ...values: unknown[]) => {
+            if (!Array.isArray(sql)) {
+              gaugeReads += 1;
+              return gaugeRows();
+            }
             settings.push(...values);
             return [];
           };
@@ -100,6 +106,8 @@ beforeEach(() => {
   starts = [];
   settings = [];
   txOptions = undefined;
+  gaugeRows = () => [];
+  gaugeReads = 0;
   jest.spyOn(Date, "now").mockImplementation(() => clock);
   jest.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -160,5 +168,54 @@ describe("idle probe deadline", () => {
 
     expect(idle).toEqual(due);
     expect(clock).toBeLessThan(IDLE_PROBE_BUDGET_MS);
+  });
+});
+
+describe("pending-age gauges", () => {
+  const ages = {
+    refundsOwed: 4_000,
+    payoutsStuck: 0,
+    dunningNotices: 0,
+    disputesDue: 0,
+    webhookEvents: 120,
+    emailRetries: 0,
+    notificationRetries: 0,
+  };
+
+  it("returns the seven gauges after every probe finishes", async () => {
+    gaugeRows = () => [ages];
+    const { idle, pendingAges } = await probeTick(
+      due,
+      fakeDb(() => 10) as never,
+      new Date(),
+    );
+
+    expect(idle).toEqual(due);
+    expect(pendingAges).toEqual(ages);
+  });
+
+  it("keeps the idle answers and reports no gauges when the gauge read fails", async () => {
+    gaugeRows = () => {
+      throw new Error("gauge query failed");
+    };
+    const { idle, pendingAges } = await probeTick(
+      due,
+      fakeDb(() => 10) as never,
+      new Date(),
+    );
+
+    expect(idle).toEqual(due);
+    expect(pendingAges).toBeNull();
+  });
+
+  it("skips the gauge read when a probe failed", async () => {
+    gaugeRows = () => [ages];
+    const db = fakeDb((model) =>
+      model === "appointmentOccurrence" ? new Error("probe failed") : 10,
+    );
+    const { pendingAges } = await probeTick(due, db as never, new Date());
+
+    expect(pendingAges).toBeNull();
+    expect(gaugeReads).toBe(0);
   });
 });
