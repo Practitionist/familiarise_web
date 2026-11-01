@@ -253,6 +253,8 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 
 - [observability/README.md](./observability/README.md) - The index of this folder, with a reading order by question
 - [00-system-design.md](./observability/00-system-design.md) - The whole subsystem: signal sources and sinks, the three questions and their layers, quota rules, ticker failure escalation, and the planned operations console
+- [01-ownership-sentry-betterstack.md](./observability/01-ownership-sentry-betterstack.md) - Which tool answers which question (Better Stack, Sentry, Postgres, the console), the planned per-item history and backlog alerts, and every option considered
+- [02-research-per-item-history-and-vendors.md](./observability/02-research-per-item-history-and-vendors.md) - The vendor comparison, the warehouse triggers and the log-table inventory behind the ownership decisions
 - [three-layers.md](./observability/three-layers.md) - Sentry for failures, Better Stack for jobs that did not run, and the entity trace and job run metrics for what happened to one payment, with a worked missing-refund trace
 - [sentry/01-setup-and-configuration.md](./observability/sentry/01-setup-and-configuration.md) - The project, the two DSN variables and who reads each, the SDK files and knobs, the source-map token history
 - [sentry/02-conventions.md](./observability/sentry/02-conventions.md) - `expected:true` for modelled outcomes, findings as messages, the tags that carry meaning, SystemEvent versus Sentry, what an issue status means

@@ -18,6 +18,13 @@ This folder explains how the platform learns that something went wrong and how a
 | [00-system-design.md](./00-system-design.md) | explanation | You need the whole picture: signal sources and sinks, the three layers, quota rules and ticker failure escalation.      |
 | [three-layers.md](./three-layers.md)         | explanation | You need to trace one payment or booking, or read the per-job run metrics. The page is not on `dev` until #2422 merges. |
 
+## Ownership and research
+
+| Document                                                                                     | Type        | Read it when                                                                                                                    |
+| -------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| [01-ownership-sentry-betterstack.md](./01-ownership-sentry-betterstack.md)                   | explanation | You need to know which tool answers which question, what is planned for per-item history, and every option that was considered. |
+| [02-research-per-item-history-and-vendors.md](./02-research-per-item-history-and-vendors.md) | reference   | You need the vendor comparison, the warehouse triggers or the log-table inventory behind those decisions.                       |
+
 ## The Sentry set
 
 | Document                                                                                           | Type        | Read it when                                                                                              |
