@@ -92,13 +92,20 @@ export const PAID_PARTICIPANT_STATUSES: ParticipantStatus[] = [
   "ATTENDED",
 ];
 
-/** A seat whose payment has landed: what entering a group-event room requires. */
+/**
+ * A seat whose payment has landed: what entering a group-event room requires.
+ * A HELD seat whose Payment already SUCCEEDED counts too: a capture that
+ * crashed before confirmation leaves exactly that until the sweep re-drives it.
+ */
 export function paidParticipant(
   userId?: string,
 ): Prisma.AppointmentParticipantWhereInput {
   return {
     ...(userId ? { userId } : {}),
-    status: { in: PAID_PARTICIPANT_STATUSES },
+    OR: [
+      { status: { in: PAID_PARTICIPANT_STATUSES } },
+      { status: "HELD", payment: { is: { paymentStatus: "SUCCEEDED" } } },
+    ],
   };
 }
 

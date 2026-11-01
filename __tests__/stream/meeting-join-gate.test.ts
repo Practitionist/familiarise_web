@@ -682,8 +682,15 @@ describe("resolveMeetingAccess still admits a live session", () => {
         where: expect.objectContaining({
           appointmentId: "appt-1",
           userId: "user_1",
-          // A HELD seat is an uncaptured payment; it must not open the room.
-          status: { in: ["CONFIRMED", "ATTENDED"] },
+          // A HELD seat is an uncaptured payment and must not open the room,
+          // unless its payment already SUCCEEDED (a capture not yet confirmed).
+          OR: [
+            { status: { in: ["CONFIRMED", "ATTENDED"] } },
+            {
+              status: "HELD",
+              payment: { is: { paymentStatus: "SUCCEEDED" } },
+            },
+          ],
         }),
       }),
     );
