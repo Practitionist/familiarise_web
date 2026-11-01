@@ -245,7 +245,7 @@ Each cron runs as a GitHub Action (`.github/workflows/*.yml`) calling a thin shi
 - `databreach-deadline-alerts` runs the 72-hour DPDP breach-reporting clock hourly.
 - `msme-payment-alerts` warns finance before the 15/45-day deadline a default would lock.
 
-Audit-log retention (7 years for INVOICE/PAYOUT/WALLET/CONTRACT/CONSENT categories, 2 years otherwise) is enforced by `prune-audit-logs` (`jobs/cleanup/`).
+Audit-log retention (8 years for INVOICE/PAYOUT/WALLET/CONTRACT/CONSENT categories, 2 years otherwise) is enforced by `prune-audit-logs` (`scripts/cleanup/prune-audit-logs.ts`); see the [retention table](../../compliance/02-dpdp-and-privacy.md#retention-windows).
 
 ## 6. Other rails
 

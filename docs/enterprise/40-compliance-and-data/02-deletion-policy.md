@@ -240,7 +240,7 @@ are not the same thing:
 - **Retention sweeps** are time-based deletes of rows that have aged
   past their statutory window:
   - `prune-audit-logs` (`jobs/cleanup/`, also `POST /api/cleanup/prune-audit-logs`)
-    deletes `OrgAuditLog` rows older than 7y (INVOICE / PAYOUT / WALLET /
+    deletes `OrgAuditLog` rows older than 8y (INVOICE / PAYOUT / WALLET /
     CONTRACT / CONSENT) or 2y (everything else).
   - `consent-retention-sweeper` (`jobs/compliance/`, GH-Actions only —
     no manual HTTP trigger) purges `ConsentArtifact` rows past

@@ -83,7 +83,7 @@ A handler answers a `DeferSignal` instead of failing when the row it needs has n
 4. **A `permanent:` or `gave up:` row you believe is valid.** The sweep will not touch it again. Do not edit the row by hand: a manual `UPDATE` of `processed` or `claimedAt` breaks the claim fencing described above. Find the money effect it should have had (a refund, a payment, a payout status) and drive that through its own reconciler or door: `reconcile-refunds`, `reconcile-disputes`, `reconcile-payout-status` or the admin refund door.
 5. **A signature that stopped verifying.** If events are being rejected after a secret rotation, fix the secret, not the verifier: see the rotation notes in [the Razorpay gateway page](../10-money-in/04-razorpay-gateway-and-currency.md). Never loosen signature verification to unblock a row.
 
-Re-sending an event from the Razorpay dashboard is safe within 30 days of its first delivery, because the receiver dedupes on `eventId` through the `WebhookEvent` row: an already processed event is acknowledged and ignored. After `archive-webhook-events` deletes that row at 30 days, a re-sent event is dispatched again, and only the handlers' own idempotency protects it.
+Re-sending an event from the Razorpay dashboard is safe within 365 days of its first delivery, because the receiver dedupes on `eventId` through the `WebhookEvent` row: an already processed event is acknowledged and ignored. After `archive-webhook-events` deletes that row at 365 days, a re-sent event is dispatched again, and only the handlers' own idempotency protects it.
 
 ## Step 4: verify
 
@@ -95,7 +95,7 @@ The Razorpay webhook route answers 503 when the database health probe (`isDbHeal
 
 ## Retention
 
-The weekly `archive-webhook-events` job (`scripts/cleanup/archive-webhook-events.ts`) deletes clean processed `WebhookEvent` rows after 30 days, terminal `permanent:` and `gave up:` rows after 30 days, other failed rows after 90 days, `EmailEvent` rows after 90 days, and finished `OutboundWebhookDelivery` rows after 30 days. A webhook older than that cannot be replayed from our table, only reconstructed from the gateway.
+The weekly `archive-webhook-events` job (`scripts/cleanup/archive-webhook-events.ts`) deletes every `WebhookEvent` row after 365 days whatever its outcome (processed, terminal `permanent:` and `gave up:`, or failed), because the DPDP Rules 2025 keep logs of processing for at least a year, and finished `OutboundWebhookDelivery` rows after 30 days. `EmailEvent` is pruned elsewhere, by `prune-system-job-executions` at 365 days. A webhook older than that cannot be replayed from our table, only reconstructed from the gateway.
 
 ## Where in code
 

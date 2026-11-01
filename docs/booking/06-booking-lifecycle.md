@@ -90,7 +90,7 @@ flowchart LR
 | **Payment**              | Consultee completes payment in the gateway's UI (Razorpay modal or Stripe form). This happens entirely on the client side.                                                                                               | None (gateway-side only)                                                                                                           | Payment gateway client-side SDK                      |
 | **Webhook Confirms**     | Gateway sends a webhook. The handler runs in two phases: Phase 1 (transaction) marks payment SUCCEEDED and confirms slots; Phase 2 (post-transaction) creates earnings, invoice, and sends notifications.                | Updates: Payment status to SUCCEEDED, AppointmentOccurrence.isTentative to false, event record status. Creates: Earnings, Invoice. | `lib/payments/webhooks/handlers.ts`                  |
 | **Session**              | Consultant and consultee meet for the scheduled session(s).                                                                                                                                                              | None (managed by video/meeting integration)                                                                                        | External integrations                                |
-| **Auto-Complete**        | Cron job runs hourly. Marks sessions as COMPLETED one hour after their end time. For trials, also creates an ActivityLog entry and sets completedAt.                                                                     | Updates: event record status to COMPLETED                                                                                          | `scripts/appointments/auto-complete-appointments.ts` |
+| **Auto-Complete**        | Cron job runs hourly. Marks sessions as COMPLETED one hour after their end time. For trials, also sets completedAt.                                                                                                      | Updates: event record status to COMPLETED                                                                                          | `scripts/appointments/auto-complete-appointments.ts` |
 
 ---
 
@@ -655,7 +655,7 @@ A free trial bypasses the checkout and payment pipeline entirely, and a paid tri
 1. The consultee requests a trial (creates a PENDING Trial record)
 2. The consultant approves and schedules a specific time slot (PENDING --> SCHEDULED)
 3. The session takes place
-4. The cron auto-completes it (SCHEDULED --> COMPLETED, sets `completedAt`, creates ActivityLog)
+4. The cron auto-completes it (SCHEDULED --> COMPLETED, sets `completedAt`)
 5. Optionally, the consultee later purchases a subscription, and the trial is marked CONVERTED
 
 #### Sequence Diagram
@@ -681,7 +681,6 @@ sequenceDiagram
 
     CRON->>DB: Find SCHEDULED trials where slot ended > 1hr ago
     CRON->>DB: UPDATE Trial status = COMPLETED, completedAt = now()
-    CRON->>DB: CREATE ActivityLog (activityType=TRIAL_COMPLETED)
     CRON->>CE: Novu: trial-session-completed
     CRON->>CT: Novu: trial-session-completed
 
@@ -700,15 +699,13 @@ The `completeTrials()` function in the auto-complete cron does more than other e
 1. Finds SCHEDULED trials where all slots ended > 1 hour ago
 2. Updates status to COMPLETED
 3. Sets `completedAt` timestamp (used for analytics -- how long ago did the trial complete?)
-4. Creates an `ActivityLog` entry with type `TRIAL_COMPLETED` (used for the consultant's activity feed)
 
-No other event type creates an ActivityLog entry during auto-completion. The reason trials are special is that the conversion funnel tracking depends on knowing exactly when the trial completed.
+Trials get this treatment because the conversion funnel tracking depends on knowing exactly when the trial completed. The `ActivityLog` table that once held a per-consultant activity feed was dropped because nothing read it; the booking's transitions are recorded in `BookingStatusHistory`.
 
 #### Source References
 
 - `completeTrials()`: `scripts/appointments/auto-complete-appointments.ts`
 - Trial conversion in subscription checkout: `linkCompletedTrialToSubscription()` in `lib/payments/checkout/handlers/subscription.ts`
-- ActivityLog creation: `scripts/appointments/auto-complete-appointments.ts`
 
 ---
 
@@ -949,7 +946,7 @@ stateDiagram-v2
     PENDING --> REJECTED: Consultant declines the trial request
     PENDING --> CANCELLED: Consultee withdraws their request
 
-    SCHEDULED --> COMPLETED: Cron runs after session ended + 1hr buffer (sets completedAt, creates ActivityLog)
+    SCHEDULED --> COMPLETED: Cron runs after session ended + 1hr buffer (sets completedAt)
     SCHEDULED --> CANCELLED: Either party cancels before session
 
     COMPLETED --> CONVERTED: Consultee purchases subscription from same consultant
@@ -1202,13 +1199,13 @@ Background jobs run on schedules via GitHub Actions and are also exposed as API 
 
 The auto-complete cron (`autoCompleteAppointments()`) runs five separate queries, one for each event type:
 
-| Function                  | Finds                                                                                          | Transition          | Extra Actions                                               |
-| ------------------------- | ---------------------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------- |
-| `completeWebinars()`      | SCHEDULED or IN_PROGRESS webinars where every slot's endsAt < bufferTime                       | Status -> COMPLETED | None                                                        |
-| `completeClasses()`       | SCHEDULED or IN_PROGRESS classes where every appointment's every slot's endsAt < bufferTime    | Status -> COMPLETED | None                                                        |
-| `completeConsultations()` | APPROVED or SCHEDULED consultations where every slot's endsAt < bufferTime                     | status -> COMPLETED | None                                                        |
-| `completeSubscriptions()` | APPROVED or SCHEDULED subscriptions where every appointment's every slot's endsAt < bufferTime | status -> COMPLETED | None                                                        |
-| `completeTrials()`        | SCHEDULED trials where every slot's endsAt < bufferTime                                        | status -> COMPLETED | Sets `completedAt`, creates `ActivityLog` (TRIAL_COMPLETED) |
+| Function                  | Finds                                                                                          | Transition          | Extra Actions      |
+| ------------------------- | ---------------------------------------------------------------------------------------------- | ------------------- | ------------------ |
+| `completeWebinars()`      | SCHEDULED or IN_PROGRESS webinars where every slot's endsAt < bufferTime                       | Status -> COMPLETED | None               |
+| `completeClasses()`       | SCHEDULED or IN_PROGRESS classes where every appointment's every slot's endsAt < bufferTime    | Status -> COMPLETED | None               |
+| `completeConsultations()` | APPROVED or SCHEDULED consultations where every slot's endsAt < bufferTime                     | status -> COMPLETED | None               |
+| `completeSubscriptions()` | APPROVED or SCHEDULED subscriptions where every appointment's every slot's endsAt < bufferTime | status -> COMPLETED | None               |
+| `completeTrials()`        | SCHEDULED trials where every slot's endsAt < bufferTime                                        | status -> COMPLETED | Sets `completedAt` |
 
 **Buffer time**: 1 hour. The reason for the buffer is to give participants time for post-session activities (filling feedback forms, downloading materials) before the system considers the session complete. The `COMPLETION_BUFFER_HOURS` constant is defined at the top of the auto-complete script.
 

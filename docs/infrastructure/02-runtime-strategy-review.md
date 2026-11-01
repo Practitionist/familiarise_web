@@ -505,7 +505,7 @@ The sections below are the reviewer's own view and are not adopted.
 - **Moving compute to Mumbai simplifies things.** It reduces cross-border processing. The web tier currently processes personal data in Singapore on Netlify, a US company. It also simplifies the processor inventory (RoPA).
 - **Payment data.** RBI's storage directive binds the payment system operator (Razorpay), which already holds payment data in India. Moving compute does not change that.
 - **Vendors that stay abroad either way.** Sentry, Stream, Resend, Novu and Upstash. None of the options changes them, except that QStash, Inngest and Trigger.dev would each add one more foreign processor.
-- **CERT-In.** The 180-day in-India log retention noted in the compliance skill is easier with a VM whose logs you control.
+- **CERT-In.** CERT-In requires 180 days of ICT logs. The logs may be stored outside India if they can be produced to CERT-In in reasonable time (FAQ question 35), so location does not force a move; a VM whose logs you control still makes producing them easier.
 
 ---
 
