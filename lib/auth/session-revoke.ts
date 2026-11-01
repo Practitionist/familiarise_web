@@ -49,15 +49,6 @@ export async function revokeAllUserSessions(
   return end(db, { userId });
 }
 
-/** End every session for several users (an org-wide SSO enforcement flip). */
-export async function revokeSessionsForUsers(
-  db: PrismaLike,
-  userIds: readonly string[],
-): Promise<RevokeResult> {
-  if (userIds.length === 0) return { revoked: 0, ended: [] };
-  return end(db, { userId: { in: [...userIds] } });
-}
-
 /**
  * End the session a browser's cookie carried when that browser has just been
  * issued a different one, so the overwritten row does not linger as a device.

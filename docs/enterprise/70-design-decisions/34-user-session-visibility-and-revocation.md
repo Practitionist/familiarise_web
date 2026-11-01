@@ -130,13 +130,13 @@ which looks the same as "signed out". The app separates the two.
 
 Every session delete goes through `lib/auth/session-revoke.ts`:
 
-| Function                   | Caller                                                       |
-| -------------------------- | ------------------------------------------------------------ |
-| `revokeAllUserSessions`    | Ban and suspend, account deletion, erasure, 2FA enrolment    |
-| `revokeUserSessionsExcept` | "Sign out other devices"                                     |
-| `revokeSessionById`        | Device list, staff revoke, the lifetime hook on refresh      |
-| `revokeSessionsForUsers`   | The sweep when an org turns SSO enforcement on               |
-| `revokeSessionByToken`     | `supersededSessionRevocation`: signing in over a live cookie |
+| Function                    | Caller                                                       |
+| --------------------------- | ------------------------------------------------------------ |
+| `revokeAllUserSessions`     | Ban and suspend, account deletion, erasure, 2FA enrolment    |
+| `revokeUserSessionsExcept`  | "Sign out other devices"                                     |
+| `revokeSessionById`         | Device list, staff revoke, the lifetime hook on refresh      |
+| `revokeEmailDomainSessions` | The SSO enforcement sweeps in `lib/sso/session-sweeps.ts`    |
+| `revokeSessionByToken`      | `supersededSessionRevocation`: signing in over a live cookie |
 
 - Each returns `{ revoked, ended }`. The caller stamps `ended` into the CERT-In
   access log with `stampSessionEnds` once its write commits, so a log failure
