@@ -15,11 +15,17 @@ import type { BackofficeSurface } from "../../lib/auth/backoffice-permissions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { deleteBoundedPage } from "@/lib/cron/run-deadline";
 
-const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 const MONEY_AUDIT_YEARS = 8;
 const OTHER_AUDIT_YEARS = 2;
 const BOOKING_HISTORY_YEARS = 3;
 const LEDGER_REPORT_YEARS = 2;
+
+/** Calendar years in UTC, so a statutory minimum never loses its leap days. */
+function yearsBefore(now: number, years: number): Date {
+  const cutoff = new Date(now);
+  cutoff.setUTCFullYear(cutoff.getUTCFullYear() - years);
+  return cutoff;
+}
 
 const KEEP_8Y_CATEGORIES: OrgAuditCategory[] = [
   "INVOICE",
@@ -218,8 +224,8 @@ async function pruneAuditLogsUnlocked(
   const limit = auditLimit.parse(requestedLimit);
   const outOfTime = () => Date.now() >= startedAt + START_BUDGET_MS;
   const now = Date.now();
-  const cutoff8y = new Date(now - MONEY_AUDIT_YEARS * YEAR_MS);
-  const cutoff2y = new Date(now - OTHER_AUDIT_YEARS * YEAR_MS);
+  const cutoff8y = yearsBefore(now, MONEY_AUDIT_YEARS);
+  const cutoff2y = yearsBefore(now, OTHER_AUDIT_YEARS);
   const result: AuditPruneResult = {
     scanned: 0,
     deleted8y: 0,
@@ -306,7 +312,7 @@ async function pruneAuditLogsUnlocked(
   );
   result.bookingHistoryDeleted = await page(
     "booking status history",
-    bookingHistoryPruneWhere(new Date(now - BOOKING_HISTORY_YEARS * YEAR_MS)),
+    bookingHistoryPruneWhere(yearsBefore(now, BOOKING_HISTORY_YEARS)),
     (w, take) =>
       prisma.bookingStatusHistory.findMany({
         where: w,
@@ -324,7 +330,7 @@ async function pruneAuditLogsUnlocked(
   result.ledgerReportsDeleted = await page(
     "ledger reconciliation report",
     {
-      runAt: { lt: new Date(now - LEDGER_REPORT_YEARS * YEAR_MS) },
+      runAt: { lt: yearsBefore(now, LEDGER_REPORT_YEARS) },
     } satisfies Prisma.LedgerReconciliationReportWhereInput,
     (w, take) =>
       prisma.ledgerReconciliationReport.findMany({

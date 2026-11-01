@@ -342,7 +342,7 @@ it("bounds the global audit cohort and commits each org's summary with its delet
     id: { in: ["a"] },
     organizationId: "org-a",
     category: { in: ["INVOICE", "PAYOUT", "WALLET", "CONTRACT", "CONSENT"] },
-    createdAt: { lt: new Date(NOW.getTime() - 8 * 365 * DAY) },
+    createdAt: { lt: new Date("2018-10-23T12:00:00Z") },
   });
 });
 
@@ -402,13 +402,13 @@ it("keeps money-surface console actions eight years and the rest two", async () 
   );
   expect(money).toEqual({
     surface: { notIn: expect.not.arrayContaining(["refunds.manage"]) },
-    createdAt: { lt: new Date(NOW.getTime() - 8 * 365 * DAY) },
+    createdAt: { lt: new Date("2018-10-23T12:00:00Z") },
   });
   expect(other.surface.in).toEqual(
     expect.arrayContaining(["systemJobs.manage", "users.read"]),
   );
   expect(other.surface.in).not.toContain("payments.manage");
   expect(other.createdAt).toEqual({
-    lt: new Date(NOW.getTime() - 2 * 365 * DAY),
+    lt: new Date("2024-10-23T12:00:00Z"),
   });
 });

@@ -28,6 +28,24 @@
   "enumLabelsInDbNotInSchema": [],
   "destructiveStatementsAllowed": [
     {
+      "statement": "ALTER TABLE \"ActivityLog\" DROP CONSTRAINT \"ActivityLog_consultantProfileId_fkey\"",
+      "reason": "Write-only table dropped with its writers; nothing on dev reads or writes it. Push once the release carrying the drop is on prod, since prod's writer still reports each failed insert to Sentry.",
+      "trackedBy": "#2496",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP TABLE \"ActivityLog\"",
+      "reason": "Write-only table dropped with its writers; nothing on dev reads or writes it. Push once the release carrying the drop is on prod, since prod's writer still reports each failed insert to Sentry.",
+      "trackedBy": "#2496",
+      "expires": "2026-12-31"
+    },
+    {
+      "statement": "DROP TYPE \"ActivityType\"",
+      "reason": "Write-only table dropped with its writers; nothing on dev reads or writes it. Push once the release carrying the drop is on prod, since prod's writer still reports each failed insert to Sentry.",
+      "trackedBy": "#2496",
+      "expires": "2026-12-31"
+    },
+    {
       "statement": "DROP INDEX \"AppointmentDocument_appointmentId_deletedAt_rootDocumentId_uplo\"",
       "reason": "Index the schema no longer declares, left by an earlier push. Perf-only; the schema's own index covers the query.",
       "trackedBy": "#2270",
