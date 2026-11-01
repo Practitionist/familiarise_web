@@ -682,6 +682,21 @@ describe("resolveMeetingAccess still admits a live session", () => {
         where: expect.objectContaining({
           appointmentId: "appt-1",
           userId: "user_1",
+          // A HELD seat is an uncaptured payment; it must not open the room.
+          status: { in: ["CONFIRMED", "ATTENDED"] },
+        }),
+      }),
+    );
+  });
+
+  it("keeps the live-seat probe for a 1:1, which has its own payment gate", async () => {
+    seedAccess(consultation("APPROVED"));
+
+    await resolveMeetingAccess("slot-abc", "user_1");
+
+    expect(db.appointmentParticipant.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
         }),
       }),

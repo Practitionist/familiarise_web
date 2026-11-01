@@ -86,6 +86,22 @@ export const RELEASED_PARTICIPANT_STATUSES: ParticipantStatus[] = [
   "REFUNDED",
 ];
 
+/** Statuses whose payment has landed; a HELD row only holds a place on an uncaptured payment. */
+export const PAID_PARTICIPANT_STATUSES: ParticipantStatus[] = [
+  "CONFIRMED",
+  "ATTENDED",
+];
+
+/** A seat whose payment has landed: what entering a group-event room requires. */
+export function paidParticipant(
+  userId?: string,
+): Prisma.AppointmentParticipantWhereInput {
+  return {
+    ...(userId ? { userId } : {}),
+    status: { in: PAID_PARTICIPANT_STATUSES },
+  };
+}
+
 /** The roster predicate: `participants: { some: liveParticipant(userId) }`. */
 export function liveParticipant(
   userId?: string,
