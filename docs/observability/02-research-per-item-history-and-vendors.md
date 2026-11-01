@@ -13,6 +13,8 @@ Date 2026-11-01. Research only; no repo changes. Labels: **VERIFIED** (official 
 
 ## 0. Verdict in six lines
 
+> **Amended 2026-11-01.** The owner kept this verdict as the target but deferred item 2 until traction: while Better Stack stays on its free three-day plan, per-item history is the run row's `SystemJobExecution.result.failures` (at most 50 ids per run, 90-day prune). Items 4 and 5 are built. See [observability gaps and launch posture](../decisions/2026-11-01-observability-gaps-and-launch-posture.md).
+
 1. No product gives "every attempt on payment X" without us emitting one event per item. Every candidate needs us to emit it; the question is only where it lands. Only the engine vendors (Inngest, Trigger.dev, Vercel Workflows) give per-run history for free, and only by adopting the engine, which the owner has ruled out for now.
 2. Put per-item history in **Better Stack Telemetry as structured log events** (the pipe already exists in `lib/observability/betterstack-telemetry.ts`). It is SQL-queryable, alertable, OTLP-capable, and TTL is the vendor's problem, not ours. No Postgres table, no warehouse.
 3. Keep **Sentry** for what it is good at: grouped errors (escalation-only), the `cron-tick` check-in monitor, and sampled traces. Do not send per-item events to Sentry (5k error quota; span sampling makes counts extrapolated, so a rare entity id may be missing).

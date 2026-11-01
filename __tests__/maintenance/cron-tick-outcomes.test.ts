@@ -244,7 +244,7 @@ describe("ticker execution outcomes", () => {
     });
 
     it("logs the status of a rejected summary without the token", async () => {
-      const error = jest.spyOn(console, "error").mockImplementation(() => {});
+      const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
       const fetchImpl = jest.fn(async (input: string | URL | Request) =>
         String(input).includes("betterstack.test")
           ? new Response("bad token", { status: 401 })
@@ -255,10 +255,14 @@ describe("ticker execution outcomes", () => {
             }),
       );
       await load(fetchImpl).default(new Request("https://tick.test"));
-      expect(error).toHaveBeenCalledWith(
-        JSON.stringify({ event: "betterstack-summary-rejected", status: 401 }),
+      expect(warn).toHaveBeenCalledWith(
+        JSON.stringify({
+          event: "betterstack-ingest-rejected",
+          status: 401,
+          message: "cron-tick summary",
+        }),
       );
-      expect(JSON.stringify(error.mock.calls)).not.toContain("tok");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("tok");
     });
 
     it("emits an error summary when CRON_SECRET is missing", async () => {

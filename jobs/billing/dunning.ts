@@ -29,10 +29,11 @@ import {
   applyOrgInvoiceCapture,
   invoiceOutstandingPaise,
 } from "@/lib/payments/billing/org-invoice-settlement";
-
-// #779 — 7-day cadence between escalations, capped at 3 reminders.
-const REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
-const MAX_REMINDERS = 3;
+import {
+  DUNNABLE_ORG_STATUSES,
+  MAX_REMINDERS,
+  REMINDER_INTERVAL_MS,
+} from "@/lib/payments/billing/dunning-policy";
 
 // #812 — Stage 3 (config-gated). After the 3rd reminder, if the invoice is
 // still OVERDUE this long past being marked overdue, suspend the org's
@@ -44,14 +45,6 @@ const SUSPEND_ENABLED = ENABLE_DUNNING_SUSPEND;
 const SUSPEND_GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7d past the final reminder
 // Turning suspension on must not suspend the whole OVERDUE backlog in one window.
 const MAX_SUSPENSIONS_PER_RUN = 20;
-
-// #779 — only dun orgs that are still reachable. DEACTIVATED orgs are torn
-// down; their invoices don't get chased.
-const DUNNABLE_ORG_STATUSES = [
-  "ACTIVE",
-  "PENDING_VERIFICATION",
-  "SUSPENDED",
-] as const;
 
 interface DunningStats {
   scannedStage1: number;

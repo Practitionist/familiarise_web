@@ -1,5 +1,7 @@
 import type { Db } from "@/lib/prisma";
 import { CLEANUP_JOB_BUILDERS } from "@/lib/cron/cleanup-registry";
+import { readPendingAges } from "@/lib/cron/pending-ages";
+import type { PendingAges } from "@/lib/observability/betterstack-telemetry";
 
 /** No probe statement starts after this budget; a target the budget never reached is dispatched. */
 export const IDLE_PROBE_BUDGET_MS = 2_000;
@@ -10,18 +12,27 @@ export const IDLE_PROBE_BUDGET_MS = 2_000;
  */
 export const IDLE_PROBE_STATEMENT_TIMEOUT_MS = 750;
 
+export interface TickProbe {
+  /** Due targets whose probe found no work. */
+  idle: string[];
+  /** The queue gauges, or null when the budget ran out or a statement failed. */
+  pendingAges: PendingAges | null;
+}
+
 /**
- * The due targets whose idle probe found no work. Probes run one at a time in one
- * transaction whose `SET LOCAL statement_timeout` holds through the transaction
- * pooler. A probe that throws, a cancelled statement or an always-run job keeps
- * its target; a failed statement aborts the transaction, so probing stops there.
+ * The due targets whose idle probe found no work, then the queue gauges. Probes
+ * run one at a time in one transaction whose `SET LOCAL statement_timeout` holds
+ * through the transaction pooler. A probe that throws, a cancelled statement or
+ * an always-run job keeps its target; a failed statement aborts the transaction,
+ * so probing stops there. The gauges start only inside the budget, after the
+ * probes, so a gauge fault never changes which targets are dispatched.
  */
-export async function idleTargets(
+export async function probeTick(
   due: readonly string[],
   db: Db,
   now = new Date(),
   deadline = Date.now() + IDLE_PROBE_BUDGET_MS,
-): Promise<string[]> {
+): Promise<TickProbe> {
   const outOfTime = () => Date.now() >= deadline;
   const probes = due.flatMap((name) => {
     const probe = Object.hasOwn(CLEANUP_JOB_BUILDERS, name)
@@ -31,9 +42,9 @@ export async function idleTargets(
       ? [{ name, hasWork: probe.hasWork }]
       : [];
   });
-  const idle: string[] = [];
+  const result: TickProbe = { idle: [], pendingAges: null };
   const failed: string[] = [];
-  if (probes.length === 0 || outOfTime()) return idle;
+  if (outOfTime()) return result;
   const remaining = Math.max(1, deadline - Date.now());
   try {
     await db.$transaction(
@@ -42,11 +53,17 @@ export async function idleTargets(
         for (const { name, hasWork } of probes) {
           if (outOfTime()) break;
           try {
-            if (!(await hasWork(tx, now, outOfTime))) idle.push(name);
+            if (!(await hasWork(tx, now, outOfTime))) result.idle.push(name);
           } catch {
             failed.push(name);
             break;
           }
+        }
+        if (failed.length > 0 || outOfTime()) return;
+        try {
+          result.pendingAges = await readPendingAges(tx, now);
+        } catch {
+          console.warn(JSON.stringify({ event: "pending-ages-failed" }));
         }
       },
       {
@@ -62,5 +79,5 @@ export async function idleTargets(
       JSON.stringify({ event: "idle-probe-failed", targets: failed }),
     );
   }
-  return idle;
+  return result;
 }
