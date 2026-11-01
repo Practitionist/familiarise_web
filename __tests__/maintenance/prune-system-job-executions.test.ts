@@ -128,9 +128,9 @@ it("pins every retention window", () => {
   expect(noOpRunRetentionCutoff(NOW)).toEqual(
     new Date(NOW.getTime() - 14 * DAY),
   );
-  expect(dataExportJobRetentionCutoff(NOW)).toEqual(
-    new Date(NOW.getTime() - 365 * DAY),
-  );
+  const oneYearBack = new Date(NOW);
+  oneYearBack.setUTCFullYear(oneYearBack.getUTCFullYear() - 1);
+  expect(dataExportJobRetentionCutoff(NOW)).toEqual(oneYearBack);
   expect(meetingPresenceRetentionCutoff(NOW)).toEqual(
     new Date(NOW.getTime() - 3 * 365 * DAY),
   );

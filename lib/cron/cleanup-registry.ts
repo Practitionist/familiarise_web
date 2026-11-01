@@ -457,6 +457,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             await import("@/scripts/cleanup/archive-webhook-events");
           return archiveWebhookEvents({ startedAt });
         },
+        items: (r) => ({ processed: r.totalDeleted }),
         summarize: (r) => ({
           hasMore: r.hasMore,
           webhookEventsDeleted: r.webhookEventsDeleted,

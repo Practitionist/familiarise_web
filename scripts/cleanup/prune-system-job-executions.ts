@@ -12,7 +12,7 @@ const SENT_OUTBOX_RETENTION_DAYS = 30;
 const DEAD_LETTER_OUTBOX_RETENTION_DAYS = 90;
 const EMAIL_EVENT_RETENTION_YEARS = 1;
 const ADMIN_RUN_REQUEST_RETENTION_DAYS = 30;
-const DATA_EXPORT_JOB_RETENTION_DAYS = 365;
+const DATA_EXPORT_JOB_RETENTION_YEARS = 1;
 const MEETING_PRESENCE_RETENTION_DAYS = 3 * 365;
 const ANONYMOUS_COOKIE_RETENTION_MONTHS = 13;
 const STRANDED_HOURS = 6;
@@ -57,7 +57,7 @@ export function adminRunRequestRetentionCutoff(now: Date): Date {
 }
 
 export function dataExportJobRetentionCutoff(now: Date): Date {
-  return new Date(now.getTime() - DATA_EXPORT_JOB_RETENTION_DAYS * DAY_MS);
+  return yearsBefore(now.getTime(), DATA_EXPORT_JOB_RETENTION_YEARS);
 }
 
 export function meetingPresenceRetentionCutoff(now: Date): Date {
