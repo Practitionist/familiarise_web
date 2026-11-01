@@ -1003,6 +1003,35 @@ Correctness holds with a clock if two conditions hold: the database guards stay 
 
 The recommendation is to keep the Netlify ticker through launch and switch the trigger to an external clock plus a single `_due` endpoint when the host moves or when issue #2491 lands.
 
+### 9.7a What is each engine actually for?
+
+The table lists the real use case of each engine and where it could apply to Familiarise.
+
+| Engine                                | What it is for                                                                                                              | Familiarise use                                                                              |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Inngest                               | Event-driven flows that wait for events: "wait up to 3 days for verification, else remind", fan-out, per-tenant concurrency | Maybe onboarding or lifecycle email                                                          |
+| Trigger.dev                           | Long, heavy compute with no timeout: transcoding, big PDFs, AI pipelines                                                    | Possibly recordings or AI later; its regions are too far from the database for DB-heavy work |
+| QStash                                | Reliable HTTP delivery: a cron clock for serverless, delayed messages, webhook fan-out                                      | As the clock if the Netlify ticker is replaced; outbound webhooks                            |
+| Upstash Workflow                      | Cheap step workflows on serverless; `context.call` holds slow external waits for hours                                      | Slow vendor calls                                                                            |
+| Cloudflare Workers, Queues, Workflows | Apps that already live on Cloudflare                                                                                        | Only if the app moves to Cloudflare                                                          |
+| Vercel Workflows                      | Multi-step durable flows on Vercel                                                                                          | If the app moves to Vercel `bom1`                                                            |
+| DBOS and pg-boss                      | Jobs and workflows on your own Postgres with a long-running worker                                                          | The target design on [page 17](./17-target-architecture-and-roadmap.md)                      |
+
+### 9.7b Why do pg-boss and DBOS have their own names if they are "just tables"?
+
+They are libraries (npm packages) that own their tables and the hard code around them, in the same way Prisma is not just tables. What they add:
+
+- Claiming with `FOR UPDATE SKIP LOCKED` (MEASURED: 600 jobs across 3 drainers, 0 duplicates).
+- Visibility timeouts and expiry.
+- Retries with backoff, dead-letter handling, deduplicated cron, delays, concurrency limits (global in DBOS) and archiving.
+- DBOS only: a step journal, so a run resumes at the failed step.
+
+Their tables live in their own schemas (`pgboss` and `dbos`), not in the Prisma schema. The earlier owner decision chose a hand-written Prisma `Job` table, which gives the same table but means writing all of the above ourselves.
+
+### 9.7c How do I monitor runs and trace a failure to a user?
+
+Use the four layers on [page 18](./18-monitoring-and-tracing-failures.md): the ticker log line and heartbeat, the `SystemJobExecution` row per run, the Entity trace, and escalation-only Sentry with a `job_run_id` tag.
+
 ### 9.8 What does Better Stack do here?
 
 Better Stack answers "is anything alive, and who gets paged". Sentry answers "what broke". The table lists each role with the code that does it. The code was checked on the current tree.

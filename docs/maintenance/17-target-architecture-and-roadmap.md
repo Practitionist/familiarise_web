@@ -173,7 +173,11 @@ flowchart LR
 
 ## 4. Netlify billing: status only
 
-The skip-idle pull request (`perf/ticker-skip-idle-targets`) writes the billing details into `docs/deployment/netlify.md` and the billing-guardrails skill, so this page does not duplicate them. The decision status as of 2026-11-01 is this. Moving to the credit-based Pro plan is PENDING Netlify support's confirmation of region pinning and Background Functions on that plan; the email to Netlify support was drafted on 2026-11-01 and is not yet sent. Removing the second (Developer) seat is pending the owner's yes. The figures behind both are UNVERIFIED here and land with the skip-idle PR.
+The skip-idle pull request (`perf/ticker-skip-idle-targets`) writes the billing details into `docs/deployment/netlify.md` and the billing-guardrails skill, so this page does not duplicate them. The decision status as of 2026-11-01 is this. Moving to the credit-based Pro plan is PENDING Netlify support's confirmation of region pinning and Background Functions on that plan; the email to Netlify support was drafted on 2026-11-01 and is not yet sent. Removing the second (Developer) seat is pending the owner's yes. The figures behind both are UNVERIFIED here and land with the skip-idle PR (#2494), which owns `docs/deployment/netlify.md` and the billing skill. Status of the Netlify ticket (#1159326) on 2026-11-01: the first reply was automated and answered none of the questions, the owner sent a follow-up asking for a human and that answer is pending, and the Developer member was changed to Reviewer through the API, so the team is now an Owner plus two Reviewers. Whether the Reviewer seat is free is still to be confirmed.
+
+### 3.1 Merge order
+
+The merge order agreed on 2026-11-01 is this. First this documentation pull request (#2486). Second the skip-idle ticker pull request with the Netlify billing docs (#2494), rebased after #2486 because both touch `.claude/skills/maintenance/SKILL.md`. Third the dunning fix (PR A, issue #2489). Fourth the manual-run durable request table (PR B, issue #2490), which needs the human-run `db:push` preflight. After launch: issue #2491 (portable `runJob` and thin triggers), issue #2492 (job backlog starvation), issue #2493 (Postgres background-work patterns) and issues #2424 and #2453 (the per-item run log and the console).
 
 ## 5. Where in code
 

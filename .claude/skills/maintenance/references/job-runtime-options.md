@@ -95,6 +95,14 @@ Target design (a proposal, not a decision): Mumbai web tier plus one long-lived 
 
 Better Stack roles: uptime monitors, the ticker heartbeat (`pingHeartbeat()` in `cron-tick.mts`), telemetry log events from `recordSystemEvent` (gated by `ENABLE_BETTERSTACK_TELEMETRY`), maintenance incidents (`app/api/admin/maintenance/route.ts`), and the health and canary reads. Sentry answers what broke.
 
+## Monitoring and tracing a failure to a user
+
+Four layers (full page: `docs/maintenance/18-monitoring-and-tracing-failures.md`): (1) the ticker summary line and `pingHeartbeat()` to Better Stack in `netlify/functions/cron-tick.mts`; (2) a `SystemJobExecution` row per run (status, outcome, `itemsProcessed`, `errorCount`, `result`, `errorLog`, `durationMs`) written by `withCronLock`, read by `readJobRunMetrics`; (3) the Entity trace at `/dashboard/<tree>/trace` (`lib/backoffice/entity-trace.ts`); (4) escalation-only Sentry with a `job_run_id` tag. One user or a group: a 207 partial run lists sample ids (open each in the trace); a 500 or a failure streak (`lib/cron/failure-streak.ts`) means the whole job; an ageing owed marker is a single poison row. `statusFor` tests failure before 207. `startDeadline` (`lib/cron/run-deadline.ts`) stops a slice at about 16 s. Gaps are filed, not built: `SystemJobRunItem` (#2424, #2453), a needs-attention inbox (#2424), oldest-pending-age alerts (#2492).
+
+## Engine use cases, and why pg-boss and DBOS are libraries
+
+Inngest: event-driven waits and fan-out. Trigger.dev: long heavy compute (regions too far for DB-heavy work). QStash: reliable HTTP delivery and a serverless clock. Upstash Workflow: cheap step workflows and long `context.call` waits. Cloudflare and Vercel Workflows: only if the app lives there. DBOS and pg-boss: jobs on your own Postgres with a long-running worker (the target design). They are libraries that own their tables and the hard code (SKIP LOCKED claiming, visibility timeouts, backoff, dead letters, deduplicated cron, delays, global concurrency in DBOS, archiving; DBOS adds a step journal), in the `pgboss` and `dbos` schemas, not Prisma. A hand-written Prisma `Job` table means writing all of that ourselves.
+
 ## Footguns
 
 - DBOS needs a pool of about 10 or more. With `systemDatabasePoolSize: 2` its advisory-lock connection hits the 5 s idle-in-transaction timeout and the process crashes. It cannot run under `PG_POOL_MAX=1`. Pin `DBOS__APPVERSION`, or a non-latest worker stops dequeuing.
