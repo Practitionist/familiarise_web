@@ -442,7 +442,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Archive webhook events",
       description:
-        "Delete webhook events past 365 days and terminal outbound deliveries past 30",
+        "Delete webhook events past one calendar year and terminal outbound deliveries past 30 days",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -452,19 +452,14 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     build: () =>
       cleanupRoute({
         job: "archive-webhook-events",
-        run: async (req, { startedAt }) => {
+        run: async (_req, { startedAt }) => {
           const { archiveWebhookEvents } =
             await import("@/scripts/cleanup/archive-webhook-events");
-          return archiveWebhookEvents({
-            limit: parseLimitParam(req),
-            startedAt,
-          });
+          return archiveWebhookEvents({ startedAt });
         },
         summarize: (r) => ({
           hasMore: r.hasMore,
-          processedEventsDeleted: r.processedEventsDeleted,
-          terminalUnprocessedDeleted: r.terminalUnprocessedDeleted,
-          failedEventsDeleted: r.failedEventsDeleted,
+          webhookEventsDeleted: r.webhookEventsDeleted,
           outboundDeliveriesDeleted: r.outboundDeliveriesDeleted,
           totalDeleted: r.totalDeleted,
         }),

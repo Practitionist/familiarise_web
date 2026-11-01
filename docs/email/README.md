@@ -66,7 +66,7 @@ flowchart LR
 |  - Single atomic `prisma.$transaction(async (tx) => ...)` (`PG_POOL_MAX=1` safe):                 |
 |    1. Insert `EmailEvent` (`@unique svixId`)                                                      |
 |    2. Upsert `EmailSuppression` + transition `Waitlist` on bounce/complaint/suppressed/unsub      |
-|  - Post-commit: `prune-system-job-executions` scrubs `SENT` bodies at 7d & prunes outbox rows at 30d/90d and `EmailEvent` at 365d |
+|  - Post-commit: `prune-system-job-executions` scrubs `SENT` bodies at 7d & prunes outbox rows at 30d/90d and `EmailEvent` at 1 year (calendar) |
 +---------------------------------------------------------------------------------------------------+
 ```
 
@@ -231,7 +231,7 @@ Both `EmailEvent` creation (`@unique` on `svixId`) and recipient suppression / w
 | **Pre-Send Suppression Block** | `email.suppressed`                                                                                                                              | Fired when Resend blocks an outbound message due to upstream suppression; synchronizes `EmailSuppression` (`MANUAL`) via `tx` and marks `Waitlist` (`BOUNCED`) so future sends short-circuit locally without API calls. |
 | **Audience / Contact Sync**    | `contact.created`, `contact.updated`, `contact.deleted`, `contact.topics.updated`                                                               | When `type === "contact.deleted"` or `type === "contact.updated"` with `unsubscribed === true`, upserts `EmailSuppression` (`MANUAL`) via `tx` and marks `Waitlist` (`UNSUBSCRIBED`).                                   |
 | **Sending Domain Health**      | `domain.created`, `domain.updated`, `domain.deleted`                                                                                            | Calls `recordSystemErrorSafe` **after transaction commit** when `domain.updated` reports `status` as `"failed"` or `"not_started"`, or when `domain.deleted` fires.                                                     |
-| **Telemetry & Inbound Events** | `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.opened`, `email.clicked`, `email.failed`, `email.scheduled`, `email.received` | Persisted idempotently on `EmailEvent` for delivery auditing; `prune-system-job-executions` prunes `EmailEvent` rows older than **365 days** every day at `04:15 UTC`.                                                  |
+| **Telemetry & Inbound Events** | `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.opened`, `email.clicked`, `email.failed`, `email.scheduled`, `email.received` | Persisted idempotently on `EmailEvent` for delivery auditing; `prune-system-job-executions` prunes `EmailEvent` rows older than **1 year (calendar)** every day at `04:15 UTC`.                                         |
 
 ---
 

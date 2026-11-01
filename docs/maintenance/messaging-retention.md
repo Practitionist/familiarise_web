@@ -11,7 +11,7 @@
 | Sent email and batch outbox rows                   | Delete after 30 days                            | Selected ID, still `SENT`, delivery timestamp still old                        |
 | Dead-letter email, batch and notification rows     | Delete after 90 days                            | Selected ID, still `DEAD_LETTER`, `updatedAt` still old                        |
 | Sent `NotificationOutbox` rows                     | Delete after 30 days                            | Selected ID, still `SENT`, `updatedAt` still old                               |
-| `EmailEvent` history                               | Delete after 365 days                           | Selected ID, `receivedAt` still old                                            |
+| `EmailEvent` history                               | Delete after 1 year (calendar)                  | Selected ID, `receivedAt` still old                                            |
 | `OrgDataExportJob` (`READY`, `FAILED`, `EXPIRED`)  | Delete after 1 year by `createdAt`              | Selected ID, status still terminal, `createdAt` still old                      |
 | Anonymous `CookiePreference` rows (`userId` null)  | Delete after 13 months by `consentUpdatedAt`    | Selected ID, `userId` still null, `consentUpdatedAt` still old                 |
 | `MeetingPresence` and `MeetingAttendance`          | Delete 3 years after the occurrence's `endsAt`  | Selected ID, the occurrence still ended before the cutoff                      |

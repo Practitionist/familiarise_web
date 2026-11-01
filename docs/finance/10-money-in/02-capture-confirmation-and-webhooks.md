@@ -157,7 +157,7 @@ Charlotte Brown's order for Hannah Anderson's session (172,400 paise, ₹1,724.0
 
 The sweeps count only; the cadence of each lives in `netlify/functions/cron-tick.mts` and is described in [scheduled jobs](../70-operations/01-scheduled-jobs.md). Stuck-event triage is in [webhook recovery](../70-operations/04-webhook-recovery.md).
 
-Retention is separate. `archive-webhook-events` prunes every event after 365 days whatever its outcome, and it is a non-money batch job owned by the weekly workflow rather than the ticker.
+Retention is separate. `archive-webhook-events` prunes every processed or failed event after 1 year (calendar), and it is a non-money batch job owned by the weekly workflow rather than the ticker.
 
 ## 6. Invariants
 

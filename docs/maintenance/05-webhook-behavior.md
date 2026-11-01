@@ -49,7 +49,7 @@ All inbound webhook receivers (`/api/webhooks/*`) are **strictly exempt from edg
    - Always apply additive expand-and-contract DDL changes on `WebhookEvent`, `Payment`, `Refund`, `Dispute`, `EmailEvent`, and `Payout` tables; never acquire long-running `ACCESS EXCLUSIVE` locks that would stall `isDbHealthy()` past Razorpay's 5-second timeout.
    - Run `reconcile-payment-status`, `reconcile-pending-refunds`, `reconcile-disputes`, and `reconcile-payout-status` immediately after concluding any maintenance window.
 3. **Weekly Multi-Table Retention (`archive-webhook-events`)**:
-   - Prunes every `WebhookEvent` row (processed, terminal unprocessed and failed) after **365 days** and terminal `OutboundWebhookDelivery` rows after **30 days**, every Sunday UTC midnight. `EmailEvent` rows are pruned by `prune-system-job-executions` after 365 days.
+   - Prunes processed and failed `WebhookEvent` rows after **1 year (calendar)** and terminal `OutboundWebhookDelivery` rows after **30 days**, every Sunday shortly after UTC midnight, in 2,000-row batches until a batch comes back short or its 16-second budget is spent. `EmailEvent` rows are pruned by `prune-system-job-executions` after 1 year (calendar).
 
 ---
 

@@ -14,18 +14,12 @@ import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import type { BackofficeSurface } from "../../lib/auth/backoffice-permissions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { deleteBoundedPage } from "@/lib/cron/run-deadline";
+import { yearsBefore } from "@/lib/cron/retention-cutoff";
 
 const MONEY_AUDIT_YEARS = 8;
 const OTHER_AUDIT_YEARS = 2;
 const BOOKING_HISTORY_YEARS = 3;
 const LEDGER_REPORT_YEARS = 2;
-
-/** Calendar years in UTC, so a statutory minimum never loses its leap days. */
-function yearsBefore(now: number, years: number): Date {
-  const cutoff = new Date(now);
-  cutoff.setUTCFullYear(cutoff.getUTCFullYear() - years);
-  return cutoff;
-}
 
 const KEEP_8Y_CATEGORIES: OrgAuditCategory[] = [
   "INVOICE",

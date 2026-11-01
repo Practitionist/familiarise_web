@@ -3,13 +3,14 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { IDLE_RESULT_KEY } from "@/lib/cron/idle-skips";
+import { yearsBefore } from "@/lib/cron/retention-cutoff";
 
 const NOOP_RUN_RETENTION_DAYS = 14;
 const RUN_RETENTION_DAYS = 180;
 const FAILED_EMAIL_BODY_SCRUB_DAYS = 7;
 const SENT_OUTBOX_RETENTION_DAYS = 30;
 const DEAD_LETTER_OUTBOX_RETENTION_DAYS = 90;
-const EMAIL_EVENT_RETENTION_DAYS = 365;
+const EMAIL_EVENT_RETENTION_YEARS = 1;
 const ADMIN_RUN_REQUEST_RETENTION_DAYS = 30;
 const DATA_EXPORT_JOB_RETENTION_DAYS = 365;
 const MEETING_PRESENCE_RETENTION_DAYS = 3 * 365;
@@ -46,8 +47,9 @@ export function deadLetterOutboxRetentionCutoff(now: Date): Date {
   return new Date(now.getTime() - DEAD_LETTER_OUTBOX_RETENTION_DAYS * DAY_MS);
 }
 
+/** DPDP Rule 8(3): delivery events are processing logs, kept a calendar year. */
 export function emailEventRetentionCutoff(now: Date): Date {
-  return new Date(now.getTime() - EMAIL_EVENT_RETENTION_DAYS * DAY_MS);
+  return yearsBefore(now.getTime(), EMAIL_EVENT_RETENTION_YEARS);
 }
 
 export function adminRunRequestRetentionCutoff(now: Date): Date {

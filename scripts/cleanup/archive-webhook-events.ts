@@ -1,15 +1,44 @@
-/** Bounded webhook/delivery retention; final deletes recheck current eligibility. */
+/** Weekly webhook retention: whole-batch DELETEs, each re-evaluating its own predicate. */
 
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { deleteBoundedPage } from "@/lib/cron/run-deadline";
-import { TERMINAL_ERROR_PREFIXES } from "@/lib/webhooks/event-log";
+import { yearsBefore } from "@/lib/cron/retention-cutoff";
 
-/** DPDP Rule 8(3): processing logs are kept a year, whatever the event's outcome. */
-const WEBHOOK_EVENT_RETENTION_DAYS = 365;
+/** DPDP Rule 8(3): processing logs are kept a calendar year, whatever the event's outcome. */
+const WEBHOOK_EVENT_RETENTION_YEARS = 1;
 const OUTBOUND_DELIVERY_RETENTION_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** No batch starts after this; one overrunning statement still ends inside the 20 s ticker timeout. */
+const START_BUDGET_MS = 16_000;
+/** Rows per DELETE; the candidate read walks the `receivedAt` index. */
+export const WEBHOOK_DELETE_BATCH = 2_000;
+
+export function webhookEventRetentionCutoff(now: Date): Date {
+  return yearsBefore(now.getTime(), WEBHOOK_EVENT_RETENTION_YEARS);
+}
+
+export function outboundDeliveryRetentionCutoff(now: Date): Date {
+  return new Date(now.getTime() - OUTBOUND_DELIVERY_RETENTION_DAYS * DAY_MS);
+}
+
+/** Processed or failed events; a pending event (no error yet) still belongs to the sweeper. */
+function webhookEventBatch(cutoff: Date): Prisma.Sql {
+  return Prisma.sql`
+    DELETE FROM "WebhookEvent" WHERE "id" IN (
+      SELECT "id" FROM "WebhookEvent"
+      WHERE ("processed" OR "error" IS NOT NULL) AND "receivedAt" < ${cutoff}
+      ORDER BY "receivedAt" LIMIT ${WEBHOOK_DELETE_BATCH})`;
+}
+
+function outboundDeliveryBatch(cutoff: Date): Prisma.Sql {
+  return Prisma.sql`
+    DELETE FROM "OutboundWebhookDelivery" WHERE "id" IN (
+      SELECT "id" FROM "OutboundWebhookDelivery"
+      WHERE "status" IN ('SUCCESS', 'FAILED', 'DEAD_LETTER')
+        AND "createdAt" < ${cutoff}
+      ORDER BY "createdAt" LIMIT ${WEBHOOK_DELETE_BATCH})`;
+}
 
 function formatArchiveError(error: unknown): string {
   if (typeof error === "string") return error;
@@ -19,9 +48,7 @@ function formatArchiveError(error: unknown): string {
 
 export interface WebhookArchiveResult {
   success: boolean;
-  processedEventsDeleted: number;
-  terminalUnprocessedDeleted: number;
-  failedEventsDeleted: number;
+  webhookEventsDeleted: number;
   outboundDeliveriesDeleted: number;
   totalDeleted: number;
   errors: string[];
@@ -29,11 +56,7 @@ export interface WebhookArchiveResult {
   hasMore: boolean;
 }
 
-const archiveLimit = z.number().int().min(1).max(500).default(100);
-const START_BUDGET_MS = 16_000;
-
 export interface WebhookArchiveOptions {
-  limit?: number;
   startedAt?: number;
 }
 
@@ -42,126 +65,55 @@ export async function archiveWebhookEvents(
 ): Promise<WebhookArchiveResult> {
   const startedAt = options.startedAt ?? Date.now();
   return withCronLock("archive-webhook-events", { failMode: "open" }, () =>
-    archiveWebhookEventsUnlocked(options.limit, startedAt),
+    archiveWebhookEventsUnlocked(startedAt),
   );
 }
 
 async function archiveWebhookEventsUnlocked(
-  requestedLimit: number | undefined,
   startedAt: number,
 ): Promise<WebhookArchiveResult> {
-  const limit = archiveLimit.parse(requestedLimit);
-  const outOfTime = () => Date.now() >= startedAt + START_BUDGET_MS;
-  let hasMore = false;
+  const deadline = startedAt + START_BUDGET_MS;
+  const now = new Date();
   const errors: string[] = [];
-  let processedEventsDeleted = 0;
-  let terminalUnprocessedDeleted = 0;
-  let failedEventsDeleted = 0;
-  let outboundDeliveriesDeleted = 0;
 
-  const eventRetention = new Date(
-    Date.now() - WEBHOOK_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-  );
-  const deliveryRetention = new Date(
-    Date.now() - OUTBOUND_DELIVERY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-  );
-
-  const runStep = async (
+  /** Whole batches until one comes back short or the deadline passes; a failure keeps committed counts. */
+  const drain = async (
     label: string,
-    pick: () => Promise<{ id: string }[]>,
-    remove: (ids: string[]) => Promise<{ count: number }>,
-    remains: () => Promise<{ id: string } | null>,
-  ): Promise<number> => {
-    const page = await deleteBoundedPage({
-      outOfTime,
-      pick,
-      remove,
-      remains,
-      onError: (error) => {
-        const msg = `Failed to archive ${label}: ${formatArchiveError(error)}`;
-        console.error(`❌ ${msg}`);
-        errors.push(msg);
-      },
-    });
-    hasMore ||= page.hasMore;
-    return page.deleted;
+    batch: Prisma.Sql,
+  ): Promise<{ count: number; hasMore: boolean }> => {
+    let count = 0;
+    try {
+      while (Date.now() < deadline) {
+        const deleted = await prisma.$executeRaw(batch);
+        count += deleted;
+        if (deleted < WEBHOOK_DELETE_BATCH) return { count, hasMore: false };
+      }
+      return { count, hasMore: true };
+    } catch (error) {
+      const msg = `Failed to archive ${label}: ${formatArchiveError(error)}`;
+      console.error(`❌ ${msg}`);
+      errors.push(msg);
+      return { count, hasMore: true };
+    }
   };
-  const archiveEvents = (label: string, where: Prisma.WebhookEventWhereInput) =>
-    runStep(
-      label,
-      () =>
-        prisma.webhookEvent.findMany({
-          where,
-          select: { id: true },
-          orderBy: [{ receivedAt: "asc" }, { id: "asc" }],
-          take: limit,
-        }),
-      (ids) =>
-        prisma.webhookEvent.deleteMany({
-          where: { ...where, id: { in: ids } },
-        }),
-      () => prisma.webhookEvent.findFirst({ where, select: { id: true } }),
-    );
 
-  processedEventsDeleted = await archiveEvents("processed webhook events", {
-    processed: true,
-    error: null,
-    receivedAt: { lt: eventRetention },
-  });
-  terminalUnprocessedDeleted = await archiveEvents(
-    "terminal unprocessed webhook events",
-    {
-      processed: false,
-      receivedAt: { lt: eventRetention },
-      OR: TERMINAL_ERROR_PREFIXES.map((prefix) => ({
-        error: { startsWith: prefix },
-      })),
-    },
-  );
-  failedEventsDeleted = await archiveEvents("aged failed webhook events", {
-    processed: false,
-    error: { not: null },
-    receivedAt: { lt: eventRetention },
-  });
-  const outboundWhere: Prisma.OutboundWebhookDeliveryWhereInput = {
-    status: { in: ["SUCCESS", "FAILED", "DEAD_LETTER"] },
-    createdAt: { lt: deliveryRetention },
-  };
-  outboundDeliveriesDeleted = await runStep(
+  // Deliveries first, so a year-deep event backlog cannot starve the 30-day window.
+  const deliveries = await drain(
     "terminal outbound webhook deliveries",
-    () =>
-      prisma.outboundWebhookDelivery.findMany({
-        where: outboundWhere,
-        select: { id: true },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-        take: limit,
-      }),
-    (ids) =>
-      prisma.outboundWebhookDelivery.deleteMany({
-        where: { ...outboundWhere, id: { in: ids } },
-      }),
-    () =>
-      prisma.outboundWebhookDelivery.findFirst({
-        where: outboundWhere,
-        select: { id: true },
-      }),
+    outboundDeliveryBatch(outboundDeliveryRetentionCutoff(now)),
   );
-
-  const totalDeleted =
-    processedEventsDeleted +
-    terminalUnprocessedDeleted +
-    failedEventsDeleted +
-    outboundDeliveriesDeleted;
+  const events = await drain(
+    "webhook events",
+    webhookEventBatch(webhookEventRetentionCutoff(now)),
+  );
 
   return {
     success: errors.length === 0,
-    processedEventsDeleted,
-    terminalUnprocessedDeleted,
-    failedEventsDeleted,
-    outboundDeliveriesDeleted,
-    totalDeleted,
+    webhookEventsDeleted: events.count,
+    outboundDeliveriesDeleted: deliveries.count,
+    totalDeleted: events.count + deliveries.count,
     errors,
     timestamp: new Date().toISOString(),
-    hasMore,
+    hasMore: deliveries.hasMore || events.hasMore,
   };
 }

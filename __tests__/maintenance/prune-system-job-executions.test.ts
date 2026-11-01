@@ -146,8 +146,8 @@ it("pins every retention window", () => {
   expect(deadLetterOutboxRetentionCutoff(NOW)).toEqual(
     new Date(NOW.getTime() - 90 * DAY),
   );
-  expect(emailEventRetentionCutoff(NOW)).toEqual(
-    new Date(NOW.getTime() - 365 * DAY),
+  expect(emailEventRetentionCutoff(new Date("2028-03-01T00:00:00Z"))).toEqual(
+    new Date("2027-03-01T00:00:00Z"),
   );
   expect(strandedCutoff(NOW)).toEqual(
     new Date(NOW.getTime() - 6 * 60 * 60 * 1000),
