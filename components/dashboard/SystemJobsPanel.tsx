@@ -239,15 +239,21 @@ export function SystemJobsPanel({
   // #1527 Q10 — every "Run now" asks for a reason (the route writes it to the
   // audit log); a money job also needs a typed confirmation.
   const [confirmJob, setConfirmJob] = useState<SystemJobCard | null>(null);
+  // One key per Run click; a retry from the same dialog reuses it, so the server returns the same request.
+  const [runKey, setRunKey] = useState("");
 
-  const handleRunJob = async (job: SystemJobCard, reason: string) => {
+  const handleRunJob = async (
+    job: SystemJobCard,
+    reason: string,
+    idempotencyKey: string,
+  ) => {
     setRunningJobs((prev) => new Set(prev).add(job.id));
 
     try {
       const response = await fetch("/api/admin/system-jobs/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: job.id, reason }),
+        body: JSON.stringify({ jobId: job.id, reason, idempotencyKey }),
       });
 
       const result = await response.json();
@@ -429,7 +435,10 @@ export function SystemJobsPanel({
                 key={job.id}
                 job={job}
                 isRunning={runningJobs.has(job.id)}
-                onRun={() => setConfirmJob(job)}
+                onRun={() => {
+                  setRunKey(crypto.randomUUID());
+                  setConfirmJob(job);
+                }}
               />
             ))}
           </div>
@@ -448,7 +457,7 @@ export function SystemJobsPanel({
           requireReason={{ label: "Why run it by hand?" }}
           requireTyped={confirmJob.confirmPhrase ?? undefined}
           onConfirm={async ({ reason }) => {
-            await handleRunJob(confirmJob, reason ?? "");
+            await handleRunJob(confirmJob, reason ?? "", runKey);
             setConfirmJob(null);
           }}
         />

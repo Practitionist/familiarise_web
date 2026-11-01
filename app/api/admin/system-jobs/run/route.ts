@@ -30,9 +30,11 @@ import {
 import { jobsMayRunHere } from "@/lib/cron/dispatch-refusal";
 import { runOutcomeSchema } from "@/lib/cron/run-outcome";
 import {
+  auditStatusOf,
   manualRunRequest,
   openAdminRunWhere,
   runAdminRunRequest,
+  type AdminRunAuditStatus,
 } from "@/lib/cron/admin-run-requests";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { withRunContext } from "@/lib/cron/run-context";
@@ -42,19 +44,11 @@ const runJobSchema = z.object({
   jobId: z.string().min(1, "Missing or invalid jobId"),
   // Every manual run carries a reason into the audit log.
   reason: opsReasonSchema,
+  // One per click, reused by its retries; absent from an older client, so the server mints one.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 const bodySchema = z.record(z.string(), z.unknown()).catch({});
-
-type RunStatus =
-  | "ACCEPTED"
-  | "SUCCEEDED"
-  | "PARTIAL"
-  | "FAILED"
-  | "HELD"
-  | "SKIPPED"
-  | "REFUSED"
-  | "PAUSED";
 
 /** The window a manual run repeats: the latest due one for a windowed job, none otherwise. */
 function manualRunWindow(slug: string, now: Date): Date | null | undefined {
@@ -62,11 +56,12 @@ function manualRunWindow(slug: string, now: Date): Date | null | undefined {
 }
 
 /**
- * Persists the request and its audit row in one transaction before any dispatch,
- * or returns the job's open request when one already holds the sidecar's unique key.
+ * Persists the request and its audit row in one transaction before any dispatch.
+ * A retry of the same click returns its request in any status; otherwise the job's open request.
  */
 async function admitRunRequest(input: {
   job: string;
+  idempotencyKey: string;
   actorUserId: string;
   actorRole: string;
   reason: string;
@@ -79,6 +74,7 @@ async function admitRunRequest(input: {
         data: {
           id,
           job: input.job,
+          idempotencyKey: input.idempotencyKey,
           requestedBy: input.actorUserId,
           windowStart: input.windowStart,
         },
@@ -99,36 +95,28 @@ async function admitRunRequest(input: {
     return { request, created: true };
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
-    const open = await prisma.adminRunRequest.findFirst({
-      where: openAdminRunWhere(input.job),
-    });
-    if (!open) throw error;
-    return { request: open, created: false };
+    const existing =
+      (await prisma.adminRunRequest.findUnique({
+        where: {
+          job_idempotencyKey: {
+            job: input.job,
+            idempotencyKey: input.idempotencyKey,
+          },
+        },
+      })) ??
+      (await prisma.adminRunRequest.findFirst({
+        where: openAdminRunWhere(input.job),
+      }));
+    if (!existing) throw error;
+    return { request: existing, created: false };
   }
 }
 
 /** The audit status follows the outcome the run row recorded, so a 207 with failed items is PARTIAL. */
-function runStatusOf(res: NextResponse): RunStatus {
+function runStatusOf(res: NextResponse): AdminRunAuditStatus {
   if (res.status === 202) return "ACCEPTED";
   const parsed = runOutcomeSchema.safeParse(res.headers.get("x-run-outcome"));
-  if (!parsed.success) return "FAILED";
-  switch (parsed.data) {
-    case "completed":
-    case "attention":
-      return "SUCCEEDED";
-    case "partial":
-      return "PARTIAL";
-    case "failed":
-      return "FAILED";
-    case "held":
-      return "HELD";
-    case "skipped":
-      return "SKIPPED";
-    case "refused":
-      return "REFUSED";
-    case "paused":
-      return "PAUSED";
-  }
+  return auditStatusOf(parsed.success ? parsed.data : null);
 }
 
 /** Hands the recorded run outcome to the console so it can name it. */
@@ -151,6 +139,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
     const { jobId, reason } = parsed.data;
+    const idempotencyKey = parsed.data.idempotencyKey ?? randomUUID();
 
     const entry = Object.hasOwn(CLEANUP_JOB_BUILDERS, jobId)
       ? CLEANUP_JOB_BUILDERS[jobId]
@@ -209,6 +198,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (entry.meta.manualRun === "after" && mayRun) {
       const { request, created } = await admitRunRequest({
         job: jobId,
+        idempotencyKey,
         actorUserId: user.id,
         actorRole: String(user.role ?? "UNKNOWN"),
         reason,
@@ -231,7 +221,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           existing: !created,
           message: created
             ? "Queued. The request is recorded and its status shows under Run requests."
-            : "A run of this job is already queued; its status shows under Run requests.",
+            : "This run was already requested; its status shows under Run requests.",
         },
         { status: 202 },
       );
@@ -239,7 +229,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // The audit row's id is fixed up front so the run's execution row can point at it.
     const opsActionLogId = randomUUID();
-    const logRun = (status: RunStatus, httpStatus?: number) =>
+    const logRun = (status: AdminRunAuditStatus, httpStatus?: number) =>
       recordOpsAction(prisma, {
         id: opsActionLogId,
         actorUserId: user.id,

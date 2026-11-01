@@ -19,6 +19,7 @@ const guard = jest.fn();
 const after = jest.fn();
 const create = jest.fn();
 const findOpen = jest.fn();
+const findByKey = jest.fn();
 const statusWrite = jest.fn();
 const runRequest = jest.fn();
 const tx = { adminRunRequest: { create } };
@@ -26,7 +27,11 @@ const db = {
   $transaction: jest.fn<Promise<unknown>, [(client: typeof tx) => unknown]>(
     async (fn) => fn(tx),
   ),
-  adminRunRequest: { findFirst: findOpen, updateMany: statusWrite },
+  adminRunRequest: {
+    findFirst: findOpen,
+    findUnique: findByKey,
+    updateMany: statusWrite,
+  },
 };
 let post: typeof import("../../app/api/admin/system-jobs/run/route").POST;
 let registry: typeof import("../../lib/cron/cleanup-registry");
@@ -89,15 +94,27 @@ beforeEach(() => {
   dispatch.mockResolvedValue({ accepted: true, job: "transfer-recordings" });
 });
 
-function request(jobId = "transfer-recordings") {
+function request(jobId = "transfer-recordings", idempotencyKey?: string) {
   return new NextRequest(
     "https://untrusted-request-host.test/api/admin/system-jobs/run",
     {
       method: "POST",
-      body: JSON.stringify({ jobId, reason: "Recover verified recording" }),
+      body: JSON.stringify({
+        jobId,
+        reason: "Recover verified recording",
+        idempotencyKey,
+      }),
     },
   );
 }
+
+const KEY_A = "6f1c2a8e-4b7d-4c1e-9a3f-1d2e3f4a5b6c";
+const KEY_B = "0a9b8c7d-6e5f-4a3b-8c1d-2e3f4a5b6c7d";
+const created = async ({ data }: { data: Record<string, unknown> }) => ({
+  ...data,
+  status: "REQUESTED",
+  attempts: 0,
+});
 
 it("runs the registry handler in-process without the cron secret and records ACCEPTED", async () => {
   delete process.env.CRON_SECRET;
@@ -137,11 +154,7 @@ it("records FAILED with the route's stable message when worker admission fails",
 });
 
 it("commits the payout request and its audit row before the 202, then dispatches after it", async () => {
-  create.mockImplementationOnce(async ({ data }) => ({
-    ...data,
-    status: "REQUESTED",
-    attempts: 0,
-  }));
+  create.mockImplementationOnce(created);
   const response = await post(request("process-payouts"));
   expect(response.status).toBe(202);
   const body = await response.json();
@@ -151,6 +164,8 @@ it("commits the payout request and its audit row before the 202, then dispatches
       id: body.requestId,
       job: "process-payouts",
       requestedBy: "admin",
+      // An older client sends no key; the server mints one.
+      idempotencyKey: expect.any(String),
     }),
   });
   expect(audit).toHaveBeenCalledWith(
@@ -190,6 +205,33 @@ it("returns the job's open request on a unique conflict and dispatches nothing",
     existing: true,
   });
   expect(after).not.toHaveBeenCalled();
+});
+
+it("returns a retried click's request in any status without scheduling it again", async () => {
+  db.$transaction.mockRejectedValueOnce(
+    Object.assign(new Error("unique"), { code: "P2002" }),
+  );
+  findByKey.mockResolvedValueOnce({ id: "req-a", status: "DONE" });
+  const retry = await post(request("process-payouts", KEY_A));
+  expect(await retry.json()).toMatchObject({
+    requestId: "req-a",
+    status: "DONE",
+    existing: true,
+  });
+  expect(findByKey).toHaveBeenCalledWith({
+    where: {
+      job_idempotencyKey: { job: "process-payouts", idempotencyKey: KEY_A },
+    },
+  });
+  expect(after).not.toHaveBeenCalled();
+
+  create.mockImplementationOnce(created);
+  const fresh = await post(request("process-payouts", KEY_B));
+  expect(await fresh.json()).toMatchObject({ existing: false });
+  expect(create).toHaveBeenLastCalledWith({
+    data: expect.objectContaining({ idempotencyKey: KEY_B }),
+  });
+  expect(after).toHaveBeenCalledTimes(1);
 });
 
 it("does not dispatch when authentication or maintenance refuses the request", async () => {

@@ -88,6 +88,63 @@ const RAN_TO_THE_END: ReadonlySet<RunOutcome> = new Set([
   "partial",
 ]);
 
+/** The `OpsActionLog` `after.status` of an admin run. */
+export type AdminRunAuditStatus =
+  | "ACCEPTED"
+  | "SUCCEEDED"
+  | "PARTIAL"
+  | "FAILED"
+  | "HELD"
+  | "SKIPPED"
+  | "REFUSED"
+  | "PAUSED";
+
+/** The audit status a recorded run outcome maps to; no outcome is FAILED. */
+export function auditStatusOf(outcome: RunOutcome | null): AdminRunAuditStatus {
+  switch (outcome) {
+    case "completed":
+    case "attention":
+      return "SUCCEEDED";
+    case "partial":
+      return "PARTIAL";
+    case "held":
+      return "HELD";
+    case "skipped":
+      return "SKIPPED";
+    case "refused":
+      return "REFUSED";
+    case "paused":
+      return "PAUSED";
+    default:
+      return "FAILED";
+  }
+}
+
+/**
+ * Applies a fenced status write and, when it settles the request, moves its audit
+ * row (same id) to the run's outcome in the same transaction.
+ */
+async function writeSettlement(
+  where: Prisma.AdminRunRequestWhereInput,
+  id: string,
+  data: Prisma.AdminRunRequestUpdateManyMutationInput & {
+    status: AdminRunRequestStatus;
+  },
+  outcome: RunOutcome | null,
+): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const written = await tx.adminRunRequest.updateMany({ where, data });
+    if (written.count === 0) return false;
+    if (data.status === "DONE" || data.status === "FAILED") {
+      await tx.opsActionLog.updateMany({
+        where: { id },
+        data: { after: { status: auditStatusOf(outcome), requestId: id } },
+      });
+    }
+    return true;
+  });
+}
+
 /**
  * Settles the claim `attempt` of a request from its run's outcome. A run that
  * reached the job is DONE or FAILED; a stand-down or a missing outcome goes back
@@ -105,16 +162,19 @@ async function settle(
   else if (outcome === "failed" || attempt >= MAX_ADMIN_RUN_ATTEMPTS)
     status = "FAILED";
   else status = "REQUESTED";
-  const written = await prisma.adminRunRequest.updateMany({
-    where: { id, status: "CLAIMED", attempts: attempt },
-    data: {
+  const written = await writeSettlement(
+    { id, status: "CLAIMED", attempts: attempt },
+    id,
+    {
       status,
       runId,
-      lastError: status === "DONE" ? null : detail,
+      // A partial run keeps its marker, so the console does not show a clean DONE.
+      lastError: status === "DONE" && outcome !== "partial" ? null : detail,
       ...(status === "REQUESTED" ? {} : { finishedAt: new Date() }),
     },
-  });
-  if (written.count === 0) return "LOST_SETTLE";
+    outcome,
+  );
+  if (!written) return "LOST_SETTLE";
   return status === "REQUESTED" ? "RELEASED" : status;
 }
 
@@ -208,8 +268,8 @@ async function recoverAdminRunRequest(
     }
   }
   if (request.attempts >= MAX_ADMIN_RUN_ATTEMPTS) {
-    const failed = await prisma.adminRunRequest.updateMany({
-      where: {
+    const failed = await writeSettlement(
+      {
         AND: [
           {
             id: request.id,
@@ -219,15 +279,17 @@ async function recoverAdminRunRequest(
           adminRunBacklogWhere(now),
         ],
       },
-      data: {
+      request.id,
+      {
         status: "FAILED",
         finishedAt: now,
         lastError:
           request.lastError ??
           `No run outcome after ${MAX_ADMIN_RUN_ATTEMPTS} attempts`,
       },
-    });
-    return failed.count > 0 ? "FAILED" : "LOST_CLAIM";
+      null,
+    );
+    return failed ? "FAILED" : "LOST_CLAIM";
   }
   return runAdminRunRequest(request, adminRunBacklogWhere(now));
 }

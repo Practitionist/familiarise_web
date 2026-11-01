@@ -8,7 +8,9 @@ const mockDb = {
     findMany: jest.fn(),
     updateMany: jest.fn(),
   },
+  opsActionLog: { updateMany: jest.fn() },
   systemJobExecution: { findFirst: jest.fn() },
+  $transaction: (fn: (tx: unknown) => unknown) => fn(mockDb),
 };
 const mockInvoke = jest.fn();
 
@@ -50,6 +52,7 @@ function request(overrides: Partial<AdminRunRequest> = {}): AdminRunRequest {
     claimedAt: null,
     finishedAt: null,
     runId: null,
+    idempotencyKey: null,
     ...overrides,
   };
 }
@@ -105,6 +108,26 @@ it("claims by CAS, runs as the admin with the admitted window and links the run 
     where: { id: "req-1", status: "CLAIMED", attempts: 1 },
     data: expect.objectContaining({ status: "DONE", runId: "run-1" }),
   });
+  expect(mockDb.opsActionLog.updateMany).toHaveBeenCalledWith({
+    where: { id: "req-1" },
+    data: { after: { status: "SUCCEEDED", requestId: "req-1" } },
+  });
+});
+
+it("keeps a partial run's marker and moves its audit row to PARTIAL", async () => {
+  mockInvoke.mockResolvedValueOnce(outcome("partial", 207));
+  await expect(runAdminRunRequest(request())).resolves.toBe("DONE");
+  expect(mockDb.adminRunRequest.updateMany).toHaveBeenLastCalledWith({
+    where: { id: "req-1", status: "CLAIMED", attempts: 1 },
+    data: expect.objectContaining({
+      status: "DONE",
+      lastError: "Run partial (HTTP 207)",
+    }),
+  });
+  expect(mockDb.opsActionLog.updateMany).toHaveBeenCalledWith({
+    where: { id: "req-1" },
+    data: { after: { status: "PARTIAL", requestId: "req-1" } },
+  });
 });
 
 it.each([
@@ -133,6 +156,10 @@ it.each([
     where: { id: "req-1", status: "CLAIMED", attempts: 1 },
     data: expect.objectContaining({ status }),
   });
+  // A released retry keeps its audit row at REQUESTED.
+  expect(mockDb.opsActionLog.updateMany).toHaveBeenCalledTimes(
+    status === "FAILED" ? 1 : 0,
+  );
 });
 
 it("leaves the row REQUESTED for the drain when the dispatch fails before its claim lands", async () => {
