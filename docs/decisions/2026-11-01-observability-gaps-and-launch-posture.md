@@ -67,7 +67,7 @@ The [ownership decision](2026-11-01-observability-ownership.md) made Better Stac
 - A rejected or stalled Better Stack send adds at most 2 seconds to a run's verdict write, and only while ingest is degraded.
 - `ENABLE_BETTERSTACK_TELEMETRY` is read at call time by the emitter; the module-load constant in `lib/feature-flags.ts` is removed.
 - The gauges are blind when the probe budget is spent or the claim is unreachable; the money alerts then open an incident by policy, and the freshness alert covers a stopped ticker.
-- On the shared database the money gauges are not zero today because of seeded and QA rows; the setup guide says to clear them or create the alerts muted until launch.
+- On the shared database the money gauges are not zero today because of seeded and QA rows; the owner chose to create the alerts muted and unmute them after the go-live data reset, without deleting rows on the shared database.
 
 ## Deprecated & Superseded Approaches
 
