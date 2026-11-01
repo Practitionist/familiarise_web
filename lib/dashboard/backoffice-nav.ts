@@ -270,9 +270,9 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           badgeKey: "compliance",
         },
         {
-          name: "Needs attention",
+          name: "Stuck work",
           icon: ShieldAlert,
-          path: "attention",
+          path: "stuck-work",
           surface: "systemJobs.manage",
         },
         {

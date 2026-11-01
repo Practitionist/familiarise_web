@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+
 import { NeedsAttentionInbox } from "@/components/dashboard/backoffice/NeedsAttentionInbox";
 import {
   DashboardContent,
@@ -6,8 +8,10 @@ import {
 import { requireBackofficePage } from "@/lib/auth-guard";
 import { readNeedsAttention } from "@/lib/backoffice/needs-attention";
 
+export const metadata: Metadata = { title: "Stuck work — Familiarise" };
+
 /** Read-only inbox of stuck work per queue, behind the System Jobs gate. */
-export default async function BackofficeNeedsAttentionPage({
+export default async function BackofficeStuckWorkPage({
   params,
 }: Readonly<{ params: Promise<{ tree: string }> }>) {
   const { cap } = await requireBackofficePage(
@@ -18,8 +22,8 @@ export default async function BackofficeNeedsAttentionPage({
   return (
     <>
       <PageHeader
-        title="Needs attention"
-        description="Stuck items in each watched queue, oldest first. Act on them from the linked pages."
+        title="Stuck work"
+        description="Stuck items in each watched queue: the oldest and the newest, with the total. Act on them from the linked pages."
       />
       <DashboardContent>
         <NeedsAttentionInbox queues={queues} basePath={cap.basePath} />
