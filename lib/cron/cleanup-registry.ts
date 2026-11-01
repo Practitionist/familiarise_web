@@ -582,6 +582,38 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       }),
   },
 
+  // @cleanup-twin drain-admin-run-requests
+  "drain-admin-run-requests": {
+    meta: {
+      title: "Drain admin run requests",
+      description:
+        "Retry admin Run-now requests whose dispatch was lost or whose run crashed",
+      category: "Reconciliation",
+      manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasAdminRunRequestWork } =
+          await import("@/lib/cron/admin-run-requests");
+        return hasAdminRunRequestWork(db, now, outOfTime);
+      },
+    },
+    build: () =>
+      cleanupRoute({
+        job: "drain-admin-run-requests",
+        run: async (req, { startedAt }) => {
+          const { drainAdminRunRequests } =
+            await import("@/lib/cron/admin-run-requests");
+          return drainAdminRunRequests({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
+        },
+        items: (r) => ({ processed: r.picked }),
+        failureMessage: "Admin run request drain failed",
+      }),
+  },
+
   // @cleanup-twin create-payout-batch
   "create-payout-batch": {
     meta: {
@@ -1291,7 +1323,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Prune job history",
       description:
-        "Remove job runs past 90 days, close stranded runs and prune messaging retention tables",
+        "Remove job runs past 90 days and settled admin run requests past 30, close stranded runs and prune messaging retention tables",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -1313,6 +1345,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         summarize: (r) => ({
           pruned: r.pruned,
           stranded: r.stranded,
+          adminRunRequestsPruned: r.adminRunRequestsPruned,
           failedEmailsBodyScrubbed: r.failedEmailsBodyScrubbed,
           failedEmailBatchesScrubbed: r.failedEmailBatchesScrubbed,
           failedEmailsPruned: r.failedEmailsPruned,
@@ -1324,6 +1357,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         items: (r) => ({
           processed:
             r.pruned +
+            r.adminRunRequestsPruned +
             r.failedEmailsPruned +
             r.failedEmailBatchesPruned +
             r.notificationOutboxPruned +

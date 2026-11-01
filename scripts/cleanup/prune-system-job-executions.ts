@@ -8,6 +8,7 @@ const FAILED_EMAIL_BODY_SCRUB_DAYS = 7;
 const SENT_OUTBOX_RETENTION_DAYS = 30;
 const DEAD_LETTER_OUTBOX_RETENTION_DAYS = 90;
 const EMAIL_EVENT_RETENTION_DAYS = 30;
+const ADMIN_RUN_REQUEST_RETENTION_DAYS = 30;
 const STRANDED_HOURS = 6;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WORK_BUDGET_MS = 16_000;
@@ -38,6 +39,10 @@ export function emailEventRetentionCutoff(now: Date): Date {
   return new Date(now.getTime() - EMAIL_EVENT_RETENTION_DAYS * DAY_MS);
 }
 
+export function adminRunRequestRetentionCutoff(now: Date): Date {
+  return new Date(now.getTime() - ADMIN_RUN_REQUEST_RETENTION_DAYS * DAY_MS);
+}
+
 export const STRANDED_ERROR = "stranded (no heartbeat)";
 
 export interface MessagingRetentionPruneResult {
@@ -54,6 +59,7 @@ export interface SystemJobExecutionPruneResult extends MessagingRetentionPruneRe
   success: boolean;
   pruned: number;
   stranded: number;
+  adminRunRequestsPruned: number;
   retentionCutoff: string;
   strandedCutoff: string;
 }
@@ -251,7 +257,7 @@ async function pruneMessagingRetentionPages(
   };
 }
 
-/** Eight pages in total; an interrupted run resumes from remaining eligible rows. */
+/** Nine pages in total; an interrupted run resumes from remaining eligible rows. */
 export async function pruneSystemJobExecutions(
   opts: { limit?: number; startedAt?: number } = {},
 ): Promise<SystemJobExecutionPruneResult> {
@@ -303,6 +309,26 @@ export async function pruneSystemJobExecutions(
             },
           }),
       );
+      const settledBefore = adminRunRequestRetentionCutoff(now);
+      const settledRequestWhere: Prisma.AdminRunRequestWhereInput = {
+        status: { in: ["DONE", "FAILED"] },
+        finishedAt: { lt: settledBefore },
+      };
+      const requests = await mutateRetentionPage(
+        limit,
+        deadline,
+        (take) =>
+          prisma.adminRunRequest.findMany({
+            where: settledRequestWhere,
+            select: { id: true },
+            orderBy: [{ finishedAt: "asc" }, { id: "asc" }],
+            take,
+          }),
+        (ids) =>
+          prisma.adminRunRequest.deleteMany({
+            where: { AND: [settledRequestWhere, { id: { in: ids } }] },
+          }),
+      );
       const messaging = await pruneMessagingRetentionPages(
         now,
         limit,
@@ -313,9 +339,14 @@ export async function pruneSystemJobExecutions(
         success: true,
         pruned: deleted.count,
         stranded: closed.count,
+        adminRunRequestsPruned: requests.count,
         retentionCutoff: retention.toISOString(),
         strandedCutoff: stranded.toISOString(),
-        hasMore: closed.hasMore || deleted.hasMore || messaging.hasMore,
+        hasMore:
+          closed.hasMore ||
+          deleted.hasMore ||
+          requests.hasMore ||
+          messaging.hasMore,
       };
     },
   );
