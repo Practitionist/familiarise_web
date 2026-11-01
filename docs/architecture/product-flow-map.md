@@ -19,16 +19,16 @@ flowchart TD
 
     C --> C1["Individual or Org buyer\nPersonal payment / Org wallet / Invoice"]
     S --> S1["Trial → conversion funnel\n3 allocation modes\nOrg program caps"]
-    W --> W1["Capacity limited with waitlist\nCollaborator revenue splits\nRecording + certificates"]
+    W --> W1["Capacity limited, sold out when full\nCollaborator revenue splits\nRecording + replays"]
     CL --> CL1["Multi-session curriculum\nTeaching assistants\nAsync content + live sessions"]
 ```
 
-| Product          | Who buys                | Who delivers      | Sessions        | Key Mechanic                      |
-| ---------------- | ----------------------- | ----------------- | --------------- | --------------------------------- |
-| **Consultation** | Individual or Org       | Solo expert       | 1               | Approval gate + doc review        |
-| **Subscription** | Individual or Org       | Solo expert       | 4–32 over weeks | 3 allocation modes + trial funnel |
-| **Webinar**      | Many individuals or Org | Expert + co-hosts | 1               | Capacity + waitlist queue         |
-| **Class**        | Many individuals or Org | Expert + TAs      | 6–20            | Curriculum + collaborator splits  |
+| Product          | Who buys                | Who delivers      | Sessions        | Key Mechanic                       |
+| ---------------- | ----------------------- | ----------------- | --------------- | ---------------------------------- |
+| **Consultation** | Individual or Org       | Solo expert       | 1               | Approval gate + doc review         |
+| **Subscription** | Individual or Org       | Solo expert       | 4–32 over weeks | 3 allocation modes + trial funnel  |
+| **Webinar**      | Many individuals or Org | Expert + co-hosts | 1               | Fixed capacity, sold out when full |
+| **Class**        | Many individuals or Org | Expert + TAs      | 6–20            | Curriculum + collaborator splits   |
 
 ---
 
@@ -294,50 +294,14 @@ flowchart TD
     MemberPays --> Sessions
     OrgCharged --> Sessions
 
-    Sessions --> AllComplete["All sessions COMPLETED\nCertificate issued if enabled"]
+    Sessions --> AllComplete["All sessions COMPLETED"]
     Converts -- Yes --> ConvertMark["Trial marked CONVERTED\nlinked via convertedToSubscriptionId"]
     ConvertMark --> DirectSub
 ```
 
 ---
 
-## 9. Waitlist Flow (Webinar & Class)
-
-```mermaid
-stateDiagram-v2
-    [*] --> WAITING : Joins waitlist (POST /api/waitlist)
-
-    WAITING --> NOTIFIED : Spot opens, 48h window starts
-    WAITING --> CANCELLED : User leaves queue
-
-    NOTIFIED --> BOOKED : Pays within 48h
-    NOTIFIED --> EXPIRED : 48h passes, no response
-    NOTIFIED --> SKIPPED : User declines spot
-
-    EXPIRED --> WAITING : Re-queued, next notified
-    SKIPPED --> WAITING : Re-queued, next notified
-
-    BOOKED --> [*]
-    CANCELLED --> [*]
-```
-
-```mermaid
-flowchart TD
-    WebinarFull["Webinar / Class at capacity\ncurrentParticipants >= maxParticipants"] --> WaitlistOpt{Join waitlist?}
-    WaitlistOpt -- Yes --> Queue["WAITING\nQueue position: count ahead by priority + time"]
-    WaitlistOpt -- No --> Exit(["Exit"])
-
-    Queue --> SpotOpens["Another registrant cancels\nhandleSlotOpening() triggers"]
-    SpotOpens --> NotifyFirst["First in queue: WAITING → NOTIFIED\nEmail: spot available, 48h to respond"]
-    NotifyFirst --> Respond{Responds within 48h?}
-    Respond -- Yes, pays --> Booked["BOOKED\nSlot confirmed, position rebalanced"]
-    Respond -- No --> ExpiredEntry["EXPIRED\nCron removes, next in queue NOTIFIED"]
-    Respond -- Declines --> Skipped["SKIPPED\nRe-queued at back"]
-```
-
----
-
-## 10. Webinar & Class Group Session Flow
+## 9. Webinar & Class Group Session Flow
 
 ```mermaid
 flowchart TD
@@ -345,7 +309,7 @@ flowchart TD
 
     EventPage --> CapCheck{Seats available?}
     CapCheck -- Yes --> Enroll["Register / Enroll\n/checkout/plans/webinar/{planId}"]
-    CapCheck -- No --> WaitlistFlow["→ Waitlist flow (see above)"]
+    CapCheck -- No --> SoldOut(["Sold out\nNo seat is sold until one is released"])
 
     Enroll --> Checkout["Checkout: Redis lock → re-check capacity\nCreate Webinar + Appointment (shared) + AppointmentOccurrence + Payment"]
     Checkout --> Pay["Pay via gateway"]
@@ -353,7 +317,7 @@ flowchart TD
 
     Webhook --> AllPartners["All N registrants share\nONE Appointment row\nONE AppointmentOccurrence\n(many-to-one, not N separate bookings)"]
     AllPartners --> Reminders["Reminders: 24h before + 1h before"]
-    Reminders --> JoinNow["'Join Now' active 5 min before\nStream.io group room"]
+    Reminders --> JoinNow["'Join Now' active 15 min before\nStream.io group room"]
 
     JoinNow --> CollabCheck{Collaborators?}
     CollabCheck -- Yes --> CollabRoom["Co-host / TA in room\nRevenue split on each payment\nOwner: e.g. 80%, Guest: 20%"]
@@ -365,15 +329,12 @@ flowchart TD
     TempRecording --> PermRecording["R2 copy (transfer-recordings,\nwithin the 14-day Stream window)\nparticipant access until retention"]
     PermRecording --> PostSession
 
-    PostSession["Post-session"] --> CertCheck{Certificate enabled?}
-    CertCheck -- Yes --> Cert["Certificate auto-issued"]
-    CertCheck -- No --> Review["Prompt: leave a review"]
-    Cert --> Review
+    PostSession["Post-session"] --> Review["Prompt: leave a review"]
 ```
 
 ---
 
-## 11. Trial Session Lifecycle
+## 10. Trial Session Lifecycle
 
 ```mermaid
 stateDiagram-v2
@@ -395,7 +356,7 @@ stateDiagram-v2
 
 ---
 
-## 12. Enterprise Organization Types
+## 11. Enterprise Organization Types
 
 ```mermaid
 flowchart TD
@@ -420,7 +381,7 @@ flowchart TD
 
 ---
 
-## 13. Enterprise Program & Budget Cap Flow
+## 12. Enterprise Program & Budget Cap Flow
 
 ```mermaid
 flowchart TD
@@ -471,7 +432,7 @@ flowchart TD
 
 ---
 
-## 14. Revenue & Earnings Split
+## 13. Revenue & Earnings Split
 
 ```mermaid
 flowchart TD
@@ -498,7 +459,7 @@ flowchart TD
 
 ---
 
-## 15. Full End-to-End User Journey
+## 14. Full End-to-End User Journey
 
 ```mermaid
 flowchart TD
@@ -533,11 +494,10 @@ flowchart TD
     W --> CapGate{Spots available?}
     CL --> CapGate
     CapGate -- Yes --> Pay
-    CapGate -- No --> Waitlist["Join waitlist\n→ notified when spot opens\n48h window"]
-    Waitlist --> Pay
+    CapGate -- No --> SoldOut(["Sold out"])
 
     Pay["Complete payment\n💳 Card / 🏢 Org wallet / 📄 Invoice / 🔑 License / 🎁 Credits"] --> Session["🎥 Live session on Stream.io"]
-    Session --> PostSession["Recording + materials\nCertificate if enabled"]
+    Session --> PostSession["Recording + materials"]
     PostSession --> Review["⭐ Leave review"]
     Review --> Repeat{Book again?}
     Repeat -- Yes --> Profile
@@ -546,13 +506,12 @@ flowchart TD
 
 ---
 
-## 16. Background Automation (No Human Needed)
+## 15. Background Automation (No Human Needed)
 
 ```mermaid
 flowchart LR
     subgraph Hourly["⏰ Hourly"]
         AC["auto-complete-appointments\nCompletes sessions 1hr after end time"]
-        PWE["process-waitlist-expirations\nNOTIFIED → EXPIRED\nnext in queue notified"]
     end
 
     subgraph Every2h["⏰ Every 2 hours"]
@@ -583,7 +542,7 @@ flowchart LR
 
 ---
 
-## 17. The Permutation Matrix
+## 16. The Permutation Matrix
 
 Every journey is a combination of these axes:
 
@@ -594,7 +553,7 @@ Every journey is a combination of these axes:
 | **Allocation mode** (subscription only) | Auto · Manual · Requested slots                                                     |
 | **Trial** (subscription only)           | None · Trial no-convert · Trial converts                                            |
 | **Payment source**                      | Personal card · Org wallet · Org invoice · Org license · Credits+card · Wallet+card |
-| **Capacity**                            | Available · Waitlist→enrolls · Waitlist→expires                                     |
+| **Capacity**                            | Available · Sold out                                                                |
 | **Collaboration**                       | Solo consultant · With co-host/TA (revenue split)                                   |
 | **Document review**                     | None · Consultee uploads · Consultant responds                                      |
 | **Recording**                           | None · Stream 2-week · Supabase permanent                                           |
@@ -604,20 +563,19 @@ Every journey is a combination of these axes:
 
 ---
 
-## 18. Competitive Moat (Why This Is Hard to Copy)
+## 17. Competitive Moat (Why This Is Hard to Copy)
 
 ```mermaid
 flowchart TD
     Competitor["Competitor starting today"] --> B1["Booking state machine\n8 states, 4 service types"]
     Competitor --> B2["Two-phase commit checkout\nRedis distributed locks\nTOCTOU race condition guards"]
     Competitor --> B3["3-mode slot allocation\nauto scoring algorithm\nconcurrency guards"]
-    Competitor --> B4["Priority waitlist queue\n48h expiry + re-queue logic"]
     Competitor --> B5["Multi-leg payments\ncard + wallet + credits + org invoice\n4 gateways"]
     Competitor --> B6["India compliance\nGST CGST/SGST/IGST\nTDS 194J withholding\ne-invoice IRN\nMSME 15/45-day rules"]
     Competitor --> B7["Enterprise billing stack\nContract → Program → ProgramAssignment\n3 overage behaviors\nimmutable 3-ledger accounting"]
     Competitor --> B8["Trial-to-conversion funnel\nunique constraint per consultee+consultant pair\nauto-conversion detection at checkout"]
 
-    B1 & B2 & B3 & B4 & B5 & B6 & B7 & B8 --> Timeline["2–3 years to rebuild\nwith India compliance expertise"]
+    B1 & B2 & B3 & B5 & B6 & B7 & B8 --> Timeline["2–3 years to rebuild\nwith India compliance expertise"]
     Timeline --> Moat["By then: verified expert roster\n+ learner trust\n= real switching costs"]
 ```
 
@@ -632,7 +590,6 @@ flowchart TD
 | Booking lifecycle      | `docs/booking/06-booking-lifecycle.md`                                   |
 | Slot math              | `docs/booking/03-interval-math-and-calculations.md`                      |
 | Trial sessions         | `docs/booking/09-trials.md`                                              |
-| Waitlist system        | `docs/booking/11-waitlist-system.md`                                     |
 | Checkout + payment     | `docs/booking/10-checkout-payment-integration.md`                        |
 | Enterprise overview    | `docs/enterprise/00-foundations/01-overview.md`                          |
 | Enterprise scenarios   | `docs/enterprise/60-scenarios-and-verdicts/01-scenarios-and-examples.md` |
@@ -644,3 +601,10 @@ flowchart TD
 | Checkout pages         | `app/checkout/plans/`                                                    |
 | Consultant dashboard   | `app/dashboard/consultant/[consultantId]/`                               |
 | Org dashboard          | `app/dashboard/organization/`                                            |
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Queued event waitlist (retired).** Webinars and classes once had a per-event queue. A learner joined when the event was full, moved from WAITING to NOTIFIED when a seat opened with a 48-hour window to pay, and was re-queued if the window lapsed or they declined. It was driven by a `handleSlotOpening()` hook, an hourly expiry job and a `/waitlists` dashboard page. None of it remains in the code. A full event is simply sold out, and the `Waitlist` database model is the marketing newsletter list, which has nothing to do with event capacity. A notify-only "tell me if a seat opens" list is planned (not built); it deliberately reserves nothing and keeps no queue. Delete any leftover reference to the queued design instead of reviving it.
+- **Automatic certificates (never built).** The plan editors store a `certificateProvided` flag, but no code generates or sends a certificate. Do not describe a certificate as issued until a generator exists.

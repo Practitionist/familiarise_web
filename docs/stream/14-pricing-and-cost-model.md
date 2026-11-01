@@ -170,6 +170,33 @@ Monthly cost in USD. Subtract $100 free credit for actual billed amount.
 
 **60 fps doubles every cost in both tables above.**
 
+### 1.5 How Stream decides the billed tier
+
+Stream does not bill a participant minute at the quality that participant sends. It bills it at the tier that matches the combined resolution of every video track that participant receives at the same moment, as set out in Stream's [pricing guide](https://getstream.io/video/docs/api/pricing-guide/) (read on 2026-11-01). The combined resolution is the sum of the pixels of all received tracks:
+
+| Combined pixels received | Tier billed     |
+| ------------------------ | --------------- |
+| up to 308K               | SD (480p)       |
+| up to 921,600            | HD (720p)       |
+| up to 2,073,600          | Full HD (1080p) |
+| up to 3,686,400          | 2K              |
+| up to 8,847,360          | 4K              |
+
+Three rules from the same guide decide what a webinar costs:
+
+1. A screen share is one more received track, and it does not use Dynascale, so it arrives at the resolution the sender publishes. Camera tracks, by contrast, are scaled down to what the viewer's screen can show.
+2. Stream's own example: a viewer who receives two HD tracks (2 × 1280 × 720 = 1,843,200 pixels) is billed at the Full HD rate.
+3. A participant whose camera and microphone are both off is metered as a livestream viewer, at the cheaper livestream rates in section 2.1, even inside a normal video call.
+
+Worked example (derived from those rules and this platform's defaults, not measured). Webinar attendees join muted with their cameras off, because `buildCallSettingsOverride` in `lib/meetings/room-ready.ts` applies the backstage and muted defaults to webinars and classes, so rule 3 applies to them. The default quality is a 720p camera and a 1080p screen share (`DEFAULT_VIDEO_CONFIG` in `lib/stream/video-quality.ts`; section 8.5). One hundred attendees watching for 90 minutes is 9,000 participant minutes:
+
+| What the attendee receives                                         | Combined pixels | Billed as a livestream viewer (rule 3) | Billed at the call rates of section 1.2 |
+| ------------------------------------------------------------------ | --------------- | -------------------------------------- | --------------------------------------- |
+| The host's camera only (at most 720p, less after Dynascale)        | at most 921,600 | HD, $1.00 per 1,000: **$9.00**         | HD, $1.50 per 1,000: **$13.50**         |
+| The host's camera and a shared 1080p screen (2,073,600 + a camera) | above 2,073,600 | 2K, $4.00 per 1,000: **$36.00**        | 2K, $6.00 per 1,000: **$54.00**         |
+
+At ₹90.7 to the dollar those are about ₹816, ₹3,265, ₹1,224 and ₹4,898. The practical reading is that a webinar with a shared screen costs roughly four times one without, because any camera added to a 1080p share pushes the viewer past the Full HD threshold into 2K. A second presenter camera on top of that share adds up to 921,600 more pixels (3,916,800 in total), which passes the 2K ceiling of 3,686,400 and bills at the 4K tier ($12.00 per 1,000 at call rates, $8.00 as a livestream viewer) whenever Dynascale does not scale the cameras down. Two points are inferred from Stream's text and have not been checked against an invoice: that the livestream rate applies to a muted attendee at the combined tier, and that an attendee promoted to the stage stops being a livestream viewer. Until a real month of usage is read from the Stream dashboard, treat the livestream column as the floor and the call-rate column as the ceiling.
+
 ---
 
 ## 2. Live Streaming Pricing
@@ -406,7 +433,7 @@ Must be explicitly applied for in the Stream dashboard. Availability is limited 
 
 ### 8.4 The 200-participant cap
 
-Webinars and classes are capped at 200 participants at launch ([ADR-07](./18-architecture-decision-records.md#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)), enforced when a plan is authored, when a seat is sold and by Stream `limits.max_participants` on the call. The cap exists so that the largest room Familiarise can sell has a known cost. At the HD rate used in 8.2 ($1.50 per 1,000 participant minutes), a full 200-attendee webinar of 90 minutes is 18,000 participant minutes, about $27 (roughly ₹2,450), and a full 200-student class of 60 minutes is 12,000 participant minutes, about $18 (roughly ₹1,630). Live Streaming with HLS (section 2.3) would cost more per viewer-minute and add 10 to 30 seconds of delay, which is why audiences above the cap are not routed to it. The cap can be lifted after a load test.
+Webinars and classes are capped at 200 participants at launch ([ADR-07](./18-architecture-decision-records.md#adr-07-interactive-webrtc-with-a-200-participant-cap-not-hls-at-launch)), enforced when a plan is authored, when a seat is sold and by Stream `limits.max_participants` on the call. The cap exists so that the largest room Familiarise can sell has a known cost. At the HD rate used in 8.2 ($1.50 per 1,000 participant minutes), a full 200-attendee webinar of 90 minutes is 18,000 participant minutes, about $27 (roughly ₹2,450), and a full 200-student class of 60 minutes is 12,000 participant minutes, about $18 (roughly ₹1,630). Those figures use the plain HD call rate; section 1.5 shows how a shared screen moves a viewer to a higher tier and how muted attendees are metered at the livestream rates. Live Streaming with HLS (section 2.3) would cost more per viewer-minute and add 10 to 30 seconds of delay, which is why audiences above the cap are not routed to it. The cap can be lifted after a load test.
 
 ### 8.5 What 1080p costs
 
