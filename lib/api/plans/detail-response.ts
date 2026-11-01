@@ -11,19 +11,26 @@ const PUBLIC_CACHE = publicCacheHeaders({
   staleWhileRevalidate: 300,
 });
 
+/** Anything that depends on who is asking: never stored by a shared cache. */
+const PRIVATE_NO_STORE = { "Cache-Control": "private, no-store" };
+
 /**
  * GET answer for a webinar or class plan by id, behind the same visibility gate
  * the detail pages apply. A plan anyone may see keeps the shared CDN cache; one
  * only this viewer may see (an owner's draft, an org-only plan) is never cached,
  * because the cache key ignores the session. A hidden plan answers exactly like
- * a missing one.
+ * a missing one, and neither 404 is cacheable: the answer depends on the viewer,
+ * and a host's default must not decide it.
  */
 export async function planDetailResponse<T extends PlanGate>(
   plan: T | null,
   notFoundMessage: string,
 ): Promise<NextResponse> {
   const notFound = () =>
-    NextResponse.json({ error: notFoundMessage }, { status: 404 });
+    NextResponse.json(
+      { error: notFoundMessage },
+      { status: 404, headers: PRIVATE_NO_STORE },
+    );
   if (!plan) return notFound();
 
   const publiclyViewable = await canViewPlanDetail(plan, null);
@@ -39,9 +46,7 @@ export async function planDetailResponse<T extends PlanGate>(
     { data: plan },
     {
       status: 200,
-      headers: publiclyViewable
-        ? PUBLIC_CACHE
-        : { "Cache-Control": "private, no-store" },
+      headers: publiclyViewable ? PUBLIC_CACHE : PRIVATE_NO_STORE,
     },
   );
 }

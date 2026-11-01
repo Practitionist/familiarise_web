@@ -41,6 +41,7 @@ describe("planDetailResponse", () => {
     const res = await planDetailResponse(null, "Webinar plan not found");
 
     expect(res.status).toBe(404);
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
     await expect(res.json()).resolves.toEqual({
       error: "Webinar plan not found",
     });
@@ -84,8 +85,8 @@ describe("planDetailResponse", () => {
     const body = await res.json();
     expect(body).toEqual({ error: "Class plan not found" });
     expect(JSON.stringify(body)).not.toContain(plan.id);
-    // No cache header at all is fine; what must never happen is a shared one.
-    expect(res.headers.get("Cache-Control") ?? "").not.toMatch(/public/);
+    // The 404 depends on who asked, so no shared cache may keep it.
+    expect(res.headers.get("Cache-Control")).toBe("private, no-store");
   });
 
   it("treats a failed session lookup as anonymous and reports it once", async () => {
