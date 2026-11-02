@@ -175,7 +175,7 @@ sequenceDiagram
   S->>P: upsert MeetingPresence
 ```
 
-The enforcers are `resolveMeetingAccess` (`lib/meetings/access.ts`) for who may enter and when, and `guardMeetingRoute` (`lib/meetings/route-guard.ts`) for authentication, the per-user rate limit and the "Stream is configured" check. In a 1:N room only the host keeps publish permissions, and the join route skips the membership write when Stream already shows the caller with the right role, because that write is broadcast to the whole room.
+The enforcers are `resolveMeetingAccess` (`lib/meetings/access.ts`) for who may enter and when, and `guardMeetingRoute` (`lib/meetings/route-guard.ts`) for authentication, the per-user rate limit and the "Stream is configured" check. An attendee of a webinar or class is admitted on their seat alone, so the seat must hold a fulfilled entitlement (`paidParticipant`): a confirmed or attended seat with a `SUCCEEDED` payment or none, or a held seat whose `SUCCEEDED` capture owes no refund, has no pending or completed refund, and carries no settled-elsewhere marker (auto-refund, `REQUIRES_MANUAL_RECOVERY:` or replay sale). In a 1:N room only the host keeps publish permissions, and the join route skips the membership write when Stream already shows the caller with the right role, because that write is broadcast to the whole room.
 
 ### 5.2 End and host reopen
 

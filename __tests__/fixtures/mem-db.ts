@@ -1,8 +1,8 @@
 /**
  * A small in-memory table whose `where` matching honours the predicates the
  * money paths repeat in their CAS writes (equality, null, `in` / `notIn` /
- * `not`, range operators, `OR` / `AND` / `NOT`, to-one relations and
- * `some` / `none` on to-many relations), so a double that ignored a predicate
+ * `not`, range operators, `OR` / `AND` / `NOT`, to-one relations bare or
+ * under `is`, and `some` / `none` on to-many relations), so a double that ignored a predicate
  * cannot make a guarded write look safe.
  */
 
@@ -18,6 +18,7 @@ const OPERATORS = [
   "lt",
   "lte",
   "startsWith",
+  "is",
   "some",
   "none",
 ];
@@ -62,6 +63,11 @@ function matchesOperators(actual: unknown, f: Where): boolean {
   if ("startsWith" in f) {
     if (typeof actual !== "string") return false;
     if (!actual.startsWith(String(f.startsWith))) return false;
+  }
+  if ("is" in f) {
+    if (f.is === null) return actual === null || actual === undefined;
+    if (!actual || typeof actual !== "object") return false;
+    if (!matchesWhere(actual as Row, f.is as Where)) return false;
   }
   if ("some" in f) {
     if (!Array.isArray(actual)) return false;

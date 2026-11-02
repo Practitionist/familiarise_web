@@ -30,8 +30,8 @@ export const REPLAY_SALE_PREFIX = "Replay sale:";
 export const MANUAL_RECOVERY_PREFIX = "REQUIRES_MANUAL_RECOVERY:";
 
 /**
- * Appointment-less SUCCEEDED rows another owner settles (replay sales and every
- * auto-refund marker); the orphan sweeps must neither page, link nor refund them.
+ * SUCCEEDED rows another owner settles (replay sales and every auto-refund marker): the
+ * orphan sweeps neither page, link nor refund them, and a HELD seat on one opens no room.
  */
 export const notSettledElsewhereWhere: Prisma.PaymentWhereInput = {
   OR: [
