@@ -214,9 +214,10 @@ it("reads only the EOCD whose comment ends the file, never a decoy inside it", a
     const comment = Buffer.concat([benignCd, decoy, Buffer.from(padding)]);
     return buildZip([{ name: "setup.exe" }], comment);
   };
+  // The decoy's records in the comment are refused before anything is trusted.
   await expect(inspect(withDecoy("padding"))).resolves.toMatchObject({
     ok: false,
-    problem: "EXECUTABLE_ENTRY",
+    problem: "UNLISTED_DATA",
   });
   // A decoy that also ends the file leaves two candidates.
   await expect(inspect(withDecoy(""))).resolves.toMatchObject({
@@ -439,16 +440,51 @@ it("refuses records before an empty directory and local/central method or flag m
   });
   await expect(
     inspect(fixture("emptyDirectoryHiddenLocal")),
-  ).resolves.toMatchObject({ ok: false, problem: "UNLISTED_DATA" });
+  ).resolves.toMatchObject({ ok: false, problem: "EMPTY_ARCHIVE" });
   await expect(
     inspect(fixture("localStoredCentralDeflate")),
   ).resolves.toMatchObject({ ok: false, problem: "LOCAL_HEADER_MISMATCH" });
-  // An empty archive is still fine.
-  await expect(inspect(buildZip([]))).resolves.toEqual({
-    ok: true,
-    entries: 0,
-    totalUncompressedBytes: 0,
+  await expect(inspect(buildZip([]))).resolves.toMatchObject({
+    ok: false,
+    problem: "EMPTY_ARCHIVE",
   });
+});
+
+it("accounts for every byte: empty directories, the gap before the end record and the comment", async () => {
+  // Codex round 3: a local payload.exe, then an EOCD claiming no entries at offset 0.
+  const hidden = buildZip([{ name: "payload.exe", hidden: true }]);
+  hidden.writeUInt32LE(0, hidden.length - 6);
+  await expect(inspect(hidden)).resolves.toMatchObject({
+    ok: false,
+    problem: "EMPTY_ARCHIVE",
+  });
+  // The same with the directory size stretched over the local record.
+  hidden.writeUInt32LE(hidden.length - 22, hidden.length - 10);
+  await expect(inspect(hidden)).resolves.toMatchObject({
+    ok: false,
+    problem: "EMPTY_ARCHIVE",
+  });
+
+  // Bytes between the central directory and the EOCD.
+  const zip = buildZip([{ name: "guide.txt" }]);
+  const gap = Buffer.concat([
+    zip.subarray(0, zip.length - 22),
+    Buffer.from("PK\x03\x04 smuggled", "latin1"),
+    zip.subarray(zip.length - 22),
+  ]);
+  await expect(inspect(gap)).resolves.toMatchObject({
+    ok: false,
+    problem: "UNLISTED_DATA",
+  });
+  // A ZIP record signature in the comment.
+  await expect(
+    inspect(
+      buildZip(
+        [{ name: "guide.txt" }],
+        Buffer.from("made by PK\x01\x02 tool", "latin1"),
+      ),
+    ),
+  ).resolves.toMatchObject({ ok: false, problem: "UNLISTED_DATA" });
 });
 
 it("inflates bit-3 DEFLATE entries and requires each stream to end at its central size", async () => {

@@ -42,6 +42,8 @@ export const ASSET_REJECT_MESSAGES: Record<string, string> = {
     "Archives inside the ZIP aren't allowed. Unpack them into the main archive.",
   ZIP_EXECUTABLE_ENTRY:
     "The archive contains a program or script, which isn't allowed. Remove it and upload again.",
+  ZIP_EMPTY_ARCHIVE:
+    "This archive has no files in it. Add the files you want to sell and zip them again.",
   ZIP_UNLISTED_DATA:
     "The archive holds data its file list doesn't account for, which can hide a file. Re-create it with a standard ZIP tool.",
   ZIP_EMBEDDED_ZIP_RECORD:

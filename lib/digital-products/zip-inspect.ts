@@ -25,6 +25,7 @@ export type ZipProblem =
   | "EXECUTABLE_ENTRY"
   | "LOCAL_HEADER_MISMATCH"
   | "UNLISTED_DATA"
+  | "EMPTY_ARCHIVE"
   | "EMBEDDED_ZIP_RECORD"
   | "ENTRY_DATA_MISMATCH"
   | "UNVERIFIABLE_ENTRY"
@@ -154,6 +155,7 @@ async function readZip64Directory(
   read: RangeReader,
   eocdAt: number,
   fileSize: number,
+  eocd: { entries: number; size: number; offset: number },
 ): Promise<Directory> {
   if (eocdAt < 20) throw new ZipFault("ZIP64_INCONSISTENT", "no locator");
   const locator = view(await read(eocdAt - 20, eocdAt - 1));
@@ -174,17 +176,26 @@ async function readZip64Directory(
   if (record.getUint32(16, true) !== 0 || record.getUint32(20, true) !== 0) {
     throw new ZipFault("MULTI_DISK");
   }
+  // The record's own length must reach the locator exactly, leaving no room for hidden bytes.
+  if (recordAt + 12 + u64(record, 4) !== eocdAt - 20) {
+    throw new ZipFault("UNLISTED_DATA", "data around the Zip64 end record");
+  }
   const onDisk = u64(record, 24);
   const entries = u64(record, 32);
+  const size = u64(record, 40);
+  const offset = u64(record, 48);
   if (onDisk !== entries) {
     throw new ZipFault("ZIP64_INCONSISTENT", "entry counts disagree");
   }
-  return {
-    entries,
-    size: u64(record, 40),
-    offset: u64(record, 48),
-    endBound: recordAt,
-  };
+  // An EOCD field that is not a sentinel must agree, or two extractors would read two directories.
+  if (
+    (eocd.entries !== U16_MAX && eocd.entries !== entries) ||
+    (eocd.size !== U32_MAX && eocd.size !== size) ||
+    (eocd.offset !== U32_MAX && eocd.offset !== offset)
+  ) {
+    throw new ZipFault("ZIP64_INCONSISTENT", "EOCD and Zip64 record disagree");
+  }
+  return { entries, size, offset, endBound: recordAt };
 }
 
 async function locateDirectory(
@@ -196,6 +207,10 @@ async function locateDirectory(
   const tail = await read(tailStart, fileSize - 1);
   const at = findEocd(tail);
   if (at < 0) throw new ZipFault("NOT_A_ZIP");
+  // The comment ends the file, so a ZIP record inside it can only be smuggled data.
+  if (findRecordSignature(tail.subarray(at + 22)) >= 0) {
+    throw new ZipFault("UNLISTED_DATA", "ZIP record in the archive comment");
+  }
   const eocd = view(tail.subarray(at));
   const disk = eocd.getUint16(4, true);
   const cdDisk = eocd.getUint16(6, true);
@@ -204,9 +219,18 @@ async function locateDirectory(
   const size = eocd.getUint32(12, true);
   const offset = eocd.getUint32(16, true);
   const eocdAt = tailStart + at;
+  // Some writers add the Zip64 records even when no EOCD field overflows.
+  const hasLocator =
+    at >= 20 && view(tail).getUint32(at - 20, true) === ZIP64_LOCATOR_SIG;
   const usesZip64 =
     entries === U16_MAX || size === U32_MAX || offset === U32_MAX;
-  if (usesZip64) return readZip64Directory(read, eocdAt, fileSize);
+  if (usesZip64 || hasLocator) {
+    return readZip64Directory(read, eocdAt, fileSize, {
+      entries,
+      size,
+      offset,
+    });
+  }
   if (disk !== 0 || cdDisk !== 0 || onDisk !== entries) {
     throw new ZipFault("MULTI_DISK");
   }
@@ -912,13 +936,15 @@ export async function inspectZip(
     }
     throw error;
   }
+  // Nothing to sell, and with nothing listed no byte before the end record can be accounted for.
+  if (dir.entries === 0) return { ok: false, problem: "EMPTY_ARCHIVE" };
   if (dir.entries > ZIP_LIMITS.maxEntries) {
     return { ok: false, problem: "TOO_MANY_ENTRIES" };
   }
   if (
     dir.offset + dir.size > dir.endBound ||
     dir.size > ZIP_LIMITS.maxCentralDirectoryBytes ||
-    (dir.entries > 0 && dir.size < 46 * dir.entries)
+    dir.size < 46 * dir.entries
   ) {
     return {
       ok: false,
@@ -928,15 +954,13 @@ export async function inspectZip(
           : "CENTRAL_DIRECTORY_CORRUPT",
     };
   }
-  if (dir.entries === 0) {
-    // With nothing listed, any byte before the directory is an unlisted record.
-    return dir.offset === 0
-      ? { ok: true, entries: 0, totalUncompressedBytes: 0 }
-      : {
-          ok: false,
-          problem: "UNLISTED_DATA",
-          detail: "data before an empty directory",
-        };
+  // The directory runs exactly to its end record (EOCD, or the Zip64 record before it).
+  if (dir.offset + dir.size !== dir.endBound) {
+    return {
+      ok: false,
+      problem: "UNLISTED_DATA",
+      detail: "data between the central directory and its end record",
+    };
   }
   const cd = await read(dir.offset, dir.offset + dir.size - 1);
   if (cd.length !== dir.size) {
