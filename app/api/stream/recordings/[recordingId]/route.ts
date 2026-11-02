@@ -16,6 +16,7 @@ import { RecordingService } from "@/lib/stream/recording-service";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import { purgeExpiredRecordingAssets } from "@/lib/stream/recording-retention";
 import prisma from "@/lib/prisma";
+import { purgeRecordingSurfaces } from "@/lib/data/public-cache";
 import { streamLogger } from "@/lib/stream-logger";
 import {
   viewerPlaybackAccess,
@@ -365,6 +366,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
           unpublishedAt: new Date(),
         },
       });
+      purgeRecordingSurfaces();
       const racedPurchase = await findActivePurchase();
       if (racedPurchase) return fileApiError("RECORDING_HAS_BUYERS");
     }

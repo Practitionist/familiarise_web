@@ -23,6 +23,9 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { PUBLIC_PRODUCTS_TAG } from "@/lib/digital-products/constants";
 
+/** Next data-cache tag of the public Replays list. */
+export const PUBLIC_RECORDINGS_TAG = "recordings";
+
 const EXPERTS_DIRECTORY = "/explore/experts";
 const ORGANISATIONS_DIRECTORY = "/explore/enterprise/organisations";
 
@@ -81,4 +84,11 @@ export function purgeDigitalProductSurfaces(product: {
   revalidatePath(`/explore/products/${product.slug}`);
   revalidateTag(PUBLIC_PRODUCTS_TAG);
   revalidatePath("/explore/products");
+}
+
+/** A replay left the public listing or its listing changed: the Replays tab, its list cache and its page. */
+export function purgeRecordingSurfaces(slug?: string | null): void {
+  revalidateTag(PUBLIC_RECORDINGS_TAG);
+  revalidatePath("/explore/products");
+  if (slug) revalidatePath(`/explore/recordings/${slug}`);
 }

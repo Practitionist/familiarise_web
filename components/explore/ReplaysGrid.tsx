@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { PlayCircle, Clock } from "lucide-react";
-import { listPublicRecordings } from "@/lib/data/recordings-explore";
+import { listPublicReplayCards } from "@/lib/data/recordings-explore";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
@@ -11,9 +11,7 @@ function formatPrice(paise: number): string {
 
 export async function ReplaysGrid() {
   // A failing read reaches the error boundary; the listing never degrades to empty.
-  const { items } = await withBuildTimeRetry(() =>
-    listPublicRecordings({ perPage: 48 }),
-  );
+  const items = await withBuildTimeRetry(() => listPublicReplayCards(48));
 
   if (items.length === 0) {
     return (
