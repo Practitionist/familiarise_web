@@ -33,7 +33,7 @@ export function registrySlugs(registrySource: string): string[] {
 
 /**
  * Every registry job is scheduled or explicitly manual, and every ticker target
- * has exactly one freshness requirement under its live run-row name. Returns the violations.
+ * has a registry job and exactly one freshness requirement under its live run-row name. Returns the violations.
  */
 export function checkJobCoverage(input: JobCoverageInput): string[] {
   const {
@@ -70,6 +70,11 @@ export function checkJobCoverage(input: JobCoverageInput): string[] {
   }
   const liveNames = new Set(targets.map(jobNameOf));
   for (const target of targets) {
+    if (slugs.length > 0 && !slugSet.has(target)) {
+      violations.push(
+        `Ticker target "${target}" has no registry job (lib/cron/cleanup-registry.ts); /api/cleanup/${target} would answer 404.`,
+      );
+    }
     const own = requirements.filter((r) => r.target === target);
     if (own.length !== 1) {
       violations.push(

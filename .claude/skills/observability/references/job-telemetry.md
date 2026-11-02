@@ -108,7 +108,7 @@ held outcomes cannot record COMPLETED evidence before activation. The probe keep
 reading during maintenance; suppress notifications externally without advancing
 successful-work freshness.
 
-`GET /api/health/jobs/streaks` is the third route. It is bearer-protected, read-only, uncached, unchanged by the outcome vocabulary (a `partial` run is `FAILED`, so it counts as a failure), and returns each requested target's last `COMPLETED` start and last `FAILED` start (`lastFailedAt`) in the past seven days plus whether any `COMPLETED` or `FAILED` row exists. The ticker uses `lastFailedAt` to judge a background target (`lastRunFailed`: the newest finished run failed). It leaves out targets whose job writes no execution row.
+`GET /api/health/jobs/streaks` is the third route. It is bearer-protected, read-only, uncached, unchanged by the outcome vocabulary (a `partial` run is `FAILED`, so it counts as a failure), and returns each requested target's last `COMPLETED` start and last `FAILED` start (`lastFailedAt`) in the past seven days plus whether any `COMPLETED` or `FAILED` row exists. The ticker uses `lastFailedAt` to judge a background target (`lastRunFailed`: the newest finished run failed).
 
 For cron activation, use the current Sentry Monitors UI and read back active
 state through the API; legacy Crons links can return 404. Check the account's

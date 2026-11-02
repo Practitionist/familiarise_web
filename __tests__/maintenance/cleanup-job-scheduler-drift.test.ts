@@ -44,6 +44,11 @@ describe("job coverage", () => {
       /"orphan" has no ticker target/,
     ],
     [
+      "a ticker target with no registry job",
+      { targets: [...fixture.targets, "ghost"] },
+      /Ticker target "ghost" has no registry job/,
+    ],
+    [
       "an empty registry parse",
       { registrySlugs: [] },
       /no `\/\/ @cleanup-twin <slug>` markers/,
