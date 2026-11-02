@@ -3,39 +3,72 @@ import {
   type AccountHrefUser,
 } from "@/lib/dashboard/account-href";
 import { goHref, goLibraryHref } from "@/lib/dashboard/go";
+import type { DashboardFacetsResponse } from "@/lib/navigation/dashboard-facets-schema";
 
 export interface AccountMenuLink {
-  key: "expert" | "client" | "dashboard" | "library" | "settings";
+  key: string;
   label: string;
   href: string;
 }
 
+export type RemoteFacets =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; facets: DashboardFacetsResponse["facets"] };
+
+const FACET_LABEL: Record<string, string> = {
+  expert: "Expert dashboard",
+  client: "Learner dashboard",
+  workspace: "All organizations",
+  admin: "Admin",
+  staff: "Staff",
+};
+
 /**
- * The public header's account menu: one door per profile the viewer holds
- * (Dashboard when they hold neither), then My library and Settings.
- * Sign out is rendered by the caller.
+ * The dashboards to offer. Until the switcher's facets arrive (or if they
+ * cannot be fetched) it is one door per personal profile the session holds,
+ * with a generic Dashboard door when it holds neither.
  */
-export function accountMenuLinks(user: AccountHrefUser): AccountMenuLink[] {
-  const facets: AccountMenuLink[] = [];
+export function accountFacetLinks(
+  user: AccountHrefUser,
+  remote: RemoteFacets,
+): { links: AccountMenuLink[]; loading: boolean } {
+  if (remote.status === "ready") {
+    return {
+      loading: false,
+      links: remote.facets.map((f) => ({
+        key: f.key,
+        label: FACET_LABEL[f.kind] ?? f.label,
+        href: f.href,
+      })),
+    };
+  }
+  const links: AccountMenuLink[] = [];
   if (user.consultantProfileId) {
-    facets.push({
+    links.push({
       key: "expert",
-      label: "Expert dashboard",
+      label: FACET_LABEL.expert,
       href: goHref("expert"),
     });
   }
   if (user.consulteeProfileId) {
-    facets.push({
+    links.push({
       key: "client",
-      label: "Learner dashboard",
+      label: FACET_LABEL.client,
       href: goHref("client"),
     });
   }
-  if (facets.length === 0) {
-    facets.push({ key: "dashboard", label: "Dashboard", href: "/dashboard" });
+  if (remote.status === "error") {
+    links.push({ key: "all", label: "All dashboards", href: "/dashboard" });
+  } else if (links.length === 0) {
+    links.push({ key: "dashboard", label: "Dashboard", href: "/dashboard" });
   }
+  return { links, loading: remote.status === "loading" };
+}
+
+/** My library and Settings, always present. Sign out is rendered by the caller. */
+export function accountBaseLinks(user: AccountHrefUser): AccountMenuLink[] {
   return [
-    ...facets,
     { key: "library", label: "My library", href: goLibraryHref() },
     {
       key: "settings",

@@ -19,7 +19,11 @@ import {
   Star,
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
-import { accountMenuLinks } from "@/lib/navigation/account-menu";
+import {
+  accountBaseLinks,
+  accountFacetLinks,
+} from "@/lib/navigation/account-menu";
+import { useDashboardFacets } from "@/hooks/useDashboardFacets";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
@@ -515,6 +519,11 @@ const Navbar = () => {
   });
   const isAuthedView = authView.mode === "authed";
   const [isOpen, setIsOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const remoteFacets = useDashboardFacets(
+    session?.user?.id,
+    accountMenuOpen || isOpen,
+  );
   const [isScrolled, setIsScrolled] = useState(false);
   const { currency, symbol, setCurrency, isEstimate } = useCurrency();
   const { isVisible: isAnnouncementVisible } = useAnnouncementBar();
@@ -540,7 +549,11 @@ const Navbar = () => {
     closeMenu();
   };
 
-  const accountLinks = accountMenuLinks(session?.user ?? {});
+  const { links: facetLinks, loading: facetsLoading } = accountFacetLinks(
+    session?.user ?? {},
+    remoteFacets,
+  );
+  const baseLinks = accountBaseLinks(session?.user ?? {});
 
   const getUserImage = () => {
     return authView.image && authView.image !== ""
@@ -678,7 +691,10 @@ const Navbar = () => {
                   <Skeleton className="h-9 w-28 rounded-md" />
                 </div>
               ) : isAuthedView ? (
-                <DropdownMenu>
+                <DropdownMenu
+                  open={accountMenuOpen}
+                  onOpenChange={setAccountMenuOpen}
+                >
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
@@ -702,7 +718,22 @@ const Navbar = () => {
                         <DropdownMenuSeparator />
                       </>
                     )}
-                    {accountLinks.map((link) => (
+                    {facetLinks.map((link) => (
+                      <DropdownMenuItem key={link.key} asChild>
+                        <Link href={link.href}>{link.label}</Link>
+                      </DropdownMenuItem>
+                    ))}
+                    {facetsLoading && (
+                      <div
+                        role="status"
+                        aria-label="Loading dashboards"
+                        className="px-2 py-1.5"
+                      >
+                        <Skeleton className="h-4 w-32" />
+                      </div>
+                    )}
+                    <DropdownMenuSeparator />
+                    {baseLinks.map((link) => (
                       <DropdownMenuItem key={link.key} asChild>
                         <Link href={link.href}>{link.label}</Link>
                       </DropdownMenuItem>
@@ -938,7 +969,7 @@ const Navbar = () => {
                     </span>
                   </div>
                   <ul aria-label="Account" className="space-y-1">
-                    {accountLinks.map((link) => (
+                    {[...facetLinks, ...baseLinks].map((link) => (
                       <li key={link.key}>
                         <Link
                           href={link.href}
@@ -949,6 +980,15 @@ const Navbar = () => {
                         </Link>
                       </li>
                     ))}
+                    {facetsLoading && (
+                      <li
+                        role="status"
+                        aria-label="Loading dashboards"
+                        className="px-2 py-2"
+                      >
+                        <Skeleton className="h-4 w-32" />
+                      </li>
+                    )}
                     <li>
                       <Button
                         variant="ghost"
