@@ -144,7 +144,9 @@ is not judged on objects it never touched — and then asks the live catalog
 whether each of those objects is there. Only objects whose absence makes a
 query fail are checked: a column, a table, an enum type, an enum value. A
 recreated enum is checked label by label, because the plan that replaces an
-enum carries no `ADD VALUE` of its own.
+enum carries no `ADD VALUE` of its own. A created table is checked column by
+column, because an earlier push of the same branch may have created the table
+without a column added since.
 
 Two things it deliberately does NOT do. It does not read the other direction of
 the drift (the database carrying objects the schema does not want): that is the
