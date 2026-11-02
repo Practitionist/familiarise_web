@@ -20,7 +20,13 @@ import type { DigitalProductQuote } from "@/lib/payments/pricing/digital-product
 export type ProductViewer =
   | { kind: "signed-out" }
   | { kind: "owner" }
-  | { kind: "buyer"; name?: string; email?: string }
+  | {
+      kind: "buyer";
+      name?: string;
+      email?: string;
+      /** Set when an earlier purchase of this product was refunded. */
+      refundedAt?: string | null;
+    }
   | { kind: "owned"; libraryHref: string | null };
 
 interface PanelFile {
@@ -281,6 +287,19 @@ export function ProductPurchasePanel({
       {viewer.kind === "owner" && (
         <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
           This is your product. Buyers see the button here.
+        </p>
+      )}
+      {viewer.kind === "buyer" && viewer.refundedAt && (
+        <p
+          role="status"
+          className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground"
+        >
+          Your earlier purchase was refunded on{" "}
+          {new Date(viewer.refundedAt).toLocaleDateString("en-IN", {
+            dateStyle: "medium",
+            timeZone: "Asia/Kolkata",
+          })}
+          , so it is no longer in your library. You can buy it again.
         </p>
       )}
       {viewer.kind === "buyer" && (

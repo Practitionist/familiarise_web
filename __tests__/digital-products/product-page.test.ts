@@ -30,21 +30,52 @@ jest.mock("../../lib/payments/pricing/digital-product-price", () => ({
 }));
 jest.mock("../../lib/payments/digital-product-entitlement", () => ({
   findDigitalProductEntitlement: (...a: unknown[]) => mockEntitlement(...a),
-  findDigitalProductRefund: async () => null,
+  findDigitalProductRefund: async (_db: unknown, _p: string, buyer: string) =>
+    buyer === "refunded_1"
+      ? { refundedAt: new Date("2026-11-02T09:00:00Z") }
+      : null,
 }));
 jest.mock("../../app/explore/products/[slug]/ProductPurchasePanel", () => ({
-  ProductPurchasePanel: () => null,
+  ProductPurchasePanel: function ProductPurchasePanel() {
+    return null;
+  },
 }));
 jest.mock("../../components/digital-products/ReportProductButton", () => ({
   ReportProductButton: () => null,
 }));
 
+import type { ReactElement, ReactNode } from "react";
 import DigitalProductPage, {
   generateMetadata,
 } from "../../app/explore/products/[slug]/page";
 
+/** The props of the first element rendered by the named component. */
+function propsOf(
+  node: ReactNode,
+  name: string,
+): Record<string, unknown> | null {
+  if (!node || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = propsOf(child as ReactNode, name);
+      if (found) return found;
+    }
+    return null;
+  }
+  const el = node as ReactElement<{ children?: ReactNode }>;
+  if (typeof el.type === "function" && el.type.name === name) {
+    return el.props as Record<string, unknown>;
+  }
+  return propsOf(el.props?.children, name);
+}
+
 const archived = {
   id: "dp_1",
+  pricePaise: 0,
+  coverImagePath: null,
+  category: "DOCUMENT",
+  fileCount: 1,
+  files: [],
   slug: "workbook-1a2b",
   title: "Workbook",
   subtitle: "Sub",
@@ -55,7 +86,7 @@ const params = Promise.resolve({ slug: archived.slug });
 
 beforeEach(() => {
   mockLookup.mockImplementation(async (_slug: string, viewerId: string) =>
-    viewerId === "buyer_1" ? archived : null,
+    viewerId === "stranger" ? null : archived,
   );
 });
 
@@ -77,4 +108,13 @@ it("titles an archived product for its buyer and hides it from everyone else", a
   );
   expect(mockEntitlement).not.toHaveBeenCalled();
   expect(mockQuote).not.toHaveBeenCalled();
+});
+
+it("tells a refunded buyer about the refund and still offers the product", async () => {
+  mockViewer.id = "refunded_1";
+  mockEntitlement.mockResolvedValue(null);
+  const page = await DigitalProductPage({ params });
+  expect(propsOf(page, "ProductPurchasePanel")).toMatchObject({
+    viewer: { kind: "buyer", refundedAt: "2026-11-02T09:00:00.000Z" },
+  });
 });

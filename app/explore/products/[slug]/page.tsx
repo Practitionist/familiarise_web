@@ -10,7 +10,10 @@ import { goHref } from "@/lib/dashboard/go";
 import { formatFileSize } from "@/lib/documents/document-utils";
 import { getDigitalProductForViewer } from "@/lib/data/digital-products-public";
 import { quoteDigitalProductForBuyer } from "@/lib/payments/pricing/digital-product-price";
-import { findDigitalProductEntitlement } from "@/lib/payments/digital-product-entitlement";
+import {
+  findDigitalProductEntitlement,
+  findDigitalProductRefund,
+} from "@/lib/payments/digital-product-entitlement";
 import { DIGITAL_PRODUCT_CATEGORY_LABEL } from "@/lib/digital-products/constants";
 import {
   ProductPurchasePanel,
@@ -66,10 +69,16 @@ export default async function DigitalProductPage({
           : null,
       };
     } else {
+      const refund = await findDigitalProductRefund(
+        prisma,
+        product.id,
+        user.id,
+      );
       viewer = {
         kind: "buyer",
         name: user.name ?? undefined,
         email: user.email ?? undefined,
+        refundedAt: refund?.refundedAt.toISOString() ?? null,
       };
     }
   }

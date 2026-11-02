@@ -13,6 +13,34 @@ export async function findDigitalProductEntitlement(
   });
 }
 
+/** When the buyer's latest purchase of the product was refunded, or null if none was. */
+export async function findDigitalProductRefund(
+  db: PrismaLike,
+  productId: string,
+  buyerId: string,
+): Promise<{ refundedAt: Date } | null> {
+  const refunded = await db.digitalProductPurchase.findFirst({
+    where: { productId, buyerId, status: "REFUNDED" },
+    orderBy: { createdAt: "desc" },
+    select: {
+      updatedAt: true,
+      payment: {
+        select: {
+          refunds: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: { createdAt: true },
+          },
+        },
+      },
+    },
+  });
+  if (!refunded) return null;
+  return {
+    refundedAt: refunded.payment?.refunds[0]?.createdAt ?? refunded.updatedAt,
+  };
+}
+
 export async function hasDigitalProductEntitlement(
   db: PrismaLike,
   productId: string,
