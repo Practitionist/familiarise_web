@@ -30,6 +30,7 @@ const ASSET_SELECT = {
   status: true,
   storageKey: true,
   originalName: true,
+  mimeType: true,
   product: { select: { consultantProfileId: true, takenDownAt: true } },
 } as const satisfies Prisma.DigitalProductAssetSelect;
 
@@ -137,15 +138,13 @@ export async function GET(request: Request, { params }: RouteParams) {
     }
   }
 
-  // Saved under the name buyers see, which a replacement never changes.
-  const names = await lineageDisplayNames(prisma, [asset]);
+  // Saved under the name buyers see: the first version's stem, this version's extension.
+  const nameOf = await lineageDisplayNames(prisma, [asset]);
   const url = createR2PresignedGetUrl({
     key: asset.storageKey,
     bucket: digitalProductsBucket(),
     expiresInSeconds: DIGITAL_PRODUCT_DOWNLOAD_URL_TTL_SECONDS,
-    responseContentDisposition: attachmentDisposition(
-      names.get(asset.lineageId) ?? asset.originalName,
-    ),
+    responseContentDisposition: attachmentDisposition(nameOf(asset)),
   });
   const response = NextResponse.redirect(url, 302);
   response.headers.set("Cache-Control", "no-store");

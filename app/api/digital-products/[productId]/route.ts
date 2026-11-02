@@ -64,11 +64,8 @@ async function ownerAssets(productId: string) {
     }),
   ]);
   const assets = [...live, ...previous, ...rejected];
-  const names = await lineageDisplayNames(prisma, assets);
-  return assets.map((a) => ({
-    ...a,
-    displayName: names.get(a.lineageId) ?? a.originalName,
-  }));
+  const nameOf = await lineageDisplayNames(prisma, assets);
+  return assets.map((a) => ({ ...a, displayName: nameOf(a) }));
 }
 
 export async function GET(_request: Request, { params }: RouteParams) {
@@ -141,7 +138,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
       order: true,
     },
   });
-  const names = await lineageDisplayNames(prisma, verified);
+  const nameOf = await lineageDisplayNames(prisma, verified);
   const {
     takedownReason: _reason,
     archivedAt: _archived,
@@ -150,15 +147,13 @@ export async function GET(_request: Request, { params }: RouteParams) {
   return NextResponse.json({
     data: {
       ...listing,
-      assets: verified.map(
-        ({ id, lineageId, originalName, mimeType, sizeBytes, order }) => ({
-          id,
-          originalName: names.get(lineageId) ?? originalName,
-          mimeType,
-          sizeBytes,
-          order,
-        }),
-      ),
+      assets: verified.map((a) => ({
+        id: a.id,
+        originalName: nameOf(a),
+        mimeType: a.mimeType,
+        sizeBytes: a.sizeBytes,
+        order: a.order,
+      })),
     },
   });
 }
