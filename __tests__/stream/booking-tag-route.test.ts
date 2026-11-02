@@ -13,6 +13,8 @@ let mockMembers: string[] = [];
 const mockFindFirst = jest.fn();
 const mockEligible = jest.fn<Promise<boolean>, [string, string, string]>();
 const mockSendMessage = jest.fn(async () => ({}));
+const mockAddMembers = jest.fn(async (_members: string[]) => ({}));
+const mockShow = jest.fn(async (_userId: string) => ({}));
 const mockContexts = jest.fn();
 const mockCreateDm = jest.fn();
 let mockChannelExists = true;
@@ -62,7 +64,11 @@ jest.mock("../../lib/stream-client", () => ({
             },
           ]
         : [],
-    channel: () => ({ sendMessage: mockSendMessage }),
+    channel: () => ({
+      sendMessage: mockSendMessage,
+      addMembers: mockAddMembers,
+      show: mockShow,
+    }),
     upsertUser: jest.fn(),
   }),
   withStreamCircuitBreaker: <T>(fn: () => Promise<T>) => fn(),
@@ -237,6 +243,25 @@ it("returns an existing DM holding both people without upserting or creating", a
   const { channelId } = (await res.json()) as { channelId: string };
   expect(channelId).toMatch(/^dm-/);
   expect(mockCreateDm).not.toHaveBeenCalled();
+  expect(mockAddMembers).not.toHaveBeenCalled();
+});
+
+describe("a DM the caller hid but never left", () => {
+  // Hidden is per user, and Stream's server-side read still returns a hidden
+  // DM, so it is always "ready": both people are in it and nothing needs creating.
+  it("shows the thread before handing it back, without creating or re-adding", async () => {
+    const res = await openDm({});
+    expect(res.status).toBe(200);
+    expect(mockShow).toHaveBeenCalledTimes(1);
+    expect(mockShow).toHaveBeenCalledWith("consultee-u");
+    expect(mockCreateDm).not.toHaveBeenCalled();
+    expect(mockAddMembers).not.toHaveBeenCalled();
+  });
+
+  it("still opens when showing it fails", async () => {
+    mockShow.mockRejectedValueOnce(new Error("stream down"));
+    expect((await openDm({})).status).toBe(200);
+  });
 });
 
 it("creates the DM when it is missing or lacks the other person", async () => {
@@ -247,4 +272,59 @@ it("creates the DM when it is missing or lacks the other person", async () => {
   expect((await openDm({})).status).toBe(200);
   expect(mockCreateDm).toHaveBeenCalledTimes(2);
   expect(mockCreateDm).toHaveBeenCalledWith("consultee-u", "expert-u", null);
+});
+
+describe("reopening a DM the caller left or deleted", () => {
+  it("re-adds both people to the existing thread, so its history comes back", async () => {
+    // The caller is no longer a member, so the caller-scoped read finds nothing.
+    mockChannelExists = false;
+    const res = await openDm({});
+    expect(res.status).toBe(200);
+    expect(mockCreateDm).toHaveBeenCalledWith("consultee-u", "expert-u", null);
+    expect(mockAddMembers).toHaveBeenCalledTimes(1);
+    expect(mockAddMembers).toHaveBeenCalledWith(["consultee-u", "expert-u"]);
+  });
+
+  it("re-adds the other person too when they are the one who left", async () => {
+    mockMembers = ["consultee-u"];
+    expect((await openDm({})).status).toBe(200);
+    expect(mockAddMembers).toHaveBeenCalledWith(["consultee-u", "expert-u"]);
+  });
+
+  it("fails the open rather than hand back a channel the caller is not in", async () => {
+    mockChannelExists = false;
+    mockAddMembers.mockRejectedValueOnce(new Error("stream down"));
+    const res = await openDm({});
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual({
+      error: "Failed to open conversation",
+    });
+  });
+
+  it("still refuses a pair with no booking link, without touching membership", async () => {
+    mockChannelExists = false;
+    mockContexts.mockResolvedValue({
+      personalAllowed: false,
+      organizations: [],
+    });
+    expect((await openDm({})).status).toBe(403);
+    expect(mockAddMembers).not.toHaveBeenCalled();
+  });
+});
+
+describe("reopening a DM the caller removed from their list", () => {
+  it("shows the thread for the caller once both people are in it", async () => {
+    mockChannelExists = false;
+    expect((await openDm({})).status).toBe(200);
+    expect(mockShow).toHaveBeenCalledWith("consultee-u");
+    expect(mockAddMembers.mock.invocationCallOrder[0]).toBeLessThan(
+      mockShow.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("still opens when showing the thread fails", async () => {
+    mockChannelExists = false;
+    mockShow.mockRejectedValueOnce(new Error("stream down"));
+    expect((await openDm({})).status).toBe(200);
+  });
 });

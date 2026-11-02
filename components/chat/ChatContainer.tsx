@@ -21,6 +21,7 @@ import { BookingTagComposer } from "./BookingTag";
 import { ComposerDraftPersistence } from "./ComposerDraftPersistence";
 import { CustomChannelHeader } from "./CustomChannelHeader";
 import { CustomMessage } from "./CustomMessage";
+import { FrozenChannelNotice } from "./FrozenChannelNotice";
 import { SupportInterventionBanner } from "./SupportInterventionBanner";
 import { SystemMessage } from "./SystemMessage";
 import { StreamChatErrorBoundary } from "@/components/stream/StreamErrorBoundary";
@@ -49,6 +50,14 @@ const ChannelEmptyState = (props: EmptyStateIndicatorProps) => {
   const event = parseEventChannelId(channel.id);
   if (!event || props.listType !== "message") {
     return <EmptyStateIndicator {...props} />;
+  }
+  // Nothing can be sent to a frozen channel, so do not invite the first message.
+  if (channel.data?.frozen) {
+    return (
+      <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
+        No messages were sent in this channel.
+      </div>
+    );
   }
   return (
     <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
@@ -92,6 +101,25 @@ const VisibleMessageList = ({ virtualized }: { virtualized: boolean }) => {
     />
   ) : (
     <MessageList messages={visible} Message={CustomMessage} />
+  );
+};
+
+/** The composer, or the reason there is none when the conversation is frozen. */
+const ComposerArea = ({
+  contextAppointmentId,
+}: {
+  contextAppointmentId: string | null;
+}) => {
+  const { channel } = useChannelStateContext();
+  if (channel?.data?.frozen) {
+    return <FrozenChannelNotice channelType={channel.type} />;
+  }
+  return (
+    <div className="w-full shrink-0">
+      <AppointmentDocumentsHint />
+      <ComposerDraftPersistence />
+      <BookingTagComposer contextAppointmentId={contextAppointmentId} />
+    </div>
   );
 };
 
@@ -155,13 +183,7 @@ export const ChatContainer = ({
                   <span>Chat is temporarily read-only during maintenance.</span>
                 </div>
               ) : (
-                <div className="w-full shrink-0">
-                  <AppointmentDocumentsHint />
-                  <ComposerDraftPersistence />
-                  <BookingTagComposer
-                    contextAppointmentId={contextAppointmentId}
-                  />
-                </div>
+                <ComposerArea contextAppointmentId={contextAppointmentId} />
               )}
             </Window>
           </WithComponents>
