@@ -915,7 +915,7 @@ Webinars are group events with a fixed time and a per-instance participant limit
 ### Test 3.1: Allocate Webinar Time Slot (Consultant)
 
 1. Log in as consultant
-2. Navigate to the Planner page: `http://localhost:3000/dashboard/consultant/test-consultant-profile-001/planner`
+2. Navigate to the Group programs page: `http://localhost:3000/dashboard/consultant/test-consultant-profile-001/sell/programs`
 3. Find the webinar plan ("Microservices Architecture Masterclass")
 4. Allocate a time slot for the webinar (e.g., next Wednesday 14:00-16:00 IST)
 5. **OR** via API:
@@ -1903,7 +1903,9 @@ so a delete of a paid appointment fails at the database instead of cascading.
 | `/auth/signup`                                      | Both       | Registration page               |
 | `/dashboard/consultant/[consultantId]/requests`     | Consultant | View/manage booking requests    |
 | `/dashboard/consultant/[consultantId]/appointments` | Consultant | View scheduled appointments     |
-| `/dashboard/consultant/[consultantId]/planner`      | Consultant | Event management & availability |
+| `/dashboard/consultant/[consultantId]/sell/sessions` | Consultant | 1:1 and subscription offerings  |
+| `/dashboard/consultant/[consultantId]/sell/programs` | Consultant | Webinar and class offerings     |
+| `/dashboard/consultant/[consultantId]/availability`  | Consultant | Weekly and custom availability  |
 | `/dashboard/consultant/[consultantId]/trials`       | Consultant | Free trial management           |
 | `/dashboard/consultee/[consulteeId]/home`           | Consultee  | Dashboard overview              |
 | `/dashboard/consultee/[consulteeId]/appointments`   | Consultee  | View bookings                   |

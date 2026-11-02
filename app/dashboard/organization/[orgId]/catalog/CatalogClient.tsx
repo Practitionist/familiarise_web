@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { isArchivedCatalogView } from "@/lib/dashboard/org-tab-redirect";
+import { isArchivedCatalogView } from "@/lib/dashboard/org-catalog-view";
 import { CatalogPanel } from "./CatalogPanel";
 import {
   MaterialsPanel,

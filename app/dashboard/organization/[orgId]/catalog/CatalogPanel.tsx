@@ -11,7 +11,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
-import { isArchivedCatalogView } from "@/lib/dashboard/org-tab-redirect";
+import { isArchivedCatalogView } from "@/lib/dashboard/org-catalog-view";
 import { replaceUrl } from "@/lib/navigation/history";
 import { formatCurrencyAmount } from "@/utils/formatting";
 

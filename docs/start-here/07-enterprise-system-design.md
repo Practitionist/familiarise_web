@@ -1731,9 +1731,8 @@ APIs under `app/api/organizations/[orgId]/`. Do not infer write access from the 
 #### 6.2.4. Tabs and legacy destinations
 
 Tabs keep one page per object. Current members tabs are `all`, `learners`, `experts`, and `invitations`; settings sections are general, SSO,
-webhooks and data exports; Billing and Payouts show at most three tabs plus a More menu, and retired `?tab=` values redirect through
-`ORG_PAGE_TAB_MAP` (see [the dashboard IA page](../dashboard/information-architecture.md#organization-page-tabs)). `/purchase-orders`,
-`/reimbursements`, and `/disputes` are redirect-only route stubs into Billing tabs. `/credits` is not an active page; the wallet is in Billing's
+webhooks and data exports; Billing and Payouts show at most three tabs plus a More menu, and an unknown `?tab=` opens the first tab (see [the dashboard IA page](../dashboard/information-architecture.md#organization-page-tabs)). `/purchase-orders`,
+`/reimbursements`, and `/disputes` no longer exist; those panels are Billing tabs. `/credits` is not an active page; the wallet is in Billing's
 Wallet & licence tab.
 Appointment `mine/everyone` is a scope switch on the same appointment object, not two destinations.
 
@@ -1948,7 +1947,7 @@ be marked as proposed rather than described as current.
   invitations routes.
 - Portfolio reads: `lib/data/org-workspace.ts` and `app/api/org-workspace/[orgWorkspaceId]/**`.
 - Public directory: `lib/data/explore-organisations.ts`, `app/api/organizations/public/route.ts`, and `app/explore/enterprise/organisations/**`.
-- Tests to inspect: `__tests__/dashboard/nav-targets-resolve.test.ts`, `__tests__/dashboard/org-tab-redirects.test.ts`,
+- Tests to inspect: `__tests__/dashboard/nav-targets-resolve.test.ts`,
   `__tests__/security/scope-org-gate.test.ts`, `__tests__/booking-algorithm/org-scope-fallthrough.test.ts`, and SSO/member tests.
 
 ## 7. Compliance, privacy and data

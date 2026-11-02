@@ -1,6 +1,7 @@
 import { sendSecurityNoticeEmail, type SecurityEvent } from "@/lib/email";
 import { notifyAccountSecurityNotice } from "@/lib/novu/service";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { goHref } from "@/lib/dashboard/go";
 import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
 
@@ -70,7 +71,7 @@ export async function sendSecurityEventEmail(
         {
           kind: bellKind,
           ...(message ? { message } : {}),
-          dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
+          dashboardUrl: `${getAppUrl()}${goHref("auto", "settings/account")}`,
         },
         `security-event:${event.kind}:${user.id}:${occurredAt.getTime()}`,
         { deferAttempt: true },

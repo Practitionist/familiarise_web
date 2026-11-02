@@ -79,14 +79,13 @@ const EXPERT_ONLY = new Set([
   "requests",
   "earnings",
   "availability",
-  "planner",
   "collaborations",
   "sell",
   "offerings",
   "reviews",
   "analytics",
 ]);
-const CLIENT_ONLY = new Set(["payments", "resources"]);
+const CLIENT_ONLY = new Set(["payments"]);
 
 /** The role's own side first, then whichever personal tree exists. */
 function roleFirst(viewer: GoViewer, path: readonly string[]): string | null {

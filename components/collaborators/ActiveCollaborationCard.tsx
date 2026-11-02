@@ -224,7 +224,7 @@ export function ActiveCollaborationCard({
               </span>
             </div>
             <Link
-              href={goHref("expert", "settings?tab=payouts")}
+              href={goHref("expert", "settings/get-paid")}
               className="shrink-0 font-semibold underline hover:text-amber-700"
             >
               Set up payouts
