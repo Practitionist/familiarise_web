@@ -44,16 +44,15 @@ import OrgDocuments from "../../app/dashboard/organization/[orgId]/documents/pag
 import OrgRecordings from "../../app/dashboard/organization/[orgId]/recordings/page";
 import GoPage from "../../app/dashboard/go/[facet]/[[...path]]/page";
 
-type SearchParams = Record<string, string | string[] | undefined>;
-type RedirectPage = (props: {
-  params: Promise<Record<string, string>>;
-  searchParams: Promise<SearchParams>;
-}) => Promise<unknown>;
-
 const ce = "/dashboard/consultee/ce-1";
 const cp = "/dashboard/consultant/cp-1";
 const org = "/dashboard/organization/org-1";
 const params = { consulteeId: "ce-1", consultantId: "cp-1", orgId: "org-1" };
+
+type RedirectPage = (props: {
+  params: Promise<typeof params>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) => Promise<unknown>;
 
 describe("moved Library routes 308 with their query", () => {
   it.each<[string, RedirectPage, string]>([
