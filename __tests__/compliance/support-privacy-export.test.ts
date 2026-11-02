@@ -122,7 +122,7 @@ describe("DPDP export of the support record", () => {
     const out = await readSupportExport("u1");
     const summary = out.supportTickets.find((c) => c.id === "case-org");
     expect(summary).toMatchObject({
-      title: "Organization support request",
+      title: "Organization support case",
       filedByOrganization: true,
     });
     expect(JSON.stringify(summary)).not.toContain("Operator");

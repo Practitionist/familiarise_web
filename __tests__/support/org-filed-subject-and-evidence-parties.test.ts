@@ -76,7 +76,7 @@ describe("reading an organization-filed case", () => {
     });
     expect(view).toMatchObject({
       id: "case-1",
-      title: "Organization support request",
+      title: "Organization support case",
       description: "",
       messages: [],
       filedByOrganizationNotice: true,

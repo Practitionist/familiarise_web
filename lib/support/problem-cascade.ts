@@ -126,7 +126,7 @@ async function stageResolvedNoticeTx(
         title:
           inc.ownershipScope === "PERSONAL"
             ? inc.title
-            : "Organization support request",
+            : "Organization support case",
         statusCode: "RESOLVED",
         statusLabel: RESOLVED_LABEL,
         ticketUrl: dashboardUrl,

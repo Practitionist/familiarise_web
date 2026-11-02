@@ -100,6 +100,14 @@ For invalidation, `revalidatePath` and `revalidateTag` both work and propagate t
 
 Documented adapter limitations worth remembering: pages set to the `edge` runtime actually run in the functions region, `beforeFiles` rewrites cannot point at static files in `public/`, and headers and redirects are evaluated after middleware.
 
+## A missing public page must answer 404, so no `loading.tsx` may sit at or above a dynamic page
+
+Next.js commits the HTTP status as soon as the first byte streams, and a `loading.tsx` streams its fallback first, so a `notFound()` called inside the page after that point can only add a noindex meta tag to a response that is already `200`. Search engines then index soft 404s, so visibility gates belong in the layout too, not only plain existence checks. The `loading.tsx` file convention is described at https://nextjs.org/docs/app/api-reference/file-conventions/loading.
+
+A segment's `loading.tsx` wraps that segment's page and everything below it, but not that segment's own `layout.tsx`. Therefore the existence check for a public dynamic segment such as `app/explore/products/[slug]` lives in that segment's `layout.tsx`: an async server component that reads the item through the same `React.cache` reader as the page, calls `notFound()` when it is missing or when the viewer may not see it (archived, draft or ORG_ONLY plans run the same `canViewPlanDetail` gate the page does), and otherwise renders `children`. The segment's own `loading.tsx` stays, because it sits below the layout.
+
+No ancestor of such a segment may have a `loading.tsx`, and that includes `app/loading.tsx`, because an ancestor's loading file wraps the descendant layouts too. When an ancestor index page needs a skeleton, move its `page.tsx` and `loading.tsx` into a route group such as `app/explore/experts/(index)/`, which leaves the URL unchanged and stops the skeleton from covering the child layouts. `__tests__/explore/not-found-layouts.test.tsx` fails if either rule regresses.
+
 ## How to verify — the only four techniques that have worked here
 
 **Read the CI build route table.** This is authoritative for *build-time* classification — whether a route prerenders at build, and what revalidate the build applied — and it settled the #1110 dispute definitively. It is not authoritative for on-demand ISR, where a `●` route legitimately shows an empty Revalidate column and no build entries; confirm those at runtime from `cache-control` and a climbing `age` instead, as described in Step 2c. `○` means prerendered at build; `ƒ` means dynamic; the Revalidate column shows whether a `revalidate` export actually applied. Pull it from the `TypeScript, Tests & Build` check run with `gh run view --log` and paste the actual lines into your report. Never run `next build` locally — it is RAM-heavy and has taken this machine down.
