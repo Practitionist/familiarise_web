@@ -92,11 +92,8 @@ export type Target = (typeof TARGETS)[number];
 /** The ticker's per-slot claim rows; bookkeeping, not a job run, so job views exclude it. */
 export const TICK_CLAIM_JOB = "cron-tick";
 
-/**
- * The `SystemJobExecution.jobName` a target's core writes when it differs from the
- * target name; `null` means the core writes no execution row.
- */
-const JOB_NAME_OVERRIDES: Partial<Record<Target, string | null>> = {
+/** The `SystemJobExecution.jobName` a target's core writes when it differs from the target name. */
+const JOB_NAME_OVERRIDES: Partial<Record<Target, string>> = {
   "reconcile-refunds": "reconcile-pending-refunds",
   "abandoned-payments": "cleanup-abandoned-payments",
   "reschedule-proposals": "expire-reschedule-proposals",
@@ -106,14 +103,10 @@ const JOB_NAME_OVERRIDES: Partial<Record<Target, string | null>> = {
   "tds-return-draft": "tds-26q-draft-export",
   "reconcile-sessions": "reconcile-orphaned-sessions",
   "auth-tokens": "cleanup-auth-tokens",
-  "sentry-ingest-canary": null,
-  "stream-control-plane-drift": null,
 };
 
-export function jobNameFor(target: Target): string | null {
-  return target in JOB_NAME_OVERRIDES
-    ? (JOB_NAME_OVERRIDES[target] ?? null)
-    : target;
+export function jobNameFor(target: Target): string {
+  return JOB_NAME_OVERRIDES[target] ?? target;
 }
 
 /** Background targets acknowledge admission; their cores record eventual completion. */

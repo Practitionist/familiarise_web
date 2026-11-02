@@ -2301,26 +2301,36 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             reportConfigSkip("sentry-ingest-canary", skipped);
             return { healthy: true, skipped };
           }
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
           const { checkSentryIngest, describeIngest, isIngestHealthy } =
             await import("@/lib/observability/ingest-canary");
           const { sendSentryIngestAlert } =
             await import("@/lib/observability/ingest-alert");
           const { checkSentryQuota } =
             await import("@/lib/observability/quota-alert");
-          const check = await checkSentryIngest(token);
-          const healthy = isIngestHealthy(check);
-          const alerted = healthy ? false : await sendSentryIngestAlert(check);
-          // After the page: the 70% warning must not spend the ceiling ahead of it.
-          const quota = await checkSentryQuota();
-          return {
-            healthy,
-            verdict: check.verdict,
-            accepted: check.accepted,
-            rejections: check.rejections,
-            alerted,
-            detail: describeIngest(check),
-            quota,
-          };
+          // Fail-open: a read-only vendor probe whose repeat costs one stats read.
+          return withCronLock(
+            "sentry-ingest-canary",
+            { failMode: "open" },
+            async () => {
+              const check = await checkSentryIngest(token);
+              const healthy = isIngestHealthy(check);
+              const alerted = healthy
+                ? false
+                : await sendSentryIngestAlert(check);
+              // After the page: the 70% warning must not spend the ceiling ahead of it.
+              const quota = await checkSentryQuota();
+              return {
+                healthy,
+                verdict: check.verdict,
+                accepted: check.accepted,
+                rejections: check.rejections,
+                alerted,
+                detail: describeIngest(check),
+                quota,
+              };
+            },
+          );
         },
         status: (result) => (result.healthy ? 200 : 503),
         items: (r) => ({ processed: 1, errors: r.healthy ? 0 : 1 }),
@@ -2489,9 +2499,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       cleanupRoute({
         job: "stream-control-plane-drift",
         run: async () => {
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
           const { detectStreamControlPlaneDrift } =
             await import("@/lib/stream/control-plane-drift");
-          return detectStreamControlPlaneDrift();
+          // Fail-open: the detector only reads Stream settings.
+          return withCronLock(
+            "stream-control-plane-drift",
+            { failMode: "open" },
+            () => detectStreamControlPlaneDrift(),
+          );
         },
         summarize: (r) => ({
           drifted: r.drifted,

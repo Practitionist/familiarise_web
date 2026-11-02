@@ -5,9 +5,9 @@ import {
   assessOperationalCompletions,
   OPERATIONAL_COMPLETION_REQUIREMENTS,
 } from "../../lib/cron/operational-health";
+import { checkJobCoverage } from "../../lib/cron/job-coverage";
 import {
   dueTargets,
-  jobNameFor,
   maxSlotGapMinutes,
   TARGETS,
   type Target,
@@ -89,20 +89,12 @@ function observedGaps(fromUtc: number, toUtc: number): Map<Target, number> {
 }
 
 describe("freshness requirements derived from the schedule", () => {
-  it("covers every target that writes a run row, under its live job name, with a tier", () => {
-    const writers = TARGETS.filter((target) => jobNameFor(target) !== null);
+  it("covers every target once, under its live job name, with a tier", () => {
+    const violations = checkJobCoverage({ registrySlugs: [...TARGETS] });
+    expect(violations).toEqual([]);
     expect(
       OPERATIONAL_COMPLETION_REQUIREMENTS.map((job) => job.target),
-    ).toEqual(writers);
-    const liveNames = new Set(TARGETS.map(jobNameFor));
-    for (const job of OPERATIONAL_COMPLETION_REQUIREMENTS) {
-      expect(liveNames.has(job.jobName)).toBe(true);
-      expect(["paging", "watched"]).toContain(job.tier);
-    }
-    expect(
-      new Set(OPERATIONAL_COMPLETION_REQUIREMENTS.map((job) => job.jobName))
-        .size,
-    ).toBe(OPERATIONAL_COMPLETION_REQUIREMENTS.length);
+    ).toEqual([...TARGETS]);
   });
 
   it("gives every target, windowed ones included, a budget above its longest dispatch gap", () => {

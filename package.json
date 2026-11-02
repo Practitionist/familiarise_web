@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "build": "npm run db:generate && next build",
+    "build": "npm run cron:coverage && npm run db:generate && next build",
     "build:analyze": "ANALYZE=true npm run build",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev --name init",
@@ -45,7 +45,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "cron:reference": "tsx scripts/maintenance/generate-cron-reference.ts",
-    "cron:reference:check": "tsx scripts/maintenance/generate-cron-reference.ts --check"
+    "cron:reference:check": "tsx scripts/maintenance/generate-cron-reference.ts --check",
+    "cron:coverage": "tsx scripts/maintenance/check-job-coverage.ts"
   },
   "dependencies": {
     "@better-auth/core": "1.7.14",

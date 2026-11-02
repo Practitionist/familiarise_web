@@ -92,10 +92,8 @@ export function istDayKeys(now: Date, count = METRICS_DAYS): string[] {
   );
 }
 
-/** Execution-row names of every ticker target that writes one. */
-const TICKER_JOB_NAMES = JOB_SCHEDULES.map((s) => jobNameFor(s.name)).filter(
-  (name): name is string => name !== null,
-);
+/** Execution-row names of every ticker target. */
+const TICKER_JOB_NAMES = JOB_SCHEDULES.map((s) => jobNameFor(s.name));
 
 /** The ticker target a job name runs under: its name or override, else the longest `-<target>` suffix. */
 export function scheduleForJob(jobName: string): JobSchedule | undefined {
