@@ -28,6 +28,10 @@ interface Entry {
   descriptor?: "signed" | "unsigned";
   /** A local record the central directory does not list. */
   hidden?: boolean;
+  /** Compression method; 0 is stored. Defaults to deflate. */
+  method?: number;
+  /** Entry data; defaults to zero filler of the compressed size. */
+  data?: Buffer;
 }
 
 /** A structurally valid archive; entry data is zero filler of the compressed size. */
@@ -38,7 +42,7 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
   let listed = 0;
   for (const e of entries) {
     const name = Buffer.from(e.name, "utf8");
-    const compressed = e.compressed ?? 16;
+    const compressed = e.data?.length ?? e.compressed ?? 16;
     const uncompressed = e.uncompressed ?? compressed;
     const localName = Buffer.from(e.localName ?? e.name, "utf8");
     const localExtra = e.localExtra ?? Buffer.alloc(0);
@@ -46,7 +50,7 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(flags, 6);
-    local.writeUInt16LE(8, 8);
+    local.writeUInt16LE(e.method ?? 8, 8);
     local.writeUInt32LE(
       e.descriptor ? 0 : (e.localCompressed ?? compressed),
       18,
@@ -54,7 +58,7 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
     local.writeUInt32LE(e.descriptor ? 0 : uncompressed, 22);
     local.writeUInt16LE(localName.length, 26);
     local.writeUInt16LE(localExtra.length, 28);
-    const data = Buffer.alloc(compressed);
+    const data = e.data ?? Buffer.alloc(compressed);
     const descriptor = Buffer.alloc(
       e.descriptor === "signed" ? 16 : e.descriptor ? 12 : 0,
     );
@@ -81,7 +85,7 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(e.madeBy ?? 20, 4);
     central.writeUInt16LE(flags, 8);
-    central.writeUInt16LE(8, 10);
+    central.writeUInt16LE(e.method ?? 8, 10);
     central.writeUInt32LE(compressed, 20);
     central.writeUInt32LE(uncompressed, 24);
     central.writeUInt16LE(name.length, 28);
@@ -354,4 +358,55 @@ it("requires each local header to repeat its central name and polices its Unicod
   );
   expect(result).toMatchObject({ ok: true, entries: 1000 });
   expect(reads).toBe(6);
+});
+
+it("scans stored entries with a data descriptor for ZIP records, within a cap", async () => {
+  // Python's zipfile writes these by default to an unseekable stream.
+  const stored = (data: Buffer, descriptor: "signed" | "unsigned" = "signed") =>
+    buildZip([{ name: "notes.txt", method: 0, descriptor, data }]);
+  for (const descriptor of ["signed", "unsigned"] as const) {
+    await expect(
+      inspect(stored(Buffer.from("plain text, nothing hidden"), descriptor)),
+    ).resolves.toMatchObject({ ok: true, entries: 1 });
+  }
+  const embedded = Buffer.concat([
+    Buffer.from("x"),
+    Buffer.from("PK\x03\x04", "latin1"),
+  ]);
+  await expect(inspect(stored(embedded))).resolves.toMatchObject({
+    ok: false,
+    problem: "EMBEDDED_ZIP_RECORD",
+  });
+  // Split across the 8 MiB piece boundary.
+  const split = Buffer.alloc(8 * MB + 16);
+  split.write("PK\x05\x06", 8 * MB - 2, "latin1");
+  await expect(inspect(stored(split))).resolves.toMatchObject({
+    ok: false,
+    problem: "EMBEDDED_ZIP_RECORD",
+  });
+  // A deflate entry with a descriptor is not scanned.
+  await expect(
+    inspect(
+      buildZip([{ name: "a.txt", descriptor: "signed", data: embedded }]),
+    ),
+  ).resolves.toMatchObject({ ok: true });
+
+  // Over the cap: refused from the central sizes, before any local read.
+  const big = stored(Buffer.alloc(16));
+  big.writeUInt32LE(65 * MB, big.indexOf(Buffer.from([0x50, 0x4b, 1, 2])) + 20);
+  let reads = 0;
+  const result = await inspectZip(
+    async (start, end) => {
+      reads += 1;
+      return new Uint8Array(big.subarray(start, end + 1));
+    },
+    big.length,
+    { checkEntryTypes: true },
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    problem: "STORED_DESCRIPTOR_TOO_LARGE",
+  });
+  // Only the tail and the central directory were read.
+  expect(reads).toBe(2);
 });

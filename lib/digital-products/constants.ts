@@ -23,6 +23,8 @@ export const ZIP_LIMITS = {
   eocdSearchBytes: 22 + 0xffff,
   /** 1,000 entries with generous names and extras fit well inside this. */
   maxCentralDirectoryBytes: 4 * 1024 * 1024,
+  /** Stored entries with a data descriptor are scanned for ZIP records; their total data is capped here. */
+  maxStoredDescriptorScanBytes: 64 * 1024 * 1024,
 } as const;
 
 interface AllowedMime {

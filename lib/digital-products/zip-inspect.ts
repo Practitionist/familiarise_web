@@ -23,7 +23,9 @@ export type ZipProblem =
   | "NESTED_ARCHIVE"
   | "EXECUTABLE_ENTRY"
   | "LOCAL_HEADER_MISMATCH"
-  | "UNLISTED_DATA";
+  | "UNLISTED_DATA"
+  | "EMBEDDED_ZIP_RECORD"
+  | "STORED_DESCRIPTOR_TOO_LARGE";
 
 export type ZipInspection =
   | { ok: true; entries: number; totalUncompressedBytes: number }
@@ -52,6 +54,12 @@ const DESCRIPTOR_FORMS: ReadonlyMap<
   [24, { signed: true, wide: true }],
 ]);
 const MAX_DESCRIPTOR_BYTES = 24;
+/** Stored descriptor data is scanned in pieces of this size, each overlapping the last by 3 bytes. */
+const SCAN_CHUNK_BYTES = 8 * 1024 * 1024;
+/** The third and fourth bytes after "PK" of every ZIP record signature a hidden entry needs. */
+const RECORD_SIGNATURE_TAILS: ReadonlySet<number> = new Set([
+  0x0304, 0x0102, 0x0708, 0x0506, 0x0606, 0x0607,
+]);
 /** Read past each local name: room for a Unicode Path copy of it and the usual timestamp, unix and Zip64 extras. */
 const LOCAL_EXTRA_SLACK = 512;
 /** Local-header reads closer than this are merged into one range read, up to LOCAL_READ_MAX bytes. */
@@ -331,6 +339,7 @@ interface CentralEntry {
   localOffset: number;
   /** Bit 3: the CRC and sizes trail the data in a descriptor. */
   descriptor: boolean;
+  method: number;
   crc: number;
   compressed: number;
   uncompressed: number;
@@ -421,6 +430,7 @@ function readCentralDirectory(
       rawName,
       localOffset: sizes.localOffset,
       descriptor: (flags & 0x0008) !== 0,
+      method,
       crc: dv.getUint32(at + 16, true),
       compressed: sizes.compressed,
       uncompressed: sizes.uncompressed,
@@ -566,6 +576,14 @@ async function inspectLocalHeaders(
     new ZipFault("LOCAL_HEADER_MISMATCH", `${entry.name} (${detail})`);
   const unlisted = (detail: string) => new ZipFault("UNLISTED_DATA", detail);
   const sorted = [...entries].sort((a, b) => a.localOffset - b.localOffset);
+  const scanned = sorted.filter((e) => e.descriptor && e.method === 0);
+  const scanBytes = scanned.reduce((sum, e) => sum + e.compressed, 0);
+  if (scanBytes > ZIP_LIMITS.maxStoredDescriptorScanBytes) {
+    throw new ZipFault(
+      "STORED_DESCRIPTOR_TOO_LARGE",
+      `${Math.ceil(scanBytes / (1024 * 1024))} MB`,
+    );
+  }
   const nextOffset = (i: number) =>
     i + 1 < sorted.length ? sorted[i + 1].localOffset : dirOffset;
   if (sorted[0].localOffset !== 0) {
@@ -695,6 +713,74 @@ async function inspectLocalHeaders(
       throw mismatch(entry, "data descriptor differs");
     }
   });
+  await scanStoredDescriptorData(read, scanned, headerEnds);
+}
+
+/** Where "PK" plus a record signature tail first starts in `bytes`, or -1. */
+function findRecordSignature(bytes: Uint8Array): number {
+  for (let i = bytes.indexOf(0x50); i >= 0 && i + 3 < bytes.length;) {
+    if (
+      bytes[i + 1] === 0x4b &&
+      RECORD_SIGNATURE_TAILS.has((bytes[i + 2] << 8) | bytes[i + 3])
+    ) {
+      return i;
+    }
+    i = bytes.indexOf(0x50, i + 1);
+  }
+  return -1;
+}
+
+/**
+ * A stored entry with a data descriptor has no length a streaming extractor
+ * can trust, so a ZIP record signature inside its data could start a hidden entry.
+ */
+async function scanStoredDescriptorData(
+  read: RangeReader,
+  scanned: readonly CentralEntry[],
+  headerEnds: ReadonlyMap<CentralEntry, number>,
+): Promise<void> {
+  const pieces: Array<Span & { entry: CentralEntry }> = [];
+  for (const entry of scanned) {
+    const start = headerEnds.get(entry) ?? 0;
+    const end = start + entry.compressed;
+    for (let at = start; at < end; at += SCAN_CHUNK_BYTES) {
+      pieces.push({
+        entry,
+        start: Math.max(start, at - 3),
+        endInclusive: Math.min(end, at + SCAN_CHUNK_BYTES) - 1,
+      });
+    }
+  }
+  const reads = coalesce(pieces);
+  const found: { fault: ZipFault | null } = { fault: null };
+  let next = 0;
+  const worker = async () => {
+    while (found.fault === null && next < reads.length) {
+      const { start, endInclusive } = reads[next++];
+      const chunk = { start, bytes: await read(start, endInclusive) };
+      for (const piece of pieces) {
+        if (piece.start < start || piece.endInclusive > endInclusive) continue;
+        const bytes = bytesAt(
+          [chunk],
+          piece.start,
+          piece.endInclusive - piece.start + 1,
+        );
+        if (!bytes) {
+          found.fault ??= new ZipFault("UNLISTED_DATA", "archive ends early");
+        } else if (findRecordSignature(bytes) >= 0) {
+          found.fault ??= new ZipFault("EMBEDDED_ZIP_RECORD", piece.entry.name);
+        }
+        if (found.fault) return;
+      }
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(LOCAL_READ_CONCURRENCY, reads.length) },
+      worker,
+    ),
+  );
+  if (found.fault) throw found.fault;
 }
 
 /**

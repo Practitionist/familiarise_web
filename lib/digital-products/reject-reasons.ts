@@ -44,6 +44,10 @@ export const ASSET_REJECT_MESSAGES: Record<string, string> = {
     "The archive contains a program or script, which isn't allowed. Remove it and upload again.",
   ZIP_UNLISTED_DATA:
     "The archive holds data its file list doesn't account for, which can hide a file. Re-create it with a standard ZIP tool.",
+  ZIP_EMBEDDED_ZIP_RECORD:
+    "A file inside the archive was stored in a way that can hide another file, and its contents look like part of a ZIP. Re-zip the files on your computer and upload the new archive.",
+  ZIP_STORED_DESCRIPTOR_TOO_LARGE:
+    "This archive was made by a tool that streams files without compressing them, and it's too large for us to check that way. Re-zip the files on your computer and upload the new archive.",
   ZIP_LOCAL_HEADER_MISMATCH:
     "A file inside the archive is named differently in two places, which can hide what it really is. Re-create the archive with a standard ZIP tool.",
   NEWER_VERSION_EXISTS: "A newer version of this file was already uploaded.",
