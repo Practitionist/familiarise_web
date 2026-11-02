@@ -437,7 +437,7 @@ function TicketRequest({
   return (
     <>
       <PageHeader
-        title={data.subject || "Support request"}
+        title={data.subject || "Support case"}
         description={[
           CASE_TOPIC_LABEL[data.topic],
           data.reference,

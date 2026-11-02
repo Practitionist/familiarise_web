@@ -170,13 +170,13 @@ export function supportNextStepText(status: SupportCaseStatus): string {
     case "OPEN":
       return "It is back in the queue and a member of the support team will pick it up.";
     case "IN_PROGRESS":
-      return "A member of the support team is working on it and will reply on the ticket.";
+      return "A member of the support team is working on it and will reply on the support case.";
     case "ESCALATED":
       return "The platform team is reviewing it and will update you in the support case.";
     case "RESOLVED":
-      return "If this fixed the problem, nothing more is needed. A reply won't reopen it: if it didn't fix the problem, open the request and choose \"This didn't fix it\" within 14 days, or appeal if we made a decision on it.";
+      return "If this fixed the problem, nothing more is needed. A reply won't reopen it: if it didn't fix the problem, open the case and choose \"This didn't fix it\" within 14 days, or appeal if we made a decision on it.";
     case "CLOSED":
-      return "The ticket is closed. If you need anything else, open a new request from your dashboard.";
+      return "The support case is closed. If you need anything else, open a new case from your dashboard.";
   }
 }
 

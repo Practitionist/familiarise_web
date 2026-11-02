@@ -165,7 +165,7 @@ it("locks the case row, re-checks eligibility, deletes the files and scrubs in t
   expect(db.tx.supportCase.update).toHaveBeenCalledWith({
     where: { id: "case-1" },
     data: {
-      title: "Support request",
+      title: "Support case",
       description: expect.any(String),
       callbackPhone: null,
       callbackWindow: null,
