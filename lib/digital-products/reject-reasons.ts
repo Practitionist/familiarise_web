@@ -49,7 +49,7 @@ export const ASSET_REJECT_MESSAGES: Record<string, string> = {
   ZIP_STORED_DESCRIPTOR_TOO_LARGE:
     "This archive was made by a tool that streams files without compressing them, and it's too large for us to check that way. Re-zip the files on your computer and upload the new archive.",
   ZIP_LOCAL_HEADER_MISMATCH:
-    "A file inside the archive is named differently in two places, which can hide what it really is. Re-create the archive with a standard ZIP tool.",
+    "A file inside the archive is described differently in two places, which can hide what it really is. Re-create the archive with a standard ZIP tool.",
   NEWER_VERSION_EXISTS: "A newer version of this file was already uploaded.",
   LINEAGE_DELETED:
     "The file this replaced was removed, so this version was discarded.",

@@ -94,10 +94,12 @@ export function buyerFileView(input: {
   const removed: RemovedBuyerFile[] = [];
   for (const [lineageId, versions] of byLineage) {
     if (versions.some((r) => r.status === "VERIFIED")) continue;
-    const last = versions.reduce((a, b) =>
-      (b.supersededAt?.getTime() ?? 0) > (a.supersededAt?.getTime() ?? 0)
-        ? b
-        : a,
+    const last = versions.reduce(
+      (a, b) =>
+        (b.supersededAt?.getTime() ?? 0) > (a.supersededAt?.getTime() ?? 0)
+          ? b
+          : a,
+      versions[0],
     );
     removed.push({
       lineageId,
