@@ -277,6 +277,11 @@ describe("removing from the list", () => {
   it("drops the chat at once and asks the server to hide it, keeping history", async () => {
     const { container } = render(<ChatSidebar />);
     await loaded(container);
+    // Stream leaves a hidden channel out of every later query.
+    mockClient.queryChannels.mockImplementation(
+      async (filter: { type: string }) =>
+        filter.type === "team" ? [beginner, workshop] : [liam, asha],
+    );
 
     openMenu(container, "Karen Anderson");
     await act(async () => {

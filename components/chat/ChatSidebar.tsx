@@ -59,6 +59,15 @@ const ChannelListSkeleton = () => (
   </div>
 );
 
+type ListType = "team" | "messaging";
+
+const PAGE_SIZE = 20;
+// Pinned first, then latest activity; offset paging relies on every page using it.
+const CHANNEL_SORT: ChannelSort = [{ pinned_at: -1 }, { last_message_at: -1 }];
+
+const listTypeOf = (channel: Channel): ListType =>
+  channel.type === "team" ? "team" : "messaging";
+
 /** Pin, unpin or hide one conversation for the signed-in user; throws when it did not take. */
 async function updateConversationPreference(
   channel: Channel,
@@ -106,19 +115,21 @@ function doesChannelMatchScope(ch: unknown, currentScope: OrgScope): boolean {
   return pinnedOrgId ? rawOrgId === pinnedOrgId : true;
 }
 
+/** The fetched rows, with any `keepCids` row the fetch left out kept on top. */
 function mergeFetchedChannels(
   prev: Channel[],
   fetched: Channel[],
   currentScope: OrgScope,
-  deepLinkedCid: string | null,
+  keepCids: ReadonlyArray<string | null>,
 ): Channel[] {
-  if (!deepLinkedCid) return fetched;
   const fetchedCids = new Set(fetched.map((ch) => ch.cid));
-  if (fetchedCids.has(deepLinkedCid)) return fetched;
-  const preserved = prev.find(
-    (ch) => ch.cid === deepLinkedCid && doesChannelMatchScope(ch, currentScope),
+  const preserved = prev.filter(
+    (ch) =>
+      keepCids.includes(ch.cid) &&
+      !fetchedCids.has(ch.cid) &&
+      doesChannelMatchScope(ch, currentScope),
   );
-  return preserved ? [preserved, ...fetched] : fetched;
+  return preserved.length > 0 ? [...preserved, ...fetched] : fetched;
 }
 
 function pickInitialChannel(
@@ -233,8 +244,8 @@ export const ChatSidebar = () => {
   // What the search box holds; both lists below narrow to it instantly.
   const [searchTerm, setSearchTerm] = useState("");
   const isFiltering = searchTerm.trim().length >= MIN_SEARCH_LENGTH;
-  // Pins changed since the lists loaded. The server sorts pinned first for paging;
-  // this keeps a change visible at once without refetching and losing loaded pages.
+  // Pins changed since the lists loaded, shown at once while the rebase that
+  // follows a successful change re-reads the loaded rows in the server's order.
   const [pinOverrides, setPinOverrides] = useState<
     Record<string, string | null>
   >({});
@@ -307,7 +318,12 @@ export const ChatSidebar = () => {
    * page two re-fetched rows already on screen and the tail of the list became
    * unreachable — the filter silently ate the pagination.
    */
-  const fetchedCountRef = useRef<{ team: number; messaging: number }>({
+  const fetchedCountRef = useRef<Record<ListType, number>>({
+    team: 0,
+    messaging: 0,
+  });
+  // Bumped whenever a list is replaced; a page requested under an older value is dropped.
+  const listGenerationRef = useRef<Record<ListType, number>>({
     team: 0,
     messaging: 0,
   });
@@ -352,41 +368,44 @@ export const ChatSidebar = () => {
           members: { $in: [client.userID] },
           ...orgFilter,
         };
-        const sort: ChannelSort = [{ pinned_at: -1 }, { last_message_at: -1 }];
         const options = {
           watch: true,
           state: true,
-          limit: 20,
+          limit: PAGE_SIZE,
           message_limit: 10,
           presence: false,
         };
 
         const [teamResponse, dmResponse] = await Promise.all([
-          client.queryChannels({ ...filter, type: "team" }, sort, options),
-          client.queryChannels({ ...filter, type: "messaging" }, sort, options),
+          client.queryChannels(
+            { ...filter, type: "team" },
+            CHANNEL_SORT,
+            options,
+          ),
+          client.queryChannels(
+            { ...filter, type: "messaging" },
+            CHANNEL_SORT,
+            options,
+          ),
         ]);
 
         if (inFlightFetchKeyRef.current !== fetchKey) {
           return;
         }
+        listGenerationRef.current.team += 1;
+        listGenerationRef.current.messaging += 1;
 
         const usableDms = dmResponse.filter(isUsableDmChannel);
 
         setTeamChannels((prev) =>
-          mergeFetchedChannels(
-            prev,
-            teamResponse,
-            scope,
+          mergeFetchedChannels(prev, teamResponse, scope, [
             deepLinkedChannelCidRef.current,
-          ),
+          ]),
         );
         setDirectMessages((prev) =>
-          mergeFetchedChannels(
-            prev,
-            usableDms,
-            scope,
+          mergeFetchedChannels(prev, usableDms, scope, [
             deepLinkedChannelCidRef.current,
-          ),
+          ]),
         );
 
         fetchedCountRef.current = {
@@ -422,68 +441,76 @@ export const ChatSidebar = () => {
     [client, setActiveChannel, scope, computeFetchKey, hasDeepLink],
   );
 
+  // One page of a list in the server's order, scoped like the first page.
+  const queryPage = useCallback(
+    (userId: string, type: ListType, offset: number) =>
+      client.queryChannels(
+        { members: { $in: [userId] }, type, ...buildOrgChannelFilter(scope) },
+        CHANNEL_SORT,
+        {
+          watch: true,
+          state: true,
+          limit: PAGE_SIZE,
+          message_limit: 10,
+          presence: false,
+          offset,
+        },
+      ),
+    [client, scope],
+  );
+
+  // A page cut for `pageKey` must not land once another scope has loaded or is
+  // loading: it would cross-tenant the inbox and corrupt the next offset.
+  const isScopeSuperseded = useCallback(
+    (pageKey: string | null) =>
+      fetchedKeyRef.current !== pageKey ||
+      (inFlightFetchKeyRef.current !== null &&
+        inFlightFetchKeyRef.current !== pageKey),
+    [],
+  );
+
   // Function to load more channels (pagination)
   const loadMoreChannels = useCallback(
-    async (type: "team" | "messaging") => {
-      if (!client?.userID || isLoadingMore) return;
+    async (type: ListType) => {
+      const userId = client?.userID;
+      if (!userId || isLoadingMore) return;
 
       const hasMore = type === "team" ? hasMoreTeamChannels : hasMoreDMChannels;
 
       if (!hasMore) return;
 
-      // The scope this page belongs to, captured before the request goes out.
+      // The scope and list generation this page belongs to, captured before the request.
       const pageKey = computeFetchKey();
+      const generation = listGenerationRef.current[type];
 
       setIsLoadingMore(true);
 
       try {
-        // Mirror the org-scope filter from `fetchChannels` so the
-        // load-more page stays in the same tenant context.
-        const orgFilter: Record<string, unknown> = buildOrgChannelFilter(scope);
-        const filter = {
-          members: { $in: [client.userID] },
+        // Raw fetched count, never the list length — see fetchedCountRef.
+        const response = await queryPage(
+          userId,
           type,
-          ...orgFilter,
-        };
-        const sort: ChannelSort = [{ pinned_at: -1 }, { last_message_at: -1 }];
+          fetchedCountRef.current[type],
+        );
 
-        // Raw fetched count, never `currentChannels.length` — see
-        // fetchedCountRef.
-        const offset = fetchedCountRef.current[type];
-
-        const options = {
-          watch: true,
-          state: true,
-          limit: 20,
-          message_limit: 10, // Match the initial-load trim above
-          presence: false,
-          offset,
-        };
-
-        const response = await client.queryChannels(filter, sort, options);
-
-        // Staleness guard, the same one `fetchChannels` applies to its own late
-        // response: switching org mid-pagination let Acme's page two land on
-        // Zeta's list, cross-tenanting the inbox the scope filter exists to
-        // keep apart — and corrupting the offset the next page reads. Stale
-        // when a newer scope has already loaded, or when one is in flight.
-        const supersededByLoaded = fetchedKeyRef.current !== pageKey;
-        const supersededByInFlight =
-          inFlightFetchKeyRef.current !== null &&
-          inFlightFetchKeyRef.current !== pageKey;
-        if (supersededByLoaded || supersededByInFlight) return;
+        if (
+          isScopeSuperseded(pageKey) ||
+          listGenerationRef.current[type] !== generation
+        ) {
+          return;
+        }
 
         fetchedCountRef.current[type] += response.length;
 
         if (type === "team") {
           setTeamChannels((prev) => appendUniqueChannels(prev, response));
-          setHasMoreTeamChannels(response.length === options.limit);
+          setHasMoreTeamChannels(response.length === PAGE_SIZE);
         } else {
           setDirectMessages((prev) =>
             appendUniqueChannels(prev, response.filter(isUsableDmChannel)),
           );
           // Raw length again — see fetchChannels.
-          setHasMoreDMChannels(response.length === options.limit);
+          setHasMoreDMChannels(response.length === PAGE_SIZE);
         }
       } catch (error) {
         console.error(`Error loading more ${type} channels:`, error);
@@ -493,15 +520,76 @@ export const ChatSidebar = () => {
     },
     [
       client,
-      // `teamChannels` / `directMessages` are deliberately absent: the offset
-      // now comes from `fetchedCountRef`, so this callback no longer reads
-      // either list. Keeping them would rebuild it on every incoming message.
+      // The offset comes from `fetchedCountRef`, so the lists are not read here.
       hasMoreTeamChannels,
       hasMoreDMChannels,
       isLoadingMore,
-      scope,
       computeFetchKey,
+      queryPage,
+      isScopeSuperseded,
     ],
+  );
+
+  // A pin, unpin or hide moves rows across the offset, so re-read as many rows as
+  // are loaded and reset the offset with them; anything paged meanwhile is dropped.
+  const rebaseList = useCallback(
+    async (type: ListType) => {
+      const userId = client?.userID;
+      if (!userId) return;
+      const pageKey = computeFetchKey();
+      const generation = ++listGenerationRef.current[type];
+      const pageCount = Math.max(
+        1,
+        Math.ceil(fetchedCountRef.current[type] / PAGE_SIZE),
+      );
+      try {
+        const pages = await Promise.all(
+          Array.from({ length: pageCount }, (_, i) =>
+            queryPage(userId, type, i * PAGE_SIZE),
+          ),
+        );
+        if (
+          isScopeSuperseded(pageKey) ||
+          listGenerationRef.current[type] !== generation
+        ) {
+          return;
+        }
+        listGenerationRef.current[type] += 1;
+        const fetched = pages.flat();
+        fetchedCountRef.current[type] = fetched.length;
+        const hasMore = pages[pages.length - 1].length === PAGE_SIZE;
+        // The open and deep-linked conversations stay listed even when the
+        // new order puts them past the loaded rows.
+        const keepCids = [
+          deepLinkedChannelCidRef.current,
+          activeChannelIdRef.current,
+        ];
+        if (type === "team") {
+          setTeamChannels((prev) =>
+            mergeFetchedChannels(
+              prev,
+              appendUniqueChannels([], fetched),
+              scope,
+              keepCids,
+            ),
+          );
+          setHasMoreTeamChannels(hasMore);
+        } else {
+          setDirectMessages((prev) =>
+            mergeFetchedChannels(
+              prev,
+              appendUniqueChannels([], fetched.filter(isUsableDmChannel)),
+              scope,
+              keepCids,
+            ),
+          );
+          setHasMoreDMChannels(hasMore);
+        }
+      } catch (error) {
+        console.error(`Error rebasing ${type} channels:`, error);
+      }
+    },
+    [client, scope, computeFetchKey, queryPage, isScopeSuperseded],
   );
 
   // Handle individual channel deletion without full refresh
@@ -800,9 +888,11 @@ export const ChatSidebar = () => {
           description: "Please try again.",
           variant: "destructive",
         });
+        return;
       }
+      void rebaseList(listTypeOf(channel));
     },
-    [toast],
+    [toast, rebaseList],
   );
 
   // Hiding keeps the history; a new message or reopening it brings it back.
@@ -818,9 +908,11 @@ export const ChatSidebar = () => {
           description: "Please try again.",
           variant: "destructive",
         });
+        return;
       }
+      void rebaseList(listTypeOf(channel));
     },
-    [handleChannelDeleted, fetchChannels, toast],
+    [handleChannelDeleted, fetchChannels, toast, rebaseList],
   );
 
   // A conversation opened from search or the New message picker is listed and

@@ -156,7 +156,7 @@ mcp__streamio__app_get_rate_limits   {}
 2. **One Connect In Flight**:
    - `joinInFlight` shares the chat and video connect per user, only the newest `connectServices` generation commits, `mergeSettledClients` never downgrades a registered client to `null`, and `retryConnection` clears the retry timer and ignores calls while a run is active.
 3. **Profile Fetch Retries**: `useUserData` makes 4 attempts with `withJitter` backoff (`lib/stream/backoff.ts`), then returns a `profileLoadFailure` with Retry; a 401 is neither retried nor reported.
-4. **Sidebar, Badge, Send Status**: an unlisted channel's `message.new` is watched and inserted at the top (dedupe by cid, load-more via `appendUniqueChannels`); the nav badge is `total_unread_count` minus org-tagged unread (one throttled `getUnreadCount` plus cached cid classification); `CustomMessage` renders `failed` and `sending` with `handleRetry`.
+4. **Sidebar, Badge, Send Status**: an unlisted channel's `message.new` is watched and inserted at the top (dedupe by cid, load-more via `appendUniqueChannels`); a successful pin, unpin or hide calls `rebaseList`, which re-reads the loaded rows, resets `fetchedCountRef` and bumps `listGenerationRef` so an older load-more page is dropped; the nav badge is `total_unread_count` minus org-tagged unread (one throttled `getUnreadCount` plus cached cid classification); `CustomMessage` renders `failed` and `sending` with `handleRetry`.
 
 ---
 
