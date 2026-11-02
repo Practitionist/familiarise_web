@@ -123,18 +123,7 @@ No organization page shows more than three tabs. Billing and Payouts render thro
 
 For example, a WALLET-funded organization that requires purchase orders shows an OWNER Invoices & usage, Wallet & licence and Purchase orders, with Payment disputes under More. An INVOICE-funded organization without purchase orders shows the same OWNER Invoices & usage and Payment disputes, and no More menu.
 
-Every `?tab=` value these pages have ever answered is listed in `ORG_PAGE_TAB_MAP` (`lib/dashboard/org-tab-redirect.ts`). Each page parses `?tab=` through that page's `z.enum` in `orgLegacyTabHref()` and answers a 308 when the value is retired; a current value, a missing one or an unknown one renders the page, which opens its first visible tab.
-
-| Old URL                      | New URL                                 |
-| ---------------------------- | --------------------------------------- |
-| `billing?tab=accrued-usage`  | `billing?tab=invoices#accrued-usage`    |
-| `billing?tab=license`        | `billing?tab=wallet#license`            |
-| `payouts?tab=earnings`       | `payouts?tab=runs#earnings`             |
-| `payouts?tab=expert-routing` | `payouts?tab=rate-cards#expert-routing` |
-| `catalog?tab=archived`       | `catalog?status=archived`               |
-| `catalog?tab=collaborators`  | `collaborators`                         |
-
-The old `invoices`, `wallet`, `purchase-orders`, `disputes`, `member-spend`, `runs`, `payout-account`, `rate-cards`, `webinars`, `classes` and `materials` values are current tabs and stay as they are. Billing and payout emails and notifications link to the bare `billing` and `payouts` pages, so they open the first tab. The Overview's "Not yet invoiced" figure links to `billing?tab=invoices#accrued-usage`.
+Each page parses `?tab=` through that page's `z.enum`; a missing or unknown value renders the page on its first visible tab. `invoices`, `wallet`, `purchase-orders`, `disputes`, `member-spend`, `runs`, `payout-account`, `rate-cards`, `webinars`, `classes` and `materials` are the current values. Billing and payout emails and notifications link to the bare `billing` and `payouts` pages, so they open the first tab. The Overview's "Not yet invoiced" figure links to `billing?tab=invoices#accrued-usage`.
 
 ## Public pages
 
@@ -145,26 +134,9 @@ The public site follows the same words as the dashboards.
 - **Breadcrumbs.** Product, replay and the four plan detail pages show Experts › Expert name › Item title through `PublicBreadcrumb` (`components/explore/PublicBreadcrumb.tsx`); a plan with no consultant drops the middle crumb.
 - **Account menu.** The signed-in avatar in the public header opens a menu. The first time it opens (the mobile sheet counts as opening it), `useDashboardFacets()` fetches `GET /api/user/dashboard-facets`. The answer stays fresh for 30 seconds, under a query key made of the user id, role, the four profile ids and the active memberships, so any change the session carries (signing in or out, a new profile or membership) refetches at once, and reopening the menu after 30 seconds refetches too. That window also bounds changes the session does not carry, such as a pending or suspended membership. The route runs `resolveDashboardFacets()` with the same inputs as the dashboard ContextSwitcher: the session's profile ids and role, plus every non-deactivated membership (`findSwitcherMemberships()`, shared with `/api/user/org-memberships?all=1`). It answers 401 signed out, `Cache-Control: private, no-store`, and only each facet's kind, key, label and href (`DashboardFacetsResponseSchema`), so the menu lists Expert, Learner (only once a learner profile exists), every organization, All organizations, Admin and Staff exactly as the switcher does. While loading, the menu shows one door per personal profile the session holds plus a skeleton row; if the fetch fails it shows those doors and "All dashboards" (`/dashboard`). My library (`/dashboard/go/library`), Settings (`accountSettingsHref()`) and Sign out are always there, and the mobile sheet lists the same rows. The route is not rate-limited, like `/api/user/org-memberships`, and reads no client IP.
 
-## Legacy redirects
+## Routes that did not move
 
-Every moved route answers a `permanentRedirect` (308) that keeps the old query, repeated keys included, and drops any stale `tab`; each redirect page must pass its `searchParams` to the helper. The personal routes are recorded in `lib/dashboard/personal-legacy-routes.ts` and the organization routes in `ORG_TAB_REDIRECTS` (`lib/dashboard/org-tab-redirect.ts`).
-
-| Old route                                             | New route                                                              |
-| ----------------------------------------------------- | ---------------------------------------------------------------------- |
-| `/dashboard/consultee/<id>/products`                  | `/dashboard/consultee/<id>/library?tab=purchases`                      |
-| `/dashboard/consultee/<id>/recordings`                | `/dashboard/consultee/<id>/library?tab=recordings`                     |
-| `/dashboard/consultee/<id>/documents`                 | `/dashboard/consultee/<id>/library?tab=documents`                      |
-| `/dashboard/consultant/<id>/purchases`                | `/dashboard/consultant/<id>/library`                                   |
-| `/dashboard/organization/<orgId>/documents`           | `/dashboard/organization/<orgId>/library?tab=documents`                |
-| `/dashboard/organization/<orgId>/recordings`          | `/dashboard/organization/<orgId>/library?tab=recordings`               |
-| `/dashboard/consultant/<id>/offerings`                | `/dashboard/consultant/<id>/sell/sessions`                             |
-| `/dashboard/consultant/<id>/offerings?type=<kind>`    | The kind's Sell page and tab, for example `sell/programs?tab=webinars` |
-| `/dashboard/consultant/<id>/offerings/products`       | `/dashboard/consultant/<id>/sell/products`                             |
-| `/dashboard/consultant/<id>/offerings/collaborations` | `/dashboard/consultant/<id>/collaborations`                            |
-| `/dashboard/consultant/<id>/planner`                  | `/dashboard/consultant/<id>/sell/programs`                             |
-| `/explore/recordings` (the index only)                | `/explore/products?tab=replays`                                        |
-
-The old Offerings list filtered by a `?type=` pill rather than a `tab`, so `offeringsListLegacyHref()` maps `type` to the Sell page and tab and drops it. The editors under `offerings/<kind>/…` are live routes and never redirect; the static `offerings/products` and `offerings/collaborations` redirects take precedence over the dynamic `[type]` segment. The per-booking pages (`appointments/<id>/documents` and `appointments/<id>/recordings`) did not move, and neither did the expert's hosted Recordings and Session documents pages, which only moved into the Studio group. `/dashboard/go/<facet>/sell/…`, `collaborations` and `offerings/…` resolve only to the expert side (`EXPERT_ONLY` in `lib/dashboard/go.ts`).
+The editors under `offerings/<kind>/…` are live routes. The per-booking pages (`appointments/<id>/documents` and `appointments/<id>/recordings`) did not move, and neither did the expert's hosted Recordings and Session documents pages, which only moved into the Studio group. `/dashboard/go/<facet>/sell/…`, `collaborations` and `offerings/…` resolve only to the expert side (`EXPERT_ONLY` in `lib/dashboard/go.ts`). Recording and document notifications link to the Library tab through `notificationHref()` and `personalHref()` (`lib/novu/resolve-href.ts`).
 
 ## Support wording
 
@@ -186,12 +158,14 @@ The support area used to be called "Support requests", with a first tab labelled
 
 The Catalog item used the `Library` icon, which collided with the learner's Library group. It now uses `LayoutGrid`.
 
-The expert's temporary "My purchases" item (`/dashboard/consultant/<id>/purchases`), the learner's Library group with Session documents, Session recordings and Digital products (`documents`, `recordings` and `products`), and the organization's two Library items (`documents` and `recordings`, with `OrgLibraryPage` rendering each) were replaced by the one Library page per role. The old URLs only redirect now; do not link to them or add pages under them.
+The expert's temporary "My purchases" item (`/dashboard/consultant/<id>/purchases`), the learner's Library group with Session documents, Session recordings and Digital products (`documents`, `recordings` and `products`), and the organization's two Library items (`documents` and `recordings`, with `OrgLibraryPage` rendering each) were replaced by the one Library page per role. The old URLs were deleted, not redirected, and now answer 404; do not link to them or add pages under them.
 
-The public "Recordings Library" at `/explore/recordings` was folded into the Replays tab of `/explore/products`. The index only redirects (308, query kept); `/explore/recordings/<slug>` still serves a replay. Do not link to the old index or add a page back there. The avatar used to be a plain link to Settings with a separate Sign out button; do not restore it.
+The public "Recordings Library" at `/explore/recordings` was folded into the Replays tab of `/explore/products`. The index page was deleted and answers 404; `/explore/recordings/<slug>` still serves a replay. Do not link to the old index or add a page back there. The avatar used to be a plain link to Settings with a separate Sign out button; do not restore it.
 
-The consultant's single Offerings item (`offerings`, titled Offerings) held every kind behind a sub-tab bar (`OfferingsTabs`: My offerings, Digital products, Collaborations) and a type pill (All, 1:1, Subscriptions, Webinars, Classes). It was split into the Sell pages and the Collaborations page, and its Business, Library, Grow and Operations groups became Inbox, Calendar, Sell, Studio, Reputation & growth and Settings & help. `/collaborations` used to redirect to Offerings › Collaborations; it is the real page now. The Offerings list URLs only redirect; link to `sell/*` or `collaborations` instead.
+The consultant's single Offerings item (`offerings`, titled Offerings) held every kind behind a sub-tab bar (`OfferingsTabs`: My offerings, Digital products, Collaborations) and a type pill (All, 1:1, Subscriptions, Webinars, Classes). It was split into the Sell pages and the Collaborations page, and its Business, Library, Grow and Operations groups became Inbox, Calendar, Sell, Studio, Reputation & growth and Settings & help. `/collaborations` used to redirect to Offerings › Collaborations; it is the real page now. The Offerings list URLs (`offerings`, `offerings/products`, `offerings/collaborations`) and `planner` were deleted and answer 404; link to `sell/*` or `collaborations` instead.
 
 The organization rail used to group its items as an unlabelled top group (Overview, My Program, Compensation, Appointments, Messages, Booking requests, Plan collaborators), Library, People, Sponsorship (Programs, Contracts), Hosting (Catalog), Money (Billing, Payouts), Operations (Help & support) and Insights. Those became Overview, My work, Messages, Library, People, Sponsor, Host, Insights and Help & support, with every gate unchanged.
 
-Org Billing used to show up to seven tabs (Invoices, Accrued usage, Wallet, License, Purchase orders, Payment disputes, Member spend), and Payouts showed five (Runs, Earnings, Payout account, Rate cards, Expert routing). They merged into the tabs above. Catalog used to carry Archived and Collaborators tabs; Archived is now a status chip inside the lists, and Collaborators is its own Host item. The retired `?tab=` values only redirect now; do not link to them.
+Org Billing used to show up to seven tabs (Invoices, Accrued usage, Wallet, License, Purchase orders, Payment disputes, Member spend), and Payouts showed five (Runs, Earnings, Payout account, Rate cards, Expert routing). They merged into the tabs above. Catalog used to carry Archived and Collaborators tabs; Archived is now a status chip inside the lists, and Collaborators is its own Host item. The retired `?tab=` values (`accrued-usage`, `license`, `earnings`, `expert-routing`, `archived`, `collaborators`) are not aliased: an unknown value opens the default tab. Link to `billing?tab=invoices#accrued-usage`, `billing?tab=wallet#license`, `payouts?tab=runs#earnings`, `payouts?tab=rate-cards#expert-routing`, `catalog?status=archived` or `collaborators` instead.
+
+Redirect stubs were deleted rather than kept, because the product had no external users before launch (see [the decision](../decisions/2026-11-03-dashboard-ia-drop-legacy-redirects.md)). Gone, and answering 404: the consultee `products`, `recordings`, `documents`, `resources`, `help` and `feedback`; the consultant `purchases`, `help`, `feedback`, `settings/security` and `settings?tab=` aliases; the organization `documents`, `recordings`, `purchase-orders`, `reimbursements`, `disputes` and `materials`; and the `/explore/recordings` index. Do not recreate them.

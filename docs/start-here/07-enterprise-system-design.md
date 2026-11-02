@@ -1948,7 +1948,7 @@ be marked as proposed rather than described as current.
   invitations routes.
 - Portfolio reads: `lib/data/org-workspace.ts` and `app/api/org-workspace/[orgWorkspaceId]/**`.
 - Public directory: `lib/data/explore-organisations.ts`, `app/api/organizations/public/route.ts`, and `app/explore/enterprise/organisations/**`.
-- Tests to inspect: `__tests__/dashboard/nav-targets-resolve.test.ts`, `__tests__/dashboard/org-tab-redirects.test.ts`,
+- Tests to inspect: `__tests__/dashboard/nav-targets-resolve.test.ts`,
   `__tests__/security/scope-org-gate.test.ts`, `__tests__/booking-algorithm/org-scope-fallthrough.test.ts`, and SSO/member tests.
 
 ## 7. Compliance, privacy and data

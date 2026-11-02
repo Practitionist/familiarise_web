@@ -25,7 +25,7 @@ export const SellableKindSchema = z.enum([
 export type SellableKind = z.infer<typeof SellableKindSchema>;
 
 /** The Sell page and tab that lists each kind. */
-export const SELL_HOME: Record<SellableKind, { page: SellPage; tab: SellTab }> =
+const SELL_HOME: Record<SellableKind, { page: SellPage; tab: SellTab }> =
   {
     consultation: { page: "sessions", tab: "consultations" },
     subscription: { page: "sessions", tab: "subscriptions" },

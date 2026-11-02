@@ -105,8 +105,8 @@ The list below is the active route set under
 The sidebar carried 28 entries at its peak, several of which were a filter or
 a single read-only table rather than a destination. Those became tabs on the
 page that already owned the object. Every tab is addressable as
-`?tab=<value>`, and legacy standalone routes (`purchase-orders`, `reimbursements`,
-`disputes`) redirect through `ORG_TAB_REDIRECTS` in `lib/dashboard/org-tab-redirect.ts`.
+`?tab=<value>`; the retired standalone routes (`purchase-orders`, `reimbursements`,
+`disputes`) were deleted and answer 404.
 
 | Page        | Tabs / Sections                                                     | Why they merged                                                                                                         |
 | ----------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
