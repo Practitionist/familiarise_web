@@ -1,19 +1,9 @@
-import { HydrationBoundary } from "@tanstack/react-query";
+import { permanentRedirect } from "next/navigation";
 
-import {
-  DashboardContent,
-  DashboardHeader,
-} from "@/components/dashboard/PageScaffold";
-import { PersonalLibrary } from "@/components/dashboard/library/PersonalLibrary";
-import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
-import { readRecordingLibrary } from "@/lib/data/recording-library";
-import { libraryKeys } from "@/lib/documents/query-keys";
-import { parseLibraryQuery } from "@/lib/library/library-query";
-import { seedLibraryPage } from "@/lib/library/library-seed";
-import { getViewerZone } from "@/lib/time/viewer-zone-server";
-import { DisplayZoneProvider } from "@/lib/time/zoned-format";
+import { consulteeLegacyHref } from "@/lib/dashboard/personal-legacy-routes";
 
-export default async function ConsulteeRecordingsRoute({
+/** Moved into the Library; the old URL answers a 308 with its query kept. */
+export default async function ConsulteeRecordingsRedirect({
   params,
   searchParams,
 }: Readonly<{
@@ -21,38 +11,7 @@ export default async function ConsulteeRecordingsRoute({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }>) {
   const { consulteeId } = await params;
-  const access = await requirePersonalProfileAccess("consultee", consulteeId);
-  const viewerZone = await getViewerZone();
-  const seed = await seedLibraryPage({
-    name: "recordings:learner",
-    queryKey: libraryKeys.personal("recordings", "consultee", consulteeId),
-    searchParams: await searchParams,
-    // An inspecting operator's list is read by the route as the profile's owner.
-    skip: access.isInspecting,
-    read: () =>
-      readRecordingLibrary({
-        userId: access.userId,
-        owner: { kind: "personal", side: "learner" },
-        query: parseLibraryQuery(() => null),
-      }),
-  });
-  return (
-    <>
-      <DashboardHeader
-        title="Recordings"
-        description="Your sessions' recordings, by booking. A session your run missed shows a catch-up from another run."
-      />
-      <DashboardContent>
-        <DisplayZoneProvider zone={viewerZone.zone}>
-          <HydrationBoundary state={seed}>
-            <PersonalLibrary
-              tree="consultee"
-              profileId={consulteeId}
-              artifact="recordings"
-            />
-          </HydrationBoundary>
-        </DisplayZoneProvider>
-      </DashboardContent>
-    </>
+  permanentRedirect(
+    consulteeLegacyHref(consulteeId, "recordings", await searchParams),
   );
 }

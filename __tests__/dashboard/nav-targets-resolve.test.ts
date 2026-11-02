@@ -107,6 +107,21 @@ describe("personal + workspace nav targets resolve", () => {
     expectTabsAreItems(nav);
   });
 
+  it("the Library is a phone tab for learners and a top-level item for experts", () => {
+    const learner = buildConsulteeNav("ce-1");
+    expect(learner.mobileTabs).toEqual([
+      "home",
+      "appointments",
+      "library",
+      "messages",
+    ]);
+    // Billing stays reachable from the Menu sheet, which lists every item.
+    expect(flattenNav(learner).map((i) => i.path)).toContain("payments");
+    const expert = flattenNav(buildConsultantNav("cp-1"));
+    expect(expert.find((i) => i.path === "library")?.name).toBe("My library");
+    expect(expert.map((i) => i.path)).not.toContain("purchases");
+  });
+
   it("header CTAs and Help targets point at real pages", () => {
     expect(buildConsultantNav("cp-1").pinnedCta?.href).toBe(
       "/explore/experts/cp-1",
@@ -176,6 +191,8 @@ describe("org nav targets resolve for every role × capability", () => {
     "disputes",
     "reimbursements",
     "materials",
+    "documents",
+    "recordings",
   ];
 
   const cases = ROLES.flatMap((role) =>
@@ -224,14 +241,13 @@ describe("org nav targets resolve for every role × capability", () => {
  */
 describe("org nav role walk (#1527 matrix)", () => {
   const OPS = ["analytics"];
-  // #1527 — Library (Session documents · Session recordings) is every member's.
+  // The Library (Session documents · Session recordings) is every member's.
   const BASE = [
     "home",
     "appointments",
     "messages",
     "members",
-    "documents",
-    "recordings",
+    "library",
     "support",
   ];
   const EXPECTED: Record<MemberRole, string[]> = {

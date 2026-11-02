@@ -2,7 +2,7 @@ import {
   backofficeLandingHref,
   resolveDashboardLanding,
 } from "@/lib/dashboard/landing";
-import { resolveGoHref } from "@/lib/dashboard/go";
+import { goLibraryHref, resolveGoHref } from "@/lib/dashboard/go";
 import { supportRequestsHref } from "@/lib/dashboard/account-href";
 
 // #1527 §6 — where /dashboard lands and how /dashboard/go resolves a viewer.
@@ -105,6 +105,50 @@ describe("resolveGoHref", () => {
     ).toBe("/dashboard/consultee/ce-1/payments");
     expect(resolveGoHref("auto", ["..", "admin"], dual)).toBe("/dashboard");
     expect(resolveGoHref("nope", [], dual)).toBe("/dashboard");
+  });
+});
+
+describe("go/library", () => {
+  it("prefers the learner Library, falls back to My library, else /dashboard", () => {
+    expect(
+      resolveGoHref("library", [], {
+        role: "CONSULTANT",
+        consultantProfileId: "cp-1",
+        consulteeProfileId: "ce-1",
+      }),
+    ).toBe("/dashboard/consultee/ce-1/library");
+    expect(
+      resolveGoHref("library", [], {
+        role: "CONSULTANT",
+        consultantProfileId: "cp-1",
+      }),
+    ).toBe("/dashboard/consultant/cp-1/library");
+    expect(
+      resolveGoHref("auto", ["library"], {
+        role: "CONSULTANT",
+        consultantProfileId: "cp-1",
+      }),
+    ).toBe("/dashboard/consultant/cp-1/library");
+    expect(
+      resolveGoHref("library", [], {
+        role: "ORG_WORKSPACE",
+        orgWorkspaceProfileId: "ow-1",
+        organizationIds: ["o1"],
+      }),
+    ).toBe("/dashboard");
+    expect(
+      resolveGoHref("library", ["x"], {
+        role: "CONSULTEE",
+        consulteeProfileId: "ce-1",
+      }),
+    ).toBe("/dashboard");
+  });
+
+  it("builds the receipt link with the tab the go page forwards", () => {
+    expect(goLibraryHref()).toBe("/dashboard/go/library");
+    expect(goLibraryHref("purchases")).toBe(
+      "/dashboard/go/library?tab=purchases",
+    );
   });
 });
 
