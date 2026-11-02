@@ -5,6 +5,7 @@ import {
   getConsultantReviews,
   getConsultantReviewTracks,
 } from "@/lib/data/consultant-detail";
+import { getConsultantDigitalProducts } from "@/lib/data/digital-products-public";
 import { TUserWithProfessionalBackground } from "@/types/user";
 import { countExpertStrikes } from "@/lib/booking/expert-reliability";
 import {
@@ -55,12 +56,14 @@ export default async function ExpertProfile({
   // [], so a parameter being rendered for the first time has NO cached copy to
   // fall back on and its visitor gets the error boundary. Only a *revalidation*
   // of an already-cached profile keeps serving the last good copy.
-  const [consultant, reviews, reviewTracks, strikes] = await Promise.all([
-    getConsultantDetail(consultantId),
-    getConsultantReviews(consultantId),
-    getConsultantReviewTracks(consultantId),
-    countExpertStrikes(consultantId, strikeWindowStart(new Date())),
-  ]);
+  const [consultant, reviews, reviewTracks, strikes, digitalProducts] =
+    await Promise.all([
+      getConsultantDetail(consultantId),
+      getConsultantReviews(consultantId),
+      getConsultantReviewTracks(consultantId),
+      countExpertStrikes(consultantId, strikeWindowStart(new Date())),
+      getConsultantDigitalProducts(consultantId),
+    ]);
 
   if (!consultant || !consultant.user) {
     notFound();
@@ -74,6 +77,7 @@ export default async function ExpertProfile({
         reviews={reviews}
         reviewTracks={reviewTracks}
         reliabilityStrikes={showsReliabilityNotice(strikes) ? strikes : null}
+        digitalProducts={digitalProducts}
       />
     </Suspense>
   );

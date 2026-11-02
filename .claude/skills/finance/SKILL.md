@@ -29,6 +29,15 @@ This is the index for the finance domain: how money truth is written and proven 
 
 Detailed invariants and regime facts live in `references/doctrine.md`; verification procedures live in `references/verification.md`.
 
+## Standalone sales (replays and digital products)
+
+- Settle each rail only in its handler: `handleRecordingPurchaseSuccess` (`lib/payments/webhooks/recording-purchase.ts`) and `handleDigitalProductPurchaseSuccess` (`lib/payments/webhooks/digital-product-purchase.ts`), routed by `routeCapturedPayment` on the order notes' `type`. Stage a capture that fulfils nothing with `stageCaptureRefund` in `lib/payments/webhooks/standalone-sale-capture.ts`; never grant it.
+- Revoke on full refund or lost chargeback through `revokeStandaloneSaleEntitlement` (`lib/payments/digital-product-entitlement.ts`), which looks the sale up by `paymentId`. Never infer what a payment bought from `appointmentId === null`.
+- A free digital product claim is a `SUCCEEDED` purchase of 0 paise with no order, Payment, invoice or earnings.
+- Digital product earnings use `DIGITAL_PRODUCT` (168 h hold); the invoice SAC comes from `DIGITAL_PRODUCT_SAC_CODES` in `lib/payments/payouts/constants.ts` (998431 or 998439, pending CA sign-off).
+- Refund a digital product through the existing support and admin doors; the operator checks `firstDownloadedAt`, which no door enforces.
+- Recover a lost capture with `reconcile-standalone-purchases` or the buyer's `purchases/[purchaseId]/verify` route, both through `recoverStandaloneOrder`. Both read `FAILED` purchases under 7 days old, since a declined attempt's order can still capture; neither ever reads `REFUNDED`.
+
 ## Settlement, wallet and operator surfaces
 
 - **Settlement recon.** Razorpay card money sits in the `GATEWAY_CLEARING` ledger account until it settles to `CASH`. `reconcile-gateway-settlements` (`jobs/reconcile/reconcile-gateway-settlements.ts`) matches Razorpay's settlement report into `GatewaySettlementLine` rows and books `GATEWAY_SETTLEMENT` (`GATEWAY_CLEARING` to `CASH`); the per-capture fee is booked by `lib/payments/ledger/gateway-fee.ts`. `reconcile-ledgers` does not check the clearing residual; read that job for it.

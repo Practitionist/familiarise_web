@@ -90,7 +90,7 @@ export function PriceField<T extends FieldValues = FieldValues>({
           value={currencyField.value}
           onValueChange={currencyField.onChange}
         >
-          <SelectTrigger className="w-[90px]">
+          <SelectTrigger className="w-[90px]" aria-label="Currency">
             <SelectValue placeholder="Currency" />
           </SelectTrigger>
           <SelectContent>
@@ -104,6 +104,7 @@ export function PriceField<T extends FieldValues = FieldValues>({
 
         <Input
           type="number"
+          aria-label={label}
           min="0"
           max={99999999}
           placeholder="0"

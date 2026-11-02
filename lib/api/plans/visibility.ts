@@ -179,3 +179,15 @@ export async function isPlanViewable(
     organizationId: plan.organizationId,
   });
 }
+
+/**
+ * The discovery filter for DigitalProduct: publicly visible, on sale and not
+ * taken down. Archived and draft products stay off every public surface.
+ */
+export function digitalProductDiscoverableWhere() {
+  return {
+    visibility: { in: MARKETPLACE_VISIBILITY },
+    status: "PUBLISHED",
+    takenDownAt: null,
+  } as const;
+}

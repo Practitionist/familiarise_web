@@ -67,7 +67,7 @@ import {
 } from "@/lib/payments/billing/org-invoice-settlement";
 import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
 import { cancelOpenPayoutsForPayment } from "@/lib/payments/payouts/cancel-open-payouts";
-import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
+import { revokeStandaloneSaleEntitlement } from "@/lib/payments/digital-product-entitlement";
 import {
   applyReversal,
   consultantClawbackKey,
@@ -1606,9 +1606,9 @@ export async function settleLostDispute(
     reason: `chargeback lost (dispute ${disputeId})`,
   });
 
-  // Replay sales are the only appointment-less payments that grant playback.
+  // A lost chargeback on a standalone sale revokes the entitlement it granted.
   if (disputedPayment?.appointmentId === null) {
-    await revokeReplayEntitlement(tx, disputedPayment.paymentIntent);
+    await revokeStandaloneSaleEntitlement(tx, disputedPayment);
   }
 
   // The consumer invoice's own s.34 credit note; idempotent on

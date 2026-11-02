@@ -15,6 +15,7 @@ import type { PaymentDetail } from "@/types/payments";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useToast } from "@/hooks/use-toast";
 import { callOpsDoor, isProposed, PROPOSED_TOAST } from "./ops-door";
+import { DownloadEvidence } from "./DownloadEvidence";
 
 export type RefundDoor = "issue" | "override" | "credits";
 
@@ -233,6 +234,9 @@ export function RefundDoorDialog({
           <span className="font-medium tabular-nums">{money(remainder)}</span>{" "}
           of {money(Number(p?.amount ?? 0))}
         </p>
+      )}
+      {door !== "credits" && p?.digitalProductPurchase && (
+        <DownloadEvidence purchase={p.digitalProductPurchase} />
       )}
       {door !== "credits" && payment.isError && (
         <p className="text-sm text-destructive">

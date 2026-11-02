@@ -242,11 +242,13 @@ async function resolveSubscriptionTranches(
  * `AppointmentType` or a renamed `CoveredPlanType` member is a compile error
  * here instead of a booking that silently settles on the wrong card.
  */
-const RATE_CARD_PLAN_TYPE: Record<AppointmentType, CoveredPlanType> = {
+const RATE_CARD_PLAN_TYPE: Record<AppointmentType, CoveredPlanType | null> = {
   CONSULTATION: "CONSULTATION",
   WEBINAR: "WEBINAR",
   SUBSCRIPTION: "SUBSCRIPTION",
   CLASS: "CLASS",
+  // No plan-typed rate card covers a file sale; it settles on the org default.
+  DIGITAL_PRODUCT: null,
 };
 
 /**

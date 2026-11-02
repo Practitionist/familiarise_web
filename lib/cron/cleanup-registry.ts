@@ -92,6 +92,10 @@ const MAX_GST_HEALER_MINTS = 25;
 const MAX_CONSUMER_INVOICE_HEALS = 25;
 /** Document rows a single purge run may process; each costs one storage delete. */
 const MAX_DOCUMENT_PURGE_ROWS = 200;
+/** Pending standalone purchases per rail per run; up to two Razorpay calls each. */
+const MAX_STANDALONE_PURCHASE_CHECKS = 5;
+/** Digital product rows per storage arm per run; one R2 delete each. */
+const MAX_DIGITAL_PRODUCT_STORAGE_ROWS = 25;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins and the console's job list.
@@ -2078,6 +2082,82 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         needsAttention: (r) =>
           r.stuck.length > 0 || r.owed.stuck.length > 0 || r.owed.failed > 0,
         failureMessage: "Failed to retry auto-refunds",
+      }),
+  },
+
+  // @cleanup-twin reconcile-standalone-purchases
+  "reconcile-standalone-purchases": {
+    meta: {
+      title: "Recover standalone purchases",
+      description:
+        "Settle digital product and replay purchases whose capture never arrived; fail empty orders after 24 hours",
+      category: "Payments",
+      manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasStandalonePurchaseWork } =
+          await import("@/scripts/payments/reconcile-standalone-purchases");
+        return hasStandalonePurchaseWork(db, now, outOfTime);
+      },
+    },
+    build: () =>
+      cleanupRoute({
+        job: "reconcile-standalone-purchases",
+        run: async (req) => {
+          const { reconcileStandalonePurchases } =
+            await import("@/scripts/payments/reconcile-standalone-purchases");
+          return reconcileStandalonePurchases({
+            limit: parseLimitParamOrDefault(
+              req,
+              MAX_STANDALONE_PURCHASE_CHECKS,
+            ),
+          });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          recovered: r.recovered,
+          expired: r.expired,
+          receipts: r.receipts,
+          errors: r.errors,
+        }),
+        items: (r) => ({ processed: r.scanned, errors: r.errors }),
+        failureMessage: "Failed to reconcile standalone purchases",
+      }),
+  },
+
+  // @cleanup-twin reconcile-digital-product-storage
+  "reconcile-digital-product-storage": {
+    meta: {
+      title: "Digital product storage",
+      description:
+        "Delete superseded, rejected and abandoned product files and bucket objects no row names",
+      category: "Cleanup",
+      manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "Compares Supabase Storage objects with product file rows; vendor state.",
+    },
+    build: () =>
+      cleanupRoute({
+        job: "reconcile-digital-product-storage",
+        run: async (req) => {
+          const { reconcileDigitalProductStorage } =
+            await import("@/lib/digital-products/storage-sweep");
+          return reconcileDigitalProductStorage({
+            limit: parseLimitParamOrDefault(
+              req,
+              MAX_DIGITAL_PRODUCT_STORAGE_ROWS,
+            ),
+          });
+        },
+        status: (r) => statusFor(r),
+        items: (r) => ({
+          processed: r.supersededPurged + r.uploadsCleared + r.orphansDeleted,
+          errors: r.failed,
+        }),
+        failureMessage: "Failed to reconcile digital product storage",
       }),
   },
 

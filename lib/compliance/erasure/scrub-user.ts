@@ -77,6 +77,10 @@ import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { liveParticipant } from "@/lib/booking/participants";
 import { eraseUserSessionDocuments } from "@/lib/documents/document-erasure";
 import {
+  purgeErasedCreatorFiles,
+  scrubDigitalProductsTx,
+} from "@/lib/digital-products/erasure";
+import {
   removeSupportAttachmentObjects,
   scrubSupportPiiTx,
   supportAttachmentPaths,
@@ -617,10 +621,16 @@ async function retryErasedUserVendorCleanup(
       return ["support-attachments: storage cleanup failed; re-run erasure"];
     },
   );
+  const productFileFailures = await purgeErasedCreatorFiles(
+    prisma,
+    userId,
+    now,
+  );
   vendorFailures.push(
     ...recordingFailures,
     ...documentFailures,
     ...supportFailures,
+    ...productFileFailures,
   );
   return vendorFailures;
 }
@@ -923,6 +933,7 @@ export async function scrubUser(
       data: { requestNotes: null },
     });
     supportAttachmentPathsToRemove = await scrubSupportPiiTx(tx, userId, now);
+    await scrubDigitalProductsTx(tx, userId, now);
 
     // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
     // every split and roster; the same flip the moderation ban runs.
@@ -1163,6 +1174,11 @@ export async function scrubUser(
     supportAttachmentPathsToRemove,
     userId,
   );
+  const productFileFailures = await purgeErasedCreatorFiles(
+    prisma,
+    userId,
+    now,
+  );
 
   const vendorFailures = [
     ...paymentFailures,
@@ -1170,6 +1186,7 @@ export async function scrubUser(
     ...recordingFailures,
     ...documentFailures,
     ...supportFailures,
+    ...productFileFailures,
   ];
 
   const notificationFailures = await offboardNotificationVendor(userId);
