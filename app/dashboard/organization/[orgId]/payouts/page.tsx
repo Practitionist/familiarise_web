@@ -5,12 +5,11 @@ import { PayoutsPageClient } from "./PayoutsPageClient";
 // and threads it to the client so PROCESSING payouts render as honestly
 // held rather than implying money is moving. `params` is forwarded as the
 // promise the client `use()`s.
-export default async function OrgPayoutsPage({
+export default function OrgPayoutsPage({
   params,
 }: Readonly<{
   params: Promise<{ orgId: string }>;
 }>) {
-  const { orgId } = await params;
   return (
     <PayoutsPageClient
       params={params}

@@ -25,14 +25,13 @@ export const SellableKindSchema = z.enum([
 export type SellableKind = z.infer<typeof SellableKindSchema>;
 
 /** The Sell page and tab that lists each kind. */
-const SELL_HOME: Record<SellableKind, { page: SellPage; tab: SellTab }> =
-  {
-    consultation: { page: "sessions", tab: "consultations" },
-    subscription: { page: "sessions", tab: "subscriptions" },
-    webinar: { page: "programs", tab: "webinars" },
-    class: { page: "programs", tab: "classes" },
-    "digital-product": { page: "products", tab: "digital" },
-  };
+const SELL_HOME: Record<SellableKind, { page: SellPage; tab: SellTab }> = {
+  consultation: { page: "sessions", tab: "consultations" },
+  subscription: { page: "sessions", tab: "subscriptions" },
+  webinar: { page: "programs", tab: "webinars" },
+  class: { page: "programs", tab: "classes" },
+  "digital-product": { page: "products", tab: "digital" },
+};
 
 const sellPath = (page: SellPage, tab?: SellTab) =>
   tab ? `sell/${page}?tab=${tab}` : `sell/${page}`;
