@@ -196,7 +196,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
                   title:
                     current.ownershipScope === "PERSONAL"
                       ? t.title
-                      : "Organization support request",
+                      : "Organization support case",
                   statusCode:
                     t.status === "ESCALATED" ? "IN_PROGRESS" : t.status,
                   statusLabel,

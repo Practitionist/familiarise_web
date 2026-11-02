@@ -108,12 +108,12 @@ export default function GrievanceRedressalPage() {
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                1. Statutory Timelines &amp; Ticket Tracking
+                1. Statutory Timelines &amp; Case Tracking
               </h2>
               <p>
-                Every support request and formal complaint opened on{" "}
+                Every support case and formal complaint opened on{" "}
                 {COMPANY_INFO.name} receives a unique tracking reference {"("}
-                <code>FAM-YYYY-NNNNNN</code> for support tickets and{" "}
+                <code>FAM-YYYY-NNNNNN</code> for support cases and{" "}
                 <code>RPT-XXXXXXXX</code> for content/review moderation
                 {" reports)"} so you can monitor progress end to end.
               </p>

@@ -248,7 +248,7 @@ function PlatformDoneView({
             created — quote it if you follow up.{" "}
           </>
         ) : (
-          <>Ticket created — </>
+          <>Support case created — </>
         )}
         {describeWait(done.replyByAt)}
         {requestHref && (

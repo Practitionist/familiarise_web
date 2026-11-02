@@ -7,6 +7,9 @@ import { join } from "path";
 jest.mock("@/lib/auth-client", () => ({
   useSession: () => ({ data: { user: { id: "u1" } } }),
 }));
+jest.mock("@/hooks/use-toast", () => ({
+  useToast: () => ({ toast: jest.fn() }),
+}));
 jest.mock("@/hooks/useListParams", () => ({
   useListParams: () => ({
     q: "",
@@ -27,6 +30,7 @@ jest.mock("@/components/support/PlatformSupportSheet", () => ({
   PlatformSupportSheet: () => null,
 }));
 
+import { NotificationPreferencesPanel } from "@/components/notifications/NotificationPreferencesPanel";
 import { SupportRequestsPage } from "@/components/dashboard/shared/support/SupportRequestsPage";
 
 it("the personal support page says support cases, not requests", async () => {
@@ -66,4 +70,28 @@ it("the learner recordings page is titled Session recordings", () => {
     "utf8",
   );
   expect(src).toContain('title="Session recordings"');
+});
+
+it("notification settings call the support toggle Support Cases", async () => {
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({ allNotifications: true, supportUpdates: true }),
+  }) as unknown as typeof fetch;
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <NotificationPreferencesPanel />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText("Support Cases")).toBeInTheDocument();
+  expect(screen.getByText("Updates on your support cases")).toBeInTheDocument();
+  expect(screen.queryByText(/ticket/i)).toBeNull();
+});
+
+it.each([
+  ["app/dashboard/consultee/[consulteeId]/(features)/home/HomeTab.tsx"],
+  ["app/support/_components/StillStuckCard.tsx"],
+])("%s offers a support case, not a support request", (file) => {
+  const src = readFileSync(join(process.cwd(), file), "utf8");
+  expect(src).toContain("Open a support case");
+  expect(src).not.toContain("Open a support request");
 });

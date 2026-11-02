@@ -668,7 +668,7 @@ export async function stageSupportCaseIntakeTx(
       });
       // Keep outbox writes sequential on the transaction’s single connection.
       for (const recipient of recipients) {
-        const text = `Reference: ${created.referenceNumber}\n\n${created.ownershipScope === "PERSONAL" ? created.description : "An organization support request was received."}\n\n${getAppUrl()}${href}`;
+        const text = `Reference: ${created.referenceNumber}\n\n${created.ownershipScope === "PERSONAL" ? created.description : "An organization support case was received."}\n\n${getAppUrl()}${href}`;
         const html = text
           .replace(
             /[&<>"']/g,
@@ -686,7 +686,7 @@ export async function stageSupportCaseIntakeTx(
           {
             from: DEFAULT_FROM_ADDRESS,
             to: recipient.email,
-            subject: `Support request — ${created.referenceNumber}`,
+            subject: `Support case — ${created.referenceNumber}`,
             html,
             text,
           },
@@ -1409,7 +1409,7 @@ export async function stageCaseResolutionCsatPromptTx(
     payload: {
       ticketId: target.id,
       reference: target.referenceNumber,
-      ticketTitle: target.title ?? "Support Request",
+      ticketTitle: target.title ?? "Support case",
       status: "Resolved — rate your resolution",
       statusCode: "RESOLVED",
       dashboardUrl: supportRequestHref(

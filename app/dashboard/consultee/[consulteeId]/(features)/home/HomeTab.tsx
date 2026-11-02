@@ -849,7 +849,7 @@ export default function HomeTab({
         <HelpCard
           href={`${basePath}/support`}
           icon={MessageSquareText}
-          title="Open a support request"
+          title="Open a support case"
           body="Ask our team about a booking or a payment."
         />
       </div>
