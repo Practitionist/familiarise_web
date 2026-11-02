@@ -54,6 +54,8 @@ const DESCRIPTOR_FORMS: ReadonlyMap<
   [24, { signed: true, wide: true }],
 ]);
 const MAX_DESCRIPTOR_BYTES = 24;
+/** Flags a local header must share with its central record: encryption (0, 6), descriptor (3), UTF-8 names (11). */
+const SHARED_FLAG_BITS = 0x0001 | 0x0008 | 0x0040 | 0x0800;
 /** Stored descriptor data is scanned in pieces of this size, each overlapping the last by 3 bytes. */
 const SCAN_CHUNK_BYTES = 8 * 1024 * 1024;
 /** The third and fourth bytes after "PK" of every ZIP record signature a hidden entry needs. */
@@ -339,6 +341,7 @@ interface CentralEntry {
   localOffset: number;
   /** Bit 3: the CRC and sizes trail the data in a descriptor. */
   descriptor: boolean;
+  flags: number;
   method: number;
   crc: number;
   compressed: number;
@@ -430,6 +433,7 @@ function readCentralDirectory(
       rawName,
       localOffset: sizes.localOffset,
       descriptor: (flags & 0x0008) !== 0,
+      flags,
       method,
       crc: dv.getUint32(at + 16, true),
       compressed: sizes.compressed,
@@ -658,8 +662,12 @@ async function inspectLocalHeaders(
     if (dv.getUint32(0, true) !== LOCAL_HEADER_SIG) {
       throw mismatch(entry, "bad signature");
     }
-    if (((dv.getUint16(6, true) & 0x0008) !== 0) !== entry.descriptor) {
-      throw mismatch(entry, "descriptor flag differs");
+    if (((dv.getUint16(6, true) ^ entry.flags) & SHARED_FLAG_BITS) !== 0) {
+      throw mismatch(entry, "flags differ");
+    }
+    // Equal methods make the stored-descriptor scan's choice hold for either header.
+    if (dv.getUint16(8, true) !== entry.method) {
+      throw mismatch(entry, "compression method differs");
     }
     const nameLen = dv.getUint16(26, true);
     const extraLen = dv.getUint16(28, true);
@@ -819,7 +827,14 @@ export async function inspectZip(
     };
   }
   if (dir.entries === 0) {
-    return { ok: true, entries: 0, totalUncompressedBytes: 0 };
+    // With nothing listed, any byte before the directory is an unlisted record.
+    return dir.offset === 0
+      ? { ok: true, entries: 0, totalUncompressedBytes: 0 }
+      : {
+          ok: false,
+          problem: "UNLISTED_DATA",
+          detail: "data before an empty directory",
+        };
   }
   const cd = await read(dir.offset, dir.offset + dir.size - 1);
   if (cd.length !== dir.size) {

@@ -410,3 +410,39 @@ it("scans stored entries with a data descriptor for ZIP records, within a cap", 
   // Only the tail and the central directory were read.
   expect(reads).toBe(2);
 });
+
+/** Codex re-review repros: each extracted an unlisted payload.exe with macOS tar. */
+const REREVIEW_FIXTURES = {
+  emptyDirectoryHiddenLocal:
+    "UEsDBBQAAAgAAAAAAAAIge7vKAAAACgAAAALAAAAcGF5bG9hZC5leGVNWiBpbmVydCByZXZpZXcgZml4dHVyZTsgbmV2ZXIgZXhlY3V0ZWQKUEsFBgAAAAAAAAAAAAAAAFEAAAAAAA==",
+  localStoredCentralDeflate:
+    "UEsDBBQACAgAAAAAAAAAAAAAAAAAAAAAAAAJAAAAbm90ZXMudHh0aGVsbG9QSwcIhqYQNgUAAAAFAAAAUEsDBBQAAAgAAAAAAAAIge7vKAAAACgAAAALAAAAcGF5bG9hZC5leGVNWiBpbmVydCByZXZpZXcgZml4dHVyZTsgbmV2ZXIgZXhlY3V0ZWQKUEsHCIJfe0RmAAAAZgAAAFBLAQIUABQACAgIAAAAAACCX3tEZgAAAGYAAAAJAAAAAAAAAAAAAAAAAAAAAABub3Rlcy50eHRQSwUGAAAAAAEAAQA3AAAAnQAAAAAA",
+  normalStored:
+    "UEsDBBQAAAgAAAAAAACGphA2BQAAAAUAAAAJAAAAbm90ZXMudHh0aGVsbG9QSwECFAAUAAAIAAAAAAAAhqYQNgUAAAAFAAAACQAAAAAAAAAAAAAAAAAAAAAAbm90ZXMudHh0UEsFBgAAAAABAAEANwAAACwAAAAAAA==",
+} as const;
+const fixture = (name: keyof typeof REREVIEW_FIXTURES) =>
+  Buffer.from(REREVIEW_FIXTURES[name], "base64");
+
+it("refuses records before an empty directory and local/central method or flag mismatches", async () => {
+  await expect(inspect(fixture("normalStored"))).resolves.toMatchObject({
+    ok: true,
+    entries: 1,
+  });
+  await expect(
+    inspect(fixture("emptyDirectoryHiddenLocal")),
+  ).resolves.toMatchObject({ ok: false, problem: "UNLISTED_DATA" });
+  await expect(
+    inspect(fixture("localStoredCentralDeflate")),
+  ).resolves.toMatchObject({ ok: false, problem: "LOCAL_HEADER_MISMATCH" });
+  // An empty archive is still fine.
+  await expect(inspect(buildZip([]))).resolves.toEqual({
+    ok: true,
+    entries: 0,
+    totalUncompressedBytes: 0,
+  });
+});
+
+// Needs an owner decision: inflating bit-3 deflate data to find where its stream really ends.
+it.todo(
+  "refuses deflate-descriptor-hidden-local.zip: a valid DEFLATE stream and descriptor before an unlisted exe, with the central compressed size inflated to cover both and a matching outer descriptor",
+);
