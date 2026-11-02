@@ -4,9 +4,9 @@
 
 /**
  * `/api/auth/get-session` must not answer "signed out" for a lookup that
- * failed: with a validly signed cookie whose row is live (or unreadable), a
- * `200 null` becomes 503 + Retry-After, which the BetterAuth client treats
- * as an error and keeps its last session.
+ * failed: a 500, or a `200 null` on a validly signed cookie whose row is live
+ * (or unreadable), becomes 503 + Retry-After, so the BetterAuth client keeps
+ * its last session.
  */
 
 const handlerGet = jest.fn();
@@ -105,6 +105,23 @@ describe("GET /api/auth/get-session", () => {
         expect.stringMatching(/^better-auth\.session_token=; .*Max-Age=0/),
       ]),
     );
+  });
+
+  it("maps a failed lookup (500) to 503 and expires the cookie of an ended session (401)", async () => {
+    handlerGet.mockResolvedValueOnce(new Response("{}", { status: 500 }));
+    const failed = await getSession();
+    expect(failed.status).toBe(503);
+    expect(failed.headers.get("Retry-After")).toBe("2");
+
+    handlerGet.mockResolvedValueOnce(new Response("{}", { status: 401 }));
+    const ended = await getSession();
+    expect(ended.status).toBe(401);
+    expect(ended.headers.getSetCookie()).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/^better-auth\.session_token=; .*Max-Age=0/),
+      ]),
+    );
+    expect(sessionFindUnique).not.toHaveBeenCalled();
   });
 
   it("passes the null through with no cookie, without a row read", async () => {
