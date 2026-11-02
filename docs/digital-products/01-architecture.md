@@ -135,6 +135,8 @@ A commit that finds no object yet answers `409 UPLOAD_NOT_FOUND`, and one whose 
 - **Unicode Path names.** An entry can carry a second name in the Info-ZIP Unicode Path extra field (header `0x7075`), and libarchive and Info-ZIP extract under that name instead of the legacy one. So `guide.txt` with a Unicode Path of `payload.exe` would land on disk as `payload.exe`. `inspectZip()` therefore runs the path and extension rules on both names and refuses the entry if either fails. A Unicode Path field that is not version 1, whose CRC32 does not match the legacy name bytes, that is not valid UTF-8, or that appears twice is refused as `ZIP_UNICODE_PATH_INVALID`. A central-directory extra field whose length runs past the extra block is `CENTRAL_DIRECTORY_CORRUPT`. The Unicode Comment field (`0x6375`) names nothing, so it is ignored.
 - **Known limitation: local headers.** Only the central directory is read. A streaming extractor that names entries from the local file headers could see a different name or Unicode Path there, and that is not checked, because reading every local header would cost one range read per entry. Moderator takedown covers it (§8).
 
+A rejected file stores its reason as `CODE` or `CODE:detail`, where the detail is the matched marker, the entry name or the compression ratio (`POLYGLOT:/javascript`, `ZIP_COMPRESSION_RATIO:big.bin (512:1)`). `describeRejectReason()` in `lib/digital-products/reject-reasons.ts` turns it into one sentence the creator can act on; the editor shows that sentence with the code underneath, and lists rejected uploads apart from the product's files. A rejected upload holds no order slot and does not count toward the 20-file or 1 GB caps.
+
 There is no antivirus scan. Moderators take down a product a structural check missed (§8).
 
 ## 5. Purchase and settlement
@@ -158,17 +160,17 @@ sequenceDiagram
   RP->>WH: payment.captured
   WH->>DB: one transaction: CAS purchase to SUCCEEDED, Payment SUCCEEDED with CARD leg, link, earnings, BOOKING journal, staged receipt
   WH->>WH: after commit: consumer invoice (SAC by category), attempt the receipt
-  loop up to 8 times, every 2 s, until SUCCEEDED
+  B->>API: on Razorpay's success handler: POST purchases/[purchaseId]/verify
+  API->>RP: read what the order holds
+  API->>WH: route the capture as the webhook would
+  loop up to 60 s, from 1 s with backoff, verify again every 15 s
     B->>API: GET /api/digital-products/purchases/[purchaseId]
-  end
-  opt still PENDING, or FAILED from an earlier declined attempt
-    B->>API: POST purchases/[purchaseId]/verify
-    API->>RP: read what the order holds
-    API->>WH: route the capture as the webhook would
   end
 ```
 
-The page shows the viewer the amount the route would charge them next: a fresh derivation, or the persisted `amountPaise` of their unfinished order, which the route resumes (`quoteDigitalProductForBuyer()` in `lib/payments/pricing/digital-product-price.ts`). A declined card fires `payment.failed`, which moves the purchase to `FAILED`, but the buyer can retry on the same Razorpay order. So the checkout keeps polling through `FAILED`, the verify route reads a `FAILED` purchase under 7 days old against the gateway, and the recovery sweep re-reads `FAILED` orders for 7 days. `REFUNDED` is never re-read.
+The page shows the viewer the amount the route would charge them next: a fresh derivation, or the persisted `amountPaise` of their unfinished order, which the route resumes (`quoteDigitalProductForBuyer()` in `lib/payments/pricing/digital-product-price.ts`). A declined card fires `payment.failed`, which moves the purchase to `FAILED`, but the buyer can retry on the same Razorpay order. So the checkout keeps polling through `FAILED`, the verify route reads a `FAILED` purchase under 7 days old against the gateway, and the recovery sweep re-reads `FAILED` orders for 7 days. Without a webhook, the verify route applies the same `PENDING → FAILED` CAS when every attempt on the order failed; an order with no attempt yet stays `PENDING`. `REFUNDED` is never re-read. A still-unconfirmed checkout shows "Check again", and a refunded buyer revisiting the page sees the refund date and can buy again.
+
+The settling Payment records Razorpay's own `method` (`NETBANKING`, `UPI`, `GATEWAY_WALLET`, and so on; `WALLET` stays the organisation wallet) from the webhook entity or the recovered order; its funding leg is always `CARD`, the gateway source.
 
 The capture is routed by `routeCapturedPayment()` (`app/api/webhooks/razorpay-dispatch.ts`) on the order notes' `type`. `handleDigitalProductPurchaseSuccess()` exits early when the order's Payment is already `SUCCEEDED` with the same amount and payment id, so a redelivered webhook does nothing. A capture that cannot be granted is kept as a `SUCCEEDED` Payment under the auto-refund marker and refunded after commit, through `stageCaptureRefund()` and `refundStagedCapture()` in `lib/payments/webhooks/standalone-sale-capture.ts`. That happens when:
 
@@ -201,11 +203,11 @@ sequenceDiagram
   B->>R2: GET the file
 ```
 
-The owner and operators download without a purchase and leave no download row. A taken-down product answers `410` to buyers. The lock decides a race with a refund: a refund that committed first leaves no `SUCCEEDED` row, so the route answers `403` and signs nothing; a download that locked first is recorded and the refund waits for it. Repeat downloads are always served and each leaves a row. The buyer library (`/dashboard/consultee/<id>/products`) and the product page link to this route; no email or page ever carries a storage URL.
+The owner and operators download without a purchase and leave no download row. A taken-down product answers `410` to buyers. The lock decides a race with a refund: a refund that committed first leaves no `SUCCEEDED` row, so the route answers `403` and signs nothing; a download that locked first is recorded and the refund waits for it. Repeat downloads are always served and each leaves a row, within about 30 per user per 10 minutes (`digitalProductDownloadLimiter`; Upstash's sliding window can admit one or two more across a bucket boundary). The buyer library (`/dashboard/consultee/<id>/products`) and the product page link to this route; no email or page ever carries a storage URL.
 
 ## 8. Refunds, disputes and takedown
 
-A buyer can ask for a refund until their first download; after that only a defective file justifies one. The refund goes through the existing support and admin refund doors, and the operator reads `firstDownloadedAt` and the download rows to decide. The doors do not check `firstDownloadedAt` themselves.
+A buyer can ask for a refund until their first download; after that only a defective file justifies one. The refund goes through the existing support and admin refund doors, and the operator reads `firstDownloadedAt` and the download rows to decide. The admin payment view and the refund dialog show "Downloaded N times, first at <time>" as evidence; the doors do not check `firstDownloadedAt` themselves.
 
 A full refund (`applyRefundCascade()` in `lib/payments/operations/refund.ts`) and a lost chargeback (`settleLostDispute()` in `app/api/webhooks/utils.ts`) revoke access through `revokeStandaloneSaleEntitlement()` (`lib/payments/digital-product-entitlement.ts`). It finds the digital product sale by its `paymentId` link and moves it `SUCCEEDED → REFUNDED`; only when no purchase is linked does it fall back to the replay sale. A partial goodwill refund keeps access.
 
@@ -278,3 +280,4 @@ Until the variable is set, the upload, commit and download routes fail with `R2_
 - **Post-commit receipt staging and `updatedAt` rotation.** The receipt was staged after the settling commit, so a crash in between lost it; the recovery sweep rotated on `updatedAt`, so rows whose gateway read kept failing were never touched and starved the queue. A failed preparation later still committed the sale with no record of the owed receipt, which `receiptStagedAt` now carries.
 - **One recovery page per rail and the last EOCD signature.** `PENDING` and `FAILED` purchases shared one `take`, so refunded `FAILED` rows could fill it, and every re-route counted as recovered. The ZIP inspector trusted the last EOCD signature in the tail, which a comment could forge.
 - **A client-writable cover path.** The first product schemas accepted `coverImagePath` in the create and update bodies. The plan-images route is now its only writer, so a cover always names an object in that bucket.
+- **Raw reject codes and polling before verify.** The editor showed the bare `rejectReason` enum, and the checkout polled eight times at 2 s before asking Razorpay. Any UI that prints a reject code without `describeRejectReason()`, or waits on the webhook before calling verify, is a leftover.
