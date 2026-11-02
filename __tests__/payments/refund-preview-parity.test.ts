@@ -193,11 +193,6 @@ jest.mock("../../lib/enterprise/system-events", () => {
   };
 });
 
-jest.mock("../../lib/activity/log-activity", () => ({
-  logConsultationCancelled: jest.fn().mockResolvedValue(undefined),
-  logSubscriptionCancelled: jest.fn().mockResolvedValue(undefined),
-}));
-
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import { GET as previewHandler } from "@/app/api/appointments/[appointmentId]/cancel/preview/route";
 import type { RefundTier } from "@/lib/payments/operations/cancellation-policy";

@@ -1,16 +1,13 @@
-# CodeRabbit configuration — tuned for maximum review depth on a money-critical
-# Next.js/TypeScript codebase. Reference: https://docs.coderabbit.ai/reference/configuration
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# AGENTS.md owns shared engineering invariants; path rules add domain risks.
 language: en-US
-# Hard-capped at 250 characters by CodeRabbit's schema. Over it, the WHOLE file
-# fails validation and every review silently falls back to defaults (#1223 shipped
-# it at 259). Count before editing.
+# Keep the tone within 250 characters or schema validation rejects the config.
 tone_instructions: >-
-  Fintech codebase moving real money (B2C consultations, B2B org billing,
-  Razorpay/RazorpayX/Stripe). Aggressively flag correctness, rounding,
-  idempotency, authorization and race-condition risk: money bugs mean
-  double payouts or lost funds.
+  Be concise and evidence-based. Explain the concrete failure and affected
+  users. Prioritize correctness, authorization, privacy, money and reliability.
+  Avoid speculative refactors and style-only churn.
 reviews:
-  # chill = high-signal review profile (avoids nitpick churn and rate limits).
+  # Profile controls feedback volume; review triggers control quota consumption.
   profile: chill
   request_changes_workflow: false # reviews stay non-blocking; we triage comments via our own flow
   high_level_summary: true
@@ -27,42 +24,198 @@ reviews:
   abort_on_close: true
   auto_review:
     enabled: true
-    auto_incremental_review: false # review once on open; re-review on demand
-    auto_pause_after_reviewed_commits: 5
+    auto_incremental_review: false # one initial review; later reviews on demand
     drafts: false
+    # The default target is dev. Other bases, including stacks/prod, are manual.
+    base_branches: []
     ignore_title_keywords: ["WIP", "[skip review]", "DO NOT MERGE"]
     labels: ["!do-not-review"]
   path_instructions:
-    - path: "lib/payments/**"
+    - path: "{app,actions,lib,utils,schemas,hooks,providers,components,scripts}/**/*.{ts,tsx}"
       instructions: |
-        Money-critical code. Verify: integer paise only (no float arithmetic on
-        amounts); BigInt-safe conversions at boundaries; idempotency keys on every
-        mutating payment/refund/payout operation; status transitions use CAS
-        conditional updateMany (never read-then-write); refunds reconcile against
-        captured amounts; gateway calls never sit inside DB transactions;
-        Serializable isolation + bounded retries where concurrent money writers
-        interleave; error paths never leave money state ambiguous (no silent
-        partial application); no secrets logged.
-    - path: "app/api/webhooks/**"
+        Follow AGENTS.md and verify claims against current callers and database
+        sidecars. Prioritize concrete bugs over speculative abstractions, flags,
+        state machines or duplicate reconciler sweeps. Inside a transaction every
+        database helper must use tx, never global prisma (PG_POOL_MAX=1). Keep
+        vendor calls outside transactions, preserve durable post-commit recovery,
+        and aggregate sweep errors rather than reporting to Sentry per row.
+        Trace changed business behavior across booking, money, org access,
+        notifications and Stream rather than trusting a directory boundary.
+    - path: "{app/api/**,actions/**}"
       instructions: |
-        Webhook handlers. Verify: raw-body signature verification (timing-safe)
-        BEFORE parsing/trusting payload; event deduplication so replayed
-        deliveries cannot double-apply effects; terminal-status guards against
-        out-of-order/stale events; safe retries that never duplicate side
-        effects; unhandled event types return 2xx; no PII/card data in logs.
-    - path: "app/api/**"
+        Protected entry points must authorize the current actor, resource and org
+        on the server, including server actions; client guards are insufficient.
+        Respect intentionally public endpoints and provider-authenticated webhooks
+        instead of requiring sessions everywhere. Validate untrusted input with
+        Zod, preserve refusal/status semantics and idempotency on retries, and
+        avoid leaking secrets, PII or internal errors. Preserve existing request
+        rate limits and use only the middleware-resolved client IP.
+    - path: "{lib/auth.ts,lib/auth-*.ts,lib/auth/**,lib/sso/**,app/auth/**,app/api/auth/**,components/auth/**,providers/AuthSyncProvider.tsx,schemas/auth.ts,__tests__/{auth,sso,security}/**}"
       instructions: |
-        Route handlers: authz checked per handler (session + role + org scoping),
-        inputs validated with zod, correct status codes, no internal error leaks.
-    - path: "**/*.test.ts"
+        Authentication failures are tri-state: a session lookup outage is a 503,
+        never evidence of sign-out. Preserve session revocation, MFA/step-up and
+        operator policy; account/role changes must take effect on the next read.
+        Check expected-user protection on identity-sensitive writes, tenant-bound
+        SSO claims, trusted origins, safe callback URLs and abuse limits. Never
+        trust a client role, email domain or hidden UI as authorization.
+    - path: "{app/form/onboarding/**,app/onboarding/**,components/onboarding/**,actions/onboarding-*.ts,utils/onboarding*.ts,lib/profiles/**,lib/verification/**,app/api/{profiles,verification}/**,__tests__/{onboarding,profiles,verification}/**}"
       instructions: |
-        Edge cases that must be covered for money tests: zero/negative amounts,
-        currency mismatch, concurrent invocations, expired signatures/orders,
-        partial refunds, idempotent replays.
-  # Static analyzers — correctness/security set. Style-duplicating linters
-  # (biome/oxlint) left off: repo already runs ESLint in CI.
-  # Belongs under `reviews`, not at the root — #1223 put it at the root, where
-  # the schema rejects it as an unknown top-level key.
+        Preserve legal role/profile combinations, DOB/consent requirements and
+        atomic onboarding completion. Draft and final submissions must validate
+        server-side and tolerate retries without duplicate profiles or consent.
+        Org invitation acceptance must not substitute for expert verification or
+        grant operator privileges. Lazy learner profiles may legitimately be null;
+        preserve the existing ensureConsulteeProfile flow. Keep verification
+        documents private and enforce ownership on upload and read.
+    - path: "{lib/{booking,appointments,scheduling,trials,offerings,plans,time}/**,utils/{schedule,scheduling-engine}/**,utils/appointmentlock.ts,utils/dateTimeUtils.ts,app/api/{appointments,bookings,scheduling,trials,plans}/**,components/{appointments,booking,planner,plans,schedule,scheduling,events,offerings}/**,hooks/scheduling/**,schemas/{appointments,slots,trials,subscriptions,plans}.ts,schemas/slotAllocation/**,scripts/{appointments,trials}/**,__tests__/{booking,booking-algorithm,appointments,scheduling,schedule,trials}/**}"
+      instructions: |
+        Preserve expected-state CAS transitions and existing lock order, isolation
+        and bounded retries. The host overlap exclusion does not protect tentative
+        holds, co-host/client overlaps or attendee capacity; retain app guards.
+        RESCHEDULED rows remain busy to app occupancy checks even though SQL
+        excludes them. Check timezone/DST, half-open intervals, capacity and
+        entitlement accounting across allocation, cancellation and rescheduling.
+        Preserve payment-linked history and use canonical refund entry points;
+        a booking or allocation change must not silently lose meetings or funds.
+    - path: "{lib/payments/**,app/api/{checkout,payments,overage}/**,app/api/admin/{payments,payouts,payout-accounts,refunds}/**,app/checkout/**,components/{billing,payouts}/**,schemas/{checkout,checkout-verify,payouts,wallet}.ts,scripts/{payments,payouts,refunds,reconcile,disputes,earnings}/**,__tests__/{money,payments}/**}"
+      instructions: |
+        Money is INR integer paise: BigInt in Postgres, number at the existing
+        Prisma boundary. Check safe conversions, rounding and captured/refunded
+        totals. Preserve CAS-in-WHERE state changes, idempotent gateway writes,
+        funded-rail splits, refund caps, immutable snapshots and ledger reversals.
+        Booking card captures use handlePaymentSuccess; retain documented
+        no-gateway and overage/recording side-payment writers rather than adding
+        parallel settlement paths. Keep gateway RPC outside transactions and
+        preserve existing Serializable retry boundaries. Check SQL constraints
+        before proposing application rechecks of commit-enforced invariants.
+        Test applicable replay, partial-refund, concurrency and failure windows.
+    - path: "{app/api/webhooks/**,app/api/stream/webhooks/**,lib/payments/webhooks/**,lib/webhooks/**,schemas/webhooks/**,__tests__/webhooks/**}"
+      instructions: |
+        At inbound endpoints verify the provider signature using its raw-body/SDK
+        contract before trusting the event. Preserve deduplication, durable
+        receipts, stale-event guards and retry-safe side effects through dispatch.
+        Acknowledge authenticated unsupported events per provider contract;
+        do not acknowledge a failed business operation as successful. Test replay,
+        invalid signatures and out-of-order events without logging raw secrets or
+        PII. Internal handlers must preserve the authenticated ingress boundary.
+    - path: "{lib/stream/**,lib/stream*.ts,actions/stream/**,providers/StreamProvider*.tsx,components/{chat,stream}/**,app/api/stream/**,schemas/stream-*.ts,hooks/useChatUnreadCount.ts,scripts/stream/**,__tests__/{chat,stream}/**}"
+      instructions: |
+        Stream Chat and Video share identity but have separate capabilities.
+        Tokens are server-issued for the current authorized user; verify channel
+        membership, booking/tenant entitlements and access revocation on every
+        relevant operation. Preserve dev/prod key separation, deterministic
+        channel IDs, idempotent membership sync and durable revocation retries.
+        Postgres owns domain state; Stream RPC stays outside transactions. Do not
+        grant channel access merely because a client knows an ID or was once a
+        member, and do not confuse a provider outage with an authorization denial.
+    - path: "{lib/meeting.ts,lib/meetings/**,lib/stream/{recording-*,video-*,incoming-video,session-handlers,call-*}.ts,app/meetings/**,app/api/{meetings,recordings,participants}/**,app/api/stream/{recordings,meetings}/**,components/{stream,recordings}/**,scripts/stream/reconcile-orphaned-recordings.ts,__tests__/{meetings,recordings}/**}"
+      instructions: |
+        For calls and recordings check join/host/attendee permissions, seat and
+        duration limits, consent, recording ownership and paid replay access.
+        Publishing, presigning and deletion must use the existing access policy
+        and preserve claim fencing when a timed-out worker may still run.
+        Unknown or delayed attendance is not proof of absence or grounds for an
+        automatic refund/payout. Preserve reconnect, room-end and revocation
+        semantics across provider webhooks, app state and background retries.
+    - path: "{lib/{email,novu,waitlist}/**,app/api/{notifications,novu,waitlist}/**,components/notifications/**,hooks/useNovuSubscriberSync.ts,emails/**,__tests__/{email,notifications,waitlist}/**}"
+      instructions: |
+        Every email goes through deliver(), or heldRecipientDomain() for the
+        waitlist broadcast, so EMAIL_DELIVERY_MODE sees every recipient. Preserve
+        FailedEmail/NotificationOutbox staging with the business transaction and
+        idempotent post-commit delivery. Check recipient/workspace identity,
+        preferences, quiet hours and timezone boundaries. Retryable failures must
+        retain durable work without undoing domain success; never retry redacted
+        auth codes as ordinary mail. Novu feed access must remain tenant-scoped.
+    - path: "{lib/enterprise/**,lib/api/scope/**,app/api/{organizations,org-workspace,programs,invitations}/**,app/dashboard/org-workspace/**,components/organization/**,schemas/organizations.ts,hooks/useOrgScope.ts,__tests__/enterprise/**}"
+      instructions: |
+        Enforce tenant and action-level permissions, distinguishing buyer/sponsor,
+        host, attendee and operator; role rank or membership alone is insufficient.
+        Preserve explicit org query scopes, funded entitlements, contract/PO and
+        invoice snapshots, wallet accounting and CAS lifecycle transitions.
+        Suspension/removal must revoke access while preserving financial duties.
+        Outbound webhooks require tenant-scoped secrets, SSRF-safe endpoints,
+        signed deliveries and bounded idempotent retries. Do not apply inbound
+        provider-signature requirements to webhook configuration CRUD routes.
+    - path: "{lib/{support,moderation,compliance}/**,app/api/{support,compliance}/**,components/support/**,__tests__/{support,moderation,compliance}/**}"
+      instructions: |
+        Check case/resource visibility and actor capabilities at every read and
+        action; support access is narrower than general booking or org access.
+        Preserve evidence privacy, retention/legal holds, audit records and
+        existing refusal/escalation policy. Moderation, erasure and auto-close
+        must preserve refund/payout obligations and durable vendor revocation;
+        do not delete financial anchors or infer consent from membership.
+    - path: "{lib/cron/**,lib/maintenance*.ts,app/api/cleanup/**,app/api/admin/system-jobs/**,jobs/**,scripts/**,netlify/functions/**,__tests__/maintenance/**}"
+      instructions: |
+        Background jobs keep one core registered in lib/cron/cleanup-registry.ts;
+        CLI/HTTP adapters reuse it instead of parallel script/job/route wrappers.
+        Do not turn one-off or read-only operator tools into scheduled jobs.
+        Cron leases use Postgres, not Redis.
+        Preserve active-platform selection and its documented fail-open behavior,
+        plus domain idempotency/fencing; a fleet switch is not exactly-once proof.
+        Check bounded work, fair continuation, checkpoints, lease ownership and
+        recovery after partial failure. A 202 is admission, not completion, and
+        a timeout/lease loss does not cancel vendor work already in flight.
+    - path: "{.github/workflows/**,netlify.toml,Dockerfile,vercel.json,next.config.mjs,middleware.ts,lib/request-ip.ts,__tests__/config/**}"
+      instructions: |
+        Preserve active-host and Netlify standby portability, runtime limits,
+        cron ownership and environment separation. Resolve client IP at middleware
+        and trust only its overwritten stamp downstream; every IP reader must be
+        covered by the middleware matcher. Cookie-aware responses need standard
+        Vary alongside platform-specific headers. Check least-privilege CI tokens,
+        untrusted PR execution, secrets, dependency patch floors and actual target
+        branch coverage; a passing/skipped bot check is not completed review.
+    - path: "{lib/{storage,documents}/**,lib/supabase*.ts,app/api/documents/**,components/documents/**,__tests__/documents/**}"
+      instructions: |
+        Authorize file ownership, tenant and content policy at presign and commit.
+        Binary transfers above 4 MB use direct signed Storage URLs, not proxied
+        Route Handler bodies. Preserve idempotent commit retries and private
+        download access; a policy rejection or DB failure must not delete an
+        upload another retry can commit. Cleanup must respect retention and
+        references without claiming DB checks can fence an external deletion.
+    - path: "{prisma/**,lib/prisma*.ts,lib/db/**,__tests__/db/**}"
+      instructions: |
+        Schema and prisma/sql sidecars jointly define the database. Check CHECK,
+        partial unique, exclusion and deferred constraint-trigger behavior before
+        recommending runtime assertions. Preserve immutable ledger/funding rules,
+        foreign-key history, index coverage and single-connection transaction
+        safety. Do not propose db push, autonomous DDL or production data writes
+        as validation. Review migration compatibility and regenerate the Prisma
+        client when schema changes; do not assume Prisma captures sidecar indexes.
+    - path: "{instrumentation*.ts,sentry.*.config.ts,lib/observability/**,lib/logging/**,lib/betterstack.ts,__tests__/observability/**}"
+      instructions: |
+        Preserve expected-refusal classification, alert severity and stable
+        grouping keys. Aggregate sweep failures through the existing run reporter,
+        not per-row Sentry captures, and preserve throttling for repeated outages.
+        Scrub PII, auth tokens, payment details and secrets from events and logs.
+        Keep client/server/edge initialization scoped to its runtime and preserve
+        bounded serverless flushing. Do not suppress unexpected failures or label
+        an admitted job complete merely to reduce telemetry volume.
+    - path: "{app/**/*.tsx,components/**/*.tsx,hooks/**/*.{ts,tsx},providers/**/*.tsx}"
+      instructions: |
+        Check complete effect dependencies, cleanup and stale async results;
+        never suppress hooks rules or write ref.current during render. React is
+        18.3, so do not recommend unavailable hooks. Check loading/error/empty
+        states, keyboard and accessible labels, hydration, and tenant/account
+        switches clearing stale data. UI restrictions never replace server
+        authorization; preserve amount/timezone formatting at display boundaries.
+    - path: "**/*.{test,spec}.{ts,tsx}"
+      instructions: |
+        Tests should prove changed behavior or a demonstrated regression, not
+        mirror implementation or require new tests for trivial reversible edits.
+        Choose relevant authorization, tenant, replay, race, time and failure
+        boundaries for the subsystem instead of imposing money cases everywhere.
+        Use repository harnesses, mocked vendors and isolated fixtures; never
+        write shared/dev/prod data. Preserve existing DB-constraint tests without
+        adding redundant production sweeps.
+    - path: "{AGENTS.md,.claude/**,docs/**,.coderabbit.yaml}"
+      instructions: |
+        Verify commands, paths, scopes and architecture claims against current
+        code. Distinguish implemented behavior from planned work and keep shared
+        invariants consistent with root AGENTS.md. Review instructions must not
+        treat green checks or zero comments as proof of completed review, promise
+        quota avoidance from profile choice, or defer known blocking defects
+        solely because a fixed review-round budget was reached.
+  # Static analyzers supplement the repository's deterministic CI checks.
   tools:
     eslint: { enabled: true }
     reactDoctor: { enabled: true }
@@ -71,7 +224,7 @@ reviews:
     trufflehog: { enabled: true }
     presidio: { enabled: true } # PII detector — cards/PANs must not leak
     actionlint: { enabled: true }
-    zizmor: { enabled: true } # GitHub Actions security (the cron fleet lives there)
+    zizmor: { enabled: true } # GitHub Actions security
     yamllint: { enabled: true }
     squawk: { enabled: true } # unsafe-Postgres-migration detection for prisma/sql sidecars
     sqlfluff: { enabled: true }
@@ -84,5 +237,7 @@ chat:
   auto_reply: true
 knowledge_base:
   opt_out: false
+  code_guidelines:
+    enabled: true # auto-discovers root AGENTS.md; skills are not blanket-loaded
   learnings:
     scope: local

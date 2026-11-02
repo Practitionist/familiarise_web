@@ -211,3 +211,22 @@ it("keeps a stopped ticker job with no run in 7 days on the table as missed", ()
       ?.missed,
   ).toEqual({ state: "missed", basis: "interval" });
 });
+
+it("counts a recent idle skip as a healthy no-work tick", () => {
+  const job = buildJobRunMetrics({
+    now,
+    environment: "production",
+    counts: [],
+    percentiles: [],
+    daily: [],
+    lastSuccess: [
+      { jobName: "cleanup-abandoned-payments", endedAt: ago(9 * 24 * 60) },
+    ],
+    idle: [
+      { jobName: "cleanup-abandoned-payments", endedAt: ago(10), skips: 96 },
+    ],
+  }).jobs.find((j) => j.jobName === "cleanup-abandoned-payments");
+  expect(job?.missed).toEqual({ state: "ok", basis: "interval" });
+  expect(job?.idleSkips).toBe(96);
+  expect(job?.lastSuccessAt).toBe(ago(10).toISOString());
+});

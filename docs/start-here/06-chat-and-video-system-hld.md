@@ -328,7 +328,7 @@ There is no stated service-level number for how quickly any of these recover. Th
 `lib/cron/schedule.ts` owns the five-minute ticker's roster, UTC phases, daily
 windows and admission timeouts. Stream's jobs have one automatic owner: the active
 Netlify ticker. Their former GitHub Actions steps and manual dispatch allowlists
-are removed. Other non-money Actions jobs remain budget-blocked. Configuration
+are removed. No Actions workflow schedules a registry job. Configuration
 must still be verified on the published deployment.
 
 | Job                                                               | Configured cadence (UTC) | Execution                                  |

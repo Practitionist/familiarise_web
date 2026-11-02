@@ -20,6 +20,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { AdminRunRequests } from "@/components/dashboard/AdminRunRequests";
 import {
   JOB_CATEGORIES,
   type JobCategory,
@@ -207,6 +208,7 @@ export function SystemJobsPanel({
   const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set());
   const [executions, setExecutions] = useState<JobExecution[]>([]);
   const [loadingExecutions, setLoadingExecutions] = useState(true);
+  const [requestsKey, setRequestsKey] = useState(0);
   const { toast } = useToast();
 
   // Only the latest request may set state, so a slower answer for a previous environment is dropped.
@@ -237,15 +239,21 @@ export function SystemJobsPanel({
   // #1527 Q10 — every "Run now" asks for a reason (the route writes it to the
   // audit log); a money job also needs a typed confirmation.
   const [confirmJob, setConfirmJob] = useState<SystemJobCard | null>(null);
+  // One key per Run click; a retry from the same dialog reuses it, so the server returns the same request.
+  const [runKey, setRunKey] = useState("");
 
-  const handleRunJob = async (job: SystemJobCard, reason: string) => {
+  const handleRunJob = async (
+    job: SystemJobCard,
+    reason: string,
+    idempotencyKey: string,
+  ) => {
     setRunningJobs((prev) => new Set(prev).add(job.id));
 
     try {
       const response = await fetch("/api/admin/system-jobs/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: job.id, reason }),
+        body: JSON.stringify({ jobId: job.id, reason, idempotencyKey }),
       });
 
       const result = await response.json();
@@ -267,6 +275,7 @@ export function SystemJobsPanel({
 
       // #1846 N6 — the payout jobs answer 202 and finish after the response.
       if (result.dispatched) {
+        if (result.requestId) setRequestsKey((key) => key + 1);
         toast({
           title: `${job.title} ${result.accepted ? "queued" : "started"}`,
           description: result.message,
@@ -322,6 +331,8 @@ export function SystemJobsPanel({
 
   return (
     <div className={cn("space-y-8", className)}>
+      <AdminRunRequests refreshKey={requestsKey} />
+
       {/* Recent Executions */}
       <Card>
         <CardHeader>
@@ -424,7 +435,10 @@ export function SystemJobsPanel({
                 key={job.id}
                 job={job}
                 isRunning={runningJobs.has(job.id)}
-                onRun={() => setConfirmJob(job)}
+                onRun={() => {
+                  setRunKey(crypto.randomUUID());
+                  setConfirmJob(job);
+                }}
               />
             ))}
           </div>
@@ -443,7 +457,7 @@ export function SystemJobsPanel({
           requireReason={{ label: "Why run it by hand?" }}
           requireTyped={confirmJob.confirmPhrase ?? undefined}
           onConfirm={async ({ reason }) => {
-            await handleRunJob(confirmJob, reason ?? "");
+            await handleRunJob(confirmJob, reason ?? "", runKey);
             setConfirmJob(null);
           }}
         />

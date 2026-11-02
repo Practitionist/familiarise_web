@@ -27,9 +27,18 @@ Verified 2026-09-18: Netlify lists `next/after` as **full support** — it is ba
 - A new instance's first ~25 s can stall the event loop. There are two ceilings, not one: the Lambda execution limit is 60 s (invocations of 32–39 s complete here), but the edge returns a 504 at ~26 s to any response that has not started streaming, so a lock retry budget or a silent admin route must still fit under ~25 s (#1454; `deployment/netlify/platform-limits.md`).
 - The stall lands on the handler's FIRST await, and no timer can fire inside it — so every deadline armed before it (pg's 3 s connect budget, a `Promise.race` timeout) wakes on the first tick after, together, before the awaited work has run. A probe that arms its budget and then hits the stall reports a false timeout (#1557: `/api/health` said `database: unreachable` on every cold instance). Yield once before arming any budget, and treat a deadline that woke at more than twice its budget as stale, not as a verdict — `lib/health/probe.ts` is the reference implementation.
 
-## 5. CodeRabbit mechanics (1 review/hour org-wide)
+## 5. CodeRabbit review completion and allowances
 
-Every push or `@coderabbitai review` competes for the slot; retry a throttled trigger every ~15 min. A review with 0 actionable comments posts NO review object — it rewrites its walkthrough comment in place ("Currently processing…" → "Actionable comments posted: N") and edits the trigger ack from "Review triggered" to "Review finished". The ack text contains "already reviewed commits", so never grep new comments for finished-phrases; detect landing via new inline comments, a bot review object, or the walkthrough/ack updated after the trigger without "Currently processing". Bot login is `coderabbitai[bot]`.
+Automatic reviews run once for eligible dev-target PRs when ready; other bases
+and subsequent rounds use manual review commands. PR allowances are per
+developer over rolling windows; CLI/IDE allowances are separate. Check actual
+availability with `@coderabbitai rate limit` instead of polling review commands.
+A rate-limited PR can have a passing check, while a completed clean review can
+have zero comments. Verify completion for the intended revision and file scope
+from the bot's review/walkthrough and command result, including edits to existing
+comments; do not infer it from check color, thread count or a stale acknowledgement.
+See [PR comment triage](../../workflow/references/pr-comment-triage.md#pr-review-policy-and-quota-checks)
+for the current policy and official references.
 
 ## 6. Strict branch protection turns a PR train into a chain
 

@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual, createHash } from "node:crypto";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { freezeAppointments } from "@/actions/maintenance/freeze-appointments";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { assertNotInMaintenance } from "@/lib/maintenance-cron";
@@ -165,6 +166,22 @@ export function confirmRemediation(
   return { ...preview, id };
 }
 
+/** Shared by the slice's claim read and the ticker's idle probe. */
+const PENDING_REMEDIATION_ITEM_WHERE = { completedAt: null };
+
+export async function hasMaintenanceRemediationWork(
+  db: PrismaLike,
+  _now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const item = await db.maintenanceRemediationItem.findFirst({
+    where: PENDING_REMEDIATION_ITEM_WHERE,
+    select: { id: true },
+  });
+  return item !== null;
+}
+
 /** One booking per slice; refund and notification obligations commit with cancellation. */
 export async function runMaintenanceRemediationSlice() {
   return withCronLock(
@@ -173,7 +190,7 @@ export async function runMaintenanceRemediationSlice() {
     async () => {
       await assertNotInMaintenance("maintenance-booking-remediation");
       const item = await prisma.maintenanceRemediationItem.findFirst({
-        where: { completedAt: null },
+        where: PENDING_REMEDIATION_ITEM_WHERE,
         orderBy: [{ attempts: "asc" }, { id: "asc" }],
         include: { remediation: true },
       });

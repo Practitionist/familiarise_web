@@ -35,7 +35,7 @@ Leaving `WALLET` funding is refused while the wallet holds a balance, owes a sho
 
 ## Invoice accrual, rollup, and dunning
 
-An INVOICE-rail booking (or a `LICENSE × CHARGE_ORG` overage) accrues an `INVOICE_ACCRUAL` / `OVERAGE_INVOICE_ACCRUAL` leg with no immediate cash movement. `rollupOrgInvoiceAccruals`, run monthly, sums every unbilled accrual leg for an organisation into one `OrganizationInvoice`, stamping `billableToOrgInvoiceId` on each `Payment` it consumed so a second rollup run does not re-bill the same charge. An invoice past its due date is marked `OVERDUE` by the dunning cron, which sends reminders on a fixed cadence; booking-suspension on terminal non-payment is gated behind `ENABLE_DUNNING_SUSPEND` (default off).
+An INVOICE-rail booking (or a `LICENSE × CHARGE_ORG` overage) accrues an `INVOICE_ACCRUAL` / `OVERAGE_INVOICE_ACCRUAL` leg with no immediate cash movement. `rollupOrgInvoiceAccruals`, run monthly, sums every unbilled accrual leg for an organisation into one `OrganizationInvoice`, stamping `billableToOrgInvoiceId` on each `Payment` it consumed so a second rollup run does not re-bill the same charge. An invoice past its due date is marked `OVERDUE` by the dunning cron, which sends reminders on a fixed cadence; booking-suspension on terminal non-payment is gated behind `ENABLE_DUNNING_SUSPEND` (default off). Each stage (the first overdue notice, reminders 1 to 3, the suspension notice) stages its bell and email as outbox rows inside the same transaction as its claim, so the state marker never commits without its notice; a roster, read or render failure rolls the claim back, counts in `failed` and is retried on the next run (see `docs/decisions/2026-11-01-dunning-atomic-notices.md`).
 
 ## Purchase-order draw-down
 

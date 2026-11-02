@@ -67,4 +67,7 @@ calls outside transactions. An SDK timeout does not cancel a provider effect.
 Before dunning suspension, inspect the retained order and hold live, uncertain or
 parked evidence, then recheck debt/order identity inside the claim transaction.
 The suspension budget starts at stage entry, independently of earlier reminders.
+Every dunning stage stages its bell and email inside the winning claim
+transaction (`stageOverdueNotices`, dedupe key `orgInvoice:<id>:overdue:<stage>`);
+a roster, read or render failure rolls the claim back and counts in `failed`.
 Read `docs/maintenance/12-worker-recovery.md` for cadence, rotation and limits.
