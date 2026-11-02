@@ -1,6 +1,7 @@
 /**
  * @jest-environment node
  */
+import { crc32 } from "node:zlib";
 import { inspectZip } from "@/lib/digital-products/zip-inspect";
 import { checkFileSignature } from "@/lib/digital-products/file-signature";
 
@@ -11,6 +12,8 @@ interface Entry {
   flags?: number;
   madeBy?: number;
   externalAttrs?: number;
+  /** Central-directory extra field bytes. */
+  extra?: Buffer;
 }
 
 /** A structurally valid archive; entry data is zero filler of the compressed size. */
@@ -32,6 +35,7 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
     const data = Buffer.alloc(compressed);
     locals.push(local, name, data);
 
+    const extra = e.extra ?? Buffer.alloc(0);
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(e.madeBy ?? 20, 4);
@@ -40,9 +44,10 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
     central.writeUInt32LE(compressed, 20);
     central.writeUInt32LE(uncompressed, 24);
     central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(extra.length, 30);
     central.writeUInt32LE(e.externalAttrs ?? 0, 38);
     central.writeUInt32LE(offset, 42);
-    centrals.push(central, name);
+    centrals.push(central, name, extra);
     offset += 30 + name.length + compressed;
   }
   const cd = Buffer.concat(centrals);
@@ -177,4 +182,43 @@ it("matches magic bytes to the declared type and refuses executables", () => {
       "application/pdf",
     ),
   ).toEqual({ ok: false, problem: "POLYGLOT" });
+});
+
+/** An Info-ZIP Unicode Path extra field (0x7075) over `legacy`. */
+function unicodePath(
+  legacy: string,
+  unicode: string,
+  { version = 1, crc = crc32(Buffer.from(legacy, "utf8")) } = {},
+): Buffer {
+  const name = Buffer.from(unicode, "utf8");
+  const field = Buffer.alloc(9);
+  field.writeUInt16LE(0x7075, 0);
+  field.writeUInt16LE(5 + name.length, 2);
+  field.writeUInt8(version, 4);
+  field.writeUInt32LE(crc, 5);
+  return Buffer.concat([field, name]);
+}
+
+it("applies every name rule to the Unicode Path name as well", async () => {
+  const entry = (unicode: string, opts?: { version?: number; crc?: number }) =>
+    buildZip([
+      {
+        name: "guide.txt",
+        flags: 0,
+        extra: unicodePath("guide.txt", unicode, opts),
+      },
+    ]);
+  await expect(inspect(entry("guide-é.txt"))).resolves.toMatchObject({
+    ok: true,
+    entries: 1,
+  });
+  const cases: Array<[Buffer, string]> = [
+    [entry("payload.exe"), "EXECUTABLE_ENTRY"],
+    [entry("../payload.txt"), "UNSAFE_PATH"],
+    [entry("guide-é.txt", { crc: 0 }), "ZIP_UNICODE_PATH_INVALID"],
+    [entry("guide-é.txt", { version: 2 }), "ZIP_UNICODE_PATH_INVALID"],
+  ];
+  for (const [zip, problem] of cases) {
+    await expect(inspect(zip)).resolves.toMatchObject({ ok: false, problem });
+  }
 });

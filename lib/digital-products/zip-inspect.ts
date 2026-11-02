@@ -1,3 +1,4 @@
+import { crc32 } from "node:zlib";
 import { ZIP_LIMITS } from "@/lib/digital-products/constants";
 
 /** Reads bytes [start, endInclusive] of the archive. */
@@ -17,6 +18,7 @@ export type ZipProblem =
   | "COMPRESSION_RATIO"
   | "ENCRYPTED_ENTRY"
   | "UNSAFE_PATH"
+  | "ZIP_UNICODE_PATH_INVALID"
   | "SYMLINK_ENTRY"
   | "NESTED_ARCHIVE"
   | "EXECUTABLE_ENTRY";
@@ -34,6 +36,8 @@ const EOCD_SIG = 0x06054b50;
 const ZIP64_LOCATOR_SIG = 0x07064b50;
 const ZIP64_EOCD_SIG = 0x06064b50;
 const CENTRAL_HEADER_SIG = 0x02014b50;
+const ZIP64_EXTRA_ID = 0x0001;
+const UNICODE_PATH_EXTRA_ID = 0x7075;
 const U16_MAX = 0xffff;
 const U32_MAX = 0xffffffff;
 
@@ -191,6 +195,32 @@ function extensionOf(name: string): string {
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
 }
 
+interface ExtraField {
+  id: number;
+  data: DataView;
+}
+
+/** Every extra field of an entry; a field that runs past the extra block is corrupt. */
+function extraFields(extra: DataView): ExtraField[] {
+  const fields: ExtraField[] = [];
+  let at = 0;
+  while (at < extra.byteLength) {
+    if (at + 4 > extra.byteLength) {
+      throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT", "truncated extra field");
+    }
+    const len = extra.getUint16(at + 2, true);
+    if (at + 4 + len > extra.byteLength) {
+      throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT", "truncated extra field");
+    }
+    fields.push({
+      id: extra.getUint16(at, true),
+      data: new DataView(extra.buffer, extra.byteOffset + at + 4, len),
+    });
+    at += 4 + len;
+  }
+  return fields;
+}
+
 interface Zip64Sizes {
   uncompressed: number;
   compressed: number;
@@ -199,38 +229,56 @@ interface Zip64Sizes {
 
 /** Resolve 0xFFFFFFFF sentinels from the entry's Zip64 extra field (0x0001). */
 function zip64Sizes(
-  extra: DataView,
+  fields: readonly ExtraField[],
   sentinel: { uncompressed: boolean; compressed: boolean; offset: boolean },
   fallback: Zip64Sizes,
 ): Zip64Sizes {
   if (!sentinel.uncompressed && !sentinel.compressed && !sentinel.offset) {
     return fallback;
   }
-  let at = 0;
-  while (at + 4 <= extra.byteLength) {
-    const id = extra.getUint16(at, true);
-    const len = extra.getUint16(at + 2, true);
-    if (at + 4 + len > extra.byteLength) break;
-    if (id === 0x0001) {
-      let cursor = at + 4;
-      const next = () => {
-        if (cursor + 8 > at + 4 + len) {
-          throw new ZipFault("ZIP64_INCONSISTENT", "short Zip64 extra");
-        }
-        const value = u64(extra, cursor);
-        cursor += 8;
-        return value;
-      };
-      const uncompressed = sentinel.uncompressed
-        ? next()
-        : fallback.uncompressed;
-      const compressed = sentinel.compressed ? next() : fallback.compressed;
-      const localOffset = sentinel.offset ? next() : fallback.localOffset;
-      return { uncompressed, compressed, localOffset };
+  const field = fields.find((f) => f.id === ZIP64_EXTRA_ID);
+  if (!field) throw new ZipFault("ZIP64_INCONSISTENT", "missing Zip64 extra");
+  let cursor = 0;
+  const next = () => {
+    if (cursor + 8 > field.data.byteLength) {
+      throw new ZipFault("ZIP64_INCONSISTENT", "short Zip64 extra");
     }
-    at += 4 + len;
+    const value = u64(field.data, cursor);
+    cursor += 8;
+    return value;
+  };
+  const uncompressed = sentinel.uncompressed ? next() : fallback.uncompressed;
+  const compressed = sentinel.compressed ? next() : fallback.compressed;
+  const localOffset = sentinel.offset ? next() : fallback.localOffset;
+  return { uncompressed, compressed, localOffset };
+}
+
+/**
+ * The Info-ZIP Unicode Path name (0x7075), which libarchive and Info-ZIP extract
+ * under instead of the legacy name; only version 1 over the legacy name's CRC32 is accepted.
+ */
+function unicodePath(
+  fields: readonly ExtraField[],
+  rawName: Uint8Array,
+): string | null {
+  const found = fields.filter((f) => f.id === UNICODE_PATH_EXTRA_ID);
+  if (found.length === 0) return null;
+  const invalid = (detail: string) =>
+    new ZipFault("ZIP_UNICODE_PATH_INVALID", detail);
+  if (found.length > 1) throw invalid("duplicate Unicode Path field");
+  const { data } = found[0];
+  if (data.byteLength < 6) throw invalid("short Unicode Path field");
+  if (data.getUint8(0) !== 1) throw invalid("unknown Unicode Path version");
+  if (data.getUint32(1, true) !== crc32(rawName)) {
+    throw invalid("Unicode Path CRC does not match the legacy name");
   }
-  throw new ZipFault("ZIP64_INCONSISTENT", "missing Zip64 extra");
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(
+      new Uint8Array(data.buffer, data.byteOffset + 5, data.byteLength - 5),
+    );
+  } catch {
+    throw invalid("Unicode Path is not UTF-8");
+  }
 }
 
 /** Parse and police every central-directory record; pure over the directory bytes. */
@@ -267,22 +315,30 @@ export function inspectCentralDirectory(
         throw new ZipFault("MULTI_DISK");
       }
 
-      const name = decodeName(
-        cd.subarray(at + 46, at + 46 + nameLen),
-        (flags & 0x0800) !== 0,
+      const rawName = cd.subarray(at + 46, at + 46 + nameLen);
+      const name = decodeName(rawName, (flags & 0x0800) !== 0);
+      const fields = extraFields(
+        new DataView(cd.buffer, cd.byteOffset + at + 46 + nameLen, extraLen),
       );
+      // Extractors differ on which name they honour, so every name rule applies to both.
+      const unicodeName = unicodePath(fields, rawName);
+      const names = unicodeName === null ? [name] : [name, unicodeName];
       // Bit 0 is traditional encryption, bit 6 strong encryption, method 99 AES.
       if ((flags & 0x0041) !== 0 || method === 99) {
         throw new ZipFault("ENCRYPTED_ENTRY", name);
       }
-      if (isUnsafePath(name)) throw new ZipFault("UNSAFE_PATH", name);
+      for (const candidate of names) {
+        if (isUnsafePath(candidate)) {
+          throw new ZipFault("UNSAFE_PATH", candidate);
+        }
+      }
       const unixMode = madeBy >> 8 === 3 ? externalAttrs >>> 16 : 0;
       if ((unixMode & 0o170000) === 0o120000) {
         throw new ZipFault("SYMLINK_ENTRY", name);
       }
 
       const sizes = zip64Sizes(
-        new DataView(cd.buffer, cd.byteOffset + at + 46 + nameLen, extraLen),
+        fields,
         {
           uncompressed: uncompressed32 === U32_MAX,
           compressed: compressed32 === U32_MAX,
@@ -298,14 +354,14 @@ export function inspectCentralDirectory(
         throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT", name);
       }
 
-      const isDirectory = name.endsWith("/");
-      if (!isDirectory && options.checkEntryTypes) {
-        const ext = extensionOf(name);
+      for (const candidate of names) {
+        if (candidate.endsWith("/") || !options.checkEntryTypes) continue;
+        const ext = extensionOf(candidate);
         if (NESTED_ARCHIVE_EXTENSIONS.has(ext)) {
-          throw new ZipFault("NESTED_ARCHIVE", name);
+          throw new ZipFault("NESTED_ARCHIVE", candidate);
         }
         if (EXECUTABLE_EXTENSIONS.has(ext)) {
-          throw new ZipFault("EXECUTABLE_ENTRY", name);
+          throw new ZipFault("EXECUTABLE_ENTRY", candidate);
         }
       }
       if (
@@ -333,7 +389,7 @@ export function inspectCentralDirectory(
 
 /**
  * Inspect an archive through range reads only: the EOCD (and Zip64 records)
- * from the tail, then the central directory. Entry data is never read.
+ * from the tail, then the central directory. Entry data and local headers are never read.
  */
 export async function inspectZip(
   read: RangeReader,
