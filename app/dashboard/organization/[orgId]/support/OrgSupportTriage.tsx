@@ -103,7 +103,7 @@ function OrgThreadRow({
           </span>
         </p>
         <p className="text-xs text-muted-foreground">
-          {t.category ? humanizeEnum(t.category) : "Support request"} · last
+          {t.category ? humanizeEnum(t.category) : "Support case"} · last
           activity{" "}
           {new Date(t.lastMessageAt).toLocaleDateString(undefined, {
             day: "numeric",

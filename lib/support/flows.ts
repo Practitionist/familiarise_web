@@ -543,7 +543,7 @@ const orgAdminDisputeFlow: FlowDefinition = {
       id: "billing",
       kind: "TERMINAL",
       // The thread lands in ORG_BILLING or ORG_OPERATIONS by the filer's grants; both list under org support requests.
-      body: "Our billing team will review the charge or invoice and reply here and in your organization's support requests. Tell us which charge or invoice it is and what looks wrong.",
+      body: "Our billing team will review the charge or invoice and reply here and in your organization's support cases. Tell us which charge or invoice it is and what looks wrong.",
       escalate: true,
       reason: "org_billing_dispute",
     },
