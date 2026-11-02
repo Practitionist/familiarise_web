@@ -104,6 +104,18 @@ export interface OwedReceiptsResult {
   firstError?: unknown;
 }
 
+/** SUCCEEDED purchases whose receipt is still owed, inside the recovery window. */
+export function owedReceiptWhere(now: Date) {
+  return {
+    status: "SUCCEEDED" as const,
+    receiptStagedAt: null,
+    createdAt: {
+      lt: new Date(now.getTime() - OWED_RECEIPT_GRACE_MS),
+      gt: new Date(now.getTime() - OWED_RECEIPT_WINDOW_MS),
+    },
+  };
+}
+
 /**
  * Prepare and stage receipts still owed on SUCCEEDED purchases, least recently
  * checked first; the purchase claim keeps a re-run from staging twice.
@@ -113,14 +125,7 @@ export async function stageOwedDigitalProductReceipts(
   now: Date,
 ): Promise<OwedReceiptsResult> {
   const rows = await prisma.digitalProductPurchase.findMany({
-    where: {
-      status: "SUCCEEDED",
-      receiptStagedAt: null,
-      createdAt: {
-        lt: new Date(now.getTime() - OWED_RECEIPT_GRACE_MS),
-        gt: new Date(now.getTime() - OWED_RECEIPT_WINDOW_MS),
-      },
-    },
+    where: owedReceiptWhere(now),
     orderBy: [
       { reconciledAt: { sort: "asc", nulls: "first" } },
       { createdAt: "asc" },

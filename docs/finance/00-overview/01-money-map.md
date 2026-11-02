@@ -140,7 +140,7 @@ flowchart LR
   subgraph Sched["Schedulers"]
     N["Netlify scheduled function cron-tick.mts<br/>every 5 minutes, at most 9 due targets"]
     R["/api/cleanup/slug<br/>Bearer CRON_SECRET, withCronLock lease in Postgres"]
-    G["GitHub Actions: non-money batch jobs only"]
+    G["GitHub Actions: CI and the cron heartbeat only"]
   end
   subgraph Recon["Reconciliation: four purposes"]
     R1["database against gateway"]

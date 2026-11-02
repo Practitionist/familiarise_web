@@ -628,7 +628,9 @@ Razorpay checkout modal loads external JS. On 3G:
 - When multiple payment webhooks arrive simultaneously during a sale
 - When cron jobs need to trigger chains of operations (e.g., payout → notification → email → update)
 
-### Recommended Architecture: QStash (Upstash)
+### Superseded recommendation: QStash (Upstash)
+
+> **Status.** This recommendation was not adopted. The decided queue is a hand-written Prisma `Job` table drained by the existing ticker, recorded in the [ticker ADR](../decisions/2026-10-31-ticker-scale-path-and-queue.md). The text below is kept as the original research.
 
 QStash is a serverless message queue by Upstash — **fits our existing ecosystem** (we already use Upstash Redis).
 
@@ -648,14 +650,16 @@ Stripe → /api/webhooks/stripe → verify signature → respond 200 immediately
 
 **Pricing**: $1 per 100,000 messages. At 10K users with ~1,000 webhooks/month = effectively free.
 
+> **Evidence (2026-10-31).** Inngest and Trigger.dev were tested after this section was written. Neither shortens the database path: Inngest calls a route that still runs on the same host, and Trigger.dev runs code in a region 125 ms or more from the database. QStash on a real Netlify function also got a 504 on a 30 s handler and, with a deliberately non-idempotent probe, wrote three side effects from one message, which is the at-least-once delivery that every engine needs idempotent handlers for. See [Background-job runtime options](../maintenance/14-background-job-runtime-options.md). The decided queue is in the [ticker ADR](../decisions/2026-10-31-ticker-scale-path-and-queue.md).
+
 **Alternatives considered**:
 
-| Service         | Cost                | Effort    | Best For                              |
-| --------------- | ------------------- | --------- | ------------------------------------- |
-| **QStash**      | $1/100K msg         | 2-3 hours | Simple webhook queuing (our use case) |
-| **Inngest**     | Free 25K runs/month | 4-6 hours | Complex workflows with fan-out        |
-| **Trigger.dev** | Free 5K runs/month  | 4-6 hours | Long-running background jobs          |
-| **BullMQ**      | $0 (self-hosted)    | 8 hours   | Full control, needs Redis             |
+| Service         | Cost                | Effort    | Best For                             |
+| --------------- | ------------------- | --------- | ------------------------------------ |
+| **QStash**      | $1/100K msg         | 2-3 hours | Simple webhook queuing (not adopted) |
+| **Inngest**     | Free 25K runs/month | 4-6 hours | Complex workflows with fan-out       |
+| **Trigger.dev** | Free 5K runs/month  | 4-6 hours | Long-running background jobs         |
+| **BullMQ**      | $0 (self-hosted)    | 8 hours   | Full control, needs Redis            |
 
 ---
 

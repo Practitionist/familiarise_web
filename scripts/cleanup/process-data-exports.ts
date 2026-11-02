@@ -4,6 +4,7 @@
  */
 
 import prisma from "../../lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { recordSystemError } from "../../lib/enterprise/system-events";
 import { checkConsentBatch } from "../../lib/compliance/dpdp";
@@ -17,7 +18,7 @@ import { attemptTrigger } from "../../lib/novu/outbox";
 import { adminStorage, removeObjects } from "../../lib/supabase-storage-core";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { startDeadline } from "@/lib/cron/run-deadline";
-import type { OrgDataExportKind } from "@prisma/client";
+import type { OrgDataExportKind, Prisma } from "@prisma/client";
 import { z } from "zod";
 import {
   bundleKinds,
@@ -229,6 +230,47 @@ async function uploadBundle(
   return sizeBytes;
 }
 
+/** Pending jobs and PROCESSING jobs whose attempt started before `staleBefore`. */
+function claimableExportWhere(
+  staleBefore: Date,
+): Prisma.OrgDataExportJobWhereInput {
+  return {
+    OR: [
+      { status: "PENDING" },
+      {
+        status: "PROCESSING",
+        OR: [{ startedAt: null }, { startedAt: { lte: staleBefore } }],
+      },
+    ],
+  };
+}
+
+function expiredArtifactWhere(
+  now: Date,
+): Prisma.OrgDataExportArtifactWhereInput {
+  return { expiresAt: { lte: now } };
+}
+
+/** Ticker idle probe: an expired artifact or a claimable export job. */
+export async function hasDataExportWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const artifact = await db.orgDataExportArtifact.findFirst({
+    where: expiredArtifactWhere(now),
+    select: { exportJobId: true },
+  });
+  if (artifact) return true;
+  if (outOfTime()) return true;
+  const job = await db.orgDataExportJob.findFirst({
+    where: claimableExportWhere(new Date(now.getTime() - LONG_JOB_TTL_MS)),
+    select: { id: true },
+  });
+  return job !== null;
+}
+
 // The shared lock is fail-closed because duplicate export builds consume data,
 // storage, and notification work even though the attempt CAS remains safe.
 export async function processDataExports(): Promise<DataExportResult> {
@@ -256,15 +298,7 @@ async function processDataExportsUnlocked(): Promise<DataExportResult> {
 
   const staleBefore = new Date(Date.now() - LONG_JOB_TTL_MS);
   const job = await prisma.orgDataExportJob.findFirst({
-    where: {
-      OR: [
-        { status: "PENDING" },
-        {
-          status: "PROCESSING",
-          OR: [{ startedAt: null }, { startedAt: { lte: staleBefore } }],
-        },
-      ],
-    },
+    where: claimableExportWhere(staleBefore),
     orderBy: { createdAt: "asc" },
   });
   if (!job) return result;
@@ -501,7 +535,7 @@ async function expireExportArtifacts(
 ): Promise<void> {
   const now = new Date();
   const due = await prisma.orgDataExportArtifact.findMany({
-    where: { expiresAt: { lte: now } },
+    where: expiredArtifactWhere(now),
     orderBy: [
       { lastDeleteAttemptedAt: { sort: "asc", nulls: "first" } },
       { expiresAt: "asc" },

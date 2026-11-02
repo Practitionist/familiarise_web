@@ -10,7 +10,8 @@
  * captured-but-uncredited top-up keeps those even after a rollback. This job finds
  * those rows and re-runs the (idempotent) confirm to land the credit.
  */
-import prisma from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { confirmTopUp } from "@/lib/api/organizations/wallet";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -30,6 +31,38 @@ export interface TopupCaptureSweepOptions {
   limit?: number;
 }
 
+const DEFAULT_GRACE_MINUTES = 5;
+const DEFAULT_MAX_AGE_HOURS = 720; // 30 days
+
+/** Shared by the sweep's query and the ticker's idle probe. */
+function orphanedTopupCaptureWhere(
+  captureBefore: Date,
+  tooOld: Date,
+): Prisma.WalletTopUpWhereInput {
+  return {
+    status: "PENDING",
+    providerPaymentId: { not: null },
+    capturedAt: { lt: captureBefore, gte: tooOld },
+  };
+}
+
+/** True when the sweep's default-window query would find at least one top-up. */
+export async function hasOrphanedTopupCaptureWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const row = await db.walletTopUp.findFirst({
+    where: orphanedTopupCaptureWhere(
+      new Date(now.getTime() - DEFAULT_GRACE_MINUTES * 60_000),
+      new Date(now.getTime() - DEFAULT_MAX_AGE_HOURS * 3_600_000),
+    ),
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function sweepOrphanedTopupCaptures(
@@ -45,8 +78,8 @@ export async function sweepOrphanedTopupCaptures(
 async function sweepOrphanedTopupCapturesUnlocked(
   opts: TopupCaptureSweepOptions = {},
 ): Promise<TopupCaptureSweepResult> {
-  const graceMinutes = opts.graceMinutes ?? 5;
-  const maxAgeHours = opts.maxAgeHours ?? 720; // 30 days
+  const graceMinutes = opts.graceMinutes ?? DEFAULT_GRACE_MINUTES;
+  const maxAgeHours = opts.maxAgeHours ?? DEFAULT_MAX_AGE_HOURS;
   const limit = opts.limit ?? 200;
   const now = Date.now();
   const captureBefore = new Date(now - graceMinutes * 60_000);
@@ -56,11 +89,7 @@ async function sweepOrphanedTopupCapturesUnlocked(
   // PENDING ⇒ the confirm/ledger post rolled back. `lt/gte` on capturedAt also
   // excludes null (null never satisfies a comparison in Postgres).
   const orphans = await prisma.walletTopUp.findMany({
-    where: {
-      status: "PENDING",
-      providerPaymentId: { not: null },
-      capturedAt: { lt: captureBefore, gte: tooOld },
-    },
+    where: orphanedTopupCaptureWhere(captureBefore, tooOld),
     select: {
       providerOrderId: true,
       providerPaymentId: true,

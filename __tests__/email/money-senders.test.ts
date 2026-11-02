@@ -34,8 +34,11 @@ jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import {
   sendOrgWalletLowEmail,
+  stageOrgInvoiceOverdueEmail,
   stageRefundProcessedEmail,
 } from "@/lib/email/senders/money";
+import { renderEmail } from "@/lib/email/render";
+import * as Sentry from "@sentry/nextjs";
 
 function user(
   id: string,
@@ -119,4 +122,45 @@ it("sendOrgWalletLowEmail delivers once when one of two roster members opted out
     "ORG_WALLET_LOW",
     { entityRef: "org:org_1", budgetMs: 10_000 },
   );
+});
+
+it("stageOrgInvoiceOverdueEmail stages through tx and throws, without a per-recipient Sentry event, when a render fails", async () => {
+  const tx = {
+    user: {
+      findMany: jest.fn().mockResolvedValue([user("own_1"), user("own_2")]),
+    },
+    failedEmail: {},
+  };
+  mockStage.mockReset().mockResolvedValue({ id: "fe_1", idempotencyKey: "k" });
+  const args = {
+    recipientUserIds: ["own_1", "own_2"],
+    invoiceId: "inv_1",
+    invoiceNumber: "INV-1",
+    orgName: "Acme",
+    totalPaise: 100_000,
+    currency: "INR",
+    dueDate: new Date("2026-09-01T00:00:00Z"),
+    daysLate: 3,
+    reminderStage: 0,
+    payUrl: "/dashboard/organization/org_1/billing",
+  };
+
+  await expect(
+    stageOrgInvoiceOverdueEmail(tx as never, args),
+  ).resolves.toHaveLength(2);
+  expect(mockStage).toHaveBeenCalledWith(
+    expect.objectContaining({ to: "own_1@example.com" }),
+    "ORG_INVOICE_OVERDUE",
+    { tx, entityRef: "orgInvoice:inv_1" },
+  );
+
+  mockStage.mockClear();
+  jest.mocked(Sentry.captureException).mockClear();
+  jest.spyOn(console, "error").mockImplementation(() => {});
+  jest.mocked(renderEmail).mockRejectedValueOnce(new Error("render boom"));
+  await expect(stageOrgInvoiceOverdueEmail(tx as never, args)).rejects.toThrow(
+    "ORG_INVOICE_OVERDUE render failed for 1 recipient(s)",
+  );
+  expect(mockStage).not.toHaveBeenCalled();
+  expect(Sentry.captureException).not.toHaveBeenCalled();
 });

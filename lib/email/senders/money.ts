@@ -59,6 +59,7 @@ import {
   money,
   prepareSpecEmails,
   stageSpecGuarded,
+  stageSpecRequired,
   type Paise,
   type PreparedRecipientEmails,
   type RecipientEmailSpec,
@@ -314,40 +315,46 @@ export interface OrgInvoiceOverdueEmailArgs {
   payUrl: string;
 }
 
-export const sendOrgInvoiceOverdueEmail =
-  defineFixedBudgetEmailSender<OrgInvoiceOverdueEmailArgs>(
-    EMAIL_BUDGET_MS.JOB,
-    (args) => {
-      const amountText = money(args.totalPaise, args.currency);
-      return {
-        userIds: args.recipientUserIds,
-        spec: {
-          emailType: MONEY_EMAIL_TYPES.ORG_INVOICE_OVERDUE,
-          category: "orgBilling",
-          from: SENDERS.finance,
-          entityRef: `orgInvoice:${args.invoiceId}`,
-          subject: () =>
-            orgInvoiceOverdueSubject({
-              invoiceNumber: args.invoiceNumber,
-              daysLate: args.daysLate,
-              reminderStage: args.reminderStage,
-            }),
-          render: (r) =>
-            OrgInvoiceOverdueEmail({
-              orgName: args.orgName,
-              invoiceNumber: args.invoiceNumber,
-              amountText,
-              dueDateText: dateText(args.dueDate, r.zone),
-              daysLate: args.daysLate,
-              reminderStage: args.reminderStage,
-              payUrl: absolute(args.payUrl),
-              unsubscribeUrl: r.unsubscribeUrl,
-            }),
-        },
-      };
-    },
-    NOTHING_SENT,
+function orgInvoiceOverdueSpec(
+  args: OrgInvoiceOverdueEmailArgs,
+): RecipientEmailSpec {
+  const amountText = money(args.totalPaise, args.currency);
+  return {
+    emailType: MONEY_EMAIL_TYPES.ORG_INVOICE_OVERDUE,
+    category: "orgBilling",
+    from: SENDERS.finance,
+    entityRef: `orgInvoice:${args.invoiceId}`,
+    subject: () =>
+      orgInvoiceOverdueSubject({
+        invoiceNumber: args.invoiceNumber,
+        daysLate: args.daysLate,
+        reminderStage: args.reminderStage,
+      }),
+    render: (r) =>
+      OrgInvoiceOverdueEmail({
+        orgName: args.orgName,
+        invoiceNumber: args.invoiceNumber,
+        amountText,
+        dueDateText: dateText(args.dueDate, r.zone),
+        daysLate: args.daysLate,
+        reminderStage: args.reminderStage,
+        payUrl: absolute(args.payUrl),
+        unsubscribeUrl: r.unsubscribeUrl,
+      }),
+  };
+}
+
+/** Stages the overdue email in the dunning claim's `tx`; a render failure throws. */
+export function stageOrgInvoiceOverdueEmail(
+  tx: StagingTx,
+  args: OrgInvoiceOverdueEmailArgs,
+): Promise<StagedRecipientEmail[]> {
+  return stageSpecRequired(
+    tx,
+    orgInvoiceOverdueSpec(args),
+    args.recipientUserIds,
   );
+}
 
 // ── Org wallet low ──────────────────────────────────────────────────────────
 

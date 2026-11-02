@@ -189,11 +189,6 @@ jest.mock("../../lib/enterprise/system-events", () => {
   };
 });
 
-jest.mock("../../lib/activity/log-activity", () => ({
-  logConsultationCancelled: jest.fn().mockResolvedValue(undefined),
-  logSubscriptionCancelled: jest.fn().mockResolvedValue(undefined),
-}));
-
 import { POST as cancelHandler } from "@/app/api/appointments/[appointmentId]/cancel/route";
 import { RefundGatewayError } from "@/lib/payments/operations/refund";
 import { grantPlatformCancel } from "@/lib/booking/platform-cancel";

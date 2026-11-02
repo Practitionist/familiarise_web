@@ -17,6 +17,7 @@ type RegistryJob = {
   line: number;
   cores: Core[];
   node: ts.Node;
+  idle: string;
 };
 type Lease = { name: string; mode: string; ttl: string; file: string };
 
@@ -115,6 +116,23 @@ function importedCores(
   return cores;
 }
 
+/** The entry's idle probe: the probe functions it imports, or why it always runs. */
+function idleLabel(entry: ts.Expression, root: string): string {
+  const idle = ts.isObjectLiteralExpression(entry)
+    ? property(entry, "idle")
+    : undefined;
+  if (!idle || !ts.isObjectLiteralExpression(idle)) return "Not declared";
+  const reason = property(idle, "alwaysRun");
+  if (reason) return `Always runs: ${text(reason) ?? reason.getText()}`;
+  const probe = property(idle, "hasWork");
+  const calls = probe
+    ? importedCores(probe, root).flatMap((core) => core.calls)
+    : [];
+  return calls.length
+    ? `Skipped when idle: ${calls.map((call) => code(call)).join(", ")}`
+    : "Skipped when idle";
+}
+
 /** Builder keys are executable AST properties; marker comments never become inventory rows. */
 export function registryJobs(source: string, root: string): RegistryJob[] {
   const file = tree(source, REGISTRY);
@@ -149,12 +167,17 @@ export function registryJobs(source: string, root: string): RegistryJob[] {
       throw new Error(
         `Missing literal builder key/job at ${member.getStart(file)}`,
       );
+    const entry = unwrap(member.initializer);
+    const build = ts.isObjectLiteralExpression(entry)
+      ? property(entry, "build")
+      : undefined;
     return {
       slug,
       job,
       line: file.getLineAndCharacterOfPosition(member.getStart(file)).line + 1,
-      cores: importedCores(member.initializer, root),
+      cores: importedCores(build ?? member.initializer, root),
       node: member.initializer,
+      idle: idleLabel(entry, root),
     };
   });
 }
@@ -396,6 +419,7 @@ export async function generateCronReference(root = ROOT): Promise<string> {
         ? "Blocked OFFLINE and DEGRADED"
         : "Blocked OFFLINE",
       requestBounds,
+      job.idle,
     ];
   });
   const outsideTicker = jobs.filter(
@@ -415,9 +439,9 @@ Run \`npm run cron:reference\` to regenerate; \`npm run cron:reference:check\` f
 
 ## Registered jobs
 
-The purpose column expands imported entry function names, not a second hand-maintained policy description. Core links are statically visible worker imports; inline implementations link to their registry entry. Lease lookup follows local imports by at most two levels and reports unresolved metadata explicitly. Lease fields show configured mode/TTL, not proof of successful acquisition. Default TTL is declared in ${link("lib/cron/with-cron-lock.ts")}; maintenance admission comes from ${link("lib/cron/financial-jobs.ts")}.
+The purpose column expands imported entry function names, not a second hand-maintained policy description. Core links are statically visible worker imports; inline implementations link to their registry entry. Lease lookup follows local imports by at most two levels and reports unresolved metadata explicitly. Lease fields show configured mode/TTL, not proof of successful acquisition. Default TTL is declared in ${link("lib/cron/with-cron-lock.ts")}; maintenance admission comes from ${link("lib/cron/financial-jobs.ts")}. The idle probe column names the claim-predicate probe the ticker runs before dispatch (${link("lib/cron/idle-probe.ts")}); a job with no work on a due tick is skipped and recorded on the tick's claim row, and an always-run job states why it has no probe.
 
-${table(["Cleanup slug", "Purpose / entry function", "Core source", "Configured schedule", "Postgres lease: name; mode; TTL", "Maintenance admission", "Configured request bounds"], rows)}
+${table(["Cleanup slug", "Purpose / entry function", "Core source", "Configured schedule", "Postgres lease: name; mode; TTL", "Maintenance admission", "Configured request bounds", "Idle probe"], rows)}
 
 ## Changing a job
 

@@ -2,7 +2,7 @@ version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
     schedule:
       interval: "weekly"
       day: "monday"
@@ -240,12 +240,25 @@ updates:
           - "minor"
           - "patch"
 
+      # Anything not matched above, so a weekly run opens grouped PRs, not one per package
+      other-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "monthly"
-      day: "friday"
+      interval: "weekly"
+      day: "monday"
     target-branch: "dev"
+    open-pull-requests-limit: 2
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     labels:
       - "dependencies"
       - "github-actions"
@@ -281,7 +294,7 @@ updates:
 #
 # 🗓️ SCHEDULING:
 # - All NPM dependencies: Weekly on Mondays 9 AM
-# - GitHub Actions: Monthly on Fridays
+# - GitHub Actions: Weekly on Mondays, one grouped PR
 # - Production deps get priority in review process
 #
 # 🏷️ LABELING SYSTEM:
@@ -290,7 +303,7 @@ updates:
 # - infrastructure: For CI/CD updates
 #
 # 📈 NOISE REDUCTION:
-# - Limited open PRs (10 for prod, 5 for dev)
+# - Limited open PRs (5 for npm, 2 for Actions)
 # - Grouped related dependencies together
 # - Ignored patch updates for dev tools
 # - Separate schedules for different dependency types

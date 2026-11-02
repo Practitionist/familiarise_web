@@ -1448,6 +1448,19 @@ ALTER TABLE "Meeting"
 -- SPLIT
 ALTER TABLE "Meeting" VALIDATE CONSTRAINT "meeting_ended_reason_known";
 -- SPLIT
+-- One open admin run request per job; a settled request frees the job for the next one.
+CREATE UNIQUE INDEX IF NOT EXISTS "admin_run_request_one_open_key"
+  ON "AdminRunRequest" ("job")
+  WHERE "status" IN ('REQUESTED', 'CLAIMED');
+-- SPLIT
+-- A claimed request carries its claim time and a settled one its finish time.
+ALTER TABLE "AdminRunRequest" DROP CONSTRAINT IF EXISTS "admin_run_request_state";
+-- SPLIT
+ALTER TABLE "AdminRunRequest" ADD CONSTRAINT "admin_run_request_state"
+  CHECK ("attempts" >= 0
+    AND ("status" <> 'CLAIMED' OR "claimedAt" IS NOT NULL)
+    AND ("status" NOT IN ('DONE', 'FAILED') OR "finishedAt" IS NOT NULL));
+-- SPLIT
 -- One live entitlement per buyer and product; failed and refunded attempts stay as history.
 CREATE UNIQUE INDEX IF NOT EXISTS "digital_product_purchase_succeeded_key"
   ON "DigitalProductPurchase" ("productId", "buyerId")

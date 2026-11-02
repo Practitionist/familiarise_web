@@ -158,6 +158,49 @@ describe("ticker execution outcomes", () => {
     expect(body.failed).toEqual([]);
   });
 
+  it("skips only the due targets the claim names idle, and dispatches all when the probe is unreadable", async () => {
+    const due = dueTargets(new Date());
+    const idleName = due.find((name) => name !== "transfer-recordings");
+    const dispatched: string[] = [];
+    const ticker = (claim: () => Response) =>
+      load(
+        jest.fn(async (input: string | URL | Request) => {
+          const url = new URL(String(input));
+          if (url.pathname === "/api/health/jobs/tick") return claim();
+          if (
+            url.pathname.startsWith("/api/cleanup/") ||
+            url.pathname.startsWith("/.netlify/functions/")
+          ) {
+            dispatched.push(url.pathname.split("/").pop() ?? "");
+          }
+          return new Response("{}", {
+            status: url.pathname.includes("-background") ? 202 : 200,
+          });
+        }),
+      );
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    const skipping = await (
+      await ticker(
+        () =>
+          new Response(
+            JSON.stringify({ claimed: true, idle: [idleName, "not-due"] }),
+          ),
+      ).default(new Request("https://tick.test"))
+    ).json();
+    expect(skipping.skippedIdle).toEqual([idleName]);
+    expect(dispatched).not.toContain(idleName);
+    expect(dispatched).toHaveLength(due.length - 1);
+
+    dispatched.length = 0;
+    const failOpen = await (
+      await ticker(() => {
+        throw new TypeError("fetch failed");
+      }).default(new Request("https://tick.test"))
+    ).json();
+    expect(failOpen.skippedIdle).toEqual([]);
+    expect(dispatched).toHaveLength(due.length);
+  });
+
   it("keeps the first failure when the retry meets the crashed call's lease", async () => {
     // A repeat tick of the hour, so the failure skips the Sentry alert path.
     jest.setSystemTime(new Date("2026-10-22T06:30:00Z"));
@@ -201,7 +244,7 @@ describe("ticker execution outcomes", () => {
     });
 
     it("logs the status of a rejected summary without the token", async () => {
-      const error = jest.spyOn(console, "error").mockImplementation(() => {});
+      const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
       const fetchImpl = jest.fn(async (input: string | URL | Request) =>
         String(input).includes("betterstack.test")
           ? new Response("bad token", { status: 401 })
@@ -212,10 +255,14 @@ describe("ticker execution outcomes", () => {
             }),
       );
       await load(fetchImpl).default(new Request("https://tick.test"));
-      expect(error).toHaveBeenCalledWith(
-        JSON.stringify({ event: "betterstack-summary-rejected", status: 401 }),
+      expect(warn).toHaveBeenCalledWith(
+        JSON.stringify({
+          event: "betterstack-ingest-rejected",
+          status: 401,
+          message: "cron-tick summary",
+        }),
       );
-      expect(JSON.stringify(error.mock.calls)).not.toContain("tok");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("tok");
     });
 
     it("emits an error summary when CRON_SECRET is missing", async () => {

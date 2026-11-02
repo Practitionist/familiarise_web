@@ -32,10 +32,6 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { CancelAppointmentSchema } from "@/schemas/appointments";
-import {
-  logConsultationCancelled,
-  logSubscriptionCancelled,
-} from "@/lib/activity/log-activity";
 
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { platformCancelGrant } from "@/lib/booking/platform-cancel";
@@ -1435,49 +1431,6 @@ export async function POST(
         },
         "cancel-route",
       );
-    }
-
-    // Log cancellation activity for consultant dashboard (awaited — DB write
-    // that should not be dropped in serverless; logActivity swallows errors)
-    const activityActor = {
-      id: session.user.id,
-      name: session.user.name || "User",
-      image: session.user.image,
-    };
-    // #1169 PR 4 — three-way, matching the notification payload above: a
-    // platform/org actor is "system", never mislabeled as the consultee.
-    const cancelledBy =
-      session.user.id === notificationMeta.consultantUserId ||
-      (isHostOrgOperator && session.user.id !== consulteeUserId)
-        ? ("consultant" as const)
-        : isParticipant
-          ? ("consultee" as const)
-          : ("system" as const);
-
-    if (appointment.consultation) {
-      const cpId =
-        appointment.consultation.consultationPlan?.consultantProfileId;
-      if (cpId) {
-        await logConsultationCancelled(
-          cpId,
-          appointment.consultation.id,
-          activityActor,
-          planTitle || "Consultation",
-          cancelledBy,
-        );
-      }
-    } else if (appointment.subscription) {
-      const cpId =
-        appointment.subscription.subscriptionPlan?.consultantProfileId;
-      if (cpId) {
-        await logSubscriptionCancelled(
-          cpId,
-          appointment.subscription.id,
-          activityActor,
-          planTitle || "Subscription",
-          cancelledBy,
-        );
-      }
     }
 
     return NextResponse.json({ ...result, refund, eventRefund });

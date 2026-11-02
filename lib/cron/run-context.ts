@@ -4,6 +4,14 @@ import {
   setRunCounterSink,
   type RunCounters,
 } from "@/lib/cron/run-counters";
+import {
+  addRunFailure,
+  emptyRunTelemetry,
+  setRunFailureSink,
+  trackTelemetrySend,
+  type RunTelemetryState,
+} from "@/lib/cron/run-telemetry";
+import { setTelemetryOutcomeSink } from "@/lib/observability/betterstack-telemetry";
 
 /** What one cleanup-route run, or one admin dispatch, knows about itself while its job runs. */
 export interface RunContext {
@@ -14,6 +22,8 @@ export interface RunContext {
   tickId?: string;
   opsActionLogId?: string;
   counters: RunCounters;
+  /** Better Stack sends and per-item failures, written to the run row's `result`. */
+  telemetry: RunTelemetryState;
   /** Rows whose own finish write landed, with the checkpoint each kept; only these are rewritten by the route. */
   finished: Map<string, { checkpoint: string | null } | null>;
 }
@@ -31,6 +41,16 @@ setRunCounterSink((name, by) => {
   if (run) run.counters[name] += by;
 });
 
+setTelemetryOutcomeSink((sending) => {
+  const run = storage.getStore();
+  if (run) trackTelemetrySend(run.telemetry, sending);
+});
+
+setRunFailureSink((failure) => {
+  const run = storage.getStore();
+  if (run) addRunFailure(run.telemetry, failure);
+});
+
 export function withRunContext<T>(
   init: RunContextInit,
   fn: () => Promise<T>,
@@ -40,6 +60,7 @@ export function withRunContext<T>(
       ...init,
       runIds: [],
       counters: emptyRunCounters(),
+      telemetry: emptyRunTelemetry(),
       finished: new Map(),
     },
     fn,

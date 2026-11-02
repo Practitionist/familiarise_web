@@ -7,7 +7,7 @@
  * empty 24 hours after creation is marked FAILED; REFUNDED is never read. Then
  * receipts still owed on settled digital product purchases are staged.
  */
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   fetchRazorpayOrder,
@@ -15,7 +15,10 @@ import {
 } from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { reportSentryError } from "@/lib/observability/report";
-import { stageOwedDigitalProductReceipts } from "@/lib/digital-products/purchase-email";
+import {
+  owedReceiptWhere,
+  stageOwedDigitalProductReceipts,
+} from "@/lib/digital-products/purchase-email";
 
 const STANDALONE_ORDER_TYPES: ReadonlySet<string> = new Set([
   "recording_purchase",
@@ -79,18 +82,57 @@ interface Candidate {
   createdAt: Date;
 }
 
+/** Only a paid digital purchase has a gateway order to check. */
+const paidOrderWhere = { gatewayOrderId: { not: null } };
+
+function pendingWhere(now: Date) {
+  return {
+    status: "PENDING" as const,
+    createdAt: { lt: new Date(now.getTime() - GRACE_MS) },
+  };
+}
+
+function failedWhere(now: Date) {
+  return {
+    status: "FAILED" as const,
+    createdAt: { gt: new Date(now.getTime() - FAILED_RECOVERY_MS) },
+  };
+}
+
+/** True when either rail has a recoverable purchase or a receipt is still owed. */
+export async function hasStandalonePurchaseWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const select = { id: true } as const;
+  if (outOfTime()) return true;
+  const digital = await db.digitalProductPurchase.findFirst({
+    where: {
+      OR: [
+        {
+          AND: [paidOrderWhere, { OR: [pendingWhere(now), failedWhere(now)] }],
+        },
+        owedReceiptWhere(now),
+      ],
+    },
+    select,
+  });
+  if (digital) return true;
+  if (outOfTime()) return true;
+  const replay = await db.recordingPurchase.findFirst({
+    where: { OR: [pendingWhere(now), failedWhere(now)] },
+    select,
+  });
+  return replay !== null;
+}
+
 async function recoverableCandidates(
   limit: number,
   now: Date,
 ): Promise<Candidate[]> {
-  const pending = {
-    status: "PENDING" as const,
-    createdAt: { lt: new Date(now.getTime() - GRACE_MS) },
-  };
-  const failed = {
-    status: "FAILED" as const,
-    createdAt: { gt: new Date(now.getTime() - FAILED_RECOVERY_MS) },
-  };
+  const pending = pendingWhere(now);
+  const failed = failedWhere(now);
   const [pendingRows, failedRows] = await Promise.all([
     recoverableRows(pending, limit),
     recoverableRows(failed, FAILED_LIMIT),
@@ -115,7 +157,7 @@ async function recoverableRows(
   } as const;
   const [digital, replay] = await Promise.all([
     prisma.digitalProductPurchase.findMany({
-      where: { ...where, gatewayOrderId: { not: null } },
+      where: { ...where, ...paidOrderWhere },
       orderBy,
       take,
       select,

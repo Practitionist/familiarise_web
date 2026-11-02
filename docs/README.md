@@ -261,6 +261,8 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 
 - [observability/README.md](./observability/README.md) - The index of this folder, with a reading order by question
 - [00-system-design.md](./observability/00-system-design.md) - The whole subsystem: signal sources and sinks, the three questions and their layers, quota rules, ticker failure escalation, and the planned operations console
+- [01-ownership-sentry-betterstack.md](./observability/01-ownership-sentry-betterstack.md) - Which tool answers which question (Better Stack, Sentry, Postgres, the console), the planned per-item history and backlog alerts, and every option considered
+- [02-research-per-item-history-and-vendors.md](./observability/02-research-per-item-history-and-vendors.md) - The vendor comparison, the warehouse triggers and the log-table inventory behind the ownership decisions
 - [three-layers.md](./observability/three-layers.md) - Sentry for failures, Better Stack for jobs that did not run, and the entity trace and job run metrics for what happened to one payment, with a worked missing-refund trace
 - [sentry/01-setup-and-configuration.md](./observability/sentry/01-setup-and-configuration.md) - The project, the two DSN variables and who reads each, the SDK files and knobs, the source-map token history
 - [sentry/02-conventions.md](./observability/sentry/02-conventions.md) - `expected:true` for modelled outcomes, findings as messages, the tags that carry meaning, SystemEvent versus Sentry, what an issue status means
@@ -271,7 +273,25 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [sentry/07-verifying-end-to-end.md](./observability/sentry/07-verifying-end-to-end.md) - The evidence ladder and the deploy-preview probe procedure
 - [sentry/08-error-telemetry-privacy-reference.md](./observability/sentry/08-error-telemetry-privacy-reference.md) - The privacy and lawful-basis reasoning for sending error data to a hosted vendor
 - [maintenance/11-job-machinery-catalog.md](./maintenance/11-job-machinery-catalog.md) - How every scheduled job runs, what each run records and reports, the observability gaps, and the operations dashboard spec
+- [infrastructure/README.md](./infrastructure/README.md) - Index of the infrastructure roadmap and the 2026-10-31 hosting and job-runtime research, numbered in reading order
+- [infrastructure/01-scale-path-research.md](./infrastructure/01-scale-path-research.md) - Research summary for the jobs and web-tier scale path, the main finding and the recorded owner decisions
+- [infrastructure/03-background-jobs-and-cron-options.md](./infrastructure/03-background-jobs-and-cron-options.md) - Background jobs and cron: 25 options, what startups do, the cheapest path per stage
+- [infrastructure/05-mumbai-vm-provider-research.md](./infrastructure/05-mumbai-vm-provider-research.md) - Mumbai VM provider research: Lightsail recommended, EC2 and GCP runners-up, latency figures are estimates until the probe runs
+- [infrastructure/04-mumbai-hosting-comparison.md](./infrastructure/04-mumbai-hosting-comparison.md) - Costed comparison of hosting in Mumbai
+- [infrastructure/06-queue-prototype-owed-refunds.md](./infrastructure/06-queue-prototype-owed-refunds.md) - pg-boss against a hand-written Prisma Job table on the owed-refund job
+- [infrastructure/02-runtime-strategy-review.md](./infrastructure/02-runtime-strategy-review.md) - Unbiased review of job and runtime strategy (a dissenting analysis, not the plan)
+- [infrastructure/07-job-runtime-system-designs.md](./infrastructure/07-job-runtime-system-designs.md) - Mermaid system designs for each candidate runtime
+- [maintenance/14-background-job-runtime-options.md](./maintenance/14-background-job-runtime-options.md) - Comparison matrix, request-flow and state diagrams, worked example, official sources and the owner's Q&A for Netlify, Inngest, QStash, Upstash Workflow, Trigger.dev, pg-boss, DBOS and Vercel `bom1`
+- [maintenance/15-job-runtime-layer-matrix.md](./maintenance/15-job-runtime-layer-matrix.md) - The eight layers of the jobs subsystem, the five compatibility rules and the eleven coherent stacks, with an HLD and a decision flowchart
+- [maintenance/18-monitoring-and-tracing-failures.md](./maintenance/18-monitoring-and-tracing-failures.md) - The four monitoring layers, the one-user-or-a-group flowchart, how each failure mode is handled and the filed gaps
+- [maintenance/17-target-architecture-and-roadmap.md](./maintenance/17-target-architecture-and-roadmap.md) - Executive summary, the greenfield target design (a proposal), the path from today and the Netlify billing status
+- [maintenance/16-job-machinery-and-portability.md](./maintenance/16-job-machinery-and-portability.md) - Job machinery line counts, what a host move removes, the Netlify-specific surface and portability as ports and adapters
+- [maintenance/experiments/2026-10-31-job-runtime/README.md](./maintenance/experiments/2026-10-31-job-runtime/README.md) - Index of the raw experiment reports, the method, the honesty labels, the dashboards to browse and the cleanup log
+- [2026-10-31-job-runtime-experiments.md](./decisions/2026-10-31-job-runtime-experiments.md) - Evidence and the launch runtime decision (ticker plus Background Functions, then a choice between Vercel `bom1` and a Mumbai VM)
+- [2026-11-01-dunning-atomic-notices.md](./decisions/2026-11-01-dunning-atomic-notices.md) - Every dunning stage stages its overdue bell and email inside the winning claim transaction; a roster or render failure rolls the claim back and counts as a failed run item
+- [2026-10-31-gpt-issue-triage.md](./decisions/2026-10-31-gpt-issue-triage.md) - Triage of the GPT-6.1 durable-jobs issues: org invoice rail off at launch, no second-scheduler pilot, fix order for the owner
 - [2026-10-26-launch-sweep-observability-and-money-holds.md](./decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) - ADR-01 to ADR-12: money holds, invoice healing, tax identity, auth abuse controls, the three observability layers, ticker escalation and the Sentry quota posture
+- [2026-10-31-ci-on-github-hosted-with-cuts.md](./decisions/2026-10-31-ci-on-github-hosted-with-cuts.md) - CI stays on GitHub-hosted runners: the cuts applied, the roughly $15 a month hard-stop budget, the launch-pace target and the runner fallback
 
 ---
 
@@ -283,6 +303,7 @@ Live hosting operations on Netlify Pro, multi-platform Mumbai compute evaluation
 - [multi-platform-evaluation.md](./deployment/multi-platform-evaluation.md) - Ranked 10-platform evaluation scorecard (`Cloud Run asia-south1`, `Vercel Pro bom1`, `Fly.io bom`, `Netlify Pro sin`, etc.)
 - [emergency-failback-runbook.md](./deployment/emergency-failback-runbook.md) - `< 90s` hot-standby failback runbook (`Platform X -> Netlify` with zero code reverts)
 - [netlify.md](./deployment/netlify.md) - Full operating handbook for live Netlify Pro (`sin`) deployments, env contexts, and build/cold-start controls
+- [netlify-vs-vercel-product-map.md](./deployment/netlify-vs-vercel-product-map.md) - Netlify, Vercel and Cloudflare products by layer, how they map onto each other, and the measured 2026-10-31 facts
 - [google-cloud.md](./deployment/google-cloud.md) - GCP project `familiarise` (`384845845365`), Google OAuth setup, and `gcloud` CLI guide
 
 ## Guides & Developer Resources

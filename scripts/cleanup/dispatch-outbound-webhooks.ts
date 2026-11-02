@@ -17,6 +17,8 @@ import { runDispatchTick } from "../../lib/enterprise/outbound-webhooks/worker";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { recordSystemEvent } from "../../lib/enterprise/system-events";
 
+export { hasOutboundWebhookWork } from "../../lib/enterprise/outbound-webhooks/worker";
+
 // The delivery table IS the queue (see worker.ts). If overdue rows pile up
 // past this, the worker isn't keeping pace — page someone (#776 §K).
 const QUEUE_BACKLOG_THRESHOLD = 200;

@@ -125,7 +125,13 @@ async function readLatestCompletedCronExecutionAt(): Promise<string | null> {
       prisma as unknown as {
         systemJobExecution?: {
           findFirst?: (args: {
-            where: { status: "COMPLETED"; jobName: { not: string } };
+            where: {
+              status: "COMPLETED";
+              OR: [
+                { jobName: { not: string } },
+                { result: { path: string[]; gt: number } },
+              ];
+            };
             orderBy: { startedAt: "desc" };
             select: { startedAt: true };
           }) => Promise<{ startedAt: Date | string } | null>;
@@ -133,9 +139,15 @@ async function readLatestCompletedCronExecutionAt(): Promise<string | null> {
       }
     ).systemJobExecution;
     if (typeof delegate?.findFirst !== "function") return null;
-    // A slot claim proves the ticker fired, not that any job completed.
+    // A bare slot claim proves only that the ticker fired; one that skipped idle jobs proves their probes ran.
     const latest = await delegate.findFirst({
-      where: { status: "COMPLETED", jobName: { not: TICK_CLAIM_JOB } },
+      where: {
+        status: "COMPLETED",
+        OR: [
+          { jobName: { not: TICK_CLAIM_JOB } },
+          { result: { path: ["idleCount"], gt: 0 } },
+        ],
+      },
       orderBy: { startedAt: "desc" },
       select: { startedAt: true },
     });
