@@ -59,9 +59,11 @@ Different jobs still require compatible row-level CAS and durable obligations.
 Fleet selection may fail open, so it cannot supply exactly-once effects.
 
 `/api/health/jobs` checks successful completions for the current configured
-environment. Export and stale-request processing have forty-five-minute
-completion budgets. Retained-order invoice recovery has a twelve-hour budget
-for its four-hour cadence. These thresholds detect stopped capabilities; they
+environment. Every budget is derived from the job's schedule
+(`lib/cron/operational-health.ts`): export processing has 50 minutes for its
+10-minute cadence, stale-request processing 60 minutes for its 15-minute
+cadence, and retained-order invoice recovery 8.5 hours for its four-hour
+cadence. These thresholds detect stopped capabilities; they
 do not establish the age of an individual queued obligation. Invoice recovery
 reads at most five candidates per slot, so cohort size and lost order pointers
 remain explicit capacity and coverage concerns.

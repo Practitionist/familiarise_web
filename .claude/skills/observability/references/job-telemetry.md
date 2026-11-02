@@ -70,9 +70,9 @@ restoration field or mistake its manual-edit transition for configuration drift.
 ## The health endpoints
 
 `GET /api/health/jobs` is a bearer-protected read-only capability freshness probe.
-It returns 503 for missing/overdue finished-run evidence (a `COMPLETED` row, or a `FAILED` row with outcome `partial`) or an unreadable history,
-using `endedAt` and actual core job names. It judges only `paging`-tier SLOs. Required capabilities/SLOs live in
-`lib/cron/operational-health.ts`, each with `tier` `paging` or `watched` (16 money SLOs are `watched`: console red, no 503, promoted after 7 clean production days); they are monitoring policy, not another schedule.
+It returns 503 when a `paging` job has no evidence of a run within its budget (a `COMPLETED` row, a `FAILED` row with outcome `partial`, an idle skip, or a config skip, which proves the job was reached) or when history is unreadable,
+using `endedAt` and actual core job names, and reading each job back only as far as its own budget. `OPERATIONAL_COMPLETION_REQUIREMENTS`
+(`lib/cron/operational-health.ts`) is derived from `lib/cron/schedule.ts`, never hand-listed: one requirement per ticker target whose core writes a run row, `maxAge = gap + min(gap, 6 h) + 30 min` over the target's longest gap between due slots (`maxSlotGapMinutes`), so windowed weekly, monthly and quarterly jobs get their calendar gap. Tiers: the housekeeping set `WATCHED_TARGETS` is `watched` (console red, no 503); every other target is `paging`. `__tests__/maintenance/operational-health.test.ts` pins coverage, live job names and each budget against a brute-force walk of `dueTargets`. Never add a literal budget or a second job list.
 The shared heartbeat, a RUNNING attempt, an accepted background dispatch, or an
 HTTP 200 from the public health route cannot replace this evidence. The recorder
 and probe must use the same environment label; untagged or preview rows do not
@@ -85,16 +85,18 @@ COMPLETED/FAILED rows by `result.environment`, so dev success cannot reset
 production failure escalation. Unknown streak history retains one-off reporting.
 This scopes monitoring evidence, not business rows or the shared Postgres lease.
 
-Export and stale-request workers have forty-five-minute completion budgets.
+Export processing has a 50-minute budget and stale-request processing 60.
 Retained-order invoice recovery runs every four hours, at most five candidates
-per slot, with a twelve-hour completion budget. These are execution-freshness
+per slot, with an 8.5-hour budget. These are execution-freshness
 policies, not per-obligation recovery or queue-drain guarantees. See
 [readiness and operating gates](../../../../docs/maintenance/13-readiness-and-operating-gates.md)
 before making an infrastructure readiness claim.
 
 Configure the external monitor with CRON_SECRET in a protected Authorization
-header, never a URL parameter. Calendar-only/config-gated jobs and business
-backlog/vendor correctness need separate checks. Verify accepted telemetry and
+header, never a URL parameter: Better Stack, every 5 minutes, 60-second timeout,
+alert on non-2xx with the keyword `"healthy":false` as a belt; the owner creates
+it from the runbook in `docs/maintenance/00-betterstack-setup.md`. Business
+backlog and vendor correctness need separate checks. Verify accepted telemetry and
 actual alert delivery after deployment; tests establish probe behavior, not that
 the vendor monitor is configured. Verify that worker maintenance refusals and
 held outcomes cannot record COMPLETED evidence before activation. The probe keeps

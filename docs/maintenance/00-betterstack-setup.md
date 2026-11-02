@@ -374,64 +374,65 @@ BetterStack incidents automatically appear on the status page linked to your acc
 
 ## Independent capability freshness probe
 
-Configure an external HTTP monitor for `GET /api/health/jobs` after deploying the
-route. Supply `Authorization: Bearer <CRON_SECRET>` as a protected monitor header;
-never put the secret in the URL. The endpoint is read-only, uncached and returns
-503 when required completion evidence is missing/stale or history cannot be read.
-It returns 401 before querying for an unauthorized caller.
+`GET /api/health/jobs` (`app/api/health/jobs/route.ts`) answers one question: did every ticker job that matters run recently enough? It is read-only and uncached. It never invokes, repairs or writes anything. It returns 401 before querying when the bearer is wrong, 503 when a `paging` job is overdue or the history cannot be read, and 200 otherwise. Because of the 503, a plain uptime monitor can alert on the status code alone.
 
-The required capabilities and completion SLOs live in
-`lib/cron/operational-health.ts`. These are monitoring budgets, not a second
-scheduler. Fifteen-minute recovery/delivery loops have 45 minutes to accommodate a
-missed tick and lease recovery; thirty-minute session-outcome loops have 90 minutes;
-support SLA scanning has 1 hour. The required set follows the current entries in
-`lib/cron/operational-health.ts`, including longer budgets for daily jobs. Check
-the schedule catalog before enabling a capability's absence monitor; remaining
-Actions-only jobs need an observed replacement before becoming required here.
+### Where the budgets come from
 
-The probe queries recent COMPLETED executions by their actual core job names,
-including `reconcile-pending-refunds` and `send-appointment-reminders`, whose HTTP
-slugs differ. It uses `endedAt`, not a new RUNNING attempt or shared heartbeat.
-One healthy email drain cannot conceal stopped refund reconciliation or session
-reminders. FAILED, CANCELLED and RUNNING rows do not refresh this evidence.
+The budgets are derived from the schedule, not listed by hand. `OPERATIONAL_COMPLETION_REQUIREMENTS` in `lib/cron/operational-health.ts` holds one requirement for every target in `TARGETS` (`lib/cron/schedule.ts`) whose core writes a run row. Adding a ticker target therefore adds its absence check in the same change, and renaming a job's run row through `jobNameFor` moves the check with it.
 
-This checks a selected always-on operational set. Calendar/configuration-gated
-jobs, backlog drain capacity, vendor effect correctness, and alert delivery need
-separate checks. Existing historical COMPLETED rows are only as trustworthy as the
-worker's outcome recording; deploy truthful outcome recording and exercise real
-failure cases before claiming complete coverage. The probe does not write rows,
-invoke jobs, send a test payment or repair vendor state.
+Each budget is computed from the target's longest gap between two consecutive due slots (`maxSlotGapMinutes` in `lib/cron/schedule.ts`):
 
-During an approved maintenance window, suppress notifications through the external
-monitor's maintenance mechanism; do not turn a blocked completion into success.
-The probe reads history without calling the job maintenance gate. Before monitor
-activation, deploy and verify maintenance refusal and truthful outcome recording:
-a refusal before the lease creates no completion, and held or failed runs must
-not be recorded as COMPLETED. Exercise OFFLINE, DEGRADED financial-job holds and
-unreadable maintenance state against those worker gates. As prior successes age
-out, the probe returns 503 even during maintenance; notification suppression does
-not change the recorded evidence.
+```text
+maxAge = gap + min(gap, 6 h) + 30 min
+```
 
-After deployment verify both a healthy probe and a controlled missing-capability
-failure in an isolated environment. A 200 from the existing public `/api/health`
-remains insufficient proof of fleet coverage.
+The second term tolerates one missed slot, but never more than six hours of one. The 30 minutes cover a late tick, a background job finishing after its slot and the run's own duration. For a windowed job the gap runs from the last slot of one window to the first slot of the next, so a monthly or quarterly job gets its real calendar gap rather than twice its hourly interval. Worked examples:
 
-See [Better Stack HTTP monitor configuration](https://betterstack.com/docs/uptime/api/create-a-new-monitor/)
-for protected request headers and expected-status monitoring.
+| Target                           | Schedule                                              | Longest gap                  | Budget                       |
+| -------------------------------- | ----------------------------------------------------- | ---------------------------- | ---------------------------- |
+| `appointment-reminders`          | every 15 min                                          | 15 min                       | 15 + 15 + 30 = 60 min        |
+| `auth-tokens`                    | once a day at 03:00 UTC                               | 24 h                         | 24 h + 6 h + 30 min = 30.5 h |
+| `generate-subscription-invoices` | hourly from 03:05 to 19:05 UTC                        | 8 h                          | 8 h + 6 h + 30 min = 14.5 h  |
+| `create-payout-batch`            | every 15 min, Mondays 20:05 to 22:50 UTC              | 6 d 21 h 15 min              | 7 d 3 h 45 min               |
+| `settle-invoice-accruals`        | hourly on the 1st, 04:45 to 19:45 UTC                 | 30 d 9 h (the longest month) | 30 d 15 h 30 min             |
+| `tds-return-draft`               | hourly 01:55 and 02:55 UTC on 5 Jan, Apr, Jul and Oct | 91 d 23 h (5 Jul to 5 Oct)   | 92 d 5 h 30 min              |
 
-The shared database also contains preview/admin executions. This probe requires
-execution `result.environment` to match the serving deployment's existing
-`NEXT_PUBLIC_SENTRY_ENVIRONMENT` (or `SENTRY_ENVIRONMENT`). Untagged historical rows
-do not establish production freshness. Missing environment configuration returns
-503 `JOB_ENVIRONMENT_UNCONFIGURED`. Deploy environment-tagged execution recording
-before expecting the probe to turn healthy, and verify context configuration;
-environment tags reduce ambiguity but do not replace isolated production data.
+The generated [cron jobs reference](04-cron-jobs-reference.md) prints every target's budget and tier on its "Freshness" line. The shortest budget is 50 minutes (the 10-minute outbox and export drains) and the longest is the quarterly TDS draft.
 
-The same environment precedence must be used by the recorder and probe. An unset
-public label uses the server label; an explicitly empty public label fails
-configuration instead of falling back. Confirm required workers are scheduled and
-producing these tagged completions before enabling the monitor; a configured SLO
-does not establish that its scheduler is active.
+Two targets are not judged, because their core writes no run row (`jobNameFor` returns `null`): `sentry-ingest-canary` is itself an out-of-band alarm that pages by email and Better Stack, and `stream-control-plane-drift` reports drift through its own alert. No per-job override exists today; add one only for a job whose healthy run can legitimately leave no evidence, with a one-line reason.
+
+### Tiers
+
+A small explicit set in `lib/cron/operational-health.ts` (`WATCHED_TARGETS`) names the housekeeping targets: the job-history and event pruning, audit-log pruning, webhook-event archiving, onboarding-draft and collaborator-invite expiry, unverified-user purge, verification sweep, document and digital-product storage reconciles, and the admin run-request backstop. A late run of one of those only delays cleanup, so it is `watched`: the System Jobs console shows it red, and the probe neither lists it nor fails on it. Every other target is money, compliance or user-facing and is `paging`, so a new target pages by default until someone deliberately demotes it.
+
+### What counts as having run
+
+The probe reads, for each paging job and only as far back as that job's own budget, the newest of these in the serving environment:
+
+- a `COMPLETED` row, or a `FAILED` row whose outcome is `partial` (the run reached its end with some items failing);
+- an idle skip on a tick claim row (`lib/cron/idle-skips.ts`), because the probe found no work;
+- a config skip (a `CANCELLED` row with outcome `skipped` and a reason ending " not configured"). The job was scheduled and reached, and only a setting is missing; the missing setting is a configuration finding, not an absence. Each job row carries `lastConfigSkipAt`, and `configSkips` lists the last day's reasons.
+
+A `RUNNING` attempt, a held or refused run, a plain `FAILED` run and the shared heartbeat do not count. The probe uses `endedAt` and the job's actual run-row name, so `reconcile-refunds` is judged as `reconcile-pending-refunds` and `appointment-reminders` as `send-appointment-reminders`.
+
+### Runbook: create the Better Stack monitor (owner step)
+
+The owner creates this monitor; the code never creates vendor monitors. It is the external dead-man's switch: it fires when a job goes stale, when the ticker stops, when a deploy breaks the route and when the app is down, even if Sentry and Netlify are quiet.
+
+1. Better Stack → Uptime → **Create monitor**.
+2. **URL to monitor:** `https://familiarisenow.com/api/health/jobs`. **Monitor type:** HTTP, alert when the URL becomes unavailable (any non-2xx status).
+3. **Request headers:** `Authorization: Bearer <CRON_SECRET>`, using the production value. Never put the secret in the URL.
+4. **Check frequency:** 5 minutes. **Request timeout:** 60 seconds and **confirmation period:** 1 minute, for the cold-start stall explained under Step 3 above.
+5. Optional belt to the status code: add the keyword check "alert when the response contains" `"healthy":false`.
+6. **Alert via:** email (and Slack) on the free plan; add phone and SMS when the responder seat is bought at launch.
+7. Do not add this monitor to the public status page: its body names internal jobs.
+8. Verify: the monitor shows Up with 200. Then read the body and confirm `healthy: true`. A job listed `overdue` with `lastCompletedAt: null` has no production-tagged run inside its budget; either wait for its next slot or run it once from the System Jobs page (`Run now` records a production run).
+
+During an approved maintenance window, pause the monitor or use Better Stack's maintenance window; do not turn a blocked completion into success. As prior successes age out the probe returns 503 even during maintenance, by design.
+
+The shared database also holds preview and development runs. The probe counts only rows whose `result.environment` matches the serving deployment's `NEXT_PUBLIC_SENTRY_ENVIRONMENT` (or `SENTRY_ENVIRONMENT`); an unset label returns 503 `JOB_ENVIRONMENT_UNCONFIGURED`, and an explicitly empty public label fails instead of falling back. Untagged historical rows never establish production freshness.
+
+What the probe does not prove: that a run's vendor effects are correct, that a backlog is draining (the oldest-pending-age alerts below cover that), or that the alert reaches a human (prove that once with a controlled failure). See [Better Stack HTTP monitor configuration](https://betterstack.com/docs/uptime/api/create-a-new-monitor/) for protected request headers and expected-status monitoring.
 
 ## Execution freshness and monitor acceptance
 

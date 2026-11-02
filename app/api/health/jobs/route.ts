@@ -9,6 +9,7 @@ import {
 export const dynamic = "force-dynamic";
 const HEADERS = { "Cache-Control": "no-store", Vary: "Authorization" };
 const skipResultSchema = z.object({ reason: z.string() });
+const CONFIG_SKIP_SUFFIX = " not configured";
 
 /** Read-only external absence probe; never invokes or repairs a job. */
 export async function GET(request: NextRequest) {
@@ -31,43 +32,70 @@ export async function GET(request: NextRequest) {
   try {
     const { default: prisma } = await import("@/lib/prisma");
     const now = new Date();
-    const since = new Date(now.getTime() - 48 * 60 * 60 * 1000);
-    // An idle skip found no work, so it is as fresh as a finished run.
-    // A partial run ran to the end, so it is fresh; watched SLOs belong to the console, not this probe.
+    const paging = OPERATIONAL_COMPLETION_REQUIREMENTS.filter(
+      (job) => job.tier === "paging",
+    );
+    const lookback = (minutes: number) =>
+      new Date(now.getTime() - minutes * 60_000);
+    // Each job is read back only as far as its own budget, so the scan stays bounded.
+    // A partial run ran to the end and a config skip proves the job was reached; watched jobs belong to the console.
     const rows = await prisma.systemJobExecution.groupBy({
-      by: ["jobName"],
+      by: ["jobName", "status"],
       where: {
-        jobName: {
-          in: OPERATIONAL_COMPLETION_REQUIREMENTS.filter(
-            (job) => job.tier === "paging",
-          ).map((job) => job.jobName),
-        },
         result: { path: ["environment"], equals: environment },
-        OR: [
-          { status: "COMPLETED" },
+        AND: [
           {
-            status: "FAILED",
-            result: { path: ["outcome"], equals: "partial" },
+            OR: paging.map((job) => ({
+              jobName: job.jobName,
+              startedAt: { gte: lookback(job.maxAgeMinutes) },
+            })),
+          },
+          {
+            OR: [
+              { status: "COMPLETED" },
+              {
+                status: "FAILED",
+                result: { path: ["outcome"], equals: "partial" },
+              },
+              {
+                status: "CANCELLED",
+                AND: [
+                  { result: { path: ["outcome"], equals: "skipped" } },
+                  {
+                    result: {
+                      path: ["reason"],
+                      string_ends_with: CONFIG_SKIP_SUFFIX,
+                    },
+                  },
+                ],
+              },
+            ],
           },
         ],
-        startedAt: { gte: since },
       },
       _max: { endedAt: true },
     });
+    // An idle skip found no work, so it is as fresh as a finished run.
     const { readIdleCompletions } = await import("@/lib/cron/idle-skips");
-    const idle = await readIdleCompletions(prisma, environment, since);
-    const report = assessOperationalCompletions(
-      [
-        ...rows.map((row) => ({
-          jobName: row.jobName,
-          endedAt: row._max.endedAt,
-        })),
+    const idle = await readIdleCompletions(
+      prisma,
+      environment,
+      lookback(Math.max(...paging.map((job) => job.maxAgeMinutes))),
+    );
+    const latest = (row: (typeof rows)[number]) => ({
+      jobName: row.jobName,
+      endedAt: row._max.endedAt,
+    });
+    const report = assessOperationalCompletions({
+      completions: [
+        ...rows.filter((row) => row.status !== "CANCELLED").map(latest),
         ...idle,
       ],
+      configSkips: rows.filter((row) => row.status === "CANCELLED").map(latest),
       now,
-      "paging",
-    );
-    // Config skips are listed for operators but never change `healthy`.
+      tier: "paging",
+    });
+    // The last day's config-skip reasons, listed for operators.
     const skips = await prisma.systemJobExecution
       .findMany({
         where: {
@@ -77,7 +105,10 @@ export async function GET(request: NextRequest) {
             { result: { path: ["environment"], equals: environment } },
             { result: { path: ["outcome"], equals: "skipped" } },
             {
-              result: { path: ["reason"], string_ends_with: " not configured" },
+              result: {
+                path: ["reason"],
+                string_ends_with: CONFIG_SKIP_SUFFIX,
+              },
             },
           ],
         },

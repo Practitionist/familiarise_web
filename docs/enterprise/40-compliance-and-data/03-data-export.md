@@ -198,7 +198,7 @@ and keep incompatible old writers from creating new unowned objects.
 
 The [worker recovery guide](../../maintenance/12-worker-recovery.md) contains the
 full failure matrix and operating gates. `/api/health/jobs` requires an owned
-successful export-core completion within 45 minutes in the current deployment
+successful export-core completion within 50 minutes in the current deployment
 environment. That does not measure oldest queued work, sufficient drain rate,
 private-bucket configuration or human alert receipt.
 
