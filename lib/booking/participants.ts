@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/prisma";
+import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-marker";
 import type {
   ParticipantRole,
   ParticipantStatus,
@@ -86,16 +87,15 @@ export const RELEASED_PARTICIPANT_STATUSES: ParticipantStatus[] = [
   "REFUNDED",
 ];
 
-/** Statuses whose payment has landed; a HELD row only holds a place on an uncaptured payment. */
+/** Statuses a seat reaches only in the commit that settles its payment, or with no payment at all. */
 export const PAID_PARTICIPANT_STATUSES: ParticipantStatus[] = [
   "CONFIRMED",
   "ATTENDED",
 ];
 
 /**
- * A seat whose payment has landed: what entering a group-event room requires.
- * A HELD seat whose Payment already SUCCEEDED counts too: a capture that
- * crashed before confirmation leaves exactly that until the sweep re-drives it.
+ * A seat holding a fulfilled entitlement, what a group-event room admits: a confirmed seat
+ * with a SUCCEEDED payment or none, or a HELD seat whose capture settled and is not being returned.
  */
 export function paidParticipant(
   userId?: string,
@@ -103,8 +103,29 @@ export function paidParticipant(
   return {
     ...(userId ? { userId } : {}),
     OR: [
-      { status: { in: PAID_PARTICIPANT_STATUSES } },
-      { status: "HELD", payment: { is: { paymentStatus: "SUCCEEDED" } } },
+      {
+        status: { in: PAID_PARTICIPANT_STATUSES },
+        OR: [
+          { paymentId: null },
+          { payment: { is: { paymentStatus: "SUCCEEDED" } } },
+        ],
+      },
+      {
+        status: "HELD",
+        payment: {
+          is: {
+            AND: [
+              {
+                paymentStatus: "SUCCEEDED",
+                refundOwedKey: null,
+                refunds: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
+              },
+              // Every capture parked as an unapplied receipt carries one of these markers.
+              notSettledElsewhereWhere,
+            ],
+          },
+        },
+      },
     ],
   };
 }
