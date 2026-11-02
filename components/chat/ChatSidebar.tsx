@@ -327,6 +327,11 @@ export const ChatSidebar = () => {
     team: 0,
     messaging: 0,
   });
+  // The generation each list was last replaced at; behind the live one while a newer read is in flight.
+  const appliedGenerationRef = useRef<Record<ListType, number>>({
+    team: 0,
+    messaging: 0,
+  });
   // Set once a preference change has moved rows across the offset and cleared when a
   // re-read lands; while set, Load more re-reads the list instead of paging from it.
   const staleListRef = useRef<Record<ListType, boolean>>({
@@ -377,7 +382,7 @@ export const ChatSidebar = () => {
       hasMore: boolean,
       keepCids: ReadonlyArray<string | null>,
     ) => {
-      listGenerationRef.current[type] += 1;
+      appliedGenerationRef.current[type] = ++listGenerationRef.current[type];
       fetchedCountRef.current[type] = fetched.length;
       staleListRef.current[type] = false;
       settlePinOverrides(fetched);
@@ -391,6 +396,90 @@ export const ChatSidebar = () => {
       else setHasMoreDMChannels(hasMore);
     },
     [scope, settlePinOverrides],
+  );
+
+  // One page of a list in the server's order, scoped like the first page.
+  const queryPage = useCallback(
+    (userId: string, type: ListType, offset: number) =>
+      client.queryChannels(
+        { members: { $in: [userId] }, type, ...buildOrgChannelFilter(scope) },
+        CHANNEL_SORT,
+        {
+          watch: true,
+          state: true,
+          limit: PAGE_SIZE,
+          message_limit: 10,
+          presence: false,
+          offset,
+        },
+      ),
+    [client, scope],
+  );
+
+  // A page cut for `pageKey` must not land once another scope has loaded or is
+  // loading: it would cross-tenant the inbox and corrupt the next offset.
+  const isScopeSuperseded = useCallback(
+    (pageKey: string | null) =>
+      fetchedKeyRef.current !== pageKey ||
+      (inFlightFetchKeyRef.current !== null &&
+        inFlightFetchKeyRef.current !== pageKey),
+    [],
+  );
+
+  // A dropped read has already written its older membership into Stream's shared
+  // Channel objects, so once the newest read has landed the list is read again.
+  const isNewestReadApplied = useCallback(
+    (type: ListType) =>
+      appliedGenerationRef.current[type] === listGenerationRef.current[type],
+    [],
+  );
+
+  // A pin, unpin or hide moves rows across the offset, so re-read the loaded rows
+  // (plus `extraPages`) and reset the offset with them; a page paged meanwhile is dropped.
+  const rebaseList = useCallback(
+    async function rebase(type: ListType, extraPages = 0): Promise<void> {
+      const userId = client?.userID;
+      if (!userId) return;
+      staleListRef.current[type] = true;
+      const pageKey = computeFetchKey();
+      const generation = ++listGenerationRef.current[type];
+      const pageCount =
+        Math.max(1, Math.ceil(fetchedCountRef.current[type] / PAGE_SIZE)) +
+        extraPages;
+      const readPages = () =>
+        Promise.all(
+          Array.from({ length: pageCount }, (_, i) =>
+            queryPage(userId, type, i * PAGE_SIZE),
+          ),
+        );
+      try {
+        // One retry; if both reads fail the list stays stale for Load more to repair.
+        const pages = await readPages().catch(readPages);
+        if (isScopeSuperseded(pageKey)) return;
+        if (listGenerationRef.current[type] !== generation) {
+          if (isNewestReadApplied(type)) void rebase(type);
+          return;
+        }
+        // The open and deep-linked conversations stay listed even when the
+        // new order puts them past the loaded rows.
+        replaceList(
+          type,
+          pages.flat(),
+          pages[pages.length - 1].length === PAGE_SIZE,
+          [deepLinkedChannelCidRef.current, activeChannelIdRef.current],
+        );
+      } catch (error) {
+        console.error(`Error rebasing ${type} channels:`, error);
+      }
+    },
+    [
+      client,
+      computeFetchKey,
+      queryPage,
+      isScopeSuperseded,
+      isNewestReadApplied,
+      replaceList,
+    ],
   );
 
   // Function to fetch channels initially and on significant changes
@@ -446,21 +535,15 @@ export const ChatSidebar = () => {
           return;
         }
         const keepCids = [deepLinkedChannelCidRef.current];
-        if (listGenerationRef.current.team === generation.team) {
-          replaceList(
-            "team",
-            teamResponse,
-            teamResponse.length === PAGE_SIZE,
-            keepCids,
-          );
-        }
-        if (listGenerationRef.current.messaging === generation.messaging) {
-          replaceList(
-            "messaging",
-            dmResponse,
-            dmResponse.length === PAGE_SIZE,
-            keepCids,
-          );
+        for (const [type, fetched] of [
+          ["team", teamResponse],
+          ["messaging", dmResponse],
+        ] as const) {
+          if (listGenerationRef.current[type] === generation[type]) {
+            replaceList(type, fetched, fetched.length === PAGE_SIZE, keepCids);
+          } else if (isNewestReadApplied(type)) {
+            void rebaseList(type);
+          }
         }
         fetchedKeyRef.current = fetchKey;
 
@@ -494,77 +577,9 @@ export const ChatSidebar = () => {
       computeFetchKey,
       hasDeepLink,
       replaceList,
+      isNewestReadApplied,
+      rebaseList,
     ],
-  );
-
-  // One page of a list in the server's order, scoped like the first page.
-  const queryPage = useCallback(
-    (userId: string, type: ListType, offset: number) =>
-      client.queryChannels(
-        { members: { $in: [userId] }, type, ...buildOrgChannelFilter(scope) },
-        CHANNEL_SORT,
-        {
-          watch: true,
-          state: true,
-          limit: PAGE_SIZE,
-          message_limit: 10,
-          presence: false,
-          offset,
-        },
-      ),
-    [client, scope],
-  );
-
-  // A page cut for `pageKey` must not land once another scope has loaded or is
-  // loading: it would cross-tenant the inbox and corrupt the next offset.
-  const isScopeSuperseded = useCallback(
-    (pageKey: string | null) =>
-      fetchedKeyRef.current !== pageKey ||
-      (inFlightFetchKeyRef.current !== null &&
-        inFlightFetchKeyRef.current !== pageKey),
-    [],
-  );
-
-  // A pin, unpin or hide moves rows across the offset, so re-read the loaded rows
-  // (plus `extraPages`) and reset the offset with them; a page paged meanwhile is dropped.
-  const rebaseList = useCallback(
-    async (type: ListType, extraPages = 0) => {
-      const userId = client?.userID;
-      if (!userId) return;
-      staleListRef.current[type] = true;
-      const pageKey = computeFetchKey();
-      const generation = ++listGenerationRef.current[type];
-      const pageCount =
-        Math.max(1, Math.ceil(fetchedCountRef.current[type] / PAGE_SIZE)) +
-        extraPages;
-      const readPages = () =>
-        Promise.all(
-          Array.from({ length: pageCount }, (_, i) =>
-            queryPage(userId, type, i * PAGE_SIZE),
-          ),
-        );
-      try {
-        // One retry; if both reads fail the list stays stale for Load more to repair.
-        const pages = await readPages().catch(readPages);
-        if (
-          isScopeSuperseded(pageKey) ||
-          listGenerationRef.current[type] !== generation
-        ) {
-          return;
-        }
-        // The open and deep-linked conversations stay listed even when the
-        // new order puts them past the loaded rows.
-        replaceList(
-          type,
-          pages.flat(),
-          pages[pages.length - 1].length === PAGE_SIZE,
-          [deepLinkedChannelCidRef.current, activeChannelIdRef.current],
-        );
-      } catch (error) {
-        console.error(`Error rebasing ${type} channels:`, error);
-      }
-    },
-    [client, computeFetchKey, queryPage, isScopeSuperseded, replaceList],
   );
 
   // Function to load more channels (pagination)

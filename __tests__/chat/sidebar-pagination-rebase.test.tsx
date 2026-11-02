@@ -343,9 +343,16 @@ function holdMessagingReads() {
   const held: Array<() => void> = [];
   let holding = true;
   mockClient.queryChannels.mockImplementation(async (filter, sort, options) => {
-    const page = await original(filter, sort, options);
+    const page: Row[] = await original(filter, sort, options);
     if (!holding || filter.type !== "messaging") return page;
-    return new Promise((resolve) => held.push(() => resolve(page)));
+    // Like Stream, a read writes its membership into the shared channels as it resolves.
+    const memberships = page.map((row) => row.state.membership);
+    return new Promise((resolve) =>
+      held.push(() => {
+        page.forEach((row, i) => (row.state.membership = memberships[i]));
+        resolve(page);
+      }),
+    );
   });
   return {
     held,
@@ -412,6 +419,27 @@ describe("when a re-read fails or lands out of order", () => {
     await act(async () => reads.held[0]());
     expect(rows(container)).toEqual(server.names().slice(0, 20));
     await loadEverything(container);
+    expect(rows(container)).toEqual(server.names());
+  });
+
+  it("shows the server's pins after an older refresh lands late", async () => {
+    const server = serveInbox(5);
+    const { container, rerender } = await mount();
+    const reads = holdMessagingReads();
+    failHides();
+    await choose(container, "Recent person 2", "Remove from list");
+    await waitFor(() => expect(reads.held).toHaveLength(1));
+    reads.stop();
+    await choose(container, "Old pinned", "Unpin");
+    await waitFor(() => expect(rows(container)).toEqual(server.names()));
+
+    await act(async () => reads.held[0]());
+    rerender(<ChatSidebar />);
+    const oldPin = () =>
+      container.querySelector<HTMLElement>('button[title="Old pinned"]')!;
+    await waitFor(() =>
+      expect(within(oldPin()).queryByText("Pinned")).toBeNull(),
+    );
     expect(rows(container)).toEqual(server.names());
   });
 
