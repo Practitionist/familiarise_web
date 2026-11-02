@@ -80,18 +80,21 @@ Two others carry a `pull_request` trigger but are conditional and never gate a
 booking change: `claude-code-review.yml` fires only on a `labeled` event, and
 `claude.yml` only when a comment or review body contains `@claude`.
 
-CI's `test-and-build` job is the gate: it passes only when the `typecheck`
-job (`npm audit`, `prisma generate`, `npx tsc --noEmit`, and the money-column,
-auth-schema and workflow-hygiene guards), the unit-test job (full sharded `unit-tests` on pushes and PRs into `prod`;
-`unit-tests-changed`, `jest --changedSince`, on other PRs)
-and the `build` job (`npm run build`) all pass. The `db-guards` job starts a
-throwaway Postgres, pushes the schema and the sidecars, runs the DB-sidecar guard
-and then the whole database tier (`jest -c jest.db.config.ts`, §11). There is no `typecheck`
+CI's `test-and-build` job is the gate: it passes only when the `checks` job
+(lint on changed files, `npm audit`, `prisma generate`, `npx tsc --noEmit`, the
+money-column, auth-schema and workflow-hygiene guards, `jest --changedSince` on
+non-prod PRs, and the DB-sidecar guard plus the database tier
+`jest -c jest.db.config.ts` against a throwaway Postgres whenever `prisma/**`
+or `scripts/ci/check-db*` changed) passes, and, on PRs into `prod` and pushes to
+`staging` or `prod`, the full sharded `unit-tests` and the `build` job
+(`npm run build`) pass too. Draft PRs run nothing. There is no `typecheck`
 script, so type-check locally by typing `npx tsc --noEmit` yourself.
 
-In the separate `lint` job ESLint errors fail the job; the Prettier step carries
-`continue-on-error: true`, so formatting is advisory in CI. There is no
-`--max-warnings` anywhere, and the config marks almost everything `warn`; only
+In the `checks` job ESLint errors fail the job, and on non-release runs ESLint
+checks only the changed files with `--max-warnings=0`, so a warning in a touched
+file fails; release runs lint everything with warnings advisory. The Prettier
+step carries `continue-on-error: true`, so formatting is advisory in CI. The
+config marks almost everything `warn`; only
 `react-hooks/rules-of-hooks` and `no-restricted-imports` are errors. That
 layering guard is the one lint rule that catches a bad booking refactor — it
 forbids `lib/**`, `components/**`, `hooks/**`, `types/**` and `schemas/**` from

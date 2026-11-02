@@ -283,6 +283,7 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [2026-11-01-dunning-atomic-notices.md](./decisions/2026-11-01-dunning-atomic-notices.md) - Every dunning stage stages its overdue bell and email inside the winning claim transaction; a roster or render failure rolls the claim back and counts as a failed run item
 - [2026-10-31-gpt-issue-triage.md](./decisions/2026-10-31-gpt-issue-triage.md) - Triage of the GPT-6.1 durable-jobs issues: org invoice rail off at launch, no second-scheduler pilot, fix order for the owner
 - [2026-10-26-launch-sweep-observability-and-money-holds.md](./decisions/2026-10-26-launch-sweep-observability-and-money-holds.md) - ADR-01 to ADR-12: money holds, invoice healing, tax identity, auth abuse controls, the three observability layers, ticker escalation and the Sentry quota posture
+- [2026-10-31-ci-on-github-hosted-with-cuts.md](./decisions/2026-10-31-ci-on-github-hosted-with-cuts.md) - CI stays on GitHub-hosted runners: the cuts applied, the roughly $15 a month hard-stop budget, the launch-pace target and the runner fallback
 
 ---
 

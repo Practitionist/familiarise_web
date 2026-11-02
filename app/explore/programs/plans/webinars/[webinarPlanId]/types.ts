@@ -11,7 +11,7 @@ export type TWebinarPlanData = Omit<
       consultantProfile: {
         select: ConsultantPublicScalars & {
           user: {
-            select: { id: true; name: true; email: true; image: true };
+            select: { id: true; name: true; image: true };
           };
           domain: true;
           subDomains: true;
