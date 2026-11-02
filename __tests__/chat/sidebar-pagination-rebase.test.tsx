@@ -443,6 +443,32 @@ describe("when a re-read fails or lands out of order", () => {
     expect(rows(container)).toEqual(server.names());
   });
 
+  it("shows the server's pin after an older Load more page lands late", async () => {
+    const server = serveInbox(20);
+    const { container, rerender } = render(<ChatSidebar />);
+    await waitFor(() => expect(rows(container)).toHaveLength(20));
+    // The open row stays listed past the loaded rows, so the next page repeats it.
+    await choose(container, "Old pinned", "Unpin");
+    await waitFor(() => expect(rows(container)).toContain("Recent person 19"));
+    const reads = holdMessagingReads();
+    await clickLoadMore(container);
+    await waitFor(() => expect(reads.held).toHaveLength(1));
+    reads.stop();
+    await choose(container, "Old pinned", "Pin to top");
+    await waitFor(() =>
+      expect(rows(container)).toEqual(server.names().slice(0, 20)),
+    );
+
+    await act(async () => reads.held[0]());
+    rerender(<ChatSidebar />);
+    const oldPin = () =>
+      container.querySelector<HTMLElement>('button[title="Old pinned"]')!;
+    await waitFor(() =>
+      expect(within(oldPin()).queryByText("Pinned")).not.toBeNull(),
+    );
+    expect(rows(container)).toEqual(server.names().slice(0, 20));
+  });
+
   it("accepts a newer refresh that lands after an older re-read", async () => {
     const server = serveInbox(20);
     const { container } = await mount();

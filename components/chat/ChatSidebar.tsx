@@ -612,10 +612,9 @@ export const ChatSidebar = () => {
           fetchedCountRef.current[type],
         );
 
-        if (
-          isScopeSuperseded(pageKey) ||
-          listGenerationRef.current[type] !== generation
-        ) {
+        if (isScopeSuperseded(pageKey)) return;
+        if (listGenerationRef.current[type] !== generation) {
+          if (isNewestReadApplied(type)) void rebaseList(type);
           return;
         }
 
@@ -646,6 +645,7 @@ export const ChatSidebar = () => {
       computeFetchKey,
       queryPage,
       isScopeSuperseded,
+      isNewestReadApplied,
       rebaseList,
     ],
   );
