@@ -22,7 +22,8 @@ export type ZipProblem =
   | "SYMLINK_ENTRY"
   | "NESTED_ARCHIVE"
   | "EXECUTABLE_ENTRY"
-  | "LOCAL_HEADER_MISMATCH";
+  | "LOCAL_HEADER_MISMATCH"
+  | "UNLISTED_DATA";
 
 export type ZipInspection =
   | { ok: true; entries: number; totalUncompressedBytes: number }
@@ -39,6 +40,18 @@ const ZIP64_EOCD_SIG = 0x06064b50;
 const CENTRAL_HEADER_SIG = 0x02014b50;
 const LOCAL_HEADER_SIG = 0x04034b50;
 const LOCAL_HEADER_BYTES = 30;
+const DATA_DESCRIPTOR_SIG = 0x08074b50;
+/** A data descriptor's length tells its form: 12/20 bytes unsigned, 16/24 signed, 32- or 64-bit sizes. */
+const DESCRIPTOR_FORMS: ReadonlyMap<
+  number,
+  { signed: boolean; wide: boolean }
+> = new Map([
+  [12, { signed: false, wide: false }],
+  [16, { signed: true, wide: false }],
+  [20, { signed: false, wide: true }],
+  [24, { signed: true, wide: true }],
+]);
+const MAX_DESCRIPTOR_BYTES = 24;
 /** Read past each local name: room for a Unicode Path copy of it and the usual timestamp, unix and Zip64 extras. */
 const LOCAL_EXTRA_SLACK = 512;
 /** Local-header reads closer than this are merged into one range read, up to LOCAL_READ_MAX bytes. */
@@ -316,6 +329,11 @@ interface CentralEntry {
   name: string;
   rawName: Uint8Array;
   localOffset: number;
+  /** Bit 3: the CRC and sizes trail the data in a descriptor. */
+  descriptor: boolean;
+  crc: number;
+  compressed: number;
+  uncompressed: number;
 }
 
 /** Parse and police every central-directory record; pure over the directory bytes. */
@@ -398,7 +416,15 @@ function readCentralDirectory(
     if (total > ZIP_LIMITS.maxTotalUncompressedBytes) {
       throw new ZipFault("TOO_LARGE_UNCOMPRESSED");
     }
-    entries.push({ name, rawName, localOffset: sizes.localOffset });
+    entries.push({
+      name,
+      rawName,
+      localOffset: sizes.localOffset,
+      descriptor: (flags & 0x0008) !== 0,
+      crc: dv.getUint32(at + 16, true),
+      compressed: sizes.compressed,
+      uncompressed: sizes.uncompressed,
+    });
     at = end;
   }
   if (at !== cd.length) throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT");
@@ -482,10 +508,53 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   return a.length === b.length && a.every((byte, i) => byte === b[i]);
 }
 
+/** The local header's CRC and sizes, its Zip64 extra (uncompressed, then compressed) resolving sentinels. */
+function localSizes(
+  fixed: DataView,
+  fields: readonly ExtraField[],
+): { crc: number; compressed: number; uncompressed: number } {
+  const crc = fixed.getUint32(14, true);
+  const compressed = fixed.getUint32(18, true);
+  const uncompressed = fixed.getUint32(22, true);
+  if (compressed !== U32_MAX && uncompressed !== U32_MAX) {
+    return { crc, compressed, uncompressed };
+  }
+  const zip64 = fields.find((f) => f.id === ZIP64_EXTRA_ID);
+  if (!zip64 || zip64.data.byteLength < 16) {
+    throw new ZipFault("LOCAL_HEADER_MISMATCH", "missing local Zip64 sizes");
+  }
+  return {
+    crc,
+    uncompressed: u64(zip64.data, 0),
+    compressed: u64(zip64.data, 8),
+  };
+}
+
+/** A descriptor matches the central CRC and sizes; `bytes` is exactly its length. */
+function descriptorMatches(bytes: Uint8Array, entry: CentralEntry): boolean {
+  const form = DESCRIPTOR_FORMS.get(bytes.length);
+  if (!form) return false;
+  const dv = view(bytes);
+  if (form.signed && dv.getUint32(0, true) !== DATA_DESCRIPTOR_SIG) {
+    return false;
+  }
+  const at = form.signed ? 4 : 0;
+  const compressed = form.wide ? u64(dv, at + 4) : dv.getUint32(at + 4, true);
+  const uncompressed = form.wide
+    ? u64(dv, at + 12)
+    : dv.getUint32(at + 8, true);
+  return (
+    dv.getUint32(at, true) === entry.crc &&
+    compressed === entry.compressed &&
+    uncompressed === entry.uncompressed
+  );
+}
+
 /**
- * Extractors that stream (libarchive, `tar -tf`) name entries from the local
- * headers, so each must repeat its central name byte for byte, and its own
- * Unicode Path must pass the same name rules.
+ * Streaming extractors (libarchive, `tar -tf`) walk the local records, so the
+ * listed records must tile [0, central directory) exactly: each local header
+ * repeats its central name, CRC and sizes (or, with bit 3, a descriptor does),
+ * and no byte is left over for an unlisted entry to hide in.
  */
 async function inspectLocalHeaders(
   read: RangeReader,
@@ -495,31 +564,54 @@ async function inspectLocalHeaders(
 ): Promise<void> {
   const mismatch = (entry: CentralEntry, detail: string) =>
     new ZipFault("LOCAL_HEADER_MISMATCH", `${entry.name} (${detail})`);
-  // One over-read per header usually covers its name and extra; a longer extra gets a second read.
-  const first = await readSpans(
-    read,
-    entries.map((e) => ({
-      start: e.localOffset,
-      endInclusive:
-        Math.min(
-          dirOffset,
-          e.localOffset +
-            LOCAL_HEADER_BYTES +
-            2 * e.rawName.length +
-            LOCAL_EXTRA_SLACK,
-        ) - 1,
-    })),
-  );
-  const tails: Array<{ entry: CentralEntry; nameLen: number; span: Span }> = [];
+  const unlisted = (detail: string) => new ZipFault("UNLISTED_DATA", detail);
+  const sorted = [...entries].sort((a, b) => a.localOffset - b.localOffset);
+  const nextOffset = (i: number) =>
+    i + 1 < sorted.length ? sorted[i + 1].localOffset : dirOffset;
+  if (sorted[0].localOffset !== 0) {
+    throw unlisted("data before the first entry");
+  }
+  sorted.forEach((e, i) => {
+    if (nextOffset(i) - e.localOffset < LOCAL_HEADER_BYTES) {
+      throw unlisted(`${e.name} overlaps the next entry`);
+    }
+  });
+  // One over-read per header usually covers its name and extra; a descriptor
+  // is read from the tail of its record, which abuts the next header's window.
+  const spans: Span[] = sorted.map((e, i) => ({
+    start: e.localOffset,
+    endInclusive:
+      Math.min(
+        nextOffset(i),
+        e.localOffset +
+          LOCAL_HEADER_BYTES +
+          2 * e.rawName.length +
+          LOCAL_EXTRA_SLACK,
+      ) - 1,
+  }));
+  sorted.forEach((e, i) => {
+    const end = nextOffset(i);
+    if (e.descriptor && end > e.localOffset) {
+      spans.push({
+        start: Math.max(e.localOffset, end - MAX_DESCRIPTOR_BYTES),
+        endInclusive: end - 1,
+      });
+    }
+  });
+  const first = await readSpans(read, spans);
+
+  const headerEnds = new Map<CentralEntry, number>();
+  const tails: Array<{ entry: CentralEntry; fixed: DataView; span: Span }> = [];
   const checkTail = (
     entry: CentralEntry,
-    nameLen: number,
+    fixed: DataView,
     tail: Uint8Array,
   ) => {
-    if (!sameBytes(tail.subarray(0, nameLen), entry.rawName)) {
+    const nameLen = entry.rawName.length;
+    const localRaw = tail.subarray(0, nameLen);
+    if (!sameBytes(localRaw, entry.rawName)) {
       throw mismatch(entry, "name differs");
     }
-    const localRaw = tail.subarray(0, nameLen);
     const fields = extraFields(
       new DataView(
         tail.buffer,
@@ -530,49 +622,79 @@ async function inspectLocalHeaders(
     );
     const unicodeName = unicodePath(fields, localRaw);
     if (unicodeName !== null) policeNames([unicodeName], options);
+    if (!entry.descriptor) {
+      const local = localSizes(fixed, fields);
+      if (
+        local.crc !== entry.crc ||
+        local.compressed !== entry.compressed ||
+        local.uncompressed !== entry.uncompressed
+      ) {
+        throw mismatch(entry, "sizes differ");
+      }
+    }
   };
-  for (const entry of entries) {
+  sorted.forEach((entry, i) => {
     const fixed = bytesAt(first, entry.localOffset, LOCAL_HEADER_BYTES);
-    if (!fixed) throw mismatch(entry, "header outside the archive");
+    if (!fixed) throw unlisted(`${entry.name} overlaps the next entry`);
     const dv = view(fixed);
     if (dv.getUint32(0, true) !== LOCAL_HEADER_SIG) {
       throw mismatch(entry, "bad signature");
+    }
+    if (((dv.getUint16(6, true) & 0x0008) !== 0) !== entry.descriptor) {
+      throw mismatch(entry, "descriptor flag differs");
     }
     const nameLen = dv.getUint16(26, true);
     const extraLen = dv.getUint16(28, true);
     if (nameLen !== entry.rawName.length) throw mismatch(entry, "name differs");
     const tailStart = entry.localOffset + LOCAL_HEADER_BYTES;
-    if (tailStart + nameLen + extraLen > dirOffset) {
-      throw mismatch(entry, "header outside the archive");
+    const headerEnd = tailStart + nameLen + extraLen;
+    if (headerEnd > nextOffset(i)) {
+      throw unlisted(`${entry.name} overlaps the next entry`);
     }
+    headerEnds.set(entry, headerEnd);
     const tail = bytesAt(first, tailStart, nameLen + extraLen);
     if (tail) {
-      checkTail(entry, nameLen, tail);
+      checkTail(entry, dv, tail);
     } else {
       tails.push({
         entry,
-        nameLen,
-        span: {
-          start: tailStart,
-          endInclusive: tailStart + nameLen + extraLen - 1,
-        },
+        fixed: dv,
+        span: { start: tailStart, endInclusive: headerEnd - 1 },
       });
     }
-  }
-  if (tails.length === 0) return;
-  const second = await readSpans(
-    read,
-    tails.map((t) => t.span),
-  );
-  for (const { entry, nameLen, span } of tails) {
-    const tail = bytesAt(
-      second,
-      span.start,
-      span.endInclusive - span.start + 1,
+  });
+  if (tails.length > 0) {
+    const second = await readSpans(
+      read,
+      tails.map((t) => t.span),
     );
-    if (!tail) throw mismatch(entry, "header outside the archive");
-    checkTail(entry, nameLen, tail);
+    for (const { entry, fixed, span } of tails) {
+      const tail = bytesAt(
+        second,
+        span.start,
+        span.endInclusive - span.start + 1,
+      );
+      if (!tail) throw mismatch(entry, "header outside the archive");
+      checkTail(entry, fixed, tail);
+    }
   }
+
+  // Header, data, then for bit 3 a descriptor, must reach the next record exactly.
+  sorted.forEach((entry, i) => {
+    const dataEnd = (headerEnds.get(entry) ?? 0) + entry.compressed;
+    const gap = nextOffset(i) - dataEnd;
+    if (!entry.descriptor) {
+      if (gap !== 0) throw unlisted(`${gap} bytes after ${entry.name}`);
+      return;
+    }
+    if (!DESCRIPTOR_FORMS.has(gap)) {
+      throw unlisted(`${gap} bytes after ${entry.name}`);
+    }
+    const bytes = bytesAt(first, dataEnd, gap);
+    if (!bytes || !descriptorMatches(bytes, entry)) {
+      throw mismatch(entry, "data descriptor differs");
+    }
+  });
 }
 
 /**

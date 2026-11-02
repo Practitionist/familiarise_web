@@ -22,6 +22,12 @@ interface Entry {
   /** Local-header name and extra field, when they differ from the central ones. */
   localName?: string;
   localExtra?: Buffer;
+  /** The compressed size the local header claims, when it lies. */
+  localCompressed?: number;
+  /** Sizes trail the data in a descriptor (bit 3), with or without its signature. */
+  descriptor?: "signed" | "unsigned";
+  /** A local record the central directory does not list. */
+  hidden?: boolean;
 }
 
 /** A structurally valid archive; entry data is zero filler of the compressed size. */
@@ -29,28 +35,52 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
+  let listed = 0;
   for (const e of entries) {
     const name = Buffer.from(e.name, "utf8");
     const compressed = e.compressed ?? 16;
     const uncompressed = e.uncompressed ?? compressed;
     const localName = Buffer.from(e.localName ?? e.name, "utf8");
     const localExtra = e.localExtra ?? Buffer.alloc(0);
+    const flags = (e.flags ?? 0x0800) | (e.descriptor ? 0x0008 : 0);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(e.flags ?? 0x0800, 6);
+    local.writeUInt16LE(flags, 6);
     local.writeUInt16LE(8, 8);
-    local.writeUInt32LE(compressed, 18);
-    local.writeUInt32LE(uncompressed, 22);
+    local.writeUInt32LE(
+      e.descriptor ? 0 : (e.localCompressed ?? compressed),
+      18,
+    );
+    local.writeUInt32LE(e.descriptor ? 0 : uncompressed, 22);
     local.writeUInt16LE(localName.length, 26);
     local.writeUInt16LE(localExtra.length, 28);
     const data = Buffer.alloc(compressed);
-    locals.push(local, localName, localExtra, data);
+    const descriptor = Buffer.alloc(
+      e.descriptor === "signed" ? 16 : e.descriptor ? 12 : 0,
+    );
+    if (e.descriptor) {
+      const at = e.descriptor === "signed" ? 4 : 0;
+      if (at) descriptor.writeUInt32LE(0x08074b50, 0);
+      descriptor.writeUInt32LE(compressed, at + 4);
+      descriptor.writeUInt32LE(uncompressed, at + 8);
+    }
+    locals.push(local, localName, localExtra, data, descriptor);
+    const recordBytes =
+      30 +
+      localName.length +
+      localExtra.length +
+      compressed +
+      descriptor.length;
+    if (e.hidden) {
+      offset += recordBytes;
+      continue;
+    }
 
     const extra = e.extra ?? Buffer.alloc(0);
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(e.madeBy ?? 20, 4);
-    central.writeUInt16LE(e.flags ?? 0x0800, 8);
+    central.writeUInt16LE(flags, 8);
     central.writeUInt16LE(8, 10);
     central.writeUInt32LE(compressed, 20);
     central.writeUInt32LE(uncompressed, 24);
@@ -59,13 +89,14 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
     central.writeUInt32LE(e.externalAttrs ?? 0, 38);
     central.writeUInt32LE(offset, 42);
     centrals.push(central, name, extra);
-    offset += 30 + localName.length + localExtra.length + compressed;
+    listed += 1;
+    offset += recordBytes;
   }
   const cd = Buffer.concat(centrals);
   const eocd = Buffer.alloc(22);
   eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(entries.length, 8);
-  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt16LE(listed, 8);
+  eocd.writeUInt16LE(listed, 10);
   eocd.writeUInt32LE(cd.length, 12);
   eocd.writeUInt32LE(offset, 16);
   eocd.writeUInt16LE(comment.length, 20);
@@ -275,6 +306,35 @@ it("requires each local header to repeat its central name and polices its Unicod
       ]),
     ),
   ).resolves.toMatchObject({ ok: true, entries: 2 });
+
+  // Every byte before the central directory belongs to a listed record.
+  await expect(
+    inspect(
+      buildZip([{ name: "notes.txt" }, { name: "payload.exe", hidden: true }]),
+    ),
+  ).resolves.toMatchObject({ ok: false, problem: "UNLISTED_DATA" });
+  await expect(
+    inspect(
+      buildZip([{ name: "notes.txt", compressed: 4096, localCompressed: 16 }]),
+    ),
+  ).resolves.toMatchObject({ ok: false, problem: "LOCAL_HEADER_MISMATCH" });
+  for (const descriptor of ["signed", "unsigned"] as const) {
+    await expect(
+      inspect(
+        buildZip([
+          { name: "a.txt", descriptor },
+          { name: "b.txt", descriptor },
+        ]),
+      ),
+    ).resolves.toMatchObject({ ok: true, entries: 2 });
+  }
+  // A descriptor that disagrees with the central sizes is refused.
+  const lying = buildZip([{ name: "a.txt", descriptor: "signed" }]);
+  lying.writeUInt32LE(99, 30 + 5 + 16 + 8);
+  await expect(inspect(lying)).resolves.toMatchObject({
+    ok: false,
+    problem: "LOCAL_HEADER_MISMATCH",
+  });
 
   // 1,000 entries of 4 KiB: the tail, the central directory, then coalesced 1 MiB local reads.
   const zip = buildZip(
