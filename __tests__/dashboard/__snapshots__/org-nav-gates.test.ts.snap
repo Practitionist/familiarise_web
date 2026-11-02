@@ -1,0 +1,1668 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`every role × capability × suspension × profile keeps its item set 1`] = `
+{
+  "BILLING_ADMIN · - · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "BILLING_ADMIN · - · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "BILLING_ADMIN · - · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "BILLING_ADMIN · - · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "BILLING_ADMIN · - · host · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "payouts",
+    ],
+    "paths": [
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "support",
+    ],
+  },
+  "BILLING_ADMIN · - · host · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "payouts",
+    ],
+    "paths": [
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "requests",
+      "support",
+    ],
+  },
+  "BILLING_ADMIN · - · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "BILLING_ADMIN · - · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "BILLING_ADMIN · sponsor · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "billing",
+    ],
+    "paths": [
+      "appointments",
+      "audit",
+      "billing",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "programs",
+      "support",
+    ],
+  },
+  "BILLING_ADMIN · sponsor · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "billing",
+    ],
+    "paths": [
+      "appointments",
+      "audit",
+      "billing",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "programs",
+      "support",
+    ],
+  },
+  "BILLING_ADMIN · sponsor · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "BILLING_ADMIN · sponsor · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "BILLING_ADMIN · sponsor · host · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "billing",
+    ],
+    "paths": [
+      "appointments",
+      "audit",
+      "billing",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "programs",
+      "support",
+    ],
+  },
+  "BILLING_ADMIN · sponsor · host · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "billing",
+    ],
+    "paths": [
+      "appointments",
+      "audit",
+      "billing",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "programs",
+      "requests",
+      "support",
+    ],
+  },
+  "BILLING_ADMIN · sponsor · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "BILLING_ADMIN · sponsor · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "EXPERT · - · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "EXPERT · - · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "EXPERT · - · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "EXPERT · - · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "EXPERT · - · host · active · -": {
+    "mobileTabs": [
+      "compensation",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "collaborations",
+      "compensation",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "EXPERT · - · host · active · delivers": {
+    "mobileTabs": [
+      "compensation",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "collaborations",
+      "compensation",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "requests",
+      "support",
+    ],
+  },
+  "EXPERT · - · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "EXPERT · - · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "EXPERT · sponsor · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "EXPERT · sponsor · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "EXPERT · sponsor · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "EXPERT · sponsor · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "EXPERT · sponsor · host · active · -": {
+    "mobileTabs": [
+      "compensation",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "collaborations",
+      "compensation",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "EXPERT · sponsor · host · active · delivers": {
+    "mobileTabs": [
+      "compensation",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "collaborations",
+      "compensation",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "requests",
+      "support",
+    ],
+  },
+  "EXPERT · sponsor · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "EXPERT · sponsor · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "LEARNER · - · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "LEARNER · - · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "LEARNER · - · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "LEARNER · - · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "LEARNER · - · host · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "LEARNER · - · host · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "requests",
+      "support",
+    ],
+  },
+  "LEARNER · - · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "LEARNER · - · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "LEARNER · sponsor · - · active · -": {
+    "mobileTabs": [
+      "my-program",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "my-program",
+      "support",
+    ],
+  },
+  "LEARNER · sponsor · - · active · delivers": {
+    "mobileTabs": [
+      "my-program",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "my-program",
+      "support",
+    ],
+  },
+  "LEARNER · sponsor · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "LEARNER · sponsor · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "LEARNER · sponsor · host · active · -": {
+    "mobileTabs": [
+      "my-program",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "my-program",
+      "support",
+    ],
+  },
+  "LEARNER · sponsor · host · active · delivers": {
+    "mobileTabs": [
+      "my-program",
+      "appointments",
+      "messages",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "my-program",
+      "requests",
+      "support",
+    ],
+  },
+  "LEARNER · sponsor · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "LEARNER · sponsor · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MAINTAINER · - · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "MAINTAINER · - · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "MAINTAINER · - · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MAINTAINER · - · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MAINTAINER · - · host · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "payouts",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "catalog",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "support",
+    ],
+  },
+  "MAINTAINER · - · host · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "payouts",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "catalog",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "requests",
+      "support",
+    ],
+  },
+  "MAINTAINER · - · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MAINTAINER · - · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MAINTAINER · sponsor · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "consent",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "programs",
+      "support",
+    ],
+  },
+  "MAINTAINER · sponsor · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "consent",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "programs",
+      "support",
+    ],
+  },
+  "MAINTAINER · sponsor · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MAINTAINER · sponsor · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MAINTAINER · sponsor · host · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "catalog",
+      "consent",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "programs",
+      "support",
+    ],
+  },
+  "MAINTAINER · sponsor · host · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "catalog",
+      "consent",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "programs",
+      "requests",
+      "support",
+    ],
+  },
+  "MAINTAINER · sponsor · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MAINTAINER · sponsor · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MANAGER · - · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "MANAGER · - · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "MANAGER · - · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MANAGER · - · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MANAGER · - · host · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "catalog",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "MANAGER · - · host · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "catalog",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "requests",
+      "support",
+    ],
+  },
+  "MANAGER · - · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MANAGER · - · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MANAGER · sponsor · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "programs",
+      "support",
+    ],
+  },
+  "MANAGER · sponsor · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "programs",
+      "support",
+    ],
+  },
+  "MANAGER · sponsor · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MANAGER · sponsor · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MANAGER · sponsor · host · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "catalog",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "programs",
+      "support",
+    ],
+  },
+  "MANAGER · sponsor · host · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "catalog",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "programs",
+      "requests",
+      "support",
+    ],
+  },
+  "MANAGER · sponsor · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "MANAGER · sponsor · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "OWNER · - · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "OWNER · - · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "OWNER · - · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "OWNER · - · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "OWNER · - · host · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "payouts",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "catalog",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "support",
+    ],
+  },
+  "OWNER · - · host · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "payouts",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "catalog",
+      "consent",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "requests",
+      "support",
+    ],
+  },
+  "OWNER · - · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "OWNER · - · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "OWNER · sponsor · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "consent",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "programs",
+      "support",
+    ],
+  },
+  "OWNER · sponsor · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "consent",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "programs",
+      "support",
+    ],
+  },
+  "OWNER · sponsor · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "OWNER · sponsor · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "OWNER · sponsor · host · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "catalog",
+      "consent",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "programs",
+      "support",
+    ],
+  },
+  "OWNER · sponsor · host · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+      "billing",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "billing",
+      "catalog",
+      "consent",
+      "contracts",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "payouts",
+      "programs",
+      "requests",
+      "support",
+    ],
+  },
+  "OWNER · sponsor · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "OWNER · sponsor · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "SUPPORT · - · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "SUPPORT · - · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "SUPPORT · - · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "SUPPORT · - · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "SUPPORT · - · host · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "SUPPORT · - · host · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "requests",
+      "support",
+    ],
+  },
+  "SUPPORT · - · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "SUPPORT · - · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "SUPPORT · sponsor · - · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "SUPPORT · sponsor · - · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "SUPPORT · sponsor · - · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "SUPPORT · sponsor · - · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "SUPPORT · sponsor · host · active · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "support",
+    ],
+  },
+  "SUPPORT · sponsor · host · active · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+      "members",
+    ],
+    "paths": [
+      "analytics",
+      "appointments",
+      "audit",
+      "home",
+      "library",
+      "members",
+      "messages",
+      "requests",
+      "support",
+    ],
+  },
+  "SUPPORT · sponsor · host · suspended · -": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+  "SUPPORT · sponsor · host · suspended · delivers": {
+    "mobileTabs": [
+      "home",
+      "appointments",
+    ],
+    "paths": [
+      "appointments",
+      "home",
+      "library",
+    ],
+  },
+}
+`;
