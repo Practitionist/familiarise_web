@@ -221,9 +221,7 @@ export function CatalogClient({
             {
               value: "webinars",
               label: "Webinars",
-              content: blocked ? (
-                noExperts
-              ) : (
+              content: (
                 <CatalogPanel
                   kind="WEBINAR"
                   rows={data?.webinars ?? []}
@@ -233,15 +231,14 @@ export function CatalogClient({
                   onToggleArchive={archiveWebinar}
                   isMutating={setArchived.isPending}
                   expertNamesById={expertNamesById}
+                  blocked={blocked ? noExperts : undefined}
                 />
               ),
             },
             {
               value: "classes",
               label: "Classes",
-              content: blocked ? (
-                noExperts
-              ) : (
+              content: (
                 <CatalogPanel
                   kind="CLASS"
                   rows={data?.classes ?? []}
@@ -251,6 +248,7 @@ export function CatalogClient({
                   onToggleArchive={archiveClass}
                   isMutating={setArchived.isPending}
                   expertNamesById={expertNamesById}
+                  blocked={blocked ? noExperts : undefined}
                 />
               ),
             },

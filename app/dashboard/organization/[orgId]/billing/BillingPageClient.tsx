@@ -1,6 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+
+import { useScrollToHashOnReady } from "@/hooks/useScrollToHashOnReady";
 import { FileText, Lock } from "lucide-react";
 
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
@@ -104,6 +106,11 @@ export function BillingPageClient({
   const invoicePaymentBlocked =
     org?.status === "PENDING_VERIFICATION" || org?.status === "SUSPENDED";
   const invoicePaymentReason = resolveInvoicePaymentBlockReason(org?.status);
+
+  // Both stacked sections sit under panels fed by the billing summary.
+  const sectionsReady = allowed && summary.isSuccess;
+  useScrollToHashOnReady("accrued-usage", sectionsReady);
+  useScrollToHashOnReady("license", sectionsReady);
 
   if (!allowed) return null;
 

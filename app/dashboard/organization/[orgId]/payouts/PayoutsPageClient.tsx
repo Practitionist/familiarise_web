@@ -68,7 +68,7 @@ export function PayoutsPageClient({
                     livePayoutsEnabled={livePayoutsEnabled}
                   />
                   <Section id="earnings" title="Earnings">
-                    <OrgEarningsPanel orgId={orgId} />
+                    <OrgEarningsPanel orgId={orgId} anchorId="earnings" />
                   </Section>
                 </>
               ),
@@ -99,6 +99,7 @@ export function PayoutsPageClient({
                     <ExpertPayoutRoutingPanel
                       orgId={orgId}
                       canManage={can("members.payoutRecipient.change")}
+                      anchorId="expert-routing"
                     />
                   </Section>
                 </>

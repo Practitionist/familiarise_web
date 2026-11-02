@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Library, Archive, Undo2, Loader2 } from "lucide-react";
 
 import { EmptyState } from "@/components/dashboard/DataCard";
@@ -78,6 +78,7 @@ export function CatalogPanel({
   onToggleArchive,
   isMutating,
   expertNamesById,
+  blocked,
 }: Readonly<{
   kind: Kind;
   rows: CatalogRow[];
@@ -87,6 +88,8 @@ export function CatalogPanel({
   onToggleArchive: (planId: string, restore: boolean) => void;
   isMutating: boolean;
   expertNamesById?: Record<string, string>;
+  /** Replaces the live list when nobody can deliver; Archived still opens. */
+  blocked?: ReactNode;
 }>) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
     initialArchived ? "ARCHIVED" : "ALL",
@@ -201,6 +204,7 @@ export function CatalogPanel({
   );
 
   if (isLoading) {
+    if (blocked) return blocked;
     return (
       <div className="flex items-center justify-center py-12 text-muted-foreground">
         <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -219,6 +223,8 @@ export function CatalogPanel({
     );
   }
 
+  if (blocked && !hasArchived) return blocked;
+
   if (rows.length === 0) {
     return (
       <EmptyState
@@ -234,9 +240,9 @@ export function CatalogPanel({
       <div className="flex flex-wrap items-center gap-1.5">
         {(
           [
-            { value: "ALL", label: "All statuses", show: true },
-            { value: "PUBLISHED", label: "Published", show: true },
-            { value: "DRAFT", label: "Drafts", show: true },
+            { value: "ALL", label: "All statuses", show: !blocked },
+            { value: "PUBLISHED", label: "Published", show: !blocked },
+            { value: "DRAFT", label: "Drafts", show: !blocked },
             { value: "ARCHIVED", label: "Archived", show: hasArchived },
           ] as const
         )
@@ -249,18 +255,29 @@ export function CatalogPanel({
               variant={filter === opt.value ? "secondary" : "ghost"}
               aria-pressed={filter === opt.value}
               className="h-7 px-2.5 text-xs"
-              onClick={() => setStatusFilter(opt.value)}
+              // Archived toggles: a second press returns to the live list.
+              onClick={() =>
+                setStatusFilter(
+                  opt.value === "ARCHIVED" && filter === "ARCHIVED"
+                    ? "ALL"
+                    : opt.value,
+                )
+              }
             >
               {opt.label}
             </Button>
           ))}
       </div>
-      <ResponsiveTable
-        columns={columns}
-        rows={filteredRows}
-        getRowId={(r) => r.id}
-        empty="No offerings match the selected status filter."
-      />
+      {blocked && filter !== "ARCHIVED" ? (
+        blocked
+      ) : (
+        <ResponsiveTable
+          columns={columns}
+          rows={filteredRows}
+          getRowId={(r) => r.id}
+          empty="No offerings match the selected status filter."
+        />
+      )}
     </div>
   );
 }
