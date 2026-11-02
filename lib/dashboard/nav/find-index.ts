@@ -49,6 +49,7 @@ const SYNONYMS: Record<string, string[]> = {
   programs: ["offerings", "webinars", "classes", "cohorts"],
   products: ["offerings", "digital products", "replays", "downloads"],
   collaborations: ["co-host", "invitations", "collaborators"],
+  collaborators: ["co-host", "invitations", "collaborations"],
   analytics: ["reports", "metrics", "stats"],
   audit: ["log", "history"],
   settings: ["preferences", "account", "configure"],

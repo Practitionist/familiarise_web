@@ -44,16 +44,25 @@ Each tree is built by a pure function, so the groups below are what the sidebar 
 
 ### Organization (`buildOrganizationNav`)
 
-Items appear only when the viewer's role and the organization's capabilities pass the same gates the pages check.
+Items appear only when the viewer's role and the organization's capabilities pass the same gates the pages check. The regrouping moved items between groups without changing any gate.
 
-- Top: Overview, My Program, Compensation, Appointments, Messages, Booking requests, Plan collaborators
-- Library (one unlabelled item, so the group does not restate it)
-- People: Members
-- Sponsorship: Programs, Contracts
-- Hosting: Catalog (icon `LayoutGrid`)
-- Money: Billing, Payouts
-- Operations: Help & support
-- Insights: Analytics, Audit, Consent
+| Group          | Items and their gates                                                                                                                                                                                                                          |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Overview       | Every member                                                                                                                                                                                                                                   |
+| My work        | My Program (`myProgram.read` and `canSponsor`), Compensation (`myArrangement.read` and `canHost`), Appointments (every member), Booking requests (a consultant profile and `canHost`), Plan collaborators (`myArrangement.read` and `canHost`) |
+| Messages       | Every member                                                                                                                                                                                                                                   |
+| Library        | Every member, one unlabelled item so the group does not restate it                                                                                                                                                                             |
+| People         | Members (`members.directory`)                                                                                                                                                                                                                  |
+| Sponsor        | Programs (`programs.read`), Contracts (`contracts.read`), Billing (`billing.read`), each also needing `canSponsor`                                                                                                                             |
+| Host           | Catalog (`catalog.manage`, icon `LayoutGrid`), Collaborators (`catalog.manage`), Payouts (`payouts.read`), each also needing `canHost`                                                                                                         |
+| Insights       | Analytics (`operations.read`), Audit (`audit.read`), Consent (`consent.read`)                                                                                                                                                                  |
+| Help & support | Every member; the page is the organization's triage, and each of its tabs carries its own gate                                                                                                                                                 |
+
+My work has five items, one more than the usual limit of about four, because every item in it is gated and most members see two or three of them. A learner on a sponsoring organization sees My Program and Appointments; an expert on a hosting organization sees Compensation, Appointments and Plan collaborators, plus Booking requests with a consultant profile.
+
+Plan collaborators (`collaborations`) and Collaborators (`collaborators`) are two pages over the same `InvitationsPanel`. Plan collaborators is an expert's own plans and invitations, and its page admits anyone who delivers for the organization (`deliversForOrg`). Collaborators is every plan the organization hosts, whoever delivers it, read-only, behind Catalog's gate. No current role holds both `catalog.manage` and `myArrangement.read`, so nobody sees both items.
+
+The phone tabs did not change: operators get Overview, Appointments, Members and Billing or Payouts, and members get their own landing page, Appointments and Messages (`organizationMobileTabs`). `__tests__/dashboard/org-nav-gates.test.ts` snapshots the visible item set and phone tabs for every role, capability, suspension and consultant-profile combination (112 in all); the only difference since the regrouping is the Collaborators item, which appears exactly where Catalog does.
 
 Organization settings is not a rail item. It opens from the avatar menu and from the mobile Menu sheet, which always lists the row for any role that holds a settings section (`canOpenOrgSettings`). A suspended member sees Overview, Appointments and Library only.
 
@@ -96,6 +105,37 @@ Replay sales are closed, so there is no listing editor. The Replays tab lists th
 
 The **+ New** picker (`NewOfferingMenu`) offers 1:1 consultation, subscription, webinar, class and digital product. Each opens the existing editor at `offerings/<kind>/new`; editing stays at `offerings/<kind>/<id>/edit`. After a save the editors return to the Sell page and tab that lists that kind (`sellHomeHref()`), and an editor's `offerings` and `<kind>` breadcrumbs open that list too (`sellHomePath()`).
 
+## Organization page tabs
+
+No organization page shows more than three tabs. Billing and Payouts render through `TabsWithOverflow` (`components/dashboard/shared/TabsWithOverflow.tsx`), which keeps the active tab in `?tab=` like `UrlTabs`, shows the first three tabs the viewer can see, and lists the rest in a **More** menu beside the tab list. The menu is a Radix dropdown, so it opens with Enter, Space or the arrow keys and closes with Escape; while an overflow tab is open the button shows that tab's name. Each tab keeps its old gate, and a merged tab stacks the old panels, unchanged, one after the other.
+
+| Page    | Tab (`?tab=`)                       | What it shows, and when                                                                                                                                                                |
+| ------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Billing | Invoices & usage (`invoices`)       | Invoices, always; then Accrued usage (`#accrued-usage`) when the organization is on INVOICE funding or has accrued postings                                                            |
+| Billing | Wallet & licence (`wallet`)         | The wallet on WALLET funding, or the annual licence (`#license`) on LICENSE funding; hidden on the other rails                                                                         |
+| Billing | Purchase orders (`purchase-orders`) | When the organization requires purchase orders and the viewer holds `purchaseOrders.read`                                                                                              |
+| Billing | Payment disputes (`disputes`)       | With `disputes.read`; under More when three tabs are already showing                                                                                                                   |
+| Billing | Member spend (`member-spend`)       | On PERSONAL funding with `reimbursements.read`; under More when three tabs are already showing                                                                                         |
+| Payouts | Runs & earnings (`runs`)            | Payout runs, then Earnings (`#earnings`)                                                                                                                                               |
+| Payouts | Payout account (`payout-account`)   | The bank account; only `payouts.account.manage` edits it                                                                                                                               |
+| Payouts | Rate cards & routing (`rate-cards`) | Rate cards, then Expert routing (`#expert-routing`)                                                                                                                                    |
+| Catalog | Webinars, Classes, Materials        | Webinars and Classes list live plans with status chips (All statuses, Published, Drafts) and an Archived chip once something has been withdrawn; `?status=archived` opens on that chip |
+
+For example, a WALLET-funded organization that requires purchase orders shows an OWNER Invoices & usage, Wallet & licence and Purchase orders, with Payment disputes under More. An INVOICE-funded organization without purchase orders shows the same OWNER Invoices & usage and Payment disputes, and no More menu.
+
+Every `?tab=` value these pages have ever answered is listed in `ORG_PAGE_TAB_MAP` (`lib/dashboard/org-tab-redirect.ts`). Each page parses `?tab=` through that page's `z.enum` in `orgLegacyTabHref()` and answers a 308 when the value is retired; a current value, a missing one or an unknown one renders the page, which opens its first visible tab.
+
+| Old URL                      | New URL                                 |
+| ---------------------------- | --------------------------------------- |
+| `billing?tab=accrued-usage`  | `billing?tab=invoices#accrued-usage`    |
+| `billing?tab=license`        | `billing?tab=wallet#license`            |
+| `payouts?tab=earnings`       | `payouts?tab=runs#earnings`             |
+| `payouts?tab=expert-routing` | `payouts?tab=rate-cards#expert-routing` |
+| `catalog?tab=archived`       | `catalog?status=archived`               |
+| `catalog?tab=collaborators`  | `collaborators`                         |
+
+The old `invoices`, `wallet`, `purchase-orders`, `disputes`, `member-spend`, `runs`, `payout-account`, `rate-cards`, `webinars`, `classes` and `materials` values are current tabs and stay as they are. Billing and payout emails and notifications link to the bare `billing` and `payouts` pages, so they open the first tab. The Overview's "Not yet invoiced" figure links to `billing?tab=invoices#accrued-usage`.
+
 ## Legacy redirects
 
 Every moved route answers a `permanentRedirect` (308) that keeps the old query and drops any stale `tab`. The personal routes are recorded in `lib/dashboard/personal-legacy-routes.ts` and the organization routes in `ORG_TAB_REDIRECTS` (`lib/dashboard/org-tab-redirect.ts`).
@@ -125,7 +165,7 @@ The support area is called Support cases wherever the viewer sees it: the first 
 1. Glossary and labels: renames only, no route moves (done).
 2. A shared buyer Library with Purchases, Session recordings and Session documents for every role that can buy (done).
 3. A consultant Studio group holding the hosted Recordings and Session documents, and the Sell grouping of offerings into sessions, group programs and products (done).
-4. The organization regrouping into My work, Sponsor and Host, with Billing and Payouts tabs merged to at most three visible plus a "More" menu.
+4. The organization regrouping into My work, Sponsor and Host, with Billing and Payouts tabs merged to at most three visible plus a "More" menu (done).
 5. Public pages: expert profile anchor tabs, a products index with replays, breadcrumbs and a public header account menu.
 
 ## Deprecated & Superseded Approaches
@@ -139,3 +179,7 @@ The Catalog item used the `Library` icon, which collided with the learner's Libr
 The expert's temporary "My purchases" item (`/dashboard/consultant/<id>/purchases`), the learner's Library group with Session documents, Session recordings and Digital products (`documents`, `recordings` and `products`), and the organization's two Library items (`documents` and `recordings`, with `OrgLibraryPage` rendering each) were replaced by the one Library page per role. The old URLs only redirect now; do not link to them or add pages under them.
 
 The consultant's single Offerings item (`offerings`, titled Offerings) held every kind behind a sub-tab bar (`OfferingsTabs`: My offerings, Digital products, Collaborations) and a type pill (All, 1:1, Subscriptions, Webinars, Classes). It was split into the Sell pages and the Collaborations page, and its Business, Library, Grow and Operations groups became Inbox, Calendar, Sell, Studio, Reputation & growth and Settings & help. `/collaborations` used to redirect to Offerings › Collaborations; it is the real page now. The Offerings list URLs only redirect; link to `sell/*` or `collaborations` instead.
+
+The organization rail used to group its items as an unlabelled top group (Overview, My Program, Compensation, Appointments, Messages, Booking requests, Plan collaborators), Library, People, Sponsorship (Programs, Contracts), Hosting (Catalog), Money (Billing, Payouts), Operations (Help & support) and Insights. Those became Overview, My work, Messages, Library, People, Sponsor, Host, Insights and Help & support, with every gate unchanged.
+
+Org Billing used to show up to seven tabs (Invoices, Accrued usage, Wallet, License, Purchase orders, Payment disputes, Member spend), and Payouts showed five (Runs, Earnings, Payout account, Rate cards, Expert routing). They merged into the tabs above. Catalog used to carry Archived and Collaborators tabs; Archived is now a status chip inside the lists, and Collaborators is its own Host item. The retired `?tab=` values only redirect now; do not link to them.
