@@ -60,7 +60,10 @@ import {
   addUserToEventChannel,
   isEventParticipant,
 } from "@/lib/stream/event-channel-service";
-import { getStreamChatClient } from "@/lib/stream-client";
+import {
+  getStreamChatClient,
+  withStreamCircuitBreaker,
+} from "@/lib/stream-client";
 import { getDmChannelId } from "@/lib/stream-utils";
 import { readDmChannel } from "@/lib/stream/dm-channel-read";
 import { streamLogger } from "@/lib/stream-logger";
@@ -154,6 +157,25 @@ async function handleCollabChannelOpen(
     .addMembers([userId])
     .catch(() => {});
   return NextResponse.json({ channelType: "messaging", channelId });
+}
+
+/** A conversation the caller removed from their list comes back when they open it. */
+async function showForCaller(
+  channelType: "messaging" | "team",
+  channelId: string,
+  userId: string,
+) {
+  try {
+    await withStreamCircuitBreaker(() =>
+      getStreamChatClient().channel(channelType, channelId).show(userId),
+    );
+  } catch (error) {
+    streamLogger.warn("Could not show a reopened conversation", {
+      userId,
+      channelId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function resolveDmOrganizationId(
@@ -250,9 +272,16 @@ async function handleDmChannelOpen(
           () => false,
         );
   if (ready) {
+    const readyChannelId = getDmChannelId(
+      userId,
+      counterpartyUserId,
+      organizationId,
+    );
+    // A DM the caller only hid still holds both people, so it lands here: show it.
+    await showForCaller("messaging", readyChannelId, userId);
     return NextResponse.json({
       channelType: "messaging",
-      channelId: getDmChannelId(userId, counterpartyUserId, organizationId),
+      channelId: readyChannelId,
     });
   }
 
@@ -261,6 +290,16 @@ async function handleDmChannelOpen(
     counterpartyUserId,
     organizationId,
   );
+
+  // Someone who left or deleted the thread keeps their eligibility, but `create()`
+  // only seeds a channel that is new. Re-adding both is idempotent for anyone
+  // already in, and the history comes back with them.
+  await withStreamCircuitBreaker(() =>
+    getStreamChatClient()
+      .channel("messaging", channelId)
+      .addMembers([userId, counterpartyUserId]),
+  );
+  await showForCaller("messaging", channelId, userId);
 
   return NextResponse.json({ channelType: "messaging", channelId });
 }
@@ -298,6 +337,7 @@ async function handleEventChannelOpen(
     eventType === "webinar"
       ? `${WEBINAR_PREFIX}${eventId}`
       : `${CLASS_PREFIX}${eventId}`;
+  await showForCaller("team", channelId, userId);
   return NextResponse.json({ channelType: "team", channelId });
 }
 

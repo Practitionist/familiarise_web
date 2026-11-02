@@ -207,3 +207,31 @@ Stream app (#1134 P0-6), which is why the grants script defaults to a dry run.
 ---
 
 Addendum (2026-09-14): `SlotOfAppointment` is `AppointmentOccurrence` since #1554.
+
+Addendum (2026-10-30): the Messages search offers exactly what `/open` accepts.
+`GET /api/stream/channels/search-appointments` reads the same
+`DM_ELIGIBLE_STATUSES` and `excludeTrialBooking()` as `pairBookingContexts`; before
+this it listed trial bookings that `/open` refused with a 403. It matches only the
+_other_ party: a consultee's query reaches the consultant's name, a consultant's
+reaches the consultee's name or email, and a consultee never matches or sees a
+consultant's email through this route. (Stream's own channel payload still carries
+member emails to other members; that is tracked in issue #2525.) It also matches plan title, an event host's name and the
+calendar day of a live session (`lib/stream/search-date.ts`, in the viewer's zone
+from the `tz` parameter). The sidebar narrows its loaded chats from the same term in
+the browser, and the dropdown leaves out rows that list already shows. Message-text
+search is deliberately absent; it is tracked in issue #2469.
+
+Leaving or deleting a thread never ends the connection. `POST /api/stream/channels/open`
+re-adds both people to the pair's existing DM (idempotent for anyone already in) and
+shows it again if the caller had hidden it, so searching for them and clicking restores
+the same thread with its history; the amendment above relies on this as the recovery
+path. Search and the picker offer only people the viewer shares a consultation or
+subscription with, so a DM that exists only through a webinar or class link is not
+offered after a removal and returns with its next message or a deep link. There is no leaving a 1:1 and no partial history clear, by choice: a thread is one
+shared record. "Remove from list" is a per-user hide that keeps the history and returns
+on the next message, and pinning is per user too. Both run server-side through
+`POST /api/stream/channels/preference`, gated on the caller being a member. Conversations
+are listed above Channels, `+` opens a picker of the people the caller can message
+(`mode=people` on the search route), and a frozen conversation says it is read-only
+instead of failing silently. Blocking is separate and not yet reversible or hidden from
+search (issue #2479).
