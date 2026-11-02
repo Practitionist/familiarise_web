@@ -28,6 +28,10 @@ jest.mock("../../lib/stream/recording-stream-delete", () => ({
   deleteStreamRecordingCopy: jest.fn(async () => ({ success: true })),
 }));
 
+jest.mock("../../lib/data/public-cache", () => ({
+  purgeRecordingSurfaces: jest.fn(),
+}));
+
 const mockRevokeUserToken = jest.fn(async () => ({}));
 const mockDeleteUsers = jest.fn(async () => ({}));
 let mockStreamConfigured = true;

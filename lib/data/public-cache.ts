@@ -86,9 +86,13 @@ export function purgeDigitalProductSurfaces(product: {
   revalidatePath("/explore/products");
 }
 
-/** A replay left the public listing or its listing changed: the Replays tab, its list cache and its page. */
-export function purgeRecordingSurfaces(slug?: string | null): void {
+/** Replays left the public listing or their listing changed: the Replays tab, its list cache and each detail page. */
+export function purgeRecordingSurfaces(
+  slugs: (string | null | undefined)[] = [],
+): void {
   revalidateTag(PUBLIC_RECORDINGS_TAG);
   revalidatePath("/explore/products");
-  if (slug) revalidatePath(`/explore/recordings/${slug}`);
+  for (const slug of new Set(slugs.filter(Boolean))) {
+    revalidatePath(`/explore/recordings/${slug}`);
+  }
 }

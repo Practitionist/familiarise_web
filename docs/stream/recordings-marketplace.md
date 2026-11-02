@@ -52,7 +52,7 @@ Refunds of a fulfilled purchase are support-led: support marks the row `REFUNDED
 
 ## Caching
 
-The Replays tab of `/explore/products` is rendered per request (the `?tab=` query makes the page dynamic) over `listPublicReplayCards()`, a 300-second data cache under the `recordings` tag. Unpublish (and publish, when it returns) calls `purgeRecordingSurfaces()` (`lib/data/public-cache.ts`), which clears the `recordings` tag and `/explore/products` (and the affected detail path) at the write site, so listing cards never outlive an unpublish by more than one request. The public list API also sends a short CDN `Cache-Control` (`s-maxage=60, stale-while-revalidate=300`).
+The Replays tab of `/explore/products` is rendered per request (the `?tab=` query makes the page dynamic) over `listPublicReplayCards()`, a 300-second data cache under the `recordings` tag. Unpublish (and publish, when it returns) and the unpublish step of a host's erasure (after the scrub transaction commits) call `purgeRecordingSurfaces()` (`lib/data/public-cache.ts`), which clears the `recordings` tag and `/explore/products` (and the affected detail path) at the write site, so listing cards never outlive an unpublish by more than one request. The public list API also sends a short CDN `Cache-Control` (`s-maxage=60, stale-while-revalidate=300`).
 
 ## Open items
 

@@ -57,6 +57,7 @@
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import type { Db } from "@/lib/prisma";
+import { purgeRecordingSurfaces } from "@/lib/data/public-cache";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -352,34 +353,42 @@ async function unpublishHostedGroupRecordingsOnErasure(
   userId: string,
   now: Date,
 ): Promise<void> {
+  let listedSlugs: (string | null)[] = [];
   if (db.recording?.updateMany) {
-    await db.recording.updateMany({
-      where: {
-        listingStatus: "PUBLISHED",
-        meeting: {
-          occurrence: {
-            appointment: {
-              OR: [
-                {
-                  webinar: {
-                    webinarPlan: { consultantProfile: { userId } },
-                  },
+    const where: Prisma.RecordingWhereInput = {
+      listingStatus: "PUBLISHED",
+      meeting: {
+        occurrence: {
+          appointment: {
+            OR: [
+              {
+                webinar: {
+                  webinarPlan: { consultantProfile: { userId } },
                 },
-                {
-                  class: {
-                    classPlan: { consultantProfile: { userId } },
-                  },
+              },
+              {
+                class: {
+                  classPlan: { consultantProfile: { userId } },
                 },
-              ],
-            },
+              },
+            ],
           },
         },
       },
+    };
+    const listed =
+      (await db.recording.findMany?.({
+        where,
+        select: { slug: true },
+      })) ?? [];
+    await db.recording.updateMany({
+      where,
       data: {
         listingStatus: "UNPUBLISHED",
         unpublishedAt: now,
       },
     });
+    if (Array.isArray(listed)) listedSlugs = listed.map((row) => row.slug);
   }
 
   if (db.recordingConsent?.updateMany) {
@@ -388,6 +397,9 @@ async function unpublishHostedGroupRecordingsOnErasure(
       data: { decision: "DECLINED", decidedAt: now },
     });
   }
+
+  // After the scrub transaction has committed, and last so a purge failure cannot skip the steps above.
+  if (listedSlugs.length > 0) purgeRecordingSurfaces(listedSlugs);
 }
 
 async function cleanupUserRecordingsOnErasure(

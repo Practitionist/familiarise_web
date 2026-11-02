@@ -33,7 +33,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     });
 
     // Take the replay off the public library immediately.
-    purgeRecordingSurfaces(updated.slug);
+    purgeRecordingSurfaces([updated.slug]);
 
     return NextResponse.json({ data: updated });
   }, "stream");
