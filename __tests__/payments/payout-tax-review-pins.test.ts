@@ -20,7 +20,7 @@ const mockConsumerNoteFindMany = jest.fn();
 // here it is configured, so the run proceeds.
 jest.mock("../../lib/pdf/supplier", () => ({
   ...jest.requireActual("../../lib/pdf/supplier"),
-  getPlatformSupplier: () => ({
+  platformSupplierForJob: () => ({
     name: "Practitionist (OPC) Private Limited",
     gstin: "06AAFCF1234Q1ZN",
     address:
