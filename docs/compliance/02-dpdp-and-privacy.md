@@ -79,7 +79,7 @@ The Digital Personal Data Protection Act 2023, with the **Digital Personal Data 
 
 ## Data inventory
 
-> 🟡 **This is one RoPA-style entry, not a record of processing activities.** No RoPA exists for the platform as a whole (Gap #12) and **no code reads one** — this is prose a human maintains, so it is only as good as the last time somebody edited it. Add one entry per processor.
+> 🟡 **These are RoPA-style entries, not a record of processing activities.** No RoPA exists for the platform as a whole (Gap #12) and **no code reads one** — this is prose a human maintains, so it is only as good as the last time somebody edited it. Add one entry per processor.
 
 ### Error monitoring — Sentry
 
@@ -95,6 +95,18 @@ The Digital Personal Data Protection Act 2023, with the **Digital Personal Data 
 | Pseudonym note      | `User.id` here is a **pseudonym, not an anonymous value**: the cuid → person mapping stays in our database and is not transferred. It is stable and unchangeable, so in the processor's copy it stays a usable link to the account until the event ages out or is deleted. That is exactly what makes Sentry harder to tear down than the other processors in Gap #3.                                                                                                                                                                              |
 | Contract            | **Missing** — no executed DPA / sub-processor agreement on file (Gap #11, Required H.5).                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Our right to delete | **Partial.** Deleting the user in our database does not delete events already delivered to the processor (Required H.8).                                                                                                                                                                                                                                                                                                                                                                                                                           |
+
+### Digital product files — Cloudflare R2
+
+| Field               | Value                                                                                                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Purpose             | Store the files an expert sells as a digital product and serve them to entitled buyers through short-lived signed URLs. See [digital products](../digital-products/01-architecture.md).                                                                                         |
+| Data subjects       | The selling expert (author of the files). Buyers are not in the bucket: their purchases, downloads and reports are Postgres rows (`DigitalProductPurchase`, `DigitalProductDownload`, `DigitalProductReport`).                                                                  |
+| Data categories     | Whatever the expert puts in the files, plus the original file name in Postgres. Object keys carry only ids. Download rows record which buyer fetched which file and when, as refund and dispute evidence.                                                                       |
+| Processor           | Cloudflare R2, the same processor and credentials as the recordings bucket; a separate private bucket named by `R2_DIGITAL_PRODUCTS_BUCKET`.                                                                                                                                    |
+| Location            | **Not established.** Set by the bucket's location hint when it is created; record it here once the bucket exists.                                                                                                                                                               |
+| Retention           | A live file stays while its product exists. A replaced or removed version is deleted 30 days later, and rejected uploads within a day (`reconcile-digital-product-storage`). Paid purchase rows stay with their Payment as money records.                                       |
+| Our right to delete | **Yes.** Erasure of the expert archives their products and deletes their objects after commit (`lib/digital-products/erasure.ts`); erasure of a buyer deletes their download trail, free claims, failed attempts and report text, while a paid purchase stays with its Payment. |
 
 ## Gap
 

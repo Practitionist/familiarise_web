@@ -44,6 +44,8 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "maintenance-booking-remediation",
   // #1846 N2 — re-drives the capture webhook's owed auto-refunds.
   "retry-auto-refunds",
+  // Settles standalone sale captures and stages refunds for the ones it cannot grant.
+  "reconcile-standalone-purchases",
   // Orphan auto-heal refunds stranded captures through the refund front door.
   "reconcile-orphaned-payments",
   // Added by the wave-5 sweep: each of these either moves money directly or

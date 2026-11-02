@@ -124,7 +124,7 @@ import {
 } from "@/lib/payments/ledger/unapplied-receipts";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
-import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
+import { revokeStandaloneSaleEntitlement } from "@/lib/payments/digital-product-entitlement";
 import { refundReversalBasis } from "@/lib/payments/ledger/refund-reversal-basis";
 import {
   overageCaptureCredits,
@@ -1144,10 +1144,9 @@ export async function applyRefundCascade(
   const completesFullRefund =
     otherCascadedPaise + input.amountPaise >= payment.amount;
 
-  // Replay sales are the only appointment-less payments that grant playback;
-  // only a full refund revokes it, so a partial goodwill refund keeps access.
+  // A full refund of a standalone sale revokes its entitlement; a partial goodwill refund keeps access.
   if (payment.appointmentId === null && completesFullRefund) {
-    await revokeReplayEntitlement(tx, payment.paymentIntent);
+    await revokeStandaloneSaleEntitlement(tx, payment);
   }
 
   if (payment.amount <= 0 || input.amountPaise <= 0) {

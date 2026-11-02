@@ -73,7 +73,9 @@ diffs the branch's **merge base** schema against the branch's own schema, which
 is exactly what this pull request adds — a branch behind its base is not judged
 on objects it never touched — and then asks the live catalog whether each of
 those objects is there. Only objects whose absence makes a query fail are
-checked: a column, a table, an enum type, an enum value. A missing index costs
+checked: a column, a table, an enum type, an enum value. A table the branch
+creates is also checked column by column, because an earlier push of the same
+branch may have created it without a column added since. A missing index costs
 a sequential scan, not a 500.
 
 It runs as its own workflow, `.github/workflows/schema-required.yml`, on pull

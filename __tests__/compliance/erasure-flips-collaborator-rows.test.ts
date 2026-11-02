@@ -8,6 +8,11 @@
  * inside its transaction and revokes Stream access per plan after commit.
  */
 
+// Digital product erasure has its own suite; these scrubs own no products.
+jest.mock("../../lib/digital-products/erasure", () => ({
+  scrubDigitalProductsTx: jest.fn(async () => undefined),
+  purgeErasedCreatorFiles: jest.fn(async () => []),
+}));
 jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
   dispatchWebhookEvent: jest.fn(async () => undefined),
 }));

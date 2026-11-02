@@ -14,9 +14,10 @@ interface R2Config {
   secretAccessKey: string;
 }
 
-function getR2Config(): R2Config | null {
+/** `bucket` overrides R2_BUCKET for a second bucket on the same credentials. */
+function getR2Config(bucketOverride?: string): R2Config | null {
   const endpoint = process.env.R2_S3_ENDPOINT?.trim();
-  const bucket = process.env.R2_BUCKET?.trim();
+  const bucket = bucketOverride?.trim() || process.env.R2_BUCKET?.trim();
   const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) return null;
@@ -36,8 +37,8 @@ export function isR2Configured(): boolean {
   return getR2Config() !== null;
 }
 
-function requireR2Config(): R2Config {
-  const config = getR2Config();
+function requireR2Config(bucket?: string): R2Config {
+  const config = getR2Config(bucket);
   if (!config) {
     throw new Error(
       "Cloudflare R2 is not configured (R2_S3_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY)",
@@ -149,6 +150,7 @@ function buildCanonicalQueryString(
 function signR2Request(opts: {
   method: "GET" | "HEAD" | "PUT" | "POST" | "DELETE";
   key: string | null;
+  bucket?: string;
   query?: Record<string, string | undefined>;
   headers?: Record<string, string>;
   payloadHash?: string;
@@ -156,7 +158,7 @@ function signR2Request(opts: {
   url: string;
   headers: Record<string, string>;
 } {
-  const config = requireR2Config();
+  const config = requireR2Config(opts.bucket);
   const { amzDate, dateStamp } = formatAmzTimestamps(new Date());
   const host = config.endpoint.host;
   const canonicalUri = objectUri(config, opts.key);
@@ -219,38 +221,47 @@ function signR2Request(opts: {
   };
 }
 
-/**
- * SigV4 presigned GET URL. Only `host` is signed, so HTTP Range requests work.
- */
-export function createR2PresignedGetUrl(opts: {
+/** SigV4 query-string presign; `signedHeaders` beyond `host` must be sent verbatim by the client. */
+function presignR2Url(opts: {
+  method: "GET" | "PUT";
   key: string;
-  expiresInSeconds?: number;
+  bucket?: string;
+  expiresInSeconds: number;
   now?: Date;
+  query?: Record<string, string | undefined>;
+  signedHeaders?: Record<string, string>;
 }): string {
-  const config = requireR2Config();
+  const config = requireR2Config(opts.bucket);
   const { amzDate, dateStamp } = formatAmzTimestamps(opts.now ?? new Date());
   const expires = Math.max(
     1,
-    Math.min(604800, Math.floor(opts.expiresInSeconds ?? 14400)),
+    Math.min(604800, Math.floor(opts.expiresInSeconds)),
   );
   const host = config.endpoint.host;
   const canonicalUri = objectUri(config, opts.key);
   const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
+  const headers: Record<string, string> = { host };
+  for (const [k, v] of Object.entries(opts.signedHeaders ?? {})) {
+    headers[k.toLowerCase()] = v.trim();
+  }
+  const headerKeys = Object.keys(headers).sort(compareCodeUnits);
+  const signedHeaderList = headerKeys.join(";");
 
   const canonicalQuery = buildCanonicalQueryString({
+    ...opts.query,
     "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
     "X-Amz-Credential": `${config.accessKeyId}/${credentialScope}`,
     "X-Amz-Date": amzDate,
     "X-Amz-Expires": String(expires),
-    "X-Amz-SignedHeaders": "host",
+    "X-Amz-SignedHeaders": signedHeaderList,
   });
 
   const canonicalRequest = [
-    "GET",
+    opts.method,
     canonicalUri,
     canonicalQuery,
-    `host:${host}\n`,
-    "host",
+    headerKeys.map((k) => `${k}:${headers[k]}\n`).join(""),
+    signedHeaderList,
     "UNSIGNED-PAYLOAD",
   ].join("\n");
 
@@ -269,6 +280,109 @@ export function createR2PresignedGetUrl(opts: {
     .digest("hex");
 
   return `${config.endpoint.origin}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+}
+
+/**
+ * SigV4 presigned GET URL. Only `host` is signed, so HTTP Range requests work.
+ * `responseContentDisposition` makes R2 answer with that Content-Disposition.
+ */
+export function createR2PresignedGetUrl(opts: {
+  key: string;
+  bucket?: string;
+  expiresInSeconds?: number;
+  now?: Date;
+  responseContentDisposition?: string;
+}): string {
+  return presignR2Url({
+    method: "GET",
+    key: opts.key,
+    bucket: opts.bucket,
+    expiresInSeconds: opts.expiresInSeconds ?? 14400,
+    now: opts.now,
+    query: {
+      "response-content-disposition": opts.responseContentDisposition,
+    },
+  });
+}
+
+/** The header R2 honours on PutObject to refuse writing over an existing key. */
+export const R2_CREATE_ONLY_HEADER = { "If-None-Match": "*" } as const;
+
+/**
+ * SigV4 presigned PUT URL that signs `content-type` and `content-length`, so
+ * the browser must upload exactly the declared type and byte count.
+ * `createOnly` also signs `If-None-Match: *`: the key can be written once, never overwritten.
+ */
+export function createR2PresignedPutUrl(opts: {
+  key: string;
+  bucket?: string;
+  contentType: string;
+  contentLength: number;
+  expiresInSeconds: number;
+  createOnly?: boolean;
+  now?: Date;
+}): string {
+  return presignR2Url({
+    method: "PUT",
+    key: opts.key,
+    bucket: opts.bucket,
+    expiresInSeconds: opts.expiresInSeconds,
+    now: opts.now,
+    signedHeaders: {
+      "content-type": opts.contentType,
+      "content-length": String(opts.contentLength),
+      ...(opts.createOnly ? R2_CREATE_ONLY_HEADER : {}),
+    },
+  });
+}
+
+/** An `If-Match` read found the object no longer has the ETag it was inspected under. */
+export class R2PreconditionFailedError extends Error {
+  constructor(key: string) {
+    super(`R2 object ${key} changed since it was read`);
+    this.name = "R2PreconditionFailedError";
+  }
+}
+
+/**
+ * Bytes [start, endInclusive] of an object through one Range GET; null when the
+ * key does not exist. With `ifMatch`, a changed object throws `R2PreconditionFailedError`.
+ */
+export async function getR2ObjectRange(opts: {
+  key: string;
+  bucket?: string;
+  start: number;
+  endInclusive: number;
+  ifMatch?: string;
+  signal?: AbortSignal;
+}): Promise<Uint8Array | null> {
+  const signed = signR2Request({
+    method: "GET",
+    key: opts.key,
+    bucket: opts.bucket,
+    headers: {
+      range: `bytes=${opts.start}-${opts.endInclusive}`,
+      ...(opts.ifMatch ? { "if-match": opts.ifMatch } : {}),
+    },
+  });
+  const response = await fetch(signed.url, {
+    method: "GET",
+    headers: signed.headers,
+    signal: opts.signal,
+  });
+  if (response.status === 404) return null;
+  if (response.status === 412) throw new R2PreconditionFailedError(opts.key);
+  if (!response.ok) {
+    const detail = formatR2ErrorDetail(await response.text().catch(() => ""));
+    throw new Error(
+      `R2 ranged GET failed (${response.status} ${response.statusText})${detail}`,
+    );
+  }
+  const body = new Uint8Array(await response.arrayBuffer());
+  // A 200 means R2 ignored the range and sent the whole object.
+  return response.status === 206
+    ? body
+    : body.subarray(opts.start, opts.endInclusive + 1);
 }
 
 async function putR2Object(opts: {
@@ -572,12 +686,17 @@ export async function streamMultipartToR2(opts: {
   }
 }
 
-/** Stored object size from HeadObject, or null when the key does not exist. */
+/** Stored object size and ETag from HeadObject, or null when the key does not exist. */
 export async function headR2Object(opts: {
   key: string;
+  bucket?: string;
   signal?: AbortSignal;
-}): Promise<{ contentLength: number } | null> {
-  const signed = signR2Request({ method: "HEAD", key: opts.key });
+}): Promise<{ contentLength: number; etag?: string } | null> {
+  const signed = signR2Request({
+    method: "HEAD",
+    key: opts.key,
+    bucket: opts.bucket,
+  });
   const response = await fetch(signed.url, {
     method: "HEAD",
     headers: signed.headers,
@@ -593,22 +712,34 @@ export async function headR2Object(opts: {
   if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
     throw new Error("R2 HEAD response missing a valid Content-Length");
   }
-  return { contentLength };
+  const etag = response.headers.get("etag");
+  return etag ? { contentLength, etag } : { contentLength };
 }
 
-/** One ListObjectsV2 page of keys under `prefix`; `truncated` means more keys remain. */
+/**
+ * One ListObjectsV2 page of keys under `prefix`, after `startAfter` when given;
+ * `truncated` means more keys remain. `objects` pairs each key with its age.
+ */
 export async function listR2Keys(opts: {
   prefix: string;
   maxKeys: number;
+  bucket?: string;
+  startAfter?: string;
   signal?: AbortSignal;
-}): Promise<{ keys: string[]; truncated: boolean }> {
+}): Promise<{
+  keys: string[];
+  truncated: boolean;
+  objects: Array<{ key: string; lastModified: Date | null }>;
+}> {
   const signed = signR2Request({
     method: "GET",
     key: null,
+    bucket: opts.bucket,
     query: {
       "list-type": "2",
       prefix: opts.prefix,
       "max-keys": String(opts.maxKeys),
+      "start-after": opts.startAfter,
     },
   });
   const response = await fetch(signed.url, {
@@ -623,20 +754,38 @@ export async function listR2Keys(opts: {
     );
   }
   const xml = await response.text();
+  const objects = Array.from(
+    xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g),
+    (m) => {
+      const block = m[1] ?? "";
+      const modified = /<LastModified>([^<]*)<\/LastModified>/.exec(block)?.[1];
+      const at = modified ? new Date(modified) : null;
+      return {
+        key: unescapeXml(/<Key>([^<]*)<\/Key>/.exec(block)?.[1] ?? ""),
+        lastModified: at && !Number.isNaN(at.getTime()) ? at : null,
+      };
+    },
+  );
   return {
     keys: Array.from(xml.matchAll(/<Key>([^<]*)<\/Key>/g), (m) =>
       unescapeXml(m[1] ?? ""),
     ),
     truncated: /<IsTruncated>true<\/IsTruncated>/.test(xml),
+    objects,
   };
 }
 
 /** Delete an object, treating 404 Not Found as success. */
 export async function deleteR2Object(opts: {
   key: string;
+  bucket?: string;
   signal?: AbortSignal;
 }): Promise<{ success: boolean; notFound?: boolean; error?: string }> {
-  const signed = signR2Request({ method: "DELETE", key: opts.key });
+  const signed = signR2Request({
+    method: "DELETE",
+    key: opts.key,
+    bucket: opts.bucket,
+  });
 
   const response = await fetch(signed.url, {
     method: "DELETE",

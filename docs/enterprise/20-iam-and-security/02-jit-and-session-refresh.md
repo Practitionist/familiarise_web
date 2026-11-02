@@ -24,7 +24,7 @@ covers the limiter posture.
 
 ## §1 — JIT (Just-In-Time) auto-join
 
-The sso() plugin (`@better-auth/sso` 1.7.7) calls our `provisionUser` hook
+The sso() plugin (`@better-auth/sso` 1.7.14) calls our `provisionUser` hook
 (`lib/sso/plugin-options.ts`) after the OIDC callback has created or found
 the user, linked the account and created the session, but before it sets the
 session cookie. The hook first runs the IdP claim checks

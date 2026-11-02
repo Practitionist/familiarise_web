@@ -185,7 +185,7 @@ export const auth = betterAuth({
     "/sso/callback",
   ],
 
-  // SSO is OIDC-only, but @better-auth/sso 1.7.7 has no switch to leave the
+  // SSO is OIDC-only, but @better-auth/sso 1.7.14 has no switch to leave the
   // SAML endpoints unmounted, and `disabledPaths` matches concrete paths so
   // it cannot cover the `:providerId` ones. `ctx.path` here is the route
   // template, so one prefix check 404s the whole SAML surface.

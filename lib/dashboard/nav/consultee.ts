@@ -1,6 +1,7 @@
 import {
   CalendarCheck,
   CreditCard,
+  FileDown,
   FileText,
   Gift,
   Home,
@@ -35,6 +36,7 @@ export function buildConsulteeNav(consulteeId: string): DashboardNav {
         items: [
           { name: "Session documents", icon: FileText, path: "documents" },
           { name: "Recordings", icon: Video, path: "recordings" },
+          { name: "Digital products", icon: FileDown, path: "products" },
         ],
       },
       {
@@ -78,6 +80,7 @@ export const CONSULTEE_PAGE_LABELS: Record<string, string> = {
   settings: "Settings",
   documents: "Session documents",
   recordings: "Recordings",
+  products: "Digital products",
   feedback: "Product feedback",
   help: "Help",
   reschedule: "Reschedule",
