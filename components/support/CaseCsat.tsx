@@ -59,7 +59,7 @@ export function CaseCsat({
       <p className="font-medium text-foreground">
         {effective
           ? "Thanks for rating how we handled your request."
-          : "How did our support team do on this request?"}
+          : "How did our support team do on this support case?"}
       </p>
       <div className="mt-1.5 flex items-center gap-1">
         {[1, 2, 3, 4, 5].map((score) => (

@@ -473,7 +473,7 @@ const generalFlow: PlatformFlowDefinition = {
     human: {
       id: "human",
       kind: "TERMINAL",
-      body: "Tell us what's on your mind in the ticket our team will pick up — they'll reply to you here and by email.",
+      body: "Tell us what's on your mind in the support case our team will pick up — they'll reply to you here and by email.",
       escalate: true,
       reason: "general_human",
     },
