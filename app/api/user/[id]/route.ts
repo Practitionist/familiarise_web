@@ -28,7 +28,7 @@ import { sendCollaboratorWithdrawnEmail } from "@/lib/email/senders/collaborator
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { requireFreshSession } from "@/lib/auth/step-up";
 import { supportRetainedHistoryCount } from "@/lib/support/erasure";
-
+import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
  * For enum fields, also validates against the allowed values.
@@ -165,6 +165,14 @@ export async function PUT(
         bio: true,
       },
     });
+
+    if (name !== undefined || image !== undefined) {
+      const expert = await prisma.consultantProfile.findUnique({
+        where: { userId: id },
+        select: { id: true },
+      });
+      if (expert) purgeExpertSurfaces(expert.id);
+    }
 
     return NextResponse.json({ data: updatedUser }, { status: 200 });
   } catch (error) {

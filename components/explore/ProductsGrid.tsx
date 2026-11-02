@@ -3,7 +3,7 @@ import Link from "next/link";
 import { FileText } from "lucide-react";
 import { listPublicDigitalProducts } from "@/lib/data/digital-products-public";
 import { DIGITAL_PRODUCT_CATEGORY_LABEL } from "@/lib/digital-products/constants";
-import { formatCurrencyAmount } from "@/utils/formatting";
+import { productPriceLabel } from "@/lib/digital-products/price-label";
 
 export async function ProductsGrid() {
   const products = await listPublicDigitalProducts(48);
@@ -50,9 +50,7 @@ export async function ProductsGrid() {
                   {DIGITAL_PRODUCT_CATEGORY_LABEL[product.category]}
                 </span>
                 <span className="font-semibold text-primary">
-                  {product.pricePaise === 0
-                    ? "Free"
-                    : formatCurrencyAmount(product.pricePaise, "INR")}
+                  {productPriceLabel(product.pricePaise)}
                 </span>
               </div>
               <h3 className="line-clamp-2 text-sm font-medium transition-colors group-hover:text-primary">

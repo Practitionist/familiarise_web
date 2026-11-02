@@ -4,7 +4,7 @@ import { FileDown, FileText } from "lucide-react";
 
 import type { PublicProductCard } from "@/lib/data/digital-products-public";
 import { DIGITAL_PRODUCT_CATEGORY_LABEL } from "@/lib/digital-products/constants";
-import { formatCurrencyAmount } from "@/utils/formatting";
+import { productPriceLabel } from "@/lib/digital-products/price-label";
 
 /** The expert's files on sale; each card opens the product page to buy. */
 export function DigitalProductsSection({
@@ -64,9 +64,7 @@ export function DigitalProductsSection({
                   {product.fileCount === 1 ? "file" : "files"} ·{" "}
                   <span className="font-medium text-foreground">
                     {/* Viewer-agnostic, so before GST; the product page shows this buyer's total. */}
-                    {product.pricePaise === 0
-                      ? "Free"
-                      : `${formatCurrencyAmount(product.pricePaise, "INR")} + GST`}
+                    {productPriceLabel(product.pricePaise)}
                   </span>
                 </p>
               </div>

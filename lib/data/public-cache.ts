@@ -41,6 +41,9 @@ export function purgeExpertSurfaces(consultantProfileId?: string | null): void {
   // Landing page reads getHomeExperts (tags: experts, home); the directory reads
   // getExpertsMetadata + getCuratedExperts (tag: experts).
   revalidateTag("experts");
+  // Product and replay cards carry the creator's name and avatar.
+  revalidateTag(PUBLIC_PRODUCTS_TAG);
+  revalidateTag(PUBLIC_RECORDINGS_TAG);
   revalidatePath("/");
   revalidatePath(EXPERTS_DIRECTORY);
   if (consultantProfileId) {

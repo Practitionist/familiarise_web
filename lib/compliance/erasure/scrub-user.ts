@@ -57,7 +57,10 @@
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import type { Db } from "@/lib/prisma";
-import { purgeRecordingSurfaces } from "@/lib/data/public-cache";
+import {
+  purgeDigitalProductSurfaces,
+  purgeRecordingSurfaces,
+} from "@/lib/data/public-cache";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -853,6 +856,7 @@ export async function scrubUser(
     );
 
   let collaborationsRemoved: CollaborationRef[] = [];
+  let archivedProducts: { consultantProfileId: string; slug: string }[] = [];
   let supportAttachmentPathsToRemove: string[] = [];
   let erasureRequestId: string | null = null;
   let principalOutboxQueued = false;
@@ -945,7 +949,7 @@ export async function scrubUser(
       data: { requestNotes: null },
     });
     supportAttachmentPathsToRemove = await scrubSupportPiiTx(tx, userId, now);
-    await scrubDigitalProductsTx(tx, userId, now);
+    archivedProducts = await scrubDigitalProductsTx(tx, userId, now);
 
     // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
     // every split and roster; the same flip the moderation ban runs.
@@ -1186,6 +1190,8 @@ export async function scrubUser(
     supportAttachmentPathsToRemove,
     userId,
   );
+  // After commit, whether or not the creator had replays: a cached listing would keep their products.
+  for (const product of archivedProducts) purgeDigitalProductSurfaces(product);
   const productFileFailures = await purgeErasedCreatorFiles(
     prisma,
     userId,
