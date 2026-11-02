@@ -12,6 +12,9 @@ export const ORG_TAB_REDIRECTS = {
 
 export type OrgRetiredTabRoute = keyof typeof ORG_TAB_REDIRECTS;
 
+/** A destination tab; null opens the page's default tab. */
+type OrgTab = string | null;
+
 /**
  * Target of a retired org route that became a tab (#1527 Q7). The old URL's
  * query survives so filters and deep links keep working; `tab` always wins.
@@ -19,7 +22,7 @@ export type OrgRetiredTabRoute = keyof typeof ORG_TAB_REDIRECTS;
 export function orgTabHref(
   orgId: string,
   page: string,
-  tab: string | null,
+  tab: OrgTab,
   searchParams: Record<string, string | string[] | undefined> = {},
 ): string {
   return retiredRouteHref(
@@ -40,8 +43,7 @@ export function orgRetiredRouteHref(
 
 interface TabTarget {
   page: string;
-  /** Null opens the page's default tab. */
-  tab: string | null;
+  tab: OrgTab;
   /** The stacked section inside the merged tab. */
   anchor?: string;
   query?: Record<string, string>;

@@ -55,6 +55,62 @@ export function resolveCatalogExpertName(
   return "—";
 }
 
+function RowStatusBadge({ row }: Readonly<{ row: CatalogRow }>) {
+  if (row.archivedAt) {
+    return <StatusBadge label="Archived" tone="neutral" size="sm" />;
+  }
+  return isCatalogRowDraft(row) ? (
+    <StatusBadge label="Draft" tone="caution" size="sm" />
+  ) : (
+    <StatusBadge label="Published" tone="success" size="sm" />
+  );
+}
+
+/** The status chips; Archived toggles, so a second press returns to All. */
+function StatusChips({
+  filter,
+  onChange,
+  showLive,
+  showArchived,
+}: Readonly<{
+  filter: StatusFilter;
+  onChange: (next: StatusFilter) => void;
+  showLive: boolean;
+  showArchived: boolean;
+}>) {
+  const options = [
+    { value: "ALL", label: "All statuses", show: showLive },
+    { value: "PUBLISHED", label: "Published", show: showLive },
+    { value: "DRAFT", label: "Drafts", show: showLive },
+    { value: "ARCHIVED", label: "Archived", show: showArchived },
+  ] as const;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {options
+        .filter((opt) => opt.show)
+        .map((opt) => (
+          <Button
+            key={opt.value}
+            type="button"
+            size="sm"
+            variant={filter === opt.value ? "secondary" : "ghost"}
+            aria-pressed={filter === opt.value}
+            className="h-7 px-2.5 text-xs"
+            onClick={() =>
+              onChange(
+                opt.value === "ARCHIVED" && filter === "ARCHIVED"
+                  ? "ALL"
+                  : opt.value,
+              )
+            }
+          >
+            {opt.label}
+          </Button>
+        ))}
+    </div>
+  );
+}
+
 /**
  * One kind's table.
  *
@@ -91,13 +147,11 @@ export function CatalogPanel({
   /** Replaces the live list when nobody can deliver; Archived still opens. */
   blocked?: ReactNode;
 }>) {
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+  // The Archived view never falls back to live rows; with none it says so.
+  const [filter, setStatusFilter] = useState<StatusFilter>(
     initialArchived ? "ARCHIVED" : "ALL",
   );
   const hasArchived = rows.some((r) => r.archivedAt !== null);
-  // With nothing withdrawn the Archived chip is hidden, so it cannot stay picked.
-  const filter =
-    statusFilter === "ARCHIVED" && !hasArchived ? "ALL" : statusFilter;
 
   const filteredRows = useMemo(
     () =>
@@ -118,21 +172,12 @@ export function CatalogPanel({
         key: "title",
         header: "Offering",
         primary: true,
-        cell: (r) => {
-          const draft = isCatalogRowDraft(r);
-          return (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">{r.title}</span>
-              {r.archivedAt ? (
-                <StatusBadge label="Archived" tone="neutral" size="sm" />
-              ) : draft ? (
-                <StatusBadge label="Draft" tone="caution" size="sm" />
-              ) : (
-                <StatusBadge label="Published" tone="success" size="sm" />
-              )}
-            </div>
-          );
-        },
+        cell: (r) => (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{r.title}</span>
+            <RowStatusBadge row={r} />
+          </div>
+        ),
       },
       {
         key: "expert",
@@ -225,11 +270,33 @@ export function CatalogPanel({
 
   if (blocked && !hasArchived) return blocked;
 
+  const noun = kind === "WEBINAR" ? "webinars" : "classes";
+
+  if (filter === "ARCHIVED" && !hasArchived) {
+    return (
+      <EmptyState
+        icon={Archive}
+        title={`No archived ${noun}`}
+        description="Offerings you withdraw from sale are listed here."
+        action={
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setStatusFilter("ALL")}
+          >
+            Show live {noun}
+          </Button>
+        }
+      />
+    );
+  }
+
   if (rows.length === 0) {
     return (
       <EmptyState
         icon={Library}
-        title={`No ${kind === "WEBINAR" ? "webinars" : "classes"} yet`}
+        title={`No ${noun} yet`}
         description="Offerings you publish here are owned by the organization and delivered by one of its experts."
       />
     );
@@ -237,37 +304,12 @@ export function CatalogPanel({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-1.5">
-        {(
-          [
-            { value: "ALL", label: "All statuses", show: !blocked },
-            { value: "PUBLISHED", label: "Published", show: !blocked },
-            { value: "DRAFT", label: "Drafts", show: !blocked },
-            { value: "ARCHIVED", label: "Archived", show: hasArchived },
-          ] as const
-        )
-          .filter((opt) => opt.show)
-          .map((opt) => (
-            <Button
-              key={opt.value}
-              type="button"
-              size="sm"
-              variant={filter === opt.value ? "secondary" : "ghost"}
-              aria-pressed={filter === opt.value}
-              className="h-7 px-2.5 text-xs"
-              // Archived toggles: a second press returns to the live list.
-              onClick={() =>
-                setStatusFilter(
-                  opt.value === "ARCHIVED" && filter === "ARCHIVED"
-                    ? "ALL"
-                    : opt.value,
-                )
-              }
-            >
-              {opt.label}
-            </Button>
-          ))}
-      </div>
+      <StatusChips
+        filter={filter}
+        onChange={setStatusFilter}
+        showLive={!blocked}
+        showArchived={hasArchived}
+      />
       {blocked && filter !== "ARCHIVED" ? (
         blocked
       ) : (

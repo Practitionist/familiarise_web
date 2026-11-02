@@ -11,10 +11,10 @@ import { PayoutsPageClient } from "./PayoutsPageClient";
 export default async function OrgPayoutsPage({
   params,
   searchParams,
-}: {
+}: Readonly<{
   params: Promise<{ orgId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
+}>) {
   const { orgId } = await params;
   const legacy = orgLegacyTabHref(orgId, "payouts", await searchParams);
   if (legacy) permanentRedirect(legacy);

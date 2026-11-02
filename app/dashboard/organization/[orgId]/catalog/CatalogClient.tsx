@@ -27,7 +27,7 @@ import {
   type OrgMaterialRow,
   type OrgPlanOption,
 } from "./MaterialsPanel";
-import type { CatalogResponse, Kind } from "./types";
+import type { CatalogResponse, CatalogRow, Kind } from "./types";
 
 interface Expert {
   consultantProfileId: string;
@@ -136,6 +136,14 @@ export function CatalogClient({
     return map;
   }, [experts]);
 
+  // `?status=archived` without a tab opens the first kind that has archived rows.
+  const hasArchived = (rows?: CatalogRow[]) =>
+    rows?.some((r) => r.archivedAt !== null) ?? false;
+  const defaultTab =
+    showArchived && !hasArchived(data?.webinars) && hasArchived(data?.classes)
+      ? "classes"
+      : undefined;
+
   // No experts, nothing to publish — an org plan needs somebody to deliver it,
   // so say that plainly rather than opening a form that will 422.
   const blocked = experts.length === 0;
@@ -217,6 +225,7 @@ export function CatalogClient({
         )}
 
         <UrlTabs
+          defaultValue={defaultTab}
           tabs={[
             {
               value: "webinars",
