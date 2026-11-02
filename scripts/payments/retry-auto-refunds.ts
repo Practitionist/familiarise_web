@@ -21,18 +21,19 @@
  * A second cohort drains the refunds the booking doors owe: a cancel,
  * rejection, moderation ban, maintenance freeze or no-show stamps
  * `Payment.refundOwedKey` in the commit that ends the booking, and this sweep
- * drives each marker under its own key until the money is back. The attempt
- * count on the row retires a marker to an operator at MAX_REFUND_OWED_ATTEMPTS,
- * and markers older than two hours are surfaced once a day as an ops event.
+ * drives each marker under its own key until the money is back. A failed drive
+ * waits out `refundOwedNextAt` (1 h, then 4 h), the attempt count retires a
+ * marker to an operator at MAX_REFUND_OWED_ATTEMPTS, and markers older than
+ * six hours, past the backoff's last retry, are surfaced once a day as an ops event.
  *
  * Imported by jobs/payments/retry-auto-refunds.ts (GitHub Actions) and
  * app/api/cleanup/retry-auto-refunds/route.ts (the ticker twin).
  */
 
 import { createHash } from "node:crypto";
-import { PaymentStatus, RefundStatus } from "@prisma/client";
+import { PaymentStatus, RefundStatus, type Prisma } from "@prisma/client";
 
-import prisma from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { parkedReceiptPaise } from "@/lib/payments/ledger/unapplied-receipts";
@@ -94,7 +95,7 @@ export interface RetryAutoRefundsResult {
     failed: number;
     /** Markers retired to an operator this run. */
     stuck: string[];
-    /** Markers older than two hours, stuck ones included. */
+    /** Markers older than six hours, stuck ones included. */
     aged: number;
   };
   /** The run hit its start deadline with rows left for the next one. */
@@ -108,8 +109,68 @@ const GRACE_MS = 15 * 60_000;
 /** Failed gateway refunds after which the payment goes to an operator. */
 export const MAX_AUTO_REFUND_ATTEMPTS = 3;
 /** A refund owed this long after its door committed is surfaced to ops. */
-const OWED_ALERT_AFTER_MS = 2 * 60 * 60_000;
+const OWED_ALERT_AFTER_MS = 6 * 60 * 60_000;
 const OWED_REPORT_WINDOW_MS = 24 * 60 * 60_000;
+
+/** Pending auto-refund markers past the webhook's grace. */
+function autoRefundDueWhere(now: Date): Prisma.PaymentWhereInput {
+  return {
+    paymentStatus: PaymentStatus.SUCCEEDED,
+    deletedAt: null,
+    description: { startsWith: AUTO_REFUND_PENDING_PREFIX },
+    updatedAt: { lt: new Date(now.getTime() - GRACE_MS) },
+    refunds: { none: { status: RefundStatus.PENDING } },
+    disputes: {
+      none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+    },
+  };
+}
+
+/** Owed-refund markers due a drive; a failed drive waits out its next-drive time. */
+function refundOwedDueWhere(now: Date): Prisma.PaymentWhereInput {
+  return {
+    refundOwedKey: { not: null },
+    refundOwedAt: { lt: new Date(now.getTime() - GRACE_MS) },
+    refundOwedAttempts: { lt: MAX_REFUND_OWED_ATTEMPTS },
+    OR: [{ refundOwedNextAt: null }, { refundOwedNextAt: { lte: now } }],
+    paymentStatus: PaymentStatus.SUCCEEDED,
+    deletedAt: null,
+    refunds: { none: { status: RefundStatus.PENDING } },
+    disputes: {
+      none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+    },
+  };
+}
+
+/** Owed-refund markers old enough for the ops report. */
+function agedRefundOwedWhere(now: Date): Prisma.PaymentWhereInput {
+  return {
+    refundOwedKey: { not: null },
+    refundOwedAt: { lt: new Date(now.getTime() - OWED_ALERT_AFTER_MS) },
+    paymentStatus: PaymentStatus.SUCCEEDED,
+    deletedAt: null,
+  };
+}
+
+/** True when any arm (auto-refund retry, owed drive, aged-marker report) has a row. */
+export async function hasAutoRefundRetryWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const row = await db.payment.findFirst({
+    where: {
+      OR: [
+        autoRefundDueWhere(now),
+        refundOwedDueWhere(now),
+        agedRefundOwedWhere(now),
+      ],
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 // #476 — one lock for every entry; fail-closed because this sweep refunds.
 export async function retryAutoRefunds(
@@ -148,16 +209,7 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
   const autoRefundsOutOfTime = startDeadlineShare(0.5, startedAt);
 
   const due = await prisma.payment.findMany({
-    where: {
-      paymentStatus: PaymentStatus.SUCCEEDED,
-      deletedAt: null,
-      description: { startsWith: AUTO_REFUND_PENDING_PREFIX },
-      updatedAt: { lt: new Date(now.getTime() - GRACE_MS) },
-      refunds: { none: { status: RefundStatus.PENDING } },
-      disputes: {
-        none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
-      },
-    },
+    where: autoRefundDueWhere(now),
     orderBy: { updatedAt: "asc" },
     take: limit,
     select: {
@@ -222,17 +274,7 @@ async function retryRefundsOwed(
   outOfTime: () => boolean,
 ): Promise<void> {
   const rows = await prisma.payment.findMany({
-    where: {
-      refundOwedKey: { not: null },
-      refundOwedAt: { lt: new Date(now.getTime() - GRACE_MS) },
-      refundOwedAttempts: { lt: MAX_REFUND_OWED_ATTEMPTS },
-      paymentStatus: PaymentStatus.SUCCEEDED,
-      deletedAt: null,
-      refunds: { none: { status: RefundStatus.PENDING } },
-      disputes: {
-        none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
-      },
-    },
+    where: refundOwedDueWhere(now),
     orderBy: [{ refundOwedAttempts: "asc" }, { refundOwedAt: "asc" }],
     take: limit,
     select: REFUND_OWED_SELECT,
@@ -308,7 +350,7 @@ async function startTrialHoldIfSettled(
 }
 
 /**
- * Markers older than two hours are money a booking door still owes. The ops
+ * Markers older than six hours are money a booking door still owes. The ops
  * event reads the persisted owed amount and is recorded once per distinct id
  * set per day, so a stuck backlog does not re-page every tick.
  */
@@ -317,12 +359,7 @@ async function reportAgedRefundsOwed(
   result: RetryAutoRefundsResult,
 ): Promise<void> {
   const aged = await prisma.payment.findMany({
-    where: {
-      refundOwedKey: { not: null },
-      refundOwedAt: { lt: new Date(now.getTime() - OWED_ALERT_AFTER_MS) },
-      paymentStatus: PaymentStatus.SUCCEEDED,
-      deletedAt: null,
-    },
+    where: agedRefundOwedWhere(now),
     orderBy: { refundOwedAt: "asc" },
     take: 200,
     select: {
@@ -354,7 +391,7 @@ async function reportAgedRefundsOwed(
   await recordSystemEvent({
     category: "PAYMENT",
     severity: "WARN",
-    message: `${aged.length} cancelled or ended bookings still owe a refund more than 2 h after their door committed`,
+    message: `${aged.length} cancelled or ended bookings still owe a refund more than 6 h after their door committed`,
     context: {
       owed: aged.slice(0, 50).map((p) => ({
         paymentId: p.id,

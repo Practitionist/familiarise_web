@@ -42,7 +42,7 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, { type Tx, type PrismaLike } from "@/lib/prisma";
 import { transitionParticipant } from "@/lib/booking/participants";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
@@ -240,7 +240,7 @@ function lapsedLinkNotice(
 const LEGACY_HOLD_MS = 35 * 60 * 1000;
 
 /** A PENDING payment whose own hold has lapsed; a sibling buyer's live hold never matches. */
-function lapsedPendingPayment(now: Date): Prisma.PaymentWhereInput {
+function lapsedPendingPaymentWhere(now: Date): Prisma.PaymentWhereInput {
   return {
     paymentStatus: PaymentStatus.PENDING,
     OR: [
@@ -285,25 +285,31 @@ function abandonedInclude(paymentWhere: Prisma.PaymentWhereInput) {
  * The cohort: an appointment still holding a slot or a group seat against a
  * PENDING payment that has passed its expiry.
  */
+function abandonedAppointmentWhere(
+  lapsed: Prisma.PaymentWhereInput,
+): Prisma.AppointmentWhereInput {
+  return {
+    deletedAt: null,
+    payment: { some: lapsed },
+    // Group-event seats are held by connecting the buyer to shared,
+    // non-tentative slots, so a tentative-slot filter would never see an
+    // abandoned webinar or class checkout.
+    OR: [
+      { occurrences: { some: { isTentative: true, deletedAt: null } } },
+      { webinar: { isNot: null } },
+      { class: { isNot: null } },
+    ],
+  };
+}
+
 function findAbandonedAppointments(limit?: number) {
-  const lapsed = lapsedPendingPayment(new Date());
+  const lapsed = lapsedPendingPaymentWhere(new Date());
   return prisma.appointment.findMany({
     take: limit,
     // A skipped unit's `updatedAt` is touched, so it rotates behind the rest
     // of the cohort instead of heading every bounded run.
     orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
-    where: {
-      deletedAt: null,
-      payment: { some: lapsed },
-      // Group-event seats are held by connecting the buyer to shared,
-      // non-tentative slots, so a tentative-slot filter would never see an
-      // abandoned webinar or class checkout.
-      OR: [
-        { occurrences: { some: { isTentative: true, deletedAt: null } } },
-        { webinar: { isNot: null } },
-        { class: { isNot: null } },
-      ],
-    },
+    where: abandonedAppointmentWhere(lapsed),
     include: abandonedInclude(lapsed),
   });
 }
@@ -1018,19 +1024,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
     // read was consultations-only, and the abandoned sweep needs a tentative
     // occurrence a placeholder subscription appointment does not have), so
     // their pay-link lapse only ever reached the 7 d updatedAt fallback.
-    const lapsedWhere = {
-      status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-      appointment: {
-        payment: {
-          some: {
-            AND: [
-              { paymentStatus: PaymentStatus.PENDING },
-              { expiresAt: { lt: new Date() } },
-            ],
-          },
-        },
-      },
-    } satisfies Prisma.ConsultationWhereInput & Prisma.SubscriptionWhereInput;
+    const lapsedWhere = lapsedApprovalRequestWhere(new Date());
     const lapsedAppointment = {
       include: {
         payment: { where: { paymentStatus: PaymentStatus.PENDING } },
@@ -1099,6 +1093,23 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
   }
 
   return result;
+}
+
+/** An approval request whose PENDING pay-link has lapsed (consultation or subscription). */
+function lapsedApprovalRequestWhere(now: Date) {
+  return {
+    status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    appointment: {
+      payment: {
+        some: {
+          AND: [
+            { paymentStatus: PaymentStatus.PENDING },
+            { expiresAt: { lt: now } },
+          ],
+        },
+      },
+    },
+  } satisfies Prisma.ConsultationWhereInput & Prisma.SubscriptionWhereInput;
 }
 
 /**
@@ -1182,7 +1193,7 @@ export async function remindApprovalPaymentsDue(
 }
 
 /** The window read: PENDING, still payable, and inside the last half. */
-function reminderPaymentWindow(now: Date) {
+function reminderPaymentWindowWhere(now: Date) {
   return {
     paymentStatus: PaymentStatus.PENDING,
     expiresAt: {
@@ -1190,6 +1201,26 @@ function reminderPaymentWindow(now: Date) {
       lte: new Date(now.getTime() + APPROVAL_PAYMENT_REMINDER_MS),
     },
   } as const;
+}
+
+/** A request whose pay-link sits in the reminder window; consultation has no tombstone. */
+function reminderRequestWhere(
+  paymentWhere: ReturnType<typeof reminderPaymentWindowWhere>,
+) {
+  return {
+    status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    pendingPaymentUrl: { not: null },
+    appointment: { deletedAt: null, payment: { some: paymentWhere } },
+  } satisfies Prisma.ConsultationWhereInput;
+}
+
+function subscriptionReminderRequestWhere(
+  paymentWhere: ReturnType<typeof reminderPaymentWindowWhere>,
+) {
+  return {
+    ...reminderRequestWhere(paymentWhere),
+    deletedAt: null,
+  } satisfies Prisma.SubscriptionWhereInput;
 }
 
 const REMINDER_PARTY_SELECT = {
@@ -1213,23 +1244,17 @@ async function findReminderCandidates(
   now: Date,
   limit: number | undefined,
 ): Promise<ReminderCandidate[]> {
-  const paymentWhere = reminderPaymentWindow(now);
+  const paymentWhere = reminderPaymentWindowWhere(now);
   const paymentSelect = {
     where: paymentWhere,
     select: { id: true, amount: true, currency: true, expiresAt: true },
     take: 1,
   } as const;
-  // Consultation has no tombstone; status plus the appointment's deletedAt retire a request.
-  const requestWhere = {
-    status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-    pendingPaymentUrl: { not: null },
-    appointment: { deletedAt: null, payment: { some: paymentWhere } },
-  } satisfies Prisma.ConsultationWhereInput;
   const [consultations, subscriptions] = await Promise.all([
     prisma.consultation.findMany({
       take: limit,
       orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
-      where: requestWhere,
+      where: reminderRequestWhere(paymentWhere),
       select: {
         id: true,
         updatedAt: true,
@@ -1246,7 +1271,7 @@ async function findReminderCandidates(
     prisma.subscription.findMany({
       take: limit,
       orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
-      where: { ...requestWhere, deletedAt: null },
+      where: subscriptionReminderRequestWhere(paymentWhere),
       select: {
         id: true,
         updatedAt: true,
@@ -1490,6 +1515,46 @@ export async function runAllCleanupTasks(): Promise<{
   } finally {
     await prisma.$disconnect();
   }
+}
+
+/**
+ * True when any of the three registry passes (abandoned holds, lapsed pay-links,
+ * due reminders) has a candidate row. Reminder candidates already reminded still count.
+ */
+export async function hasAbandonedPaymentWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const appointment = await db.appointment.findFirst({
+    where: abandonedAppointmentWhere(lapsedPendingPaymentWhere(now)),
+    select: { id: true },
+  });
+  if (appointment) return true;
+  const reminderWindow = reminderPaymentWindowWhere(now);
+  if (outOfTime()) return true;
+  const consultation = await db.consultation.findFirst({
+    where: {
+      OR: [
+        lapsedApprovalRequestWhere(now),
+        reminderRequestWhere(reminderWindow),
+      ],
+    },
+    select: { id: true },
+  });
+  if (consultation) return true;
+  if (outOfTime()) return true;
+  const subscription = await db.subscription.findFirst({
+    where: {
+      OR: [
+        lapsedApprovalRequestWhere(now),
+        subscriptionReminderRequestWhere(reminderWindow),
+      ],
+    },
+    select: { id: true },
+  });
+  return subscription !== null;
 }
 
 /**

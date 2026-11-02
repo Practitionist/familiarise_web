@@ -165,7 +165,6 @@ sequenceDiagram
     Note over API: Hourly cron runs
     API->>DB: Find SCHEDULED trials past endTime + 1h buffer
     API->>DB: Update to COMPLETED, set completedAt
-    API->>DB: Create ActivityLog (TRIAL_COMPLETED)
     API->>Novu: trial-session-completed (to both parties)
 ```
 
@@ -259,7 +258,6 @@ The `completeTrials()` function:
 
 1. Queries `Trial` records where `status = SCHEDULED` and all linked `AppointmentOccurrence.endsAt < (now - 1 hour)`
 2. Updates each to `status = COMPLETED` with `completedAt = now()`
-3. Creates an `ActivityLog` entry with `activityType = TRIAL_COMPLETED` and `metadata: { autoCompleted: true }`
 
 Additionally, the `GET /api/trials` endpoint performs an inline auto-complete check (without the buffer) to keep the UI current between cron runs.
 
@@ -279,7 +277,6 @@ This is a one-to-one relationship (both FKs carry `@unique`). The conversion is 
 1. Validates the `subscriptionId` is provided (returns 400 if missing).
 2. Confirms the subscription belongs to the same plan and consultee as the trial.
 3. Sets `convertedToSubscriptionId` on the trial record.
-4. Calls `logTrialConverted()` to create an `ActivityLog` entry with `activityType = TRIAL_CONVERTED`.
 
 The link enables:
 
@@ -317,15 +314,15 @@ Users can disable trial notifications via `NotificationPreference.trialNotificat
 
 ## API Reference
 
-| Method   | Endpoint                        | Auth Required             | Purpose                                     |
-| -------- | ------------------------------- | ------------------------- | ------------------------------------------- |
-| `GET`    | `/api/trials`                   | Yes (session)             | List trials (paginated, filterable)         |
-| `POST`   | `/api/trials`                   | Yes (session)             | Request a new trial session                 |
-| `GET`    | `/api/trials/[trialId]`         | Yes (session)             | Get a specific trial session                |
-| `PATCH`  | `/api/trials/[trialId]`         | Yes (session)             | Update status (schedule, complete, convert) |
-| `DELETE` | `/api/trials/[trialId]`         | Yes (session)             | Cancel a PENDING, AWAITING_PAYMENT or SCHEDULED trial; a paid one needs `confirmedRefundPaise` |
-| `GET`    | `/api/trials/[trialId]/cancel/preview` | Yes (session)      | Refund quote for cancelling the trial now (#1846) |
-| `GET`    | `/api/trials/check-eligibility` | Yes (session)             | Check if consultee can request a trial      |
-| `GET`    | `/api/trials/stats`             | Yes (session + ownership) | Trial session statistics (own profile only) |
+| Method   | Endpoint                               | Auth Required             | Purpose                                                                                        |
+| -------- | -------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------- |
+| `GET`    | `/api/trials`                          | Yes (session)             | List trials (paginated, filterable)                                                            |
+| `POST`   | `/api/trials`                          | Yes (session)             | Request a new trial session                                                                    |
+| `GET`    | `/api/trials/[trialId]`                | Yes (session)             | Get a specific trial session                                                                   |
+| `PATCH`  | `/api/trials/[trialId]`                | Yes (session)             | Update status (schedule, complete, convert)                                                    |
+| `DELETE` | `/api/trials/[trialId]`                | Yes (session)             | Cancel a PENDING, AWAITING_PAYMENT or SCHEDULED trial; a paid one needs `confirmedRefundPaise` |
+| `GET`    | `/api/trials/[trialId]/cancel/preview` | Yes (session)             | Refund quote for cancelling the trial now (#1846)                                              |
+| `GET`    | `/api/trials/check-eligibility`        | Yes (session)             | Check if consultee can request a trial                                                         |
+| `GET`    | `/api/trials/stats`                    | Yes (session + ownership) | Trial session statistics (own profile only)                                                    |
 
 **Note**: `/api/trials/stats` was previously in `PUBLIC_API_PREFIXES` (no auth required). It now requires authentication and enforces an ownership check -- users can only view stats for their own consultant profile.

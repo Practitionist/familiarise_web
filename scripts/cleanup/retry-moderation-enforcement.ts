@@ -27,8 +27,9 @@
 import type {
   ModerationActionType,
   ModerationReportType,
+  Prisma,
 } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -82,6 +83,63 @@ const RETRYABLE_ACTIONS: ModerationActionType[] = [
   "CONTENT_REMOVED",
   "USER_REINSTATED",
 ];
+
+// `stream: "failed"` and `collaboratorRevocation: "failed"` are the queue; a
+// capped row is marked "gave_up" and so falls out of this selector by construction.
+const FAILED_ENFORCEMENT_WHERE: Prisma.ModerationActionWhereInput = {
+  actionType: { in: RETRYABLE_ACTIONS },
+  OR: [
+    { sideEffects: { path: ["stream"], equals: "failed" } },
+    {
+      sideEffects: { path: ["collaboratorRevocation"], equals: "failed" },
+    },
+  ],
+};
+
+/** Owed revocations due now; a row past the attempt budget already wrote its give-up. */
+function streamRevocationDueWhere(
+  now: Date,
+): Prisma.StreamRevocationRetryWhereInput {
+  return {
+    status: { in: ["PENDING", "FAILED"] },
+    attempts: { lt: MAX_ATTEMPTS },
+    OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+  };
+}
+
+function vendorErasureDueWhere(now: Date): Prisma.VendorErasureRetryWhereInput {
+  return {
+    status: { in: ["PENDING", "FAILED"] },
+    attempts: { lt: MAX_ATTEMPTS },
+    OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+  };
+}
+
+/** Ticker idle probe: a failed enforcement, an owed revocation or a vendor erasure due now. */
+export async function hasModerationRetryWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const action = await db.moderationAction.findFirst({
+    where: FAILED_ENFORCEMENT_WHERE,
+    select: { id: true },
+  });
+  if (action) return true;
+  if (outOfTime()) return true;
+  const revocation = await db.streamRevocationRetry.findFirst({
+    where: streamRevocationDueWhere(now),
+    select: { id: true },
+  });
+  if (revocation) return true;
+  if (outOfTime()) return true;
+  const erasure = await db.vendorErasureRetry.findFirst({
+    where: vendorErasureDueWhere(now),
+    select: { id: true },
+  });
+  return erasure !== null;
+}
 
 type ActionRow = {
   id: string;
@@ -179,20 +237,8 @@ async function retryModerationEnforcementUnlocked(
   const limit = opts.limit ?? 100;
   const giveUpOlderThan = new Date(Date.now() - giveUpAfterHours * 3_600_000);
 
-  // `stream: "failed"` (and, since #1580, `collaboratorRevocation: "failed"`)
-  // is the queue. The terminal marker is a different value ("gave_up"), so a
-  // capped row falls out of this selector by construction rather than by a
-  // negated JSON filter that a null path would defeat.
   const rows = (await prisma.moderationAction.findMany({
-    where: {
-      actionType: { in: RETRYABLE_ACTIONS },
-      OR: [
-        { sideEffects: { path: ["stream"], equals: "failed" } },
-        {
-          sideEffects: { path: ["collaboratorRevocation"], equals: "failed" },
-        },
-      ],
-    },
+    where: FAILED_ENFORCEMENT_WHERE,
     select: {
       id: true,
       actionType: true,
@@ -353,13 +399,7 @@ async function drainErasureRevocations(
   // #1593 — the outbox `scrubUser` writes inside its own transaction; a row
   // is owed until SUCCEEDED, and FAILED rows wait out their backoff slot.
   const rows = await prisma.streamRevocationRetry.findMany({
-    where: {
-      status: { in: ["PENDING", "FAILED"] },
-      // A row past the attempt budget is terminal: the give-up was already
-      // written, so the selector must not re-drive it.
-      attempts: { lt: MAX_ATTEMPTS },
-      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
-    },
+    where: streamRevocationDueWhere(now),
     select: {
       id: true,
       kind: true,
@@ -439,11 +479,7 @@ async function drainVendorErasureRetries(
   if (!prisma.vendorErasureRetry?.findMany) return;
   const now = new Date();
   const rows = await prisma.vendorErasureRetry.findMany({
-    where: {
-      status: { in: ["PENDING", "FAILED"] },
-      attempts: { lt: MAX_ATTEMPTS },
-      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
-    },
+    where: vendorErasureDueWhere(now),
     select: {
       id: true,
       erasureRequestId: true,

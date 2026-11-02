@@ -1,6 +1,6 @@
 # ADR: Ticker through launch, the scale path, the phase 2 queue and the database plan
 
-- **Status**: Accepted on 2026-10-31. Decision 1 ships in the pull request that adds this record. Decisions 2 to 5 are direction: nothing in them is built yet, and each names what has to be true before it is. Decision 6 ships in a separate Sentry-policy pull request.
+- **Status**: Accepted on 2026-10-31. Decision 1 ships in the pull request that adds this record. Decisions 2 to 4 are direction: nothing in them is built yet, and each names what has to be true before it is. Decision 5's refusals are built; its split is not. Decision 6 ships in a separate Sentry-policy pull request.
 - **Date**: 2026-10-31
 - **Author**: Platform engineering
 - **Supersedes**: the phase 1 container option and the "split before launch" timing in [Architecture at scale review](2026-10-30-architecture-at-scale-review.md)
@@ -66,7 +66,14 @@ Inngest, Trigger.dev, Hatchet, Temporal Cloud and QStash all schedule work by ca
 - **Compute.** Small compute (400 pooler clients) is the next step, at about 150 sustained concurrent users.
 - **Split deferred.** The split into separate production and preview databases is deferred until after launch. This reverses the 2026-10-30 timing of "split before launch".
 - **Load test.** The load test waits for the split, because a load test against the shared database would load production too.
-- **Mitigation until then.** The ticker and background dispatch already stand down off production (decision 1). Refusing the remaining production-only writes from previews is planned in #2460 (PR 3) and not built yet.
+- **Owner decision (2026-10-31).** The shared database stays until customers arrive and Supabase moves to Pro. The split is planned in [the database split plan](../deployment/db-split-plan.md) (a second project, not branching), and the load test in [the load test plan](../enterprise/50-operations/11-load-test-plan.md) waits for it.
+- **Mitigation until then (built).** Four pieces keep a preview from acting on production through the shared database:
+  - **Job refusal.** Every preview and branch deploy refuses every job, money or not, with 409 `JOB_RUN_PRODUCTION_ONLY`. `cleanupRoute` (`lib/cron/cleanup-route.ts`) checks `jobsMayRunHere()` (`lib/cron/dispatch-refusal.ts`) after the bearer check, so the CRON_SECRET door and the admin Run door (`POST /api/admin/system-jobs/run`) both refuse. The refusal writes one `CANCELLED` run row with outcome `refused` and sends nothing to Sentry. The money console's batch doors (`POST /api/admin/reconcile/[job]` and `POST /api/admin/reconcile-ledgers`) refuse with the same code through `OpsRefusal`, before any runner starts. Production runs jobs, and so does a local `next dev` or jest process, which is not a deploy; each preview and branch deploy also holds its own `CRON_SECRET`.
+  - **Production-only shared writes.** `mayWriteProductionState()` (`lib/production-state.ts`) gates the maintenance window and its Redis mirror, the discount-code pause and its snapshot, and the `cron:heartbeat:last` key that `/api/health` reads as production's dead-man signal. The admin maintenance route answers 409 `MAINTENANCE_PRODUCTION_ONLY` off production. Local development is off production here too.
+  - **Environment filter on the job console.** `readJobRunMetrics()` (`lib/backoffice/job-run-metrics.ts`) filters counts, percentiles, daily buckets and the last success by `result.environment`, the System Jobs page takes `?env=`, and the Recent Executions list filters the same way. No schema change was needed.
+  - **Release schema gate.** `scripts/ci/check-db-schema-required.ts --live` fails a release when the schema declares a table, column, enum type or enum value that the live database lacks. It is read-only and ignores sidecar objects and objects only the database has. It runs as the "Release schema gate" job in `.github/workflows/db-live-drift.yml` on pull requests into `prod`.
+
+  Shared keys left deliberately shared: rate-limit buckets, slot locks, the payout and checkout mutexes, account-throttle locks, reminder dedupe and the meeting Q&A keys. `ops:active_cron_platform` is only read.
 
 ## Decision 6. Sentry: escalations only, and a canary that does not spend the error quota
 
@@ -82,7 +89,8 @@ Until that pull request merges, the canary in `docs/observability/sentry/06-inge
 
 - Jobs keep paying about 95 ms per statement until decision 2's trial. The idle fast paths added with decision 1 cut the waste in the busiest sweeps, but they do not remove it.
 - A job added to the schedule must fit under the 11-per-tick pin, or shift existing offsets until it does.
-- The shared database remains the main safety risk until the split: a preview can still write to production tables through any path the code does not yet refuse.
+- The shared database remains the main safety risk until the split. Previews can no longer run jobs or flip production's maintenance and heartbeat state, but an ordinary request on a preview still reads and writes production tables (a booking, a profile edit), and rate-limit and lock keys are shared.
+- A job cannot be exercised on a preview any more, so job changes are checked locally with `next dev` or on production after release.
 
 ## Deprecated & Superseded Approaches
 

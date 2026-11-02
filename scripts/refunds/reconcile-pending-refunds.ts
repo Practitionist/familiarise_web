@@ -16,7 +16,8 @@ import {
   compareLeastRecentlyReconciled,
   LEAST_RECENTLY_RECONCILED,
 } from "@/lib/payments/payouts/reconcile-cursor";
-import prisma from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
+import { failRefund } from "@/lib/payments/operations/refund-owed";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import { getRefund, listRefunds } from "../../lib/payments";
@@ -82,6 +83,57 @@ export interface RefundReconciliationResult {
   redriveDeadLettered: number;
   errors: string[];
   timestamp: string;
+}
+
+const SYNTHETIC_PREFIXES = ["pending_", "internal_", "credits_"];
+
+/** Pass 1 placeholders; shared with the ticker's idle probe. */
+function placeholderRefundWhere(createdBefore: Date): Prisma.RefundWhereInput {
+  return {
+    status: RefundStatus.PENDING,
+    refundId: { startsWith: "pending_" },
+    createdAt: { lt: createdBefore },
+  };
+}
+
+/** Pass 2 real-id PENDING rows; shared with the ticker's idle probe. */
+function realIdPendingRefundWhere(
+  createdBefore: Date,
+): Prisma.RefundWhereInput {
+  return {
+    status: RefundStatus.PENDING,
+    AND: SYNTHETIC_PREFIXES.map((prefix) => ({
+      refundId: { not: { startsWith: prefix } },
+    })),
+    createdAt: { lt: createdBefore },
+  };
+}
+
+/** True when any pass of the run (pending, stranded cascade, failure notice) has a row. */
+export async function hasPendingRefundWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const thresholdDate = new Date(now.getTime() - RECONCILIATION_THRESHOLD_MS);
+  if (outOfTime()) return true;
+  const refund = await db.refund.findFirst({
+    where: {
+      OR: [
+        placeholderRefundWhere(thresholdDate),
+        realIdPendingRefundWhere(thresholdDate),
+        FAILED_REFUND_NOTICE_WHERE,
+      ],
+    },
+    select: { id: true },
+  });
+  if (refund) return true;
+  if (outOfTime()) return true;
+  const stranded = await db.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "Refund"
+    WHERE ${strandedRefundSqlWhere(new Date(now.getTime() - STRANDED_AFTER_MS))}
+    LIMIT 1`;
+  return stranded.length > 0;
 }
 
 export interface ReconcilePendingRefundsOptions {
@@ -157,14 +209,16 @@ async function reconcilePendingRefundsUnlocked(
     if (Date.now() - refund.createdAt.getTime() <= PLACEHOLDER_FAIL_AFTER_MS) {
       return false;
     }
-    const claim = await prisma.refund.updateMany({
-      where: { id: refund.id, status: RefundStatus.PENDING },
-      data: {
-        status: RefundStatus.FAILED,
-        failureReason: "GATEWAY_DISABLED",
-        failedAt: new Date(),
-      },
-    });
+    const claim = await failRefund(refund.id, (tx) =>
+      tx.refund.updateMany({
+        where: { id: refund.id, status: RefundStatus.PENDING },
+        data: {
+          status: RefundStatus.FAILED,
+          failureReason: "GATEWAY_DISABLED",
+          failedAt: new Date(),
+        },
+      }),
+    );
     if (claim.count !== 1) return false;
     failedCount++;
     failedGatewayDisabled++;
@@ -179,11 +233,7 @@ async function reconcilePendingRefundsUnlocked(
   // Pass 1 — placeholders
   // ------------------------------------------------------------------
   const placeholders = await prisma.refund.findMany({
-    where: {
-      status: RefundStatus.PENDING,
-      refundId: { startsWith: "pending_" },
-      createdAt: { lt: thresholdDate },
-    },
+    where: placeholderRefundWhere(thresholdDate),
     include: {
       payment: true,
     },
@@ -191,15 +241,8 @@ async function reconcilePendingRefundsUnlocked(
     take: limit,
   });
 
-  const SYNTHETIC_PREFIXES = ["pending_", "internal_", "credits_"];
   const realIds = await prisma.refund.findMany({
-    where: {
-      status: RefundStatus.PENDING,
-      AND: SYNTHETIC_PREFIXES.map((prefix) => ({
-        refundId: { not: { startsWith: prefix } },
-      })),
-      createdAt: { lt: thresholdDate },
-    },
+    where: realIdPendingRefundWhere(thresholdDate),
     include: { payment: true },
     orderBy: [LEAST_RECENTLY_RECONCILED, { id: "asc" }],
     take: limit,
@@ -314,18 +357,20 @@ async function reconcilePendingRefundsUnlocked(
       if (isVeryOld) {
         // CAS: a `refund.created` webhook may bind this row to SUCCEEDED
         // between the read and this write — only FAIL a still-PENDING row.
-        const claimed = await prisma.refund.updateMany({
-          where: { id: refund.id, status: RefundStatus.PENDING },
-          data: {
-            status: RefundStatus.FAILED,
-            metadata: {
-              ...(refund.metadata as object),
-              reconciliation_error:
-                "No refund carrying this reservation id found at gateway after 24 hours",
-              reconciled_at: new Date().toISOString(),
+        const claimed = await failRefund(refund.id, (tx) =>
+          tx.refund.updateMany({
+            where: { id: refund.id, status: RefundStatus.PENDING },
+            data: {
+              status: RefundStatus.FAILED,
+              metadata: {
+                ...(refund.metadata as object),
+                reconciliation_error:
+                  "No refund carrying this reservation id found at gateway after 24 hours",
+                reconciled_at: new Date().toISOString(),
+              },
             },
-          },
-        });
+          }),
+        );
         if (claimed.count === 0) {
           skippedCount++;
           continue;
@@ -352,14 +397,16 @@ async function reconcilePendingRefundsUnlocked(
           skippedCount++;
           continue;
         }
-        const claim = await prisma.refund.updateMany({
-          where: { id: refund.id, status: RefundStatus.PENDING },
-          data: {
-            status: RefundStatus.FAILED,
-            failureReason: `Gateway has no record of order ${refund.payment.paymentIntent} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
-            failedAt: new Date(),
-          },
-        });
+        const claim = await failRefund(refund.id, (tx) =>
+          tx.refund.updateMany({
+            where: { id: refund.id, status: RefundStatus.PENDING },
+            data: {
+              status: RefundStatus.FAILED,
+              failureReason: `Gateway has no record of order ${refund.payment.paymentIntent} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
+              failedAt: new Date(),
+            },
+          }),
+        );
         if (claim.count === 1) {
           failedCount++;
           failedUnknownId++;
@@ -468,14 +515,16 @@ async function reconcilePendingRefundsUnlocked(
         );
         reconciledCount++;
       } else if (gatewayRefund.status === RefundStatus.FAILED) {
-        const claimed = await prisma.refund.updateMany({
-          where: { id: refund.id, status: RefundStatus.PENDING },
-          data: {
-            status: RefundStatus.FAILED,
-            failureReason: "Gateway reports the refund failed",
-            failedAt: new Date(),
-          },
-        });
+        const claimed = await failRefund(refund.id, (tx) =>
+          tx.refund.updateMany({
+            where: { id: refund.id, status: RefundStatus.PENDING },
+            data: {
+              status: RefundStatus.FAILED,
+              failureReason: "Gateway reports the refund failed",
+              failedAt: new Date(),
+            },
+          }),
+        );
         if (claimed.count === 0) {
           skippedCount++;
           continue;
@@ -493,14 +542,16 @@ async function reconcilePendingRefundsUnlocked(
       if (isRazorpayUnknownRefundIdError(error)) {
         // FAMILIARISE_WEB-3V — terminal, not transient; same FAILED shape as
         // above, CAS on PENDING so a webhook that settled it is not undone.
-        const claim = await prisma.refund.updateMany({
-          where: { id: refund.id, status: RefundStatus.PENDING },
-          data: {
-            status: RefundStatus.FAILED,
-            failureReason: `Gateway has no record of refund id ${refund.refundId} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
-            failedAt: new Date(),
-          },
-        });
+        const claim = await failRefund(refund.id, (tx) =>
+          tx.refund.updateMany({
+            where: { id: refund.id, status: RefundStatus.PENDING },
+            data: {
+              status: RefundStatus.FAILED,
+              failureReason: `Gateway has no record of refund id ${refund.refundId} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
+              failedAt: new Date(),
+            },
+          }),
+        );
         if (claim.count === 1) {
           failedCount++;
           failedUnknownId++;
@@ -588,6 +639,7 @@ async function reconcilePendingRefundsUnlocked(
       () =>
         reportSentryMessage(message, {
           subsystem: "payments",
+          level: "warning",
           tags: { feature: "refund-reconcile" },
           extra: { ambiguous: ambiguousPlaceholders },
         }),
@@ -755,6 +807,22 @@ const MAX_CASCADE_REDRIVE_ATTEMPTS = 3;
 /** The metadata key the cohort query below reads by its literal name. */
 const REDRIVE_ATTEMPTS_KEY = "cascadeRedriveAttempts";
 
+/**
+ * Stranded SUCCEEDED refunds under the re-drive cap; raw because a missing JSON
+ * key must count as zero attempts. Shared with the ticker's idle probe.
+ */
+function strandedRefundSqlWhere(updatedBefore: Date): Prisma.Sql {
+  return Prisma.sql`status = 'SUCCEEDED'
+      AND "cascadedAt" IS NULL
+      AND "deletedAt" IS NULL
+      AND "amountPaise" > 0
+      AND "updatedAt" < ${updatedBefore}
+      AND COALESCE(
+        CASE jsonb_typeof(metadata -> 'cascadeRedriveAttempts')
+          WHEN 'number' THEN (metadata ->> 'cascadeRedriveAttempts')::numeric
+        END, 0) < ${MAX_CASCADE_REDRIVE_ATTEMPTS}`;
+}
+
 type StrandedPass = {
   scanned: number;
   redriven: number;
@@ -771,19 +839,10 @@ async function redriveStrandedRefunds(
   pastDeadline: () => boolean,
 ): Promise<StrandedPass> {
   const startedAt = Date.now();
-  // Raw because a missing JSON key must count as zero attempts; credit
-  // restorations (amountPaise 0) settle in place and never cascade.
+  // Credit restorations (amountPaise 0) settle in place and never cascade.
   const due = await prisma.$queryRaw<{ id: string }[]>`
     SELECT id FROM "Refund"
-    WHERE status = 'SUCCEEDED'
-      AND "cascadedAt" IS NULL
-      AND "deletedAt" IS NULL
-      AND "amountPaise" > 0
-      AND "updatedAt" < ${new Date(startedAt - STRANDED_AFTER_MS)}
-      AND COALESCE(
-        CASE jsonb_typeof(metadata -> 'cascadeRedriveAttempts')
-          WHEN 'number' THEN (metadata ->> 'cascadeRedriveAttempts')::numeric
-        END, 0) < ${MAX_CASCADE_REDRIVE_ATTEMPTS}
+    WHERE ${strandedRefundSqlWhere(new Date(startedAt - STRANDED_AFTER_MS))}
     ORDER BY "updatedAt" ASC, id ASC
     LIMIT ${Math.min(limit ?? STRANDED_BATCH, STRANDED_BATCH)}`;
   const pass: StrandedPass = {
@@ -910,6 +969,12 @@ function prismaMetadataObject(metadata: unknown): Record<string, unknown> {
 // #779 §A — default failure reason when the gateway metadata carries none.
 const REFUND_FAILED_DEFAULT_REASON = "Gateway rejected the refund";
 
+/** FAILED refunds the payer has not heard about; shared with the ticker's idle probe. */
+const FAILED_REFUND_NOTICE_WHERE: Prisma.RefundWhereInput = {
+  status: RefundStatus.FAILED,
+  failedNotifiedAt: null,
+};
+
 export interface FailedRefundNotifyResult {
   scanned: number;
   notified: number;
@@ -940,10 +1005,7 @@ async function notifyFailedRefundsUnlocked(
   const now = new Date();
   const failed =
     (await prisma.refund.findMany({
-      where: {
-        status: RefundStatus.FAILED,
-        failedNotifiedAt: null,
-      },
+      where: FAILED_REFUND_NOTICE_WHERE,
       include: {
         payment: {
           select: {

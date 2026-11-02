@@ -45,9 +45,6 @@ jest.mock("../../utils/appointmentlock", () => ({
   AppointmentBusyError: class extends Error {},
 }));
 jest.mock("../../lib/auth-server", () => ({ getSession: jest.fn() }));
-jest.mock("../../lib/activity/log-activity", () => ({
-  logActivity: jest.fn().mockResolvedValue(undefined),
-}));
 jest.mock("../../lib/novu/service", () => ({
   notifyAppointmentRescheduled: jest.fn().mockResolvedValue(undefined),
 }));

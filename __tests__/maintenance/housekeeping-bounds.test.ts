@@ -2,7 +2,11 @@
 import type { Tx } from "../../lib/prisma";
 import { txDouble } from "../fixtures/tx-double";
 import { cleanupAuthTokens } from "../../lib/auth/cleanup-auth-tokens";
-import { archiveWebhookEvents } from "../../scripts/cleanup/archive-webhook-events";
+import {
+  archiveWebhookEvents,
+  WEBHOOK_DELETE_BATCH,
+  webhookEventRetentionCutoff,
+} from "../../scripts/cleanup/archive-webhook-events";
 import { pruneAuditLogs } from "../../scripts/cleanup/prune-audit-logs";
 import { expireOnboardingDrafts } from "../../scripts/cleanup/expire-onboarding-drafts";
 
@@ -28,11 +32,14 @@ jest.mock("../../lib/prisma", () => {
       session: delegate(),
       idempotencyRecord: delegate(),
       invitation: delegate(),
-      webhookEvent: delegate(),
-      outboundWebhookDelivery: delegate(),
       orgAuditLog: delegate(),
       onboardingDraft: delegate(),
+      opsActionLog: delegate(),
+      opsActionProposal: delegate(),
+      bookingStatusHistory: delegate(),
+      ledgerReconciliationReport: delegate(),
       $transaction: jest.fn(),
+      $executeRaw: jest.fn(),
     },
   };
 });
@@ -46,22 +53,29 @@ type Model =
   | "session"
   | "idempotencyRecord"
   | "invitation"
-  | "webhookEvent"
-  | "outboundWebhookDelivery"
   | "orgAuditLog"
-  | "onboardingDraft";
+  | "onboardingDraft"
+  | "opsActionLog"
+  | "opsActionProposal"
+  | "bookingStatusHistory"
+  | "ledgerReconciliationReport";
 const { default: db } = jest.requireMock<{
-  default: Record<Model, Delegate> & { $transaction: jest.Mock };
+  default: Record<Model, Delegate> & {
+    $transaction: jest.Mock;
+    $executeRaw: jest.Mock;
+  };
 }>("../../lib/prisma");
 const models: Model[] = [
   "verification",
   "session",
   "idempotencyRecord",
   "invitation",
-  "webhookEvent",
-  "outboundWebhookDelivery",
   "orgAuditLog",
   "onboardingDraft",
+  "opsActionLog",
+  "opsActionProposal",
+  "bookingStatusHistory",
+  "ledgerReconciliationReport",
 ];
 const NOW = new Date("2026-10-23T12:00:00Z");
 const DAY = 86_400_000;
@@ -114,10 +128,12 @@ it.each(["verification", "session", "idempotencyRecord"] as const)(
       totalCleaned: 0,
       hasMore: false,
     });
+    const lapsed =
+      model === "session" ? new Date(NOW.getTime() - 180 * DAY) : NOW;
     expect(db[model].deleteMany).toHaveBeenCalledWith({
       where: {
+        expiresAt: { lt: lapsed },
         id: { in: ["refreshed"] },
-        expiresAt: { lt: NOW },
       },
     });
   },
@@ -221,78 +237,43 @@ it("does not start draft work after its request budget elapsed", async () => {
   expect(db.onboardingDraft.findMany).not.toHaveBeenCalled();
 });
 
-it("rechecks webhook processing/error and terminal delivery state at deletion", async () => {
-  db.webhookEvent.findMany.mockResolvedValueOnce([{ id: "processed" }]);
-  db.outboundWebhookDelivery.findMany.mockResolvedValue([{ id: "redriven" }]);
-  // Both rows change after selection: the event is retrying and delivery is RETRY.
-  const event = { processed: false, error: "retry" };
-  const deliveryStatus = "RETRY";
-  db.webhookEvent.deleteMany.mockImplementation(
-    async ({
-      where,
-    }: {
-      where: { processed: boolean; error: null; receivedAt: { lt: Date } };
-    }) => ({
-      count:
-        event.processed === where.processed && event.error === where.error
-          ? 1
-          : 0,
-    }),
-  );
-  db.outboundWebhookDelivery.deleteMany.mockImplementation(
-    async ({
-      where,
-    }: {
-      where: { status: { in: string[] }; createdAt: { lt: Date } };
-    }) => ({ count: where.status.in.includes(deliveryStatus) ? 1 : 0 }),
-  );
-  expect(await archiveWebhookEvents({ limit: 2 })).toMatchObject({
+const sqlOf = (call: number): { sql: string; values: unknown[] } =>
+  db.$executeRaw.mock.calls[call][0];
+
+it("drains whole webhook batches, deliveries first, until a batch comes back short", async () => {
+  for (const count of [WEBHOOK_DELETE_BATCH, 5, WEBHOOK_DELETE_BATCH, 7])
+    db.$executeRaw.mockResolvedValueOnce(count);
+  expect(await archiveWebhookEvents()).toMatchObject({
     success: true,
-    totalDeleted: 0,
+    outboundDeliveriesDeleted: WEBHOOK_DELETE_BATCH + 5,
+    webhookEventsDeleted: WEBHOOK_DELETE_BATCH + 7,
+    hasMore: false,
   });
-  expect(db.webhookEvent.deleteMany).toHaveBeenCalledWith({
-    where: {
-      id: { in: ["processed"] },
-      processed: true,
-      error: null,
-      receivedAt: { lt: new Date(NOW.getTime() - 30 * DAY) },
-    },
-  });
-  expect(db.outboundWebhookDelivery.deleteMany).toHaveBeenCalledWith({
-    where: {
-      id: { in: ["redriven"] },
-      status: { in: ["SUCCESS", "FAILED", "DEAD_LETTER"] },
-      createdAt: { lt: new Date(NOW.getTime() - 30 * DAY) },
-    },
-  });
-});
-
-it("preserves webhook retention windows and bounds every archive arm", async () => {
-  await archiveWebhookEvents();
-  expect(db.webhookEvent.findMany).toHaveBeenCalledTimes(3);
-  for (const [args] of db.webhookEvent.findMany.mock.calls)
-    expect(args.take).toBe(100);
-  expect(db.webhookEvent.findMany.mock.calls[2][0].where).toEqual({
-    processed: false,
-    error: { not: null },
-    receivedAt: { lt: new Date(NOW.getTime() - 90 * DAY) },
-  });
-  expect(db.outboundWebhookDelivery.findMany).toHaveBeenCalledWith(
-    expect.objectContaining({ take: 100 }),
+  expect(db.$executeRaw).toHaveBeenCalledTimes(4);
+  expect(sqlOf(0).sql).toContain('DELETE FROM "OutboundWebhookDelivery"');
+  expect(sqlOf(0).values).toContainEqual(new Date(NOW.getTime() - 30 * DAY));
+  expect(sqlOf(2).sql).toContain('("processed" OR "error" IS NOT NULL)');
+  expect(sqlOf(2).values).toContainEqual(new Date("2025-10-23T12:00:00Z"));
+  expect(webhookEventRetentionCutoff(new Date("2028-03-01T00:00:00Z"))).toEqual(
+    new Date("2027-03-01T00:00:00Z"),
   );
 });
 
-it("preserves committed archive counts if the remaining-work read fails", async () => {
-  db.webhookEvent.findMany.mockResolvedValueOnce([{ id: "done" }]);
-  db.webhookEvent.deleteMany.mockResolvedValue({ count: 1 });
-  db.webhookEvent.findFirst.mockRejectedValueOnce(new Error("peek failed"));
+it("keeps committed webhook deletes after a failure and starts no batch past the budget", async () => {
+  db.$executeRaw
+    .mockResolvedValueOnce(WEBHOOK_DELETE_BATCH)
+    .mockRejectedValueOnce(new Error("lock timeout"))
+    .mockImplementationOnce(async () => {
+      jest.setSystemTime(NOW.getTime() + 17_000);
+      return WEBHOOK_DELETE_BATCH;
+    });
   expect(await archiveWebhookEvents()).toMatchObject({
     success: false,
-    processedEventsDeleted: 1,
-    totalDeleted: 1,
+    outboundDeliveriesDeleted: WEBHOOK_DELETE_BATCH,
+    webhookEventsDeleted: WEBHOOK_DELETE_BATCH,
     hasMore: true,
   });
-  expect(db.outboundWebhookDelivery.findMany).toHaveBeenCalled();
+  expect(db.$executeRaw).toHaveBeenCalledTimes(3);
 });
 
 it("bounds the global audit cohort and commits each org's summary with its deletes", async () => {
@@ -318,7 +299,7 @@ it("bounds the global audit cohort and commits each org's summary with its delet
   expect(result).toMatchObject({
     success: true,
     scanned: 2,
-    deleted7y: 2,
+    deleted8y: 2,
     deleted2y: 0,
     perOrgSummaries: 2,
     hasMore: true,
@@ -328,7 +309,7 @@ it("bounds the global audit cohort and commits each org's summary with its delet
     id: { in: ["a"] },
     organizationId: "org-a",
     category: { in: ["INVOICE", "PAYOUT", "WALLET", "CONTRACT", "CONSENT"] },
-    createdAt: { lt: new Date(NOW.getTime() - 7 * 365 * DAY) },
+    createdAt: { lt: new Date("2018-10-23T12:00:00Z") },
   });
 });
 
@@ -347,7 +328,7 @@ it("counts only committed audit summaries after a commit failure and continues a
   expect(await pruneAuditLogs()).toMatchObject({
     success: false,
     scanned: 2,
-    deleted7y: 1,
+    deleted8y: 1,
     deleted2y: 1,
     perOrgSummaries: 1,
     hasMore: true,
@@ -378,5 +359,23 @@ it("retains committed auth deletes when the continuation probe fails", async () 
     totalCleaned: 1,
     hasMore: true,
     errors: [expect.stringContaining("probe unavailable")],
+  });
+});
+
+it("keeps money-surface console actions eight years and the rest two", async () => {
+  await pruneAuditLogs();
+  const [money, other] = db.opsActionLog.findMany.mock.calls.map(
+    ([args]) => args.where,
+  );
+  expect(money).toEqual({
+    surface: { notIn: expect.not.arrayContaining(["refunds.manage"]) },
+    createdAt: { lt: new Date("2018-10-23T12:00:00Z") },
+  });
+  expect(other.surface.in).toEqual(
+    expect.arrayContaining(["systemJobs.manage", "users.read"]),
+  );
+  expect(other.surface.in).not.toContain("payments.manage");
+  expect(other.createdAt).toEqual({
+    lt: new Date("2024-10-23T12:00:00Z"),
   });
 });

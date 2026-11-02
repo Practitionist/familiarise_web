@@ -22,7 +22,7 @@ for dispatch, maintenance admission and lease behavior.
 The five-minute Netlify ticker is the current operating clock for time-sensitive
 recovery and the configured money jobs. Export processing runs every ten minutes;
 stale-request expiry runs every fifteen. GitHub Actions retains CI and the
-remaining configured non-money batch jobs. Do not create a second automatic
+cron heartbeat, drift and security checks; it schedules no registry job. Do not create a second automatic
 scheduler for a ticker-owned job. An Actions cron expression is configuration,
 not evidence of current budget, execution or successful effects.
 

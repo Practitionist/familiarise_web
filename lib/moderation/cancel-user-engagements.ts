@@ -29,7 +29,8 @@ import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import {
   driveRefundOwed,
-  stampRefundOwed,
+  stampOwedOrHeld,
+  type OwedRefundAlreadyHeld,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
 import { isModelledRefundRefusal } from "@/lib/payments/operations/refund";
@@ -83,6 +84,8 @@ export interface BulkCancelSummary {
   }>;
   /** Work items not reached inside the time budget — safe to re-run. */
   remaining: Array<{ kind: string; id: string }>;
+  /** Payments that already owed another door's refund, so the ban added nothing; top up by hand. */
+  refundsAlreadyOwed: OwedRefundAlreadyHeld[];
 }
 
 interface BulkCancelOptions {
@@ -124,6 +127,7 @@ export async function cancelFutureEngagementsForUser(
     failures: [],
     refundedInFullOnUnreadableLedger: [],
     remaining: [],
+    refundsAlreadyOwed: [],
   };
 
   const target = await prisma.user.findUnique({
@@ -428,7 +432,7 @@ async function casCancelExclusiveEngagement(
   appointmentId: string | null,
   owed: RefundOwedMarker[],
   ctx: { initiatedByUserId: string; notes?: string },
-): Promise<RefundOwedMarker[] | null> {
+): Promise<{ owed: RefundOwedMarker[]; held: OwedRefundAlreadyHeld[] } | null> {
   const now = new Date();
   const cancellationData = {
     cancellationReason: "MODERATION" as const,
@@ -467,8 +471,15 @@ async function casCancelExclusiveEngagement(
         if (err instanceof IllegalTransitionError) return null;
         throw err;
       }
-      // Every refund the ban owes commits with the cancel.
-      for (const marker of owed) await stampRefundOwed(tx, marker);
+      // Every refund the ban owes commits with the cancel; one another door
+      // already owes is reported instead (first writer wins).
+      const stamped: RefundOwedMarker[] = [];
+      const held: OwedRefundAlreadyHeld[] = [];
+      for (const marker of owed) {
+        const h = await stampOwedOrHeld(tx, marker);
+        if (h) held.push(h);
+        else stamped.push(marker);
+      }
       await releaseEngagementOccurrences(
         tx,
         kind === "consultation"
@@ -482,7 +493,7 @@ async function casCancelExclusiveEngagement(
       if (appointmentId) {
         await declineOpenReschedules(tx, appointmentId, audit);
       }
-      return owed;
+      return { owed: stamped, held };
     });
   // A request that never got a wrapper has no atom to lock; its CAS decides.
   return appointmentId ? withAppointmentLock(appointmentId, cancel) : cancel();
@@ -605,18 +616,19 @@ async function cancelExclusiveEngagement(
   const engagement = await loadExclusiveEngagement(kind, engagementId);
   if (!engagement) return;
 
-  const owed = await casCancelExclusiveEngagement(
+  const cancelled = await casCancelExclusiveEngagement(
     kind,
     engagementId,
     engagement.appointments[0]?.id ?? null,
     refundableEngagementPayments(engagement),
     ctx,
   );
-  if (!owed) return; // lost the CAS — already terminal, no refund
+  if (!cancelled) return; // lost the CAS — already terminal, no refund
 
   ctx.summary.engagementsCancelled += 1;
+  ctx.summary.refundsAlreadyOwed.push(...cancelled.held);
 
-  for (const marker of owed) {
+  for (const marker of cancelled.owed) {
     await issueFullRefund(marker, ctx.initiatedByUserId, ctx.summary);
   }
 
@@ -926,12 +938,14 @@ async function removeAttendee(
         select: { id: true },
       });
       const owed = paid ? moderationRefundOwed(eventWrapper.id, paid.id) : null;
-      if (owed) await stampRefundOwed(tx, owed);
-      return { owed };
+      const held = owed ? await stampOwedOrHeld(tx, owed) : null;
+      // First writer wins: the owed refund already on the payment is the one driven.
+      return { owed: held ? null : owed, held };
     }),
   );
   if (!removal) return;
   ctx.summary.attendeeRemovals += 1;
+  if (removal.held) ctx.summary.refundsAlreadyOwed.push(removal.held);
   if (removal.owed) {
     await issueFullRefund(removal.owed, ctx.initiatedByUserId, ctx.summary);
   }

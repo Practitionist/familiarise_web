@@ -241,11 +241,8 @@ async function processIrpCandidate(
   return "skipped";
 }
 
-function configSkip(
-  skipped: ConfigSkip,
-  windowStart?: Date,
-): IrpUploaderResult {
-  reportConfigSkip("irp-uploader", skipped, windowStart);
+function configSkip(skipped: ConfigSkip): IrpUploaderResult {
+  reportConfigSkip("irp-uploader", skipped);
   return { processed: 0, failed: 0, skippedRows: 0, skipped };
 }
 
@@ -261,7 +258,7 @@ async function runIrpUploaderUnlocked(opts: {
   // the run is skipped and every row stays PENDING.
   const supplier = getPlatformSupplier();
   if (!supplier) {
-    return configSkip("PLATFORM_GSTIN not configured", opts.windowStart);
+    return configSkip("PLATFORM_GSTIN not configured");
   }
   const seller: SellerIdentity = {
     gstin: supplier.gstin,
@@ -282,10 +279,7 @@ async function runIrpUploaderUnlocked(opts: {
     "PLATFORM_GSTIN",
   ].filter((k) => !process.env[k]?.trim());
   if (missingCleartax.length > 0) {
-    return configSkip(
-      `${missingCleartax.join(", ")} not configured`,
-      opts.windowStart,
-    );
+    return configSkip(`${missingCleartax.join(", ")} not configured`);
   }
 
   const thirtyDaysAgo = new Date();

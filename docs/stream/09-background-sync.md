@@ -35,8 +35,7 @@ redirects, and keep the bearer server-side.
 
 The adapters have no independent schedules. All Stream jobs in this document
 have one automatic owner; their former Actions steps, dispatch allowlists and
-failure-summary entries are removed. Other non-money Actions maintenance remains
-budget-blocked. CI/CD build and review workflows are a separate responsibility.
+failure-summary entries are removed. No Actions workflow schedules a registry job. CI/CD build and review workflows are a separate responsibility.
 
 Current background targets are `/.netlify/functions/recording-transfer-background`
 and `/.netlify/functions/stream-maintenance-background?job=<slug>`. Automatic

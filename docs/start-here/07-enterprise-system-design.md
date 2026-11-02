@@ -1503,7 +1503,7 @@ Refunds are two-phase. A Refund record reserves an amount before a gateway call;
 
 When a confirmed refund fully reverses a booking with collected CHARGE_MEMBER overage batches, the cascade does not make nested gateway calls inside that transaction or try to reverse the side charge as if it shared the parent's tender. Instead, it stamps `Payment.refundOwedKey` on each charged side Payment in the same transaction that completes the parent cascade. The stable key is `overage-credit-back:<parentPaymentId>:<sidePaymentId>`; null `refundOwedPaise` means the child's full remaining refundable balance. This state-as-outbox marker survives process failure and is later driven through the ordinary refund front door by `scripts/payments/retry-auto-refunds.ts`.
 
-The owed-refund worker waits 15 minutes, skips a payment with an existing PENDING refund or a live dispute, and uses the marker key as the refund dedupe key. Success/replay clears the marker; a still-PENDING gateway refund remains owned by refund reconciliation; failures are counted on the payment and retried until the third failed drive, when an operator is asked to refund manually. A marker older than two hours is surfaced in an operations event. `__tests__/payments/overage-credit-back-owed.test.ts` checks multiple child payments, idempotent replay, and retry after a gateway failure. A partial parent refund does not trigger this full-booking overage credit-back; the new marker branch is guarded by full completion of the parent refund.
+The owed-refund worker waits 15 minutes, skips a payment with an existing PENDING refund or a live dispute, and uses the marker key as the refund dedupe key. Success/replay clears the marker; a still-PENDING gateway refund remains owned by refund reconciliation; failures are counted on the payment and retried after 1 hour and then 4 hours (`refundOwedNextAt`) until the third failed drive, when an operator is asked to refund manually. A marker older than six hours is surfaced in an operations event. `__tests__/payments/overage-credit-back-owed.test.ts` checks multiple child payments, idempotent replay, and retry after a gateway failure. A partial parent refund does not trigger this full-booking overage credit-back; the new marker branch is guarded by full completion of the parent refund.
 
 ### 5.12. Organization payout batch
 
@@ -2276,7 +2276,7 @@ The ticker always responds successfully after target execution and reports failu
 
 #### 8.2.2. Batch schedules
 
-GitHub Actions retains non-money batch schedules such as audit pruning, consent retention and breach deadline alerts, plus CI/CD. Money reconciliation, payouts and statutory exports are owned by the active platform ticker in bounded slices. A configured workflow does not prove a recent successful run. Read the executable schedules and the [job inventory](../maintenance/04-cron-jobs-reference.md) before changing ownership; a lease does not prevent sequential duplicate executions.
+The active platform ticker owns every registered job, including audit pruning, consent retention and breach deadline alerts, money reconciliation, payouts and statutory exports, in bounded slices. GitHub Actions keeps CI/CD, the cron heartbeat, the live-database drift check and the security audit. A configured workflow does not prove a recent successful run. Read the executable schedules and the [job inventory](../maintenance/04-cron-jobs-reference.md) before changing ownership; a lease does not prevent sequential duplicate executions.
 
 | Work category            | Examples                                                        | Current scheduling shape                              | Recovery signal                                  |
 | ------------------------ | --------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------ |
@@ -2284,9 +2284,9 @@ GitHub Actions retains non-money batch schedules such as audit pruning, consent 
 | Delivery outbox          | outbound webhooks, Resend, Novu                                 | Netlify ticker with target limits                     | pending/retry/dead-letter counts                 |
 | User lifecycle sweeps    | booking reminders/expiry, Stream erasure                        | Netlify ticker at configured interval                 | summary counts and retry rows                    |
 | Data export              | `process-data-exports`                                          | 10m ticker target                                     | `OrgDataExportJob` state and summary             |
-| Statutory monitoring     | breach deadline, MSME risk                                      | breach alerts: Actions; MSME risk: ticker             | structured alert + admin queue                   |
+| Statutory monitoring     | breach deadline, MSME risk                                      | breach alerts and MSME risk: ticker                   | structured alert + admin queue                   |
 | Money batch              | ledger, payout, tax/accounting exports                          | bounded ticker slices or authenticated manual batches | completed report, execution evidence and backlog |
-| Retention                | audit and consent records                                       | daily or weekly Actions schedule                      | deleted/count summary and retention backlog      |
+| Retention                | audit and consent records                                       | ticker target at its configured interval              | deleted/count summary and retention backlog      |
 
 #### 8.2.3. Cron lease and job execution
 
@@ -2318,7 +2318,7 @@ Use correlation IDs to join a job execution to the domain row and, where availab
 
 `app/api/cleanup/[job]/route.ts` resolves a slug through `getCleanupJobHandlers`. The shared `cleanupRoute` factory validates `CRON_SECRET` (or supported Vercel cron secret), checks maintenance, parses and clamps `limit`, emits run logs, and maps results to HTTP status. A lock loser is 409; maintenance is a deliberate refusal; real callback failure is 500; a successful run with an operator-attention condition can be 207.
 
-`/api/admin/system-jobs/run` provides a staff-controlled execution path for registered jobs; `/api/staff/system-jobs/executions` exposes job history. Both routes should dispatch the same core used by the scheduled endpoint. Permission checks and the job's lock remain in force for manual runs. Do not add a separate admin-only implementation or bypass the lease for convenience.
+`/api/admin/system-jobs/run` provides a staff-controlled execution path for registered jobs; `/api/staff/system-jobs/executions` exposes job history. Both routes should dispatch the same core used by the scheduled endpoint. Permission checks and the job's lock remain in force for manual runs, and off production the run refuses with 409 `JOB_RUN_PRODUCTION_ONLY`. Do not add a separate admin-only implementation or bypass the lease for convenience.
 
 For cleanups that use `?limit=`, the shared parser rejects malformed present values, clamps to a maximum, and lets jobs set a bounded default. Bounded work is especially important on a serverless host: a large database cohort or slow vendor could otherwise outlive the function timeout. Ensure oldest-first work can drain over successive runs and that retry rows keep their own due time.
 

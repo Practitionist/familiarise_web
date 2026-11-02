@@ -50,6 +50,7 @@ const mockRedisSet = (redis as unknown as { set: jest.Mock }).set;
 const priorHost = {
   NETLIFY: process.env.NETLIFY,
   SITE_ID: process.env.SITE_ID,
+  NEXT_PUBLIC_SENTRY_ENVIRONMENT: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
 };
 afterAll(() => {
   for (const [key, value] of Object.entries(priorHost)) {
@@ -61,6 +62,7 @@ afterAll(() => {
 beforeEach(() => {
   delete process.env.NETLIFY;
   delete process.env.SITE_ID;
+  process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
   jest.clearAllMocks();
   delegate.findFirst.mockResolvedValue(null);
   delegate.create.mockResolvedValue({ id: "exec-1" });
@@ -78,7 +80,7 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
 
     expect(delegate.findFirst).toHaveBeenCalledWith({
       where: { jobName: "dunning", status: "RUNNING" },
-      select: { id: true, startedAt: true, createdAt: true },
+      select: { id: true, startedAt: true, createdAt: true, result: true },
     });
     expect(delegate.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -87,6 +89,7 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
         jobName: "dunning",
         status: "RUNNING",
         triggeredBy: expect.stringMatching(/^(cron|github-actions)$/),
+        result: { environment: "production" },
       }),
       select: { id: true },
     });
@@ -150,6 +153,7 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
       id: "exec-old",
       startedAt: new Date(Date.now() - ageMs),
       createdAt: new Date(Date.now() - ageMs - 60_000),
+      result: { environment: "preview" },
     });
     delegate.findFirst.mockResolvedValueOnce(
       heartbeat(LONG_JOB_TTL_MS - 5_000),
@@ -189,7 +193,7 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
         result: {
           outcome: "failed",
           reason: "lease-expired",
-          environment: expect.any(String),
+          environment: "preview",
           takenOverBy,
         },
       },

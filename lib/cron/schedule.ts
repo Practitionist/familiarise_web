@@ -81,6 +81,7 @@ export const TARGETS = [
   "archive-webhook-events",
   "consent-retention-sweeper",
   "expire-onboarding-drafts",
+  "drain-admin-run-requests",
   ...STREAM_LIFECYCLE_JOBS,
 ] as const;
 
@@ -192,6 +193,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   // Count-only: deletion stays behind the route's explicit delete flag.
   "consent-retention-sweeper": 500,
   "expire-onboarding-drafts": null,
+  // One open request per after-mode job.
+  "drain-admin-run-requests": 2,
   "expire-recordings": null,
   "reconcile-orphaned-recordings": null,
   "wind-down-deactivated-orgs": null,
@@ -211,7 +214,7 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "dispatch-outbound-webhooks": 15,
   "drain-notification-outbox": 10,
   "retry-failed-emails": 15,
-  "sentry-ingest-canary": 360,
+  "sentry-ingest-canary": 1440,
   "sync-payment-earnings": 15,
   "release-earnings": 15,
   "reconcile-refunds": 15,
@@ -277,6 +280,8 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "archive-webhook-events": 1440,
   "consent-retention-sweeper": 1440,
   "expire-onboarding-drafts": 1440,
+  // Backstop only: the admin route dispatches at once; every shorter cadence breaks the tick cap.
+  "drain-admin-run-requests": 60,
   "expire-recordings": 60,
   "reconcile-orphaned-recordings": 60,
   "wind-down-deactivated-orgs": 60,
@@ -362,6 +367,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "archive-webhook-events": 20,
   "consent-retention-sweeper": 25,
   "expire-onboarding-drafts": 35,
+  "drain-admin-run-requests": 40,
   "expire-recordings": 5,
   "reconcile-orphaned-recordings": 25,
   "wind-down-deactivated-orgs": 55,
@@ -512,10 +518,10 @@ export function latestWindowStart(name: Target, at: Date): Date | null {
   return null;
 }
 
-/** The targets due on this tick; exported so a test can pin the cadence. */
-export function dueTargets(now: Date): Target[] {
+/** Every target whose slot falls on this tick, before idle skips and the cap. */
+export function scheduledTargets(now: Date): Target[] {
   const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const due = TARGETS.filter((name) => {
+  return TARGETS.filter((name) => {
     if (name in TARGET_WINDOWS && windowStartFor(name, now) === null) {
       return false;
     }
@@ -524,10 +530,18 @@ export function dueTargets(now: Date): Target[] {
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
     return (((minuteOfDay - offset) % every) + every) % every < 5;
   });
-  // The ledger report persists its cursor and yields past the cap; other jobs keep their slots.
-  return due.length > MAX_TARGETS_PER_TICK
-    ? due.filter((name) => name !== "reconcile-ledgers")
-    : due;
+}
+
+/** The cap on dispatched targets: the ledger report persists its cursor and yields past it. */
+export function capToTick(targets: readonly Target[]): Target[] {
+  return targets.length > MAX_TARGETS_PER_TICK
+    ? targets.filter((name) => name !== "reconcile-ledgers")
+    : [...targets];
+}
+
+/** The targets due on this tick with no idle skips; exported so a test can pin the cadence. */
+export function dueTargets(now: Date): Target[] {
+  return capToTick(scheduledTargets(now));
 }
 
 /** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */
@@ -591,6 +605,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "archive-webhook-events": 20_000,
   "consent-retention-sweeper": 20_000,
   "expire-onboarding-drafts": 20_000,
+  "drain-admin-run-requests": 24_000,
 };
 
 /**
