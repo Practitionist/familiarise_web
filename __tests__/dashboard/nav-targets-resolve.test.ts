@@ -122,6 +122,21 @@ describe("personal + workspace nav targets resolve", () => {
     expect(expert.map((i) => i.path)).not.toContain("purchases");
   });
 
+  it("the expert tree splits Sell from Studio and keeps no Offerings item", () => {
+    const nav = buildConsultantNav("cp-1");
+    const group = (label: string) =>
+      nav.groups.find((g) => g.label === label)?.items.map((i) => i.path);
+    expect(group("Sell")).toEqual([
+      "sell/sessions",
+      "sell/programs",
+      "sell/products",
+      "collaborations",
+    ]);
+    expect(group("Studio")).toEqual(["recordings", "documents"]);
+    expect(flattenNav(nav).map((i) => i.path)).not.toContain("offerings");
+    expect(nav.groups.every((g) => g.items.length <= 4)).toBe(true);
+  });
+
   it("header CTAs and Help targets point at real pages", () => {
     expect(buildConsultantNav("cp-1").pinnedCta?.href).toBe(
       "/explore/experts/cp-1",
@@ -364,15 +379,23 @@ describe("no redundant group nesting", () => {
 
 describe("where Settings lives", () => {
   it.each([
-    ["consultant", buildConsultantNav("cp-1")],
-    ["consultee", buildConsulteeNav("ce-1")],
-    ["workspace", buildWorkspaceNav("ow-1")],
-    ["admin", buildBackofficeDashboardNav(backofficeCap("admin"))],
-    ["staff", buildBackofficeDashboardNav(backofficeCap("staff"))],
-  ] as const)("%s exposes Settings once under Operations", (_name, nav) => {
+    ["consultant", buildConsultantNav("cp-1"), "Settings & help"],
+    ["consultee", buildConsulteeNav("ce-1"), "Operations"],
+    ["workspace", buildWorkspaceNav("ow-1"), "Operations"],
+    [
+      "admin",
+      buildBackofficeDashboardNav(backofficeCap("admin")),
+      "Operations",
+    ],
+    [
+      "staff",
+      buildBackofficeDashboardNav(backofficeCap("staff")),
+      "Operations",
+    ],
+  ] as const)("%s exposes Settings once under %s", (_name, nav, label) => {
     expect(
       nav.groups
-        .find((group) => group.label === "Operations")
+        .find((group) => group.label === label)
         ?.items.some((item) => item.path === "settings"),
     ).toBe(true);
     expect(

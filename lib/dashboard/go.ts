@@ -81,6 +81,7 @@ const EXPERT_ONLY = new Set([
   "availability",
   "planner",
   "collaborations",
+  "sell",
   "offerings",
   "reviews",
   "analytics",

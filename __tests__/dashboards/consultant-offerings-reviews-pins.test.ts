@@ -5,7 +5,7 @@
 /**
  * #1527 — three consultant pins: Delete is offered only on an untouched plan,
  * the Reviews inbox reads the session's own profile and nobody else's, and the
- * retired planner/collaborations URLs 308 to their Offerings homes.
+ * retired planner URL 308s to Group programs.
  */
 
 jest.mock("server-only", () => ({}));
@@ -35,7 +35,6 @@ import {
 } from "@/lib/offerings/delete-guard";
 import { GET as getReviews } from "@/app/api/consultant/reviews/route";
 import PlannerRedirectPage from "@/app/dashboard/consultant/[consultantId]/(features)/planner/page";
-import CollaborationsRedirectPage from "@/app/dashboard/consultant/[consultantId]/(features)/collaborations/page";
 
 // #1846 — the card and the DELETE routes share one guard, so they cannot
 // disagree, and any seat ever held counts (no status filter), released or not.
@@ -81,12 +80,11 @@ it("reads the session's own reviews and ignores any id in the URL", async () => 
   );
 });
 
-it("308s the planner and collaborations URLs to Offerings", async () => {
-  const params = Promise.resolve({ consultantId: "cp-1" });
-  await PlannerRedirectPage({ params });
-  await CollaborationsRedirectPage({ params });
+it("308s the planner URL to Group programs", async () => {
+  await PlannerRedirectPage({
+    params: Promise.resolve({ consultantId: "cp-1" }),
+  });
   expect(permanentRedirect.mock.calls).toEqual([
-    ["/dashboard/consultant/cp-1/offerings"],
-    ["/dashboard/consultant/cp-1/offerings/collaborations"],
+    ["/dashboard/consultant/cp-1/sell/programs"],
   ]);
 });

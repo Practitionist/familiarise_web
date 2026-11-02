@@ -10,6 +10,7 @@ import { resolveBackofficeCapability } from "@/lib/backoffice/capability";
 import { accountSettingsLinks } from "@/components/dashboard/DashboardShellParts";
 import { buildWorkspaceNav } from "@/lib/dashboard/nav/workspace";
 import { buildBackofficeDashboardNav } from "@/lib/dashboard/nav/backoffice";
+import { buildConsulteeNav } from "@/lib/dashboard/nav/consultee";
 import { buildFindIndex, filterFind } from "@/lib/dashboard/nav/find-index";
 import { buildOrganizationNav } from "@/lib/dashboard/nav/organization";
 import { flattenNav } from "@/lib/dashboard/nav/types";
@@ -68,6 +69,20 @@ describe("Find index", () => {
     expect(filterFind(index, "purchases").map((e) => e.label)).toEqual([
       "My library",
     ]);
+  });
+
+  it("a learner's Library is listed once, and ebooks find it", () => {
+    const nav = buildConsulteeNav("ce-1");
+    const account = accountSettingsLinks({
+      name: null,
+      image: null,
+      roleLabel: "",
+      settingsHref: "/dashboard/consultee/ce-1/settings",
+    });
+    const index = buildFindIndex({ nav, account });
+    const hits = (q: string) => filterFind(index, q).map((e) => e.href);
+    expect(hits("library")).toEqual(["/dashboard/consultee/ce-1/library"]);
+    expect(hits("ebooks")).toEqual(["/dashboard/consultee/ce-1/library"]);
   });
 
   it("the old words still find the renamed pages", () => {
