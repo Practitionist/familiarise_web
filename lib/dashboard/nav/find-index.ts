@@ -36,6 +36,7 @@ const SYNONYMS: Record<string, string[]> = {
   documents: ["files", "uploads", "materials"],
   recordings: ["videos", "replays"],
   products: ["ebooks", "templates", "downloads", "purchases"],
+  purchases: ["ebooks", "templates", "downloads", "products"],
   analytics: ["reports", "metrics", "stats"],
   audit: ["log", "history"],
   settings: ["preferences", "account", "configure"],
