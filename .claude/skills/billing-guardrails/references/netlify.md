@@ -6,19 +6,47 @@ Rechecked 2026-10-23 using getSite and listAccountsForUser: familiarise belongs 
 
 The account explicitly reports background_functions.included=true. Current [general documentation](https://docs.netlify.com/build/functions/usage-and-billing/) restricts legacy-plan background availability, so preserve the account-specific evidence and require deployed manifest/runtime verification. Do not assume availability or impossibility from the general plan name alone.
 
-Netlify distinguishes legacy request billing from credit-based compute and web-request meters. Use actual provider usage and invoices before quoting an overage or changing plans. The [credit model](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/) has multiple meters; fewer function calls need not reduce total credits if compute or bandwidth grows. Current plan price and exact overage are not established by the capability response.
+Netlify distinguishes legacy request billing from credit-based compute and web-request meters (section 1.2). Use actual provider usage and invoices before quoting an overage or changing plans. The [credit model](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/) has multiple meters; fewer function calls need not reduce total credits if compute or bandwidth grows. Current plan price and exact overage are not established by the capability response.
+
+## 1.1 What the bill is made of (legacy Pro)
+
+MEASURED from receipts (team `teetangh`, invoices CFJUKK-00015 to CFJUKK-00020):
+
+- $19 per member per month. A second member (a Developer) was added on 2026-10-05 and billed $18.39 prorated; the next bill is about $63 if invocations stay above 125,000.
+- Function invocations of the `familiarise` site by billing period: May 24,804; June 48,552; August 75,897; September 4 to October 3 282,162. Crossing the 125,000-per-site tier adds a flat $25 (125,000 to 2,000,000), which is why the 2026-10-06 bill was $44.
+- Nothing else is close: bandwidth 1.29, 1.60, 8.26 and 8.36 GB against 1 TB; edge function invocations 52,000 rising to 284,000 against 2,000,000 free; build minutes up to 9,777 of 25,000. Invocations are the only meter that has crossed a line.
+
+DOCS (Netlify support ticket #1112198, 2026-09-17, and [legacy plans](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-legacy-plans/legacy-pricing-plans/)):
+
+- Keep-warm pings bill like real invocations (about 26,000 a month for three pings every five minutes). That keep-warm was retired on 2026-10-03. Both keep-warm figures were real at different times: 32,400 a month was the 4-minute configuration (three pings every four minutes), and about 26,000 a month is the support ticket's figure for three pings every five minutes.
+- A cold-start stall bills as duration: 28 seconds at 1,024 MB is about 28 GB-seconds against the 1,000 GB-hour allowance.
+- Legacy Pro has no hard spend cap, only usage alerts at 50, 75, 90 and 100 percent. Overage above 2,000,000 invocations is billed per 500,000.
+
+The ticker used to be the largest controllable source: MEASURED about 94,850 invocations a month on `dev` (8,640 ticks plus 86,210 target calls) plus 8,640 slot-claim calls, with 99.8 percent of runs in a 7-day window processing zero items. After the skip-idle change (ESTIMATE, `docs/decisions/2026-11-01-ticker-skip-idle-targets.md`) the idle state is about 22,450 a month plus one call per due tick that has work. Every new job must declare an idle probe or an `alwaysRun` reason (`lib/cron/cleanup-registry.ts`); a job that always runs is a permanent monthly invocation cost.
+
+Better Stack checks `familiarisenow.com` and `/api/health` every 3 minutes (`docs/maintenance/00-betterstack-setup.md`). The homepage is ISR (`revalidate = 3600` in `app/page.tsx`) and served from the CDN, so its check is not a function invocation; the `/api/health` check is, at about 14,400 a month per checking region. The owner decided on 2026-11-01 to keep both monitors unchanged.
+
+## 1.2 Credit-based plans (PENDING, not decided)
+
+DOCS ([pricing](https://www.netlify.com/pricing/), [how credits work](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/)):
+
+- Pro is $20 flat with 3,000 credits and unlimited members. Packs are 1,500 credits for $10; auto-recharge is off by default; free-plan sites pause when credits run out.
+- Costs: a production deploy 15 credits; Deploy Previews and branch deploys free; compute 10 credits per GB-hour (Serverless, Scheduled and Background Functions; Edge Functions do not count); web requests 2 credits per 10,000; bandwidth 20 credits per GB; forms free.
+- The switch is permanent: "You cannot revert to a Legacy plan from a Credit-based plan."
+- ESTIMATE at our usage: about 1,000 to 1,300 credits a month.
+- Status: an email asking Netlify support to confirm region pinning, Background Functions and seats before switching was drafted on 2026-11-01 and is not yet sent. Do not recommend the switch as decided.
 
 ## 2. What causes surprise bills or outages
 
 - Compute usage depends on allocated memory and execution duration, not observed heap usage. Entry-preloading is disabled to avoid unnecessary cold-start work; do not infer a bill by multiplying heap measurements by time.
 - Keep-warm pingers bill like user traffic: one route pinged every five minutes is 8,640 invocations in a 30-day month, multiplied by every route the pinger hits and race the reclaim window anyway.
 - Pages marked `force-dynamic` invoke the server handler on every visitor instead of being served by the CDN.
-- The ticker deliberately returns 200; its status is not a worker-health signal. Background functions have documented asynchronous failure retries after one and then two minutes. Do not apply that retry contract to every function type without evidence.
+- The ticker deliberately returns 200; its status is not a worker-health signal. Background functions have documented asynchronous failure retries after one and then two minutes, which ours avoid: `runBackgroundWorker` (`lib/cron/background-worker.ts`) never throws, so a failed run is recorded and logged, not retried. Do not apply that retry contract to every function type without evidence.
 - Bandwidth from uncached large assets; build minutes on every deploy preview, including those nobody looks at.
 
 ## 3. Exposure in this repo
 
-- `netlify/functions/cron-tick.mts` fires every five minutes (`*/5 * * * *`), about 8,640 ticks a month, each fanning out to due targets in `lib/cron/schedule.ts`. Cadence tests bound planned waves to `MAX_TARGETS_PER_TICK=10`. If the due wave exceeds that ceiling, `dueTargets` omits `reconcile-ledgers` for that tick and retains the other targets. This specific ledger deferral is not a general truncation or worker concurrency queue. It answers 200 regardless of individual target results. Use completed capabilities and the structured failure buckets for health.
+- `netlify/functions/cron-tick.mts` fires every five minutes (`*/5 * * * *`), about 8,640 ticks a month, each fanning out to due targets in `lib/cron/schedule.ts`. Cadence tests bound planned waves to `MAX_TARGETS_PER_TICK=12`. If the due wave exceeds that ceiling, `dueTargets` omits `reconcile-ledgers` for that tick and retains the other targets. This specific ledger deferral is not a general truncation or worker concurrency queue. It answers 200 regardless of individual target results. Use completed capabilities and the structured failure buckets for health.
 - `next.config.mjs` sets `experimental.preloadEntriesOnStart: false` and `experimental.appDocumentPreloading: false`; turning either on makes `NextNodeServer` load route entries on every cold container (20 to 34 s of GB-seconds and 504 timeouts). `__tests__/lib/next-config-preload.test.ts` pins this.
 - A prior memory increase did not resolve the entry-preloading stall. Changing allocation needs new latency measurements and account-specific pricing; usage growth alone does not establish the invoice delta.
 - `app/page.tsx` uses `revalidate = 3600`, not `force-dynamic`, so the CDN serves marketing traffic.

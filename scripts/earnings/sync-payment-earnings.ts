@@ -18,7 +18,7 @@
  * Schedule: Hourly
  */
 
-import prisma from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import { PaymentStatus, AppointmentsType, type Prisma } from "@prisma/client";
 import { AppointmentType } from "../../lib/payments/payouts/constants";
 import {
@@ -65,6 +65,42 @@ const REFUNDED_OR_DISPUTED: Prisma.PaymentWhereInput = {
     { disputes: { some: { status: { in: [...RETURNED_DISPUTE_STATUSES] } } } },
   ],
 };
+
+/** The cohort the sweep accrues; shared with the ticker's idle probe. */
+const UNEARNED_PAYMENT_WHERE: Prisma.PaymentWhereInput = {
+  paymentStatus: PaymentStatus.SUCCEEDED,
+  // Synchronous rails carry the flag and settle earnings in their own tx.
+  isMockPayment: false,
+  // An appointment-less row is never healed here, so it must not hold a cohort slot.
+  appointmentId: { not: null },
+  earnings: { none: {} }, // No linked earnings
+  refunds: { none: { status: { in: [...RETURNED_REFUND_STATUSES] } } },
+  disputes: { none: { status: { in: [...RETURNED_DISPUTE_STATUSES] } } },
+  // A parked capture's cash sits in UNAPPLIED_RECEIPTS; booking it would count CASH twice.
+  AND: [notSettledElsewhereWhere],
+};
+
+/** Unearned payments whose money already left; the run reports them every time while any exist. */
+const REFUNDED_UNEARNED_PAYMENT_WHERE: Prisma.PaymentWhereInput = {
+  paymentStatus: PaymentStatus.SUCCEEDED,
+  appointmentId: { not: null },
+  earnings: { none: {} },
+  ...REFUNDED_OR_DISPUTED,
+};
+
+/** True when the run would accrue a payment or report a refunded unearned one. */
+export async function hasPaymentEarningsSyncWork(
+  db: PrismaLike,
+  _now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const row = await db.payment.findFirst({
+    where: { OR: [UNEARNED_PAYMENT_WHERE, REFUNDED_UNEARNED_PAYMENT_WHERE] },
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 /**
  * How long a SUCCEEDED payment may sit without earnings before the sweep pages
@@ -318,18 +354,7 @@ async function syncPaymentEarningsUnlocked(
     const take = Math.min(BATCH_SIZE, maxPayments - totalProcessed);
     // Fetch batch with cursor-based pagination
     const payments = await prisma.payment.findMany({
-      where: {
-        paymentStatus: PaymentStatus.SUCCEEDED,
-        // Synchronous rails carry the flag and settle earnings in their own tx.
-        isMockPayment: false,
-        // An appointment-less row is never healed here, so it must not hold a cohort slot.
-        appointmentId: { not: null },
-        earnings: { none: {} }, // No linked earnings
-        refunds: { none: { status: { in: [...RETURNED_REFUND_STATUSES] } } },
-        disputes: { none: { status: { in: [...RETURNED_DISPUTE_STATUSES] } } },
-        // A parked capture's cash sits in UNAPPLIED_RECEIPTS; booking it would count CASH twice.
-        AND: [notSettledElsewhereWhere],
-      },
+      where: UNEARNED_PAYMENT_WHERE,
       take,
       ...(cursor
         ? { cursor: { id: cursor }, skip: 1 } // skip the cursor item itself
@@ -519,12 +544,7 @@ async function syncPaymentEarningsUnlocked(
   // One message per run, not per row: the excluded volume is what an operator
   // needs to see when a cascade starts running ahead of the accrual (#1583 C-P0-05).
   const skippedRefunded = await prisma.payment.count({
-    where: {
-      paymentStatus: PaymentStatus.SUCCEEDED,
-      appointmentId: { not: null },
-      earnings: { none: {} },
-      ...REFUNDED_OR_DISPUTED,
-    },
+    where: REFUNDED_UNEARNED_PAYMENT_WHERE,
   });
   if (skippedRefunded > 0) {
     reportSentryMessage(

@@ -54,7 +54,6 @@ describe("cleanup registry metadata", () => {
       "expire-contracts",
       "heal-consumer-invoices",
       "irp-uploader",
-      "prune-audit-logs",
       "reconcile-org-invoice-payments",
       "reconcile-sessions",
       "timeout-member-overages",

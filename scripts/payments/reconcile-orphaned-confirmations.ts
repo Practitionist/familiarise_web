@@ -23,7 +23,7 @@
  * paid, still NULL" into an exact work queue — state-as-outbox, no queue table.
  * See ADR 27.
  */
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import { PaymentStatus, Prisma, RefundStatus } from "@prisma/client";
 import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
@@ -31,7 +31,6 @@ import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-cha
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
-import * as Sentry from "@sentry/nextjs";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   isFreeCreditIntent,
@@ -42,7 +41,10 @@ import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-ma
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { claimAndNotifyOnce } from "@/lib/cron/cas-notice";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
-import { reportSentryMessage } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 
 export interface OrphanedConfirmationResult {
@@ -80,20 +82,40 @@ type OrphanChannelOutcome =
   | { kind: "skipped"; reason: string }
   | { kind: "failed" };
 
-// #1708 — no retry can make this pair's channel succeed, so the row leaves the
-// `chatChannelEnsuredAt IS NULL` queue; rationale in the cron reference.
-async function markChannelTerminal(
-  appointmentId: string,
-  reason: string,
-): Promise<string> {
-  await prisma.appointment.updateMany({
-    where: { id: appointmentId, chatChannelEnsuredAt: null },
-    data: { chatChannelEnsuredAt: new Date() },
-  });
+// No retry can create this pair's channel; the run stamps it out of the queue afterwards.
+function terminalReason(appointmentId: string, reason: string): string {
   console.warn(
-    `💬 Chat channel for appointment ${appointmentId} marked terminal: ${reason}`,
+    `💬 Chat channel for appointment ${appointmentId} is terminal: ${reason}`,
   );
   return reason;
+}
+
+type TerminalSkip = {
+  appointmentId: string;
+  appointmentType: string;
+  reason: string;
+};
+
+// The stamp and its finding commit together, so a failed insert leaves the rows queued for the next run.
+async function stampChannelsTerminal(skipped: TerminalSkip[]): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.appointment.updateMany({
+      where: {
+        id: { in: skipped.map((s) => s.appointmentId) },
+        chatChannelEnsuredAt: null,
+      },
+      data: { chatChannelEnsuredAt: new Date() },
+    });
+    await recordSystemEvent({
+      db: tx,
+      strict: true,
+      category: "BOOKING",
+      severity: "WARN",
+      message: `reconcile-orphaned-confirmations: ${skipped.length} appointment(s) marked terminal — no retry can create their chat channel`,
+      context: { skipped },
+      correlationId: "reconcile-orphaned-confirmations:channel-terminal",
+    });
+  });
 }
 
 async function ensureChannelForOrphan(
@@ -108,7 +130,7 @@ async function ensureChannelForOrphan(
     if (result.reason === "no_channel_branch_for_appointment") {
       return {
         kind: "skipped",
-        reason: await markChannelTerminal(appointmentId, result.reason),
+        reason: terminalReason(appointmentId, result.reason),
       };
     }
     console.warn(
@@ -119,7 +141,7 @@ async function ensureChannelForOrphan(
     if (err instanceof DmNotPermittedError) {
       return {
         kind: "skipped",
-        reason: await markChannelTerminal(appointmentId, "dm_not_permitted"),
+        reason: terminalReason(appointmentId, "dm_not_permitted"),
       };
     }
     console.error(
@@ -128,6 +150,61 @@ async function ensureChannelForOrphan(
     );
     return { kind: "failed" };
   }
+}
+
+const DEFAULT_CONFIRMATION_GRACE_MINUTES = 15;
+const CHANNEL_PASS_WINDOW_MS = 7 * 24 * 3_600_000;
+
+/** A SUCCEEDED payment whose appointment still holds a live tentative slot. */
+function orphanedConfirmationWhere(
+  updatedBefore: Date,
+): Prisma.PaymentWhereInput {
+  return {
+    paymentStatus: "SUCCEEDED",
+    updatedAt: { lt: updatedBefore },
+    appointmentId: { not: null },
+    // A rescheduled-away row keeps isTentative and would be re-driven every
+    // tick; only a live hold is an orphan.
+    appointment: {
+      occurrences: { some: { isTentative: true, ...liveOccurrenceWhere } },
+    },
+  };
+}
+
+/** A confirmed, paid appointment whose chat channel was never stamped ensured. */
+function unchanneledAppointmentWhere(
+  createdSince: Date,
+): Prisma.AppointmentWhereInput {
+  return {
+    chatChannelEnsuredAt: null,
+    deletedAt: null,
+    createdAt: { gte: createdSince },
+    payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
+    occurrences: { none: { isTentative: true, ...liveOccurrenceWhere } },
+  };
+}
+
+/** True when the confirmation pass or the chat-channel pass has a row. */
+export async function hasOrphanedConfirmationWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const t = now.getTime();
+  if (outOfTime()) return true;
+  const payment = await db.payment.findFirst({
+    where: orphanedConfirmationWhere(
+      new Date(t - DEFAULT_CONFIRMATION_GRACE_MINUTES * 60_000),
+    ),
+    select: { id: true },
+  });
+  if (payment) return true;
+  if (outOfTime()) return true;
+  const appointment = await db.appointment.findFirst({
+    where: unchanneledAppointmentWhere(new Date(t - CHANNEL_PASS_WINDOW_MS)),
+    select: { id: true },
+  });
+  return appointment !== null;
 }
 
 // #476 — fail-closed: re-driving a confirmation twice is guarded by the
@@ -145,7 +222,7 @@ export async function reconcileOrphanedConfirmations(
 async function reconcileOrphanedConfirmationsUnlocked(
   opts: { graceMinutes?: number; limit?: number } = {},
 ): Promise<OrphanedConfirmationResult> {
-  const graceMinutes = opts.graceMinutes ?? 15;
+  const graceMinutes = opts.graceMinutes ?? DEFAULT_CONFIRMATION_GRACE_MINUTES;
   const limit = opts.limit ?? 200;
   // #1356 — the channel pass is bounded separately and much lower: each entry
   // is an outbound Stream round trip, and the caller that matters is a Netlify
@@ -159,16 +236,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
   const cutoff = new Date(Date.now() - graceMinutes * 60_000);
 
   const orphans = await prisma.payment.findMany({
-    where: {
-      paymentStatus: "SUCCEEDED",
-      updatedAt: { lt: cutoff },
-      appointmentId: { not: null },
-      // FAMILIARISE_WEB-46 — a rescheduled-away row keeps isTentative and
-      // would be re-driven every tick; only a live hold is an orphan.
-      appointment: {
-        occurrences: { some: { isTentative: true, ...liveOccurrenceWhere } },
-      },
-    },
+    where: orphanedConfirmationWhere(cutoff),
     select: {
       id: true,
       appointmentId: true,
@@ -250,13 +318,9 @@ async function reconcileOrphanedConfirmationsUnlocked(
   // syncUserEventChannels on a dashboard load or is past caring. Oldest first,
   // so a backlog drains in arrival order rather than starving its head.
   const unchanneled = await prisma.appointment.findMany({
-    where: {
-      chatChannelEnsuredAt: null,
-      deletedAt: null,
-      createdAt: { gte: new Date(Date.now() - 7 * 24 * 3_600_000) },
-      payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
-      occurrences: { none: { isTentative: true, ...liveOccurrenceWhere } },
-    },
+    where: unchanneledAppointmentWhere(
+      new Date(Date.now() - CHANNEL_PASS_WINDOW_MS),
+    ),
     select: {
       id: true,
       appointmentType: true,
@@ -275,11 +339,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
 
   let channelsEnsured = 0;
   let channelsFailed = 0;
-  const skipped: {
-    appointmentId: string;
-    appointmentType: string;
-    reason: string;
-  }[] = [];
+  const skipped: TerminalSkip[] = [];
   let channelBuyerOps = 0;
   let channelsDeferred = 0;
   for (const [index, appointment] of unchanneled.entries()) {
@@ -315,21 +375,20 @@ async function reconcileOrphanedConfirmationsUnlocked(
     }
   }
 
-  const channelsSkipped = skipped.length;
-  // #1708 — one warning per run that counts up, not one event per row per tick.
-  if (channelsSkipped > 0) {
-    Sentry.captureMessage(
-      `reconcile-orphaned-confirmations: ${channelsSkipped} appointment(s) marked terminal — no retry can create their chat channel`,
-      {
-        level: "warning",
-        fingerprint: ["reconcile-orphaned-confirmations", "dm_not_permitted"],
-        tags: { subsystem: "payments" },
-        extra: {
-          appointmentIds: skipped.map((r) => r.appointmentId),
-          skipped,
-        },
-      },
-    );
+  // One console finding per run; if it cannot be saved the rows stay queued and Sentry hears once.
+  let channelsSkipped = 0;
+  if (skipped.length > 0) {
+    try {
+      await stampChannelsTerminal(skipped);
+      channelsSkipped = skipped.length;
+    } catch (err) {
+      channelsFailed += skipped.length;
+      reportSentryError(err, {
+        subsystem: "payments",
+        op: "reconcile-orphaned-confirmations:channel-terminal",
+        extra: { appointmentIds: skipped.map((s) => s.appointmentId) },
+      });
+    }
   }
 
   console.log(
@@ -411,6 +470,56 @@ function orphanPaymentWhere(graceCutoff: Date, windowCutoff: Date) {
   } satisfies Prisma.PaymentWhereInput;
 }
 
+/** An orphan past the heal window, escrowed for an operator. */
+function staleOrphanPaymentWhere(windowCutoff: Date) {
+  return {
+    paymentStatus: PaymentStatus.SUCCEEDED,
+    appointmentId: null,
+    deletedAt: null,
+    parentPaymentId: null,
+    NOT: { paymentIntent: { startsWith: "overage:" } },
+    AND: [notSettledElsewhereWhere],
+    createdAt: { lt: windowCutoff },
+    refunds: {
+      none: {
+        status: RefundStatus.PENDING,
+      },
+    },
+    disputes: {
+      none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+    },
+  } satisfies Prisma.PaymentWhereInput;
+}
+
+/**
+ * True when the heal arm or the escrow arm has a candidate. An already-escrowed
+ * row stays in the escrow arm, so this is a superset of the run's writes.
+ */
+export async function hasOrphanedPaymentWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const t = now.getTime();
+  const windowCutoff = new Date(
+    t - ORPHAN_PAYMENT_WINDOW_DAYS * 24 * 3_600_000,
+  );
+  if (outOfTime()) return true;
+  const row = await db.payment.findFirst({
+    where: {
+      OR: [
+        orphanPaymentWhere(
+          new Date(t - ORPHAN_PAYMENT_GRACE_MINUTES * 60_000),
+          windowCutoff,
+        ),
+        staleOrphanPaymentWhere(windowCutoff),
+      ],
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 // Fail-closed: this sweep refunds, so concurrent runs must collapse to one.
 export async function reconcileOrphanedPayments(
   opts: { graceMinutes?: number; limit?: number } = {},
@@ -475,23 +584,7 @@ async function reconcileOrphanedPaymentsUnlocked(
   }
 
   const rawStale = await prisma.payment.findMany({
-    where: {
-      paymentStatus: PaymentStatus.SUCCEEDED,
-      appointmentId: null,
-      deletedAt: null,
-      parentPaymentId: null,
-      NOT: { paymentIntent: { startsWith: "overage:" } },
-      AND: [notSettledElsewhereWhere],
-      createdAt: { lt: windowCutoff },
-      refunds: {
-        none: {
-          status: RefundStatus.PENDING,
-        },
-      },
-      disputes: {
-        none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
-      },
-    },
+    where: staleOrphanPaymentWhere(windowCutoff),
     orderBy: { createdAt: "asc" },
     take: limit,
     select: {

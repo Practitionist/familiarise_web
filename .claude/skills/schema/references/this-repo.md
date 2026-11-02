@@ -154,6 +154,10 @@ removed from PR CI. And it does not run on pushes, because a push to `dev`
 legitimately leads the live database until the orchestrator pushes the merge;
 `db-live-drift.yml` covers the merged state.
 
+Release gate: `npx --no-install tsx scripts/ci/check-db-schema-required.ts --live` diffs the whole schema against the live database (`prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`; `DIRECT_URL` for both the diff and the catalog read) and fails when the schema declares a table, column, enum type or enum value the database lacks. It is read-only and ignores database-ahead objects and the sidecar objects. It is the "Release schema gate" job in `.github/workflows/db-live-drift.yml` on pull requests into `prod` from branches of this repository (a fork's pull request gets no run). The release cutter runs it locally before opening the `prod` pull request and pastes the output into the body (GitHub Free has no branch protection, so it cannot be required); once Actions runs, the job is the record. If it fails by listing missing objects the human runs the preflight and push, never an agent; if it could not compare (a missing URL, a failed diff or catalog read), fix that cause and re-run.
+
+Database ahead of the schema on 2026-10-31 (ignored by the gate, so do not "fix" it with a push): tables `DigitalProduct`, `DigitalProductAsset`, `DigitalProductDownload`, `DigitalProductPurchase`, `DigitalProductReport`; enums `DigitalProductStatus`, `DigitalProductPurchaseStatus`, `DigitalProductCategory`, `DigitalProductAssetStatus`; the column `RecordingPurchase.reconciledAt` (with `RecordingPurchase_status_reconciledAt_idx`); and the sidecar-owned indexes `organization_earnings_split_key`, `consultant_earnings_occurrence_key` and `appointment_feedback_level_key`.
+
 The live drift carried today is in `prisma/sql/known-drift.json`, in two
 lists. `destructiveStatementsAllowed` is what a push MAY run, and
 `knownDivergences` is what the daily drift check tolerates but a push must NOT

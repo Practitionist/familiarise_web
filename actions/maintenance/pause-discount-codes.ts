@@ -3,12 +3,13 @@
  *
  * Before OFFLINE: snapshots active discount code IDs to Redis, deactivates all.
  * After recovery: restores active state from snapshot, skipping codes that
- * expired during maintenance.
+ * expired during maintenance. Production only: the codes and snapshot are shared.
  */
 
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
+import { mayWriteProductionState } from "@/lib/production-state";
 import redis from "@/lib/redis";
 
 const REDIS_KEY = "maintenance:discount_snapshot";
@@ -26,6 +27,7 @@ interface RestoreResult {
  * Snapshot active discount codes to Redis and deactivate them.
  */
 export async function pauseDiscountCodes(): Promise<PauseResult> {
+  if (!mayWriteProductionState(REDIS_KEY)) return { paused: 0 };
   const activeCodes = await prisma.discountCode.findMany({
     where: { isActive: true },
     select: { id: true },
@@ -61,6 +63,9 @@ export async function pauseDiscountCodes(): Promise<PauseResult> {
  * Codes that expired during maintenance are skipped.
  */
 export async function restoreDiscountCodes(): Promise<RestoreResult> {
+  if (!mayWriteProductionState(REDIS_KEY)) {
+    return { restored: 0, expiredDuringMaintenance: 0 };
+  }
   const raw = await redis.get<string>(REDIS_KEY);
   if (!raw) {
     return { restored: 0, expiredDuringMaintenance: 0 };

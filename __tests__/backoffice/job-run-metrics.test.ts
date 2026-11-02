@@ -74,7 +74,7 @@ describe("missed window", () => {
   it("leaves a job with no SLO and no ticker cadence unscheduled", () => {
     expect(
       assessMissedWindow({
-        jobName: "prune-audit-logs",
+        jobName: "retired-sweep",
         lastSuccessAt: null,
         now,
       }),
@@ -88,55 +88,55 @@ it("folds counts, rounds percentiles, fills IST days and sorts missed jobs first
     environment: "production",
     counts: [
       {
-        jobName: "prune-audit-logs",
+        jobName: "retired-sweep",
         status: "COMPLETED",
         outcome: "completed",
         count: 2,
         itemsProcessed: 9,
       },
       {
-        jobName: "prune-audit-logs",
+        jobName: "retired-sweep",
         status: "COMPLETED",
         outcome: "attention",
         count: 1,
         itemsProcessed: 0,
       },
       {
-        jobName: "prune-audit-logs",
+        jobName: "retired-sweep",
         status: "FAILED",
         outcome: "failed",
         count: 1,
         itemsProcessed: 0,
       },
       {
-        jobName: "prune-audit-logs",
+        jobName: "retired-sweep",
         status: "FAILED",
         outcome: "partial",
         count: 2,
         itemsProcessed: 4,
       },
       {
-        jobName: "prune-audit-logs",
+        jobName: "retired-sweep",
         status: "CANCELLED",
         outcome: "held",
         count: 2,
         itemsProcessed: 0,
       },
       {
-        jobName: "prune-audit-logs",
+        jobName: "retired-sweep",
         status: "CANCELLED",
         outcome: "refused",
         count: 1,
         itemsProcessed: 0,
       },
     ],
-    percentiles: [{ jobName: "prune-audit-logs", p50: 1234.4, p95: 9876.6 }],
+    percentiles: [{ jobName: "retired-sweep", p50: 1234.4, p95: 9876.6 }],
     daily: [
-      { jobName: "prune-audit-logs", day: "2026-10-26", runs: 6, failures: 1 },
+      { jobName: "retired-sweep", day: "2026-10-26", runs: 6, failures: 1 },
     ],
     lastSuccess: [],
   });
-  const prune = metrics.jobs.find((j) => j.jobName === "prune-audit-logs");
+  const prune = metrics.jobs.find((j) => j.jobName === "retired-sweep");
   expect(prune).toMatchObject({
     runs: 9,
     succeeded: 3,
@@ -159,7 +159,7 @@ it("folds counts, rounds percentiles, fills IST days and sorts missed jobs first
   expect(prune?.daily[0]).toEqual({ day: "2026-10-20", runs: 0, failures: 0 });
   // SLO jobs with no run at all still appear, flagged, ahead of the rest.
   expect(metrics.jobs[0].missed.state).toBe("missed");
-  expect(metrics.jobs.at(-1)?.jobName).toBe("prune-audit-logs");
+  expect(metrics.jobs.at(-1)?.jobName).toBe("retired-sweep");
 });
 
 it("reports no-runs instead of missed when a non-production deployment has no success of its own", () => {
@@ -167,7 +167,7 @@ it("reports no-runs instead of missed when a non-production deployment has no su
     now,
     counts: [
       {
-        jobName: "prune-audit-logs",
+        jobName: "retired-sweep",
         status: "COMPLETED" as const,
         outcome: "completed",
         count: 1,
@@ -180,14 +180,14 @@ it("reports no-runs instead of missed when a non-production deployment has no su
   };
   const preview = buildJobRunMetrics({ ...input, environment: "preview" });
   expect(
-    preview.jobs.find((j) => j.jobName === "prune-audit-logs")?.missed,
+    preview.jobs.find((j) => j.jobName === "retired-sweep")?.missed,
   ).toEqual({ state: "no-runs", basis: null });
   const production = buildJobRunMetrics({
     ...input,
     environment: "production",
   });
   expect(
-    production.jobs.find((j) => j.jobName === "prune-audit-logs")?.missed.state,
+    production.jobs.find((j) => j.jobName === "retired-sweep")?.missed.state,
   ).not.toBe("no-runs");
 });
 
@@ -210,4 +210,23 @@ it("keeps a stopped ticker job with no run in 7 days on the table as missed", ()
     metrics.jobs.find((j) => j.jobName === "cleanup-abandoned-payments")
       ?.missed,
   ).toEqual({ state: "missed", basis: "interval" });
+});
+
+it("counts a recent idle skip as a healthy no-work tick", () => {
+  const job = buildJobRunMetrics({
+    now,
+    environment: "production",
+    counts: [],
+    percentiles: [],
+    daily: [],
+    lastSuccess: [
+      { jobName: "cleanup-abandoned-payments", endedAt: ago(9 * 24 * 60) },
+    ],
+    idle: [
+      { jobName: "cleanup-abandoned-payments", endedAt: ago(10), skips: 96 },
+    ],
+  }).jobs.find((j) => j.jobName === "cleanup-abandoned-payments");
+  expect(job?.missed).toEqual({ state: "ok", basis: "interval" });
+  expect(job?.idleSkips).toBe(96);
+  expect(job?.lastSuccessAt).toBe(ago(10).toISOString());
 });

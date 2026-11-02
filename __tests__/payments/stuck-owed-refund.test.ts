@@ -3,9 +3,9 @@
  */
 
 /**
- * A refund marker that spent its attempts must have an exit: an ops hand
- * refund clears it (and only a stuck one), and the needs-human queue lists it
- * until it is gone.
+ * An owed refund always has an exit: an operator's hand refund settles it in
+ * the refund's own transaction, a hand refund that fails gives it back once,
+ * and the needs-human queue lists a stuck one until it is gone.
  */
 const mockPaymentFindMany = jest.fn();
 
@@ -15,141 +15,299 @@ jest.mock("@/lib/prisma", () => ({
     payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
   },
 }));
+const mockRecordSystemError = jest.fn();
 jest.mock("@/lib/enterprise/system-events", () => ({
   recordSystemErrorSafe: jest.fn(),
+  recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
 }));
 jest.mock("@/lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: jest.fn(),
 }));
 
-import type { PrismaLike } from "@/lib/prisma";
+import type { Tx } from "@/lib/prisma";
 import { readStuckOwedRefunds } from "@/lib/backoffice/needs-human";
 import {
-  clearStuckRefundOwed,
   MAX_REFUND_OWED_ATTEMPTS,
+  restoreOwedOnFailedRefund,
+  settleOwedByHand,
 } from "@/lib/payments/operations/refund-owed";
 
-const STAMPED_AT = new Date("2026-05-01T00:00:00Z");
-
 function fakeDb(
-  row: {
-    refundOwedKey: string | null;
-    refundOwedAttempts: number;
-    refundOwedPaise?: number | null;
-  },
-  refundedSincePaise = 0,
+  opts: {
+    own?: "PENDING" | "SUCCEEDED";
+    owed?: number | null;
+    attempts?: number;
+    casWins?: boolean;
+  } = {},
 ) {
   const updates: unknown[] = [];
-  const aggregates: unknown[] = [];
   const db = {
     payment: {
       findUnique: jest.fn(async () => ({
-        refundOwedPaise: null,
-        refundOwedAt: STAMPED_AT,
-        ...row,
+        refundOwedKey: "cancel:appt-1:pay-1",
+        refundOwedPaise: opts.owed === undefined ? 500_000 : opts.owed,
+        refundOwedReason: "cancellation",
+        refundOwedAttempts: opts.attempts ?? 1,
       })),
       updateMany: jest.fn(async (args: unknown) => {
         updates.push(args);
-        return { count: 1 };
+        return { count: opts.casWins === false ? 0 : 1 };
       }),
     },
     refund: {
-      aggregate: jest.fn(async (args: unknown) => {
-        aggregates.push(args);
-        return { _sum: { amountPaise: refundedSincePaise } };
-      }),
+      findUnique: jest.fn(async () => (opts.own ? { status: opts.own } : null)),
     },
   };
-  return {
-    db: db as unknown as Pick<PrismaLike, "payment" | "refund">,
-    updates,
-    aggregates,
-  };
+  return { db: db as unknown as Pick<Tx, "payment" | "refund">, updates };
 }
 
-describe("clearStuckRefundOwed", () => {
-  it("clears a marker that spent its attempts, by CAS on its key", async () => {
-    const { db, updates } = fakeDb({
-      refundOwedKey: "incident:inc-1:occ-1:u-1",
-      refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS,
-    });
-    expect(await clearStuckRefundOwed(db, "pay-1", { full: true })).toEqual({
-      cleared: "incident:inc-1:occ-1:u-1",
+const hand = (handPaise: number, refundableBeforePaise = 1_000_000) => ({
+  kind: "amount" as const,
+  handPaise,
+  refundableBeforePaise,
+});
+const CAS = {
+  id: "pay-1",
+  refundOwedKey: "cancel:appt-1:pay-1",
+  refundOwedPaise: 500_000,
+};
+
+describe("settleOwedByHand", () => {
+  it("clears a marker the hand refund covers, by CAS on its key and owed amount", async () => {
+    const { db, updates } = fakeDb();
+    expect(await settleOwedByHand(db, "pay-1", hand(500_000))).toMatchObject({
+      settledPaise: 500_000,
+      stillOwedPaise: 0,
+      note: "The owed ₹5000.00 is fully settled.",
     });
     expect(updates).toEqual([
-      expect.objectContaining({
-        where: {
-          id: "pay-1",
-          refundOwedKey: "incident:inc-1:occ-1:u-1",
-          refundOwedAttempts: { gte: MAX_REFUND_OWED_ATTEMPTS },
-        },
-      }),
+      {
+        where: CAS,
+        data: expect.objectContaining({
+          refundOwedKey: null,
+          refundOwedNextAt: null,
+        }),
+      },
     ]);
   });
 
-  it("never touches a marker still retrying", async () => {
-    const { db, updates } = fakeDb({
+  it("reduces a marker by a smaller hand refund, leaving its attempts and backoff alone", async () => {
+    const { db, updates } = fakeDb();
+    expect(await settleOwedByHand(db, "pay-1", hand(200_000))).toMatchObject({
+      settledPaise: 200_000,
+      stillOwedPaise: 300_000,
+      note: "Settled ₹2000.00 of the owed ₹5000.00; ₹3000.00 still owed and retrying.",
+    });
+    expect(updates).toEqual([
+      { where: CAS, data: { refundOwedPaise: 300_000 } },
+    ]);
+  });
+
+  it("tells the operator a remainder whose retries are spent needs a hand refund", async () => {
+    const { db } = fakeDb({ attempts: MAX_REFUND_OWED_ATTEMPTS });
+    expect((await settleOwedByHand(db, "pay-1", hand(200_000)))?.note).toBe(
+      "Settled ₹2000.00 of the owed ₹5000.00; ₹3000.00 still owed, and its automatic retries are spent: refund it by hand.",
+    );
+  });
+
+  it("reads a full-balance marker as the balance before the hand refund", async () => {
+    const { db, updates } = fakeDb({ owed: null });
+    await settleOwedByHand(db, "pay-1", hand(200_000, 500_000));
+    expect(updates).toEqual([
+      {
+        where: { ...CAS, refundOwedPaise: null },
+        data: { refundOwedPaise: 300_000 },
+      },
+    ]);
+  });
+
+  it("settles nothing for a zero or negative hand amount", async () => {
+    for (const handPaise of [0, -100]) {
+      const { db, updates } = fakeDb();
+      expect(await settleOwedByHand(db, "pay-1", hand(handPaise))).toBeNull();
+      expect(updates).toEqual([]);
+    }
+  });
+
+  it("answers nothing settled when the CAS loses a race", async () => {
+    const { db } = fakeDb({ casWins: false });
+    expect(await settleOwedByHand(db, "pay-1", hand(200_000))).toBeNull();
+  });
+
+  it("refuses while the marker's own refund is in flight", async () => {
+    const { db, updates } = fakeDb({ own: "PENDING" });
+    await expect(
+      settleOwedByHand(db, "pay-1", hand(500_000)),
+    ).rejects.toMatchObject({ code: "OWED_REFUND_IN_FLIGHT" });
+    expect(updates).toEqual([]);
+  });
+
+  it("refuses a partial credit return against a whole credit restoration", async () => {
+    const { db, updates } = fakeDb({ owed: null });
+    await expect(
+      settleOwedByHand(db, "pay-1", { kind: "credits-part" }),
+    ).rejects.toMatchObject({ code: "OWED_RESTORATION_WHOLE" });
+    expect(updates).toEqual([]);
+  });
+});
+
+/** A FAILED hand refund on a ₹100 payment and the payment's marker, as one transaction sees them. */
+function failedHandRefund(opts: {
+  settledPaise: number;
+  marker: { key: string; paise: number } | null;
+  refundedElsewherePaise?: number;
+  /** Another hand refund moves the marker to this amount just before the first write. */
+  movedTo?: number;
+}) {
+  const refund = {
+    paymentId: "pay-1",
+    status: "FAILED",
+    updatedAt: new Date(1),
+    metadata: {
+      source: "app",
+      settledOwed: {
+        key: "cancel:appt-1:pay-1",
+        reason: "cancellation",
+        owedPaise: 5_000,
+        settledPaise: opts.settledPaise,
+        stillOwedPaise: 5_000 - opts.settledPaise,
+        note: "",
+      },
+    } as Record<string, unknown>,
+  };
+  const payment = {
+    amount: 10_000,
+    paymentStatus: "SUCCEEDED",
+    deletedAt: null,
+    refundOwedKey: opts.marker?.key ?? null,
+    refundOwedPaise: opts.marker?.paise ?? null,
+    refundOwedAttempts: 1,
+    refundOwedNextAt: null as Date | null,
+    refunds: opts.refundedElsewherePaise
+      ? [{ amountPaise: opts.refundedElsewherePaise, status: "SUCCEEDED" }]
+      : [],
+    disputes: [],
+  };
+  const tx = {
+    refund: {
+      findUnique: jest.fn(async () => ({ ...refund })),
+      updateMany: jest.fn(
+        async (a: {
+          where: { updatedAt: Date };
+          data: { metadata: Record<string, unknown> };
+        }) => {
+          if (a.where.updatedAt.getTime() !== refund.updatedAt.getTime())
+            return { count: 0 };
+          refund.metadata = a.data.metadata;
+          refund.updatedAt = new Date(refund.updatedAt.getTime() + 1);
+          return { count: 1 };
+        },
+      ),
+    },
+    payment: {
+      findUnique: jest.fn(async () => ({ ...payment })),
+      updateMany: jest.fn(
+        async (a: {
+          where: { refundOwedKey: string | null; refundOwedPaise?: number };
+          data: Record<string, unknown>;
+        }) => {
+          if (opts.movedTo !== undefined) {
+            payment.refundOwedPaise = opts.movedTo;
+            opts.movedTo = undefined;
+          }
+          if (
+            a.where.refundOwedKey !== payment.refundOwedKey ||
+            ("refundOwedPaise" in a.where &&
+              a.where.refundOwedPaise !== payment.refundOwedPaise)
+          )
+            return { count: 0 };
+          Object.assign(payment, a.data);
+          return { count: 1 };
+        },
+      ),
+    },
+  };
+  return { tx: tx as unknown as Tx, refund, payment };
+}
+
+describe("restoreOwedOnFailedRefund", () => {
+  it("grows a partly reduced marker back by what the hand refund settled", async () => {
+    const { tx, payment, refund } = failedHandRefund({
+      settledPaise: 2_000,
+      marker: { key: "cancel:appt-1:pay-1", paise: 3_000 },
+    });
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    expect(payment).toMatchObject({
       refundOwedKey: "cancel:appt-1:pay-1",
+      refundOwedPaise: 5_000,
       refundOwedAttempts: 1,
     });
-    expect(await clearStuckRefundOwed(db, "pay-1", { full: true })).toBeNull();
-    expect(updates).toEqual([]);
-  });
-
-  it("a partial hand refund smaller than the debt leaves the marker owed", async () => {
-    const { db, updates } = fakeDb(
-      {
-        refundOwedKey: "cancel:appt-1:pay-1",
-        refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS,
-        refundOwedPaise: 500_000,
-      },
-      10_000,
-    );
-    expect(await clearStuckRefundOwed(db, "pay-1", { full: false })).toEqual({
-      stillOwed: { key: "cancel:appt-1:pay-1", paise: 500_000 },
+    expect(refund.metadata).toMatchObject({
+      settledOwedRestored: true,
+      settledOwedRestoredPaise: 2_000,
     });
-    expect(updates).toEqual([]);
   });
 
-  it("hand refunds since the marker that add up to the debt clear it", async () => {
-    const { db, updates, aggregates } = fakeDb(
-      {
-        refundOwedKey: "cancel:appt-1:pay-1",
-        refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS,
-        refundOwedPaise: 500_000,
-      },
-      500_000,
-    );
-    expect(await clearStuckRefundOwed(db, "pay-1", { full: false })).toEqual({
-      cleared: "cancel:appt-1:pay-1",
+  it("gives back against the debt as it stands after another hand refund", async () => {
+    // A settled 1,000 of 5,000 (to 4,000); B then settled 1,000 more (to 3,000); A failed.
+    const { tx, payment } = failedHandRefund({
+      settledPaise: 1_000,
+      marker: { key: "cancel:appt-1:pay-1", paise: 3_000 },
+      refundedElsewherePaise: 1_000,
+      movedTo: 2_000,
     });
-    expect(updates).toHaveLength(1);
-    expect(aggregates).toEqual([
-      expect.objectContaining({
-        where: {
-          paymentId: "pay-1",
-          status: "SUCCEEDED",
-          createdAt: { gte: STAMPED_AT },
-        },
-      }),
-    ]);
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    // B moved it again mid-restore; the re-read still adds back exactly A's 1,000.
+    expect(payment.refundOwedPaise).toBe(3_000);
   });
 
-  it("a marker owing the full balance clears only on a full refund", async () => {
-    const row = {
-      refundOwedKey: "plan-end:sub-1:pay:pay-1",
-      refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS,
-      refundOwedPaise: null,
-    };
-    const partial = fakeDb(row, 9_999_999);
-    expect(
-      await clearStuckRefundOwed(partial.db, "pay-1", { full: false }),
-    ).toEqual({ stillOwed: { key: "plan-end:sub-1:pay:pay-1", paise: null } });
-    expect(partial.updates).toEqual([]);
-    const full = fakeDb(row);
-    expect(
-      await clearStuckRefundOwed(full.db, "pay-1", { full: true }),
-    ).toEqual({ cleared: "plan-end:sub-1:pay:pay-1" });
+  it("re-stamps a cleared marker under a new key, after the grace", async () => {
+    const { tx, payment } = failedHandRefund({
+      settledPaise: 5_000,
+      marker: null,
+    });
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    expect(payment).toMatchObject({
+      refundOwedKey: "cancel:appt-1:pay-1:restored:rf-1",
+      refundOwedPaise: 5_000,
+      refundOwedAttempts: 0,
+    });
+    expect(payment.refundOwedNextAt!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("gives it back once, however often the failure is replayed", async () => {
+    const { tx, payment } = failedHandRefund({
+      settledPaise: 2_000,
+      marker: { key: "cancel:appt-1:pay-1", paise: 3_000 },
+    });
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    expect(payment.refundOwedPaise).toBe(5_000);
+  });
+
+  it("caps a re-stamp at what is still refundable", async () => {
+    const { tx, payment, refund } = failedHandRefund({
+      settledPaise: 5_000,
+      marker: null,
+      refundedElsewherePaise: 7_500,
+    });
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    expect(payment.refundOwedPaise).toBe(2_500);
+    expect(refund.metadata).toMatchObject({ settledOwedRestoredPaise: 2_500 });
+  });
+
+  it("caps the give-back at the refundable balance", async () => {
+    const { tx, payment, refund } = failedHandRefund({
+      settledPaise: 5_000,
+      marker: null,
+      refundedElsewherePaise: 10_000,
+    });
+    await restoreOwedOnFailedRefund(tx, "rf-1");
+    expect(payment.refundOwedKey).toBeNull();
+    expect(refund.metadata).toMatchObject({
+      settledOwedRestored: true,
+      settledOwedRestoredPaise: 0,
+    });
   });
 });
 

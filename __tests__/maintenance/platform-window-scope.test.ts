@@ -41,6 +41,9 @@ import { MaintenancePhase } from "@prisma/client";
 
 import { setMaintenanceState } from "../../lib/maintenance";
 
+// Maintenance state is production state; other deploys skip the write.
+process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
+
 // A tiny table: one active per-org row, no platform row.
 const rows = [{ id: "win_org", phase: "DEGRADED", organizationId: "org_1" }];
 

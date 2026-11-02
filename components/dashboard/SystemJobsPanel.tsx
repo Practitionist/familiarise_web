@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/utils/tailwind";
 import { Button } from "@/components/ui/button";
@@ -20,14 +20,17 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { AdminRunRequests } from "@/components/dashboard/AdminRunRequests";
 import {
   JOB_CATEGORIES,
   type JobCategory,
   type SystemJobCard,
 } from "@/lib/cron/job-categories";
 import type { Tone } from "@/lib/ui/tone";
+import type { MetricsEnvironment } from "@/lib/backoffice/job-run-metrics";
 import {
   formatDuration,
+  isStandDownOutcome,
   outcomeLabel,
   scalarFields,
   summaryFields,
@@ -193,53 +196,77 @@ interface SystemJobsPanelProps {
   className?: string;
   /** Built on the server from the cleanup registry. */
   jobs: SystemJobCard[];
+  /** Recent executions list only this environment's runs. */
+  environment: MetricsEnvironment;
 }
 
 export function SystemJobsPanel({
   className,
   jobs,
+  environment,
 }: Readonly<SystemJobsPanelProps>) {
   const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set());
   const [executions, setExecutions] = useState<JobExecution[]>([]);
   const [loadingExecutions, setLoadingExecutions] = useState(true);
+  const [requestsKey, setRequestsKey] = useState(0);
   const { toast } = useToast();
 
-  // Fetch recent executions
-  const fetchExecutions = async () => {
+  // Only the latest request may set state, so a slower answer for a previous environment is dropped.
+  const latestExecutionsRequest = useRef(0);
+  const fetchExecutions = useCallback(async () => {
+    const request = ++latestExecutionsRequest.current;
     try {
       setLoadingExecutions(true);
       const response = await fetch(
-        "/api/staff/system-jobs/executions?limit=10",
+        `/api/staff/system-jobs/executions?limit=10&environment=${environment}`,
       );
       if (!response.ok) throw new Error("Failed to fetch executions");
       const data = await response.json();
-      setExecutions(data.executions || []);
+      if (request === latestExecutionsRequest.current)
+        setExecutions(data.executions || []);
     } catch (error) {
       console.error("Error fetching executions:", error);
     } finally {
-      setLoadingExecutions(false);
+      if (request === latestExecutionsRequest.current)
+        setLoadingExecutions(false);
     }
-  };
+  }, [environment]);
 
   useEffect(() => {
     fetchExecutions();
-  }, []);
+  }, [fetchExecutions]);
 
   // #1527 Q10 — every "Run now" asks for a reason (the route writes it to the
   // audit log); a money job also needs a typed confirmation.
   const [confirmJob, setConfirmJob] = useState<SystemJobCard | null>(null);
+  // One key per Run click; a retry from the same dialog reuses it, so the server returns the same request.
+  const [runKey, setRunKey] = useState("");
 
-  const handleRunJob = async (job: SystemJobCard, reason: string) => {
+  const handleRunJob = async (
+    job: SystemJobCard,
+    reason: string,
+    idempotencyKey: string,
+  ) => {
     setRunningJobs((prev) => new Set(prev).add(job.id));
 
     try {
       const response = await fetch("/api/admin/system-jobs/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: job.id, reason }),
+        body: JSON.stringify({ jobId: job.id, reason, idempotencyKey }),
       });
 
       const result = await response.json();
+      const runOutcome = response.headers.get("x-run-outcome");
+
+      if (!response.ok && isStandDownOutcome(runOutcome)) {
+        toast({
+          title: `${job.title} ${outcomeLabel(runOutcome)?.toLowerCase() ?? "skipped"}`,
+          description: result.error ?? "The job did not run.",
+          variant: "default",
+        });
+        return;
+      }
 
       if (!response.ok) {
         // Shown inside the dialog, which stays open.
@@ -248,6 +275,7 @@ export function SystemJobsPanel({
 
       // #1846 N6 — the payout jobs answer 202 and finish after the response.
       if (result.dispatched) {
+        if (result.requestId) setRequestsKey((key) => key + 1);
         toast({
           title: `${job.title} ${result.accepted ? "queued" : "started"}`,
           description: result.message,
@@ -256,7 +284,7 @@ export function SystemJobsPanel({
         return;
       }
 
-      const outcome = outcomeLabel(response.headers.get("x-run-outcome"));
+      const outcome = outcomeLabel(runOutcome);
       const counts = scalarFields(result, 5);
       const failed = outcome === "Failed" || outcome === "Partial";
 
@@ -303,6 +331,8 @@ export function SystemJobsPanel({
 
   return (
     <div className={cn("space-y-8", className)}>
+      <AdminRunRequests refreshKey={requestsKey} />
+
       {/* Recent Executions */}
       <Card>
         <CardHeader>
@@ -312,7 +342,9 @@ export function SystemJobsPanel({
                 <History className="h-5 w-5" />
                 Recent Executions
               </CardTitle>
-              <CardDescription>Last 10 job executions</CardDescription>
+              <CardDescription>
+                Last 10 job executions in {environment}
+              </CardDescription>
             </div>
             <Button
               variant="ghost"
@@ -403,7 +435,10 @@ export function SystemJobsPanel({
                 key={job.id}
                 job={job}
                 isRunning={runningJobs.has(job.id)}
-                onRun={() => setConfirmJob(job)}
+                onRun={() => {
+                  setRunKey(crypto.randomUUID());
+                  setConfirmJob(job);
+                }}
               />
             ))}
           </div>
@@ -422,7 +457,7 @@ export function SystemJobsPanel({
           requireReason={{ label: "Why run it by hand?" }}
           requireTyped={confirmJob.confirmPhrase ?? undefined}
           onConfirm={async ({ reason }) => {
-            await handleRunJob(confirmJob, reason ?? "");
+            await handleRunJob(confirmJob, reason ?? "", runKey);
             setConfirmJob(null);
           }}
         />

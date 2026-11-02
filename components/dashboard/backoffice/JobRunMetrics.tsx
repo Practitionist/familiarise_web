@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Bar, BarChart, Tooltip, XAxis } from "recharts";
 
 import { Section } from "@/components/dashboard/Section";
@@ -15,8 +16,10 @@ import {
 import type {
   JobRunMetric,
   JobRunMetrics as Metrics,
+  MetricsEnvironment,
 } from "@/lib/backoffice/job-run-metrics";
 import { toneTextClass, type Tone } from "@/lib/ui/tone";
+import { cn } from "@/utils/tailwind";
 
 const OK_FILL = "hsl(var(--muted-foreground))";
 const FAIL_FILL = "hsl(var(--destructive))";
@@ -78,13 +81,54 @@ function Sparkline({ job }: Readonly<{ job: JobRunMetric }>) {
   );
 }
 
-/** Per-job run health over the last seven days, from the execution trail. */
+/** Links that reload the page for another environment's runs. */
+function EnvironmentFilter({
+  environment,
+  environments,
+}: Readonly<{
+  environment: MetricsEnvironment;
+  environments: readonly MetricsEnvironment[];
+}>) {
+  return (
+    <nav
+      className="flex items-center gap-1 text-xs"
+      aria-label="Run environment"
+    >
+      {environments.map((env) => (
+        <Link
+          key={env}
+          href={{ query: { env } }}
+          aria-current={env === environment ? "page" : undefined}
+          className={cn(
+            "rounded-md px-2 py-1",
+            env === environment
+              ? "bg-muted font-medium text-foreground"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {env}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+/** Per-job run health over the last seven days for one environment, from the execution trail. */
 export function JobRunMetrics({
   metrics,
-}: Readonly<{ metrics: Metrics | null }>) {
+  environment,
+  environments,
+}: Readonly<{
+  metrics: Metrics | null;
+  environment: MetricsEnvironment;
+  environments: readonly MetricsEnvironment[];
+}>) {
+  const filter = (
+    <EnvironmentFilter environment={environment} environments={environments} />
+  );
   if (!metrics) {
     return (
-      <Section title="Run metrics" variant="card">
+      <Section title="Run metrics" variant="card" actions={filter}>
         <p className="text-sm text-muted-foreground">
           The run metrics could not be read. The job list below still works.
         </p>
@@ -100,33 +144,36 @@ export function JobRunMetrics({
       variant="card"
       description={
         <>
-          Counts cover every environment writing to this database; the last
-          finished run (completed or partial) and the window check count only{" "}
-          {metrics.environment ?? "every environment"} runs.{" "}
+          Every figure counts only runs recorded by the {metrics.environment}{" "}
+          environment; the database is shared, so other deploys&apos; runs are
+          kept apart.{" "}
           {missed.length > 0
             ? `${missed.length} ${missed.length === 1 ? "job has" : "jobs have"} missed a window.`
             : "No job has missed a window."}
         </>
       }
       actions={
-        <div
-          className="flex items-center gap-3 text-xs text-muted-foreground"
-          aria-label="Chart legend"
-        >
-          <span className="inline-flex items-center gap-1">
-            <span
-              className="h-2 w-2 rounded-sm"
-              style={{ background: OK_FILL }}
-            />
-            Runs
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span
-              className="h-2 w-2 rounded-sm"
-              style={{ background: FAIL_FILL }}
-            />
-            Failed
-          </span>
+        <div className="flex items-center gap-4">
+          {filter}
+          <div
+            className="flex items-center gap-3 text-xs text-muted-foreground"
+            aria-label="Chart legend"
+          >
+            <span className="inline-flex items-center gap-1">
+              <span
+                className="h-2 w-2 rounded-sm"
+                style={{ background: OK_FILL }}
+              />
+              Runs
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span
+                className="h-2 w-2 rounded-sm"
+                style={{ background: FAIL_FILL }}
+              />
+              Failed
+            </span>
+          </div>
         </div>
       }
     >
@@ -140,6 +187,7 @@ export function JobRunMetrics({
             <TableHead className="text-right">Partial</TableHead>
             <TableHead className="text-right">Failed</TableHead>
             <TableHead className="text-right">Held / skipped</TableHead>
+            <TableHead className="text-right">Idle skips</TableHead>
             <TableHead className="text-right">p50</TableHead>
             <TableHead className="text-right">p95</TableHead>
             {itemsRecorded && (
@@ -173,6 +221,9 @@ export function JobRunMetrics({
               </TableCell>
               <TableCell className="text-right tabular-nums">
                 {job.held} / {job.skipped}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {job.idleSkips}
               </TableCell>
               <TableCell className="text-right tabular-nums">
                 {duration(job.p50Ms)}

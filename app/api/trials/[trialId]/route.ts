@@ -34,11 +34,6 @@ import {
 import { TrialStatus, AppointmentsType, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import {
-  logTrialCompleted,
-  logTrialScheduled,
-  logTrialConverted,
-} from "@/lib/activity/log-activity";
-import {
   lockSlotBatch,
   unlockSlotBooking,
   lockConsulteeBooking,
@@ -768,19 +763,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             scheduled.staged;
           const result = scheduled.trial;
 
-          // 4. Log activity (outside transaction for non-critical operation)
-          await logTrialScheduled(
-            existingTrial.consultantProfileId,
-            trialId,
-            {
-              id: existingTrial.consulteeProfile.user.id,
-              name: existingTrial.consulteeProfile.user.name,
-              image: existingTrial.consulteeProfile.user.image,
-            },
-            existingTrial.subscriptionPlan.title,
-            startTime,
-          );
-
           await flushNotificationsAfter(
             {
               bells: [consulteeBell?.staged, consultantBell?.staged],
@@ -842,20 +824,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       // Handle completion
       if (status === TrialStatus.COMPLETED) {
         updateData.completedAt = new Date();
-
-        // Log activity
-        afterCommit.push(() =>
-          logTrialCompleted(
-            existingTrial.consultantProfileId,
-            trialId,
-            {
-              id: existingTrial.consulteeProfile.user.id,
-              name: existingTrial.consulteeProfile.user.name,
-              image: existingTrial.consulteeProfile.user.image,
-            },
-            existingTrial.subscriptionPlan.title,
-          ),
-        );
 
         // Notify both parties that the trial is completed
         afterCommit.push(async () => {
@@ -1075,21 +1043,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         updateData.convertedToSubscription = {
           connect: { id: subscriptionId },
         };
-
-        // Log the conversion activity
-        afterCommit.push(() =>
-          logTrialConverted(
-            existingTrial.consultantProfileId,
-            trialId,
-            subscriptionId,
-            {
-              id: existingTrial.consulteeProfile.user.id,
-              name: existingTrial.consulteeProfile.user.name || "User",
-              image: existingTrial.consulteeProfile.user.image,
-            },
-            existingTrial.subscriptionPlan.title,
-          ),
-        );
       }
     }
 

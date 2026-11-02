@@ -10,9 +10,10 @@ const MAX_PRIOR_ROWS = 50;
 const storedContext = z.object({ ids: z.array(z.string()) });
 
 /**
- * Runs `report` only when `ids` holds an id not already reported under `key`
- * inside the window; the reported ids live in `SystemEvent`, so a fresh process
- * on the next tick sees them. A failed lookup reports (never swallows a fault).
+ * Records a `SystemEvent` and runs `report` only when `ids` holds an id not
+ * already recorded under `key` inside the window, so a fresh process on the
+ * next tick sees them. A failed lookup records (never swallows a fault). Omit
+ * `report` for a business finding that belongs in the console, not Sentry.
  * Call it outside any `$transaction`.
  */
 export async function reportStandingFinding(
@@ -22,7 +23,7 @@ export async function reportStandingFinding(
     message: string;
     windowMs?: number;
   },
-  report: () => void,
+  report?: () => void,
 ): Promise<boolean> {
   const ids = [...new Set(args.ids)];
   if (ids.length === 0) return false;
@@ -68,6 +69,6 @@ export async function reportStandingFinding(
     context: { ids },
     correlationId: `${prefix}${hash}`,
   });
-  report();
+  report?.();
   return true;
 }

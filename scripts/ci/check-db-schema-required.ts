@@ -27,6 +27,11 @@
  * schema-bearing pull request, which is why the earlier whole-schema drift
  * check was moved out of pull-request CI. See docs/prisma/README.md.
  *
+ * `--live` is the release gate for a pull request into `prod`: it diffs the
+ * whole schema against the live database (`--from-config-datasource`) instead
+ * of against the merge base, so code cannot ship before the human-run push.
+ * Sidecar objects and the database-ahead direction are still never read.
+ *
  * Read-only: it reads a schema file and reads the catalog. It never writes.
  */
 import "dotenv/config";
@@ -280,6 +285,28 @@ function branchPlan(base: string): string {
   );
 }
 
+/** The plan that turns the live database into this branch's schema; needs DIRECT_URL (prisma.config.ts). */
+function livePlan(): string {
+  if (!process.env.DIRECT_URL) {
+    throw new Error(
+      "DIRECT_URL is not set, so the live database cannot be diffed",
+    );
+  }
+  const prismaBin = path.join(ROOT, "node_modules", ".bin", "prisma");
+  return execFileSync(
+    prismaBin,
+    [
+      "migrate",
+      "diff",
+      "--from-config-datasource",
+      "--to-schema",
+      SCHEMA,
+      "--script",
+    ],
+    { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+}
+
 /** Every table, column, enum type and enum value in the live database. */
 export type LiveCatalog = {
   tables: Set<string>;
@@ -363,7 +390,17 @@ export function isPresent(o: RequiredObject, catalog: LiveCatalog): boolean {
 }
 
 async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const live = argv.includes("--live");
   const connectionString = process.env.DATABASE_URL;
+  // The release gate has nothing to skip to: without the live database it must fail.
+  if (live && (!connectionString || !process.env.DIRECT_URL)) {
+    console.error(
+      "check-db-schema-required: --live needs DATABASE_URL and DIRECT_URL — refusing to pass without the live database.",
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (!connectionString) {
     // A gate that cannot run must not pass. Outside CI there is simply no live
     // database to compare against and skipping is the useful answer; inside
@@ -384,8 +421,13 @@ async function main(): Promise<void> {
   let plan: string;
   let ref = "origin/dev";
   try {
-    ref = baseRef(process.argv.slice(2));
-    plan = branchPlan(baseSchemaFile(ref));
+    if (live) {
+      ref = "the live database";
+      plan = livePlan();
+    } else {
+      ref = baseRef(argv);
+      plan = branchPlan(baseSchemaFile(ref));
+    }
   } catch (error) {
     // A diff that cannot be computed is not a pass.
     console.error(
@@ -404,7 +446,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const catalog = await readLiveCatalog(connectionString);
+  // --live reads the catalog from the same DIRECT_URL target the diff used.
+  const catalog = await readLiveCatalog(
+    (live && process.env.DIRECT_URL) || connectionString,
+  );
   const missing = required.filter((o) => !isPresent(o, catalog));
 
   if (missing.length === 0) {

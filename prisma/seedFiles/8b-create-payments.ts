@@ -1,6 +1,8 @@
 import { faker } from "@faker-js/faker";
 import {
   Currency,
+  OccurrenceCompletionStatus,
+  OccurrenceOutcome,
   PaymentGateway,
   PaymentLegSource,
   PaymentStatus,
@@ -82,6 +84,7 @@ export async function createPayments(users: UserWithProfiles[]) {
     take: NUM_PAYMENTS,
   });
 
+  const paidAppointmentIds: string[] = [];
   for (let i = 0; i < appointments.length; i++) {
     const user = faker.helpers.arrayElement(users);
     const appointment = appointments[i];
@@ -162,6 +165,9 @@ export async function createPayments(users: UserWithProfiles[]) {
       const created = await prisma.payment.create({
         data: paymentData,
       });
+      if (paymentStatus === PaymentStatus.SUCCEEDED) {
+        paidAppointmentIds.push(appointment.id);
+      }
       // #1319 A9 — stamp the funding payment on the buyer's participant row.
       await prisma.appointmentParticipant.updateMany({
         where: {
@@ -183,5 +189,30 @@ export async function createPayments(users: UserWithProfiles[]) {
     }
   }
 
-  console.log(`Finished creating payments`);
+  // A past session this run paid for was held; only this run's rows, since the DB is shared.
+  const now = new Date();
+  const held = await prisma.appointmentOccurrence.updateMany({
+    where: {
+      appointmentId: { in: paidAppointmentIds },
+      endsAt: { lt: now },
+      isTentative: false,
+      completionStatus: OccurrenceCompletionStatus.UNVERIFIED,
+      outcome: null,
+      deletedAt: null,
+      appointment: {
+        payment: {
+          some: { paymentStatus: PaymentStatus.SUCCEEDED, deletedAt: null },
+        },
+      },
+    },
+    data: {
+      completionStatus: OccurrenceCompletionStatus.COMPLETED,
+      completedAt: now,
+      outcome: OccurrenceOutcome.HELD,
+      outcomeAt: now,
+    },
+  });
+  console.log(
+    `Finished creating payments; ${held.count} paid past sessions held`,
+  );
 }

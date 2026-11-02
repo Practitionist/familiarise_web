@@ -263,7 +263,8 @@ INVOICE events record the full arc of an organization's billing document — fro
 
 > Dunning **stage 2** (escalation reminders, 7d cadence × max 3) does
 > **not** emit a distinct audit action — it bumps
-> `dunningReminderCount` + `lastDunningReminderAt` and re-notifies; only
+> `dunningReminderCount` + `lastDunningReminderAt` and stages its notices
+> in the same transaction; only
 > the stage-1 ISSUED→OVERDUE flip writes `INVOICE_OVERDUE`. Stage 3
 > (`ENABLE_DUNNING_SUSPEND`-gated, #812) now writes `INVOICE_DUNNING_SUSPENDED`
 > when it stamps `dunningSuspendedAt`; the claim and that audit row commit

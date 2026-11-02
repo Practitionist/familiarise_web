@@ -8,6 +8,7 @@ import {
   type ReconcileJob,
 } from "@/lib/backoffice/reconcile-jobs";
 import { getMaintenanceState } from "@/lib/maintenance";
+import { jobsMayRunHere } from "@/lib/cron/dispatch-refusal";
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
 import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
 import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
@@ -25,6 +26,12 @@ export const POST = withOpsAction(
       const job = params.job;
       if (!isReconcileJob(job)) {
         throw new OpsRefusal("UNKNOWN_JOB", "No such reconcile job.", 404);
+      }
+      if (!jobsMayRunHere()) {
+        throw new OpsRefusal(
+          "JOB_RUN_PRODUCTION_ONLY",
+          "Reconcile jobs run only on the production deploy; this deploy shares its database.",
+        );
       }
       const { phase } = await getMaintenanceState();
       if (phase === "DEGRADED" || phase === "OFFLINE") {

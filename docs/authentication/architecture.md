@@ -26,7 +26,7 @@ and `GET /get-session` answers 503 instead of `200 null` when the lookup failed
 `/api/auth/clear-stale-session`, because only a route handler can delete
 cookies.
 
-Expired sessions and verification tokens are rejected by their runtime expiry checks. Housekeeping is separate: `cleanupAuthTokens` removes at most 100 expired verification, session and idempotency rows per arm by default, and examines at most 100 lapsed invitations. The maximum explicit limit is 500 per arm. Deletion repeats expiry after selection, so a refreshed row survives. Invitation expiry still conditionally claims PENDING and commits its audit row in the same transaction. A shared 16-second start budget and `hasMore` describe continuation; neither cleanup nor a successful batch establishes that the entire backlog is drained. See [housekeeping bounds](../maintenance/housekeeping-bounds.md).
+Expired sessions and verification tokens are rejected by their runtime expiry checks. Housekeeping is separate: `cleanupAuthTokens` removes at most 100 expired verification and idempotency rows per arm by default, and expired session rows 180 days after `expiresAt` (the row holds the IP address and user agent, which CERT-In asks to be kept for 180 days; Better Auth `getSession` already returns null for an expired row, and the cookie cache is off, so a kept row cannot sign anyone in). A session ended by sign-out or revocation is deleted at once and leaves no trail, and examines at most 100 lapsed invitations. The maximum explicit limit is 500 per arm. Deletion repeats expiry after selection, so a refreshed row survives. Invitation expiry still conditionally claims PENDING and commits its audit row in the same transaction. A shared 16-second start budget and `hasMore` describe continuation; neither cleanup nor a successful batch establishes that the entire backlog is drained. See [housekeeping bounds](../maintenance/housekeeping-bounds.md).
 
 ## 2. Server composition (`lib/auth.ts`)
 
@@ -111,7 +111,7 @@ which is how staff onboarding calls `createUser` and step-up calls
   not linger as a ghost device.
 - No cap on sessions per user. Expired rows are deleted daily by
   `lib/auth/cleanup-auth-tokens.ts`, the `auth-tokens` job in
-  `lib/cron/cleanup-registry.ts`, which `.github/workflows/cron-daily.yml` calls
+  `lib/cron/cleanup-registry.ts`, which the Netlify ticker calls daily at 03:00 UTC
   via `POST /api/cleanup/auth-tokens`.
 
 ### 3.1 Lifetimes
@@ -310,8 +310,8 @@ stateDiagram-v2
   Operators get a setup mail and give consent in the back office.
 - **Account-linked mail** is skipped for a brand-new user's first account; it
   fires only when a provider is added to an account that already had one.
-- **Purge.** `purge-unverified-users` (registry job, daily from
-  `.github/workflows/cron-daily.yml`) deletes never-verified, credential-only
+- **Purge.** `purge-unverified-users` (registry job, daily at 03:35 UTC from the
+  Netlify ticker) deletes never-verified, credential-only
   consumers older than 7 days with no profile, booking, payment, invoice,
   referral credit or membership (`lib/auth/purge-unverified-users.ts`).
 - In local development the code is logged to the server console

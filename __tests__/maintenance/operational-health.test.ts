@@ -12,7 +12,13 @@ jest.mock("../../lib/cron/cleanup-route", () => ({
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { systemJobExecution: { groupBy: jest.fn() } },
+  default: {
+    systemJobExecution: {
+      groupBy: jest.fn(),
+      findMany: jest.fn(async () => []),
+    },
+    $queryRaw: async () => [],
+  },
 }));
 import prisma from "../../lib/prisma";
 const groupBy = jest.mocked(prisma.systemJobExecution.groupBy);

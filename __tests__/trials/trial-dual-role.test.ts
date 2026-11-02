@@ -26,9 +26,6 @@ jest.mock("../../lib/rate-limit", () => ({
 jest.mock("../../lib/booking/participants", () => ({
   recordParticipants: jest.fn(),
 }));
-jest.mock("../../lib/activity/log-activity", () => ({
-  logTrialRequested: jest.fn(),
-}));
 jest.mock("../../lib/novu", () => ({ notifyTrialRequested: jest.fn() }));
 jest.mock("../../lib/payments/operations/approval-payment", () => ({
   createApprovalPaymentIntent: jest.fn(),

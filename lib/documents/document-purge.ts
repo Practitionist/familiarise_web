@@ -6,7 +6,7 @@
  */
 import type { DocumentRemovalReason, Prisma } from "@prisma/client";
 
-import prisma, { type Db } from "@/lib/prisma";
+import prisma, { type Db, type PrismaLike } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 // The marker-free leaf module, so this job can run from a bare Node process.
 import { deleteAppointmentDocument } from "@/lib/supabase-storage-core";
@@ -38,6 +38,10 @@ export interface PurgeDeletedDocumentsResult {
   failedRows: number;
   byReason: Partial<Record<ReasonKey, number>>;
   remaining: number;
+}
+
+function retentionCutoff(now: Date): Date {
+  return new Date(now.getTime() - DOCUMENT_RETENTION_DAYS * DAY_MS);
 }
 
 /** Bookings that may be past retention; the pure date rule makes the final call. */
@@ -74,7 +78,7 @@ async function tombstoneExpiredBookings(
   now: Date,
   options: PurgeOptions,
 ): Promise<{ tombstoned: number; failed: number }> {
-  const cutoff = new Date(now.getTime() - DOCUMENT_RETENTION_DAYS * DAY_MS);
+  const cutoff = retentionCutoff(now);
   // The caller's limit budgets rows to purge; each due booking here costs a
   // lock and a write, so cap this arm at the same number. Counting only due
   // bookings keeps a run with few expiries from spending its whole budget on
@@ -262,17 +266,43 @@ export async function purgeTombstonedDocuments(
   return counts;
 }
 
+/** Tombstones past the delete grace window. */
+function graceExpiredWhere(now: Date): Prisma.AppointmentDocumentWhereInput {
+  return {
+    deletedAt: {
+      lt: new Date(now.getTime() - DOCUMENT_DELETE_GRACE_DAYS * DAY_MS),
+    },
+  };
+}
+
+/** Ticker idle probe: a retention candidate booking or a purgeable tombstone past grace. */
+export async function hasDocumentPurgeWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const booking = await db.appointment.findFirst({
+    where: retentionCandidateWhere(retentionCutoff(now)),
+    select: { id: true },
+  });
+  if (booking) return true;
+  if (outOfTime()) return true;
+  const doc = await db.appointmentDocument.findFirst({
+    where: purgeableWhere(graceExpiredWhere(now)),
+    select: { id: true },
+  });
+  return doc !== null;
+}
+
 async function purgeDeletedDocumentsUnlocked(
   now: Date,
   options: PurgeOptions,
 ): Promise<PurgeDeletedDocumentsResult> {
   const { tombstoned, failed: failedTombstones } =
     await tombstoneExpiredBookings(now, options);
-  const graceCutoff = new Date(
-    now.getTime() - DOCUMENT_DELETE_GRACE_DAYS * DAY_MS,
-  );
   const counts = await purgeTombstonedDocuments(
-    { deletedAt: { lt: graceCutoff } },
+    graceExpiredWhere(now),
     prisma,
     options,
   );

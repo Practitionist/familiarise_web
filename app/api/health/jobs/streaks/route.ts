@@ -12,7 +12,7 @@ function isTarget(name: string): name is Target {
   return KNOWN_TARGETS.has(name);
 }
 
-/** Read-only: when each requested target's job last COMPLETED, for the ticker's repeat-failure escalation. */
+/** Read-only: when each requested target's job last COMPLETED and last FAILED, for the ticker's escalation and background outcomes. */
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
   if (!secret || !bearerMatches(request.headers.get("authorization"), secret)) {
@@ -43,29 +43,39 @@ export async function GET(request: NextRequest) {
   }
   try {
     const { default: prisma } = await import("@/lib/prisma");
+    const since = new Date(Date.now() - HISTORY_MS);
     const rows = await prisma.systemJobExecution.groupBy({
       by: ["jobName", "status"],
       where: {
         jobName: { in: [...new Set(jobByTarget.values())] },
         status: { in: ["COMPLETED", "FAILED"] },
         result: { path: ["environment"], equals: environment },
-        startedAt: { gte: new Date(Date.now() - HISTORY_MS) },
+        startedAt: { gte: since },
       },
       _max: { startedAt: true },
     });
+    // An idle skip is a run that found no work, so it ends a failure streak.
+    const { readIdleCompletions, newerOf } =
+      await import("@/lib/cron/idle-skips");
+    const idle = await readIdleCompletions(prisma, environment, since);
     const report: StreakReport = {};
     for (const [target, jobName] of jobByTarget) {
       const entry: StreakReport[string] = {
         lastCompletedAt: null,
+        lastFailedAt: null,
         seenRecently: false,
       };
+      let completed: Date | null = null;
       for (const row of rows) {
         if (row.jobName !== jobName) continue;
         entry.seenRecently = true;
-        if (row.status === "COMPLETED" && row._max.startedAt) {
-          entry.lastCompletedAt = row._max.startedAt.toISOString();
-        }
+        if (row.status === "COMPLETED") completed = row._max.startedAt;
+        else entry.lastFailedAt = row._max.startedAt?.toISOString() ?? null;
       }
+      const skipped = idle.find((i) => i.jobName === jobName)?.endedAt;
+      if (skipped) entry.seenRecently = true;
+      entry.lastCompletedAt =
+        newerOf(completed, skipped)?.toISOString() ?? null;
       report[target] = entry;
     }
     return NextResponse.json(report, { headers: HEADERS });

@@ -1,31 +1,10 @@
-import { reportSentryMessage } from "@/lib/observability/report";
-
 /** A run that did nothing because a required setting is absent; its route answers 200. */
 export type ConfigSkip = `${string} not configured`;
 
-/** One hourly slot: only the first ticker slot of a window warns. */
-const FIRST_SLOT_MS = 60 * 60 * 1000;
-
 /**
- * Logs a missing-config skip every run and warns Sentry only on the first slot
- * of the job's ticker window, so a daily window warns once per UTC day.
+ * Logs a missing-config skip. It never reaches Sentry: the run row records it
+ * as outcome `skipped` with this reason, which the console and `/api/health/jobs` show.
  */
-export function reportConfigSkip(
-  job: string,
-  skipped: ConfigSkip,
-  windowStart: Date | undefined,
-  now: Date = new Date(),
-): void {
+export function reportConfigSkip(job: string, skipped: ConfigSkip): void {
   console.warn(JSON.stringify({ event: "cron.config-skip", job, skipped }));
-  if (!windowStart || now.getTime() - windowStart.getTime() >= FIRST_SLOT_MS) {
-    return;
-  }
-  reportSentryMessage(`${job} skipped: ${skipped}`, {
-    subsystem: "cron",
-    op: "config-skip",
-    expected: true,
-    level: "warning",
-    tags: { job },
-    fingerprint: ["cron-config-skip", job],
-  });
 }
