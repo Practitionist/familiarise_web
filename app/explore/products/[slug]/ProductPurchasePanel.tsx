@@ -52,8 +52,11 @@ const purchaseStatusSchema = z.object({
 });
 type PurchaseStatus = z.infer<typeof purchaseStatusSchema>["data"]["status"];
 
-const POLL_INTERVAL_MS = 2_000;
-const POLL_ATTEMPTS = 8;
+const POLL_FIRST_MS = 1_000;
+const POLL_MAX_MS = 5_000;
+const CONFIRM_BUDGET_MS = 60_000;
+/** Re-asks Razorpay this often; verify shares the 10-per-minute money limiter. */
+const REVERIFY_MS = 15_000;
 const RAZORPAY_SCRIPT = "https://checkout.razorpay.com/v1/checkout.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -68,19 +71,33 @@ async function readStatus(
   return parsed.success ? parsed.data.data.status : null;
 }
 
+const settledStatus = (s: PurchaseStatus | null) =>
+  s === "SUCCEEDED" || s === "REFUNDED";
+
 /**
- * Poll the purchase the webhook settles, then ask the server to check Razorpay
- * itself. FAILED is not final here: an earlier declined attempt on the same
- * order marks it FAILED before the successful retry's capture lands.
+ * Ask the server to check Razorpay at once, then poll with backoff for up to a
+ * minute, re-checking Razorpay now and then. FAILED is not final here: an
+ * earlier declined attempt on the same order marks it FAILED before the
+ * successful retry's capture lands.
  */
 async function confirmPurchase(purchaseId: string): Promise<PurchaseStatus> {
   const path = `/api/digital-products/purchases/${encodeURIComponent(purchaseId)}`;
-  for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
-    const status = await readStatus(path);
-    if (status === "SUCCEEDED" || status === "REFUNDED") return status;
-    await sleep(POLL_INTERVAL_MS);
+  const verify = () => readStatus(`${path}/verify`, { method: "POST" });
+  const deadline = Date.now() + CONFIRM_BUDGET_MS;
+  let lastVerify = Date.now();
+  let status = await verify();
+  let delay = POLL_FIRST_MS;
+  while (!settledStatus(status) && Date.now() < deadline) {
+    await sleep(delay);
+    delay = Math.min(delay * 1.5, POLL_MAX_MS);
+    if (Date.now() - lastVerify >= REVERIFY_MS) {
+      lastVerify = Date.now();
+      status = await verify();
+    } else {
+      status = await readStatus(path);
+    }
   }
-  return (await readStatus(`${path}/verify`, { method: "POST" })) ?? "PENDING";
+  return status ?? "PENDING";
 }
 
 function PriceBreakdown({ quote }: Readonly<{ quote: DigitalProductQuote }>) {
@@ -124,6 +141,8 @@ export function ProductPurchasePanel({
   const { emiEnabled } = useCheckoutFlags();
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  /** A purchase checkout reported paid that is not confirmed yet. */
+  const [unconfirmed, setUnconfirmed] = useState<string | null>(null);
   const isFree = quote === null;
   const priceText = quote
     ? formatCurrencyAmount(quote.totalPaise, "INR")
@@ -137,12 +156,15 @@ export function ProductPurchasePanel({
     });
 
   const settle = async (purchaseId: string) => {
+    setBusy(true);
     setConfirming(true);
+    setUnconfirmed(null);
     const status = await confirmPurchase(purchaseId).catch(
       (): PurchaseStatus => "PENDING",
     );
     setConfirming(false);
     setBusy(false);
+    if (status === "PENDING" || status === "FAILED") setUnconfirmed(purchaseId);
     if (status === "SUCCEEDED") {
       toast({ title: "It's yours", description: "Your files are ready." });
       router.refresh();
@@ -153,6 +175,7 @@ export function ProductPurchasePanel({
         description:
           "It will appear in your library within a few minutes. You won't be charged twice.",
       });
+      return;
     } else {
       failed(
         "This payment was refunded, so the product is not in your library. The money goes back to your original payment method.",
@@ -330,6 +353,21 @@ export function ProductPurchasePanel({
           {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {confirming && "Confirming payment…"}
           {!confirming && (isFree ? "Get for free" : `Buy for ${priceText}`)}
+        </Button>
+      )}
+      {confirming && (
+        <p role="status" className="text-xs text-muted-foreground">
+          Confirming your payment. This can take up to a minute — you won&apos;t
+          be charged twice.
+        </p>
+      )}
+      {!confirming && unconfirmed && (
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={() => void settle(unconfirmed)}
+        >
+          Check again
         </Button>
       )}
       <p className="text-xs text-muted-foreground">
