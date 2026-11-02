@@ -14,6 +14,7 @@
  */
 
 import prisma from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import redis from "../../lib/redis";
 import {
@@ -172,6 +173,15 @@ async function stagedReminderSlotIds(
   return [...ids];
 }
 
+// Shared by the window read, the run's early return and the ticker's idle probe.
+function reminderWindowWhere(windowStart: Date, windowEnd: Date) {
+  return {
+    startsAt: { gte: windowStart, lte: windowEnd },
+    isTentative: false,
+    completionStatus: "SCHEDULED" as const,
+  };
+}
+
 function queryUpcomingOccurrences(
   windowStart: Date,
   windowEnd: Date,
@@ -181,12 +191,7 @@ function queryUpcomingOccurrences(
   return prisma.appointmentOccurrence.findMany({
     where: {
       ...(stagedSlotIds.length > 0 ? { id: { notIn: stagedSlotIds } } : {}),
-      startsAt: {
-        gte: windowStart,
-        lte: windowEnd,
-      },
-      isTentative: false,
-      completionStatus: "SCHEDULED",
+      ...reminderWindowWhere(windowStart, windowEnd),
     },
     orderBy: { startsAt: "asc" },
     take: maxPerRun,
@@ -782,18 +787,21 @@ export async function sendAppointmentReminders(opts?: {
 }
 
 /** One indexed read: is any live session inside either reminder window? */
-async function anySessionInReminderWindows(now: number): Promise<boolean> {
-  const inWindow = (window: { minMs: number; maxMs: number }) => ({
-    startsAt: {
-      gte: new Date(now + window.minMs),
-      lte: new Date(now + window.maxMs),
-    },
-  });
-  const found = await prisma.appointmentOccurrence.findFirst({
+export async function hasAppointmentReminderWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const at = now.getTime();
+  const offsetWindowWhere = (window: { minMs: number; maxMs: number }) =>
+    reminderWindowWhere(
+      new Date(at + window.minMs),
+      new Date(at + window.maxMs),
+    );
+  if (outOfTime()) return true;
+  const found = await db.appointmentOccurrence.findFirst({
     where: {
-      OR: [inWindow(REMINDER_24H), inWindow(REMINDER_1H)],
-      isTentative: false,
-      completionStatus: "SCHEDULED",
+      OR: [offsetWindowWhere(REMINDER_24H), offsetWindowWhere(REMINDER_1H)],
     },
     select: { id: true },
   });
@@ -806,7 +814,7 @@ async function sendAppointmentRemindersUnlocked(
   console.log("🔔 Starting appointment reminders scan...");
   console.log(`   Per-window cap: ${maxPerWindow} slot(s)`);
 
-  if (!(await anySessionInReminderWindows(Date.now()))) {
+  if (!(await hasAppointmentReminderWork(prisma, new Date(), () => false))) {
     return {
       success: true,
       reminders24h: 0,

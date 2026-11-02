@@ -19,7 +19,7 @@ export async function GET() {
 }
 ```
 
-The error it returns has three shapes, and the status is the contract (#1716). A `401` means Better Auth found no session: no cookie, an expired row, or a row that is gone. A `403` means the account is suspended. A `503` with `code: "SESSION_LOOKUP_FAILED"` and a `Retry-After` header means the lookup itself did not complete — a cold-instance stall or a database fault on a cookie that may well be valid — and the client should retry rather than send the user to sign-in. The distinction is made in `lib/auth-session-lookup.ts`, because the `customSession` plugin swallows the adapter's rejection into `null`; a null with a session cookie present is settled by one indexed read of the `Session` row. The page guards in `lib/auth-guard.ts` make the same distinction and throw `SessionLookupFailedError` to the nearest error boundary instead of clearing the cookie.
+The error it returns has three shapes, and the status is the contract (#1716). A `401` means Better Auth found no session: no cookie, an expired row, or a row that is gone. A `403` means the account is suspended. A `503` with `code: "SESSION_LOOKUP_FAILED"` and a `Retry-After` header means the lookup itself did not complete — a cold-instance stall or a database fault on a cookie that may well be valid — and the client should retry rather than send the user to sign-in. The distinction is made in `lib/auth-session-lookup.ts`: a thrown lookup is a failure unless it is the 401 Better Auth raises when the refresh hook ends the session, and a null with a session cookie present is settled by one indexed read of the `Session` row. The page guards in `lib/auth-guard.ts` make the same distinction and throw `SessionLookupFailedError` to the nearest error boundary instead of clearing the cookie.
 
 ## `requireAdminAuth()`
 
@@ -28,6 +28,7 @@ The error it returns has three shapes, and the status is the contract (#1716). A
 Use this for routes that mutate platform-level state irreversibly. These are things where a STAFF member accidentally clicking a button in the wrong dashboard tab shouldn't be able to do real damage.
 
 **Routes that must use this:**
+
 - `/api/admin/maintenance/**` — site-wide maintenance mode toggle
 - `/api/admin/system-jobs/run` — manual cron triggers
 - `/api/admin/newsletter/send` — mass email
@@ -52,6 +53,7 @@ export async function POST() {
 Use this for the vast majority of `/api/admin/**` and `/api/staff/**` routes — anything that should be accessible to both admin and staff operators: moderation queues, support tools, dashboards, read endpoints, shared analytics, etc.
 
 **Routes that should use this:**
+
 - All `/api/staff/**` routes
 - All `/api/admin/**` routes that are NOT in the `requireAdminAuth` list above
 - Read-only endpoints, moderation queues, support ticket views, analytics dashboards
@@ -111,10 +113,16 @@ Used alongside `requireApiAuth()` when the route is scoped to "the resource owne
 const auth = await requireApiAuth();
 if (auth.error) return auth.error;
 
-const plan = await prisma.consultationPlan.findUnique({ where: { id: planId } });
+const plan = await prisma.consultationPlan.findUnique({
+  where: { id: planId },
+});
 if (!plan) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-const isOwner = checkOwnership(auth.session, plan.consultantProfileId, "consultant");
+const isOwner = checkOwnership(
+  auth.session,
+  plan.consultantProfileId,
+  "consultant",
+);
 if (!isOwner && !isPrivileged(auth.session.user.role)) {
   return forbiddenResponse();
 }
@@ -130,7 +138,11 @@ Checks whether the session user is (a) the consultant who owns the plan, (b) the
 const auth = await requireApiAuth();
 if (auth.error) return auth.error;
 
-const authzError = await authorizeEventAccess(auth.session, "webinar", webinarId);
+const authzError = await authorizeEventAccess(
+  auth.session,
+  "webinar",
+  webinarId,
+);
 if (authzError) return authzError;
 // ... authorized logic
 ```

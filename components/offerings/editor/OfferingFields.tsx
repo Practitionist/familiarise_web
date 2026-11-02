@@ -124,11 +124,14 @@ function renderControl<T extends FieldValues = FieldValues>(
         />
       );
     case "select":
+      // FormControl sits on the trigger: Select's root renders no element to label.
       return (
         <Select onValueChange={field.onChange} value={field.value ?? undefined}>
-          <SelectTrigger>
-            <SelectValue placeholder={spec.placeholder} />
-          </SelectTrigger>
+          <FormControl>
+            <SelectTrigger>
+              <SelectValue placeholder={spec.placeholder} />
+            </SelectTrigger>
+          </FormControl>
           <SelectContent>
             {spec.options?.map((option) => (
               <SelectItem key={option.value} value={option.value}>
@@ -258,7 +261,8 @@ export function OfferingField<T extends FieldValues = FieldValues>({
               {spec.required && <RequiredMark />}
             </FormLabel>
           )}
-          {spec.kind === "switch" ? (
+          {spec.kind === "select" && renderControl(spec, field, coverImage)}
+          {spec.kind === "switch" && (
             // A switch is inline, so it sat on the label's line; the h-9 row
             // stacks it under the label at the same height as its neighbours.
             <div className="flex h-9 items-center">
@@ -266,7 +270,8 @@ export function OfferingField<T extends FieldValues = FieldValues>({
                 {renderControl(spec, field, coverImage)}
               </FormControl>
             </div>
-          ) : (
+          )}
+          {spec.kind !== "select" && spec.kind !== "switch" && (
             <FormControl>{renderControl(spec, field, coverImage)}</FormControl>
           )}
           {spec.description && (

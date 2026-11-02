@@ -25,6 +25,7 @@
  */
 
 import prisma from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 import {
   WebinarStatus,
   ClassStatus,
@@ -68,6 +69,7 @@ import {
   OUTCOME_SLOT_SELECT,
   type StreamWitnessBudget,
   readOutageWindows,
+  staleNeedsHumanWhere,
   type OutcomeSlot,
   type SlotDecision,
 } from "@/lib/booking/session-outcome-sweep";
@@ -129,6 +131,142 @@ function endedAndSettled(
 
 const AUTO_COMPLETE_REASON = "auto-complete";
 
+// The pass cohorts, shared by each pass's read and the ticker's idle probe.
+type SettledAnd = Prisma.AppointmentWhereInput["AND"];
+
+function completableWebinarWhere(settled: SettledAnd) {
+  return {
+    status: { in: [WebinarStatus.SCHEDULED, WebinarStatus.IN_PROGRESS] },
+    appointment: { AND: settled },
+  } satisfies Prisma.WebinarWhereInput;
+}
+
+function completableClassWhere(settled: SettledAnd) {
+  return {
+    status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
+    // One wrapper: at least one occurrence, and every live one ended.
+    appointment: { AND: settled },
+  } satisfies Prisma.ClassWhereInput;
+}
+
+function completableConsultationWhere(bufferTime: Date) {
+  return {
+    status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
+    // A voided consultation is owed its make-up or refund first.
+    appointment: {
+      AND: [
+        { occurrences: allLiveOccurrencesEnded(bufferTime) },
+        { occurrences: { none: UNSETTLED_MISS } },
+        { occurrences: { none: AWAITING_HUMAN } },
+      ],
+    },
+  } satisfies Prisma.ConsultationWhereInput;
+}
+
+/** Every live session ended and decided, and no void left unsettled: otherwise plan-end settlement owns completion. */
+function completableSubscriptionWhere(settled: SettledAnd) {
+  return {
+    status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
+    appointment: { AND: settled },
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+function completableTrialWhere(bufferTime: Date) {
+  return {
+    status: TrialStatus.SCHEDULED,
+    // A free trial's void is a record only, so the unsettled-miss
+    // check (which a void never leaves on a trial) is not applied here.
+    appointment: {
+      AND: [
+        { occurrences: allLiveOccurrencesEnded(bufferTime) },
+        { occurrences: { none: AWAITING_HUMAN } },
+        {
+          occurrences: {
+            none: {
+              completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+              isTentative: false,
+              deletedAt: null,
+            },
+          },
+        },
+      ],
+    },
+    // A paid trial that was voided waits for ops, or for its free rebook to settle the void.
+    OR: [
+      { paymentId: null },
+      {
+        appointment: {
+          occurrences: {
+            none: {
+              completionStatus: OccurrenceCompletionStatus.VOIDED,
+              seatsSettledAt: null,
+            },
+          },
+        },
+      },
+    ],
+  } satisfies Prisma.TrialWhereInput;
+}
+
+function undecidedSlotWhere(bufferTime: Date) {
+  return {
+    endsAt: { lt: bufferTime },
+    isTentative: false,
+    deletedAt: null,
+    completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+  } satisfies Prisma.AppointmentOccurrenceWhereInput;
+}
+
+/** Every pass and the needs-human alert; parents are probed as they stand, before any slot is decided. */
+export async function hasAutoCompleteWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const bufferTime = new Date(
+    now.getTime() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
+  );
+  const settled = endedAndSettled(bufferTime);
+  if (outOfTime()) return true;
+  const slot = await db.appointmentOccurrence.findFirst({
+    where: {
+      OR: [undecidedSlotWhere(bufferTime), staleNeedsHumanWhere(now)],
+    },
+    select: { id: true },
+  });
+  if (slot) return true;
+  if (outOfTime()) return true;
+  const webinar = await db.webinar.findFirst({
+    where: completableWebinarWhere(settled),
+    select: { id: true },
+  });
+  if (webinar) return true;
+  if (outOfTime()) return true;
+  const cohort = await db.class.findFirst({
+    where: completableClassWhere(settled),
+    select: { id: true },
+  });
+  if (cohort) return true;
+  if (outOfTime()) return true;
+  const consultation = await db.consultation.findFirst({
+    where: completableConsultationWhere(bufferTime),
+    select: { id: true },
+  });
+  if (consultation) return true;
+  if (outOfTime()) return true;
+  const subscription = await db.subscription.findFirst({
+    where: completableSubscriptionWhere(settled),
+    select: { id: true },
+  });
+  if (subscription) return true;
+  if (outOfTime()) return true;
+  const trial = await db.trial.findFirst({
+    where: completableTrialWhere(bufferTime),
+    select: { id: true },
+  });
+  return trial !== null;
+}
+
 /** One bite of a pass; `read` holds every id the bite's cohort read returned. */
 interface PassBite {
   completed: number;
@@ -189,8 +327,7 @@ async function completeWebinars(
     take: maxParents,
     where: {
       ...unseen(seen),
-      status: { in: [WebinarStatus.SCHEDULED, WebinarStatus.IN_PROGRESS] },
-      appointment: { AND: endedAndSettled(bufferTime) },
+      ...completableWebinarWhere(endedAndSettled(bufferTime)),
     },
     include: {
       webinarPlan: { select: { title: true } },
@@ -269,9 +406,7 @@ async function completeClasses(
     take: maxParents,
     where: {
       ...unseen(seen),
-      status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
-      // #1554 — one wrapper: at least one occurrence, and every live one ended.
-      appointment: { AND: endedAndSettled(bufferTime) },
+      ...completableClassWhere(endedAndSettled(bufferTime)),
     },
     include: {
       classPlan: { select: { title: true } },
@@ -351,15 +486,7 @@ async function completeConsultations(
     take: maxParents,
     where: {
       ...unseen(seen),
-      status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      // A voided consultation is owed its make-up or refund first (#1569 D4).
-      appointment: {
-        AND: [
-          { occurrences: allLiveOccurrencesEnded(bufferTime) },
-          { occurrences: { none: UNSETTLED_MISS } },
-          { occurrences: { none: AWAITING_HUMAN } },
-        ],
-      },
+      ...completableConsultationWhere(bufferTime),
     },
     include: {
       consultationPlan: {
@@ -527,10 +654,7 @@ async function completeSubscriptions(
     take: maxParents,
     where: {
       ...unseen(seen),
-      status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      // Every live session ended and decided, and no void left unsettled:
-      // otherwise plan-end settlement owns completion and pays the void.
-      appointment: { AND: endedAndSettled(bufferTime) },
+      ...completableSubscriptionWhere(endedAndSettled(bufferTime)),
     },
     include: {
       subscriptionPlan: {
@@ -710,38 +834,7 @@ async function completeTrials(
     take: maxParents,
     where: {
       ...unseen(seen),
-      status: TrialStatus.SCHEDULED,
-      // #1569 D4 — a free trial's void is a record only, so the unsettled-miss
-      // check (which a void never leaves on a trial) is not applied here.
-      appointment: {
-        AND: [
-          { occurrences: allLiveOccurrencesEnded(bufferTime) },
-          { occurrences: { none: AWAITING_HUMAN } },
-          {
-            occurrences: {
-              none: {
-                completionStatus: OccurrenceCompletionStatus.SCHEDULED,
-                isTentative: false,
-                deletedAt: null,
-              },
-            },
-          },
-        ],
-      },
-      // A paid trial that was voided waits for ops, or for its free rebook to settle the void.
-      OR: [
-        { paymentId: null },
-        {
-          appointment: {
-            occurrences: {
-              none: {
-                completionStatus: OccurrenceCompletionStatus.VOIDED,
-                seatsSettledAt: null,
-              },
-            },
-          },
-        },
-      ],
+      ...completableTrialWhere(bufferTime),
     },
     include: {
       subscriptionPlan: {
@@ -755,7 +848,7 @@ async function completeTrials(
       consulteeProfile: {
         include: {
           user: {
-            select: { id: true, name: true, image: true },
+            select: { id: true, name: true },
           },
         },
       },
@@ -800,27 +893,6 @@ async function completeTrials(
         if (!(error instanceof IllegalTransitionError)) throw error;
         console.log(`   ⏭️ Skipped — status changed since the sweep read`);
         continue;
-      }
-
-      // Log activity for trial completion
-      try {
-        await prisma.activityLog.create({
-          data: {
-            activityType: "TRIAL_COMPLETED",
-            description: `Completed trial session with ${trial.consulteeProfile.user.name}: ${trial.subscriptionPlan.title}`,
-            actorId: trial.consulteeProfile.user.id,
-            actorName: trial.consulteeProfile.user.name,
-            actorImage: trial.consulteeProfile.user.image,
-            consultantProfileId: trial.consultantProfileId,
-            trialId: trial.id,
-            metadata: {
-              planTitle: trial.subscriptionPlan.title,
-              autoCompleted: true,
-            },
-          },
-        });
-      } catch (activityError) {
-        console.warn(`   ⚠️ Failed to log activity: ${activityError}`);
       }
 
       console.log(`   ✅ Marked as COMPLETED`);
@@ -1052,10 +1124,7 @@ async function completeIndividualSlots(
     const cohort = await prisma.appointmentOccurrence.findMany({
       where: {
         ...unseen(seen),
-        endsAt: { lt: bufferTime },
-        isTentative: false,
-        deletedAt: null,
-        completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+        ...undecidedSlotWhere(bufferTime),
       },
       select: OUTCOME_SLOT_SELECT,
       orderBy: { endsAt: "asc" },

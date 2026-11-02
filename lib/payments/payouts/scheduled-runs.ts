@@ -1,9 +1,8 @@
-import { PayoutStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
-import { PAYOUT_CONSTANTS } from "./constants";
 import {
+  APPROVED_PAYOUT_WHERE,
   createPayoutBatchSlice,
   processApprovedPayouts,
   REQUEST_PAYOUT_RUN_BOUNDS,
@@ -117,10 +116,7 @@ export async function runProcessPayouts(opts: {
     let lockFault = false;
     if (results.length === 0) {
       const waiting = await prisma.consultantPayout.count({
-        where: {
-          status: PayoutStatus.APPROVED,
-          retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
-        },
+        where: APPROVED_PAYOUT_WHERE,
       });
       const verdict = classifyEmptyRun({
         waiting,

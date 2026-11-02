@@ -2276,7 +2276,7 @@ The ticker always responds successfully after target execution and reports failu
 
 #### 8.2.2. Batch schedules
 
-GitHub Actions retains non-money batch schedules such as audit pruning, consent retention and breach deadline alerts, plus CI/CD. Money reconciliation, payouts and statutory exports are owned by the active platform ticker in bounded slices. A configured workflow does not prove a recent successful run. Read the executable schedules and the [job inventory](../maintenance/04-cron-jobs-reference.md) before changing ownership; a lease does not prevent sequential duplicate executions.
+The active platform ticker owns every registered job, including audit pruning, consent retention and breach deadline alerts, money reconciliation, payouts and statutory exports, in bounded slices. GitHub Actions keeps CI/CD, the cron heartbeat, the live-database drift check and the security audit. A configured workflow does not prove a recent successful run. Read the executable schedules and the [job inventory](../maintenance/04-cron-jobs-reference.md) before changing ownership; a lease does not prevent sequential duplicate executions.
 
 | Work category            | Examples                                                        | Current scheduling shape                              | Recovery signal                                  |
 | ------------------------ | --------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------ |
@@ -2284,9 +2284,9 @@ GitHub Actions retains non-money batch schedules such as audit pruning, consent 
 | Delivery outbox          | outbound webhooks, Resend, Novu                                 | Netlify ticker with target limits                     | pending/retry/dead-letter counts                 |
 | User lifecycle sweeps    | booking reminders/expiry, Stream erasure                        | Netlify ticker at configured interval                 | summary counts and retry rows                    |
 | Data export              | `process-data-exports`                                          | 10m ticker target                                     | `OrgDataExportJob` state and summary             |
-| Statutory monitoring     | breach deadline, MSME risk                                      | breach alerts: Actions; MSME risk: ticker             | structured alert + admin queue                   |
+| Statutory monitoring     | breach deadline, MSME risk                                      | breach alerts and MSME risk: ticker                   | structured alert + admin queue                   |
 | Money batch              | ledger, payout, tax/accounting exports                          | bounded ticker slices or authenticated manual batches | completed report, execution evidence and backlog |
-| Retention                | audit and consent records                                       | daily or weekly Actions schedule                      | deleted/count summary and retention backlog      |
+| Retention                | audit and consent records                                       | ticker target at its configured interval              | deleted/count summary and retention backlog      |
 
 #### 8.2.3. Cron lease and job execution
 

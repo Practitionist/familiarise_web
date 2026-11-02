@@ -246,8 +246,8 @@ have no independent schedules and currently require Netlify as active cron host.
 | `wind-down-deactivated-orgs`    | 03:55, 04:55, 05:55 | End tenant calls, freeze channels, unpublish and claim recordings before deletion; withhold incomplete markers. |
 
 All these cores use fail-closed PostgreSQL leases. Completion health requires
-successful owned executions, with 45-minute transfer, 90-minute session and
-27-hour daily budgets. See [background sync](./09-background-sync.md) for capacity,
+successful owned executions, with 60-minute transfer, 90-minute session and
+28.5-hour daily budgets derived from the schedule. See [background sync](./09-background-sync.md) for capacity,
 replay and cross-job limits. The recording alarm excludes expired sources and
 conditionally throttles each recording to once per six hours without changing its
 retry timestamp.

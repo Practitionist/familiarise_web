@@ -43,16 +43,21 @@ export async function GET(request: NextRequest) {
   }
   try {
     const { default: prisma } = await import("@/lib/prisma");
+    const since = new Date(Date.now() - HISTORY_MS);
     const rows = await prisma.systemJobExecution.groupBy({
       by: ["jobName", "status"],
       where: {
         jobName: { in: [...new Set(jobByTarget.values())] },
         status: { in: ["COMPLETED", "FAILED"] },
         result: { path: ["environment"], equals: environment },
-        startedAt: { gte: new Date(Date.now() - HISTORY_MS) },
+        startedAt: { gte: since },
       },
       _max: { startedAt: true },
     });
+    // An idle skip is a run that found no work, so it ends a failure streak.
+    const { readIdleCompletions, newerOf } =
+      await import("@/lib/cron/idle-skips");
+    const idle = await readIdleCompletions(prisma, environment, since);
     const report: StreakReport = {};
     for (const [target, jobName] of jobByTarget) {
       const entry: StreakReport[string] = {
@@ -60,13 +65,17 @@ export async function GET(request: NextRequest) {
         lastFailedAt: null,
         seenRecently: false,
       };
+      let completed: Date | null = null;
       for (const row of rows) {
         if (row.jobName !== jobName) continue;
         entry.seenRecently = true;
-        const at = row._max.startedAt?.toISOString() ?? null;
-        if (row.status === "COMPLETED") entry.lastCompletedAt = at;
-        else entry.lastFailedAt = at;
+        if (row.status === "COMPLETED") completed = row._max.startedAt;
+        else entry.lastFailedAt = row._max.startedAt?.toISOString() ?? null;
       }
+      const skipped = idle.find((i) => i.jobName === jobName)?.endedAt;
+      if (skipped) entry.seenRecently = true;
+      entry.lastCompletedAt =
+        newerOf(completed, skipped)?.toISOString() ?? null;
       report[target] = entry;
     }
     return NextResponse.json(report, { headers: HEADERS });

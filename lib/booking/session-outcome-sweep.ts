@@ -723,16 +723,12 @@ async function stageNoShowBells(
 /** Owner decision — a needs-human item older than this raises a Sentry warning. */
 export const NEEDS_HUMAN_ALERT_HOURS = 72;
 
-/**
- * Warn when a session newly passes 72 hours in the ops needs-human queue; the
- * same queue is not re-reported inside the window. The hold on its money stays.
- */
-export async function alertStaleNeedsHuman(
-  db: Pick<Tx, "appointmentOccurrence">,
+/** Shared by the alert and auto-complete's idle probe. */
+export function staleNeedsHumanWhere(
   now: Date,
-): Promise<number> {
+): Prisma.AppointmentOccurrenceWhereInput {
   const cutoff = new Date(now.getTime() - NEEDS_HUMAN_ALERT_HOURS * 3_600_000);
-  const where: Prisma.AppointmentOccurrenceWhereInput = {
+  return {
     AND: [
       NEEDS_HUMAN,
       // Queued since the verdict, or since the call ended when none was written.
@@ -744,6 +740,17 @@ export async function alertStaleNeedsHuman(
       },
     ],
   };
+}
+
+/**
+ * Warn when a session newly passes 72 hours in the ops needs-human queue; the
+ * same queue is not re-reported inside the window. The hold on its money stays.
+ */
+export async function alertStaleNeedsHuman(
+  db: Pick<Tx, "appointmentOccurrence">,
+  now: Date,
+): Promise<number> {
+  const where = staleNeedsHumanWhere(now);
   const stale = await db.appointmentOccurrence.count({ where });
   if (stale > 0) {
     const rows = await db.appointmentOccurrence.findMany({

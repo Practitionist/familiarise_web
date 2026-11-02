@@ -15,19 +15,19 @@ const now = new Date("2026-10-26T12:00:00Z");
 const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000);
 
 describe("missed window", () => {
-  it("uses the completion SLO when the job has one", () => {
+  it("uses the job's freshness budget derived from its schedule", () => {
     const check = (last: Date | null) =>
       assessMissedWindow({
         jobName: "reconcile-payment-status",
         lastSuccessAt: last,
         now,
       });
-    expect(check(ago(30))).toEqual({ state: "ok", basis: "slo" });
-    expect(check(ago(50))).toEqual({ state: "missed", basis: "slo" });
+    expect(check(ago(59))).toEqual({ state: "ok", basis: "slo" });
+    expect(check(ago(61))).toEqual({ state: "missed", basis: "slo" });
     expect(check(null)).toEqual({ state: "missed", basis: "slo" });
   });
 
-  it("allows two ticker slots plus a tick, matching a prefixed lock name", () => {
+  it("judges a prefixed lock name by its target's budget", () => {
     expect(scheduleForJob("cleanup-abandoned-payments")?.name).toBe(
       "abandoned-payments",
     );
@@ -37,8 +37,8 @@ describe("missed window", () => {
         lastSuccessAt: ago(minutes),
         now,
       }).state;
-    expect(check(34)).toBe("ok");
-    expect(check(36)).toBe("missed");
+    expect(check(59)).toBe("ok");
+    expect(check(61)).toBe("missed");
   });
 
   it("checks a calendar job against its latest due window", () => {
@@ -56,19 +56,22 @@ describe("missed window", () => {
     expect(batch(new Date("2026-10-26T20:10:00Z"), afterOpen)).toBe("ok");
   });
 
-  it("maps an overridden execution name and stops judging a window older than the trail", () => {
+  it("maps an overridden execution name and judges its quarterly window", () => {
     expect(scheduleForJob("tds-26q-draft-export")?.name).toBe(
       "tds-return-draft",
     );
     const tds = (at: string) =>
       assessMissedWindow({
         jobName: "tds-26q-draft-export",
-        lastSuccessAt: null,
+        lastSuccessAt: new Date("2026-07-05T02:55:00Z"),
         now: new Date(at),
-      }).state;
-    // The Jul 5 window is 91 days old, past the 90-day trail; Oct 5 has opened.
-    expect(tds("2026-10-04T12:00:00Z")).toBe("ok");
-    expect(tds("2026-10-05T04:00:00Z")).toBe("missed");
+      });
+    // The Jul 5 run is inside its 92-day budget until the Oct 5 window opens.
+    expect(tds("2026-10-04T12:00:00Z")).toEqual({ state: "ok", basis: "slo" });
+    expect(tds("2026-10-05T04:00:00Z")).toEqual({
+      state: "missed",
+      basis: "window",
+    });
   });
 
   it("leaves a job with no SLO and no ticker cadence unscheduled", () => {
@@ -209,5 +212,24 @@ it("keeps a stopped ticker job with no run in 7 days on the table as missed", ()
   expect(
     metrics.jobs.find((j) => j.jobName === "cleanup-abandoned-payments")
       ?.missed,
-  ).toEqual({ state: "missed", basis: "interval" });
+  ).toEqual({ state: "missed", basis: "slo" });
+});
+
+it("counts a recent idle skip as a healthy no-work tick", () => {
+  const job = buildJobRunMetrics({
+    now,
+    environment: "production",
+    counts: [],
+    percentiles: [],
+    daily: [],
+    lastSuccess: [
+      { jobName: "cleanup-abandoned-payments", endedAt: ago(9 * 24 * 60) },
+    ],
+    idle: [
+      { jobName: "cleanup-abandoned-payments", endedAt: ago(10), skips: 96 },
+    ],
+  }).jobs.find((j) => j.jobName === "cleanup-abandoned-payments");
+  expect(job?.missed).toEqual({ state: "ok", basis: "slo" });
+  expect(job?.idleSkips).toBe(96);
+  expect(job?.lastSuccessAt).toBe(ago(10).toISOString());
 });

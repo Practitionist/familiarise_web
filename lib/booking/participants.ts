@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/prisma";
+import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-marker";
 import type {
   ParticipantRole,
   ParticipantStatus,
@@ -85,6 +86,49 @@ export const RELEASED_PARTICIPANT_STATUSES: ParticipantStatus[] = [
   "CANCELLED",
   "REFUNDED",
 ];
+
+/** Statuses a seat reaches only in the commit that settles its payment, or with no payment at all. */
+export const PAID_PARTICIPANT_STATUSES: ParticipantStatus[] = [
+  "CONFIRMED",
+  "ATTENDED",
+];
+
+/**
+ * A seat holding a fulfilled entitlement, what a group-event room admits: a confirmed seat
+ * with a SUCCEEDED payment or none, or a HELD seat whose capture settled and is not being returned.
+ */
+export function paidParticipant(
+  userId?: string,
+): Prisma.AppointmentParticipantWhereInput {
+  return {
+    ...(userId ? { userId } : {}),
+    OR: [
+      {
+        status: { in: PAID_PARTICIPANT_STATUSES },
+        OR: [
+          { paymentId: null },
+          { payment: { is: { paymentStatus: "SUCCEEDED" } } },
+        ],
+      },
+      {
+        status: "HELD",
+        payment: {
+          is: {
+            AND: [
+              {
+                paymentStatus: "SUCCEEDED",
+                refundOwedKey: null,
+                refunds: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
+              },
+              // Every capture parked as an unapplied receipt carries one of these markers.
+              notSettledElsewhereWhere,
+            ],
+          },
+        },
+      },
+    ],
+  };
+}
 
 /** The roster predicate: `participants: { some: liveParticipant(userId) }`. */
 export function liveParticipant(

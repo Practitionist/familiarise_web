@@ -62,6 +62,10 @@ The transactional outbox pattern, as defined at microservices.io, exists to avoi
 
 Every option with a "Yes" in the third column requires the always-on process that ledger group 1 shows the current host cannot supply, which is why ADR 14 rejected a broker. Of the "No" options, Async Workloads and QStash are the two that fit the existing CRON_SECRET routes without new infrastructure; #1010 should be decided between them.
 
+## Measured hosted job runtimes, 2026-10-31
+
+These are evidence for the decided scale path, not a recommendation. The platform facts are in `job-runtime-options.md` in this folder, the library facts in `.claude/skills/maintenance/references/job-runtime-options.md`, and the depth in `docs/maintenance/14-background-job-runtime-options.md`.
+
 ## Background Functions against the five-minute ticker
 
 Netlify support confirmed on 2026-09-16 that Background Functions do not execute on Deploy Previews or branch deploys — the 202 is returned and execution is suppressed — and logged the missing documentation as a gap; the `cron-tick ?resume=1` backstop (#1636) therefore stays. From Netlify's Background Functions page (last updated 2026-06-03): fifteen-minute limit; an immediate 202 with the return value discarded; on error one retry after one minute and a second two minutes later. A scheduled function may hand long work to a background function, but the older `context.client.invokeBackgroundFunction` is absent from the current context reference and should be treated as legacy. Under Next.js runtime v5 a route cannot be declared background — the in-route `experimental-background` config belongs to runtime v4 — so `background: true` applies only to a standalone file under `netlify/functions/`, which is the pattern `cron-tick.mts` already uses. A background driver that loops bounded calls to an HTTP twin is therefore the platform-native way to run a job past the request ceiling without a queue.

@@ -9,6 +9,16 @@ import {
   withRunContext,
 } from "../../lib/cron/run-context";
 import { casMiss } from "../../lib/cron/run-counters";
+import {
+  runTelemetryResult,
+  settleTelemetry,
+} from "../../lib/cron/run-telemetry";
+import { emitTelemetryLog } from "../../lib/observability/betterstack-telemetry";
+import { createRunFailureReporter } from "../../lib/observability/run-failures";
+
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryError: jest.fn(),
+}));
 
 describe("run context", () => {
   it("is a no-op outside a run", () => {
@@ -49,5 +59,44 @@ describe("run context", () => {
     await withRunContext({ triggeredBy: "cron" }, async () => {
       expect(adminActorId()).toBeUndefined();
     });
+  });
+
+  it("records ingest rejections and capped, ids-only failures for the run row", async () => {
+    process.env.ENABLE_BETTERSTACK_TELEMETRY = "true";
+    process.env.BETTERSTACK_SOURCE_TOKEN = "tok";
+    process.env.BETTERSTACK_INGEST_URL = "https://in.example.test";
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    const statuses = [202, 402, 503];
+    global.fetch = jest.fn(async () => ({
+      status: statuses.shift() ?? 403,
+    })) as never;
+    const result = await withRunContext({ triggeredBy: "cron" }, async () => {
+      for (let i = 0; i < 4; i++) {
+        void emitTelemetryLog({ level: "warn", message: "x" });
+      }
+      const failures = createRunFailureReporter("payments");
+      for (let i = 0; i < 52; i++) {
+        failures.add("refund-owed.retry", new Error("timeout"), {
+          paymentId: `pay_${i}`,
+          email: "a@b.test",
+          attempts: 2,
+        });
+      }
+      const run = currentRun();
+      if (!run) throw new Error("no run");
+      await settleTelemetry(run.telemetry);
+      return runTelemetryResult(run.telemetry);
+    });
+    expect(result.telemetry).toEqual({
+      sent: 1,
+      rejected: { "402": 1, "403": 1, "5xx": 1, network: 0, other: 0 },
+    });
+    expect(result.failures).toHaveLength(50);
+    expect(result.failures?.[0]).toEqual({
+      entityId: "pay_0",
+      reason: "refund-owed.retry",
+      attempt: 2,
+    });
+    expect(result.failuresOverflow).toBe(2);
   });
 });

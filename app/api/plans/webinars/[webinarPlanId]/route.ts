@@ -2,6 +2,7 @@ import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { fetchWebinarPlanDetail } from "@/lib/data/plan-details";
+import { planDetailResponse } from "@/lib/api/plans/detail-response";
 import { apiError } from "@/lib/errors";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -19,23 +20,9 @@ export async function GET(
 ) {
   try {
     const { webinarPlanId } = await params;
-    const webinarPlan = await fetchWebinarPlanDetail(webinarPlanId);
-
-    if (!webinarPlan) {
-      return NextResponse.json(
-        { error: "Webinar plan not found" },
-        { status: 404 },
-      );
-    }
-
-    return NextResponse.json(
-      { data: webinarPlan },
-      {
-        status: 200,
-        headers: {
-          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-        },
-      },
+    return await planDetailResponse(
+      await fetchWebinarPlanDetail(webinarPlanId),
+      "Webinar plan not found",
     );
   } catch (error) {
     Sentry.captureException(

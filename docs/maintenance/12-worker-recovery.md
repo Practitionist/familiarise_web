@@ -22,7 +22,7 @@ for dispatch, maintenance admission and lease behavior.
 The five-minute Netlify ticker is the current operating clock for time-sensitive
 recovery and the configured money jobs. Export processing runs every ten minutes;
 stale-request expiry runs every fifteen. GitHub Actions retains CI and the
-remaining configured non-money batch jobs. Do not create a second automatic
+cron heartbeat, drift and security checks; it schedules no registry job. Do not create a second automatic
 scheduler for a ticker-owned job. An Actions cron expression is configuration,
 not evidence of current budget, execution or successful effects.
 
@@ -257,8 +257,9 @@ throughput, storage permissions, backlog drain or actual gateway behavior.
 4. Verify actual worker completion and a bounded representative export on the
    deployed host, then inspect expiry retries, oldest eligible work and refund
    obligations. Whole-bundle size and outage catch-up need measured evidence.
-5. `/api/health/jobs` requires `process-data-exports` and `expire-stale-requests`
-   completion within 45 minutes, independently of other capabilities. The
+5. `/api/health/jobs` requires `process-data-exports` completion within 50
+   minutes and `expire-stale-requests` within 60, budgets derived from their
+   schedules, independently of other capabilities. The
    endpoint is environment scoped and read-only; a held or failed invocation
    does not refresh it. Independent monitoring must poll it and route an alert.
 

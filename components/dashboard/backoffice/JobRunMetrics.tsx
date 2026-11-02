@@ -42,8 +42,7 @@ const WINDOW: Record<
 };
 
 const BASIS: Record<NonNullable<JobRunMetric["missed"]["basis"]>, string> = {
-  slo: "completion SLO",
-  interval: "ticker interval",
+  slo: "freshness budget",
   window: "calendar window",
 };
 
@@ -187,6 +186,7 @@ export function JobRunMetrics({
             <TableHead className="text-right">Partial</TableHead>
             <TableHead className="text-right">Failed</TableHead>
             <TableHead className="text-right">Held / skipped</TableHead>
+            <TableHead className="text-right">Idle skips</TableHead>
             <TableHead className="text-right">p50</TableHead>
             <TableHead className="text-right">p95</TableHead>
             {itemsRecorded && (
@@ -220,6 +220,9 @@ export function JobRunMetrics({
               </TableCell>
               <TableCell className="text-right tabular-nums">
                 {job.held} / {job.skipped}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {job.idleSkips}
               </TableCell>
               <TableCell className="text-right tabular-nums">
                 {duration(job.p50Ms)}

@@ -2,11 +2,13 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
-import { jobEnvironment } from "@/lib/cron/run-outcome";
 import {
-  assessOperationalCompletions,
-  OPERATIONAL_COMPLETION_REQUIREMENTS,
-} from "@/lib/cron/operational-health";
+  newerOf,
+  readIdleCompletions,
+  type IdleCompletion,
+} from "@/lib/cron/idle-skips";
+import { jobEnvironment } from "@/lib/cron/run-outcome";
+import { freshnessBudgetMinutes } from "@/lib/cron/operational-health";
 import {
   JOB_SCHEDULES,
   jobNameFor,
@@ -38,12 +40,12 @@ const IST_OFFSET_MS = 330 * MINUTE_MS;
 
 export interface MissedWindow {
   /**
-   * `unscheduled`: no SLO and no ticker cadence, so nothing to miss.
+   * `unscheduled`: no ticker target, so nothing to miss.
    * `no-runs`: a non-production deployment has no successful run of its own,
    * so the window cannot be judged there.
    */
   state: "ok" | "missed" | "unscheduled" | "no-runs";
-  basis: "slo" | "interval" | "window" | null;
+  basis: "slo" | "window" | null;
 }
 
 export interface JobRunMetric {
@@ -60,6 +62,8 @@ export interface JobRunMetric {
   held: number;
   /** CANCELLED rows that stood down for another reason: a config skip, a maintenance refusal or a pause. */
   skipped: number;
+  /** Due ticks the idle probe skipped because the job had no work; they write no run row. */
+  idleSkips: number;
   running: number;
   p50Ms: number | null;
   p95Ms: number | null;
@@ -131,9 +135,8 @@ function missedWindow(
 }
 
 /**
- * Missed when the job's completion SLO has lapsed or, for a calendar-windowed
- * job, its latest due window passed with no finished run; else, for a ticker
- * job, when two interval slots (plus a tick) passed with no finished run.
+ * Missed when a calendar-windowed job's latest due window passed with no
+ * finished run, or when the job's freshness budget has lapsed.
  */
 export function assessMissedWindow(args: {
   jobName: string;
@@ -142,25 +145,14 @@ export function assessMissedWindow(args: {
 }): MissedWindow {
   const { jobName, lastSuccessAt, now } = args;
   const schedule = scheduleForJob(jobName);
-  const windowMissed =
-    schedule?.window && missedWindow(schedule, lastSuccessAt, now);
-  if (OPERATIONAL_COMPLETION_REQUIREMENTS.some((r) => r.jobName === jobName)) {
-    if (windowMissed) return { state: "missed", basis: "window" };
-    const { jobs } = assessOperationalCompletions(
-      [{ jobName, endedAt: lastSuccessAt }],
-      now,
-    );
-    const overdue = jobs.find((j) => j.jobName === jobName)?.overdue ?? true;
-    return { state: overdue ? "missed" : "ok", basis: "slo" };
-  }
   if (!schedule) return { state: "unscheduled", basis: null };
-  if (schedule.window) {
-    return { state: windowMissed ? "missed" : "ok", basis: "window" };
+  if (schedule.window && missedWindow(schedule, lastSuccessAt, now)) {
+    return { state: "missed", basis: "window" };
   }
-  const limitMs = (2 * schedule.everyMinutes + 5) * MINUTE_MS;
+  const budgetMs = freshnessBudgetMinutes(schedule.name) * MINUTE_MS;
   const missed =
-    !lastSuccessAt || now.getTime() - lastSuccessAt.getTime() > limitMs;
-  return { state: missed ? "missed" : "ok", basis: "interval" };
+    !lastSuccessAt || now.getTime() - lastSuccessAt.getTime() > budgetMs;
+  return { state: missed ? "missed" : "ok", basis: "slo" };
 }
 
 export interface MetricInputs {
@@ -177,6 +169,8 @@ export interface MetricInputs {
   percentiles: { jobName: string; p50: number | null; p95: number | null }[];
   daily: { jobName: string; day: string; runs: number; failures: number }[];
   lastSuccess: { jobName: string; endedAt: Date | null }[];
+  /** Idle skips count as finished runs that found no work. */
+  idle?: IdleCompletion[];
 }
 
 const roundMs = (v: number | null | undefined) =>
@@ -184,14 +178,13 @@ const roundMs = (v: number | null | undefined) =>
 
 /**
  * Folds the four reads into one row per job; missed jobs sort first. A job off
- * the ticker with no SLO drops out once it has no run in 7 days and no success in 90.
+ * the ticker drops out once it has no run in 7 days and no success in 90.
  */
 export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
   const days = istDayKeys(input.now);
   const names = new Set<string>([
     ...input.counts.map((c) => c.jobName),
     ...input.lastSuccess.map((l) => l.jobName),
-    ...OPERATIONAL_COMPLETION_REQUIREMENTS.map((r) => r.jobName),
     ...TICKER_JOB_NAMES,
   ]);
   const jobs = [...names].map((jobName): JobRunMetric => {
@@ -205,8 +198,11 @@ export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
     const cancelled = sum((c) => c.status === "CANCELLED");
     const held = sum((c) => c.status === "CANCELLED" && c.outcome === "held");
     const pct = input.percentiles.find((p) => p.jobName === jobName);
-    const last =
-      input.lastSuccess.find((l) => l.jobName === jobName)?.endedAt ?? null;
+    const idle = input.idle?.find((i) => i.jobName === jobName);
+    const last = newerOf(
+      input.lastSuccess.find((l) => l.jobName === jobName)?.endedAt ?? null,
+      idle?.endedAt,
+    );
     const perDay = new Map(
       input.daily.filter((d) => d.jobName === jobName).map((d) => [d.day, d]),
     );
@@ -221,6 +217,7 @@ export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
       failed: failedRows - partial,
       held,
       skipped: cancelled - held,
+      idleSkips: idle?.skips ?? 0,
       running: sum((c) => c.status === "RUNNING"),
       p50Ms: roundMs(pct?.p50),
       p95Ms: roundMs(pct?.p95),
@@ -272,9 +269,9 @@ const DailyRow = z.object({
 });
 
 /**
- * Seven days of one environment's SystemJobExecution rows per job, in four
- * statements run in turn; the ticker's slot-claim rows are not job runs and are
- * left out. Outcome counts, percentiles and IST-day buckets have no Prisma
+ * Seven days of one environment's SystemJobExecution rows per job, in five
+ * statements run in turn; the ticker's slot-claim rows are not job runs, but
+ * the idle skips they list are read as no-work runs. Outcome counts, percentiles and IST-day buckets have no Prisma
  * groupBy form, so those are parameterised read-only `$queryRaw`; the last
  * finish uses groupBy.
  */
@@ -283,6 +280,9 @@ export async function readJobRunMetrics(
   now = new Date(),
 ): Promise<JobRunMetrics> {
   const since = new Date(now.getTime() - METRICS_DAYS * DAY_MS);
+  const lookback = new Date(
+    now.getTime() - LAST_SUCCESS_LOOKBACK_DAYS * DAY_MS,
+  );
 
   const counts = z.array(CountRow).parse(
     await prisma.$queryRaw(Prisma.sql`
@@ -320,7 +320,7 @@ export async function readJobRunMetrics(
         AND "result"->>'environment' = ${environment}
       GROUP BY 1, 2`),
   );
-  // A partial run ran to the end, the same freshness rule the SLOs use.
+  // A partial run ran to the end, the same rule the freshness budgets use.
   const lastSuccess = await prisma.systemJobExecution.groupBy({
     by: ["jobName"],
     where: {
@@ -329,9 +329,7 @@ export async function readJobRunMetrics(
         { status: "COMPLETED" },
         { status: "FAILED", result: { path: ["outcome"], equals: "partial" } },
       ],
-      startedAt: {
-        gte: new Date(now.getTime() - LAST_SUCCESS_LOOKBACK_DAYS * DAY_MS),
-      },
+      startedAt: { gte: lookback },
       result: { path: ["environment"], equals: environment },
     },
     _max: { endedAt: true },
@@ -347,5 +345,6 @@ export async function readJobRunMetrics(
       jobName: l.jobName,
       endedAt: l._max.endedAt,
     })),
+    idle: await readIdleCompletions(prisma, environment, lookback, since),
   });
 }

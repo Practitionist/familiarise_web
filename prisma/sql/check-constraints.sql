@@ -1447,3 +1447,46 @@ ALTER TABLE "Meeting"
     ) NOT VALID;
 -- SPLIT
 ALTER TABLE "Meeting" VALIDATE CONSTRAINT "meeting_ended_reason_known";
+-- SPLIT
+-- One open admin run request per job; a settled request frees the job for the next one.
+CREATE UNIQUE INDEX IF NOT EXISTS "admin_run_request_one_open_key"
+  ON "AdminRunRequest" ("job")
+  WHERE "status" IN ('REQUESTED', 'CLAIMED');
+-- SPLIT
+-- A claimed request carries its claim time and a settled one its finish time.
+ALTER TABLE "AdminRunRequest" DROP CONSTRAINT IF EXISTS "admin_run_request_state";
+-- SPLIT
+ALTER TABLE "AdminRunRequest" ADD CONSTRAINT "admin_run_request_state"
+  CHECK ("attempts" >= 0
+    AND ("status" <> 'CLAIMED' OR "claimedAt" IS NOT NULL)
+    AND ("status" NOT IN ('DONE', 'FAILED') OR "finishedAt" IS NOT NULL));
+-- SPLIT
+-- One live entitlement per buyer and product; failed and refunded attempts stay as history.
+CREATE UNIQUE INDEX IF NOT EXISTS "digital_product_purchase_succeeded_key"
+  ON "DigitalProductPurchase" ("productId", "buyerId")
+  WHERE "status" = 'SUCCEEDED';
+-- SPLIT
+-- Free, or at least Razorpay's ₹1 order floor (DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE).
+ALTER TABLE "DigitalProduct" DROP CONSTRAINT IF EXISTS "digital_product_price_nonnegative";
+-- SPLIT
+ALTER TABLE "DigitalProduct" DROP CONSTRAINT IF EXISTS "digital_product_price_free_or_min_paid";
+-- SPLIT
+ALTER TABLE "DigitalProduct" ADD CONSTRAINT "digital_product_price_free_or_min_paid"
+  CHECK ("pricePaise" = 0 OR "pricePaise" >= 100);
+-- SPLIT
+-- A free claim has no gateway order and a paid purchase always has one.
+ALTER TABLE "DigitalProductPurchase" DROP CONSTRAINT IF EXISTS "digital_product_purchase_free_has_no_order";
+-- SPLIT
+ALTER TABLE "DigitalProductPurchase" ADD CONSTRAINT "digital_product_purchase_free_has_no_order"
+  CHECK ("amountPaise" >= 0 AND ("amountPaise" = 0) = ("gatewayOrderId" IS NULL));
+-- SPLIT
+-- 250 MB per file (DIGITAL_PRODUCT_MAX_FILE_BYTES in lib/digital-products/constants.ts).
+ALTER TABLE "DigitalProductAsset" DROP CONSTRAINT IF EXISTS "digital_product_asset_size_cap";
+-- SPLIT
+ALTER TABLE "DigitalProductAsset" ADD CONSTRAINT "digital_product_asset_size_cap"
+  CHECK ("sizeBytes" >= 0 AND "sizeBytes" <= 262144000);
+-- SPLIT
+-- At most one current version per file lineage; verification retires the old one first.
+CREATE UNIQUE INDEX IF NOT EXISTS "digital_product_asset_one_verified_per_lineage"
+  ON "DigitalProductAsset" ("lineageId")
+  WHERE "status" = 'VERIFIED';

@@ -11,6 +11,7 @@
 import type { IncidentRemedyKind, Prisma } from "@prisma/client";
 
 import prisma from "../../lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { startDeadline } from "@/lib/cron/run-deadline";
 import { withAppointmentLock } from "@/utils/appointmentlock";
@@ -93,6 +94,38 @@ type Step =
   | { kind: "applied"; count: number }
   | { kind: "retry"; error: string; countAttempt: boolean };
 
+// Shared by the run's reads and the ticker's idle probe.
+const UNSETTLED_INCIDENT_WHERE = {
+  settledAt: null,
+} satisfies Prisma.PlatformIncidentWhereInput;
+
+function dueRemedyWhere(now: Date) {
+  return {
+    doneAt: null,
+    dueAt: { lte: now },
+    attempts: { lt: MAX_REMEDY_ATTEMPTS },
+  } satisfies Prisma.IncidentRemedyWhereInput;
+}
+
+export async function hasPlatformIncidentWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const incident = await db.platformIncident.findFirst({
+    where: UNSETTLED_INCIDENT_WHERE,
+    select: { id: true },
+  });
+  if (incident) return true;
+  if (outOfTime()) return true;
+  const remedy = await db.incidentRemedy.findFirst({
+    where: dueRemedyWhere(now),
+    select: { id: true },
+  });
+  return remedy !== null;
+}
+
 const emptyResult = (now: Date): SettlePlatformIncidentsResult => ({
   success: true,
   incidents: 0,
@@ -136,7 +169,10 @@ async function settleUnlocked(
   const result = emptyResult(now);
   try {
     const incidents: IncidentState[] = await prisma.platformIncident.findMany({
-      where: { settledAt: null, ...(incidentId ? { id: incidentId } : {}) },
+      where: {
+        ...UNSETTLED_INCIDENT_WHERE,
+        ...(incidentId ? { id: incidentId } : {}),
+      },
       orderBy: [{ startsAt: "asc" }, { id: "asc" }],
       take: INCIDENTS_PER_RUN,
       select: INCIDENT_SELECT,
@@ -211,9 +247,7 @@ async function applyDueRemedies(
   while (!pastDeadline()) {
     const due: DueRemedy[] = await prisma.incidentRemedy.findMany({
       where: {
-        doneAt: null,
-        dueAt: { lte: now },
-        attempts: { lt: MAX_REMEDY_ATTEMPTS },
+        ...dueRemedyWhere(now),
         ...(incidentId ? { incidentId } : {}),
         ...(seen.length > 0 ? { id: { notIn: seen } } : {}),
       },

@@ -175,7 +175,7 @@ sequenceDiagram
   S->>P: upsert MeetingPresence
 ```
 
-The enforcers are `resolveMeetingAccess` (`lib/meetings/access.ts`) for who may enter and when, and `guardMeetingRoute` (`lib/meetings/route-guard.ts`) for authentication, the per-user rate limit and the "Stream is configured" check. In a 1:N room only the host keeps publish permissions, and the join route skips the membership write when Stream already shows the caller with the right role, because that write is broadcast to the whole room.
+The enforcers are `resolveMeetingAccess` (`lib/meetings/access.ts`) for who may enter and when, and `guardMeetingRoute` (`lib/meetings/route-guard.ts`) for authentication, the per-user rate limit and the "Stream is configured" check. An attendee of a webinar or class is admitted on their seat alone, so the seat must hold a fulfilled entitlement (`paidParticipant`): a confirmed or attended seat with a `SUCCEEDED` payment or none, or a held seat whose `SUCCEEDED` capture owes no refund, has no pending or completed refund, and carries no settled-elsewhere marker (auto-refund, `REQUIRES_MANUAL_RECOVERY:` or replay sale). In a 1:N room only the host keeps publish permissions, and the join route skips the membership write when Stream already shows the caller with the right role, because that write is broadcast to the whole room.
 
 ### 5.2 End and host reopen
 
@@ -328,7 +328,7 @@ There is no stated service-level number for how quickly any of these recover. Th
 `lib/cron/schedule.ts` owns the five-minute ticker's roster, UTC phases, daily
 windows and admission timeouts. Stream's jobs have one automatic owner: the active
 Netlify ticker. Their former GitHub Actions steps and manual dispatch allowlists
-are removed. Other non-money Actions jobs remain budget-blocked. Configuration
+are removed. No Actions workflow schedules a registry job. Configuration
 must still be verified on the published deployment.
 
 | Job                                                               | Configured cadence (UTC) | Execution                                  |
@@ -361,8 +361,8 @@ a stale claim preserves its consumed attempt. All five lifecycle cores also fail
 closed on unavailable ownership. The adapters have no independent schedules.
 
 `/api/health/jobs` requires a successful environment-scoped transfer completion
-within 45 minutes, session recovery within 90 minutes, and each daily lifecycle
-capability within 27 hours. Admission cannot satisfy completion health. The risk
+within 60 minutes, session recovery within 90 minutes, and each daily lifecycle
+capability within 28.5 hours (budgets derived from the schedule). Admission cannot satisfy completion health. The risk
 alarm samples at most 100 READY Stream sources with a future expiry that is within
 72 hours or with at least three attempts. Each recording is conditionally claimed
 for an alarm at most once per six hours; expired sources are excluded. Alert

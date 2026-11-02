@@ -8,6 +8,11 @@
  * inside its transaction and revokes Stream access per plan after commit.
  */
 
+// Digital product erasure has its own suite; these scrubs own no products.
+jest.mock("../../lib/digital-products/erasure", () => ({
+  scrubDigitalProductsTx: jest.fn(async () => undefined),
+  purgeErasedCreatorFiles: jest.fn(async () => []),
+}));
 jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
   dispatchWebhookEvent: jest.fn(async () => undefined),
 }));
@@ -16,6 +21,16 @@ jest.mock("../../lib/api/organizations/seat-count", () => ({
 }));
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
+}));
+const mockLogDb = {
+  $queryRaw: jest.fn(async () => [{ ready: true }]),
+  $executeRaw: jest.fn(),
+};
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  get default() {
+    return mockLogDb;
+  },
 }));
 jest.mock("../../lib/collaborators/service", () => ({
   revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
@@ -49,7 +64,12 @@ const tx = {
       { collaboratorType: "WEBINAR", webinarPlanId: "wp-1", classPlanId: null },
     ]),
   },
-  session: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+  session: {
+    findMany: jest.fn(async () => []),
+    deleteMany: jest.fn(async () => ({ count: 0 })),
+  },
+  sessionAccessLog: { updateMany: jest.fn(async () => ({ count: 2 })) },
+  $queryRaw: jest.fn(async () => [{ ready: true }]),
   account: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   // #1593 — the outbox: the request being processed and the rows the scrub
   // writes for it inside the transaction.
@@ -92,6 +112,52 @@ describe("DPDP erasure flips collaborator rows", () => {
       "u1",
       { notify: false },
     );
+  });
+
+  it("unlinks the CERT-In access log in the transaction and keeps its rows for the prune", async () => {
+    await scrubUser(db as never, "u1");
+
+    expect(tx.sessionAccessLog.updateMany).toHaveBeenCalledWith({
+      where: { userId: "u1" },
+      data: { userId: null },
+    });
+  });
+
+  it("stamps the access log after commit, and a throwing stamp leaves the erasure done", async () => {
+    tx.session.findMany.mockResolvedValueOnce([
+      {
+        id: "s1",
+        userId: "u1",
+        ipAddress: "203.0.113.7",
+        userAgent: "Firefox",
+        createdAt: new Date("2026-11-01T00:00:00Z"),
+        expiresAt: new Date("2099-01-01T00:00:00Z"),
+      },
+    ] as never);
+    tx.session.deleteMany.mockResolvedValueOnce({ count: 1 });
+    mockLogDb.$executeRaw.mockRejectedValueOnce(new Error("log table locked"));
+    jest.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(scrubUser(db as never, "u1")).resolves.toMatchObject({
+      scrubbed: true,
+    });
+    expect(tx.session.deleteMany).toHaveBeenCalledWith({
+      where: { userId: "u1" },
+    });
+    expect(mockLogDb.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(mockLogDb.$executeRaw.mock.invocationCallOrder[0]).toBeGreaterThan(
+      db.$transaction.mock.invocationCallOrder[0],
+    );
+    // The stamp drops the user link, as the in-transaction detach did.
+    const { values, sql } = (
+      mockLogDb.$executeRaw.mock.calls[0] as unknown as [
+        unknown,
+        { values: unknown[]; sql: string },
+      ]
+    )[1];
+    expect(values).toContain("s1");
+    expect(values).not.toContain("u1");
+    expect(sql).not.toContain("users");
   });
 
   it("writes the outbox row inside the transaction and settles it after the attempt (#1593)", async () => {

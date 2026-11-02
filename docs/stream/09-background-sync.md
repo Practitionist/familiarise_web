@@ -35,8 +35,7 @@ redirects, and keep the bearer server-side.
 
 The adapters have no independent schedules. All Stream jobs in this document
 have one automatic owner; their former Actions steps, dispatch allowlists and
-failure-summary entries are removed. Other non-money Actions maintenance remains
-budget-blocked. CI/CD build and review workflows are a separate responsibility.
+failure-summary entries are removed. No Actions workflow schedules a registry job. CI/CD build and review workflows are a separate responsibility.
 
 Current background targets are `/.netlify/functions/recording-transfer-background`
 and `/.netlify/functions/stream-maintenance-background?job=<slug>`. Automatic
@@ -132,8 +131,8 @@ remain owned by the existing erasure/revocation retry flow.
 ## Completion, alarms and operations
 
 `/api/health/jobs` requires successful owned COMPLETED executions scoped to the
-server environment: 45 minutes for transfer, 90 minutes for orphaned sessions,
-27 hours for each daily lifecycle capability. A 202 or another job's heartbeat
+server environment: 60 minutes for transfer, 90 minutes for orphaned sessions,
+28.5 hours for each daily lifecycle capability, each derived from the schedule. A 202 or another job's heartbeat
 cannot satisfy one capability's requirement. A successful bounded slice is still
 not evidence of complete vendor cleanup or acceptable backlog age.
 

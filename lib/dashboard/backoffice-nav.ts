@@ -23,6 +23,7 @@ import {
   Scale,
   Settings,
   ScrollText,
+  ShieldAlert,
   Shield,
   Siren,
   Star,
@@ -267,6 +268,12 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           path: "compliance",
           surface: "compliance.manage",
           badgeKey: "compliance",
+        },
+        {
+          name: "Stuck work",
+          icon: ShieldAlert,
+          path: "stuck-work",
+          surface: "systemJobs.manage",
         },
         {
           name: "System jobs",

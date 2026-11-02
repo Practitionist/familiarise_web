@@ -29,11 +29,11 @@
 2. **Money & State Transitions**:
    - All money columns are `BigInt` paise in Postgres (mapped to `number` at the Prisma client boundary in `lib/prisma.ts`). Settlement is INR-only.
    - Every status transition on `Payment`, `Appointment`, `Refund`, or `Payout` must use conditional `updateMany` with the expected prior status in `WHERE` (CAS-in-WHERE), never read-then-update.
-   - Gateway card captures are confirmed only by `handlePaymentSuccess` (`lib/payments/webhooks/handlers.ts`), reached from the webhook, client verify, the reconcile sweep and the admin recover door. The only other `SUCCEEDED` writers are the no-gateway rails and the overage and replay side-payments: `payment-row.ts`, `overage-handlers.ts`, `overage-settlement.ts` and `recording-purchase.ts` (full list in `docs/start-here/02-money-system-hld.md` §1).
+   - Gateway card captures are confirmed only by `handlePaymentSuccess` (`lib/payments/webhooks/handlers.ts`), reached from the webhook, client verify, the reconcile sweep and the admin recover door. The only other `SUCCEEDED` writers are the no-gateway rails, the overage side-payments and the standalone sales (replays and digital products): `payment-row.ts`, `overage-handlers.ts`, `overage-settlement.ts`, `recording-purchase.ts`, `digital-product-purchase.ts` and their shared auto-refund stamp in `standalone-sale-capture.ts` (full list in `docs/start-here/02-money-system-hld.md` §1).
 3. **Schema & Sidecar Discipline (`prisma/schema.prisma` + `prisma/sql/*.sql`)**:
    - One Postgres database serves dev and prod across worktrees. **Never** run `prisma db push` or `npm run db:*` autonomously.
    - Check live-DB drift read-only with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`; a plain `db push` would drop the `prisma/sql` sidecar uniques.
-   - Run `npx prisma generate` after editing `prisma/schema.prisma`. Any new `CHECK`, partial unique index, or trigger belongs in `prisma/sql/*.sql`.
+   - Run `npx prisma generate` after editing `prisma/schema.prisma`. Any new `CHECK`, partial unique index, or trigger belongs in `prisma/sql/*.sql`. A trigger that rebuilds a summary or aggregate must be `FOR EACH STATEMENT` with transition tables, or a dirty-mark plus a sweep. Guard and constraint triggers stay `FOR EACH ROW`.
    - Never run database DDL or write SQL through an MCP server. The reviewed Supabase MCP entry is read-only and project-scoped; schema changes go through `prisma/schema.prisma`, the human-run `db:push` preflight, and `prisma/sql/*.sql` sidecars.
 4. **Locking (`Postgres` vs `Upstash Redis`)**:
    - Cron mutual exclusion (`withCronLock` in `lib/cron/with-cron-lock.ts`) is backed by Postgres (`SystemJobExecution` lease). Do not add Redis locks for cron jobs.
@@ -68,6 +68,6 @@
 4. **Contiguous Numbering Discipline**:
    - Whenever a numbered file, folder, subfolder, seed phase, or index table entry (`x, x+1, x+2`) is deleted or inserted, immediately renumber all subsequent items (`x+2` -> `x+1`, etc.) and update all imports and cross-references in the same commit so numbering remains strictly contiguous with zero gaps or duplicates.
 5. **CodeRabbit CLI & PR Comment Triage**:
-   - Use the `coderabbit` CLI (`~/.local/bin/coderabbit review --plain`) for local review checks and follow `.claude/skills/workflow/references/pr-comment-triage.md` to classify and resolve every PR review comment before merging.
+   - Use the `coderabbit` CLI (`coderabbit review`; plain text is the default) for local review checks and follow `.claude/skills/workflow/references/pr-comment-triage.md` to classify and resolve every PR review comment before merging.
 6. **Email Delivery Guard**:
    - Every send goes through `deliver()`, or for the waitlist broadcast batch through `heldRecipientDomain()`, so the pre-launch guard (`EMAIL_DELIVERY_MODE`) sees every recipient; see `docs/email/README.md`.

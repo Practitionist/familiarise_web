@@ -93,7 +93,12 @@ the operator can see what to settle.
   `name → "Erased User <8hex>"`).
 - Nulls PII on profiles, payout-account masked fields, and user-authored text.
 - Flips memberships, program assignments and collaborators.
-- Hard-deletes sessions and accounts — immediate sign-out everywhere.
+- Hard-deletes sessions and accounts — immediate sign-out everywhere. Inside
+  the transaction the scrub sets the user's `SessionAccessLog.userId` to null
+  (`detachSessionAccessLogs`); after commit `stampSessionEnds(ended,
+{ forgetUser: true })` stamps each session's end, so a log failure never
+  fails the erasure. IP, user agent and times stay for the 180-day CERT-In
+  prune (`lib/auth/session-access-log.ts`).
 - **Deliberately preserves** `city`/`country` (geographic compliance reporting),
   payment and ledger rows, tax records, and the Razorpay reference ids.
 
@@ -181,8 +186,9 @@ it was communicated. That is a legal review question.
 2. DPA with India-storage, erasure, and breach-notification terms where
    relevant.
 3. **Data residency is usually the wrong question.** DPDP imposes no
-   localisation. What actually binds: CERT-In's 180-day in-India **log**
-   retention, and RBI payment data — which reaches us _contractually_ through
+   localisation. What actually binds: CERT-In's 180-day **log** retention (the
+   logs may be stored outside India if producible to CERT-In in reasonable
+   time, FAQ Q35), and RBI payment data — which reaches us _contractually_ through
    the payment provider, not by geography. The control is "never put payment
    payloads in telemetry", enforced in code.
 4. DPDP s.16 / Rule 15 is a may-restrict power about foreign states, and the

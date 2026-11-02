@@ -61,9 +61,6 @@ jest.mock("../../lib/email/senders/booking", () => ({
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn().mockResolvedValue(undefined),
 }));
-jest.mock("../../lib/activity/log-activity", () => ({
-  logActivity: jest.fn().mockResolvedValue(undefined),
-}));
 jest.mock("../../lib/collaborators/recipients", () => ({
   collaboratorUserIds: jest.fn().mockResolvedValue([]),
 }));

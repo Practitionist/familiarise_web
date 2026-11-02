@@ -5,7 +5,6 @@ const mockReadHolding = jest.fn();
 const mockApplyCapture = jest.fn();
 const mockOutstanding = jest.fn();
 const mockNotify = jest.fn(async (..._args: unknown[]) => []);
-const mockSend = jest.fn(async (..._args: unknown[]) => undefined);
 const mockTx = {
   organizationInvoice: { updateMany: jest.fn(async () => ({ count: 1 })) },
   orgAuditLog: { create: jest.fn(async () => ({})) },
@@ -42,8 +41,12 @@ jest.mock("@/lib/novu/org-workflows", () => ({
   rosterForOrg: jest.fn(async () => []),
   VISIBILITY_ROLES: [],
 }));
+jest.mock("@/lib/novu/outbox", () => ({ attemptTrigger: jest.fn() }));
 jest.mock("@/lib/email", () => ({
-  sendOrgInvoiceOverdueEmail: (...args: unknown[]) => mockSend(...args),
+  attemptStaged: jest.fn(),
+  EMAIL_BUDGET_MS: { JOB: 1 },
+  MONEY_EMAIL_TYPES: { ORG_INVOICE_OVERDUE: "ORG_INVOICE_OVERDUE" },
+  stageOrgInvoiceOverdueEmail: jest.fn(async () => []),
 }));
 
 import { runDunning } from "@/jobs/billing/dunning";

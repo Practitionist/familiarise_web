@@ -33,6 +33,8 @@ export const TARGETS = [
   "settle-platform-incidents",
   "maintenance-booking-remediation",
   "retry-auto-refunds",
+  "reconcile-standalone-purchases",
+  "reconcile-digital-product-storage",
   "alert-orphaned-payments",
   "reconcile-orphaned-payments",
   "sentry-ingest-canary",
@@ -81,6 +83,7 @@ export const TARGETS = [
   "archive-webhook-events",
   "consent-retention-sweeper",
   "expire-onboarding-drafts",
+  "drain-admin-run-requests",
   ...STREAM_LIFECYCLE_JOBS,
 ] as const;
 
@@ -138,6 +141,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "settle-platform-incidents": 10,
   "maintenance-booking-remediation": 1,
   "retry-auto-refunds": 10,
+  "reconcile-standalone-purchases": 5,
+  "reconcile-digital-product-storage": 25,
   "appointment-reminders": 25,
   "expire-stale-requests": 20,
   "reschedule-proposals": 25,
@@ -192,6 +197,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   // Count-only: deletion stays behind the route's explicit delete flag.
   "consent-retention-sweeper": 500,
   "expire-onboarding-drafts": null,
+  // One open request per after-mode job.
+  "drain-admin-run-requests": 2,
   "expire-recordings": null,
   "reconcile-orphaned-recordings": null,
   "wind-down-deactivated-orgs": null,
@@ -228,6 +235,9 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "settle-platform-incidents": 60,
   "maintenance-booking-remediation": 15,
   "retry-auto-refunds": 15,
+  // Hourly: any 15-minute phase would push the busiest tick past the free slot.
+  "reconcile-standalone-purchases": 60,
+  "reconcile-digital-product-storage": 360,
   "auto-complete-appointments": 30,
   "detect-consultant-no-shows": 30,
   "alert-orphaned-payments": 15,
@@ -277,6 +287,8 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "archive-webhook-events": 1440,
   "consent-retention-sweeper": 1440,
   "expire-onboarding-drafts": 1440,
+  // Backstop only: the admin route dispatches at once; every shorter cadence breaks the tick cap.
+  "drain-admin-run-requests": 60,
   "expire-recordings": 60,
   "reconcile-orphaned-recordings": 60,
   "wind-down-deactivated-orgs": 60,
@@ -314,6 +326,8 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "settle-platform-incidents": 30,
   "maintenance-booking-remediation": 0,
   "retry-auto-refunds": 10,
+  "reconcile-standalone-purchases": 45,
+  "reconcile-digital-product-storage": 125,
   "auto-complete-appointments": 15,
   "detect-consultant-no-shows": 20,
   "reconcile-orphaned-payments": 10,
@@ -362,6 +376,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "archive-webhook-events": 20,
   "consent-retention-sweeper": 25,
   "expire-onboarding-drafts": 35,
+  "drain-admin-run-requests": 40,
   "expire-recordings": 5,
   "reconcile-orphaned-recordings": 25,
   "wind-down-deactivated-orgs": 55,
@@ -512,10 +527,40 @@ export function latestWindowStart(name: Target, at: Date): Date | null {
   return null;
 }
 
-/** The targets due on this tick; exported so a test can pin the cadence. */
-export function dueTargets(now: Date): Target[] {
+/** A fixed span holding at least two of every calendar window, quarterly ones included. */
+const GAP_SPAN_DAYS = 800;
+const GAP_EPOCH_MINUTE = Date.UTC(2027, 0, 1) / 60_000;
+
+/**
+ * The longest gap in minutes between two consecutive due slots of a target.
+ * Every interval divides the day and every offset sits on a five-minute tick.
+ */
+export function maxSlotGapMinutes(name: Target): number {
+  const every = TARGET_EVERY_MINUTES[name] ?? 5;
+  const w = TARGET_WINDOWS[name];
+  if (!w) return every;
+  const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
+  let gap = 0;
+  let previousLast: number | null = null;
+  for (let d = 0; d < GAP_SPAN_DAYS; d++) {
+    const opens = GAP_EPOCH_MINUTE + d * 1440 + w.startMinuteUtc;
+    const at = new Date(opens * 60_000);
+    if (windowStartFor(name, at)?.getTime() !== at.getTime()) continue;
+    const first = opens + ((((offset - opens) % every) + every) % every);
+    const closes = opens + w.windowMinutes;
+    if (first >= closes) continue;
+    const last = first + Math.floor((closes - 1 - first) / every) * every;
+    if (last > first) gap = Math.max(gap, every);
+    if (previousLast !== null) gap = Math.max(gap, first - previousLast);
+    previousLast = last;
+  }
+  return gap;
+}
+
+/** Every target whose slot falls on this tick, before idle skips and the cap. */
+export function scheduledTargets(now: Date): Target[] {
   const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const due = TARGETS.filter((name) => {
+  return TARGETS.filter((name) => {
     if (name in TARGET_WINDOWS && windowStartFor(name, now) === null) {
       return false;
     }
@@ -524,10 +569,18 @@ export function dueTargets(now: Date): Target[] {
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
     return (((minuteOfDay - offset) % every) + every) % every < 5;
   });
-  // The ledger report persists its cursor and yields past the cap; other jobs keep their slots.
-  return due.length > MAX_TARGETS_PER_TICK
-    ? due.filter((name) => name !== "reconcile-ledgers")
-    : due;
+}
+
+/** The cap on dispatched targets: the ledger report persists its cursor and yields past it. */
+export function capToTick(targets: readonly Target[]): Target[] {
+  return targets.length > MAX_TARGETS_PER_TICK
+    ? targets.filter((name) => name !== "reconcile-ledgers")
+    : [...targets];
+}
+
+/** The targets due on this tick with no idle skips; exported so a test can pin the cadence. */
+export function dueTargets(now: Date): Target[] {
+  return capToTick(scheduledTargets(now));
 }
 
 /** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */
@@ -545,6 +598,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "settle-cancelled-sessions": 20_000,
   "settle-platform-incidents": 20_000,
   "retry-auto-refunds": 20_000,
+  "reconcile-standalone-purchases": 20_000,
+  "reconcile-digital-product-storage": 20_000,
   "vest-referral-credits": 20_000,
   "reconcile-refunds": 20_000,
   "reconcile-org-invoice-payments": 24_000,
@@ -591,6 +646,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "archive-webhook-events": 20_000,
   "consent-retention-sweeper": 20_000,
   "expire-onboarding-drafts": 20_000,
+  "drain-admin-run-requests": 24_000,
 };
 
 /**

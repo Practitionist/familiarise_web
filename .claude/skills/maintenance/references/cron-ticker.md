@@ -4,7 +4,7 @@
 
 `lib/cron/cleanup-registry.ts` supplies the single implementation dispatch for
 `/api/cleanup/[job]`. Its bearer check uses `CRON_SECRET`. The Netlify scheduled
-adapter runs every five minutes and schedules every registered job (76 targets);
+adapter runs every five minutes and schedules every registered job (77 targets);
 no Actions workflow schedules a registry job. Check executable target metadata
 rather than assuming a registered job is scheduled.
 
@@ -18,7 +18,7 @@ on a production schedule.
 
 ## Shared schedule catalog
 
-`lib/cron/schedule.ts` owns target names, cadence, offsets, calendar windows, row limits and request timeouts. `JOB_SCHEDULES` exposes their effective values and `scheduleFor(name)` supports lookup. Dispatchers and generated schedule metadata consume this catalog instead of copying maps or scraping the Netlify adapter. Completion SLOs remain separate from configured cadence. Recording transfer runs every 15 minutes through the catalog background destination, with 202 recorded in `accepted` rather than `ok`; its Actions step is removed. Cleanup and staff recovery queue the same adapter. Preserve the core's fail-closed 15-minute lease and one-copy limit. The 45-minute operational-health budget requires actual successful core completion. The catalog has no database, vendor client or environment reads. `npm run cron:reference` generates `docs/maintenance/04-cron-jobs-reference.md` from this catalog, executable registry AST properties and worker lease declarations. `npm run cron:reference:check` detects stale output; it does not verify deployed execution. Import schedule helpers directly from the catalog; the Netlify adapter contains platform dispatch and failure reporting.
+`lib/cron/schedule.ts` owns target names, cadence, offsets, calendar windows, row limits and request timeouts. `JOB_SCHEDULES` exposes their effective values and `scheduleFor(name)` supports lookup. Dispatchers and generated schedule metadata consume this catalog instead of copying maps or scraping the Netlify adapter. Freshness budgets are derived from this catalog (`maxSlotGapMinutes`, then `freshnessBudgetMinutes` in `lib/cron/operational-health.ts`); never write a literal budget. Recording transfer runs every 15 minutes through the catalog background destination, with 202 recorded in `accepted` rather than `ok`; its Actions step is removed. Cleanup and staff recovery queue the same adapter. Preserve the core's fail-closed 15-minute lease and one-copy limit. Its 60-minute freshness budget requires actual successful core completion. The catalog has no database, vendor client or environment reads. `npm run cron:reference` generates `docs/maintenance/04-cron-jobs-reference.md` from this catalog, executable registry AST properties and worker lease declarations. `npm run cron:reference:check` detects stale output; it does not verify deployed execution. Import schedule helpers directly from the catalog; the Netlify adapter contains platform dispatch and failure reporting.
 
 Document retention (`purge-deleted-documents`) runs hourly at `:25`, with a 100-row request limit and 20-second HTTP timeout. Keep these values in the shared catalog when merging worker changes. The twelve-target bound (the busiest tick holds 11) and ledger yielding must match the current cadence/collision test.
 
@@ -61,13 +61,13 @@ callback gets `statusFor` and the inferred outcome. A lease-held 409 is an
 attempted run, never fresh successful work.
 
 `reconcile-ledgers` runs as an hourly `:55` bounded slice whose cursor persists on
-its report. When the due cohort reaches `MAX_TARGETS_PER_TICK`, the ledger
+its report. When the dispatched cohort (after idle skips) reaches `MAX_TARGETS_PER_TICK`, the ledger
 yields before dispatch so statutory and settlement slots keep priority; later
 admitted slices resume the report. It answers 200 with summary status RUNNING while work
 remains and 207 once a completed audit has discrepancies; it is listed in
 `PARTIAL_FAILURE_TARGETS`, so that 207 counts as failed.
 
-No GitHub Actions workflow schedules a registry job: every registered job, including the former daily, weekly and hourly housekeeping batch, runs on the ticker (76 targets, at most 12 per tick). The three fleet workflows `cron-daily.yml`, `cron-intra-day.yml` and `cron-weekly.yml` and their `tsx` wrappers are deleted; run a job by hand through the admin Run door or `POST /api/cleanup/<slug>` with the `CRON_SECRET` bearer. The weekly `consent-retention-sweeper` is count-only from the ticker, which never sends the delete flag. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. A 503 carrying an explicit `DEGRADED`/`OFFLINE` phase is a planned maintenance hold; an unreadable-state 503 remains `failed`.
+No GitHub Actions workflow schedules a registry job: every registered job, including the former daily, weekly and hourly housekeeping batch, runs on the ticker (77 targets, at most 12 per tick). The three fleet workflows `cron-daily.yml`, `cron-intra-day.yml` and `cron-weekly.yml` and their `tsx` wrappers are deleted; run a job by hand through the admin Run door or `POST /api/cleanup/<slug>` with the `CRON_SECRET` bearer. The weekly `consent-retention-sweeper` is count-only from the ticker, which never sends the delete flag. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. A 503 carrying an explicit `DEGRADED`/`OFFLINE` phase is a planned maintenance hold; an unreadable-state 503 remains `failed`.
 
 A per-job lease does not serialize different jobs touching the same payment or
 payout. Conditional state transitions, transactionally staged obligations and
@@ -75,6 +75,19 @@ vendor idempotency keys protect those boundaries. A lease renewal failure or
 client timeout does not cancel a worker or roll back committed effects. Test
 concurrent jobs, sequential replays, interrupted staging and ambiguous gateway
 responses independently.
+
+## Idle probes: the ticker skips targets with no work
+
+Every `CLEANUP_JOB_BUILDERS` entry has a required `idle: IdleProbe` (`lib/cron/cleanup-registry.ts`): either `{ hasWork(db, now, outOfTime) }`, which lazily imports an exported `has...Work` function from the job's own core module, or `{ alwaysRun: "<one-line reason>" }`.
+
+- **Flow.** `cron-tick.mts` computes `scheduledTargets(tickDate)` and calls `claimTickSlot(...)`, which POSTs `/api/health/jobs/tick?tickId=...&slot=...&due=<comma list>`. The route runs `probeTick(due, db, now, deadline)` (`lib/cron/idle-probe.ts`): the idle probes, then, only while the 2-second budget lasts and no probe failed, the seven oldest-pending-age gauges in one statement (`readPendingAges` in `lib/cron/pending-ages.ts`). It writes the claim row with `result.idle` (target names) and `result.idleCount` in the same insert, and answers `{claimed: true, idle, pendingAges?}`. A duplicate dispatch gets `{claimed: false}`. The ticker then dispatches `capToTick(scheduled minus idle)`, and its log line, body and Better Stack summary carry `skippedIdle` and the gauges as `oldestPendingAgeS`. Never add a ticker target for a gauge; add it to the one statement.
+- **Why it exists.** Every dispatched target is a billable Netlify function invocation, and the legacy Pro bill steps up by $25 past 125,000 a site; see `docs/decisions/2026-11-01-ticker-skip-idle-targets.md` (Billing rationale).
+- **Probe budget.** Probes run in one transaction with `SET LOCAL statement_timeout` of 750 ms (`IDLE_PROBE_STATEMENT_TIMEOUT_MS`), which holds through the transaction pooler. No statement starts after the 2 s budget (`IDLE_PROBE_BUDGET_MS`): a probe checks `outOfTime()` before every statement and answers "has work" once it is true, and the drift test counts those checks. Probing therefore ends by 2.75 s.
+- **Claim timeout.** `TICK_CLAIM_TIMEOUT_MS` is 5 s: up to 2.75 s of probes plus the commit and claim insert leaves about 2 s for a cold start.
+- **Fail open.** A probe that throws or whose statement Postgres cancels (the aborted transaction stops probing, so later targets are dispatched too), a probe cut short by the budget, an always-run job, a target the budget never reached, a probe module that cannot load (the route claims with `idle: []`), and an unreachable, non-2xx or unreadable claim reply all dispatch the target. Probe failures are one `idle-probe-failed` log line per tick, never Sentry.
+- **Shared predicate.** A probe reuses the `...Where` builders the job's own claim query uses. `__tests__/maintenance/idle-probe-drift.test.ts` fails when a target has neither a probe nor a reason, a probe's `where` is more than a combination of builders, a builder the probe reads is not also read by the claim query, or the probe is not in the module the entry's `build` imports.
+- **Run history.** A skipped target writes no `SystemJobExecution` row. `readIdleCompletions` (`lib/cron/idle-skips.ts`) reads the claim rows' `idle` arrays; `app/api/health/jobs/route.ts`, `app/api/health/jobs/streaks/route.ts`, `lib/backoffice/job-run-metrics.ts` (the "Idle skips" column) and `app/api/health/route.ts` treat a skip as a healthy finished run. Never add a reader of job freshness that ignores them.
+- **Always-run is the exception.** Use it for vendor-state reconcilers, statutory exports whose window is the work, jobs that record a config skip on every run (`irp-uploader`), and jobs due so rarely that a probe saves little. State the reason in the entry.
 
 ## Runtime envelope and monitoring
 
@@ -97,6 +110,11 @@ disabled Sentry monitor accepts no check-ins: verify the monitor is active and
 that accepted check-ins and missed-run alerts actually arrive. Independent
 absence monitoring must inspect completed capabilities and oldest outstanding
 obligations, not the ticker's always-200 response or `/api/health` alone.
+`/api/health/jobs` is that probe: one requirement per ticker target that writes a
+run row, `maxAge = gap + min(gap, 6 h) + 30 min` over the target's longest gap
+between due slots, `paging` unless the target is in the housekeeping set
+`WATCHED_TARGETS`, 503 when a paging job lapses. An external Better Stack monitor
+polls it (owner step, runbook in `docs/maintenance/00-betterstack-setup.md`).
 
 ## Explicit maintenance booking remediation
 
@@ -117,7 +135,7 @@ none, such as `reconcile-ledgers`.
 
 ## Job history and messaging retention
 
-`prune-system-job-executions` is a ticker target (every 30 minutes at offset 25, window 20:00 to 23:30 UTC, `limit=500`); the daily Actions step and the CLI wrapper are deleted. Its registered HTTP core always runs bounded: maximum 500 rows per phase, eight phases, and a 16-second start budget. `hasMore` indicates continuation; it is not a failure or a drained-backlog guarantee. Final mutations repeat eligibility so an admin-requeued message is preserved, and scrubbing keeps the delivery/legacy retention clocks unchanged. See [the execution and replay contract](../../../../docs/maintenance/messaging-retention.md).
+`prune-system-job-executions` is a ticker target (every 30 minutes at offset 25, window 20:00 to 23:30 UTC, `limit=500`); the daily Actions step and the CLI wrapper are deleted. Its registered HTTP core always runs bounded: maximum 500 rows per bounded page, and a 16-second start budget. Run history (no-op runs at 14 days, every other finished run at 180 days) is drained in raw 1,000-row batches until a short batch or the deadline; the secondary tables (`EmailEvent` 1 year (calendar), export jobs 1 year, anonymous cookie rows 13 months, meeting presence and attendance 3 years) are pages of the same job. No new retention gets its own ticker target: the busiest tick holds 11 of 12. `archive-webhook-events` keeps its weekly Sunday slot and drains the same way, in 2,000-row batches inside its 16-second budget and 20-second ticker timeout. `hasMore` indicates continuation; it is not a failure or a drained-backlog guarantee. Final mutations repeat eligibility so an admin-requeued message is preserved, and scrubbing keeps the delivery/legacy retention clocks unchanged. See [the execution and replay contract](../../../../docs/maintenance/messaging-retention.md).
 
 ## Adding a job
 
@@ -126,7 +144,7 @@ Never create 3-layer wrappers. A job has one implementation, registered in
 `app/api/cleanup/<job>/route.ts`, `jobs/<domain>/<job>.ts` or
 `scripts/<domain>/<job>.ts` wrapper.
 
-1. Register one implementation, maintenance classification, and active schedule.
+1. Register one implementation, maintenance classification, active schedule and `idle` field: an exported `has...Work` probe that shares the claim query's `...Where` builders, or an `alwaysRun` reason.
 2. Bound candidate reads, examined rows and runtime; preserve durable continuation.
 3. Rotate unchanged/error polls so old unresolved rows cannot starve later work.
 4. Stage delivery obligations atomically with the state claim using the supplied tx.
@@ -135,7 +153,9 @@ Never create 3-layer wrappers. A job has one implementation, registered in
 7. Put a ticker job in `lib/cron/schedule.ts` (`TARGETS` with an offset or a `TARGET_WINDOWS` slot) so
    the cadence/collision tests preserve the twelve-target design bound (the busiest tick holds 11).
    Only the resumable ledger target yields when the due roster exceeds this bound;
-   the dispatcher does not truncate other due work.
+   the dispatcher does not truncate other due work. The target gets a `paging`
+   freshness budget automatically; add it to `WATCHED_TARGETS`
+   (`lib/cron/operational-health.ts`) only if it is housekeeping.
 8. If the job moves money or payouts, add its slug to `FINANCIAL_JOB_NAMES`
    (`lib/cron/financial-jobs.ts`). The maintenance gate then also stops it in
    `DEGRADED`, and the lock-registry test requires a fail-closed lock.
@@ -146,7 +166,7 @@ Calendar-window schedules also require explicit missed-window recovery.
 
 ## Compliance and retention slices
 
-Consent, breach-deadline alerts and SystemEvent retention have registered bounded cores under lib/compliance and lib/observability. All three run on the ticker: `consent-retention-sweeper` weekly on Sunday at 00:25 UTC (count only, the ticker never sends the delete flag), `databreach-deadline-alerts` hourly at :15 (limit 50) and `prune-system-events` hourly at offset 10 in the 20:00 to 23:30 UTC window. Carry the original caller start time through maintenance, lease admission and repeated slices; a slow read must not admit a post-deadline write. Consent deletion remains DPDP_SWEEPER_DELETE-gated and uses the stored retention deadline; event retention remains 400 days. Breach mail/Novu obligations stage transactionally and resume the oldest unfinished hourly digest, including across hour rollover. Staged or held mail is not delivered-mail evidence. See docs/maintenance/compliance-retention-workers.md; never run a real retention or alerting job to test it against the shared database.
+Consent, breach-deadline alerts and SystemEvent retention have registered bounded cores under lib/compliance and lib/observability. All three run on the ticker: `consent-retention-sweeper` weekly on Sunday at 00:25 UTC (count only, the ticker never sends the delete flag), `databreach-deadline-alerts` hourly at :15 (limit 50) and `prune-system-events` hourly at offset 10 in the 20:00 to 23:30 UTC window. Carry the original caller start time through maintenance, lease admission and repeated slices; a slow read must not admit a post-deadline write. Consent deletion remains DPDP_SWEEPER_DELETE-gated and uses the stored retention deadline; event retention remains 400 days, except that the newest event per `(correlationId, category)` of a `STATE_BEARING_EVENT_PREFIXES` prefix is kept. Breach mail/Novu obligations stage transactionally and resume the oldest unfinished hourly digest, including across hour rollover. Staged or held mail is not delivered-mail evidence. See docs/maintenance/compliance-retention-workers.md; never run a real retention or alerting job to test it against the shared database.
 
 An invalid officer mailbox reports a configuration error while admin alerts still stage; the digest remains active until repaired. Do not complete or abandon an unfinished digest solely because it is old. Persistent staging failures require operator repair and an explicit progression/capacity gate before schedule cutover.
 
@@ -175,8 +195,9 @@ See `docs/stream/17-channel-lifecycle.md#organisation-wind-down-completion`.
 
 ## Deprecated & Superseded Approaches
 
-Redis cron locks, production fallbacks for incomplete unit-test mocks, and shared
-heartbeats described as proof of complete fleet health are superseded. Recovery
+Redis cron locks, production fallbacks for incomplete unit-test mocks, shared
+heartbeats described as proof of complete fleet health, and the hand-kept
+completion-SLO list (replaced by budgets derived from the schedule) are superseded. Recovery
 is not guaranteed by a parallel Actions workflow or by making every HTTP result 200. Keep the required Netlify standby; platform moves change adapters, not
 transaction or replay guarantees.
 

@@ -16,6 +16,7 @@ const NEW_OFFERINGS = [
   { type: "subscription", label: "Subscription" },
   { type: "webinar", label: "Webinar" },
   { type: "class", label: "Class" },
+  { type: "digital-product", label: "Digital product" },
 ] as const;
 
 /** #1527 §7.2 — one "+ New offering" entry instead of four section buttons. */

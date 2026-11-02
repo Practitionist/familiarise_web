@@ -356,7 +356,11 @@ You can find this key in: Dashboard > Settings > API > service_role key
 // adding a type needs no bucket provisioning — only ownership verification,
 // which lives in app/api/plans/image/route.ts.
 export type TPlanImageType =
-  "webinar-plans" | "class-plans" | "consultation-plans" | "subscription-plans";
+  | "webinar-plans"
+  | "class-plans"
+  | "consultation-plans"
+  | "subscription-plans"
+  | "digital-products";
 
 interface IPlanImageUploadOptions {
   planType: TPlanImageType;
