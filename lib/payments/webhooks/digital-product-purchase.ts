@@ -460,15 +460,19 @@ export async function handleDigitalProductPurchaseSuccess(
   /** Razorpay's `method` for the capture. */
   method?: string,
 ): Promise<void> {
-  const existing = await prisma.payment.findUnique({
-    where: { paymentIntent: orderId },
-    select: {
-      id: true,
-      paymentStatus: true,
-      amount: true,
-      gatewayPaymentId: true,
-    },
-  });
+  // The receipt renders alongside the settled check; once settled it is null after one read.
+  const [existing, receipt] = await Promise.all([
+    prisma.payment.findUnique({
+      where: { paymentIntent: orderId },
+      select: {
+        id: true,
+        paymentStatus: true,
+        amount: true,
+        gatewayPaymentId: true,
+      },
+    }),
+    receiptForOrder(orderId),
+  ]);
   if (
     existing?.paymentStatus === "SUCCEEDED" &&
     (capturedPaise === undefined || capturedPaise === existing.amount) &&
@@ -485,7 +489,6 @@ export async function handleDigitalProductPurchaseSuccess(
     return;
   }
 
-  const receipt = await receiptForOrder(orderId);
   const { outcome, staged } = await prisma.$transaction(async (tx) => {
     const settled = await settleCapture(
       tx,
@@ -505,8 +508,11 @@ export async function handleDigitalProductPurchaseSuccess(
   if (!outcome) return;
   // Post-commit and best effort, as the booking confirmation mints it.
   if (outcome.kind === "settled") {
-    await mintConsumerInvoiceBestEffort({ paymentId: outcome.paymentId });
-    await flushDigitalProductReceipt(staged, EMAIL_BUDGET_MS.WEBHOOK);
+    // Independent and both best effort, so neither waits on the other.
+    await Promise.all([
+      mintConsumerInvoiceBestEffort({ paymentId: outcome.paymentId }),
+      flushDigitalProductReceipt(staged, EMAIL_BUDGET_MS.WEBHOOK),
+    ]);
     return;
   }
   await refundStagedCapture(outcome, {

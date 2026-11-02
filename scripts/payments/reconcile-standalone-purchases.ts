@@ -33,10 +33,17 @@ const STANDALONE_ORDER_TYPES: ReadonlySet<string> = new Set([
 export async function recoverStandaloneOrder(
   orderId: string,
 ): Promise<"captured" | "live" | "empty" | "failed"> {
+  // Both reads at once: a capture, the usual case after checkout, needs the notes too.
+  const orderRead = fetchRazorpayOrder(orderId).then(
+    (order) => ({ order }),
+    (error: unknown) => ({ error }),
+  );
   const holding = await readRazorpayOrderHolding(orderId);
   if (holding.kind === "empty") return holding.onlyFailed ? "failed" : "empty";
   if (holding.kind !== "captured") return holding.kind;
-  const order = await fetchRazorpayOrder(orderId);
+  const read = await orderRead;
+  if ("error" in read) throw read.error;
+  const { order } = read;
   if (!order) throw new Error("RAZORPAY_NOT_INITIALIZED");
   // The notes pick the handler; anything else would reach the booking pipeline.
   if (!STANDALONE_ORDER_TYPES.has(order.notes.type ?? "")) {

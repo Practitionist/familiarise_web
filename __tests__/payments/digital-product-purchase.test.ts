@@ -322,11 +322,10 @@ it("keeps the receipt obligation when the process dies after the settling commit
   await expect(
     handleDigitalProductPurchaseSuccess("order_1", "pay_A", NOTES, 59000),
   ).rejects.toThrow("process killed");
-  // Staged before commit, so the email retry sweep owns delivery from here.
+  // Staged before commit, so the email retry sweep owns delivery whatever the attempt did.
   expect(mockStageReceipt).toHaveBeenCalledWith(mockTx, {
     purchaseId: "dpp-1",
   });
-  expect(mockFlushReceipt).not.toHaveBeenCalled();
 
   // The redelivered webhook short-circuits on the settled Payment and stages nothing new.
   mockPaymentLookup.mockResolvedValueOnce({

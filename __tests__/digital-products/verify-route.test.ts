@@ -10,6 +10,10 @@
 const mockRow = { status: "PENDING" as string };
 const mockHolding = jest.fn();
 const mockRoute = jest.fn();
+const mockFetchOrder = jest.fn(async (id: string) => ({
+  id,
+  notes: { type: "digital_product_purchase" },
+}));
 const mockUpdateMany = jest.fn(
   async ({ where }: { where: { status: string } }) => {
     if (where.status !== mockRow.status) return { count: 0 };
@@ -41,10 +45,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 jest.mock("../../lib/payments/core/razorpay", () => ({
   readRazorpayOrderHolding: (id: string) => mockHolding(id),
-  fetchRazorpayOrder: async (id: string) => ({
-    id,
-    notes: { type: "digital_product_purchase" },
-  }),
+  fetchRazorpayOrder: (id: string) => mockFetchOrder(id),
 }));
 jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
   routeCapturedPayment: (...a: unknown[]) => mockRoute(...a),
@@ -91,4 +92,19 @@ it("fails a PENDING order whose every attempt failed and keeps FAILED recoverabl
     expect.objectContaining({ orderId: "order_1", gatewayPaymentId: "pay_R" }),
   );
   expect(mockUpdateMany).toHaveBeenCalledTimes(1);
+});
+
+it("reads the order's notes alongside its payments, not after them", async () => {
+  mockRow.status = "PENDING";
+  let release: (value: unknown) => void = () => undefined;
+  mockHolding.mockReturnValue(new Promise((resolve) => (release = resolve)));
+  const pending = call();
+  await new Promise((resolve) => setImmediate(resolve));
+  // The payments read has not answered, yet the order read is already out.
+  expect(mockFetchOrder).toHaveBeenCalledWith("order_1");
+  release({ kind: "captured", paymentId: "pay_P", amountPaise: 59_000 });
+  await pending;
+  expect(mockRoute).toHaveBeenCalledWith(
+    expect.objectContaining({ gatewayPaymentId: "pay_P" }),
+  );
 });
