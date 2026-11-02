@@ -4,6 +4,7 @@ import { cache } from "react";
 import type { DigitalProductCategory, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { digitalProductDiscoverableWhere } from "@/lib/api/plans/visibility";
+import { lineageDisplayNames } from "@/lib/digital-products/lineage";
 
 /**
  * Public digital product reads for the product page and the expert profile.
@@ -89,6 +90,8 @@ const PRODUCT_PAGE_SELECT = {
     orderBy: [{ order: "asc" }, { createdAt: "asc" }],
     select: {
       id: true,
+      lineageId: true,
+      version: true,
       originalName: true,
       mimeType: true,
       sizeBytes: true,
@@ -103,14 +106,23 @@ function findProductPage(where: Prisma.DigitalProductWhereInput) {
   });
 }
 
-function toPublicProduct(
+/** File names are each lineage's first name, so a replacement never renames a file. */
+async function toPublicProduct(
   row: NonNullable<Awaited<ReturnType<typeof findProductPage>>>,
-): PublicProduct {
+): Promise<PublicProduct> {
   const { consultantProfile, assets, ...product } = row;
+  const names = await lineageDisplayNames(prisma, assets);
   return {
     ...product,
     fileCount: assets.length,
-    files: assets,
+    files: assets.map(
+      ({ id, lineageId, originalName, mimeType, sizeBytes }) => ({
+        id,
+        originalName: names.get(lineageId) ?? originalName,
+        mimeType,
+        sizeBytes,
+      }),
+    ),
     creator: {
       consultantProfileId: consultantProfile.id,
       name: consultantProfile.user.name,

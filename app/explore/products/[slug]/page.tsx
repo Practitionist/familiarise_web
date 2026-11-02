@@ -6,7 +6,6 @@ import { ArrowLeft, ChevronRight, FileText } from "lucide-react";
 
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { goHref } from "@/lib/dashboard/go";
 import { formatFileSize } from "@/lib/documents/document-utils";
 import { getDigitalProductForViewer } from "@/lib/data/digital-products-public";
 import { quoteDigitalProductForBuyer } from "@/lib/payments/pricing/digital-product-price";
@@ -14,7 +13,11 @@ import {
   findDigitalProductEntitlement,
   findDigitalProductRefund,
 } from "@/lib/payments/digital-product-entitlement";
-import { DIGITAL_PRODUCT_CATEGORY_LABEL } from "@/lib/digital-products/constants";
+import {
+  DIGITAL_PRODUCT_CATEGORY_LABEL,
+  digitalProductLibraryHref,
+} from "@/lib/digital-products/constants";
+import { readBuyerFiles } from "@/lib/digital-products/buyer-files";
 import {
   ProductPurchasePanel,
   type ProductViewer,
@@ -25,6 +28,15 @@ import { ReportProductButton } from "@/components/digital-products/ReportProduct
 export const dynamic = "force-dynamic";
 
 type Params = Promise<{ slug: string }>;
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+/** Set by the download route when a browser follows a link to a file that is gone. */
+const DOWNLOAD_NOTICES: Record<string, string> = {
+  "file-removed":
+    "The expert removed that file, so its link no longer works. Your current files are below.",
+  "file-missing":
+    "That download link is out of date. Your current files are below.",
+};
 
 export async function generateMetadata({
   params,
@@ -47,8 +59,14 @@ export async function generateMetadata({
 
 export default async function DigitalProductPage({
   params,
-}: Readonly<{ params: Params }>) {
+  searchParams,
+}: Readonly<{ params: Params; searchParams?: SearchParams }>) {
   const { slug } = await params;
+  const noticeKey = (await searchParams)?.notice;
+  const notice =
+    typeof noticeKey === "string"
+      ? (DOWNLOAD_NOTICES[noticeKey] ?? null)
+      : null;
   const session = await getSession();
   const user = session?.user;
   // A product off sale still opens for its buyers: not discoverable, no checkout.
@@ -59,16 +77,30 @@ export default async function DigitalProductPage({
   if (user?.id) {
     if (user.consultantProfileId === product.creator.consultantProfileId) {
       viewer = { kind: "owner" };
-    } else if (
-      await findDigitalProductEntitlement(prisma, product.id, user.id)
-    ) {
-      viewer = {
-        kind: "owned",
-        libraryHref: user.consulteeProfileId
-          ? goHref("client", "products")
-          : null,
-      };
     } else {
+      const entitlement = await findDigitalProductEntitlement(
+        prisma,
+        product.id,
+        user.id,
+      );
+      if (entitlement) {
+        const views = await readBuyerFiles([
+          {
+            id: entitlement.id,
+            productId: product.id,
+            createdAt: entitlement.createdAt,
+          },
+        ]);
+        viewer = {
+          kind: "owned",
+          libraryHref: digitalProductLibraryHref(user),
+          free: entitlement.amountPaise === 0,
+          ...(views.get(entitlement.id) ?? { files: [], removed: [] }),
+        };
+      }
+    }
+    // Signed in, neither the owner nor holding it: a buyer.
+    if (viewer.kind === "signed-out") {
       const refund = await findDigitalProductRefund(
         prisma,
         product.id,
@@ -180,13 +212,20 @@ export default async function DigitalProductPage({
       </div>
 
       <aside className="h-fit min-w-0 space-y-4 rounded-xl border bg-card p-4 sm:p-6 lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-2">
+        {notice && (
+          <p
+            role="status"
+            className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200"
+          >
+            {notice}
+          </p>
+        )}
         <ProductPurchasePanel
           productId={product.id}
           slug={product.slug}
           title={product.title}
           quote={quote}
           viewer={viewer}
-          files={product.files}
         />
         {user?.id && viewer.kind !== "owner" && (
           <ReportProductButton productId={product.id} />
@@ -198,28 +237,31 @@ export default async function DigitalProductPage({
           {product.description}
         </p>
 
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold">What you get</h2>
-          <ul className="divide-y rounded-lg border text-sm">
-            {product.files.map((file) => (
-              <li key={file.id} className="flex items-center gap-3 p-3">
-                <FileText
-                  className="h-4 w-4 shrink-0 text-muted-foreground"
-                  aria-hidden
-                />
-                <span
-                  className="min-w-0 flex-1 break-words"
-                  title={file.originalName}
-                >
-                  {file.originalName}
-                </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {formatFileSize(file.sizeBytes)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
+        {/* A buyer who holds it sees these files, with downloads, in the panel. */}
+        {viewer.kind !== "owned" && (
+          <section className="space-y-2">
+            <h2 className="text-sm font-semibold">What you get</h2>
+            <ul className="divide-y rounded-lg border text-sm">
+              {product.files.map((file) => (
+                <li key={file.id} className="flex items-center gap-3 p-3">
+                  <FileText
+                    className="h-4 w-4 shrink-0 text-muted-foreground"
+                    aria-hidden
+                  />
+                  <span
+                    className="min-w-0 flex-1 break-words"
+                    title={file.originalName}
+                  >
+                    {file.originalName}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {formatFileSize(file.sizeBytes)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
     </div>
   );

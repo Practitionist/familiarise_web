@@ -1,17 +1,14 @@
 import Link from "next/link";
-import { Download, FileDown, FileText } from "lucide-react";
+import { FileDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { ReportProductButton } from "@/components/digital-products/ReportProductButton";
-import { formatFileSize } from "@/lib/documents/document-utils";
+import { BuyerFileList } from "@/components/digital-products/BuyerFileList";
 import { DIGITAL_PRODUCT_CATEGORY_LABEL } from "@/lib/digital-products/constants";
 import type { LibraryProduct } from "@/lib/data/digital-product-library";
-
-const downloadHref = (productId: string, assetId: string) =>
-  `/api/digital-products/${encodeURIComponent(productId)}/assets/${encodeURIComponent(assetId)}/download`;
 
 /** The buyer's purchased and claimed products, each with its current files. */
 export function DigitalProductLibrary({
@@ -66,49 +63,17 @@ export function DigitalProductLibrary({
               </div>
               {product.takenDown ? (
                 <p className="text-sm text-muted-foreground">
-                  This product was taken down, so its files can no longer be
-                  downloaded. Contact support about a refund.
+                  {product.free
+                    ? "This product was taken down, so its files can no longer be downloaded."
+                    : "This product was taken down, so its files can no longer be downloaded. Contact support about a refund."}
                 </p>
               ) : (
-                <ul className="divide-y rounded-md border text-sm">
-                  {product.files.map((file) => (
-                    <li key={file.id} className="flex items-center gap-3 p-2.5">
-                      <FileText
-                        className="h-4 w-4 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p
-                          className="line-clamp-2 break-words"
-                          title={file.originalName}
-                        >
-                          {file.originalName}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatFileSize(file.sizeBytes)}
-                          {file.updatedSincePurchase && " · New"}
-                        </p>
-                      </div>
-                      <Button
-                        asChild
-                        size="sm"
-                        variant="outline"
-                        className="shrink-0 px-2.5 sm:px-3"
-                      >
-                        <a
-                          href={downloadHref(product.productId, file.id)}
-                          aria-label={`Download ${file.originalName}`}
-                        >
-                          <Download
-                            className="h-3.5 w-3.5 sm:mr-1.5"
-                            aria-hidden
-                          />
-                          <span className="hidden sm:inline">Download</span>
-                        </a>
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
+                <BuyerFileList
+                  productId={product.productId}
+                  files={product.files}
+                  removed={product.removed}
+                  free={product.free}
+                />
               )}
               <ReportProductButton productId={product.productId} />
             </CardContent>

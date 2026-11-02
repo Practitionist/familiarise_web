@@ -1,5 +1,5 @@
 import prisma, { type Tx } from "@/lib/prisma";
-import { goHref } from "@/lib/dashboard/go";
+import { digitalProductLibraryHref } from "@/lib/digital-products/constants";
 import {
   MONEY_EMAIL_TYPES,
   prepareDigitalProductPurchaseEmail,
@@ -58,7 +58,7 @@ async function buildReceipt(
     }),
     prisma.user.findUnique({
       where: { id: input.buyerId },
-      select: { consulteeProfileId: true },
+      select: { consulteeProfileId: true, consultantProfileId: true },
     }),
   ]);
   if (!product) return null;
@@ -68,9 +68,9 @@ async function buildReceipt(
     productTitle: product.title,
     creatorName: product.consultantProfile.user.name,
     amountPaise: input.amountPaise,
-    libraryHref: buyer?.consulteeProfileId
-      ? goHref("client", "products")
-      : `/explore/products/${product.slug}`,
+    libraryHref:
+      (buyer && digitalProductLibraryHref(buyer)) ??
+      `/explore/products/${product.slug}`,
   });
 }
 

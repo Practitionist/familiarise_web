@@ -104,6 +104,16 @@ const product = {
   pricePaise: 50_000,
 };
 const lockPurchase = jest.fn();
+const asset = (version: number, status: string) => ({
+  id: `as_${version}`,
+  lineageId: "lin_1",
+  version,
+  status,
+  storageKey: `products/dp_1/lin_1/as_${version}.pdf`,
+  originalName: version === 1 ? "Guide.pdf" : `Guide v${version}.pdf`,
+  product: { consultantProfileId: "cp_owner", takenDownAt: null },
+});
+const assetFindFirst = jest.fn();
 const purchaseModel = {
   findFirst: async ({ where }: { where: Partial<Row> }) =>
     rows.find(
@@ -132,14 +142,12 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     user: { findUnique: async () => ({ country: "IN" }) },
-    digitalProduct: { findUnique: async () => product },
+    digitalProduct: {
+      findUnique: async () => ({ ...product, slug: "guide-1" }),
+    },
     digitalProductAsset: {
-      findFirst: async () => ({
-        id: "as_1",
-        storageKey: "products/dp_1/as_1/v1.pdf",
-        originalName: "Guide.pdf",
-        product: { consultantProfileId: "cp_owner", takenDownAt: null },
-      }),
+      findFirst: (...a: unknown[]) => assetFindFirst(...a),
+      findMany: async () => [{ lineageId: "lin_1", originalName: "Guide.pdf" }],
     },
     get digitalProductPurchase() {
       return purchaseModel;
@@ -164,6 +172,7 @@ beforeEach(() => {
   mintCount = 0;
   deliverable.ok = true;
   product.pricePaise = 50_000;
+  assetFindFirst.mockResolvedValue(asset(1, "VERIFIED"));
   process.env.R2_DIGITAL_PRODUCTS_BUCKET = "digital-products";
 });
 
@@ -303,5 +312,47 @@ it("locks the live purchase in the download transaction: revoked first, download
 it("encodes a download name to RFC 8187 attr-char with a quoted ASCII fallback", () => {
   expect(attachmentDisposition("Léa's guide (v2)*.pdf")).toBe(
     `attachment; filename="L_a's guide (v2)*.pdf"; filename*=UTF-8''L%C3%A9a%27s%20guide%20%28v2%29%2A.pdf`,
+  );
+});
+
+it("serves a stale link the current version under the first name, and sends a browser from a removed file to the product page", async () => {
+  rows.push({
+    id: "dpp_1",
+    productId: "dp_1",
+    buyerId: "buyer_1",
+    amountPaise: 0,
+    status: "SUCCEEDED",
+  });
+  lockPurchase.mockResolvedValue([{ id: "dpp_1" }]);
+  assetFindFirst
+    .mockResolvedValueOnce(asset(1, "SUPERSEDED"))
+    .mockResolvedValueOnce(asset(3, "VERIFIED"));
+  const res = await downloadOnce();
+  expect(res.status).toBe(302);
+  expect(downloadCreate).toHaveBeenCalledWith({
+    data: { purchaseId: "dpp_1", assetId: "as_3" },
+  });
+  expect(presign.mock.calls[0][0]).toMatchObject({
+    key: "products/dp_1/lin_1/as_3.pdf",
+    responseContentDisposition: expect.stringContaining('filename="Guide.pdf"'),
+  });
+
+  // The lineage has no current version: removed.
+  assetFindFirst
+    .mockResolvedValueOnce(asset(3, "SUPERSEDED"))
+    .mockResolvedValueOnce(null);
+  const api = await downloadOnce();
+  expect(api.status).toBe(410);
+  expect((await api.json()).code).toBe("FILE_REMOVED");
+  assetFindFirst
+    .mockResolvedValueOnce(asset(3, "SUPERSEDED"))
+    .mockResolvedValueOnce(null);
+  const browser = await download(
+    new Request("http://localhost/x", { headers: { accept: "text/html" } }),
+    { params: Promise.resolve({ productId: "dp_1", assetId: "as_3" }) },
+  );
+  expect(browser.status).toBe(303);
+  expect(browser.headers.get("location")).toBe(
+    "http://localhost/explore/products/guide-1?notice=file-removed",
   );
 });

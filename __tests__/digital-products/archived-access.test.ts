@@ -5,7 +5,8 @@
 /**
  * An archived product leaves discovery but stays reachable to its buyers: a
  * consultant-only buyer (no learner library) follows the receipt's product
- * link to the download view and downloads; a taken-down product never loads.
+ * link to their purchases page, opens the archived product and downloads; a
+ * taken-down product never loads.
  */
 jest.mock("server-only", () => ({}));
 jest.mock("react", () => ({
@@ -60,6 +61,8 @@ const row = {
   assets: [
     {
       id: "as_1",
+      lineageId: "as_1",
+      version: 1,
       originalName: "w.pdf",
       mimeType: "application/pdf",
       sizeBytes: 1,
@@ -96,10 +99,18 @@ jest.mock("../../lib/prisma", () => ({
         consultantProfile: { user: { name: "Hannah" } },
       }),
     },
-    user: { findUnique: async () => ({ consulteeProfileId: null }) },
+    user: {
+      findUnique: async () => ({
+        consulteeProfileId: null,
+        consultantProfileId: "cp_buyer",
+      }),
+    },
     digitalProductAsset: {
       findFirst: async () => ({
         id: "as_1",
+        lineageId: "as_1",
+        version: 1,
+        status: "VERIFIED",
         storageKey: "products/dp_1/lin/as_1.pdf",
         originalName: "w.pdf",
         product: {
@@ -128,7 +139,7 @@ it("opens an archived product's download view to a consultant-only buyer and nob
     amountPaise: 59_000,
   });
   expect(prepareEmail).toHaveBeenCalledWith(
-    expect.objectContaining({ libraryHref: "/explore/products/workbook-1a2b" }),
+    expect.objectContaining({ libraryHref: "/dashboard/go/expert/purchases" }),
   );
 
   expect(await getPublicDigitalProductBySlug(product.slug)).toBeNull();

@@ -1,9 +1,12 @@
 /**
  * GET /api/digital-products/[productId]/assets/[assetId]/download — redirect
  * an entitled buyer (or the owner, or an operator) to a 300 s presigned R2
- * GET. A buyer's first download ends the no-questions refund window.
+ * GET. A buyer's first download ends the no-questions refund window. A link
+ * to a replaced version serves its file's current one; a browser following a
+ * link to a removed file is sent to the product page with a notice.
  */
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import {
@@ -16,10 +19,54 @@ import {
   attachmentDisposition,
   digitalProductsBucket,
 } from "@/lib/digital-products/storage";
+import { lineageDisplayNames } from "@/lib/digital-products/lineage";
 
 type RouteParams = { params: Promise<{ productId: string; assetId: string }> };
 
-export async function GET(_request: Request, { params }: RouteParams) {
+const ASSET_SELECT = {
+  id: true,
+  lineageId: true,
+  version: true,
+  status: true,
+  storageKey: true,
+  originalName: true,
+  product: { select: { consultantProfileId: true, takenDownAt: true } },
+} as const satisfies Prisma.DigitalProductAssetSelect;
+
+/** A browser navigation gets the product page with a notice; an API client keeps the JSON. */
+async function fileGone(
+  request: Request,
+  productId: string,
+  removed: boolean,
+): Promise<NextResponse> {
+  if (request.headers.get("accept")?.includes("text/html")) {
+    const product = await prisma.digitalProduct.findUnique({
+      where: { id: productId },
+      select: { slug: true },
+    });
+    if (product) {
+      const notice = removed ? "file-removed" : "file-missing";
+      return NextResponse.redirect(
+        new URL(
+          `/explore/products/${encodeURIComponent(product.slug)}?notice=${notice}`,
+          request.url,
+        ),
+        303,
+      );
+    }
+  }
+  return removed
+    ? NextResponse.json(
+        { error: "The expert removed this file", code: "FILE_REMOVED" },
+        { status: 410 },
+      )
+    : NextResponse.json(
+        { error: "File not found", code: "NOT_FOUND" },
+        { status: 404 },
+      );
+}
+
+export async function GET(request: Request, { params }: RouteParams) {
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
   const user = auth.session.user;
@@ -27,20 +74,26 @@ export async function GET(_request: Request, { params }: RouteParams) {
   if (limited) return limited;
 
   const { productId, assetId } = await params;
-  const asset = await prisma.digitalProductAsset.findFirst({
-    where: { id: assetId, productId, status: "VERIFIED" },
-    select: {
-      id: true,
-      storageKey: true,
-      originalName: true,
-      product: { select: { consultantProfileId: true, takenDownAt: true } },
-    },
+  const requested = await prisma.digitalProductAsset.findFirst({
+    where: { id: assetId, productId },
+    select: ASSET_SELECT,
   });
+  // A replaced or purged version resolves to its lineage's current one.
+  const asset =
+    requested?.status === "VERIFIED"
+      ? requested
+      : requested
+        ? await prisma.digitalProductAsset.findFirst({
+            where: {
+              productId,
+              lineageId: requested.lineageId,
+              status: "VERIFIED",
+            },
+            select: ASSET_SELECT,
+          })
+        : null;
   if (!asset) {
-    return NextResponse.json(
-      { error: "File not found", code: "NOT_FOUND" },
-      { status: 404 },
-    );
+    return fileGone(request, productId, requested?.status === "SUPERSEDED");
   }
   const operator = isPrivileged(user.role);
   if (asset.product.takenDownAt && !operator) {
@@ -84,11 +137,15 @@ export async function GET(_request: Request, { params }: RouteParams) {
     }
   }
 
+  // Saved under the name buyers see, which a replacement never changes.
+  const names = await lineageDisplayNames(prisma, [asset]);
   const url = createR2PresignedGetUrl({
     key: asset.storageKey,
     bucket: digitalProductsBucket(),
     expiresInSeconds: DIGITAL_PRODUCT_DOWNLOAD_URL_TTL_SECONDS,
-    responseContentDisposition: attachmentDisposition(asset.originalName),
+    responseContentDisposition: attachmentDisposition(
+      names.get(asset.lineageId) ?? asset.originalName,
+    ),
   });
   const response = NextResponse.redirect(url, 302);
   response.headers.set("Cache-Control", "no-store");

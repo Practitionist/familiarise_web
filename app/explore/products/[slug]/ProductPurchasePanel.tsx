@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Download, Loader2 } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 
@@ -14,7 +14,12 @@ import { useCheckoutFlags } from "@/app/checkout/components/CheckoutFlags";
 import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
-import { formatFileSize } from "@/lib/documents/document-utils";
+import { useSession } from "@/lib/auth-client";
+import { BuyerFileList } from "@/components/digital-products/BuyerFileList";
+import type {
+  BuyerFile,
+  RemovedBuyerFile,
+} from "@/lib/digital-products/buyer-files";
 import { ownProductNotice } from "@/lib/digital-products/constants";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { DigitalProductQuote } from "@/lib/payments/pricing/digital-product-price";
@@ -29,13 +34,13 @@ export type ProductViewer =
       /** Set when an earlier purchase of this product was refunded. */
       refundedAt?: string | null;
     }
-  | { kind: "owned"; libraryHref: string | null };
-
-interface PanelFile {
-  id: string;
-  originalName: string;
-  sizeBytes: number;
-}
+  | {
+      kind: "owned";
+      libraryHref: string | null;
+      free: boolean;
+      files: BuyerFile[];
+      removed: RemovedBuyerFile[];
+    };
 
 const orderSchema = z.object({
   data: z.object({
@@ -127,7 +132,6 @@ export function ProductPurchasePanel({
   title,
   quote,
   viewer,
-  files,
 }: Readonly<{
   productId: string;
   slug: string;
@@ -135,9 +139,14 @@ export function ProductPurchasePanel({
   /** Null for a free product; the server derives it as the purchase route would charge. */
   quote: DigitalProductQuote | null;
   viewer: ProductViewer;
-  files: PanelFile[];
 }>) {
   const router = useRouter();
+  const { data: session } = useSession();
+  const signedIn = Boolean(session?.user);
+  // A cached signed-out render can outlive the sign-in redirect; re-render on the server.
+  useEffect(() => {
+    if (viewer.kind === "signed-out" && signedIn) router.refresh();
+  }, [viewer.kind, signedIn, router]);
   const { toast } = useToast();
   const { emiEnabled } = useCheckoutFlags();
   const [busy, setBusy] = useState(false);
@@ -247,11 +256,12 @@ export function ProductPurchasePanel({
       );
       let reported = false;
       rzp.on("payment.failed", ({ error }) => {
-        const reason = error.description?.trim();
+        // Razorpay's own sentence already says what to try next.
         toast({
           title: "The payment didn't go through",
-          description: `${reason ? `${reason} ` : ""}You can try again or choose another payment method.`,
-          variant: "destructive",
+          description:
+            error.description?.trim() ||
+            "You can try again or choose another payment method.",
         });
         // One event per checkout, grouped by the gateway's code.
         if (reported) return;
@@ -288,29 +298,12 @@ export function ProductPurchasePanel({
             <Link href={viewer.libraryHref}>Open library</Link>
           </Button>
         )}
-        <ul className="divide-y rounded-md border text-sm">
-          {files.map((file) => (
-            <li key={file.id} className="flex items-center gap-2 p-2.5">
-              <span
-                className="line-clamp-2 min-w-0 flex-1 break-words"
-                title={file.originalName}
-              >
-                {file.originalName}
-              </span>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {formatFileSize(file.sizeBytes)}
-              </span>
-              <Button asChild size="sm" variant="ghost" className="h-7 w-7 p-0">
-                <a
-                  href={`/api/digital-products/${encodeURIComponent(productId)}/assets/${encodeURIComponent(file.id)}/download`}
-                  aria-label={`Download ${file.originalName}`}
-                >
-                  <Download className="h-3.5 w-3.5" aria-hidden />
-                </a>
-              </Button>
-            </li>
-          ))}
-        </ul>
+        <BuyerFileList
+          productId={productId}
+          files={viewer.files}
+          removed={viewer.removed}
+          free={viewer.free}
+        />
       </div>
     );
   }

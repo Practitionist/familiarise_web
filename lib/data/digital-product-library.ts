@@ -2,6 +2,11 @@ import "server-only";
 
 import type { DigitalProductCategory } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import {
+  readBuyerFiles,
+  type BuyerFile,
+  type RemovedBuyerFile,
+} from "@/lib/digital-products/buyer-files";
 
 /** One owned product in the buyer's library, with the files they can download now. */
 export interface LibraryProduct {
@@ -13,15 +18,14 @@ export interface LibraryProduct {
   coverImagePath: string | null;
   creatorName: string | null;
   purchasedAt: Date;
+  /** Claimed at ₹0: there is nothing to refund. */
+  free: boolean;
   takenDown: boolean;
-  /** A verified file arrived (new or a new version) after the purchase. */
+  /** A file is new or updated since the buyer last downloaded it. */
   updated: boolean;
-  files: {
-    id: string;
-    originalName: string;
-    sizeBytes: number;
-    updatedSincePurchase: boolean;
-  }[];
+  files: BuyerFile[];
+  /** Files the buyer had that the creator removed. */
+  removed: RemovedBuyerFile[];
 }
 
 /** Every product the user holds a SUCCEEDED purchase of, newest purchase first. */
@@ -34,7 +38,9 @@ export async function readDigitalProductLibrary(
     take: 200,
     select: {
       id: true,
+      productId: true,
       createdAt: true,
+      amountPaise: true,
       product: {
         select: {
           id: true,
@@ -44,27 +50,13 @@ export async function readDigitalProductLibrary(
           coverImagePath: true,
           takenDownAt: true,
           consultantProfile: { select: { user: { select: { name: true } } } },
-          assets: {
-            where: { status: "VERIFIED" },
-            orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-            select: {
-              id: true,
-              originalName: true,
-              sizeBytes: true,
-              createdAt: true,
-            },
-          },
         },
       },
     },
   });
-  return purchases.map(({ id, createdAt, product }) => {
-    const files = product.assets.map((asset) => ({
-      id: asset.id,
-      originalName: asset.originalName,
-      sizeBytes: asset.sizeBytes,
-      updatedSincePurchase: asset.createdAt > createdAt,
-    }));
+  const views = await readBuyerFiles(purchases);
+  return purchases.map(({ id, createdAt, amountPaise, product }) => {
+    const { files, removed } = views.get(id) ?? { files: [], removed: [] };
     return {
       purchaseId: id,
       productId: product.id,
@@ -74,9 +66,11 @@ export async function readDigitalProductLibrary(
       coverImagePath: product.coverImagePath,
       creatorName: product.consultantProfile.user.name,
       purchasedAt: createdAt,
+      free: amountPaise === 0,
       takenDown: product.takenDownAt !== null,
-      updated: files.some((f) => f.updatedSincePurchase),
+      updated: files.some((f) => f.badge !== null),
       files,
+      removed,
     };
   });
 }

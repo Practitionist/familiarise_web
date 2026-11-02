@@ -6,10 +6,20 @@ export async function findDigitalProductEntitlement(
   db: PrismaLike,
   productId: string,
   buyerId: string,
-): Promise<{ id: string; firstDownloadedAt: Date | null } | null> {
+): Promise<{
+  id: string;
+  firstDownloadedAt: Date | null;
+  createdAt: Date;
+  amountPaise: number;
+} | null> {
   return db.digitalProductPurchase.findFirst({
     where: { productId, buyerId, status: "SUCCEEDED" },
-    select: { id: true, firstDownloadedAt: true },
+    select: {
+      id: true,
+      firstDownloadedAt: true,
+      createdAt: true,
+      amountPaise: true,
+    },
   });
 }
 
