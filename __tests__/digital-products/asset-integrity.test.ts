@@ -145,7 +145,10 @@ jest.mock("../../lib/prisma", () => {
   };
 });
 
-import { reservePendingAsset } from "../../lib/digital-products/creator";
+import {
+  reservePendingAsset,
+  uploadRefusalResponse,
+} from "../../lib/digital-products/creator";
 import { verifyDigitalProductAsset } from "../../lib/digital-products/verify-asset";
 import { createR2PresignedPutUrl } from "../../lib/storage/r2-client";
 import { DELETE as removeFile } from "../../app/api/digital-products/[productId]/assets/[assetId]/route";
@@ -336,6 +339,12 @@ it("holds the final file slot and the final bytes under the product lock", async
     "TOO_MANY_FILES",
     "ok",
   ]);
+  const full = slots.find((r) => !r.ok);
+  expect(
+    full && !full.ok && (await uploadRefusalResponse(full).json()),
+  ).toEqual(
+    expect.objectContaining({ code: "TOO_MANY_FILES", limit: 20, current: 20 }),
+  );
 
   mockAssets.length = 0;
   seedVerified().sizeBytes = 1024 * MB - 300 * MB;
@@ -359,7 +368,11 @@ it("checks the category read under the lock, not the caller's earlier read", asy
     mimeType: "application/pdf",
     sizeBytes: 10,
   });
-  expect(refused).toEqual({ ok: false, refusal: "CATEGORY_MISMATCH" });
+  expect(refused).toEqual({
+    ok: false,
+    refusal: "CATEGORY_MISMATCH",
+    category: "AUDIO",
+  });
   expect(mockAssets).toHaveLength(0);
 });
 

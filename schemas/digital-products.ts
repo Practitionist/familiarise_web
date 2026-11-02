@@ -11,6 +11,9 @@ import {
 /** ₹5,00,000 ceiling on a single file sale. */
 const MAX_PRICE_PAISE = 50_000_000;
 
+/** The one wording of the price rule, for the editor and the API alike. */
+export const DIGITAL_PRODUCT_PRICE_RULE = "Free (₹0), or at least ₹1";
+
 /** The cover is written only by /api/plans/image, so it always names a plan-images object. */
 const productFields = {
   title: z.string().trim().min(3).max(120),
@@ -23,7 +26,7 @@ const productFields = {
     .min(0)
     .max(MAX_PRICE_PAISE)
     .refine((p) => p === 0 || p >= DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE, {
-      message: "A paid product costs at least ₹1",
+      message: DIGITAL_PRODUCT_PRICE_RULE,
     }),
 };
 

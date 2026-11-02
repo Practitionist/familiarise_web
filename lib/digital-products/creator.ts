@@ -16,6 +16,7 @@ import {
   DIGITAL_PRODUCT_MAX_FILES,
   DIGITAL_PRODUCT_MAX_TOTAL_BYTES,
   DIGITAL_PRODUCT_UPLOAD_URL_TTL_SECONDS,
+  categoryFileRule,
   digitalProductAssetKey,
   mimeFitsCategory,
   type DigitalProductMimeType,
@@ -31,8 +32,13 @@ export interface OwnedProduct {
   takenDownAt: Date | null;
 }
 
-export function jsonError(status: number, code: string, error: string) {
-  return NextResponse.json({ error, code }, { status });
+export function jsonError(
+  status: number,
+  code: string,
+  error: string,
+  extra?: Record<string, unknown>,
+) {
+  return NextResponse.json({ error, code, ...extra }, { status });
 }
 
 /** Parse a JSON body through `schema`; a malformed body is a 400, never a throw. */
@@ -110,13 +116,40 @@ export type UploadRefusal =
   | "PRODUCT_TOO_LARGE"
   | "NOT_FOUND";
 
-export const UPLOAD_REFUSAL_MESSAGES: Record<UploadRefusal, string> = {
+export interface UploadRefusalResult {
+  ok: false;
+  refusal: UploadRefusal;
+  category?: DigitalProductCategory;
+  /** Live (PENDING or VERIFIED) files, on TOO_MANY_FILES. */
+  current?: number;
+}
+
+const UPLOAD_REFUSAL_MESSAGES: Record<UploadRefusal, string> = {
   CATEGORY_MISMATCH: "This file type does not fit the product's category",
   TAKEN_DOWN: "This product was taken down",
-  TOO_MANY_FILES: "A product holds at most 20 files",
+  TOO_MANY_FILES: `A product holds at most ${DIGITAL_PRODUCT_MAX_FILES} files`,
   PRODUCT_TOO_LARGE: "A product holds at most 1 GB of files",
   NOT_FOUND: "Product or verified file not found",
 };
+
+/** The 404/409 an upload or replace refusal answers with, its numbers included. */
+export function uploadRefusalResponse(result: UploadRefusalResult) {
+  const { refusal, category, current } = result;
+  if (refusal === "CATEGORY_MISMATCH" && category) {
+    return jsonError(409, refusal, categoryFileRule(category), { category });
+  }
+  if (refusal === "TOO_MANY_FILES") {
+    return jsonError(409, refusal, UPLOAD_REFUSAL_MESSAGES[refusal], {
+      limit: DIGITAL_PRODUCT_MAX_FILES,
+      current,
+    });
+  }
+  return jsonError(
+    refusal === "NOT_FOUND" ? 404 : 409,
+    refusal,
+    UPLOAD_REFUSAL_MESSAGES[refusal],
+  );
+}
 
 /** Whether one more file fits the product's file and byte caps; `replacing` frees its own slot. */
 async function checkUploadFits(
@@ -126,7 +159,7 @@ async function checkUploadFits(
     sizeBytes: number;
     replacing?: { id: string };
   },
-): Promise<UploadRefusal | null> {
+): Promise<Omit<UploadRefusalResult, "ok"> | null> {
   const { productId, sizeBytes, replacing } = params;
   const live = await tx.digitalProductAsset.findMany({
     where: { productId, status: { in: ["PENDING", "VERIFIED"] } },
@@ -134,11 +167,11 @@ async function checkUploadFits(
   });
   const others = live.filter((a) => a.id !== replacing?.id);
   if (!replacing && others.length >= DIGITAL_PRODUCT_MAX_FILES) {
-    return "TOO_MANY_FILES";
+    return { refusal: "TOO_MANY_FILES", current: live.length };
   }
   const total = others.reduce((sum, a) => sum + a.sizeBytes, 0);
   return total + sizeBytes > DIGITAL_PRODUCT_MAX_TOTAL_BYTES
-    ? "PRODUCT_TOO_LARGE"
+    ? { refusal: "PRODUCT_TOO_LARGE" }
     : null;
 }
 
@@ -163,22 +196,24 @@ export async function reservePendingAsset(params: {
         headers: Record<string, string>;
       };
     }
-  | { ok: false; refusal: UploadRefusal }
+  | UploadRefusalResult
 > {
   const { product, mimeType, sizeBytes, replacesAssetId } = params;
   const assetId = randomUUID();
   const reserved = await prisma.$transaction(
-    async (tx): Promise<{ storageKey: string } | UploadRefusal> => {
+    async (
+      tx,
+    ): Promise<{ storageKey: string } | Omit<UploadRefusalResult, "ok">> => {
       await lockDigitalProductRow(tx, product.id);
       // Re-read under the lock: a draft's category change serialises on the same row.
       const locked = await tx.digitalProduct.findUnique({
         where: { id: product.id },
         select: { category: true, takenDownAt: true },
       });
-      if (!locked) return "NOT_FOUND";
-      if (locked.takenDownAt) return "TAKEN_DOWN";
+      if (!locked) return { refusal: "NOT_FOUND" };
+      if (locked.takenDownAt) return { refusal: "TAKEN_DOWN" };
       if (!mimeFitsCategory(mimeType, locked.category)) {
-        return "CATEGORY_MISMATCH";
+        return { refusal: "CATEGORY_MISMATCH", category: locked.category };
       }
       const current = replacesAssetId
         ? await tx.digitalProductAsset.findFirst({
@@ -190,7 +225,7 @@ export async function reservePendingAsset(params: {
             select: { id: true, lineageId: true, order: true },
           })
         : null;
-      if (replacesAssetId && !current) return "NOT_FOUND";
+      if (replacesAssetId && !current) return { refusal: "NOT_FOUND" };
       const refusal = await checkUploadFits(tx, {
         productId: product.id,
         sizeBytes,
@@ -240,7 +275,7 @@ export async function reservePendingAsset(params: {
       return { storageKey };
     },
   );
-  if (typeof reserved === "string") return { ok: false, refusal: reserved };
+  if ("refusal" in reserved) return { ok: false, ...reserved };
 
   // The browser must send exactly these; content-length follows from the body.
   const headers = { "Content-Type": mimeType, ...R2_CREATE_ONLY_HEADER };

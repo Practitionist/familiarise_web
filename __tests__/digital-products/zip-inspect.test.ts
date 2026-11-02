@@ -4,6 +4,11 @@
 import { crc32 } from "node:zlib";
 import { inspectZip } from "@/lib/digital-products/zip-inspect";
 import { checkFileSignature } from "@/lib/digital-products/file-signature";
+import {
+  ASSET_REJECT_MESSAGES,
+  describeRejectReason,
+  formatRejectReason,
+} from "@/lib/digital-products/reject-reasons";
 
 interface Entry {
   name: string;
@@ -181,7 +186,24 @@ it("matches magic bytes to the declared type and refuses executables", () => {
       new Uint8Array(Buffer.from("%PDF-1.4 /JavaScript (app.alert)")),
       "application/pdf",
     ),
-  ).toEqual({ ok: false, problem: "POLYGLOT" });
+  ).toEqual({ ok: false, problem: "POLYGLOT", detail: "/javascript" });
+});
+
+it("stores the matched check as CODE:detail and reads it back as one sentence", () => {
+  const stored = formatRejectReason(
+    "ZIP_COMPRESSION_RATIO",
+    "big.bin\n(512:1)",
+  );
+  expect(stored).toBe("ZIP_COMPRESSION_RATIO:big.bin (512:1)");
+  expect(describeRejectReason(stored)).toEqual({
+    code: "ZIP_COMPRESSION_RATIO",
+    detail: "big.bin (512:1)",
+    message: ASSET_REJECT_MESSAGES.ZIP_COMPRESSION_RATIO,
+  });
+  expect(describeRejectReason("ZIP_UNICODE_PATH_INVALID")).toMatchObject({
+    detail: null,
+    message: expect.stringMatching(/^A file name inside/),
+  });
 });
 
 /** An Info-ZIP Unicode Path extra field (0x7075) over `legacy`. */
@@ -215,8 +237,8 @@ it("applies every name rule to the Unicode Path name as well", async () => {
   const cases: Array<[Buffer, string]> = [
     [entry("payload.exe"), "EXECUTABLE_ENTRY"],
     [entry("../payload.txt"), "UNSAFE_PATH"],
-    [entry("guide-é.txt", { crc: 0 }), "ZIP_UNICODE_PATH_INVALID"],
-    [entry("guide-é.txt", { version: 2 }), "ZIP_UNICODE_PATH_INVALID"],
+    [entry("guide-é.txt", { crc: 0 }), "UNICODE_PATH_INVALID"],
+    [entry("guide-é.txt", { version: 2 }), "UNICODE_PATH_INVALID"],
   ];
   for (const [zip, problem] of cases) {
     await expect(inspect(zip)).resolves.toMatchObject({ ok: false, problem });

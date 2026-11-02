@@ -37,7 +37,10 @@ export async function GET(_request: Request, { params }: RouteParams) {
     },
   });
   if (!asset) {
-    return NextResponse.json({ error: "File not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "File not found", code: "NOT_FOUND" },
+      { status: 404 },
+    );
   }
   const operator = isPrivileged(user.role);
   if (asset.product.takenDownAt && !operator) {

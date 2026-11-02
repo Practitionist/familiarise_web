@@ -31,12 +31,15 @@ import { putFileWithProgress } from "@/lib/documents/direct-upload";
 import { formatFileSize } from "@/lib/documents/document-utils";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import {
+  allowedExtensionsFor,
+  categoryFileRule,
   DIGITAL_PRODUCT_MAX_FILE_BYTES,
   DIGITAL_PRODUCT_MAX_FILES,
   digitalProductAcceptAttr,
   mimeFitsCategory,
   resolveDigitalProductMime,
 } from "@/lib/digital-products/constants";
+import { describeRejectReason } from "@/lib/digital-products/reject-reasons";
 import type { Tone } from "@/lib/ui/tone";
 import type { OwnedProductAsset } from "./load-offering";
 
@@ -109,10 +112,13 @@ async function uploadOne(params: {
 }): Promise<CommitResult> {
   const { productId, file, category, replacing } = params;
   const mimeType = resolveDigitalProductMime(file.name, file.type);
-  if (!mimeType)
-    throw new Error(`${file.name}: this file type isn't supported`);
+  if (!mimeType) {
+    throw new Error(
+      `${file.name}: this file type isn't supported. Allowed: ${allowedExtensionsFor(category).join(", ")}.`,
+    );
+  }
   if (!mimeFitsCategory(mimeType, category)) {
-    throw new Error(`${file.name}: this file type doesn't fit the category`);
+    throw new Error(`${file.name}: ${categoryFileRule(category)}`);
   }
   if (file.size === 0 || file.size > DIGITAL_PRODUCT_MAX_FILE_BYTES) {
     throw new Error(`${file.name}: files must be between 1 byte and 250 MB`);
@@ -147,6 +153,21 @@ async function uploadOne(params: {
   return commit(productId, presign.assetId);
 }
 
+/** The friendly sentence, with the code and its detail kept small for support. */
+function RejectReason({ stored }: Readonly<{ stored: string | null }>) {
+  const { message, code, detail } = describeRejectReason(stored);
+  return (
+    <div className="space-y-0.5 text-xs">
+      <p className="text-destructive">{message}</p>
+      {code && (
+        <p className="break-all font-mono text-[11px] text-muted-foreground">
+          {detail ? `${code} · ${detail}` : code}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /**
  * Upload, verify, replace, reorder and remove a digital product's files.
  * Rows come from the owner's product read; every change refetches it.
@@ -177,6 +198,10 @@ export function ProductFilesManager({
   const rows = assets
     .filter((a) => a.status !== "SUPERSEDED")
     .sort((a, b) => a.order - b.order);
+  // The server's caps count only these; a rejected file holds no slot.
+  const liveCount = rows.filter(
+    (a) => a.status === "PENDING" || a.status === "VERIFIED",
+  ).length;
   const accept = digitalProductAcceptAttr(category);
 
   const fail = (error: unknown) => {
@@ -195,7 +220,7 @@ export function ProductFilesManager({
       toast({
         title: `${rejected.length} file${rejected.length === 1 ? " was" : "s were"} rejected`,
         description: rejected
-          .map((r) => `${r.name}: ${r.reason ?? "failed verification"}`)
+          .map((r) => `${r.name}: ${describeRejectReason(r.reason).message}`)
           .join(" "),
         variant: "destructive",
       });
@@ -206,9 +231,9 @@ export function ProductFilesManager({
 
   const add = useMutation({
     mutationFn: async (files: File[]) => {
-      if (rows.length + files.length > DIGITAL_PRODUCT_MAX_FILES) {
+      if (liveCount + files.length > DIGITAL_PRODUCT_MAX_FILES) {
         throw new Error(
-          `A product holds at most ${DIGITAL_PRODUCT_MAX_FILES} files.`,
+          `A product holds at most ${DIGITAL_PRODUCT_MAX_FILES} files; this one has ${liveCount}.`,
         );
       }
       const results: CommitResult[] = [];
@@ -378,10 +403,8 @@ export function ProductFilesManager({
                     <span>{formatFileSize(asset.sizeBytes)}</span>
                     {asset.version > 1 && <span>Version {asset.version}</span>}
                   </div>
-                  {asset.status === "REJECTED" && asset.rejectReason && (
-                    <p className="text-xs text-destructive">
-                      {asset.rejectReason}
-                    </p>
+                  {asset.status === "REJECTED" && (
+                    <RejectReason stored={asset.rejectReason} />
                   )}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-0.5">

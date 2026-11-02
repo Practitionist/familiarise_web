@@ -18,6 +18,7 @@ import {
 import { DigitalProductCategory, PlanLevel } from "@prisma/client";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import { DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE } from "@/lib/digital-products/constants";
+import { DIGITAL_PRODUCT_PRICE_RULE } from "@/schemas/digital-products";
 import type { TPlanImageType } from "@/lib/supabase";
 import { ConsultationService } from "@/components/planner/services/plans/consultation-service";
 import { SubscriptionService } from "@/components/planner/services/plans/subscription-service";
@@ -359,7 +360,7 @@ export const digitalProductFormSchema = z.object({
       (rupees) =>
         rupees === 0 ||
         Math.round(rupees * 100) >= DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE,
-      "Free, or at least ₹1",
+      DIGITAL_PRODUCT_PRICE_RULE,
     ),
   priceCurrency: z.literal("INR"),
   // Written by the cover-image route, never by the form's save.

@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Download, Loader2 } from "lucide-react";
+import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
@@ -220,8 +221,26 @@ export function ProductPurchasePanel({
           onDismiss: () => setBusy(false),
         }),
       );
-      rzp.on("payment.failed", () => {
-        failed("Your card was declined or the payment timed out.");
+      let reported = false;
+      rzp.on("payment.failed", ({ error }) => {
+        const reason = error.description?.trim();
+        toast({
+          title: "The payment didn't go through",
+          description: `${reason ? `${reason} ` : ""}You can try again or choose another payment method.`,
+          variant: "destructive",
+        });
+        // One event per checkout, grouped by the gateway's code.
+        if (reported) return;
+        reported = true;
+        Sentry.captureMessage("digital product payment failed", {
+          level: "warning",
+          tags: { subsystem: "payments", gatewayCode: error.code },
+          fingerprint: [
+            "digital-product-payment-failed",
+            error.code ?? "unknown",
+          ],
+          extra: { reason: error.reason },
+        });
       });
       rzp.open();
       opened = true;

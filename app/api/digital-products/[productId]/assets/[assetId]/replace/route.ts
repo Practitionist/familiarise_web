@@ -11,7 +11,7 @@ import {
   parseBody,
   requireOwnedProduct,
   reservePendingAsset,
-  UPLOAD_REFUSAL_MESSAGES,
+  uploadRefusalResponse,
 } from "@/lib/digital-products/creator";
 
 type RouteParams = { params: Promise<{ productId: string; assetId: string }> };
@@ -38,12 +38,6 @@ export async function POST(request: Request, { params }: RouteParams) {
     sizeBytes: body.data.sizeBytes,
     replacesAssetId: assetId,
   });
-  if (!reserved.ok) {
-    return jsonError(
-      reserved.refusal === "NOT_FOUND" ? 404 : 409,
-      reserved.refusal,
-      UPLOAD_REFUSAL_MESSAGES[reserved.refusal],
-    );
-  }
+  if (!reserved.ok) return uploadRefusalResponse(reserved);
   return NextResponse.json({ data: reserved.upload }, { status: 201 });
 }

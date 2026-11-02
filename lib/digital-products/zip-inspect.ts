@@ -18,7 +18,7 @@ export type ZipProblem =
   | "COMPRESSION_RATIO"
   | "ENCRYPTED_ENTRY"
   | "UNSAFE_PATH"
-  | "ZIP_UNICODE_PATH_INVALID"
+  | "UNICODE_PATH_INVALID"
   | "SYMLINK_ENTRY"
   | "NESTED_ARCHIVE"
   | "EXECUTABLE_ENTRY";
@@ -73,7 +73,7 @@ const EXECUTABLE_EXTENSIONS: ReadonlySet<string> = new Set([
 class ZipFault extends Error {
   constructor(
     readonly problem: ZipProblem,
-    detail?: string,
+    readonly detail?: string,
   ) {
     super(detail ?? problem);
   }
@@ -264,7 +264,7 @@ function unicodePath(
   const found = fields.filter((f) => f.id === UNICODE_PATH_EXTRA_ID);
   if (found.length === 0) return null;
   const invalid = (detail: string) =>
-    new ZipFault("ZIP_UNICODE_PATH_INVALID", detail);
+    new ZipFault("UNICODE_PATH_INVALID", detail);
   if (found.length > 1) throw invalid("duplicate Unicode Path field");
   const { data } = found[0];
   if (data.byteLength < 6) throw invalid("short Unicode Path field");
@@ -369,7 +369,10 @@ export function inspectCentralDirectory(
         sizes.uncompressed >
           Math.max(sizes.compressed, 1) * ZIP_LIMITS.maxEntryRatio
       ) {
-        throw new ZipFault("COMPRESSION_RATIO", name);
+        const ratio = Math.round(
+          sizes.uncompressed / Math.max(sizes.compressed, 1),
+        );
+        throw new ZipFault("COMPRESSION_RATIO", `${name} (${ratio}:1)`);
       }
       total += sizes.uncompressed;
       if (total > ZIP_LIMITS.maxTotalUncompressedBytes) {
@@ -381,7 +384,7 @@ export function inspectCentralDirectory(
     return { ok: true, entries: dir.entries, totalUncompressedBytes: total };
   } catch (error) {
     if (error instanceof ZipFault) {
-      return { ok: false, problem: error.problem, detail: error.message };
+      return { ok: false, problem: error.problem, detail: error.detail };
     }
     throw error;
   }
@@ -401,7 +404,7 @@ export async function inspectZip(
     dir = await locateDirectory(read, fileSize);
   } catch (error) {
     if (error instanceof ZipFault) {
-      return { ok: false, problem: error.problem, detail: error.message };
+      return { ok: false, problem: error.problem, detail: error.detail };
     }
     throw error;
   }

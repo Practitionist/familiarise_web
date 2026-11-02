@@ -95,7 +95,7 @@ export type SignatureProblem = "EXECUTABLE" | "POLYGLOT" | "SIGNATURE_MISMATCH";
 export function checkFileSignature(
   header: Uint8Array,
   mime: DigitalProductMimeType,
-): { ok: true } | { ok: false; problem: SignatureProblem } {
+): { ok: true } | { ok: false; problem: SignatureProblem; detail?: string } {
   if (EXECUTABLE_SIGNATURES.some((sig) => startsWith(header, sig))) {
     return { ok: false, problem: "EXECUTABLE" };
   }
@@ -108,9 +108,9 @@ export function checkFileSignature(
       mime === "application/pdf"
         ? [...POLYGLOT_MARKERS, ...PDF_ACTIVE_MARKERS]
         : POLYGLOT_MARKERS;
-    if (markers.some((m) => text.includes(m))) {
-      return { ok: false, problem: "POLYGLOT" };
-    }
+    const marker = markers.find((m) => text.includes(m));
+    if (marker)
+      return { ok: false, problem: "POLYGLOT", detail: marker.trim() };
   }
   return { ok: true };
 }

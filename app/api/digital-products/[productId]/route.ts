@@ -15,6 +15,7 @@ import {
 import { lockDigitalProductRow } from "@/lib/digital-products/product-lock";
 import { purgeDigitalProductSurfaces } from "@/lib/data/public-cache";
 import {
+  categoryFileRule,
   isDigitalProductMime,
   mimeFitsCategory,
 } from "@/lib/digital-products/constants";
@@ -151,14 +152,16 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     if (current?.status !== "DRAFT") return "CATEGORY_LOCKED" as const;
     const files = await tx.digitalProductAsset.findMany({
       where: { productId, status: { in: ["PENDING", "VERIFIED"] } },
-      select: { mimeType: true },
+      select: { id: true, mimeType: true },
     });
-    const misfit = files.some(
+    const misfits = files.filter(
       (f) =>
         !isDigitalProductMime(f.mimeType) ||
         !mimeFitsCategory(f.mimeType, newCategory),
     );
-    if (misfit) return "CATEGORY_MISMATCH" as const;
+    if (misfits.length > 0) {
+      return { misfitIds: misfits.map((f) => f.id) };
+    }
     return tx.digitalProduct.update({
       where: { id: productId },
       data: patch,
@@ -172,11 +175,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       "The category can change only while the product is a draft",
     );
   }
-  if (changed === "CATEGORY_MISMATCH") {
+  if ("misfitIds" in changed) {
     return jsonError(
       409,
       "CATEGORY_MISMATCH",
-      "Remove the files that do not fit the new category first",
+      `${categoryFileRule(newCategory)} Remove the ${changed.misfitIds.length === 1 ? "file that doesn't" : `${changed.misfitIds.length} files that don't`} fit first.`,
+      { assetIds: changed.misfitIds },
     );
   }
   return NextResponse.json({ data: changed });

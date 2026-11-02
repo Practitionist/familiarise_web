@@ -156,3 +156,18 @@ export function digitalProductAcceptAttr(
     .flatMap((mime) => [mime, `.${DIGITAL_PRODUCT_MIME_TYPES[mime].extension}`])
     .join(",");
 }
+
+/** The file extensions a category takes, for messages: "PDF, EPUB, DOCX". */
+export function allowedExtensionsFor(
+  category: DigitalProductCategory,
+): string[] {
+  return Object.keys(DIGITAL_PRODUCT_MIME_TYPES)
+    .filter(isDigitalProductMime)
+    .filter((mime) => mimeFitsCategory(mime, category))
+    .map((mime) => DIGITAL_PRODUCT_MIME_TYPES[mime].extension.toUpperCase());
+}
+
+/** "The Document category takes PDF, EPUB, … files." */
+export function categoryFileRule(category: DigitalProductCategory): string {
+  return `The ${DIGITAL_PRODUCT_CATEGORY_LABEL[category]} category takes ${allowedExtensionsFor(category).join(", ")} files.`;
+}

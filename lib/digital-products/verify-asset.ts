@@ -14,6 +14,7 @@ import { lockDigitalProductRow } from "@/lib/digital-products/product-lock";
 import { checkFileSignature } from "@/lib/digital-products/file-signature";
 import { inspectZip } from "@/lib/digital-products/zip-inspect";
 import { digitalProductsBucket } from "@/lib/digital-products/storage";
+import { formatRejectReason } from "@/lib/digital-products/reject-reasons";
 
 const HEADER_BYTES = 4096;
 
@@ -87,7 +88,12 @@ async function inspectOneVersion(asset: PendingAsset): Promise<Inspection> {
   });
   if (!header) return { missing: true };
   const signature = checkFileSignature(header, mime);
-  if (!signature.ok) return { ok: false, reason: signature.problem };
+  if (!signature.ok) {
+    return {
+      ok: false,
+      reason: formatRejectReason(signature.problem, signature.detail),
+    };
+  }
 
   if (policy.zipContainer) {
     const zip = await inspectZip(
@@ -105,7 +111,12 @@ async function inspectOneVersion(asset: PendingAsset): Promise<Inspection> {
       head.contentLength,
       { checkEntryTypes: policy.zipContainer === "archive" },
     );
-    if (!zip.ok) return { ok: false, reason: `ZIP_${zip.problem}` };
+    if (!zip.ok) {
+      return {
+        ok: false,
+        reason: formatRejectReason(`ZIP_${zip.problem}`, zip.detail),
+      };
+    }
   }
   return { ok: true };
 }

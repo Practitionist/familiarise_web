@@ -231,7 +231,9 @@ it("orders a settle and a last-file removal on the product row lock", async () =
 it("refuses a draft category change its files do not fit", async () => {
   const misfit = await PATCH(req({ category: "AUDIO" }), params);
   expect(misfit.status).toBe(409);
-  expect((await misfit.json()).code).toBe("CATEGORY_MISMATCH");
+  const body = await misfit.json();
+  expect(body).toMatchObject({ code: "CATEGORY_MISMATCH", assetIds: ["as_1"] });
+  expect(body.error).toMatch(/^The Audio category takes MP3, M4A, WAV files\./);
 
   state.assets = [pdf("as_1", "SUPERSEDED")];
   expect((await PATCH(req({ category: "AUDIO" }), params)).status).toBe(200);
