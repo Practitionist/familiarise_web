@@ -304,6 +304,10 @@ const nextConfig = {
         }
       : {}),
     webpackMemoryOptimizations: true,
+    // withSentryConfig adds a webpack hook, which silently turns the build worker
+    // off; each compiler then shares one heap and the production source-map
+    // build overran 6144 MB. Forcing it on gives every compiler its own process.
+    webpackBuildWorker: true,
     // Disables NextNodeServer's cold-start `unstable_preloadEntries()` and
     // `preloadAppDocument()` loops (`next/dist/server/next-server.js`).
     //
