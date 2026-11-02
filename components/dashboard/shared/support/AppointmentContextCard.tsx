@@ -115,7 +115,7 @@ export function AppointmentContextCard({
 
       {/* Helper Text */}
       <p className="mt-3 text-xs text-muted-foreground">
-        Your support ticket will be linked to this {typeLabel.toLowerCase()} for
+        Your support case will be linked to this {typeLabel.toLowerCase()} for
         faster resolution.
       </p>
     </div>
