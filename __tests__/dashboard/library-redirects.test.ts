@@ -43,6 +43,7 @@ import ConsultantPurchases from "../../app/dashboard/consultant/[consultantId]/(
 import OrgDocuments from "../../app/dashboard/organization/[orgId]/documents/page";
 import OrgRecordings from "../../app/dashboard/organization/[orgId]/recordings/page";
 import GoPage from "../../app/dashboard/go/[facet]/[[...path]]/page";
+import { retiredRouteHref } from "../../lib/dashboard/personal-legacy-routes";
 
 const ce = "/dashboard/consultee/ce-1";
 const cp = "/dashboard/consultant/cp-1";
@@ -94,4 +95,24 @@ it("go/library lands a dual-profile viewer on the learner Library tab", async ()
     }),
   ).rejects.toThrow("NEXT_REDIRECT");
   expect(mockRedirect).toHaveBeenLastCalledWith(`${ce}/library?tab=purchases`);
+});
+
+describe("retiredRouteHref", () => {
+  it("keeps scalar and repeated params in order and sets the new tab last", () => {
+    expect(
+      retiredRouteHref("/x", "documents", {
+        q: "work shop",
+        a: ["1", "2"],
+        tab: "old",
+        skip: undefined,
+      }),
+    ).toBe("/x?q=work+shop&a=1&a=2&tab=documents");
+  });
+
+  it("drops a stale tab when the destination has none", () => {
+    expect(retiredRouteHref("/x", null, { tab: "old", page: "2" })).toBe(
+      "/x?page=2",
+    );
+    expect(retiredRouteHref("/x", null, {})).toBe("/x");
+  });
 });

@@ -124,6 +124,7 @@ async function LibraryPanel({
       <DisplayZoneProvider zone={zone.zone}>
         <HydrationBoundary state={seed}>
           <OrgLibrary
+            key={tab}
             orgId={owner.orgId}
             artifact={tab}
             canSeeEveryone={owner.canSeeEveryone}
@@ -153,6 +154,7 @@ async function LibraryPanel({
     <DisplayZoneProvider zone={zone.zone}>
       <HydrationBoundary state={seed}>
         <PersonalLibrary
+          key={tab}
           tree="consultee"
           profileId={learner.consulteeId}
           artifact={tab}
