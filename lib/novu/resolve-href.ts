@@ -55,6 +55,19 @@ export function notificationHref(
 }
 
 /**
+ * One booking's recordings, multi-recipient safe. B2C goes through the go
+ * resolver's participation read, so a host lands on their hosted side and an
+ * attendee on theirs; org-hosted stays on the org Library.
+ */
+export function appointmentRecordingsHref(
+  organizationId: string | null | undefined,
+  appointmentId: string,
+): string {
+  if (organizationId) return notificationHref(organizationId, "recordings");
+  return `${getAppUrl()}/dashboard/go/auto/appointments/${appointmentId}/recordings`;
+}
+
+/**
  * Single-recipient variant: when the trigger targets exactly one person and we
  * know which personal dashboard is theirs, link straight to it.
  */

@@ -73,7 +73,7 @@ Organization settings is not a rail item. It opens from the avatar menu and from
 
 ## Library
 
-Library means only what the viewer bought, attended or was given access to. One server component, `LibraryPage` in `components/dashboard/library/LibraryPage.tsx`, renders it for every role. Its tabs live in the URL as `?tab=purchases|recordings|documents`, parsed through the `LibraryTabSchema` enum in `lib/dashboard/library-tabs.ts`. An unknown or unavailable tab opens the viewer's first tab. Each tab is a link, so switching tabs is a server navigation and the server reads only the active tab's data:
+Library means only what the viewer bought, attended or was given access to. One server component, `LibraryPage` in `components/dashboard/library/LibraryPage.tsx`, renders it for every role. Its tabs live in the URL as `?tab=purchases|recordings|documents`, parsed through the `LibraryTabSchema` enum in `lib/dashboard/library-tabs.ts`. An unknown or unavailable tab opens the viewer's first tab. In the organization Library the tab links (`LibraryTabNav`) carry the current `?scope=` from the live URL, because the Mine and Everyone pick rewrites the address bar without a server render. Each tab is a link, so switching tabs is a server navigation and the server reads only the active tab's data:
 
 - Purchases lists `readDigitalProductLibrary()` for the buyer's user id through `DigitalProductLibrary`.
 - Session recordings and Session documents seed page 1 of `readRecordingLibrary()` or `readDocumentLibrary()` and hand over to `PersonalLibrary` (learner side) or `OrgLibrary` (organization), which fetch filtered pages on the client.
@@ -136,7 +136,7 @@ The public site follows the same words as the dashboards.
 
 ## Routes that did not move
 
-The editors under `offerings/<kind>/…` are live routes. The per-booking pages (`appointments/<id>/documents` and `appointments/<id>/recordings`) did not move, and neither did the expert's hosted Recordings and Session documents pages, which only moved into the Studio group. `/dashboard/go/<facet>/sell/…`, `collaborations` and `offerings/…` resolve only to the expert side (`EXPERT_ONLY` in `lib/dashboard/go.ts`). Recording and document notifications link to the Library tab through `notificationHref()` and `personalHref()` (`lib/novu/resolve-href.ts`).
+The editors under `offerings/<kind>/…` are live routes. The per-booking pages (`appointments/<id>/documents` and `appointments/<id>/recordings`) did not move, and neither did the expert's hosted Recordings and Session documents pages, which only moved into the Studio group. `/dashboard/go/<facet>/sell/…`, `collaborations` and `offerings/…` resolve only to the expert side (`EXPERT_ONLY` in `lib/dashboard/go.ts`). A B2C recording-ready or recording-failed notice goes to the host and every attendee with one link, `/dashboard/go/auto/appointments/<id>/recordings` (`appointmentRecordingsHref()` in `lib/novu/resolve-href.ts`); the go page reads the viewer's side of that booking, so the host lands on the booking's hosted recordings and an attendee on their own, never a host on the buyer Library. An org-hosted notice opens the org Library's Session recordings tab, which lists sessions a member attends or delivers. A no-show bell has one learner recipient and links to their Library tab through `personalHref()`, and document notices link each recipient to their own side of the booking's document thread.
 
 ## Support wording
 
