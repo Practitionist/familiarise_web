@@ -23,7 +23,7 @@ export function SupportRequestsPage({
   return (
     <>
       <PageHeader
-        title="Your requests"
+        title="Your support cases"
         headingLevel={2}
         description="Track conversations with the Familiarise team about an appointment or your account."
       />
