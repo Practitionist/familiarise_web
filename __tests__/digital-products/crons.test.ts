@@ -49,7 +49,9 @@ const dpFindMany = jest.fn();
 const dpFindUnique = jest.fn();
 const rpUpdate = jest.fn(async () => ({ count: 1 }));
 const assetFindMany = jest.fn();
-const assetQueryRaw = jest.fn(async (..._a: unknown[]) => []);
+const assetQueryRaw = jest.fn(
+  async (..._a: unknown[]): Promise<{ id: string; storageKey: string }[]> => [],
+);
 const assetUpdateMany = jest.fn(async () => ({ count: 1 }));
 const assetDeleteMany = jest.fn(async () => ({ count: 1 }));
 jest.mock("../../lib/prisma", () => ({

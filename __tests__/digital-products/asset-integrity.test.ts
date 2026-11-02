@@ -42,7 +42,7 @@ type Where = Record<string, unknown>;
 function mockMatches(row: Asset, where: Where): boolean {
   return Object.entries(where).every(([key, cond]) => {
     const value = row[key as keyof Asset];
-    if (cond === null) return value == null;
+    if (cond === null) return value === null || value === undefined;
     if (cond && typeof cond === "object") {
       const c = cond as {
         in?: unknown[];
