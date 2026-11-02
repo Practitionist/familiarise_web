@@ -191,6 +191,12 @@ describe("public plan payloads do not say who holds a seat", () => {
     expect(src).toContain("private, no-store");
     expect(src).toContain("auth.session.user.id");
   });
+
+  it("chat membership is seeded from paid seats only", () => {
+    const src = strip("lib/stream/event-channel-service.ts");
+    expect(src).not.toContain("liveParticipant");
+    expect(src.match(/paidParticipant\(\)/g)?.length).toBe(2);
+  });
 });
 
 describe("participant rosters do not return full User rows", () => {
