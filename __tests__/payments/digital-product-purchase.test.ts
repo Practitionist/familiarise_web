@@ -79,6 +79,7 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
     notes: Record<string, string>;
     amountPaise: number;
     gatewayPaymentId: string;
+    method?: string;
   }) => {
     const { handleDigitalProductPurchaseSuccess } =
       await import("../../lib/payments/webhooks/digital-product-purchase");
@@ -87,6 +88,7 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
       input.gatewayPaymentId,
       input.notes,
       input.amountPaise,
+      input.method,
     );
   },
 }));
@@ -171,7 +173,13 @@ it("settles a capture atomically and refunds mismatched, duplicate and orphan ca
   mockTx.digitalProductPurchase.findUnique.mockResolvedValueOnce(
     purchase("PENDING"),
   );
-  await handleDigitalProductPurchaseSuccess("order_1", "pay_A", NOTES, 59000);
+  await handleDigitalProductPurchaseSuccess(
+    "order_1",
+    "pay_A",
+    NOTES,
+    59000,
+    "netbanking",
+  );
   expect(mockTx.digitalProductPurchase.updateMany).toHaveBeenNthCalledWith(1, {
     where: { id: "dpp-1", status: "PENDING" },
     data: { status: "SUCCEEDED", gatewayPaymentId: "pay_A" },
@@ -183,6 +191,7 @@ it("settles a capture atomically and refunds mismatched, duplicate and orphan ca
     taxAmount: 9000,
     paymentIntent: "order_1",
     paymentStatus: "SUCCEEDED",
+    paymentMethod: "NETBANKING",
     description: "Digital product sale: product dp-1",
     legs: { create: { source: "CARD", amountPaise: 59000 } },
   });
@@ -330,6 +339,7 @@ it("recovers a capture on a failed attempt's order when the webhook never arrive
     kind: "captured",
     paymentId: "pay_R",
     amountPaise: 59000,
+    method: "upi",
   });
   mockTx.digitalProductPurchase.findUnique.mockResolvedValueOnce(
     purchase("FAILED"),
@@ -350,6 +360,7 @@ it("recovers a capture on a failed attempt's order when the webhook never arrive
   expect(mockTx.payment.create.mock.calls[0][0].data).toMatchObject({
     paymentIntent: "order_f",
     paymentStatus: "SUCCEEDED",
+    paymentMethod: "UPI",
     amount: 59000,
   });
   expect(mockRefund).not.toHaveBeenCalled();

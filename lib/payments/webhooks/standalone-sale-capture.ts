@@ -64,6 +64,20 @@ export function resolveStandaloneCharge(
   return { originalAmount: chargedPaise, taxAmount: 0, buyerCountry: null };
 }
 
+const razorpayMethodSchema = z.string().regex(/^[a-z_]{1,32}$/);
+
+/**
+ * Payment.paymentMethod for a gateway capture, from Razorpay's `method`.
+ * "WALLET" means the organisation wallet, so a prepaid wallet is GATEWAY_WALLET.
+ */
+export function gatewayPaymentMethod(method: string | undefined): string {
+  const parsed = razorpayMethodSchema.safeParse(method);
+  if (!parsed.success) return "CARD";
+  return parsed.data === "wallet"
+    ? "GATEWAY_WALLET"
+    : parsed.data.toUpperCase();
+}
+
 export const AUTO_REFUND_MARKERS = [
   AUTO_REFUND_PENDING_PREFIX,
   AUTO_REFUNDED_PREFIX,
@@ -88,6 +102,8 @@ export interface StageRefundInput {
   charge: StandaloneCharge;
   organizationId: string | null;
   gatewayPaymentId: string | undefined;
+  /** Razorpay's `method` for the capture; absent reads as a card. */
+  method?: string;
   reason: string;
 }
 
@@ -131,6 +147,7 @@ async function stageExistingCaptureRefund(
         originalAmount: input.charge.originalAmount,
         taxAmount: input.charge.taxAmount,
         paymentStatus: "SUCCEEDED",
+        paymentMethod: gatewayPaymentMethod(input.method),
         gatewayPaymentId: input.gatewayPaymentId,
         capturedAt: new Date(),
         description: marker,
@@ -204,7 +221,7 @@ export async function stageCaptureRefund(
       originalAmount: input.charge.originalAmount,
       taxAmount: input.charge.taxAmount,
       currency: "INR",
-      paymentMethod: "CARD",
+      paymentMethod: gatewayPaymentMethod(input.method),
       paymentIntent: input.paymentIntent,
       paymentGateway: "RAZORPAY",
       paymentStatus: "SUCCEEDED",

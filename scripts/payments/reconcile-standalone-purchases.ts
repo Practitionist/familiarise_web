@@ -47,6 +47,7 @@ export async function recoverStandaloneOrder(
     notes: order.notes,
     amountPaise: holding.amountPaise,
     gatewayPaymentId: holding.paymentId,
+    method: holding.method,
   });
   return "captured";
 }

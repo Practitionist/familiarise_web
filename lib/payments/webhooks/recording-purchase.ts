@@ -21,6 +21,7 @@ import { REPLAY_SALE_PREFIX } from "@/lib/payments/webhooks/auto-refund-marker";
 import {
   AUTO_REFUND_MARKERS,
   cardLeg,
+  gatewayPaymentMethod,
   paiseNote,
   refundStagedCapture,
   resolveStandaloneCharge,
@@ -188,6 +189,7 @@ async function refundOrphanCapture(
     gatewayPaymentId: string | undefined;
     notes: Record<string, string> | undefined;
     capturedPaise: number | undefined;
+    method: string | undefined;
   },
 ): Promise<CaptureOutcome | null> {
   const { orderId, capturedPaise } = input;
@@ -212,6 +214,7 @@ async function refundOrphanCapture(
     charge: resolveReplayCharge(orderId, capturedPaise, input.notes),
     organizationId: null,
     gatewayPaymentId: input.gatewayPaymentId,
+    method: input.method,
     reason: `capture on replay order ${orderId}; its purchase no longer exists`,
   });
 }
@@ -262,6 +265,7 @@ async function settleReplaySale(
     recordingId: string;
     orderId: string;
     gatewayPaymentId: string | undefined;
+    method: string | undefined;
     chargedPaise: number;
     charge: ReplayCharge;
     hostOrganizationId: string | null;
@@ -277,6 +281,7 @@ async function settleReplaySale(
     hostOrganizationId,
     planInfo,
   } = input;
+  const paymentMethod = gatewayPaymentMethod(input.method);
   const payment = orderPayment
     ? await (async () => {
         const updatedLegs = await tx.paymentLeg.updateMany({
@@ -305,6 +310,7 @@ async function settleReplaySale(
                   isInternational: charge.buyerCountry !== "IN",
                 }
               : {}),
+            paymentMethod,
             paymentStatus: "SUCCEEDED",
             capturedAt: new Date(),
             description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
@@ -326,7 +332,7 @@ async function settleReplaySale(
               }
             : {}),
           currency: "INR",
-          paymentMethod: "CARD",
+          paymentMethod,
           paymentIntent: orderId,
           paymentGateway: "RAZORPAY",
           paymentStatus: "SUCCEEDED",
@@ -403,6 +409,8 @@ export async function handleRecordingPurchaseSuccess(
   notes?: Record<string, string>,
   /** Captured paise from the payment entity; the purchase amount when absent. */
   capturedPaise?: number,
+  /** Razorpay's `method` for the capture. */
+  method?: string,
 ): Promise<void> {
   if (prisma.payment?.findUnique) {
     const existing = await prisma.payment.findUnique({
@@ -528,6 +536,7 @@ export async function handleRecordingPurchaseSuccess(
           gatewayPaymentId,
           notes,
           capturedPaise,
+          method,
         });
       }
 
@@ -555,6 +564,7 @@ export async function handleRecordingPurchaseSuccess(
           charge,
           organizationId: null,
           gatewayPaymentId,
+          method,
           reason,
         });
       if (chargedPaise !== Number(purchase.amountPaise)) {
@@ -635,6 +645,7 @@ export async function handleRecordingPurchaseSuccess(
         recordingId: purchase.recordingId,
         orderId,
         gatewayPaymentId,
+        method,
         chargedPaise,
         charge,
         hostOrganizationId,

@@ -643,7 +643,13 @@ export async function cancelRazorpayOrder(
 
 /** What an order holds at the gateway: its captured payment, an uncaptured live one, or nothing. */
 export type RazorpayOrderHolding =
-  | { kind: "captured"; paymentId: string; amountPaise: number }
+  | {
+      kind: "captured";
+      paymentId: string;
+      amountPaise: number;
+      /** Razorpay's `method` (card, netbanking, upi, wallet, ...). */
+      method?: string;
+    }
   | { kind: "live" }
   /** `onlyFailed`: the order has attempts and every one of them failed. */
   | { kind: "empty"; onlyFailed: boolean };
@@ -682,7 +688,12 @@ export async function readRazorpayOrderHolding(
         `Order ${orderId} captured ${String(captured.amount)} ${captured.currency}, not positive whole INR paise`,
       );
     }
-    return { kind: "captured", paymentId: captured.id, amountPaise };
+    return {
+      kind: "captured",
+      paymentId: captured.id,
+      amountPaise,
+      ...(captured.method ? { method: captured.method } : {}),
+    };
   }
   if (payments.items.some((p) => LIVE_ORDER_PAYMENT_STATUSES.has(p.status))) {
     return { kind: "live" };

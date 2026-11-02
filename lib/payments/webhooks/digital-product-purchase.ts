@@ -34,6 +34,7 @@ import { DIGITAL_PRODUCT_SALE_PREFIX } from "@/lib/payments/webhooks/auto-refund
 import {
   AUTO_REFUND_MARKERS,
   cardLeg,
+  gatewayPaymentMethod,
   paiseNote,
   refundStagedCapture,
   resolveStandaloneCharge,
@@ -105,6 +106,7 @@ async function refundOrphanCapture(
     gatewayPaymentId: string | undefined;
     notes: Record<string, string> | undefined;
     capturedPaise: number | undefined;
+    method: string | undefined;
   },
 ): Promise<CaptureOutcome | null> {
   const { orderId, capturedPaise } = input;
@@ -129,6 +131,7 @@ async function refundOrphanCapture(
     charge: resolveStandaloneCharge(RAIL, orderId, capturedPaise, input.notes),
     organizationId: null,
     gatewayPaymentId: input.gatewayPaymentId,
+    method: input.method,
     reason: `capture on digital product order ${orderId}; its purchase no longer exists`,
   });
 }
@@ -207,12 +210,14 @@ async function settleProductSale(
     orderPayment: Omit<CreateEarningsParams["payment"], "appointment"> | null;
     orderId: string;
     gatewayPaymentId: string | undefined;
+    method: string | undefined;
     chargedPaise: number;
     charge: StandaloneCharge;
   },
 ): Promise<CaptureOutcome> {
   const { purchase, orderPayment, orderId, gatewayPaymentId, chargedPaise } =
     input;
+  const paymentMethod = gatewayPaymentMethod(input.method);
   const { charge } = input;
   const product = purchase.product;
   const description = `${DIGITAL_PRODUCT_SALE_PREFIX} product ${product.id}`;
@@ -245,6 +250,7 @@ async function settleProductSale(
         originalAmount: charge.originalAmount,
         taxAmount: charge.taxAmount,
         ...buyerCountry,
+        paymentMethod,
         paymentStatus: "SUCCEEDED",
         capturedAt: new Date(),
         description,
@@ -261,7 +267,7 @@ async function settleProductSale(
         taxAmount: charge.taxAmount,
         ...buyerCountry,
         currency: "INR",
-        paymentMethod: "CARD",
+        paymentMethod,
         paymentIntent: orderId,
         paymentGateway: "RAZORPAY",
         paymentStatus: "SUCCEEDED",
@@ -301,6 +307,7 @@ async function settleCapture(
   gatewayPaymentId: string | undefined,
   notes: Record<string, string> | undefined,
   capturedPaise: number | undefined,
+  method: string | undefined,
 ): Promise<CaptureOutcome | null> {
   const purchase: SettlingPurchase | null =
     await tx.digitalProductPurchase.findUnique({
@@ -317,6 +324,7 @@ async function settleCapture(
       gatewayPaymentId,
       notes,
       capturedPaise,
+      method,
     });
   }
 
@@ -335,6 +343,7 @@ async function settleCapture(
       charge,
       organizationId: null,
       gatewayPaymentId,
+      method,
       reason,
     });
   if (chargedPaise !== purchase.amountPaise) {
@@ -411,6 +420,7 @@ async function settleCapture(
     orderPayment,
     orderId,
     gatewayPaymentId,
+    method,
     chargedPaise,
     charge,
   });
@@ -447,6 +457,8 @@ export async function handleDigitalProductPurchaseSuccess(
   notes?: Record<string, string>,
   /** Captured paise from the payment entity; absent, the purchase stays PENDING. */
   capturedPaise?: number,
+  /** Razorpay's `method` for the capture. */
+  method?: string,
 ): Promise<void> {
   const existing = await prisma.payment.findUnique({
     where: { paymentIntent: orderId },
@@ -481,6 +493,7 @@ export async function handleDigitalProductPurchaseSuccess(
       gatewayPaymentId,
       notes,
       capturedPaise,
+      method,
     );
     // The receipt obligation commits with the sale; a crash after commit leaves it staged.
     const emails: StagedRecipientEmail[] =
