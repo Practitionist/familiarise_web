@@ -25,6 +25,7 @@ interface Asset {
   version: number;
   status: string;
   rejectReason?: string;
+  purgedAt?: Date | null;
 }
 const mockAssets: Asset[] = [];
 const mockLocks: string[] = [];
@@ -41,6 +42,7 @@ type Where = Record<string, unknown>;
 function mockMatches(row: Asset, where: Where): boolean {
   return Object.entries(where).every(([key, cond]) => {
     const value = row[key as keyof Asset];
+    if (cond === null) return value == null;
     if (cond && typeof cond === "object") {
       const c = cond as {
         in?: unknown[];
@@ -59,8 +61,19 @@ function mockMatches(row: Asset, where: Where): boolean {
 
 jest.mock("../../lib/prisma", () => {
   const asset = {
-    findMany: async ({ where }: { where: Where }) =>
-      mockAssets.filter((a) => mockMatches(a, where)),
+    findMany: async ({
+      where,
+      orderBy,
+      skip = 0,
+    }: {
+      where: Where;
+      orderBy?: { version: "desc" };
+      skip?: number;
+    }) => {
+      const hits = mockAssets.filter((a) => mockMatches(a, where));
+      if (orderBy) hits.sort((a, b) => b.version - a.version);
+      return hits.slice(skip);
+    },
     findFirst: async ({
       where,
       orderBy,
@@ -309,6 +322,29 @@ it("versions concurrent different-MIME replacements per lineage, retries past a 
   });
   expect(retry.ok).toBe(true);
   expect(mockAssets.at(-1)?.version).toBe(4);
+});
+
+it("keeps only the current and the previous version's objects once a replacement verifies", async () => {
+  const v1 = { ...seedVerified(), status: "SUPERSEDED" };
+  mockAssets.splice(0, 1, v1);
+  const at = (version: number, status: string): Asset => ({
+    ...v1,
+    id: `as_${version}`,
+    storageKey: `products/dp_1/lin_1/as_${version}.pdf`,
+    version,
+    status,
+  });
+  const v2 = at(2, "VERIFIED");
+  const v3 = at(3, "PENDING");
+  mockAssets.push(v2, v3);
+  mockR2();
+  expect(await verifyDigitalProductAsset(v3)).toEqual({ status: "VERIFIED" });
+  const deleted = fetchMock.mock.calls
+    .filter(([, init]) => init.method === "DELETE")
+    .map(([url]) => String(url));
+  expect(deleted).toEqual([expect.stringContaining("as_1.pdf")]);
+  expect(v1.purgedAt).toBeInstanceOf(Date);
+  expect([v2.status, v2.purgedAt]).toEqual(["SUPERSEDED", undefined]);
 });
 
 it("holds the final file slot and the final bytes under the product lock", async () => {

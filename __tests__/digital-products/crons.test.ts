@@ -49,6 +49,7 @@ const dpFindMany = jest.fn();
 const dpFindUnique = jest.fn();
 const rpUpdate = jest.fn(async () => ({ count: 1 }));
 const assetFindMany = jest.fn();
+const assetQueryRaw = jest.fn(async (..._a: unknown[]) => []);
 const assetUpdateMany = jest.fn(async () => ({ count: 1 }));
 const assetDeleteMany = jest.fn(async () => ({ count: 1 }));
 jest.mock("../../lib/prisma", () => ({
@@ -74,6 +75,7 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: async () => ({ status: "PENDING" }),
       updateMany: (...a: unknown[]) => rpUpdate(...(a as [])),
     },
+    $queryRaw: (...a: unknown[]) => assetQueryRaw(...a),
     digitalProductAsset: {
       findMany: (...a: unknown[]) => assetFindMany(...a),
       updateMany: (...a: unknown[]) => assetUpdateMany(...(a as [])),
@@ -282,8 +284,10 @@ it("never lets a page of dead FAILED rows block a PENDING capture, and counts on
 });
 
 it("purges old versions, retires a dead upload before deleting it and deletes only unnamed old objects", async () => {
+  assetQueryRaw.mockResolvedValueOnce([
+    { id: "a_sup", storageKey: "products/p/a/v1.pdf" },
+  ]);
   assetFindMany
-    .mockResolvedValueOnce([{ id: "a_sup", storageKey: "products/p/a/v1.pdf" }])
     .mockResolvedValueOnce([
       { id: "a_rej", storageKey: "products/p/b/v1.zip", status: "REJECTED" },
       { id: "a_pend", storageKey: "products/p/d/v1.pdf", status: "PENDING" },
@@ -323,6 +327,10 @@ it("purges old versions, retires a dead upload before deleting it and deletes on
     "products/p/b/v1.zip",
     "products/p/orphan/v1.pdf",
   ]);
+  // Superseded over 30 days ago, or behind its lineage's two newest versions.
+  const purgeSql = (assetQueryRaw.mock.calls[0][0] as string[]).join("?");
+  expect(purgeSql).toMatch(/"supersededAt" < \?/);
+  expect(purgeSql).toMatch(/b\.version > a\.version[\s\S]*OFFSET 1/);
   expect(assetUpdateMany).toHaveBeenCalledWith({
     where: { id: { in: ["a_sup"] }, status: "SUPERSEDED", purgedAt: null },
     data: { purgedAt: expect.any(Date) },

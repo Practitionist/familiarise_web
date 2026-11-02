@@ -15,6 +15,7 @@ import { checkFileSignature } from "@/lib/digital-products/file-signature";
 import { inspectZip } from "@/lib/digital-products/zip-inspect";
 import { digitalProductsBucket } from "@/lib/digital-products/storage";
 import { formatRejectReason } from "@/lib/digital-products/reject-reasons";
+import { purgeSupersededObjects } from "@/lib/digital-products/storage-sweep";
 
 const HEADER_BYTES = 4096;
 
@@ -125,7 +126,8 @@ async function inspectOneVersion(asset: PendingAsset): Promise<Inspection> {
  * Verify a PENDING asset and settle it by CAS under the product row lock:
  * VERIFIED (superseding older versions of its lineage), or REJECTED with its
  * object deleted. A version older than one already verified, or one whose
- * lineage's current file was deleted, never becomes current.
+ * lineage's current file was deleted, never becomes current. Only the current
+ * and the previous version keep their objects; older ones are purged after commit.
  */
 export async function verifyDigitalProductAsset(
   asset: PendingAsset,
@@ -133,8 +135,13 @@ export async function verifyDigitalProductAsset(
   const verdict = await inspectUploadedObject(asset);
   if ("missing" in verdict) return { status: "MISSING" };
   if ("changed" in verdict) return { status: "CHANGED" };
-  const outcome = await prisma.$transaction(
-    async (tx): Promise<AssetVerification> => {
+  const { outcome, stale } = await prisma.$transaction(
+    async (
+      tx,
+    ): Promise<{
+      outcome: AssetVerification;
+      stale: { id: string; storageKey: string }[];
+    }> => {
       await lockDigitalProductRow(tx, asset.productId);
       const newer = verdict.ok
         ? await tx.digitalProductAsset.findFirst({
@@ -166,16 +173,21 @@ export async function verifyDigitalProductAsset(
           where: { id: asset.id, status: "PENDING" },
           data: { status: "REJECTED", rejectReason: reason },
         });
-        return rejected.count === 1
-          ? { status: "REJECTED", reason }
-          : { status: "SETTLED" };
+        return {
+          outcome:
+            rejected.count === 1
+              ? { status: "REJECTED", reason }
+              : { status: "SETTLED" },
+          stale: [],
+        };
       }
       // Row-locks the still-PENDING asset; the one-verified-per-lineage index needs the old version retired first.
       const claimed = await tx.digitalProductAsset.updateMany({
         where: { id: asset.id, status: "PENDING" },
         data: { verifiedAt: now },
       });
-      if (claimed.count === 0) return { status: "SETTLED" };
+      if (claimed.count === 0)
+        return { outcome: { status: "SETTLED" }, stale: [] };
       await tx.digitalProductAsset.updateMany({
         where: {
           lineageId: asset.lineageId,
@@ -188,9 +200,26 @@ export async function verifyDigitalProductAsset(
         where: { id: asset.id, status: "PENDING" },
         data: { status: "VERIFIED" },
       });
-      return { status: "VERIFIED" };
+      // Versions behind the one just superseded are retired; their objects go after commit.
+      const stale = await tx.digitalProductAsset.findMany({
+        where: {
+          lineageId: asset.lineageId,
+          status: "SUPERSEDED",
+          purgedAt: null,
+        },
+        orderBy: { version: "desc" },
+        skip: 1,
+        select: { id: true, storageKey: true },
+      });
+      return { outcome: { status: "VERIFIED" }, stale };
     },
   );
+  if (stale.length > 0) {
+    // A failed delete keeps purgedAt null, so the storage sweep retries it.
+    await purgeSupersededObjects(digitalProductsBucket(), stale, []).catch(
+      () => 0,
+    );
+  }
   if (outcome.status === "REJECTED") {
     // A failed delete leaves the REJECTED row naming the key for the storage sweep.
     await deleteR2Object({

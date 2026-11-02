@@ -1,7 +1,8 @@
 /**
  * Keeps the digital products bucket equal to what the rows promise: deletes
- * the objects of versions superseded over 30 days ago (stamping purgedAt),
- * retires and clears REJECTED and abandoned PENDING uploads older than a day,
+ * the objects of versions superseded over 30 days ago or older than their
+ * lineage's two newest (stamping purgedAt), retires and clears REJECTED and
+ * abandoned PENDING uploads older than a day,
  * and pages through the bucket deleting objects older than a day no row names.
  */
 import prisma from "@/lib/prisma";
@@ -55,22 +56,17 @@ async function deleteAll(
   return deleted;
 }
 
-async function purgeSuperseded(
+/**
+ * Delete the objects of SUPERSEDED versions and stamp purgedAt once R2
+ * confirms; the row stays as download evidence. A failed delete stays for the sweep.
+ */
+export async function purgeSupersededObjects(
   bucket: string,
-  limit: number,
-  now: Date,
+  rows: { id: string; storageKey: string }[],
   failures: string[],
+  now: Date = new Date(),
 ): Promise<number> {
-  const rows = await prisma.digitalProductAsset.findMany({
-    where: {
-      status: "SUPERSEDED",
-      purgedAt: null,
-      supersededAt: { lt: new Date(now.getTime() - SUPERSEDED_KEEP_MS) },
-    },
-    orderBy: { supersededAt: "asc" },
-    take: limit,
-    select: { id: true, storageKey: true },
-  });
+  if (rows.length === 0) return 0;
   const deleted = await deleteAll(
     bucket,
     rows.map((r) => r.storageKey),
@@ -78,12 +74,32 @@ async function purgeSuperseded(
   );
   const ids = rows.filter((r) => deleted.has(r.storageKey)).map((r) => r.id);
   if (ids.length === 0) return 0;
-  // The row stays as download evidence; purgedAt takes it out of the cohort.
   const stamped = await prisma.digitalProductAsset.updateMany({
     where: { id: { in: ids }, status: "SUPERSEDED", purgedAt: null },
     data: { purgedAt: now },
   });
   return stamped.count;
+}
+
+/** Unpurged versions superseded 30 days ago, or with two newer versions in their lineage. */
+async function purgeSuperseded(
+  bucket: string,
+  limit: number,
+  now: Date,
+  failures: string[],
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - SUPERSEDED_KEEP_MS);
+  const rows = await prisma.$queryRaw<{ id: string; storageKey: string }[]>`
+    SELECT a.id, a."storageKey" FROM "DigitalProductAsset" a
+    WHERE a.status = 'SUPERSEDED' AND a."purgedAt" IS NULL
+      AND (a."supersededAt" < ${cutoff} OR EXISTS (
+        SELECT 1 FROM "DigitalProductAsset" b
+        WHERE b."lineageId" = a."lineageId" AND b.version > a.version
+          AND b.status IN ('VERIFIED', 'SUPERSEDED')
+        OFFSET 1))
+    ORDER BY a."supersededAt" ASC
+    LIMIT ${limit}`;
+  return purgeSupersededObjects(bucket, rows, failures, now);
 }
 
 /**
