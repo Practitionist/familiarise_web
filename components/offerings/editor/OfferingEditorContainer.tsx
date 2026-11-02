@@ -45,6 +45,7 @@ import {
   resolveSponsorPricingHint,
 } from "./sponsor-pricing-hint";
 import { useSession } from "@/lib/auth-client";
+import { sellHomeHref } from "@/lib/dashboard/sell-pages";
 
 interface OfferingEditorContainerProps {
   type: OfferingType;
@@ -55,7 +56,7 @@ interface OfferingEditorContainerProps {
   duplicateOf?: unknown;
   /** Extra bespoke sections, keyed by the manifest's `slot`. */
   extraSlots?: Record<string, React.ReactNode>;
-  /** Where to go once saved. Defaults to the Offerings list. */
+  /** Where to go once saved. Defaults to the Sell page listing this type. */
   returnHref?: string;
   /**
    * Overrides the adapter's save. The org catalog posts to its own endpoint
@@ -316,9 +317,7 @@ export function OfferingEditorContainer({
         }),
       );
 
-      router.push(
-        returnHref ?? `/dashboard/consultant/${consultantId}/offerings`,
-      );
+      router.push(returnHref ?? sellHomeHref(consultantId, type));
       router.refresh();
     } catch (error) {
       Sentry.captureException(

@@ -3,8 +3,8 @@
  */
 
 /**
- * Every route the Library absorbed answers a 308 to its tab with the old
- * query kept, and `/dashboard/go/library` forwards `?tab=` to the viewer's own.
+ * Every route the Library or the Sell pages absorbed answers a 308 to its new
+ * home with the old query kept, and `/dashboard/go/library` forwards `?tab=`.
  */
 
 const mockPermanentRedirect = jest.fn((path: string) => {
@@ -40,6 +40,9 @@ import ConsulteeDocuments from "../../app/dashboard/consultee/[consulteeId]/(fea
 import ConsulteeRecordings from "../../app/dashboard/consultee/[consulteeId]/(features)/recordings/page";
 import ConsulteeProducts from "../../app/dashboard/consultee/[consulteeId]/(features)/products/page";
 import ConsultantPurchases from "../../app/dashboard/consultant/[consultantId]/(features)/purchases/page";
+import Offerings from "../../app/dashboard/consultant/[consultantId]/(features)/offerings/page";
+import OfferingsProducts from "../../app/dashboard/consultant/[consultantId]/(features)/offerings/products/page";
+import OfferingsCollaborations from "../../app/dashboard/consultant/[consultantId]/(features)/offerings/collaborations/page";
 import OrgDocuments from "../../app/dashboard/organization/[orgId]/documents/page";
 import OrgRecordings from "../../app/dashboard/organization/[orgId]/recordings/page";
 import GoPage from "../../app/dashboard/go/[facet]/[[...path]]/page";
@@ -55,7 +58,7 @@ type RedirectPage = (props: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) => Promise<unknown>;
 
-describe("moved Library routes 308 with their query", () => {
+describe("moved routes 308 with their query", () => {
   it.each<[string, RedirectPage, string]>([
     [
       "consultee documents",
@@ -73,6 +76,13 @@ describe("moved Library routes 308 with their query", () => {
       `${ce}/library?q=cv&tab=purchases`,
     ],
     ["consultant purchases", ConsultantPurchases, `${cp}/library?q=cv`],
+    ["offerings", Offerings, `${cp}/sell/sessions?q=cv`],
+    ["offerings products", OfferingsProducts, `${cp}/sell/products?q=cv`],
+    [
+      "offerings collaborations",
+      OfferingsCollaborations,
+      `${cp}/collaborations?q=cv`,
+    ],
     ["org documents", OrgDocuments, `${org}/library?q=cv&tab=documents`],
     ["org recordings", OrgRecordings, `${org}/library?q=cv&tab=recordings`],
   ])("%s", async (_name, Page, target) => {
@@ -85,6 +95,18 @@ describe("moved Library routes 308 with their query", () => {
     ).rejects.toThrow("NEXT_PERMANENT_REDIRECT");
     expect(mockPermanentRedirect).toHaveBeenLastCalledWith(target);
   });
+});
+
+it("the old Offerings type pill picks the Sell page and tab", async () => {
+  await expect(
+    Offerings({
+      params: Promise.resolve(params),
+      searchParams: Promise.resolve({ type: "webinar", q: "cv" }),
+    }),
+  ).rejects.toThrow("NEXT_PERMANENT_REDIRECT");
+  expect(mockPermanentRedirect).toHaveBeenLastCalledWith(
+    `${cp}/sell/programs?q=cv&tab=webinars`,
+  );
 });
 
 it("go/library lands a dual-profile viewer on the learner Library tab", async () => {

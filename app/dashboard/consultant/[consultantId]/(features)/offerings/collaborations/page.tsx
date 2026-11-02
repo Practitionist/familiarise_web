@@ -1,28 +1,21 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { useParams } from "next/navigation";
-import {
-  DashboardHeader,
-  DashboardContent,
-} from "@/components/dashboard/PageScaffold";
-import { InvitationsPanel } from "@/components/collaborators/InvitationsPanel";
-import { NewOfferingMenu } from "@/components/offerings/list/NewOfferingMenu";
-import { OfferingsTabs } from "@/components/offerings/list/OfferingsTabs";
+import { consultantLegacyHref } from "@/lib/dashboard/personal-legacy-routes";
 
-/** #1527 §13b — Offerings · Collaborations: invitations and co-hosted events. */
-export default function OfferingsCollaborationsPage() {
-  const consultantId = useParams().consultantId as string;
-  return (
-    <>
-      <DashboardHeader
-        title="Offerings"
-        description="What you sell, and the webinars and classes you deliver with others"
-        actions={<NewOfferingMenu consultantId={consultantId} />}
-      />
-      <OfferingsTabs consultantId={consultantId} />
-      <DashboardContent>
-        <InvitationsPanel />
-      </DashboardContent>
-    </>
+/** Collaborations is its own Sell page; the old URL 308s with its query kept. */
+export default async function OfferingsCollaborationsRedirect({
+  params,
+  searchParams,
+}: Readonly<{
+  params: Promise<{ consultantId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}>) {
+  const { consultantId } = await params;
+  permanentRedirect(
+    consultantLegacyHref(
+      consultantId,
+      "offerings/collaborations",
+      await searchParams,
+    ),
   );
 }
