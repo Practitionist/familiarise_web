@@ -204,7 +204,7 @@ jobs:
           if [ "${{ steps.changed.outputs.full }}" = "true" ]; then
             npm run format:check 2>&1 | tee /tmp/prettier.txt; exit "${PIPESTATUS[0]}"
           else
-            xargs -0 -r npx prettier --check --ignore-unknown -- < /tmp/changed.z 2>&1 | tee /tmp/prettier.txt; exit "${PIPESTATUS[0]}"
+            xargs -0 -r node_modules/.bin/prettier --check --ignore-unknown -- < /tmp/changed.z 2>&1 | tee /tmp/prettier.txt; exit "${PIPESTATUS[0]}"
           fi
         continue-on-error: true
 
@@ -217,11 +217,11 @@ jobs:
           rc=0
           if [ "$RELEASE" != "true" ]; then
             grep -zE '\.(js|jsx|mjs|cjs|ts|tsx|mts|cts)$' /tmp/changed.z > /tmp/changed-src.z || true
-            xargs -0 -r npx eslint --max-warnings=0 --no-warn-ignored --format stylish -- < /tmp/changed-src.z 2>&1 | tee /tmp/eslint.txt
+            xargs -0 -r node_modules/.bin/eslint --max-warnings=0 --no-warn-ignored --format stylish -- < /tmp/changed-src.z 2>&1 | tee /tmp/eslint.txt
             rc=${PIPESTATUS[0]}
           fi
           if [ "${{ steps.changed.outputs.full }}" = "true" ]; then
-            npx eslint . --format stylish 2>&1 | tee -a /tmp/eslint.txt
+            node_modules/.bin/eslint . --format stylish 2>&1 | tee -a /tmp/eslint.txt
             [ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
           fi
           exit "$rc"
