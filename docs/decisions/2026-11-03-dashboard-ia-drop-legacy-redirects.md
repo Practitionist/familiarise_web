@@ -16,7 +16,7 @@ Delete the redirect stubs and make every internal reference name the new URL. Th
 Deleted:
 
 - Consultee `products`, `recordings`, `documents`, `resources`, `help` and `feedback`.
-- Consultant `purchases`, `planner`, the Offerings list (`offerings`, `offerings/products`, `offerings/collaborations`), `help`, `feedback`, `settings/security` and the `settings?tab=` aliases. The editors under `offerings/[type]/…` stay.
+- Consultant `purchases`, `planner`, the Offerings list (`offerings`, `offerings/products`, `offerings/collaborations`), `help`, `feedback` and `settings/security`. The editors under `offerings/[type]/…` stay. The `settings?tab=` aliases are dropped as well, but `settings` is still a live page that ignores `?tab=`, so an old tab link opens the Settings hub instead of a 404.
 - Organization `documents`, `recordings`, `purchase-orders`, `reimbursements`, `disputes` and `materials`, and the retired `?tab=` values of Billing, Payouts and Catalog.
 - The `/explore/recordings` index. `/explore/recordings/[slug]` stays.
 - `lib/dashboard/personal-legacy-routes.ts` and `lib/dashboard/org-tab-redirect.ts`, with the tests that pinned them.
@@ -29,7 +29,7 @@ AGENTS.md section 1.2 says to delete dead code outright and keep no back-compat 
 
 - A stale bookmark or an old deep link 404s. This is accepted before launch; a post-launch move of the same kind needs redirects again and a new record.
 - Recording and document notifications now link to the Library tab (`library?tab=recordings` or `library?tab=documents`) through `lib/novu/resolve-href.ts`.
-- `/dashboard/go/…` no longer lists `planner` or `resources`; `payments` and `offerings` stay because those routes still exist.
+- `/dashboard/go/…` no longer lists `planner` or `resources`; `payments` stays because that page exists, and `offerings` stays for the editors under `offerings/[type]/…`.
 
 ## Follow-up
 

@@ -748,7 +748,7 @@ graph TD
 **How to test:**
 
 1. Book a session with a consultant who has uploaded materials
-2. After booking, check Resources
+2. After booking, open Library › Documents (the plan materials table)
 3. You should see downloadable files (PDFs, documents, etc.)
 4. Try downloading a resource
 
