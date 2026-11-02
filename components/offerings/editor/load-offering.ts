@@ -145,6 +145,7 @@ const ownedProductSchema = z.object({
   takenDownAt: z.string().nullable(),
   takedownReason: z.string().nullable(),
   assets: z.array(ownedAssetSchema),
+  purchaseCount: z.number(),
 });
 export type OwnedDigitalProduct = z.infer<typeof ownedProductSchema>;
 

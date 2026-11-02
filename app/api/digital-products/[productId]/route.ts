@@ -61,12 +61,19 @@ export async function GET(_request: Request, { params }: RouteParams) {
           verifiedAt: true,
         },
       },
+      _count: { select: { purchases: true } },
     },
   });
   if (!product) return jsonError(404, "NOT_FOUND", "Product not found");
 
+  const { _count, ...view } = product;
   const isOwner = viewerProfileId === product.consultantProfileId;
-  if (isOwner) return NextResponse.json({ data: product });
+  // Any purchase row, even a failed one, keeps a product from being deleted.
+  if (isOwner) {
+    return NextResponse.json({
+      data: { ...view, purchaseCount: _count.purchases },
+    });
+  }
   if (
     product.status !== "PUBLISHED" ||
     product.takenDownAt ||
@@ -74,11 +81,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
   ) {
     return jsonError(404, "NOT_FOUND", "Product not found");
   }
-  const {
-    takedownReason: _reason,
-    archivedAt: _archived,
-    ...listing
-  } = product;
+  const { takedownReason: _reason, archivedAt: _archived, ...listing } = view;
   return NextResponse.json({
     data: {
       ...listing,

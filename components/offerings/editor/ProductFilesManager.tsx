@@ -195,13 +195,12 @@ export function ProductFilesManager({
   } | null>(null);
   const [deleting, setDeleting] = useState<OwnedProductAsset | null>(null);
 
+  // Only PENDING and VERIFIED files hold an order slot and count toward the caps.
   const rows = assets
-    .filter((a) => a.status !== "SUPERSEDED")
+    .filter((a) => a.status === "PENDING" || a.status === "VERIFIED")
     .sort((a, b) => a.order - b.order);
-  // The server's caps count only these; a rejected file holds no slot.
-  const liveCount = rows.filter(
-    (a) => a.status === "PENDING" || a.status === "VERIFIED",
-  ).length;
+  const liveCount = rows.length;
+  const rejected = assets.filter((a) => a.status === "REJECTED");
   const accept = digitalProductAcceptAttr(category);
 
   const fail = (error: unknown) => {
@@ -397,15 +396,17 @@ export function ProductFilesManager({
                   aria-hidden
                 />
                 <div className="min-w-0 flex-1 space-y-1">
-                  <p className="truncate font-medium">{asset.originalName}</p>
+                  <p
+                    className="line-clamp-2 break-words font-medium"
+                    title={asset.originalName}
+                  >
+                    {asset.originalName}
+                  </p>
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <StatusBadge label={chip.label} tone={chip.tone} />
                     <span>{formatFileSize(asset.sizeBytes)}</span>
                     {asset.version > 1 && <span>Version {asset.version}</span>}
                   </div>
-                  {asset.status === "REJECTED" && (
-                    <RejectReason stored={asset.rejectReason} />
-                  )}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-0.5">
                   {asset.status === "VERIFIED" && (
@@ -495,6 +496,48 @@ export function ProductFilesManager({
             );
           })}
         </ul>
+      )}
+
+      {rejected.length > 0 && (
+        <section aria-labelledby="rejected-files" className="space-y-2">
+          <h3 id="rejected-files" className="text-sm font-medium">
+            Rejected uploads
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Buyers never see these and they don&apos;t count toward the file
+            limit. Fix the file and upload it again.
+          </p>
+          <ul className="divide-y rounded-md border border-destructive/30">
+            {rejected.map((asset) => (
+              <li key={asset.id} className="flex items-start gap-3 p-3 text-sm">
+                <FileText
+                  className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                  aria-hidden
+                />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p
+                    className="line-clamp-2 break-words font-medium"
+                    title={asset.originalName}
+                  >
+                    {asset.originalName}
+                  </p>
+                  <RejectReason stored={asset.rejectReason} />
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 shrink-0 px-2"
+                  aria-label={`Dismiss ${asset.originalName}`}
+                  disabled={busy}
+                  onClick={() => remove.mutate(asset.id)}
+                >
+                  Dismiss
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       <AlertDialog

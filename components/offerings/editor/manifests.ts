@@ -516,9 +516,9 @@ export const DIGITAL_PRODUCT_MANIFEST: OfferingManifest = {
   noun: "digital product",
   sections: [
     {
-      id: "basics",
-      title: "Basics",
-      description: "What buyers download and why they want it.",
+      id: "details",
+      title: "Details",
+      description: "What buyers download, why they want it and its price.",
       icon: FileText,
       fields: [
         {
@@ -561,20 +561,6 @@ export const DIGITAL_PRODUCT_MANIFEST: OfferingManifest = {
           ],
         },
         {
-          name: "coverImagePath",
-          kind: "image",
-          label: "Cover image",
-          description: "Shown on the product card and page.",
-          span: 6,
-        },
-      ],
-    },
-    {
-      id: "pricing",
-      title: "Pricing",
-      icon: IndianRupee,
-      fields: [
-        {
           name: "price",
           kind: "price",
           label: "Price (₹)",
@@ -583,6 +569,13 @@ export const DIGITAL_PRODUCT_MANIFEST: OfferingManifest = {
             "Use ₹0 to give it away; buyers still sign in to claim it.",
           required: true,
           span: 3,
+        },
+        {
+          name: "coverImagePath",
+          kind: "image",
+          label: "Cover image",
+          description: "Shown on the product card and page.",
+          span: 6,
         },
       ],
     },

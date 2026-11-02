@@ -6,9 +6,21 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
 import * as Sentry from "@sentry/nextjs";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Trash2 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import { toast } from "@/components/ui/use-toast";
 import {
   commitPlanImage,
@@ -45,12 +57,24 @@ function formValuesOf(product: OwnedDigitalProduct): DigitalProductFormValues {
 function publishBlockedReason(
   product: OwnedDigitalProduct | undefined,
 ): string | null {
-  if (!product) return "Save a draft first, then add the files.";
+  if (!product)
+    return "To publish, save a draft first, then add files in Files.";
   if (product.takenDownAt) return "This product was taken down.";
-  if (!product.assets.some((a) => a.status === "VERIFIED")) {
-    return "Add at least one verified file before publishing.";
-  }
-  return null;
+  if (product.assets.some((a) => a.status === "VERIFIED")) return null;
+  return product.assets.some((a) => a.status === "PENDING")
+    ? "To publish, finish verifying a file in Files."
+    : "To publish, add a file that passes verification in Files.";
+}
+
+/** DELETE the product; a sold one answers 409 HAS_PURCHASES with the archive hint. */
+async function deleteDigitalProduct(productId: string): Promise<void> {
+  const res = await fetch(
+    `/api/digital-products/${encodeURIComponent(productId)}`,
+    { method: "DELETE" },
+  );
+  if (res.ok) return;
+  const body: unknown = await res.json().catch(() => null);
+  throw new Error(errorMessageFromBody(body, "Couldn't delete the product"));
 }
 
 /**
@@ -70,6 +94,8 @@ export function DigitalProductEditorContainer({
   const [stagedImage, setStagedImage] = React.useState<StagedPlanImage | null>(
     null,
   );
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
   const form = useForm<DigitalProductFormValues>({
     resolver: zodResolver(digitalProductFormSchema),
     defaultValues: product ? formValuesOf(product) : DIGITAL_PRODUCT_DEFAULTS,
@@ -130,8 +156,10 @@ export function DigitalProductEditorContainer({
           title: "Taken off sale",
           description: "Existing buyers keep their files.",
         });
+        return;
       } else {
-        toast({ title: "Saved" });
+        toast({ title: "Draft saved" });
+        return;
       }
       router.push(listHref);
     } catch (error) {
@@ -148,6 +176,30 @@ export function DigitalProductEditorContainer({
       void refresh();
     } finally {
       setSavingAction(null);
+    }
+  };
+
+  const remove = async () => {
+    if (!product) return;
+    setDeleting(true);
+    try {
+      await deleteDigitalProduct(product.id);
+      await queryClient.invalidateQueries({
+        queryKey: MY_DIGITAL_PRODUCTS_QUERY_KEY,
+      });
+      toast({ title: "Product deleted" });
+      router.push(listHref);
+    } catch (error) {
+      toast({
+        title: "Couldn't delete",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+      void refresh();
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
     }
   };
 
@@ -186,6 +238,21 @@ export function DigitalProductEditorContainer({
         }
         savingAction={savingAction}
         publishBlockedReason={publishBlockedReason(product)}
+        headerActions={
+          product && product.purchaseCount === 0 ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              disabled={deleting || savingAction !== null}
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              Delete
+            </Button>
+          ) : undefined
+        }
         slots={{
           files: product ? (
             <ProductFilesManager
@@ -205,6 +272,29 @@ export function DigitalProductEditorContainer({
         onPublish={(values) => persist(values, { publish: true })}
         onCancel={() => router.back()}
       />
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this product?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Its listing and files are deleted for good. Nobody has bought it,
+              so no buyer loses access.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={(e) => {
+                e.preventDefault();
+                void remove();
+              }}
+            >
+              {deleting ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

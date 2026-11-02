@@ -64,6 +64,8 @@ export interface OfferingEditorProps<T extends FieldValues = FieldValues> {
   canSaveDraft?: boolean;
   /** The buyer-facing page; the owner's preview renders drafts too (Q4). */
   previewHref?: string;
+  /** Extra controls in the title band, e.g. deleting a never-sold product. */
+  headerActions?: React.ReactNode;
   onSaveDraft: (values: T) => void | Promise<void>;
   onPublish: (values: T) => void | Promise<void>;
   onCancel?: () => void;
@@ -82,6 +84,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
   draftLabel = "Save draft",
   canSaveDraft = true,
   previewHref,
+  headerActions,
   onSaveDraft,
   onPublish,
   onCancel,
@@ -187,6 +190,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
                 {status === "ARCHIVED" && (
                   <StatusBadge label="Off sale" tone="neutral" />
                 )}
+                {headerActions}
               </span>
             </div>
 
@@ -263,9 +267,14 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           so buttons align flush with the form card edges.
         */}
         <div className="sticky bottom-0 z-10 -mx-4 mt-auto border-t bg-background/95 shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.15)] backdrop-blur sm:-mx-6 lg:-mx-8">
-          <div className="flex flex-wrap items-center justify-end gap-3 px-4 py-4 sm:px-6 lg:px-8">
+          {/* Compact below sm: the reason gets its own line, Cancel yields to the
+              browser's back, and the two actions share one row. */}
+          <div className="flex flex-wrap items-center justify-end gap-2 px-4 py-3 sm:gap-3 sm:px-6 sm:py-4 lg:px-8">
             {publishBlockedReason && (
-              <p className="mr-auto text-sm text-muted-foreground">
+              <p
+                role="status"
+                className="basis-full text-xs text-muted-foreground sm:mr-auto sm:basis-auto sm:text-sm"
+              >
                 {publishBlockedReason}
               </p>
             )}
@@ -273,6 +282,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
               <Button
                 type="button"
                 variant="ghost"
+                className="hidden sm:inline-flex"
                 onClick={onCancel}
                 disabled={isSaving}
               >
@@ -283,6 +293,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
               <Button
                 type="button"
                 variant="outline"
+                className="flex-1 sm:flex-none"
                 disabled={isSaving}
                 onClick={submitDraft}
               >
@@ -294,6 +305,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
             )}
             <Button
               type="button"
+              className="flex-1 sm:flex-none"
               disabled={isSaving || !!publishBlockedReason}
               onClick={submitPublish}
             >
