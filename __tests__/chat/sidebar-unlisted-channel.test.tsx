@@ -17,6 +17,7 @@ function team(id: string, name: string) {
     state: { messages: [], members: {} },
     initialized: true,
     countUnread: () => 0,
+    on: () => ({ unsubscribe: () => undefined }),
     watch: jest.fn(() => Promise.resolve()),
   };
 }
@@ -33,7 +34,11 @@ const mockClient = {
     registry.set(created.cid, created);
     return created;
   }),
-  on: (handler: Handler) => handlers.add(handler),
+  // The real client takes `on(handler)` or `on(type, handler)`; only the first is tracked.
+  on: (...args: unknown[]) => {
+    if (typeof args[0] === "function") handlers.add(args[0] as Handler);
+    return { unsubscribe: () => undefined };
+  },
   off: (handler: Handler) => handlers.delete(handler),
 };
 

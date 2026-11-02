@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useEffect, useReducer } from "react";
 import { MoreVerticalIcon, PinIcon, ShieldCheckIcon } from "lucide-react";
 import type { Channel } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
@@ -18,7 +18,36 @@ import {
   lastVisibleMessage,
 } from "./utils/channelUtils";
 
-/** One row of the sidebar list. Memoized: the list re-renders on every incoming message. */
+/**
+ * Events after which a row's preview, time or unread count may differ. The SDK's
+ * own list row subscribes to the same ones.
+ */
+const ROW_CHANNEL_EVENTS = [
+  "message.new",
+  "message.updated",
+  "message.deleted",
+  "message.undeleted",
+  "channel.truncated",
+  "message.read",
+  "message.read_locally",
+  "notification.mark_unread",
+] as const;
+
+/** The one-line preview a row shows for its last message. */
+function previewText(message: { text?: string } | null): string | null {
+  if (!message) return null;
+  if (!message.text) return "Sent an attachment";
+  return message.text.length > 30
+    ? `${message.text.substring(0, 30)}...`
+    : message.text;
+}
+
+/**
+ * One row of the sidebar list.
+ *
+ * It reads the channel's mutable state (last message, unread count), which a memoized
+ * component is never told about, so it subscribes to its own channel and redraws itself.
+ */
 export const ChannelItem = memo(
   ({
     channel,
@@ -36,6 +65,18 @@ export const ChannelItem = memo(
     onRemove: (channel: Channel) => void;
   }) => {
     const { client } = useChatContext();
+    const [, redraw] = useReducer((n: number) => n + 1, 0);
+    useEffect(() => {
+      const subscriptions = ROW_CHANNEL_EVENTS.map((type) =>
+        channel.on(type, redraw),
+      );
+      // Marking everything read resets every row at once.
+      const markedRead = client?.on("notification.mark_read", redraw);
+      return () => {
+        subscriptions.forEach((subscription) => subscription.unsubscribe());
+        markedRead?.unsubscribe();
+      };
+    }, [channel, client]);
     const isTeamChannel = channel.type === "team";
 
     const displayInfo = !isTeamChannel
@@ -60,13 +101,7 @@ export const ChannelItem = memo(
     const hasUnread = unreadCount > 0;
 
     const lastMessage = lastVisibleMessage(channel.state.messages);
-    const lastMessageText = lastMessage?.text
-      ? lastMessage.text.length > 30
-        ? lastMessage.text.substring(0, 30) + "..."
-        : lastMessage.text
-      : lastMessage
-        ? "Sent an attachment"
-        : null;
+    const lastMessageText = previewText(lastMessage);
     const lastMessageTime = lastMessage?.created_at
       ? formatRowTime(lastMessage.created_at)
       : null;
@@ -168,7 +203,9 @@ export const ChannelItem = memo(
 
         {/* A sibling of the row button, not a child: a button cannot hold a button.
             Always visible below `md`, where there is no hover. */}
-        <DropdownMenu>
+        {/* Non-modal: a modal menu marks the rest of the page aria-hidden while the
+            composer still holds focus, which the browser reports as an error. */}
+        <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <button
               type="button"

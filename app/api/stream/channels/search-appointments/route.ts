@@ -391,6 +391,7 @@ export async function GET(request: NextRequest) {
       },
       select: {
         id: true,
+        createdAt: true,
         consultationPlan: {
           select: {
             title: true,
@@ -422,6 +423,7 @@ export async function GET(request: NextRequest) {
       },
       select: {
         id: true,
+        createdAt: true,
         subscriptionPlan: {
           select: {
             title: true,
@@ -537,8 +539,12 @@ export async function GET(request: NextRequest) {
     );
 
     const results: AppointmentSearchResult[] = [];
-    const push = (row: AppointmentSearchResult | null) => {
-      if (row) results.push(row);
+    // When each booking was made, so the picker can keep the newest connections.
+    const bookedAt = new Map<AppointmentSearchResult, number>();
+    const push = (row: AppointmentSearchResult | null, createdAt?: Date) => {
+      if (!row) return;
+      results.push(row);
+      if (createdAt) bookedAt.set(row, createdAt.getTime());
     };
 
     for (const consultation of consultations) {
@@ -556,6 +562,7 @@ export async function GET(request: NextRequest) {
           userId,
           query,
         ),
+        consultation.createdAt,
       );
     }
 
@@ -574,6 +581,7 @@ export async function GET(request: NextRequest) {
           userId,
           query,
         ),
+        subscription.createdAt,
       );
     }
 
@@ -599,25 +607,37 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Best match first, then by person and title. `sort` is stable.
-    const searchedByDate = days.length > 0;
-    results.sort(
-      (a, b) =>
-        matchRank(a, query, searchedByDate) -
-          matchRank(b, query, searchedByDate) ||
-        a.counterpartyName.localeCompare(b.counterpartyName) ||
-        a.name.localeCompare(b.name),
-    );
+    const byPerson = (a: AppointmentSearchResult, b: AppointmentSearchResult) =>
+      a.counterpartyName.localeCompare(b.counterpartyName) ||
+      a.name.localeCompare(b.name);
+
+    let ordered: AppointmentSearchResult[];
+    if (peopleOnly && !query) {
+      // Nothing was typed, so keep the newest connections under the cap and only
+      // then list them by name. Sorting by name first cut off recent people late
+      // in the alphabet.
+      ordered = limitByChannel(
+        results.sort((a, b) => (bookedAt.get(b) ?? 0) - (bookedAt.get(a) ?? 0)),
+        PEOPLE_MAX_CHANNELS,
+      ).sort(byPerson);
+    } else {
+      // Best match first, then by person and title. `sort` is stable.
+      const searchedByDate = days.length > 0;
+      results.sort(
+        (a, b) =>
+          matchRank(a, query, searchedByDate) -
+            matchRank(b, query, searchedByDate) || byPerson(a, b),
+      );
+      ordered = limitByChannel(
+        results,
+        peopleOnly ? PEOPLE_MAX_CHANNELS : MAX_CHANNELS,
+      );
+    }
 
     // Parsed on the way out: the dropdown derives its type from this schema, so
     // a field renamed here fails at the boundary rather than rendering blank.
     return NextResponse.json(
-      AppointmentSearchResultSchema.array().parse(
-        limitByChannel(
-          results,
-          peopleOnly ? PEOPLE_MAX_CHANNELS : MAX_CHANNELS,
-        ),
-      ),
+      AppointmentSearchResultSchema.array().parse(ordered),
     );
   } catch (error) {
     Sentry.captureException(

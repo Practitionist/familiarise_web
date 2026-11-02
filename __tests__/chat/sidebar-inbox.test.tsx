@@ -13,6 +13,12 @@ import {
 
 type Handler = (event: Record<string, unknown>) => void;
 
+type FixtureMessage = {
+  text?: string;
+  created_at?: string;
+  user?: { id: string };
+};
+
 function dm(id: string, name: string, pinnedAt: string | null = null) {
   return {
     cid: `messaging:${id}`,
@@ -20,7 +26,7 @@ function dm(id: string, name: string, pinnedAt: string | null = null) {
     id,
     data: {},
     state: {
-      messages: [],
+      messages: [] as FixtureMessage[],
       members: {
         me: { user: { id: "me", name: "Me" } },
         [id]: { user: { id, name } },
@@ -30,6 +36,7 @@ function dm(id: string, name: string, pinnedAt: string | null = null) {
     initialized: true,
     countUnread: () => 0,
     watch: jest.fn(() => Promise.resolve()),
+    on: () => ({ unsubscribe: () => undefined }),
   };
 }
 
@@ -39,10 +46,11 @@ function team(id: string, name: string) {
     type: "team",
     id,
     data: { name },
-    state: { messages: [], members: {}, membership: {} },
+    state: { messages: [] as FixtureMessage[], members: {}, membership: {} },
     initialized: true,
     countUnread: () => 0,
     watch: jest.fn(() => Promise.resolve()),
+    on: () => ({ unsubscribe: () => undefined }),
   };
 }
 
@@ -52,7 +60,11 @@ const mockClient = {
   userID: "me",
   queryChannels: jest.fn(),
   channel: jest.fn(),
-  on: (handler: Handler) => handlers.add(handler),
+  // The real client takes `on(handler)` or `on(type, handler)`; only the first is tracked.
+  on: (...args: unknown[]) => {
+    if (typeof args[0] === "function") handlers.add(args[0] as Handler);
+    return { unsubscribe: () => undefined };
+  },
   off: (handler: Handler) => handlers.delete(handler),
 };
 
@@ -122,6 +134,14 @@ beforeEach(() => {
   mockClient.queryChannels.mockImplementation(
     async (filter: { type: string }) =>
       filter.type === "team" ? [beginner, workshop] : [karen, liam, asha],
+  );
+  // As the real client does, hand back the instance it already holds.
+  const held = new Map(
+    [karen, liam, asha, beginner, workshop].map((c) => [c.cid, c]),
+  );
+  mockClient.channel.mockReset();
+  mockClient.channel.mockImplementation((type: string, id: string) =>
+    held.get(`${type}:${id}`),
   );
   fetchMock = jest.fn(async () => ({ ok: true, json: async () => ({}) }));
   global.fetch = fetchMock as unknown as typeof fetch;
@@ -349,5 +369,46 @@ describe("a hidden thread shown again", () => {
     });
 
     await waitFor(() => expect(rows(container)).toContain("Karen Two"));
+  });
+});
+
+describe("live updates", () => {
+  // Stream sends `message.new` for a channel the client is watching with the
+  // ids only (`cid`, `channel_type`, `channel_id`); only `notification.*`
+  // events carry a `channel` object. An open thread is always watched.
+  const incoming = (id: string, text: string) => {
+    const at = new Date().toISOString();
+    return {
+      text,
+      at,
+      event: {
+        type: "message.new",
+        cid: `messaging:${id}`,
+        channel_type: "messaging",
+        channel_id: id,
+        message: { created_at: at },
+      },
+    };
+  };
+
+  it("moves a conversation up and shows its new message when the event carries only channel ids", async () => {
+    const { container } = render(<ChatSidebar />);
+    await loaded(container);
+    const { text, at, event } = incoming("liam", "see you at five");
+    // By the time a listener runs, the SDK has already put the message in state.
+    liam.state.messages.push({ text, created_at: at, user: { id: "liam" } });
+
+    await act(async () => {
+      handlers.forEach((h) => h(event));
+      await Promise.resolve();
+    });
+
+    // Asha stays first because she is pinned; Liam now leads the rest.
+    expect(rows(container).slice(0, 3)).toEqual([
+      "Asha Rao",
+      "Liam Anderson",
+      "Karen Anderson",
+    ]);
+    expect(container.textContent).toContain("see you at five");
   });
 });

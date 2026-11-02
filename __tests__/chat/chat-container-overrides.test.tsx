@@ -10,7 +10,8 @@ let mockPhase: string | null = "NORMAL";
 let mockOverrides: Record<string, React.ComponentType> | undefined;
 let mockMessages: { id: string; user?: { id: string } }[] = [];
 let mockListed: unknown;
-let mockStateChannel: { type: string; data?: { frozen?: boolean } } | undefined;
+let mockStateChannel:
+  { type: string; id?: string; data?: { frozen?: boolean } } | undefined;
 
 const mockChannel = {
   type: "messaging",
@@ -103,6 +104,10 @@ jest.mock("../../components/stream/StreamErrorBoundary", () => {
 });
 jest.mock("../../lib/stream-channel-ids", () => ({
   isEventChannel: () => false,
+  parseEventChannelId: (id: string) =>
+    id.startsWith("class-")
+      ? { eventType: "class", eventId: id.slice("class-".length) }
+      : null,
 }));
 jest.mock("../../components/dashboard/DataCard", () => ({
   EmptyState: () => null,
@@ -204,5 +209,35 @@ describe("ChatContainer", () => {
 
     expect(screen.getByTestId("message-composer")).toBeTruthy();
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  describe("the empty state of an event channel", () => {
+    const EmptyState = () => {
+      render(<ChatContainer />);
+      const Component =
+        mockOverrides?.EmptyStateIndicator as React.ComponentType<{
+          listType: string;
+        }>;
+      return render(<Component listType="message" />);
+    };
+
+    it("invites the first message in a live class channel", () => {
+      mockStateChannel = { type: "team", id: "class-1", data: {} };
+      EmptyState();
+      expect(screen.getByText("Say hello to your class")).toBeTruthy();
+    });
+
+    it("does not invite one in a frozen class channel", () => {
+      mockStateChannel = {
+        type: "team",
+        id: "class-1",
+        data: { frozen: true },
+      };
+      EmptyState();
+      expect(screen.queryByText("Say hello to your class")).toBeNull();
+      expect(
+        screen.getByText("No messages were sent in this channel."),
+      ).toBeTruthy();
+    });
   });
 });

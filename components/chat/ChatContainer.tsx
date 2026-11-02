@@ -51,6 +51,14 @@ const ChannelEmptyState = (props: EmptyStateIndicatorProps) => {
   if (!event || props.listType !== "message") {
     return <EmptyStateIndicator {...props} />;
   }
+  // Nothing can be sent to a frozen channel, so do not invite the first message.
+  if (channel.data?.frozen) {
+    return (
+      <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
+        No messages were sent in this channel.
+      </div>
+    );
+  }
   return (
     <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
       {event.eventType === "class"

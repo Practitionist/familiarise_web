@@ -246,6 +246,24 @@ it("returns an existing DM holding both people without upserting or creating", a
   expect(mockAddMembers).not.toHaveBeenCalled();
 });
 
+describe("a DM the caller hid but never left", () => {
+  // Hidden is per user, and Stream's server-side read still returns a hidden
+  // DM, so it is always "ready": both people are in it and nothing needs creating.
+  it("shows the thread before handing it back, without creating or re-adding", async () => {
+    const res = await openDm({});
+    expect(res.status).toBe(200);
+    expect(mockShow).toHaveBeenCalledTimes(1);
+    expect(mockShow).toHaveBeenCalledWith("consultee-u");
+    expect(mockCreateDm).not.toHaveBeenCalled();
+    expect(mockAddMembers).not.toHaveBeenCalled();
+  });
+
+  it("still opens when showing it fails", async () => {
+    mockShow.mockRejectedValueOnce(new Error("stream down"));
+    expect((await openDm({})).status).toBe(200);
+  });
+});
+
 it("creates the DM when it is missing or lacks the other person", async () => {
   mockChannelExists = false;
   expect((await openDm({})).status).toBe(200);

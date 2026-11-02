@@ -48,9 +48,11 @@ function consultation(opts: {
   consultant: Person;
   consultee: Person;
   startsAt?: Date;
+  createdAt?: Date;
 }) {
   return {
     id: opts.id,
+    createdAt: opts.createdAt ?? new Date("2026-01-01T00:00:00Z"),
     consultationPlan: {
       title: opts.title ?? "Career plan",
       organizationId: null,
@@ -525,5 +527,52 @@ describe("people mode (the New message picker)", () => {
     expect(mockConsultations).not.toHaveBeenCalled();
     await search({ q: "karen", mode: "bogus" });
     expect(mockWebinars).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the newest fifty connections, then lists them by name", async () => {
+    // Person 00 is first alphabetically but the OLDEST booking; person 59 is the newest.
+    mockConsultations.mockResolvedValue(
+      Array.from({ length: 60 }, (_, i) =>
+        consultation({
+          id: `c${i}`,
+          consultant: {
+            id: `p${i}`,
+            name: `Person ${String(i).padStart(2, "0")}`,
+          },
+          consultee: VIEWER,
+          createdAt: new Date(Date.UTC(2026, 0, 1, 0, i)),
+        }),
+      ),
+    );
+    const { body } = await search({ mode: "people" });
+    const names = body.map(
+      (r: { counterpartyName: string }) => r.counterpartyName,
+    );
+
+    expect(names).toHaveLength(50);
+    // The ten oldest (00 to 09) are the ones cut, not the ones late in the alphabet.
+    expect(names[0]).toBe("Person 10");
+    expect(names[49]).toBe("Person 59");
+    expect(names).toEqual([...names].sort());
+  });
+
+  it("still ranks by match once text is typed", async () => {
+    mockConsultations.mockResolvedValue([
+      consultation({
+        id: "old",
+        consultant: { id: "a", name: "Rahul Das" },
+        consultee: VIEWER,
+        createdAt: new Date("2020-01-01T00:00:00Z"),
+      }),
+      consultation({
+        id: "new",
+        consultant: { id: "b", name: "Frank Lee" },
+        consultee: VIEWER,
+        createdAt: new Date("2026-06-01T00:00:00Z"),
+      }),
+    ]);
+    const { body } = await search({ mode: "people", q: "ra" });
+    // Rahul starts with "ra", Frank only contains it: rank, not recency, decides.
+    expect(body.map((r: { id: string }) => r.id)).toEqual(["old", "new"]);
   });
 });

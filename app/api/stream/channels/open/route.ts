@@ -272,9 +272,16 @@ async function handleDmChannelOpen(
           () => false,
         );
   if (ready) {
+    const readyChannelId = getDmChannelId(
+      userId,
+      counterpartyUserId,
+      organizationId,
+    );
+    // A DM the caller only hid still holds both people, so it lands here: show it.
+    await showForCaller("messaging", readyChannelId, userId);
     return NextResponse.json({
       channelType: "messaging",
-      channelId: getDmChannelId(userId, counterpartyUserId, organizationId),
+      channelId: readyChannelId,
     });
   }
 

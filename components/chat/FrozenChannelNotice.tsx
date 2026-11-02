@@ -14,15 +14,12 @@ export const FrozenChannelNotice = ({
 }: {
   channelType: string;
 }) => (
-  <div
-    role="status"
-    className="flex items-center justify-center gap-2 border-t border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground"
-  >
+  <output className="flex items-center justify-center gap-2 border-t border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
     <LockIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
     <span>
       {channelType === "messaging"
         ? "This conversation is read-only. It reopens when you book a session together again."
         : "This channel is read-only. Its session has ended."}
     </span>
-  </div>
+  </output>
 );

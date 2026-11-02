@@ -24,6 +24,60 @@ import {
 } from "./ConversationResult";
 import { useOpenConversation } from "./useOpenConversation";
 
+/** The dialog's list: loading, failed, empty, or the people. One state at a time. */
+const PeopleList = ({
+  loadError,
+  isPending,
+  people,
+  term,
+  onPick,
+}: {
+  loadError: boolean;
+  isPending: boolean;
+  people: GroupedConversation[];
+  term: string;
+  onPick: (person: GroupedConversation) => void;
+}) => {
+  if (loadError) {
+    return (
+      <p className="p-4 text-center text-sm text-destructive">
+        People could not be loaded. Please try again.
+      </p>
+    );
+  }
+  if (isPending) {
+    return (
+      <div className="space-y-3 p-3">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="flex items-center gap-3">
+            <Skeleton className="h-10 w-10 shrink-0 rounded-full" />
+            <div className="flex-1 space-y-1.5">
+              <Skeleton className="h-3 w-1/2" />
+              <Skeleton className="h-2.5 w-1/3" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (people.length === 0) {
+    return (
+      <p className="p-4 text-center text-sm text-muted-foreground">
+        {term
+          ? `No one matches \u201c${term}\u201d.`
+          : "No one to message yet. A conversation opens once you book a session."}
+      </p>
+    );
+  }
+  return people.map((person) => (
+    <ConversationResultRow
+      key={person.channelId}
+      conversation={person}
+      onClick={() => onPick(person)}
+    />
+  ));
+};
+
 /**
  * "New message": the people you can message, for when you have forgotten the name
  * or the conversation is not in your list.
@@ -130,6 +184,8 @@ export const NewMessageDialog = ({
           size="sm"
           aria-label="New message"
           title="New message"
+          // The dialog marks the page behind it aria-hidden; nothing there may hold focus.
+          onClick={() => (document.activeElement as HTMLElement | null)?.blur()}
           className="p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <PlusIcon className="h-4 w-4" />
@@ -154,43 +210,19 @@ export const NewMessageDialog = ({
         />
 
         {openError && (
-          <p role="status" className="text-sm text-muted-foreground">
+          <output className="block text-sm text-muted-foreground">
             {openError}
-          </p>
+          </output>
         )}
 
         <div className="max-h-[50vh] overflow-auto rounded-md border border-border">
-          {loadError ? (
-            <p className="p-4 text-center text-sm text-destructive">
-              People could not be loaded. Please try again.
-            </p>
-          ) : isPending ? (
-            <div className="space-y-3 p-3">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <Skeleton className="h-10 w-10 shrink-0 rounded-full" />
-                  <div className="flex-1 space-y-1.5">
-                    <Skeleton className="h-3 w-1/2" />
-                    <Skeleton className="h-2.5 w-1/3" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : people.length === 0 ? (
-            <p className="p-4 text-center text-sm text-muted-foreground">
-              {debouncedTerm
-                ? `No one matches “${debouncedTerm}”.`
-                : "No one to message yet. A conversation opens once you book a session."}
-            </p>
-          ) : (
-            people.map((person) => (
-              <ConversationResultRow
-                key={person.channelId}
-                conversation={person}
-                onClick={() => void handlePick(person)}
-              />
-            ))
-          )}
+          <PeopleList
+            loadError={loadError}
+            isPending={isPending}
+            people={people}
+            term={debouncedTerm}
+            onPick={(person) => void handlePick(person)}
+          />
         </div>
       </ResponsiveModalContent>
     </ResponsiveModal>

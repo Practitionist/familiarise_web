@@ -76,6 +76,20 @@ async function updateConversationPreference(
   if (!response.ok) throw new Error("Preference update failed");
 }
 
+/** What an empty Conversations list says, by who is looking and where. */
+function noConversationsMessage(
+  inOrganization: boolean,
+  isConsultant: boolean,
+) {
+  if (inOrganization) {
+    return "No conversations yet. Threads appear here once you're part of a session in this organization.";
+  }
+  if (isConsultant) {
+    return "No conversations yet. Conversations will appear here once clients book sessions.";
+  }
+  return "No conversations yet. Book a consultation to start chatting.";
+}
+
 type OrgScope = ReturnType<typeof useOrgScope>["scope"];
 
 function doesChannelMatchScope(ch: unknown, currentScope: OrgScope): boolean {
@@ -655,9 +669,15 @@ export const ChatSidebar = () => {
     };
 
     const handleChannelActivity = (event: Event) => {
-      if (!event.channel) return;
-      const targetCid =
-        event.channel.cid || `${event.channel.type}:${event.channel.id}`;
+      // `notification.*` events carry a `channel`; `message.new` for a channel the
+      // client is watching, which every open thread is, carries only its ids.
+      const target =
+        event.channel ??
+        (event.channel_type && event.channel_id
+          ? { type: event.channel_type, id: event.channel_id, cid: event.cid }
+          : null);
+      if (!target) return;
+      const targetCid = target.cid || `${target.type}:${target.id}`;
       const isNewMessage =
         event.type === "message.new" ||
         event.type === "notification.message_new";
@@ -668,13 +688,12 @@ export const ChatSidebar = () => {
         fetchedKeyRef.current !== null &&
         !listedCidsRef.current.has(targetCid)
       ) {
-        void addChannelToLists(event.channel);
+        // Listing needs the channel's data to check its scope, which only the
+        // `channel` form of the event carries.
+        if (event.channel) void addChannelToLists(event.channel);
         return;
       }
-      const updatedChannel = client.channel(
-        event.channel.type,
-        event.channel.id,
-      );
+      const updatedChannel = client.channel(target.type, target.id);
       const updateList = (prev: Channel[]) =>
         sortUpdatedChannels(
           prev.map((ch) => (ch.cid === targetCid ? updatedChannel : ch)),
@@ -683,9 +702,9 @@ export const ChatSidebar = () => {
           event.message?.created_at,
         );
 
-      if (event.channel.type === "team") {
+      if (target.type === "team") {
         setTeamChannels(updateList);
-      } else if (event.channel.type === "messaging") {
+      } else if (target.type === "messaging") {
         setDirectMessages(updateList);
       }
     };
@@ -720,7 +739,7 @@ export const ChatSidebar = () => {
         return;
       }
       if (
-        event.channel &&
+        (event.channel || event.channel_id) &&
         (event.type === "message.new" ||
           event.type === "notification.message_new" ||
           event.type === "message.read" ||
@@ -1069,11 +1088,10 @@ export const ChatSidebar = () => {
               directMessages.length === 0 &&
               !hasMoreDMChannels && (
                 <div className="p-4 text-center text-muted-foreground text-sm">
-                  {scopeOrgId(scope)
-                    ? "No conversations yet. Threads appear here once you're part of a session in this organization."
-                    : isConsultant
-                      ? "No conversations yet. Conversations will appear here once clients book sessions."
-                      : "No conversations yet. Book a consultation to start chatting."}
+                  {noConversationsMessage(
+                    Boolean(scopeOrgId(scope)),
+                    isConsultant,
+                  )}
                 </div>
               )}
 

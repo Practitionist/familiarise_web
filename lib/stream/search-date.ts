@@ -97,6 +97,23 @@ function today(now: Date, timeZone: string): Ymd {
   return { y, m, d };
 }
 
+/** The month word, day and optional year of "3 nov [2026]" or "nov 3 [2026]". */
+function dateParts(text: string): {
+  month?: string;
+  day?: string;
+  year?: string;
+} {
+  const dayFirst = DAY_FIRST.exec(text);
+  if (dayFirst) {
+    return { day: dayFirst[1], month: dayFirst[2], year: dayFirst[3] };
+  }
+  const monthFirst = MONTH_FIRST.exec(text);
+  if (monthFirst) {
+    return { month: monthFirst[1], day: monthFirst[2], year: monthFirst[3] };
+  }
+  return {};
+}
+
 /**
  * The days `term` names, or `[]` when it is not a date.
  *
@@ -130,13 +147,7 @@ export function parseSearchDays(
     return isRealDay(day) ? [dayRange(day, timeZone)] : [];
   }
 
-  const dayFirst = DAY_FIRST.exec(text);
-  const monthFirst = dayFirst ? null : MONTH_FIRST.exec(text);
-  const [monthWord, dayWord, yearWord] = dayFirst
-    ? [dayFirst[2], dayFirst[1], dayFirst[3]]
-    : monthFirst
-      ? [monthFirst[1], monthFirst[2], monthFirst[3]]
-      : [];
+  const { month: monthWord, day: dayWord, year: yearWord } = dateParts(text);
   const month =
     monthWord && Object.hasOwn(MONTHS, monthWord)
       ? MONTHS[monthWord]

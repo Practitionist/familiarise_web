@@ -214,7 +214,8 @@ Addendum (2026-10-30): the Messages search offers exactly what `/open` accepts.
 this it listed trial bookings that `/open` refused with a 403. It matches only the
 _other_ party: a consultee's query reaches the consultant's name, a consultant's
 reaches the consultee's name or email, and a consultee never matches or sees a
-consultant's email. It also matches plan title, an event host's name and the
+consultant's email through this route. (Stream's own channel payload still carries
+member emails to other members; that is tracked in issue #2525.) It also matches plan title, an event host's name and the
 calendar day of a live session (`lib/stream/search-date.ts`, in the viewer's zone
 from the `tz` parameter). The sidebar narrows its loaded chats from the same term in
 the browser, and the dropdown leaves out rows that list already shows. Message-text
@@ -224,7 +225,9 @@ Leaving or deleting a thread never ends the connection. `POST /api/stream/channe
 re-adds both people to the pair's existing DM (idempotent for anyone already in) and
 shows it again if the caller had hidden it, so searching for them and clicking restores
 the same thread with its history; the amendment above relies on this as the recovery
-path. There is no leaving a 1:1 and no partial history clear, by choice: a thread is one
+path. Search and the picker offer only people the viewer shares a consultation or
+subscription with, so a DM that exists only through a webinar or class link is not
+offered after a removal and returns with its next message or a deep link. There is no leaving a 1:1 and no partial history clear, by choice: a thread is one
 shared record. "Remove from list" is a per-user hide that keeps the history and returns
 on the next message, and pinning is per user too. Both run server-side through
 `POST /api/stream/channels/preference`, gated on the caller being a member. Conversations

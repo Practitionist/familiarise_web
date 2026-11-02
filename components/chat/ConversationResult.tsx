@@ -88,6 +88,11 @@ export function groupConversations(
   return Array.from(byChannel.values());
 }
 
+function kindLabel({ hasConsultation, hasSubscription }: GroupedConversation) {
+  if (hasConsultation && hasSubscription) return "Consultation & Subscription";
+  return hasConsultation ? "Consultation" : "Subscription";
+}
+
 /** A person you can open a conversation with: who, why they matched, and when you next meet. */
 export const ConversationResultRow = ({
   conversation,
@@ -126,11 +131,7 @@ export const ConversationResultRow = ({
         <div className="flex items-center gap-1 mt-1">
           <UserIcon className="w-3 h-3 text-muted-foreground" />
           <span className="text-xs text-muted-foreground">
-            {conversation.hasConsultation && conversation.hasSubscription
-              ? "Consultation & Subscription"
-              : conversation.hasConsultation
-                ? "Consultation"
-                : "Subscription"}
+            {kindLabel(conversation)}
           </span>
         </div>
 
