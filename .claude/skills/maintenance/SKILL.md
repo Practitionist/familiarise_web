@@ -26,7 +26,12 @@ inventory with `npm run cron:reference` and verify `npm run cron:reference:check
 The catalog has no worker, database or environment imports. Every target's
 freshness budget for `/api/health/jobs` is derived from it
 (`lib/cron/operational-health.ts`), so a new target is absence-monitored the
-moment it is scheduled; never hand-list a budget. Its twelve-target figure
+moment it is scheduled; never hand-list a budget. Every target writes a run row
+(`jobNameFor` never returns `null`), and `checkJobCoverage` (`lib/cron/job-coverage.ts`)
+fails `npm run build` when a registry job has no target or `MANUAL_ONLY` reason, or a
+target has no requirement. The daily `ops-digest` target (03:50 UTC) emails the
+operations digest and feeds the release-lag and standing-skip verdicts of that probe
+(`docs/decisions/2026-11-02-reliable-jobs-digest-and-release-lag.md`). Its twelve-target figure
 (`MAX_TARGETS_PER_TICK`) is a tested design bound; at runtime `capToTick` applies it to the targets left after idle
 skips, and the busiest tick holds 11. No Actions workflow schedules a registry job, so a job with
 no ticker target runs nowhere.
@@ -172,7 +177,7 @@ For plan-material commits, check session, rate limit, current plan-management ac
 
 ## Ticker capacity, state ownership and the scale path
 
-- **Capacity.** The ticker has 288 ticks a day × `MAX_TARGETS_PER_TICK` (12) = 3,456 slots. All 77 registered jobs now run on it and use about 2,897 starts a day (about 84 %); the busiest tick has 11 targets and the cadence test pins that at 11 or fewer, so every tick keeps one free slot. Before adding a job, check that a slot exists in its window, or bundle it. The growth limit is database connections (one per function instance), not the tick's 30 seconds. The trigger for leaving the Netlify ticker is a tick that would need a 13th slot, p99 ticks above 24 s, or pooler pressure; the decided path is the Vercel `bom1` trial below.
+- **Capacity.** The ticker has 288 ticks a day × `MAX_TARGETS_PER_TICK` (12) = 3,456 slots. All 80 registered jobs now run on it and use about 2,900 starts on a typical weekday (about 85 %); the busiest tick has 11 targets and the cadence test pins that at 11 or fewer, so every tick keeps one free slot. Before adding a job, check that a slot exists in its window, or bundle it. The growth limit is database connections (one per function instance), not the tick's 30 seconds. The trigger for leaving the Netlify ticker is a tick that would need a 13th slot, p99 ticks above 24 s, or pooler pressure; the decided path is the Vercel `bom1` trial below.
 - **Jobs are slices, not long runs.** Each run takes a `?limit=`, a 16-second deadline, a saved cursor and a 90-second lease. Long work goes to a background function. A crashed run's lease expires and the next run takes over.
 - **State ownership.** Jobs may touch the same rows. Correctness comes from the database, not from job order: CAS status writes, Serializable retry, constraints and triggers, and gateway idempotency keys. A new writer of a status column must appear in the state ownership matrix (#2466), and `result.counters.casMiss` is the live signal for contention.
 - **Off production, jobs refuse.** `cleanupRoute` calls `jobsMayRunHere()` (`lib/cron/dispatch-refusal.ts`) after the bearer check and before the maintenance guard, for the `/api/cleanup/[job]` door and the admin Run door (`POST /api/admin/system-jobs/run`, which calls `handlers.invoke`). A preview or branch deploy answers 409 `JOB_RUN_PRODUCTION_ONLY` (`JobRunRefusedError`, run-row reason `job-run-production-only`) with `X-Run-Outcome: refused`, one zero-duration `CANCELLED` row and no Sentry event; the System Jobs panel shows a non-error toast. The money console's batch doors (`/api/admin/reconcile/[job]`, `/api/admin/reconcile-ledgers`) answer the same code through `OpsRefusal`. Background dispatch still refuses with `BACKGROUND_DISPATCH_PRODUCTION_ONLY`; both extend `ProductionOnlyRefusal`. The admin door's `manualRun: "after"` path (payout jobs) is used only when `jobsMayRunHere()`, so a refusal answers inline instead of 202. Local `next dev` and jest still run jobs.

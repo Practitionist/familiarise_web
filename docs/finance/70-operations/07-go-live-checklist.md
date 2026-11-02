@@ -21,6 +21,7 @@ Use this page to take the money subsystem from sandbox to real money: first the 
 
 ### 1.2 Keys and the test-key guard
 
+- Before the live keys go in, the daily ops digest reads clean ([Part 3](#part-3-the-daily-ops-digest-reads-clean)). Live collection keys are what turn a standing config skip into a page.
 - `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` hold the live pair (`rzp_live_...`). `NEXT_PUBLIC_RAZORPAY_KEY_ID` holds the same key id. A secret is never given a `NEXT_PUBLIC_` prefix.
 - `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` is deleted from production. While it is unset, `lib/payments/core/razorpay.ts` throws `RAZORPAY_TEST_KEY_IN_PRODUCTION` at boot if a test key ever reaches production; set to `true` it only logs, which is for a pre-launch deploy that must not move money.
 - `RAZORPAY_WEBHOOK_SECRET` holds the live payment-webhook secret.
@@ -95,7 +96,15 @@ flowchart TD
 - **Monitoring is on:** `handle-stuck-payouts` and the webhook sweep report to Sentry, and a Sentry alert exists for them.
 - **Better Stack launch plan is bought.** Until launch Better Stack stays on the free plan (3-day logs, email and Slack alerts). At launch buy the responder seat (phone and SMS, about $29 to $34 a month) and the Telemetry Nano bundle (30-day retention, about $25 a month billed yearly, EU region), then add phone and SMS to the four money backlog alerts (`refundsOwed`, `payoutsStuck`, `dunningNotices`, `disputesDue`) described in the [Better Stack setup guide](../../maintenance/00-betterstack-setup.md#owner-step-the-oldest-pending-age-alerts).
 - **The job-freshness monitor exists and is green.** A Better Stack uptime monitor polls `https://familiarisenow.com/api/health/jobs` every 5 minutes with `Authorization: Bearer <CRON_SECRET>` and alerts on any non-2xx status (keyword `"healthy":false` as a belt). Create it now rather than at launch, by following the [runbook](../../maintenance/00-betterstack-setup.md#runbook-create-the-better-stack-monitor-owner-step); at launch confirm it shows Up and that its body reads `"healthy":true`.
-- **Better Stack backlog alerts are unmuted.** The freshness alert and the seven backlog alerts are created muted before launch, because seeded and QA money rows on the shared database would fire them. Unmute them after the go-live data reset, once every money gauge in the latest `cron-tick summary` event reads zero.
+- **Better Stack backlog alerts are unmuted.** The freshness alert and the seven backlog alerts are created muted before launch, because seeded and QA money rows on the shared database would fire them. Unmute them after the go-live data reset, once every money gauge in the latest `cron-tick summary` event reads zero. The digest cannot see these Telemetry alerts, so tick each one off here:
+  - [ ] `Ticker telemetry stale` (the tick-summary freshness alert)
+  - [ ] `Backlog: refundsOwed`
+  - [ ] `Backlog: payoutsStuck`
+  - [ ] `Backlog: dunningNotices`
+  - [ ] `Backlog: disputesDue`
+  - [ ] `Backlog: webhookEvents`
+  - [ ] `Backlog: emailRetries`
+  - [ ] `Backlog: notificationRetries`
 
 ### 2.2 Sandbox proof
 
@@ -109,6 +118,17 @@ Run `npx tsx scripts/smoke/org-payout-sandbox-smoke.ts` with a RazorpayX test ke
 4. Run `reconcile-ledgers` and expect no unbaselined findings, then release the held payouts.
 
 **Rollback:** set the flag to `false` and redeploy. New runs stop submitting; payouts already submitted keep settling through their webhooks, because a transfer cannot be un-sent. A wrong disbursement is recovered by the clawback path, which nets the amount against the payee's future payouts; see [organisation payouts and clawbacks](../40-payouts/05-org-payouts-and-clawbacks.md). A row stuck in `PROCESSING` with no terminal webhook is polled by `handle-stuck-payouts`.
+
+## Part 3: the daily ops digest reads clean
+
+The [daily ops digest](../../maintenance/00-betterstack-setup.md#daily-ops-digest-and-its-heartbeat) lists everything that is parked, held or muted. Before the first live key, its latest email must show:
+
+- **Zero standing config skips.** The "Config skips" section is empty. Once `RAZORPAY_KEY_ID` is live, any paging job that has skipped for a missing setting for more than 7 days makes `/api/health/jobs` answer 503 (`STANDING_CONFIG_SKIP`) at once, and the streak usually started weeks earlier. Set each missing setting (typically `PLATFORM_GSTIN`), redeploy, run the skipping jobs and then `ops-digest` from the System Jobs page, and confirm the section is empty.
+- **No paused or muted Better Stack monitor or heartbeat.** For each one the "Better Stack" section lists, unmute it or resume it, and record the date here:
+  - [ ] every monitor and heartbeat in the digest's "Better Stack" section is active (list each by name in the cutover issue)
+- **`EMAIL_DELIVERY_MODE=live`.** The "Settings" line reads `EMAIL_DELIVERY_MODE: live`. Any other value holds every email to a domain other than ours and the allowlist; the "Held email" line counts what it held in the last 24 hours.
+- **The digest heartbeat and the second watcher exist.** The "ops digest" Better Stack heartbeat is Up, and the Sentry uptime monitor on `/api/health/jobs` shows a recent successful check.
+- **Release lag is known.** The "Release lag" section names a commit count rather than "Unknown", so `BUILD_SHA` and `GITHUB_RELEASE_LAG_TOKEN` are in place.
 
 ## Where in code
 

@@ -290,20 +290,9 @@ export function bucketFor(
 }
 
 /**
- * #1868 — which failed targets are reported to Sentry itself.
- *
- * The Sentry ingest canary is excluded. An unhealthy canary answers 503 with
- * no `phase`, so `bucketFor` files it under `failed`, and `alertFailedTargets`
- * reports to Sentry — the very system whose outage the canary just detected.
- * During a quota outage that is one event per tick that can never arrive; after
- * recovery, one more per tick spent from the allowance being protected. A
- * monitor that reports its own failure through the failing system is not a
- * monitor.
- *
- * The canary is still counted as failed: it stays in the HTTP status and the
- * response body, so a 503 remains visible in the tick's output and the job
- * history. Only the Sentry report is suppressed, and the email alert — which
- * fails open, so this same outage cannot silence it — carries the signal.
+ * Which failed targets are reported to Sentry itself. The ingest canary is
+ * excluded: its unhealthy verdict is a 207 finding, and a crashed canary is
+ * caught by the freshness probe, never by the system whose ingest it checks.
  */
 export function reportableToSentry(name: string): boolean {
   return name !== "sentry-ingest-canary";

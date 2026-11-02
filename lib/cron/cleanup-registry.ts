@@ -1226,6 +1226,36 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       }),
   },
 
+  // @cleanup-twin ops-digest
+  "ops-digest": {
+    meta: {
+      title: "Daily ops digest",
+      description:
+        "Email the daily operations digest to the observability inbox, then ping its Better Stack heartbeat",
+      category: "Alerts",
+      manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Sent every day: its arrival is the signal.",
+    },
+    build: () =>
+      cleanupRoute({
+        job: "ops-digest",
+        run: async () => {
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
+          const { runOpsDigest } =
+            await import("@/lib/observability/ops-digest");
+          // Fail-open: read-only, and a repeat costs one extra email.
+          return withCronLock("ops-digest", { failMode: "open" }, () =>
+            runOpsDigest(),
+          );
+        },
+        status: (r) => (r.success ? 200 : 500),
+        items: () => ({ processed: 1 }),
+        failureMessage: "Failed to build the daily ops digest",
+      }),
+  },
+
   // @cleanup-twin process-data-exports
   "process-data-exports": {
     meta: {
@@ -2289,7 +2319,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      alwaysRun: "A time-based check of Sentry's ingest outcomes; no rows.",
+      alwaysRun:
+        "A time-based check of Sentry's ingest outcomes; no queue to probe.",
     },
     build: () =>
       cleanupRoute({
@@ -2301,29 +2332,40 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             reportConfigSkip("sentry-ingest-canary", skipped);
             return { healthy: true, skipped };
           }
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
           const { checkSentryIngest, describeIngest, isIngestHealthy } =
             await import("@/lib/observability/ingest-canary");
           const { sendSentryIngestAlert } =
             await import("@/lib/observability/ingest-alert");
           const { checkSentryQuota } =
             await import("@/lib/observability/quota-alert");
-          const check = await checkSentryIngest(token);
-          const healthy = isIngestHealthy(check);
-          const alerted = healthy ? false : await sendSentryIngestAlert(check);
-          // After the page: the 70% warning must not spend the ceiling ahead of it.
-          const quota = await checkSentryQuota();
-          return {
-            healthy,
-            verdict: check.verdict,
-            accepted: check.accepted,
-            rejections: check.rejections,
-            alerted,
-            detail: describeIngest(check),
-            quota,
-          };
+          // Fail-open: a read-only vendor probe whose repeat costs one stats read.
+          return withCronLock(
+            "sentry-ingest-canary",
+            { failMode: "open" },
+            async () => {
+              const check = await checkSentryIngest(token);
+              const healthy = isIngestHealthy(check);
+              const alerted = healthy
+                ? false
+                : await sendSentryIngestAlert(check);
+              // After the page: the 70% warning must not spend the ceiling ahead of it.
+              const quota = await checkSentryQuota();
+              return {
+                healthy,
+                verdict: check.verdict,
+                accepted: check.accepted,
+                rejections: check.rejections,
+                alerted,
+                detail: describeIngest(check),
+                quota,
+              };
+            },
+          );
         },
-        status: (result) => (result.healthy ? 200 : 503),
-        items: (r) => ({ processed: 1, errors: r.healthy ? 0 : 1 }),
+        // An unhealthy verdict is a finding with its own email; the run still counts as ran.
+        needsAttention: (result) => !result.healthy,
+        items: () => ({ processed: 1 }),
         failureMessage:
           "The Sentry ingest canary route failed to run. This is a fault in the canary, not a verdict about Sentry.",
       }),
@@ -2489,9 +2531,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       cleanupRoute({
         job: "stream-control-plane-drift",
         run: async () => {
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
           const { detectStreamControlPlaneDrift } =
             await import("@/lib/stream/control-plane-drift");
-          return detectStreamControlPlaneDrift();
+          // Fail-open: the detector only reads Stream settings.
+          return withCronLock(
+            "stream-control-plane-drift",
+            { failMode: "open" },
+            () => detectStreamControlPlaneDrift(),
+          );
         },
         summarize: (r) => ({
           drifted: r.drifted,

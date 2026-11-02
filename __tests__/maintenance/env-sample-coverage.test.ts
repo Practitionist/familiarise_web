@@ -57,6 +57,7 @@ const PLATFORM_KEYS = [
   "DEPLOY_PRIME_URL",
   "URL",
   "SITE_ID",
+  "COMMIT_REF",
   "BRANCH",
   "CI",
   "NEXT_PHASE",

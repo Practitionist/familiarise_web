@@ -370,7 +370,7 @@ export async function generateCronReference(root = ROOT): Promise<string> {
       );
       const budget = freshness
         ? `<br>Freshness: ${freshness.maxAgeMinutes} min; ${freshness.tier}`
-        : "<br>Freshness: not judged (writes no run row)";
+        : "";
       owners.unshift(
         `Ticker: every ${schedule.everyMinutes} min; offset ${schedule.offsetMinutes} min${window}${budget}`,
       );

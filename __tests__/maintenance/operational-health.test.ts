@@ -5,9 +5,13 @@ import {
   assessOperationalCompletions,
   OPERATIONAL_COMPLETION_REQUIREMENTS,
 } from "../../lib/cron/operational-health";
+import { checkJobCoverage } from "../../lib/cron/job-coverage";
+import {
+  unknownReleaseLag,
+  type ReleaseLag,
+} from "../../lib/observability/release-lag";
 import {
   dueTargets,
-  jobNameFor,
   maxSlotGapMinutes,
   TARGETS,
   type Target,
@@ -17,12 +21,14 @@ jest.mock("../../lib/cron/cleanup-route", () => ({
   bearerMatches: (header: string | null, secret: string) =>
     header === `Bearer ${secret}`,
 }));
+const mockFindFirst = jest.fn<Promise<unknown>, unknown[]>(async () => null);
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     systemJobExecution: {
       groupBy: jest.fn(),
       findMany: jest.fn(async () => []),
+      findFirst: (...args: unknown[]) => mockFindFirst(...args),
     },
     $queryRaw: jest.fn(async () => []),
   },
@@ -89,20 +95,12 @@ function observedGaps(fromUtc: number, toUtc: number): Map<Target, number> {
 }
 
 describe("freshness requirements derived from the schedule", () => {
-  it("covers every target that writes a run row, under its live job name, with a tier", () => {
-    const writers = TARGETS.filter((target) => jobNameFor(target) !== null);
+  it("covers every target once, under its live job name, with a tier", () => {
+    const violations = checkJobCoverage({ registrySlugs: [...TARGETS] });
+    expect(violations).toEqual([]);
     expect(
       OPERATIONAL_COMPLETION_REQUIREMENTS.map((job) => job.target),
-    ).toEqual(writers);
-    const liveNames = new Set(TARGETS.map(jobNameFor));
-    for (const job of OPERATIONAL_COMPLETION_REQUIREMENTS) {
-      expect(liveNames.has(job.jobName)).toBe(true);
-      expect(["paging", "watched"]).toContain(job.tier);
-    }
-    expect(
-      new Set(OPERATIONAL_COMPLETION_REQUIREMENTS.map((job) => job.jobName))
-        .size,
-    ).toBe(OPERATIONAL_COMPLETION_REQUIREMENTS.length);
+    ).toEqual([...TARGETS]);
   });
 
   it("gives every target, windowed ones included, a budget above its longest dispatch gap", () => {
@@ -268,5 +266,87 @@ describe("operational absence checks", () => {
     const response = await GET(request());
     expect(response.status).toBe(503);
     expect((await response.json()).error).toBe("JOB_HISTORY_UNAVAILABLE");
+  });
+});
+
+describe("digest verdicts on the probe", () => {
+  /** The newest completed digest row, with one paging-tier standing skip first seen `days` ago. */
+  const digestRow = (
+    days: number,
+    releaseLag: ReleaseLag = unknownReleaseLag("test"),
+  ) => ({
+    result: {
+      environment: "production",
+      summary: {
+        success: true,
+        heartbeat: "pinged",
+        headline: "0 new, 1 standing",
+        newItems: 0,
+        standingItems: 1,
+        unavailableSections: [],
+        standingSkips: [
+          {
+            jobName: "irp-uploader",
+            tier: "paging",
+            reason: "PLATFORM_GSTIN not configured",
+            firstSeenAt: minutesAgo(days * 24 * 60).toISOString(),
+          },
+        ],
+        releaseLag,
+      },
+    },
+  });
+
+  const probe = async (keyId: string, days: number) => {
+    process.env.RAZORPAY_KEY_ID = keyId;
+    groupBy.mockResolvedValueOnce(groupRows());
+    mockFindFirst.mockResolvedValueOnce(digestRow(days));
+    return GET(request());
+  };
+
+  it("answers 503 with live keys and a paging skip older than 7 days", async () => {
+    const response = await probe("rzp_live_x", 8);
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      healthy: false,
+      reasons: ["STANDING_CONFIG_SKIP"],
+      standingConfigSkips: [
+        expect.objectContaining({ jobName: "irp-uploader" }),
+      ],
+    });
+  });
+
+  it("answers 503 when the digest found the release lag overdue", async () => {
+    process.env.RAZORPAY_KEY_ID = "rzp_test_x";
+    groupBy.mockResolvedValueOnce(groupRows());
+    mockFindFirst.mockResolvedValueOnce(
+      digestRow(1, {
+        status: "known",
+        buildSha: "abc123",
+        commitsBehind: 4,
+        oldestUnreleasedAt: minutesAgo(8 * 24 * 60).toISOString(),
+        scheduleChangeAt: null,
+        touches: [],
+        truncated: false,
+        overdue: true,
+      }),
+    );
+    const response = await GET(request());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      healthy: false,
+      reasons: ["RELEASE_LAG_OVERDUE"],
+      releaseLag: { overdue: true, commitsBehind: 4 },
+    });
+  });
+
+  it.each([
+    ["test keys", "rzp_test_x", 30],
+    ["live keys and a 6-day skip", "rzp_live_x", 6],
+  ])("answers 200 with %s", async (_case, keyId, days) => {
+    const response = await probe(keyId, days);
+    expect(response.status).toBe(200);
+    expect((await response.json()).healthy).toBe(true);
   });
 });
