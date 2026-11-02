@@ -1,12 +1,11 @@
 /**
  * GET    /api/digital-products/[productId] — the public listing, or the owner's full view.
  * PATCH  /api/digital-products/[productId] — the owner edits the listing.
- * DELETE /api/digital-products/[productId] — the owner deletes a product nobody bought or was refunded.
+ * DELETE /api/digital-products/[productId] — the owner deletes a product with no purchase rows at all.
  */
 import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { cancelRazorpayOrder } from "@/lib/payments/core/razorpay";
 import { lineageDisplayNames } from "@/lib/digital-products/lineage";
 import { requireApiSession } from "@/lib/auth-helpers";
 import { updateDigitalProductSchema } from "@/schemas/digital-products";
@@ -112,7 +111,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
     ]);
     const count = (status: string) =>
       sales.find((s) => s.status === status)?._count._all ?? 0;
-    // Only a sale or a refund keeps the product from being deleted; buyerCount holds access now.
+    // purchaseCount counts sales and refunds; DELETE also refuses an open checkout. buyerCount holds access now.
     return NextResponse.json({
       data: {
         ...product,
@@ -261,7 +260,7 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
   if (!owned.ok) return owned.error;
 
   // Product lock first, as the settle takes it before the purchase CAS.
-  const orderIds = await prisma.$transaction(async (tx) => {
+  const refusal = await prisma.$transaction(async (tx) => {
     await lockDigitalProductRow(tx, productId);
     // A sold or refunded product is archived, never deleted: its sale rows are money evidence.
     const sold = await tx.digitalProductPurchase.findFirst({
@@ -274,36 +273,30 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
       },
       select: { id: true },
     });
-    if (sold) return null;
-    const abandoned = await tx.digitalProductPurchase.findMany({
-      where: { productId, status: { in: ["PENDING", "FAILED"] } },
-      select: { gatewayOrderId: true },
+    if (sold) return "HAS_PURCHASES" as const;
+    // Every other row holds a gateway order a late capture can still settle through the reconcile sweep.
+    const ordered = await tx.digitalProductPurchase.findFirst({
+      where: { productId },
+      select: { id: true },
     });
-    await tx.digitalProductPurchase.deleteMany({
-      where: {
-        productId,
-        status: { in: ["PENDING", "FAILED"] },
-        paymentId: null,
-      },
-    });
+    if (ordered) return "HAS_ORDERS" as const;
     await tx.digitalProduct.delete({ where: { id: productId } });
-    return abandoned.flatMap((p) =>
-      p.gatewayOrderId ? [p.gatewayOrderId] : [],
-    );
+    return null;
   });
-  if (orderIds === null) {
+  if (refusal === "HAS_PURCHASES") {
     return jsonError(
       409,
       "HAS_PURCHASES",
       "This product has buyers; archive it instead",
     );
   }
-  // Best effort: a late capture on a deleted order is auto-refunded by the orphan-capture path.
-  await Promise.all(
-    orderIds.map((orderId) =>
-      cancelRazorpayOrder(orderId).catch(() => "unknown" as const),
-    ),
-  );
+  if (refusal === "HAS_ORDERS") {
+    return jsonError(
+      409,
+      "HAS_ORDERS",
+      "Someone started a checkout for this product, so it can't be deleted; archive it instead",
+    );
+  }
   // Its objects lose their rows and the storage sweep deletes them.
   return NextResponse.json({ data: { id: productId, deleted: true } });
 }

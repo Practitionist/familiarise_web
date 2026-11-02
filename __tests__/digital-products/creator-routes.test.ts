@@ -59,11 +59,6 @@ const purchases: Array<{
   paymentId: string | null;
 }> = [];
 const productDelete = jest.fn(async () => product);
-const purchaseDeleteMany = jest.fn(async () => ({ count: 0 }));
-const cancelOrder = jest.fn(async (_id: string) => "no_live_payment");
-jest.mock("../../lib/payments/core/razorpay", () => ({
-  cancelRazorpayOrder: (id: string) => cancelOrder(id),
-}));
 const tx = {
   digitalProductAsset: assetModel,
   digitalProduct: {
@@ -72,16 +67,14 @@ const tx = {
     delete: (...a: unknown[]) => productDelete(...(a as [])),
   },
   digitalProductPurchase: {
-    findFirst: async () =>
+    findFirst: async ({ where }: { where: { OR?: unknown } }) =>
       purchases.find(
         (p) =>
+          !where.OR ||
           p.status === "SUCCEEDED" ||
           p.status === "REFUNDED" ||
           p.paymentId !== null,
       ) ?? null,
-    findMany: async () =>
-      purchases.filter((p) => p.status === "PENDING" || p.status === "FAILED"),
-    deleteMany: (...a: unknown[]) => purchaseDeleteMany(...(a as [])),
   },
   $executeRaw: async () => 1,
 };
@@ -195,36 +188,34 @@ it("reserves a PENDING file under a fresh key and versions a replacement in its 
   });
 });
 
-it("deletes a product with only abandoned checkouts, and keeps one with a sale or a refund", async () => {
-  purchases.push(
-    { status: "PENDING", gatewayOrderId: "order_p", paymentId: null },
-    { status: "FAILED", gatewayOrderId: "order_f", paymentId: null },
-  );
-  const deleted = await deleteProduct(json({}), params);
-  expect(deleted.status).toBe(200);
-  expect(purchaseDeleteMany).toHaveBeenCalledWith({
-    where: {
-      productId: "dp_1",
-      status: { in: ["PENDING", "FAILED"] },
-      paymentId: null,
-    },
-  });
-  expect(productDelete).toHaveBeenCalledWith({ where: { id: "dp_1" } });
-  // After commit, best effort; a late capture is refunded as an orphan.
-  expect(cancelOrder.mock.calls.map(([id]) => id)).toEqual([
-    "order_p",
-    "order_f",
-  ]);
-
-  jest.clearAllMocks();
+it("deletes only a product with no purchase rows, and never consults the gateway about an open order", async () => {
+  // The route never asks Razorpay, so a live or unknown order outcome is refused alike.
   purchases.push({
-    status: "REFUNDED",
-    gatewayOrderId: "order_r",
-    paymentId: "pay_1",
+    status: "PENDING",
+    gatewayOrderId: "order_p",
+    paymentId: null,
   });
-  const kept = await deleteProduct(json({}), params);
-  expect(kept.status).toBe(409);
-  expect((await kept.json()).code).toBe("HAS_PURCHASES");
+  const open = await deleteProduct(json({}), params);
+  expect(open.status).toBe(409);
+  expect((await open.json()).code).toBe("HAS_ORDERS");
   expect(productDelete).not.toHaveBeenCalled();
-  expect(cancelOrder).not.toHaveBeenCalled();
+  expect(purchases).toHaveLength(1);
+
+  // A free claim (no order) and a refunded sale are both sales.
+  for (const sale of [
+    { status: "SUCCEEDED", gatewayOrderId: null, paymentId: null },
+    { status: "REFUNDED", gatewayOrderId: "order_r", paymentId: "pay_1" },
+  ]) {
+    purchases.length = 0;
+    purchases.push(sale);
+    const sold = await deleteProduct(json({}), params);
+    expect(sold.status).toBe(409);
+    expect((await sold.json()).code).toBe("HAS_PURCHASES");
+  }
+  expect(productDelete).not.toHaveBeenCalled();
+
+  purchases.length = 0;
+  const unsold = await deleteProduct(json({}), params);
+  expect(unsold.status).toBe(200);
+  expect(productDelete).toHaveBeenCalledWith({ where: { id: "dp_1" } });
 });
