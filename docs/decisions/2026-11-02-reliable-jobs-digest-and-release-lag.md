@@ -50,7 +50,7 @@ Why each choice:
 
 ### Release-lag details
 
-- `BUILD_SHA` is Netlify's build-time `COMMIT_REF`, inlined by `next.config.mjs` like `NETLIFY`; `/api/health/jobs` shows it as `buildSha`.
+- `BUILD_SHA` is Netlify's build-time `COMMIT_REF`, or `VERCEL_GIT_COMMIT_SHA` on Vercel, inlined by `next.config.mjs` like `NETLIFY`; `/api/health/jobs` shows it as `buildSha`. The Vercel fallback keeps release lag working through a possible host move (owner decision, 2026-11-02). A host with neither variable, such as a Docker build, shows release lag as unknown, which is a digest line and never a page.
 - The compare API lists at most 250 commits without pagination and at most 300 files. The choices are conservative, so a truncation can page early but never hides a lag:
   - **Commit list cut short** (`ahead_by` above the commits listed): the lag is overdue. More than 250 unreleased commits is a held release by any measure.
   - **File list at its 300-file limit:** every watched area (`lib/cron/schedule.ts`, `lib/cron/cleanup-registry.ts`, `netlify/functions/**`, `prisma/**`) is reported as touched, and the schedule check runs.
