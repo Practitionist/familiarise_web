@@ -28,8 +28,11 @@ jest.mock("../../lib/stream/recording-stream-delete", () => ({
   deleteStreamRecordingCopy: jest.fn(async () => ({ success: true })),
 }));
 
+const mockPurge = jest.fn();
+const mockPurgeProduct = jest.fn();
 jest.mock("../../lib/data/public-cache", () => ({
-  purgeRecordingSurfaces: jest.fn(),
+  purgeRecordingSurfaces: (slugs: string[]) => mockPurge(slugs),
+  purgeDigitalProductSurfaces: (p: unknown) => mockPurgeProduct(p),
 }));
 
 const mockRevokeUserToken = jest.fn(async () => ({}));
@@ -264,5 +267,65 @@ describe("DPDP erasure Stream principal leg", () => {
       where: { userId: "u-erased-1", decision: "GRANTED" },
       data: { decision: "DECLINED", decidedAt: expect.any(Date) },
     });
+  });
+});
+
+describe("erasure purges the public replays cache", () => {
+  const replays = {
+    findMany: jest.fn(async (args: { select: Record<string, boolean> }) =>
+      args.select.slug ? [{ slug: "intro" }, { slug: "advanced" }] : [],
+    ),
+    updateMany: jest.fn(async () => ({ count: 2 })),
+  };
+  const dbWithReplays = {
+    ...db,
+    recording: replays,
+    recordingConsent: { updateMany: jest.fn(async () => ({ count: 0 })) },
+  };
+
+  it("purges once with the unpublished slugs after a successful scrub", async () => {
+    await scrubUser(dbWithReplays as never, "u-erased-1");
+
+    expect(replays.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockPurge).toHaveBeenCalledTimes(1);
+    expect(mockPurge).toHaveBeenCalledWith(["intro", "advanced"]);
+  });
+
+  it("does not purge when the scrub transaction throws", async () => {
+    db.$transaction.mockRejectedValueOnce(new Error("tx failed"));
+
+    await expect(
+      scrubUser(dbWithReplays as never, "u-erased-1"),
+    ).rejects.toThrow("tx failed");
+    expect(replays.updateMany).not.toHaveBeenCalled();
+    expect(mockPurge).not.toHaveBeenCalled();
+  });
+
+  it("purges each archived product after commit, even with no replays", async () => {
+    (tx.digitalProduct.findMany as jest.Mock).mockResolvedValueOnce([
+      { consultantProfileId: "cp1", slug: "pack" },
+    ]);
+    replays.findMany.mockResolvedValue([]);
+
+    await scrubUser(dbWithReplays as never, "u-erased-1");
+
+    expect(mockPurgeProduct).toHaveBeenCalledTimes(1);
+    expect(mockPurgeProduct).toHaveBeenCalledWith({
+      consultantProfileId: "cp1",
+      slug: "pack",
+    });
+    expect(mockPurge).not.toHaveBeenCalled();
+  });
+
+  it("does not purge products when the transaction throws", async () => {
+    (tx.digitalProduct.findMany as jest.Mock).mockResolvedValueOnce([
+      { consultantProfileId: "cp1", slug: "pack" },
+    ]);
+    db.$transaction.mockRejectedValueOnce(new Error("tx failed"));
+
+    await expect(
+      scrubUser(dbWithReplays as never, "u-erased-1"),
+    ).rejects.toThrow();
+    expect(mockPurgeProduct).not.toHaveBeenCalled();
   });
 });
