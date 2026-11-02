@@ -5,7 +5,7 @@
 | Status        | Live                                                                                                                                                                                  |
 | Audience      | Engineers, ADMINs, enterprise support                                                                                                                                                 |
 | Last reviewed | 2026-10-10                                                                                                                                                                            |
-| Versions      | `better-auth` 1.7.7, `@better-auth/sso` 1.7.7                                                                                                                                         |
+| Versions      | `better-auth` 1.7.14, `@better-auth/sso` 1.7.14                                                                                                                                       |
 | Source        | `lib/sso/*`, `lib/prisma-sso-secret-extension.ts`, `app/api/organizations/[orgId]/sso/**`, `app/api/admin/organizations/[orgId]/sso-providers/**`, `scripts/rotate-sso-secret-key.ts` |
 
 An organization can route its users' sign-in through its own identity provider

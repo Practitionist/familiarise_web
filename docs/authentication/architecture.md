@@ -5,7 +5,7 @@
 | Status        | Live                                                                                                                                                                           |
 | Audience      | Engineers changing auth code                                                                                                                                                   |
 | Last reviewed | 2026-10-10                                                                                                                                                                     |
-| Versions      | `better-auth`, `@better-auth/sso`, `@better-auth/passkey`: **1.7.7**, pinned exactly                                                                                           |
+| Versions      | `better-auth`, `@better-auth/core`, `@better-auth/sso`, `@better-auth/passkey`: **1.7.14**, pinned exactly                                                                     |
 | Source        | `lib/auth.ts`, `lib/auth/*`, `lib/auth-server.ts`, `lib/auth-session-lookup.ts`, `lib/auth-helpers.ts`, `lib/auth-guard.ts`, `providers/AuthSyncProvider.tsx`, `middleware.ts` |
 
 ## 1. Request path
@@ -21,8 +21,9 @@ guards.
 `/api/auth/*` is public at the edge and handled by
 `app/api/auth/[...all]/route.ts` (BetterAuth). That route adds two things to
 BetterAuth's handler: `withRetryAfter` copies `X-Retry-After` to `Retry-After`,
-and `GET /get-session` answers 503 instead of `200 null` when the lookup failed
-(§3.3). A page guard that finds a cookie but no live session redirects through
+and `GET /get-session` answers 503 instead of BetterAuth's 500 (or a `200 null`
+on a live row) when the lookup failed, and expires the cookie of a session the
+refresh hook ended (§3.3). A page guard that finds a cookie but no live session redirects through
 `/api/auth/clear-stale-session`, because only a route handler can delete
 cookies.
 
@@ -175,13 +176,14 @@ flowchart LR
   DB --> CS["customSession<br/>User flags + Memberships"]
   CS --> R{"Result"}
   R -- session --> OK["found"]
-  R -- "null, no live row for the cookie" --> NONE["none: 401 or redirect to sign-in"]
-  R -- "null but signed cookie's row is live, or throw" --> FAIL["failed: SessionLookupFailedError<br/>503 + Retry-After 2, never signs out"]
+  R -- "null with no live row, or a 401 from the refresh hook" --> NONE["none: 401 or redirect to sign-in"]
+  R -- "null but signed cookie's row is live, or another throw" --> FAIL["failed: SessionLookupFailedError<br/>503 + Retry-After 2, never signs out"]
 ```
 
-BetterAuth's `customSession` turns lookup errors into `200 null`, which looks
-the same as "signed out". The app tells them apart with one indexed read of
-the `Session` row (`classifyMissingSession` in `lib/auth/session-cookie.ts`,
+BetterAuth's `customSession` throws a lookup error (a 500 over HTTP) and
+answers 401 when the refresh hook ends the session. The server reader treats
+that 401 as "none" and any other throw as "failed". A `null` on a validly
+signed cookie is settled with one indexed read of the `Session` row (`classifyMissingSession` in `lib/auth/session-cookie.ts`,
 cookie HMAC checked against the first `BETTER_AUTH_SECRETS` entry or
 `BETTER_AUTH_SECRET`):
 

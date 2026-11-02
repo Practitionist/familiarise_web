@@ -189,7 +189,7 @@ _dynamic_ roles map for role names that collide with the plugin's built-in ones,
 so a role literally called `admin` or `user` is authorised from the built-in
 `defaultRoles` statement regardless of what the `roles` configuration says.
 
-In the installed `better-auth@1.7.7` the mechanism is visible in
+In the installed `better-auth@1.7.14` the mechanism is visible in
 `node_modules/better-auth/dist/plugins/admin/has-permission.mjs`:
 
 ```js
