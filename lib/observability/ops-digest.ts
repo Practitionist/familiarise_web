@@ -30,6 +30,11 @@ import {
   OPS_DIGEST_JOB,
   type OpsDigestSummary,
 } from "@/lib/observability/ops-digest-summary";
+import {
+  readReleaseLag,
+  unknownReleaseLag,
+  type ReleaseLag,
+} from "@/lib/observability/release-lag";
 import { razorpayKeyMode } from "@/lib/payments/core/razorpay-key-mode";
 
 const MINUTE_MS = 60_000;
@@ -586,6 +591,33 @@ function settingsSection(): SectionBody {
   };
 }
 
+function releaseLagSection(lag: ReleaseLag, now: Date): SectionBody {
+  if (lag.status === "unknown") {
+    return { items: [], notes: [`Unknown: ${lag.reason}.`] };
+  }
+  if (lag.commitsBehind === 0) {
+    return {
+      items: [],
+      notes: [`Production runs dev's head (${lag.buildSha.slice(0, 9)}).`],
+    };
+  }
+  const age = (at: string | null) =>
+    at ? formatAge(now.getTime() - Date.parse(at)) : "unknown";
+  const line = [
+    `Production is ${lag.commitsBehind} commits behind dev; oldest unreleased ${age(lag.oldestUnreleasedAt)}`,
+    lag.scheduleChangeAt
+      ? `schedule or registry change waiting ${age(lag.scheduleChangeAt)}`
+      : null,
+    lag.touches.length > 0 ? `touches ${lag.touches.join(", ")}` : null,
+    lag.truncated ? "GitHub truncated the comparison" : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join("; ");
+  return lag.overdue
+    ? { items: [{ text: line, isNew: false }], notes: [] }
+    : { items: [], notes: [`${line}.`] };
+}
+
 function bodyOf(read: VendorRead): SectionBody {
   return "unknown" in read
     ? { items: [], notes: [`Unknown: ${read.unknown}.`] }
@@ -694,10 +726,12 @@ export async function runOpsDigest(
     "unknown";
   const unavailableSections: string[] = [];
   let standingSkips: StandingConfigSkip[] = [];
+  let releaseLag = unknownReleaseLag("digest failed before the GitHub read");
   try {
     const { default: db } = await import("@/lib/prisma");
     const betterStack = betterStackSection(now);
     const upstash = upstashSection();
+    const lag = readReleaseLag(now);
     const sections: DigestSection[] = [];
     const read = async (
       title: string,
@@ -738,6 +772,10 @@ export async function runOpsDigest(
     await read("Sentry ingest", () => canarySection(db, environment, now));
     await read("Better Stack", async () => bodyOf(await betterStack));
     await read("Upstash", async () => bodyOf(await upstash));
+    await read("Release lag", async () => {
+      releaseLag = await lag;
+      return releaseLagSection(releaseLag, now);
+    });
     sections.push({ title: "Settings", ...settingsSection() });
 
     const counts = headlineOf(sections);
@@ -761,6 +799,7 @@ export async function runOpsDigest(
       ...counts,
       unavailableSections,
       standingSkips: standingSkips.map(summaryOfSkip),
+      releaseLag,
     };
   } catch (error) {
     console.error(
@@ -777,6 +816,7 @@ export async function runOpsDigest(
       standingItems: 0,
       unavailableSections,
       standingSkips: standingSkips.map(summaryOfSkip),
+      releaseLag,
     };
   }
 }

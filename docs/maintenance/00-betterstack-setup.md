@@ -374,11 +374,11 @@ BetterStack incidents automatically appear on the status page linked to your acc
 
 ## Independent capability freshness probe
 
-`GET /api/health/jobs` (`app/api/health/jobs/route.ts`) answers one question: did every ticker job that matters run recently enough? It is read-only and uncached. It never invokes, repairs or writes anything. It returns 401 before querying when the bearer is wrong, 503 when a `paging` job is overdue or the history cannot be read, and 200 otherwise. Because of the 503, a plain uptime monitor can alert on the status code alone.
+`GET /api/health/jobs` (`app/api/health/jobs/route.ts`) answers one question: did every ticker job that matters run recently enough? It is read-only and uncached. It never invokes, repairs or writes anything. It returns 401 before querying when the bearer is wrong; 503 when a `paging` job is overdue, when the history cannot be read, or when the newest daily digest found a page-worthy verdict (see [Digest verdicts on the probe](#digest-verdicts-on-the-probe)); and 200 otherwise. The body's `reasons` names each cause (`JOB_OVERDUE`, `STANDING_CONFIG_SKIP`, `RELEASE_LAG_OVERDUE`) and `buildSha` names the deployed commit. Because of the 503, a plain uptime monitor can alert on the status code alone.
 
 ### Where the budgets come from
 
-The budgets are derived from the schedule, not listed by hand. `OPERATIONAL_COMPLETION_REQUIREMENTS` in `lib/cron/operational-health.ts` holds one requirement for every target in `TARGETS` (`lib/cron/schedule.ts`) whose core writes a run row. Adding a ticker target therefore adds its absence check in the same change, and renaming a job's run row through `jobNameFor` moves the check with it.
+The budgets are derived from the schedule, not listed by hand. `OPERATIONAL_COMPLETION_REQUIREMENTS` in `lib/cron/operational-health.ts` holds one requirement for every target in `TARGETS` (`lib/cron/schedule.ts`); every target's core writes a run row. Adding a ticker target therefore adds its absence check in the same change, and renaming a job's run row through `jobNameFor` moves the check with it.
 
 Each budget is computed from the target's longest gap between two consecutive due slots (`maxSlotGapMinutes` in `lib/cron/schedule.ts`):
 
@@ -399,7 +399,7 @@ The second term tolerates one missed slot, but never more than six hours of one.
 
 The generated [cron jobs reference](04-cron-jobs-reference.md) prints every target's budget and tier on its "Freshness" line. The shortest budget is 50 minutes (the 10-minute outbox and export drains) and the longest is the quarterly TDS draft.
 
-Two targets are not judged, because their core writes no run row (`jobNameFor` returns `null`): `sentry-ingest-canary` is itself an out-of-band alarm that pages by email and Better Stack, and `stream-control-plane-drift` reports drift through its own alert. No per-job override exists today; add one only for a job whose healthy run can legitimately leave no evidence, with a one-line reason.
+Every target is judged, including `sentry-ingest-canary` and `stream-control-plane-drift`, which take a fail-open lease so each run writes a row. An unhealthy canary verdict records a `FAILED` run, so Sentry rejecting events for longer than the canary's 30.5-hour budget also turns the probe 503. `checkJobCoverage` (`lib/cron/job-coverage.ts`) proves at the start of every `npm run build` that each target has exactly one requirement under its live run-row name, so a rename or a dropped target fails the deploy even when GitHub Actions is not running.
 
 ### Tiers
 
@@ -433,6 +433,47 @@ During an approved maintenance window, pause the monitor or use Better Stack's m
 The shared database also holds preview and development runs. The probe counts only rows whose `result.environment` matches the serving deployment's `NEXT_PUBLIC_SENTRY_ENVIRONMENT` (or `SENTRY_ENVIRONMENT`); an unset label returns 503 `JOB_ENVIRONMENT_UNCONFIGURED`, and an explicitly empty public label fails instead of falling back. Untagged historical rows never establish production freshness.
 
 What the probe does not prove: that a run's vendor effects are correct, that a backlog is draining (the oldest-pending-age alerts below cover that), or that the alert reaches a human (prove that once with a controlled failure). See [Better Stack HTTP monitor configuration](https://betterstack.com/docs/uptime/api/create-a-new-monitor/) for protected request headers and expected-status monitoring.
+
+### Digest verdicts on the probe
+
+Two verdicts come from the daily ops digest rather than from the probe's own reads. The probe reads the newest `COMPLETED` production `ops-digest` run row (one indexed read) and judges its stored summary at poll time, so a poll never calls GitHub or recomputes skip streaks:
+
+- **`RELEASE_LAG_OVERDUE`** when the digest's `releaseLag.overdue` is true: an unreleased change to `lib/cron/schedule.ts` or `lib/cron/cleanup-registry.ts` is more than 3 days old, any unreleased commit on `dev` is more than 7 days old, or GitHub cut the commit list. An unknown release lag never pages.
+- **`STANDING_CONFIG_SKIP`** only when Razorpay collection keys are live (`RAZORPAY_KEY_ID` starts with `rzp_live_`) and a paging job has skipped for a missing setting for more than 7 days, counted from the first skip after its last real run. Before live keys this is a digest line only.
+
+After fixing the cause, run `ops-digest` once from the System Jobs page; the next probe poll reads the new row and answers 200.
+
+### Runbook: the Sentry uptime monitor (second vendor, owner step)
+
+A second company watches `/api/health/jobs`, so a Better Stack outage cannot hide a stalled fleet. The Sentry Developer plan includes one uptime monitor.
+
+1. In Sentry, open **Monitors** and create an **Uptime Monitor**.
+2. **URL:** `https://familiarisenow.com/api/health/jobs`. **Method:** GET.
+3. **Headers:** `Authorization: Bearer <CRON_SECRET>`, using the production value. Never put the secret in the URL. Sentry stores header values unmasked and visible to anyone who can edit the monitor, so keep monitor edit rights to the owner.
+4. **Interval:** 5 minutes. **Timeout:** 30 seconds (the maximum), for the cold-start stall. Keep the default failure tolerance of three consecutive failures and recovery tolerance of one success.
+5. **Alert:** route the uptime issue to the owner's alert email.
+6. Verify: the monitor shows its first successful check. If it fails, read the body: a `reasons` list or an `overdue` job explains the 503.
+
+## Daily ops digest and its heartbeat
+
+`ops-digest` is a ticker target that runs once a day at 03:50 UTC (09:20 IST). Its core, `runOpsDigest` in `lib/observability/ops-digest.ts`, emails one digest to `OBSERVABILITY_ALERT_EMAIL` through `deliver()` and then pings a Better Stack heartbeat. It is **always sent**: a quiet day reads "All clear". A missing digest is therefore the alarm. The job never reports to Sentry and never repairs anything.
+
+The email has a one-line headline ("All clear", or "N new, M standing"), then **New since yesterday**, then **Standing** items with their age, then **Context** per section, with at most 10 sample ids per item. Sections: overdue watched jobs and jobs only idle-skipped for 7 days; standing config skips with their first-seen age; pre-launch held email by type with the effective `EMAIL_DELIVERY_MODE`; new and total dead letters (email, notification, outbound webhook, and inbound webhook events past the 168-hour give-up); queue ages past their limits; the last inbound webhook per provider; rejected Better Stack telemetry in 24 hours; the last Sentry ingest canary verdict; paused or muted Better Stack monitors and heartbeats; Upstash usage against `UPSTASH_MONTHLY_COMMAND_CAP`; launch-critical settings as names and booleans only; and release lag. A section whose read fails is shown as unavailable and the email still goes.
+
+### Owner step: create the digest heartbeat
+
+1. Better Stack → Uptime → **Heartbeats** → **Create heartbeat**, named "ops digest".
+2. **Expect a heartbeat every:** 24 hours. **Grace period:** 3 hours.
+3. **Alert via:** email now; add phone and SMS with the responder seat at launch.
+4. Copy the heartbeat URL into the Netlify production environment as `BETTERSTACK_DIGEST_HEARTBEAT_URL` (Functions scope) and redeploy.
+5. Verify: run `ops-digest` from the System Jobs page. The email arrives, the heartbeat shows Up, and the run row's `result.summary.heartbeat` reads `pinged`.
+
+The digest pings the URL only after `deliver()` accepted the email. After a failed or held send, or a thrown error, it pings `<url>/fail`, which raises an incident at once. With the URL unset the run row records `heartbeat: "not-configured"`. The recipient must be an own-domain address, because the pre-launch email guard holds anything else and the held send pings `/fail`.
+
+### Owner step: the release-lag token and the Upstash settings
+
+- **`GITHUB_RELEASE_LAG_TOKEN`:** a fine-grained GitHub token with **Contents: read** on this repository only, in the Netlify production environment. The digest calls the compare API (`BUILD_SHA...dev`) once a day; without the token, release lag reads "unknown" and never pages.
+- **Upstash usage:** copy `UPSTASH_MANAGEMENT_API_KEY`, `UPSTASH_EMAIL`, `UPSTASH_DATABASE_ID` and `UPSTASH_MONTHLY_COMMAND_CAP` into the production environment. The usage line used to run in `cron-heartbeat.yml`; at 70% of the cap it becomes a standing digest item.
 
 ## Execution freshness and monitor acceptance
 
@@ -694,4 +735,4 @@ On the shared development and production database the money gauges are not zero 
 
 Every failing target appears in the per-tick summary line. A one-off failure stays out of Sentry: the ticker writes a `cron-tick.target-failed-once` log line (with `class: platform` when the body is Netlify's own `Internal Server Error - Request ID` page). It becomes an error issue fingerprinted per target only after it has gone three of its own cadences without a `COMPLETED` run. The ticker reads that history from `GET /api/health/jobs/streaks?targets=a,b` (bearer `CRON_SECRET`, read-only), which resolves each target to the `jobName` its core writes (`jobNameFor` in `lib/cron/schedule.ts`; most match the target name, eight differ, for example `abandoned-payments` writes `cleanup-abandoned-payments`) and returns that job's last `COMPLETED` start time from `SystemJobExecution`; it asks only for targets that are about to be reported, and an unreachable endpoint or a job with no recent rows counts as a one-off, so it is logged only. The history comes from Postgres because the ticker keeps no state and a Redis failure counter is outside the allowed Redis uses. A platform 5xx leaves no execution row, which is why the test is the absence of a recent `COMPLETED` run rather than a run of `FAILED` rows. Reports remain limited to one per target per hour, and the `cron-tick` monitor check-in is unchanged: it reports `error` on any tick with a failed target and the monitor's threshold of three consecutive failed check-ins does the escalation.
 
-`sentry-ingest-canary` and `stream-control-plane-drift` write no execution row, so their `jobNameFor` is `null` and their failures never escalate to an error issue; they rely on the cron monitor and the health jobs probe. A jest test scans the sources and fails if a target resolves to a name no `withCronLock` call uses.
+Every target, `sentry-ingest-canary` and `stream-control-plane-drift` included, writes an execution row, so every failure can escalate; the canary is still never reported to Sentry, because Sentry may be the thing that is down. A jest test scans the sources and fails if a target resolves to a name no `withCronLock` call uses.

@@ -7,6 +7,10 @@ import {
 } from "../../lib/cron/operational-health";
 import { checkJobCoverage } from "../../lib/cron/job-coverage";
 import {
+  unknownReleaseLag,
+  type ReleaseLag,
+} from "../../lib/observability/release-lag";
+import {
   dueTargets,
   maxSlotGapMinutes,
   TARGETS,
@@ -267,7 +271,10 @@ describe("operational absence checks", () => {
 
 describe("digest verdicts on the probe", () => {
   /** The newest completed digest row, with one paging-tier standing skip first seen `days` ago. */
-  const digestRow = (days: number) => ({
+  const digestRow = (
+    days: number,
+    releaseLag: ReleaseLag = unknownReleaseLag("test"),
+  ) => ({
     result: {
       environment: "production",
       summary: {
@@ -285,6 +292,7 @@ describe("digest verdicts on the probe", () => {
             firstSeenAt: minutesAgo(days * 24 * 60).toISOString(),
           },
         ],
+        releaseLag,
       },
     },
   });
@@ -306,6 +314,30 @@ describe("digest verdicts on the probe", () => {
       standingConfigSkips: [
         expect.objectContaining({ jobName: "irp-uploader" }),
       ],
+    });
+  });
+
+  it("answers 503 when the digest found the release lag overdue", async () => {
+    process.env.RAZORPAY_KEY_ID = "rzp_test_x";
+    groupBy.mockResolvedValueOnce(groupRows());
+    mockFindFirst.mockResolvedValueOnce(
+      digestRow(1, {
+        status: "known",
+        buildSha: "abc123",
+        commitsBehind: 4,
+        oldestUnreleasedAt: minutesAgo(8 * 24 * 60).toISOString(),
+        scheduleChangeAt: null,
+        touches: [],
+        truncated: false,
+        overdue: true,
+      }),
+    );
+    const response = await GET(request());
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      healthy: false,
+      reasons: ["RELEASE_LAG_OVERDUE"],
+      releaseLag: { overdue: true, commitsBehind: 4 },
     });
   });
 

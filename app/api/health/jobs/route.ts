@@ -41,9 +41,14 @@ async function readDigestVerdicts(db: Db, environment: string, now: Date) {
           now.getTime() - Date.parse(skip.firstSeenAt) > STANDING_SKIP_PAGE_MS,
       )
     : [];
+  const releaseLag = summary?.releaseLag ?? null;
   return {
-    reasons: standingConfigSkips.length > 0 ? ["STANDING_CONFIG_SKIP"] : [],
+    reasons: [
+      ...(standingConfigSkips.length > 0 ? ["STANDING_CONFIG_SKIP"] : []),
+      ...(releaseLag?.overdue ? ["RELEASE_LAG_OVERDUE"] : []),
+    ],
     standingConfigSkips,
+    releaseLag,
   };
 }
 
@@ -115,6 +120,8 @@ export async function GET(request: NextRequest) {
         ],
         configSkips,
         standingConfigSkips: digest.standingConfigSkips,
+        releaseLag: digest.releaseLag,
+        buildSha: process.env.BUILD_SHA ?? null,
       },
       {
         status: healthy ? 200 : 503,

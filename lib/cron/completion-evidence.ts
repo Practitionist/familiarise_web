@@ -13,7 +13,7 @@ const RUN_HISTORY_DAYS = 180;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 
 /** A config skip's reason ends with this (`ConfigSkip` in lib/cron/config-skip.ts). */
-export const CONFIG_SKIP_SUFFIX = " not configured";
+const CONFIG_SKIP_SUFFIX = " not configured";
 
 /** Run rows of one environment that did nothing because a required setting is absent. */
 export function configSkipWhere(

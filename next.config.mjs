@@ -266,6 +266,8 @@ const nextConfig = {
     // Netlify sets NETLIFY only on the build machine, so runtime checks
     // (lease cap, pool guard) need it inlined here.
     ...(process.env.NETLIFY ? { NETLIFY: process.env.NETLIFY } : {}),
+    // Netlify sets COMMIT_REF only on the build machine; the jobs probe and the digest read it.
+    ...(process.env.COMMIT_REF ? { BUILD_SHA: process.env.COMMIT_REF } : {}),
   },
   // Skipped on Netlify by default: with them on, the deploy preview was killed
   // (exit 137) at "Linting and checking validity of types" on the 6144 MB

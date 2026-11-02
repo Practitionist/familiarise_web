@@ -3,7 +3,7 @@ import { OPERATIONAL_COMPLETION_REQUIREMENTS } from "@/lib/cron/operational-heal
 import { jobNameFor, TARGETS, type Target } from "@/lib/cron/schedule";
 
 /** Pure inputs only: this check runs inside `npm run build`, with no env, database or network. */
-export interface JobCoverageInput {
+interface JobCoverageInput {
   /** `@cleanup-twin` slugs of `lib/cron/cleanup-registry.ts`, from {@link registrySlugs}. */
   registrySlugs: readonly string[];
   targets?: readonly string[];
