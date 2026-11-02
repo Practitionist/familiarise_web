@@ -108,9 +108,7 @@ export function DigitalProductEditorContainer({
   );
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
-  const [archiveReason, setArchiveReason] = React.useState<string | null>(
-    null,
-  );
+  const [archiveReason, setArchiveReason] = React.useState<string | null>(null);
   const form = useForm<DigitalProductFormValues>({
     resolver: zodResolver(digitalProductFormSchema),
     defaultValues: product ? formValuesOf(product) : DIGITAL_PRODUCT_DEFAULTS,
@@ -209,7 +207,10 @@ export function DigitalProductEditorContainer({
         return;
       }
       if (refused) {
-        toast({ title: "Couldn't delete", description: refused.archiveInstead });
+        toast({
+          title: "Couldn't delete",
+          description: refused.archiveInstead,
+        });
       } else {
         await queryClient.invalidateQueries({
           queryKey: MY_DIGITAL_PRODUCTS_QUERY_KEY,
@@ -239,7 +240,8 @@ export function DigitalProductEditorContainer({
       await setDigitalProductLifecycle(product.id, "archive");
       toast({
         title: "Product archived",
-        description: "It's off sale, and anyone who bought it keeps their files.",
+        description:
+          "It's off sale, and anyone who bought it keeps their files.",
       });
     } catch (error) {
       toast({
@@ -344,8 +346,8 @@ export function DigitalProductEditorContainer({
               <AlertDialogTitle>Delete this product?</AlertDialogTitle>
               <AlertDialogDescription>
                 Its listing and files are deleted for good. You can delete it
-                only while nobody has bought it or started a checkout;
-                otherwise you can archive it.
+                only while nobody has bought it or started a checkout; otherwise
+                you can archive it.
               </AlertDialogDescription>
             </AlertDialogHeader>
           )}

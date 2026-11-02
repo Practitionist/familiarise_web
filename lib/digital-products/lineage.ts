@@ -52,5 +52,8 @@ export async function lineageDisplayNames(
     for (const first of found) firsts.set(first.lineageId, first.originalName);
   }
   return (row) =>
-    withMimeExtension(firsts.get(row.lineageId) ?? row.originalName, row.mimeType);
+    withMimeExtension(
+      firsts.get(row.lineageId) ?? row.originalName,
+      row.mimeType,
+    );
 }
