@@ -65,6 +65,7 @@ Why each choice:
 - **Clearing a standing-skip or release-lag page.** Both verdicts come from the newest digest row. After fixing the setting or shipping the release, run `ops-digest` once from the System Jobs page to clear the 503 instead of waiting for the next day.
 - **Muted Better Stack Telemetry alerts are not read.** The digest reads Uptime monitors and heartbeats through `BETTERSTACK_API_KEY`. The SQL backlog alerts live in Better Stack Telemetry, whose mute state that key cannot read, so the go-live checklist keeps an explicit unmute line for them.
 - **Idle-only jobs are standing items before launch.** Most probe-gated jobs find no work on mock data, so the digest lists them collapsed in one line with their last real run. The headline is not "All clear" until real traffic, or until each is accepted as idle by design.
+- **The probe keeps `CRON_SECRET` (owner decision, 2026-11-02).** Sentry stores uptime-monitor headers unmasked, and the same secret can run every job through `/api/cleanup/[job]`. A dedicated read-only probe secret was offered and declined: jobs are idempotent and CAS-guarded, and one secret is simpler to rotate. Rotate `CRON_SECRET` if either vendor's monitor settings leak.
 - **Costs.** One email a day, one Better Stack heartbeat (6 of the 10 free monitors), three GitHub API calls a day and about 25 bounded database statements a day.
 
 ## Deprecated & Superseded Approaches
