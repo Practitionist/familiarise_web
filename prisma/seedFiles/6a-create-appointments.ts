@@ -1,10 +1,14 @@
 import { faker } from "@faker-js/faker";
 import {
   AppointmentsType,
+  BookingSource,
   ClassPlan,
-  ClassStatus,
   ConsultationPlan,
+  Currency,
   DayOfWeek,
+  ParticipantStatus,
+  PaymentGateway,
+  PaymentStatus,
   Platform,
   Prisma,
   AppointmentStatus,
@@ -12,11 +16,21 @@ import {
   AvailabilityWindowWeekly,
   SubscriptionPlan,
   WebinarPlan,
-  WebinarStatus,
 } from "@prisma/client";
 import prisma from "../../lib/prisma";
+import { buildOccurrence } from "../../lib/appointments/occurrences";
+import { firstCycleWindow, planEndOf } from "../../lib/booking/entitlement";
+import { DIRECT_CHECKOUT_HOLD_MS } from "../../lib/payments/constants";
+import { resolveSchedulingTimezone } from "../../lib/scheduling/schedulingTimezone";
 import { UserWithProfiles } from "./1a-create-users";
+import { buildSeedPaymentLegs } from "./8b-create-payments";
 import { config, getTotalAppointments } from "./config";
+import {
+  HostCalendar,
+  atGridTime,
+  placeSession,
+  releasedSession,
+} from "./host-calendar";
 
 // #780 — the extended client reads plan money columns (price,
 // trialPriceInPaise) as number; the raw model types still say bigint.
@@ -31,6 +45,11 @@ const NUM_WEBINAR = config.volumes.appointments.webinar;
 const NUM_APPOINTMENTS = getTotalAppointments();
 const BATCH_SIZE = config.batchSize;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Subscriptions are allocated this far ahead of their start, cycle by cycle. */
+const SUBSCRIPTION_ALLOCATED_HORIZON_MS = 28 * DAY_MS;
+
 // Distribution helpers - uses configurable volumes
 const getAppointmentType = (index: number): AppointmentsType => {
   // Distribution based on configured volumes
@@ -42,22 +61,57 @@ const getAppointmentType = (index: number): AppointmentsType => {
   return AppointmentsType.CLASS;
 };
 
+/** A request in one of these states holds no time: its sessions are released. */
+const RELEASED_REQUEST_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
+  AppointmentStatus.CANCELLED,
+  AppointmentStatus.EXPIRED,
+  AppointmentStatus.REJECTED,
+]);
+
 const getAppointmentStatus = (
-  index: number,
   isPastAppointment: boolean,
 ): AppointmentStatus => {
   const rand = Math.random();
 
   if (isPastAppointment) {
-    return rand < 0.8
-      ? AppointmentStatus.APPROVED
-      : AppointmentStatus.CANCELLED;
+    if (rand < 0.75) return AppointmentStatus.APPROVED;
+    if (rand < 0.92) return AppointmentStatus.CANCELLED;
+    return AppointmentStatus.REJECTED;
   }
 
-  if (rand < 0.3) return AppointmentStatus.PENDING;
+  if (rand < 0.25) return AppointmentStatus.PENDING;
   if (rand < 0.7) return AppointmentStatus.APPROVED;
-  if (rand < 0.9) return AppointmentStatus.EXPIRED;
+  if (rand < 0.85) return AppointmentStatus.EXPIRED;
+  if (rand < 0.9) return AppointmentStatus.REJECTED;
   return AppointmentStatus.CANCELLED;
+};
+
+/**
+ * How the request reached the consultant. An expiry or a rejection answers a
+ * request nobody paid for; a checkout hold is PENDING and DIRECT_CHECKOUT.
+ */
+const getBookingSource = (status: AppointmentStatus): BookingSource => {
+  if (
+    status === AppointmentStatus.EXPIRED ||
+    status === AppointmentStatus.REJECTED
+  ) {
+    return BookingSource.REQUEST_SUBMITTED;
+  }
+  return faker.helpers.arrayElement([
+    BookingSource.DIRECT_CHECKOUT,
+    BookingSource.REQUEST_SUBMITTED,
+  ]);
+};
+
+// DRAFT is authored-but-not-live, so it cannot describe an instance that
+// already has a booked appointment hanging off it. Drafts are seeded separately
+// (6b), with no appointment at all — which is what makes them drafts. A past
+// event has run (or was cancelled); a future one is scheduled (or cancelled).
+type BookedEventStatus = "SCHEDULED" | "COMPLETED" | "CANCELLED";
+
+const getEventStatus = (isPastAppointment: boolean): BookedEventStatus => {
+  if (Math.random() < 0.15) return "CANCELLED";
+  return isPastAppointment ? "COMPLETED" : "SCHEDULED";
 };
 
 const getAppointmentDate = (
@@ -89,21 +143,11 @@ const getAppointmentDate = (
     });
   }
 
-  const startDate = new Date(now.getTime() + startOffset * 24 * 60 * 60 * 1000);
-  const endDate = new Date(now.getTime() + endOffset * 24 * 60 * 60 * 1000);
+  const startDate = new Date(now.getTime() + startOffset * DAY_MS);
+  const endDate = new Date(now.getTime() + endOffset * DAY_MS);
 
   return { startDate, endDate, isPastAppointment };
 };
-
-// DRAFT is authored-but-not-live, so it cannot describe an instance that
-// already has a booked appointment hanging off it. Drafts are seeded separately
-// (6b), with no appointment at all — which is what makes them drafts.
-const LIVE_WEBINAR_STATUSES = Object.values(WebinarStatus).filter(
-  (status) => status !== WebinarStatus.DRAFT,
-);
-const LIVE_CLASS_STATUSES = Object.values(ClassStatus).filter(
-  (status) => status !== ClassStatus.DRAFT,
-);
 
 const getNumSlots = (appointmentType: AppointmentsType): number => {
   switch (appointmentType) {
@@ -146,6 +190,24 @@ type SlotData =
       slot: AvailabilityWindowCustom;
     };
 
+const DAY_OF_WEEK_BY_UTC_DAY: Record<number, DayOfWeek> = {
+  0: DayOfWeek.SUNDAY,
+  1: DayOfWeek.MONDAY,
+  2: DayOfWeek.TUESDAY,
+  3: DayOfWeek.WEDNESDAY,
+  4: DayOfWeek.THURSDAY,
+  5: DayOfWeek.FRIDAY,
+  6: DayOfWeek.SATURDAY,
+};
+
+/** A session's length on the 30-minute grid, exactly as checkout sizes it. */
+const sessionMs = (durationInHours: number): number =>
+  buildOccurrence({
+    startsAt: new Date(0),
+    durationInHours,
+    consultantProfileId: "",
+  }).endsAt.getTime();
+
 // --- Helper function to create Meeting data ---
 const createMeetingData = (
   isPastAppointment: boolean,
@@ -173,421 +235,566 @@ const createMeetingData = (
   };
 };
 
-// --- Updated Appointment Creation Functions ---
+/**
+ * One session as checkout writes it (`buildOccurrence`: plan length on the
+ * grid, the plan's consultant stamped), released when its booking no longer
+ * holds time.
+ */
+const sessionRow = (args: {
+  ordinal: number;
+  startsAt: Date;
+  durationInHours: number;
+  consultantProfileId: string;
+  isTentative: boolean;
+  releasedAt: Date | null;
+  now: Date;
+}) => {
+  const occurrence = buildOccurrence(args);
+  return {
+    ...occurrence,
+    ...(args.releasedAt ? releasedSession(args.releasedAt) : {}),
+    meeting: createMeetingData(occurrence.endsAt < args.now),
+  };
+};
+
+/** The request's seats: HELD while a hold is pending, released with the request. */
+const requestParticipants = (
+  consultee: UserWithProfiles,
+  status: AppointmentStatus,
+  consultantUserId?: string,
+): Prisma.AppointmentParticipantCreateNestedManyWithoutAppointmentInput => {
+  const released = RELEASED_REQUEST_STATUSES.has(status);
+  const consulteeStatus: ParticipantStatus = released
+    ? ParticipantStatus.CANCELLED
+    : status === AppointmentStatus.PENDING
+      ? ParticipantStatus.HELD
+      : ParticipantStatus.CONFIRMED;
+  return {
+    create: [
+      { userId: consultee.id, role: "CONSULTEE", status: consulteeStatus },
+      ...(consultantUserId
+        ? [
+            {
+              userId: consultantUserId,
+              role: "CONSULTANT" as const,
+              status: released
+                ? ParticipantStatus.CANCELLED
+                : ParticipantStatus.CONFIRMED,
+            },
+          ]
+        : []),
+    ],
+  };
+};
+
+/** Group-event seats, released when the event is cancelled. */
+const eventParticipants = (
+  consultee: UserWithProfiles,
+  consultees: UserWithProfiles[],
+  status: BookedEventStatus,
+  consultantUserId?: string,
+): Prisma.AppointmentParticipantCreateNestedManyWithoutAppointmentInput => {
+  // Pick 2-4 additional participants to simulate a group event
+  const otherConsultees = consultees.filter((c) => c.id !== consultee.id);
+  const additionalCount = Math.min(
+    faker.number.int({ min: 2, max: 4 }),
+    otherConsultees.length,
+  );
+  const additionalParticipants = faker.helpers
+    .shuffle(otherConsultees)
+    .slice(0, additionalCount);
+  const seat =
+    status === "CANCELLED"
+      ? ParticipantStatus.CANCELLED
+      : ParticipantStatus.CONFIRMED;
+  return {
+    create: [
+      ...(consultantUserId
+        ? [
+            {
+              userId: consultantUserId,
+              role: "CONSULTANT" as const,
+              status: seat,
+            },
+          ]
+        : []),
+      { userId: consultee.id, role: "CONSULTEE", status: seat },
+      ...additionalParticipants.map((c) => ({
+        userId: c.id,
+        role: "CONSULTEE" as const,
+        status: seat,
+      })),
+    ],
+  };
+};
+
+/**
+ * A checkout hold's money side: PENDING, unpaid, expiring when the slot hold
+ * does (`DIRECT_CHECKOUT_HOLD_MS`), so the abandoned-payments sweep retires it.
+ */
+const checkoutHold = (
+  consultee: UserWithProfiles,
+  plan: { price: number; title: string },
+  now: Date,
+): Prisma.PaymentCreateNestedManyWithoutAppointmentInput => {
+  const paymentIntent = `order_seed_${faker.string.uuid()}`;
+  const legs = buildSeedPaymentLegs(plan.price, paymentIntent);
+  return {
+    create: [
+      {
+        user: { connect: { id: consultee.id } },
+        amount: plan.price,
+        originalAmount: plan.price,
+        currency: Currency.INR,
+        description: `Checkout hold for ${plan.title}`,
+        paymentMethod: "CARD",
+        paymentIntent,
+        clientIdempotencyKey: faker.string.uuid(),
+        paymentGateway: PaymentGateway.RAZORPAY,
+        paymentStatus: PaymentStatus.PENDING,
+        expiresAt: new Date(now.getTime() + DIRECT_CHECKOUT_HOLD_MS),
+        ...(legs.length > 0 ? { legs: { create: legs } } : {}),
+      },
+    ],
+  };
+};
+
+interface RequestArgs {
+  consultee: UserWithProfiles;
+  status: AppointmentStatus;
+  bookingSource: BookingSource;
+  now: Date;
+  consultantUserId?: string;
+}
+
+/** Sessions of a request: tentative while PENDING, released once it ended. */
+const requestSessionState = (status: AppointmentStatus, now: Date) => ({
+  isTentative:
+    status === AppointmentStatus.PENDING ||
+    status === AppointmentStatus.EXPIRED ||
+    status === AppointmentStatus.REJECTED,
+  releasedAt: RELEASED_REQUEST_STATUSES.has(status) ? now : null,
+});
+
+/** The request row's lifecycle stamps: a closed request carries its closing time. */
+const requestLifecycle = (args: RequestArgs) => ({
+  status: args.status,
+  requestedAt: args.now,
+  requestNotes: faker.lorem.sentence(),
+  bookingSource: args.bookingSource,
+  ...(RELEASED_REQUEST_STATUSES.has(args.status)
+    ? { cancelledAt: args.now }
+    : {}),
+});
+
+const holdsCheckout = (args: RequestArgs): boolean =>
+  args.status === AppointmentStatus.PENDING &&
+  args.bookingSource === BookingSource.DIRECT_CHECKOUT;
 
 const createConsultationAppointment = (
-  consultee: UserWithProfiles,
-  consultationPlans: PlanRead<ConsultationPlan>[],
-  defaultStatus: AppointmentStatus,
-  isPastAppointment: boolean,
-  startsAt: Date,
-  endsAt: Date,
-  consultantUserId?: string,
+  args: RequestArgs & {
+    plan: PlanRead<ConsultationPlan>;
+    startsAt: Date;
+  },
 ): Prisma.AppointmentCreateInput => {
-  // #1639 item 3 — pick once and reuse, so the occurrence's stamp matches the
-  // plan actually connected below rather than a second independent draw.
-  const selectedPlan = faker.helpers.arrayElement(consultationPlans);
+  const { plan } = args;
   return {
     appointmentType: AppointmentsType.CONSULTATION,
     // #1319 A9 — participant rows mirror the slot connects below.
-    participants: {
-      create: [
-        {
-          userId: consultee.id,
-          role: "CONSULTEE",
-          status:
-            defaultStatus === AppointmentStatus.PENDING ? "HELD" : "CONFIRMED",
-        },
-        ...(consultantUserId
-          ? [
-              {
-                userId: consultantUserId,
-                role: "CONSULTANT" as const,
-                status: "CONFIRMED" as const,
-              },
-            ]
-          : []),
-      ],
-    },
+    participants: requestParticipants(
+      args.consultee,
+      args.status,
+      args.consultantUserId,
+    ),
     occurrences: {
-      create: {
+      create: sessionRow({
         ordinal: 1,
-        startsAt: startsAt,
-        endsAt: endsAt,
-        isTentative: defaultStatus === AppointmentStatus.PENDING,
-        // #1639 item 3 — the app's checkout stamps this via
-        // buildOccurrenceForWindow; seeded rows were the only ones left NULL.
-        consultantProfileId: selectedPlan.consultantProfileId,
-        meeting: createMeetingData(isPastAppointment),
-      },
+        startsAt: args.startsAt,
+        durationInHours: plan.durationInHours,
+        consultantProfileId: plan.consultantProfileId,
+        ...requestSessionState(args.status, args.now),
+        now: args.now,
+      }),
     },
+    ...(holdsCheckout(args)
+      ? { payment: checkoutHold(args.consultee, plan, args.now) }
+      : {}),
     consultation: {
       create: {
-        consultationPlan: {
-          connect: {
-            id: selectedPlan.id,
-          },
-        },
-        requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
-        status: defaultStatus,
-        requestedAt: new Date(),
-        requestNotes: faker.lorem.sentence(),
-        bookingSource: faker.helpers.arrayElement([
-          "DIRECT_CHECKOUT",
-          "REQUEST_SUBMITTED",
-        ]),
+        consultationPlan: { connect: { id: plan.id } },
+        requestedBy: { connect: { id: args.consultee.consulteeProfile!.id } },
+        ...requestLifecycle(args),
       },
     },
   };
 };
 
 const createSubscriptionAppointment = (
-  consultee: UserWithProfiles,
-  subscriptionPlans: PlanRead<SubscriptionPlan>[],
-  consultantWeeklySlots: AvailabilityWindowWeekly[],
-  defaultStatus: AppointmentStatus,
-  isPastAppointment: boolean,
-  startDate: Date,
-  endDate: Date,
-  numSlots: number,
-  consultantUserId?: string,
+  args: RequestArgs & {
+    plan: PlanRead<SubscriptionPlan>;
+    start: Date;
+    schedulingTimezone: string;
+    sessionStarts: Date[];
+  },
 ): Prisma.AppointmentCreateInput => {
-  // Select a random subscription plan
-  const selectedPlan = faker.helpers.arrayElement(subscriptionPlans);
-
-  // Calculate realistic number of slots based on SUBSCRIPTION INSTANCE duration (not plan duration)
-  const sessionsPerWeek = selectedPlan.sessionsPerWeek;
-  const subscriptionDurationMs = endDate.getTime() - startDate.getTime();
-  const subscriptionWeeks = Math.ceil(
-    subscriptionDurationMs / (7 * 24 * 60 * 60 * 1000),
-  );
-  const maxTotalCalls = Math.min(sessionsPerWeek * subscriptionWeeks, numSlots);
-
-  // Get consultant's available days of week from their weekly slots
-  const availableDaysSet = new Set(
-    consultantWeeklySlots.map((s) => s.startDay),
-  );
-  const availableDays = Array.from(availableDaysSet);
-
-  if (availableDays.length === 0) {
-    console.warn(
-      "Consultant has no weekly availability slots. Creating minimal slots.",
-    );
-  }
-
-  // Helper function to convert Date to DayOfWeek enum
-  const getDayOfWeekEnum = (date: Date): DayOfWeek => {
-    const dayMap: Record<number, DayOfWeek> = {
-      0: DayOfWeek.SUNDAY,
-      1: DayOfWeek.MONDAY,
-      2: DayOfWeek.TUESDAY,
-      3: DayOfWeek.WEDNESDAY,
-      4: DayOfWeek.THURSDAY,
-      5: DayOfWeek.FRIDAY,
-      6: DayOfWeek.SATURDAY,
-    };
-    return dayMap[date.getUTCDay()];
-  };
-
-  // Create slots distributed across weeks, respecting consultant's availability
-  const slots = [];
-  const currentDate = new Date(startDate);
-  let slotsCreated = 0;
-
-  // Iterate through the subscription period
-  while (currentDate < endDate && slotsCreated < maxTotalCalls) {
-    const currentDayOfWeek = getDayOfWeekEnum(currentDate);
-
-    // Only create slots on days consultant works
-    if (availableDays.includes(currentDayOfWeek)) {
-      // Find available time slots for this day
-      const daySlotsForConsultant = consultantWeeklySlots.filter(
-        (s) => s.startDay === currentDayOfWeek,
-      );
-
-      if (daySlotsForConsultant.length > 0) {
-        // Pick a random time from consultant's availability
-        const randomSlot = faker.helpers.arrayElement(daySlotsForConsultant);
-
-        // Create appointment slot at this time
-        const slotStart = new Date(currentDate);
-        slotStart.setUTCHours(
-          Math.floor(randomSlot.startTimeUtc / 60),
-          randomSlot.startTimeUtc % 60,
-          0,
-          0,
-        );
-
-        const slotEnd = new Date(
-          slotStart.getTime() +
-            selectedPlan.sessionDurationInHours * 60 * 60 * 1000,
-        );
-
-        // Ensure slot is within subscription period
-        if (slotStart >= startDate && slotEnd <= endDate) {
-          slots.push({
-            ordinal: slots.length + 1,
-            startsAt: slotStart,
-            endsAt: slotEnd,
-            isTentative: defaultStatus === AppointmentStatus.PENDING,
-            // #1639 item 3 — stamp the plan's consultant, as checkout does.
-            consultantProfileId: selectedPlan.consultantProfileId,
-            meeting: createMeetingData(
-              isPastAppointment && slotStart < new Date(),
-            ),
-          });
-          slotsCreated++;
-        }
-      }
-    }
-
-    // Move to next day
-    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
-  }
-
-  // If no slots were created (edge case), create at least one slot
-  if (slots.length === 0 && consultantWeeklySlots.length > 0) {
-    console.warn(
-      "No slots created within subscription period. Creating one slot at start.",
-    );
-    const randomSlot = faker.helpers.arrayElement(consultantWeeklySlots);
-    const slotStart = new Date(startDate);
-    slotStart.setUTCHours(
-      Math.floor(randomSlot.startTimeUtc / 60),
-      randomSlot.startTimeUtc % 60,
-      0,
-      0,
-    );
-    const slotEnd = new Date(
-      slotStart.getTime() +
-        selectedPlan.sessionDurationInHours * 60 * 60 * 1000,
-    );
-
-    slots.push({
-      ordinal: slots.length + 1,
-      startsAt: slotStart,
-      endsAt: slotEnd,
-      isTentative: defaultStatus === AppointmentStatus.PENDING,
-      // #1639 item 3 — stamp the plan's consultant, as checkout does.
-      consultantProfileId: selectedPlan.consultantProfileId,
-      meeting: createMeetingData(isPastAppointment),
-    });
-  }
+  const { plan } = args;
+  // The window checkout persists (the first cycle) and the fixed plan end.
+  const period = firstCycleWindow(plan, args.start, args.schedulingTimezone);
+  const sessionState = requestSessionState(args.status, args.now);
 
   return {
     appointmentType: AppointmentsType.SUBSCRIPTION,
-    participants: {
-      create: [
-        {
-          userId: consultee.id,
-          role: "CONSULTEE",
-          status:
-            defaultStatus === AppointmentStatus.PENDING ? "HELD" : "CONFIRMED",
-        },
-        ...(consultantUserId
-          ? [
-              {
-                userId: consultantUserId,
-                role: "CONSULTANT" as const,
-                status: "CONFIRMED" as const,
-              },
-            ]
-          : []),
-      ],
-    },
+    participants: requestParticipants(
+      args.consultee,
+      args.status,
+      args.consultantUserId,
+    ),
     occurrences: {
-      create: slots,
+      create: args.sessionStarts.map((startsAt, index) =>
+        sessionRow({
+          ordinal: index + 1,
+          startsAt,
+          durationInHours: plan.sessionDurationInHours,
+          consultantProfileId: plan.consultantProfileId,
+          ...sessionState,
+          now: args.now,
+        }),
+      ),
     },
+    ...(holdsCheckout(args)
+      ? { payment: checkoutHold(args.consultee, plan, args.now) }
+      : {}),
     subscription: {
       create: {
-        subscriptionPlan: {
-          connect: {
-            id: selectedPlan.id,
-          },
-        },
-        requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
-        status: defaultStatus,
-        requestedAt: new Date(),
-        requestNotes: faker.lorem.sentence(),
-        bookingSource: faker.helpers.arrayElement([
-          "DIRECT_CHECKOUT",
-          "REQUEST_SUBMITTED",
-        ]),
-        schedulingPeriodStartsAt: startDate,
-        schedulingPeriodEndsAt: endDate,
-        schedulingTimezone: "UTC",
+        subscriptionPlan: { connect: { id: plan.id } },
+        requestedBy: { connect: { id: args.consultee.consulteeProfile!.id } },
+        ...requestLifecycle(args),
+        schedulingPeriodStartsAt: period.start,
+        schedulingPeriodEndsAt: period.end,
+        planEndsAt: planEndOf(
+          period.start,
+          plan.durationInMonths,
+          args.schedulingTimezone,
+        ),
+        schedulingTimezone: args.schedulingTimezone,
         // #1766 — the entitlement is snapshotted at purchase.
-        sessionsTotal: selectedPlan.totalSessions,
+        sessionsTotal: plan.totalSessions,
       },
     },
   };
 };
 
-const createWebinarAppointment = async (
-  consultee: UserWithProfiles,
-  webinarPlans: PlanRead<WebinarPlan>[],
-  consultees: UserWithProfiles[],
-  isPastAppointment: boolean,
-  startsAt: Date,
-  endsAt: Date,
-  consultantUserId?: string,
-): Promise<Prisma.AppointmentCreateInput> => {
-  // Pick 2-4 additional participants to simulate a group webinar
-  const otherConsultees = consultees.filter((c) => c.id !== consultee.id);
-  const additionalCount = Math.min(
-    faker.number.int({ min: 2, max: 4 }),
-    otherConsultees.length,
+/**
+ * The subscription's allocated sessions: up to `sessionsPerWeek` per rolling
+ * week from the start, on the consultant's weekly days (any day when they keep
+ * none), inside the plan and the allocation horizon, never on a held time.
+ */
+const subscriptionSessionStarts = (args: {
+  calendar: HostCalendar;
+  plan: PlanRead<SubscriptionPlan>;
+  start: Date;
+  planEndsAt: Date;
+  weeklyRows: AvailabilityWindowWeekly[];
+  fallbackMinutesUtc: number;
+  cap: number;
+  occupies: boolean;
+}): Date[] => {
+  const { plan, start } = args;
+  const lengthMs = sessionMs(plan.sessionDurationInHours);
+  const horizon = Math.min(
+    args.planEndsAt.getTime(),
+    start.getTime() + SUBSCRIPTION_ALLOCATED_HORIZON_MS,
   );
-  const additionalParticipants = faker.helpers
-    .shuffle(otherConsultees)
-    .slice(0, additionalCount);
+  const perWeek = new Map<number, number>();
+  const starts: Date[] = [];
+  for (
+    let day = atGridTime(start, 0);
+    day.getTime() < horizon && starts.length < args.cap;
+    day = new Date(day.getTime() + DAY_MS)
+  ) {
+    const week = Math.floor((day.getTime() - start.getTime()) / (7 * DAY_MS));
+    if ((perWeek.get(week) ?? 0) >= plan.sessionsPerWeek) continue;
+    const rowsToday = args.weeklyRows.filter(
+      (row) => row.startDay === DAY_OF_WEEK_BY_UTC_DAY[day.getUTCDay()],
+    );
+    if (args.weeklyRows.length > 0 && rowsToday.length === 0) continue;
+    const minutesUtc =
+      rowsToday.length > 0
+        ? faker.helpers.arrayElement(rowsToday).startTimeUtc
+        : args.fallbackMinutesUtc;
+    const startsAt = atGridTime(day, minutesUtc);
+    const endsAt = new Date(startsAt.getTime() + lengthMs);
+    if (startsAt < start || endsAt.getTime() > args.planEndsAt.getTime()) {
+      continue;
+    }
+    if (
+      args.occupies &&
+      !args.calendar.claim(plan.consultantProfileId, startsAt, endsAt)
+    ) {
+      continue;
+    }
+    starts.push(startsAt);
+    perWeek.set(week, (perWeek.get(week) ?? 0) + 1);
+  }
+  return starts;
+};
 
-  // #1639 item 3 — pick once and reuse, so the occurrence's stamp matches the
-  // plan actually connected below rather than a second independent draw. This
-  // is also what puts a group-event row inside `occurrence_no_confirmed_overlap`:
-  // the predicate requires a non-null `consultantProfileId`, so a NULL here left
-  // every seeded webinar permanently outside the only DB-level double-book guard.
-  const selectedPlan = faker.helpers.arrayElement(webinarPlans);
-
+const createWebinarAppointment = (args: {
+  consultee: UserWithProfiles;
+  consultees: UserWithProfiles[];
+  plan: PlanRead<WebinarPlan>;
+  /** The plan's consultant: the host whose time the session takes. */
+  hostId: string;
+  status: BookedEventStatus;
+  startsAt: Date;
+  now: Date;
+  consultantUserId?: string;
+}): Prisma.AppointmentCreateInput => {
+  const { plan } = args;
   return {
     appointmentType: AppointmentsType.WEBINAR,
-    participants: {
-      create: [
-        ...(consultantUserId
-          ? [
-              {
-                userId: consultantUserId,
-                role: "CONSULTANT" as const,
-                status: "CONFIRMED" as const,
-              },
-            ]
-          : []),
-        { userId: consultee.id, role: "CONSULTEE", status: "CONFIRMED" },
-        ...additionalParticipants.map((c) => ({
-          userId: c.id,
-          role: "CONSULTEE" as const,
-          status: "CONFIRMED" as const,
-        })),
-      ],
-    },
+    participants: eventParticipants(
+      args.consultee,
+      args.consultees,
+      args.status,
+      args.consultantUserId,
+    ),
     occurrences: {
-      create: {
+      // #1639 item 3 — the plan's consultant is stamped, which is also what
+      // puts a group-event row inside `occurrence_no_confirmed_overlap`.
+      create: sessionRow({
         ordinal: 1,
-        startsAt: startsAt,
-        endsAt: endsAt,
+        startsAt: args.startsAt,
+        durationInHours: plan.durationInHours,
+        consultantProfileId: args.hostId,
         isTentative: false,
-        // #1639 item 3 — stamp the plan's consultant, as checkout does.
-        consultantProfileId: selectedPlan.consultantProfileId,
-        meeting: createMeetingData(isPastAppointment),
-      },
+        releasedAt: args.status === "CANCELLED" ? args.now : null,
+        now: args.now,
+      }),
     },
     webinar: {
       create: {
-        webinarPlan: {
-          connect: { id: selectedPlan.id },
-        },
-        status: isPastAppointment
-          ? WebinarStatus.COMPLETED
-          : faker.helpers.arrayElement(LIVE_WEBINAR_STATUSES),
-        feedbackSummary: isPastAppointment ? faker.lorem.paragraph() : null,
+        webinarPlan: { connect: { id: plan.id } },
+        status: args.status,
+        feedbackSummary:
+          args.status === "COMPLETED" ? faker.lorem.paragraph() : null,
       },
     },
   };
 };
 
-const createClassAppointment = async (
-  consultee: UserWithProfiles,
-  classPlans: PlanRead<ClassPlan>[],
-  consultees: UserWithProfiles[],
-  isPastAppointment: boolean,
-  startDate: Date,
-  endDate: Date,
-  numSlots: number,
-  consultantUserId?: string,
-): Promise<Prisma.AppointmentCreateInput> => {
-  // Limit slots to prevent transaction timeout
-  const limitedSlots = Math.min(numSlots, 4);
-
-  // Pick 2-4 additional participants to simulate a group class
-  const otherConsultees = consultees.filter((c) => c.id !== consultee.id);
-  const additionalCount = Math.min(
-    faker.number.int({ min: 2, max: 4 }),
-    otherConsultees.length,
-  );
-  const additionalParticipants = faker.helpers
-    .shuffle(otherConsultees)
-    .slice(0, additionalCount);
-
-  // #1639 item 3 — pick once and reuse, so every occurrence's stamp matches the
-  // plan actually connected below rather than a second independent draw. This
-  // is also what puts a group-event row inside `occurrence_no_confirmed_overlap`:
-  // the predicate requires a non-null `consultantProfileId`, so a NULL here left
-  // every seeded class permanently outside the only DB-level double-book guard.
-  const selectedPlan = faker.helpers.arrayElement(classPlans);
-
+const createClassAppointment = (args: {
+  consultee: UserWithProfiles;
+  consultees: UserWithProfiles[];
+  plan: PlanRead<ClassPlan>;
+  hostId: string;
+  status: BookedEventStatus;
+  sessionStarts: Date[];
+  startDate: Date;
+  endDate: Date;
+  now: Date;
+  consultantUserId?: string;
+}): Prisma.AppointmentCreateInput => {
+  const { plan } = args;
   return {
     appointmentType: AppointmentsType.CLASS,
-    participants: {
-      create: [
-        ...(consultantUserId
-          ? [
-              {
-                userId: consultantUserId,
-                role: "CONSULTANT" as const,
-                status: "CONFIRMED" as const,
-              },
-            ]
-          : []),
-        { userId: consultee.id, role: "CONSULTEE", status: "CONFIRMED" },
-        ...additionalParticipants.map((c) => ({
-          userId: c.id,
-          role: "CONSULTEE" as const,
-          status: "CONFIRMED" as const,
-        })),
-      ],
-    },
+    participants: eventParticipants(
+      args.consultee,
+      args.consultees,
+      args.status,
+      args.consultantUserId,
+    ),
     occurrences: {
-      create: Array.from({ length: limitedSlots }, (_, index) => {
-        const slotStart = new Date(
-          startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
-        );
-
-        // Set class sessions to business hours (9 AM - 6 PM) in UTC
-        const businessHours = [9, 10, 11, 14, 15, 16, 17];
-        const businessHour = faker.helpers.arrayElement(businessHours);
-        slotStart.setUTCHours(businessHour, 0, 0, 0);
-
-        const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
-
-        return {
+      create: args.sessionStarts.map((startsAt, index) =>
+        sessionRow({
           ordinal: index + 1,
-          startsAt: slotStart,
-          endsAt: slotEnd,
+          startsAt,
+          durationInHours: plan.sessionDurationInHours,
+          consultantProfileId: args.hostId,
           isTentative: false,
-          // #1639 item 3 — stamp the plan's consultant, as checkout does.
-          consultantProfileId: selectedPlan.consultantProfileId,
-          meeting: createMeetingData(
-            isPastAppointment && index === limitedSlots - 1,
-          ),
-        };
-      }),
+          releasedAt: args.status === "CANCELLED" ? args.now : null,
+          now: args.now,
+        }),
+      ),
     },
     class: {
       create: {
-        classPlan: {
-          connect: { id: selectedPlan.id },
-        },
-        schedulingPeriodStartsAt: startDate,
-        schedulingPeriodEndsAt: endDate,
+        classPlan: { connect: { id: plan.id } },
+        schedulingPeriodStartsAt: args.startDate,
+        schedulingPeriodEndsAt: args.endDate,
         schedulingTimezone: "UTC",
-        status: isPastAppointment
-          ? ClassStatus.COMPLETED
-          : faker.helpers.arrayElement(LIVE_CLASS_STATUSES),
-        feedbackSummary: isPastAppointment ? faker.lorem.paragraph() : null,
+        status: args.status,
+        feedbackSummary:
+          args.status === "COMPLETED" ? faker.lorem.paragraph() : null,
       },
     },
   };
 };
+
+/** Class sessions: weekly from the start at a business hour, never on a held time. */
+const classSessionStarts = (args: {
+  calendar: HostCalendar;
+  plan: PlanRead<ClassPlan>;
+  hostId: string;
+  startDate: Date;
+  count: number;
+  occupies: boolean;
+  step: 1 | -1;
+}): Date[] => {
+  const lengthMs = sessionMs(args.plan.sessionDurationInHours);
+  const businessHours = [9, 10, 11, 14, 15, 16, 17];
+  const starts: Date[] = [];
+  for (let index = 0; index < args.count; index++) {
+    const week = new Date(args.startDate.getTime() + index * 7 * DAY_MS);
+    const from = atGridTime(
+      week,
+      faker.helpers.arrayElement(businessHours) * 60,
+    );
+    const startsAt = placeSession(args.calendar, args.hostId, from, lengthMs, {
+      occupies: args.occupies,
+      step: args.step,
+      tries: 6,
+    });
+    if (startsAt) starts.push(startsAt);
+  }
+  return starts;
+};
+
+/** Marks the QA cohort's request rows; nothing else writes this prefix. */
+export const QA_COHORT_NOTE = "QA cohort:";
+
+/** A captured payment as checkout leaves it: SUCCEEDED, its CARD leg, no hold clock. */
+const capturedPayment = (
+  consultee: UserWithProfiles,
+  plan: { price: number; title: string },
+  now: Date,
+): Prisma.PaymentCreateNestedManyWithoutAppointmentInput => {
+  const paymentIntent = `order_seed_${faker.string.uuid()}`;
+  const legs = buildSeedPaymentLegs(plan.price, paymentIntent);
+  return {
+    create: [
+      {
+        user: { connect: { id: consultee.id } },
+        amount: plan.price,
+        originalAmount: plan.price,
+        currency: Currency.INR,
+        description: `Payment for ${plan.title}`,
+        paymentMethod: "CARD",
+        paymentIntent,
+        clientIdempotencyKey: faker.string.uuid(),
+        paymentGateway: PaymentGateway.RAZORPAY,
+        paymentStatus: PaymentStatus.SUCCEEDED,
+        capturedAt: now,
+        ...(legs.length > 0 ? { legs: { create: legs } } : {}),
+      },
+    ],
+  };
+};
+
+/**
+ * The two no-session states the dashboards render, seeded on purpose: three
+ * paid plans awaiting their first session ("Awaiting scheduling") and one
+ * paid consultation whose only session was cancelled ("Needs rescheduling").
+ * Both are states the app reaches; `QA_COHORT_NOTE` labels them.
+ */
+async function createSessionGapCohort(args: {
+  consultees: UserWithProfiles[];
+  consultationPlans: PlanRead<ConsultationPlan>[];
+  subscriptionPlans: PlanRead<SubscriptionPlan>[];
+  consultants: Record<string, { userId: string; timezone: string | null }>;
+  now: Date;
+}): Promise<number> {
+  const buyers = args.consultees.filter((c) => c.consulteeProfile).slice(0, 4);
+  const subscriptionPlans = args.subscriptionPlans.slice(0, 3);
+  const consultationPlan = args.consultationPlans[0];
+  if (buyers.length < 4 || subscriptionPlans.length < 3 || !consultationPlan) {
+    return 0;
+  }
+  const start = atGridTime(new Date(args.now.getTime() + DAY_MS), 9 * 60);
+  const rows: Prisma.AppointmentCreateInput[] = subscriptionPlans.map(
+    (plan, index) => {
+      const consultee = buyers[index];
+      const consultant = args.consultants[plan.consultantProfileId];
+      const timezone = resolveSchedulingTimezone(consultant?.timezone);
+      const period = firstCycleWindow(plan, start, timezone);
+      return {
+        appointmentType: AppointmentsType.SUBSCRIPTION,
+        participants: requestParticipants(
+          consultee,
+          AppointmentStatus.APPROVED,
+          consultant?.userId,
+        ),
+        payment: capturedPayment(consultee, plan, args.now),
+        subscription: {
+          create: {
+            subscriptionPlan: { connect: { id: plan.id } },
+            requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
+            status: AppointmentStatus.APPROVED,
+            requestedAt: args.now,
+            requestNotes: `${QA_COHORT_NOTE} awaiting scheduling`,
+            bookingSource: BookingSource.DIRECT_CHECKOUT,
+            schedulingPeriodStartsAt: period.start,
+            schedulingPeriodEndsAt: period.end,
+            planEndsAt: planEndOf(
+              period.start,
+              plan.durationInMonths,
+              timezone,
+            ),
+            schedulingTimezone: timezone,
+            sessionsTotal: plan.totalSessions,
+          },
+        },
+      };
+    },
+  );
+  const consultee = buyers[3];
+  rows.push({
+    appointmentType: AppointmentsType.CONSULTATION,
+    participants: requestParticipants(
+      consultee,
+      AppointmentStatus.APPROVED,
+      args.consultants[consultationPlan.consultantProfileId]?.userId,
+    ),
+    // The host cancelled the one session: released, so it holds no time.
+    occurrences: {
+      create: sessionRow({
+        ordinal: 1,
+        startsAt: start,
+        durationInHours: consultationPlan.durationInHours,
+        consultantProfileId: consultationPlan.consultantProfileId,
+        isTentative: false,
+        releasedAt: args.now,
+        now: args.now,
+      }),
+    },
+    payment: capturedPayment(consultee, consultationPlan, args.now),
+    consultation: {
+      create: {
+        consultationPlan: { connect: { id: consultationPlan.id } },
+        requestedBy: { connect: { id: consultee.consulteeProfile!.id } },
+        status: AppointmentStatus.APPROVED,
+        requestedAt: args.now,
+        requestNotes: `${QA_COHORT_NOTE} needs rescheduling`,
+        bookingSource: BookingSource.DIRECT_CHECKOUT,
+      },
+    },
+  });
+
+  for (const [index, data] of rows.entries()) {
+    const buyer = buyers[index];
+    await prisma.$transaction(async (tx) => {
+      const created = await tx.appointment.create({
+        data: { ...data, chatChannelEnsuredAt: args.now },
+        select: { id: true, payment: { select: { id: true } } },
+      });
+      await tx.appointmentParticipant.updateMany({
+        where: { appointmentId: created.id, userId: buyer.id, paymentId: null },
+        data: { paymentId: created.payment[0].id },
+      });
+    });
+  }
+  return rows.length;
+}
 
 async function createAppointmentBatch(
   consultees: UserWithProfiles[],
@@ -599,7 +806,8 @@ async function createAppointmentBatch(
   weeklySlots: AvailabilityWindowWeekly[],
   startIndex: number,
   batchSize: number,
-  consultantUserMap: Record<string, string>,
+  consultants: Record<string, { userId: string; timezone: string | null }>,
+  calendar: HostCalendar,
 ): Promise<number> {
   let successCount = 0;
 
@@ -627,157 +835,183 @@ async function createAppointmentBatch(
       const appointmentType = getAppointmentType(i);
       const now = new Date();
       const { startDate, endDate, isPastAppointment } = getAppointmentDate(now);
-      const defaultStatus = getAppointmentStatus(i, isPastAppointment);
       const numSlots = getNumSlots(appointmentType);
+      const step = isPastAppointment ? -1 : 1;
 
       // Extract the consultant ID from the slot to ensure data integrity
       // This ensures appointments use the correct consultant's plans
       const slotConsultantId = slotData.slot.consultantProfileId;
+      const consultant = consultants[slotConsultantId];
+      const consultantUserId = consultant?.userId;
 
-      // Filter plans to only include those belonging to the slot's consultant
-      // This prevents appointments from being linked to the wrong consultant's plans
-      const consultantConsultationPlans = consultationPlans.filter(
-        (p) => p.consultantProfileId === slotConsultantId,
-      );
-      const consultantSubscriptionPlans = subscriptionPlans.filter(
-        (p) => p.consultantProfileId === slotConsultantId,
-      );
-      const consultantWebinarPlans = webinarPlans.filter(
-        (p) => p.consultantProfileId === slotConsultantId,
-      );
-      const consultantClassPlans = classPlans.filter(
-        (p) => p.consultantProfileId === slotConsultantId,
-      );
+      // The published time of day this booking was made against.
+      const slotMinutesUtc =
+        slotData.type === "weekly"
+          ? slotData.slot.startTimeUtc
+          : slotData.slot.startsAt.getUTCHours() * 60 +
+            slotData.slot.startsAt.getUTCMinutes();
+      const slotStart = atGridTime(startDate, slotMinutesUtc);
 
-      // Filter weekly slots for this consultant (needed for subscription appointments)
-      const consultantWeeklySlots = weeklySlots.filter(
-        (s) => s.consultantProfileId === slotConsultantId,
-      );
-
-      // Skip if consultant has no plans for this appointment type
-      if (
-        appointmentType === AppointmentsType.CONSULTATION &&
-        consultantConsultationPlans.length === 0
-      ) {
-        continue;
-      }
-      if (
-        appointmentType === AppointmentsType.SUBSCRIPTION &&
-        consultantSubscriptionPlans.length === 0
-      ) {
-        continue;
-      }
-      if (
-        appointmentType === AppointmentsType.WEBINAR &&
-        consultantWebinarPlans.length === 0
-      ) {
-        continue;
-      }
-      if (
-        appointmentType === AppointmentsType.CLASS &&
-        consultantClassPlans.length === 0
-      ) {
-        continue;
-      }
-
-      // Extract just the time pattern (hours and minutes) from the slot
-      let startHours: number,
-        startMinutes: number,
-        endHours: number,
-        endMinutes: number;
-      if (slotData.type === "weekly") {
-        startHours = Math.floor(slotData.slot.startTimeUtc / 60);
-        startMinutes = slotData.slot.startTimeUtc % 60;
-        endHours = Math.floor(slotData.slot.endTimeUtc / 60);
-        endMinutes = slotData.slot.endTimeUtc % 60;
-      } else {
-        startHours = slotData.slot.startsAt.getUTCHours();
-        startMinutes = slotData.slot.startsAt.getUTCMinutes();
-        endHours = slotData.slot.endsAt.getUTCHours();
-        endMinutes = slotData.slot.endsAt.getUTCMinutes();
-      }
-
-      // Create new dates using the appointment's actual date
-      const actualStartTime = new Date(startDate);
-      actualStartTime.setUTCHours(startHours, startMinutes, 0, 0);
-
-      const actualEndTime = new Date(startDate);
-      actualEndTime.setUTCHours(endHours, endMinutes, 0, 0);
-
-      // Check if this is an overnight slot (end hour < start hour OR same hour but end minute < start minute)
-      if (
-        endHours < startHours ||
-        (endHours === startHours && endMinutes < startMinutes)
-      ) {
-        actualEndTime.setDate(actualEndTime.getDate() + 1);
-      }
-
-      // Prepare appointment data outside transaction
-      let appointmentData: Prisma.AppointmentCreateInput;
-
-      const consultantUserId = consultantUserMap[slotConsultantId];
+      let appointmentData: Prisma.AppointmentCreateInput | null = null;
 
       switch (appointmentType) {
-        case AppointmentsType.CONSULTATION:
-          appointmentData = createConsultationAppointment(
-            consultee,
-            consultantConsultationPlans,
-            defaultStatus,
-            isPastAppointment,
-            actualStartTime,
-            actualEndTime,
-            consultantUserId,
+        case AppointmentsType.CONSULTATION: {
+          const plans = consultationPlans.filter(
+            (p) => p.consultantProfileId === slotConsultantId,
           );
-          break;
-
-        case AppointmentsType.SUBSCRIPTION:
-          appointmentData = createSubscriptionAppointment(
+          if (plans.length === 0) break;
+          // #1639 item 3 — pick once and reuse, so the occurrence's stamp
+          // matches the plan actually connected.
+          const plan = faker.helpers.arrayElement(plans);
+          const status = getAppointmentStatus(isPastAppointment);
+          const startsAt = placeSession(
+            calendar,
+            plan.consultantProfileId,
+            slotStart,
+            sessionMs(plan.durationInHours),
+            { occupies: !RELEASED_REQUEST_STATUSES.has(status), step },
+          );
+          if (!startsAt) break;
+          appointmentData = createConsultationAppointment({
             consultee,
-            consultantSubscriptionPlans,
-            consultantWeeklySlots,
-            defaultStatus,
-            isPastAppointment,
+            plan,
+            status,
+            bookingSource: getBookingSource(status),
+            startsAt,
+            now,
+            consultantUserId,
+          });
+          break;
+        }
+
+        case AppointmentsType.SUBSCRIPTION: {
+          const plans = subscriptionPlans.filter(
+            (p) => p.consultantProfileId === slotConsultantId,
+          );
+          if (plans.length === 0) break;
+          const plan = faker.helpers.arrayElement(plans);
+          const status = getAppointmentStatus(isPastAppointment);
+          const schedulingTimezone = resolveSchedulingTimezone(
+            consultant?.timezone,
+          );
+          const sessionStarts = subscriptionSessionStarts({
+            calendar,
+            plan,
+            start: startDate,
+            planEndsAt: planEndOf(
+              startDate,
+              plan.durationInMonths,
+              schedulingTimezone,
+            ),
+            weeklyRows: weeklySlots.filter(
+              (s) => s.consultantProfileId === slotConsultantId,
+            ),
+            fallbackMinutesUtc: slotMinutesUtc,
+            cap: Math.min(numSlots, plan.totalSessions),
+            occupies: !RELEASED_REQUEST_STATUSES.has(status),
+          });
+          if (sessionStarts.length === 0) break;
+          appointmentData = createSubscriptionAppointment({
+            consultee,
+            plan,
+            status,
+            bookingSource: getBookingSource(status),
+            start: startDate,
+            schedulingTimezone,
+            sessionStarts,
+            now,
+            consultantUserId,
+          });
+          break;
+        }
+
+        case AppointmentsType.WEBINAR: {
+          const plans = webinarPlans.filter(
+            (p) => p.consultantProfileId === slotConsultantId,
+          );
+          if (plans.length === 0) break;
+          const plan = faker.helpers.arrayElement(plans);
+          const status = getEventStatus(isPastAppointment);
+          const startsAt = placeSession(
+            calendar,
+            slotConsultantId,
+            slotStart,
+            sessionMs(plan.durationInHours),
+            { occupies: status !== "CANCELLED", step },
+          );
+          if (!startsAt) break;
+          appointmentData = createWebinarAppointment({
+            consultee,
+            consultees,
+            plan,
+            hostId: slotConsultantId,
+            status,
+            startsAt,
+            now,
+            consultantUserId,
+          });
+          break;
+        }
+
+        case AppointmentsType.CLASS: {
+          const plans = classPlans.filter(
+            (p) => p.consultantProfileId === slotConsultantId,
+          );
+          if (plans.length === 0) break;
+          const plan = faker.helpers.arrayElement(plans);
+          const status = getEventStatus(isPastAppointment);
+          // Limit slots to prevent transaction timeout
+          const sessionStarts = classSessionStarts({
+            calendar,
+            plan,
+            hostId: slotConsultantId,
+            startDate,
+            count: Math.min(numSlots, 4),
+            occupies: status !== "CANCELLED",
+            step,
+          });
+          if (sessionStarts.length === 0) break;
+          appointmentData = createClassAppointment({
+            consultee,
+            consultees,
+            plan,
+            hostId: slotConsultantId,
+            status,
+            sessionStarts,
             startDate,
             endDate,
-            numSlots,
+            now,
             consultantUserId,
-          );
+          });
           break;
-
-        case AppointmentsType.WEBINAR:
-          appointmentData = await createWebinarAppointment(
-            consultee,
-            consultantWebinarPlans,
-            consultees,
-            isPastAppointment,
-            actualStartTime,
-            actualEndTime,
-            consultantUserId,
-          );
-          break;
-
-        case AppointmentsType.CLASS:
-          appointmentData = await createClassAppointment(
-            consultee,
-            consultantClassPlans,
-            consultees,
-            isPastAppointment,
-            startDate,
-            endDate,
-            numSlots,
-            consultantUserId,
-          );
-          break;
+        }
       }
+
+      // No plan of this type, or no free time for it: nothing to book.
+      if (!appointmentData) continue;
+      const data = appointmentData;
 
       // Execute transaction with increased timeout (60 seconds)
       await prisma.$transaction(
         async (tx) => {
-          await tx.appointment.create({
+          const created = await tx.appointment.create({
             // #1708 — seeded parties share no real booking link, so the chat
             // sweep can never ensure a channel; stamp it as decided.
-            data: { ...appointmentData, chatChannelEnsuredAt: new Date() },
+            data: { ...data, chatChannelEnsuredAt: now },
+            select: { id: true, payment: { select: { id: true } } },
           });
+          // #1319 A9 — a checkout hold's payment is stamped on the buyer's seat.
+          const hold = created.payment[0];
+          if (hold) {
+            await tx.appointmentParticipant.updateMany({
+              where: {
+                appointmentId: created.id,
+                userId: consultee.id,
+                paymentId: null,
+              },
+              data: { paymentId: hold.id },
+            });
+          }
         },
         {
           timeout: 60000, // Increased to 60 seconds
@@ -817,12 +1051,20 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   // the consultant user to every AppointmentOccurrence. Without this, the
   // validateNoConflicts query (which filters by user.some.id = consultantUserId)
   // cannot detect conflicts against seed-generated appointments.
+  // The consultant's zone is what checkout stamps on a subscription.
   const consultantProfiles = await prisma.consultantProfile.findMany({
-    select: { id: true, userId: true },
+    select: { id: true, userId: true, user: { select: { timezone: true } } },
   });
-  const consultantUserMap: Record<string, string> = Object.fromEntries(
-    consultantProfiles.map((p) => [p.id, p.userId]),
+  const consultants: Record<
+    string,
+    { userId: string; timezone: string | null }
+  > = Object.fromEntries(
+    consultantProfiles.map((p) => [
+      p.id,
+      { userId: p.userId, timezone: p.user?.timezone ?? null },
+    ]),
   );
+  const calendar = new HostCalendar();
 
   const allSlots: SlotData[] = [
     ...weeklySlots.map((slot) => ({ type: "weekly" as const, slot })),
@@ -850,7 +1092,8 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       weeklySlots,
       batchStart,
       BATCH_SIZE,
-      consultantUserMap,
+      consultants,
+      calendar,
     );
 
     totalCreated += batchCount;
@@ -870,6 +1113,15 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   console.log(
     `Finished creating appointments. Successfully created ${totalCreated} out of ${NUM_APPOINTMENTS} requested.`,
   );
+
+  const cohort = await createSessionGapCohort({
+    consultees,
+    consultationPlans,
+    subscriptionPlans,
+    consultants,
+    now: new Date(),
+  });
+  console.log(`Created ${cohort} QA cohort bookings with no live session.`);
 
   // #1554 — what the auto-complete sweep does on a live database: a confirmed
   // call that has ended is UNVERIFIED, so the review seed (7b) has held calls.

@@ -43,7 +43,6 @@ import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
 import { transitionOccurrenceCompletion } from "./transitions";
 import { liveParticipant, transitionParticipant } from "./participants";
 import { NEEDS_HUMAN } from "./misses";
-import { reportSentryError } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { onClassSessionVoided } from "./class-sessions";
@@ -753,22 +752,13 @@ export async function alertStaleNeedsHuman(
       orderBy: [{ endsAt: "asc" }, { id: "asc" }],
       take: 200,
     });
-    const message = `${stale} session(s) waited over 72 h for an ops decision`;
-    await reportStandingFinding(
-      {
-        key: "session-outcome-sweep:needs-human-age",
-        // The count joins the ids so growth past the sampled rows still re-reports.
-        ids: [...rows.map((r) => r.id), `count:${stale}`],
-        message,
-      },
-      () =>
-        reportSentryError(new Error(message), {
-          subsystem: "bookings",
-          op: "needs-human-age",
-          level: "warning",
-          extra: { stale },
-        }),
-    );
+    // A business finding for the console, not Sentry.
+    await reportStandingFinding({
+      key: "session-outcome-sweep:needs-human-age",
+      // The count joins the ids so growth past the sampled rows still re-records.
+      ids: [...rows.map((r) => r.id), `count:${stale}`],
+      message: `${stale} session(s) waited over 72 h for an ops decision`,
+    });
   }
   return stale;
 }

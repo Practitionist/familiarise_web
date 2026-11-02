@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
+import { requireApiAuth, resolveEventHostActor } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { reportSentryError } from "@/lib/observability/report";
+import { ConsultantScheduleConflictError } from "@/lib/collaborators/availability";
 import { BookingRuleError } from "./booking-rule-error";
 import { bookingRuleResponse } from "./booking-rule-response";
 import {
@@ -32,7 +33,7 @@ export async function classSessionRoute(
     hosted: HostedClass,
   ) => Promise<NextResponse>,
 ): Promise<NextResponse> {
-  const auth = await requireApiAuth();
+  const auth = await requireApiAuth({ expectUser: true });
   if (auth.error) return auth.error;
   const { session } = auth;
   const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
@@ -42,22 +43,41 @@ export async function classSessionRoute(
   const actor: ClassActor = {
     userId: session.user.id,
     consultantProfileId: session.user.consultantProfileId ?? null,
-    isPrivileged: isPrivileged(session.user.role),
   };
   try {
-    const hosted = await readHostedClass(appointmentId, actor);
+    const hosted = await readHostedClass(appointmentId);
     if (!hosted.found) {
       return NextResponse.json({ error: "Class not found" }, { status: 404 });
     }
-    if (opts.hostOnly && !hosted.isHost) {
-      return NextResponse.json(
-        { error: "Only the class host can do this" },
-        { status: 403 },
-      );
+    if (opts.hostOnly) {
+      // The same host side as cancel and reschedule: the plan's expert or an
+      // operator of its host org.
+      const host = await resolveEventHostActor(session, "class", hosted.cls.id);
+      if (host === "staff") {
+        return NextResponse.json(
+          {
+            error: "Do this from the back office so the change is audited.",
+            code: "PLATFORM_CLASS_DOOR_REQUIRED",
+          },
+          { status: 403 },
+        );
+      }
+      if (host !== "consultant" && host !== "host-org") {
+        return NextResponse.json(
+          { error: "Only the class host can do this" },
+          { status: 403 },
+        );
+      }
     }
     return await handler({ actor, appointmentId, occurrenceId }, hosted);
   } catch (error) {
     if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+    if (error instanceof ConsultantScheduleConflictError) {
+      return NextResponse.json(
+        { error: error.message, code: "SCHEDULE_CONFLICT" },
+        { status: 409 },
+      );
+    }
     reportSentryError(error, {
       subsystem: "bookings",
       op: opts.op,

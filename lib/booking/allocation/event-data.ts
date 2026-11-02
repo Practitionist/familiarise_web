@@ -2,7 +2,11 @@
 // status write that lands the event once its times exist.
 
 import type { Tx, PrismaLike } from "@/lib/prisma";
-import { AppointmentStatus, OccurrenceCompletionStatus } from "@prisma/client";
+import {
+  AppointmentStatus,
+  OccurrenceCompletionStatus,
+  PaymentStatus,
+} from "@prisma/client";
 import { addMonths } from "date-fns";
 import {
   EventType,
@@ -10,11 +14,16 @@ import {
   EventConfig,
 } from "@/utils/scheduling-engine/types";
 import { intervalStartsOf } from "@/lib/appointments/occurrences";
+import { isVoidRequestRow } from "@/lib/booking/allocation/counts";
+import { isLiveCheckoutHold } from "@/lib/booking/request-cohort";
+import { assertUnpaidApprovalFits } from "@/lib/booking/lead-time";
 import { WEEKLY_COVERAGE_SELECT } from "@/utils/scheduling-engine/availabilityCoverage";
 import {
+  lastInstantBefore,
   sessionsTotalOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
+import { formatDateLabel } from "@/lib/time/display";
 import {
   ALLOCATION_APPROVABLE_FROM,
   transitionClassEvent,
@@ -81,6 +90,8 @@ export async function approveByMoney<
   unpaid: Omit<W, "id"> | (() => Promise<void>),
   data?: D,
   approvableFrom: AppointmentStatus[] = ALLOCATION_APPROVABLE_FROM,
+  /** Runs before the awaiting-payment write; a throw refuses the approval. */
+  beforeUnpaid?: () => void,
 ): Promise<ApprovalOutcome> {
   try {
     await transition({
@@ -99,6 +110,7 @@ export async function approveByMoney<
       throw error;
     }
   }
+  beforeUnpaid?.();
   await transition({
     where: { id: eventId, ...unpaid } as W,
     to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
@@ -141,6 +153,8 @@ export async function updateEventStatus(
         UNPAID_CONSULTATION,
         undefined,
         approvableFrom,
+        // The client pays before the session: refuse a too-close first one.
+        () => assertUnpaidApprovalFits(firstSlot),
       );
 
     // #1775 C-1 — a plan is paid at purchase: an unpaid one is refused,
@@ -165,20 +179,7 @@ export async function updateEventStatus(
             );
           }
         },
-        {
-          // FIX: Only set schedulingPeriod if not already configured
-          // This prevents overwriting the user's scheduling period with the first allocated slot
-          // which could cause slots to appear outside the intended scheduling window
-          ...(!config.schedulingPeriodStartsAt || !config.schedulingPeriodEndsAt
-            ? {
-                schedulingPeriodStartsAt: firstSlot,
-                schedulingPeriodEndsAt: addMonths(
-                  firstSlot,
-                  config.durationInMonths || 1,
-                ),
-              }
-            : {}),
-        },
+        undefined,
         approvableFrom,
       );
 
@@ -266,6 +267,13 @@ export async function fetchEventData(
   organizationId?: string | null;
   /** AE-2 (#784) — the plan the co-host guard reads its collaborators from. */
   planId?: string | null;
+  /**
+   * Whether the booking is paid (or free): it decides the lead time a placed
+   * session needs (`leadTimeFor`). Only an unpaid consultation request is not.
+   */
+  settled: boolean;
+  /** The buyer's own direct checkout is still being paid: nobody may answer it yet. */
+  checkoutInProgress: boolean;
 } | null> {
   // Only rows that can still host a slot: every path refuses a past slot, so a
   // custom row that has ended can never contain one.
@@ -302,6 +310,8 @@ export async function fetchEventData(
   let organizationId: string | null = null;
   // AE-2 (#784) — webinar/class only; the other two have no collaborators.
   let planId: string | null = null;
+  let settled = true;
+  let checkoutInProgress = false;
 
   switch (eventType) {
     case "consultation": {
@@ -311,6 +321,7 @@ export async function fetchEventData(
           consultationPlan: {
             select: {
               durationInHours: true,
+              price: true,
               consultantProfile: consultantProfileSelect,
             },
           },
@@ -318,13 +329,40 @@ export async function fetchEventData(
           appointment: {
             select: {
               organizationId: true,
-              occurrences: { select: { startsAt: true, endsAt: true } },
+              occurrences: {
+                select: {
+                  startsAt: true,
+                  endsAt: true,
+                  deletedAt: true,
+                  completionStatus: true,
+                },
+              },
+              payment: {
+                where: {
+                  deletedAt: null,
+                  paymentStatus: {
+                    in: [PaymentStatus.SUCCEEDED, PaymentStatus.PENDING],
+                  },
+                },
+                select: { paymentStatus: true, expiresAt: true },
+              },
             },
           },
+          bookingSource: true,
         },
       });
       if (!event) return null;
       consultantProfile = event.consultationPlan?.consultantProfile;
+      const payments = event.appointment?.payment ?? [];
+      // The same money predicate the approval CAS rides (SETTLED_CONSULTATION).
+      settled =
+        payments.some((p) => p.paymentStatus === PaymentStatus.SUCCEEDED) ||
+        Number(event.consultationPlan?.price ?? -1) === 0;
+      checkoutInProgress = isLiveCheckoutHold(
+        event.bookingSource,
+        payments,
+        new Date(),
+      );
       config = {
         durationInHours: event.consultationPlan?.durationInHours,
       };
@@ -333,9 +371,9 @@ export async function fetchEventData(
       // covered half-hour atoms and `validateConsultation` compares against
       // `getSlotsPerCall`, so a legacy 60-minute row offered as one requested
       // slot answered "1" to both questions and could never be approved.
-      requestedSlots = event.appointment?.occurrences?.flatMap((s) =>
-        intervalStartsOf(s),
-      );
+      requestedSlots = event.appointment?.occurrences
+        ?.filter((s) => !isVoidRequestRow(s))
+        .flatMap((s) => intervalStartsOf(s));
       // #768 — preserve org tag across reschedule (delete+recreate).
       organizationId = event.appointment?.organizationId ?? null;
       break;
@@ -348,6 +386,7 @@ export async function fetchEventData(
           sessionsTotal: true,
           schedulingPeriodStartsAt: true,
           schedulingTimezone: true,
+          planEndsAt: true,
           subscriptionPlan: {
             select: {
               totalSessions: true,
@@ -370,13 +409,26 @@ export async function fetchEventData(
                   deletedAt: true,
                 },
               },
-              payment: { select: { organizationId: true } },
+              payment: {
+                select: {
+                  organizationId: true,
+                  paymentStatus: true,
+                  expiresAt: true,
+                  deletedAt: true,
+                },
+              },
             },
           },
+          bookingSource: true,
         },
       });
       if (!event) return null;
       consultantProfile = event.subscriptionPlan?.consultantProfile;
+      checkoutInProgress = isLiveCheckoutHold(
+        event.bookingSource,
+        (event.appointment?.payment ?? []).filter((p) => !p.deletedAt),
+        new Date(),
+      );
       // #1766 — one counter: the frozen entitlement and the current cycle
       // decide how many sessions this run may place and in which window.
       const entitlement = subscriptionEntitlement({
@@ -386,7 +438,17 @@ export async function fetchEventData(
         occurrences: event.appointment?.occurrences ?? [],
         schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
         schedulingTimezone: event.schedulingTimezone,
+        planEndsAt: event.planEndsAt,
       });
+      if (entitlement.cycle.windowEnd <= entitlement.cycle.windowStart) {
+        throw new AllocationValidationError(
+          `This plan ended on ${formatDateLabel(
+            lastInstantBefore(entitlement.planEndsAt),
+            { zone: event.schedulingTimezone },
+          )}, so no more sessions can be booked. Any unused paid sessions are refunded automatically.`,
+          "PERIOD_ENDED",
+        );
+      }
       config = {
         durationInMonths: event.subscriptionPlan?.durationInMonths,
         sessionsPerWeek: event.subscriptionPlan?.sessionsPerWeek,
@@ -399,9 +461,9 @@ export async function fetchEventData(
       };
       consulteeUserId = event.requestedBy?.user?.id;
       // #1319 — same coverage rule as the consultation arm above.
-      requestedSlots = event.appointment?.occurrences.flatMap((s) =>
-        intervalStartsOf(s),
-      );
+      requestedSlots = event.appointment?.occurrences
+        .filter((s) => !isVoidRequestRow(s))
+        .flatMap((s) => intervalStartsOf(s));
       // #768 — the purchase wrapper from checkout carries the org tag.
       // New lazy-allocated occurrences inherit it.
       organizationId =
@@ -497,9 +559,13 @@ export async function fetchEventData(
   if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
     if (config.schedulingPeriodStartsAt >= config.schedulingPeriodEndsAt) {
       throw new AllocationValidationError(
-        `Invalid date range: schedulingPeriodStartsAt (${config.schedulingPeriodStartsAt.toISOString()}) ` +
-          `must be before schedulingPeriodEndsAt (${config.schedulingPeriodEndsAt.toISOString()}). ` +
-          `Please check the ${eventType} configuration.`,
+        `This ${eventType}'s scheduling period ends before it starts. Fix the dates on the plan, then try again.`,
+        "VALIDATION_ERROR",
+        {
+          schedulingPeriodStartsAt:
+            config.schedulingPeriodStartsAt.toISOString(),
+          schedulingPeriodEndsAt: config.schedulingPeriodEndsAt.toISOString(),
+        },
       );
     }
   }
@@ -520,5 +586,7 @@ export async function fetchEventData(
     requestedSlots,
     organizationId,
     planId,
+    settled,
+    checkoutInProgress,
   };
 }

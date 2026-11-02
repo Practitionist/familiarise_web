@@ -15,7 +15,7 @@ The catalog is dependency-free, allowing another active host to use the same def
 Retry-email relay phases are :05/:20/:35/:50 and document purge is hourly
 at :25. These phase shifts reserve one target at :00/:15/:30/:45 for the
 maintenance-remediation train without changing either cadence. Weekly tests
-pin the reservation, and calendar tests retain the ten-target cap.
+pin the reservation, and calendar tests retain the twelve-target cap (the busiest tick holds 11).
 
 ## Deprecated & Superseded Approaches
 

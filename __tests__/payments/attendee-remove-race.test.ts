@@ -35,6 +35,8 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     webinar: { findFirst: (...a: unknown[]) => mockWebinarFindFirst(...a) },
     class: { findFirst: (...a: unknown[]) => mockClassFindFirst(...a) },
+    // The leave serialises on the event's appointment lock.
+    appointment: { findFirst: async () => ({ id: "apt-1" }) },
     $transaction: (...a: unknown[]) => mockTransaction(...a),
   },
 }));
@@ -95,6 +97,8 @@ function runInteractiveTransaction(fn: unknown) {
       }),
       updateMany: (...a: unknown[]) => mockParticipantUpdateMany(...a),
     },
+    // An unpaid seat owes no refund, so no marker is stamped.
+    payment: { findFirst: async () => null },
   });
 }
 

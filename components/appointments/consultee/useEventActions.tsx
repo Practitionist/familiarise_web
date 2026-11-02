@@ -20,11 +20,21 @@ import {
 import type { SlotPreference } from "@/components/scheduling/time-picker-policy";
 import {
   applyRefundRequote,
+  paymentLandedUnderClick,
+  cancelPreviewQueryKey,
+  cancelAlreadySettled,
   cancelPreviewUrl,
+  cancelRefusalFrom,
   readRefundQuoteChanged,
   shownQuoteBody,
   type ShownCancelQuote,
 } from "@/lib/appointments/cancel-requote";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
+import {
+  rescheduleTimesTaken,
+  takenStartsFrom,
+} from "@/lib/scheduling/allocationMessages";
+import { takenSlotStartsOf } from "@/lib/scheduling/allocationService";
 
 interface UseEventActionsOptions {
   appointmentId?: string;
@@ -223,6 +233,8 @@ export function useEventActions({
     // #1065 — only meaningful alongside an absent proposedSlots: how to place
     // the replacement when the consultee names no time.
     preference?: SlotPreference,
+    /** The zone the picker showed, for naming taken times back. */
+    displayZone?: string,
   ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
@@ -250,7 +262,7 @@ export function useEventActions({
       if (preference?.preferredDays)
         payload.preferredDays = preference.preferredDays;
 
-      const response = await fetch(url, {
+      const response = await fetchWithIdentity(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: Object.keys(payload).length ? JSON.stringify(payload) : undefined,
@@ -287,6 +299,15 @@ export function useEventActions({
         console.error("Error requesting reschedule:", error);
       }
       const code = error instanceof ApiResponseError ? error.code : undefined;
+      if (error instanceof ApiResponseError && code === "TIMES_TAKEN") {
+        toast(
+          rescheduleTimesTaken(
+            takenStartsFrom(takenSlotStartsOf(error.body)),
+            displayZone,
+          ),
+        );
+        return false;
+      }
       // #1863 — RESCHEDULE_ALREADY_OPEN is the one refusal here that is not a
       // dead end: the request they just made DID land, the first click won, and
       // the proposal is sitting on the appointment detail page waiting for an
@@ -350,7 +371,7 @@ export function useEventActions({
   ): Promise<boolean> => {
     setIsLoading(true);
     try {
-      const response = await fetch(
+      const response = await fetchWithIdentity(
         `/api/appointments/${appointmentId}/cancel`,
         {
           method: "POST",
@@ -384,6 +405,17 @@ export function useEventActions({
         error instanceof ApiResponseError && error.status === 409
           ? readRefundQuoteChanged(error.body)
           : null;
+      // A click made on an unpaid screen: the payment has since landed, so the
+      // booking reopens on its paid quote instead of re-asking in place.
+      if (requote && paymentLandedUnderClick(quote)) {
+        toast({
+          title: "Your payment just went through",
+          description: "Review the refund before you cancel.",
+        });
+        setShowCancelDialog(false);
+        invalidateBookingData();
+        return true;
+      }
       if (requote && appointmentId) {
         applyRefundRequote(
           queryClient,
@@ -396,10 +428,40 @@ export function useEventActions({
         });
         return false;
       }
+      // A refusal (the session froze, another refund must finish first) is
+      // the server's own sentence; the dialog stays open on a fresh quote.
+      const refusal =
+        error instanceof ApiResponseError && error.status === 409
+          ? cancelRefusalFrom(error.body)
+          : null;
+      if (refusal) {
+        toast({
+          title: "This booking can't be cancelled right now",
+          description: refusal.message,
+          variant: "destructive",
+        });
+        if (appointmentId) {
+          void queryClient.invalidateQueries({
+            queryKey: cancelPreviewQueryKey(cancelPreviewUrl(appointmentId)),
+          });
+        }
+        return false;
+      }
       // 409 = the CAS transition guard matched zero rows: the booking already
       // changed state (double-cancel, consultant approved a stale tab, …).
       // The list refresh IS the answer — not an error.
       if (error instanceof ApiResponseError && error.status === 409) {
+        if (!cancelAlreadySettled(error.code)) {
+          toast({
+            title: "This booking can't be cancelled right now",
+            description: actionFailureMessage(
+              error,
+              "Failed to cancel appointment",
+            ),
+            variant: "destructive",
+          });
+          return false;
+        }
         toast({
           title: "Booking already updated",
           description:

@@ -218,7 +218,7 @@ The daily sync job hard-deletes users from Stream who don't exist in Prisma. Thi
 #### Location
 
 **File:** `jobs/stream-sync.ts`
-**Scheduled:** the daily 03:00 UTC batch (`cron-daily.yml`); not running while GitHub Actions is budget-blocked
+**Scheduled:** the `stream-sync` ticker target (hourly at :50 in the 08:00 UTC window, through the Stream lifecycle background worker)
 
 #### Current Behavior
 

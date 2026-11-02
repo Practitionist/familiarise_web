@@ -499,7 +499,7 @@ Stream can push recordings into a customer bucket directly, but pushing provides
 
 `call.recording_ready` only upserts the `READY` row; it never copies. The
 `transfer-recordings` job (`lib/stream/recording-transfer-service.ts`, every
-six hours in `cron-intra-day.yml`) copies every READY recording into
+15 minutes on the Netlify ticker, through the background adapter) copies every READY recording into
 Cloudflare R2 while Stream's fourteen-day copy is still live. R2 is the only
 destination; Stream's copy is the retry source.
 
@@ -978,13 +978,13 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
 ### The scheduled fleet behind recordings
 
-Three jobs keep the recording pipeline honest. They are written for GitHub Actions, which is budget-blocked, so they run only when an operator triggers them until they move to the Netlify ticker. Each acquires the Postgres cron lock (`withCronLock`) and recording `SystemJobExecution` runs:
+Three jobs keep the recording pipeline honest. All three run on the Netlify ticker (the first through its own background adapter, the other two through the Stream lifecycle background worker); no GitHub Actions workflow schedules them. Each acquires the Postgres cron lock (`withCronLock`) and recording `SystemJobExecution` runs:
 
-| Workflow                                       | Schedule (UTC)         | What it does                                                                                                                                                      |
-| ---------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cron-intra-day.yml#transfer-recordings`       | Every six hours at :33 | Copies `READY` recordings into R2 before Stream's 14-day copy lapses, reporting exhausted transfer attempts once per run.                                         |
-| `cron-daily.yml#expire-recordings`             | Daily at 03:00         | Expires lapsed Stream copies and recordings past retention, deletes R2 and preview objects, writes org audit rows, and deletes Stream's copy of transferred rows. |
-| `cron-daily.yml#reconcile-orphaned-recordings` | Daily at 03:00         | Recovers recordings whose `call.recording_ready` webhook never arrived by polling Stream for sessions 2 hours to 14 days old.                                     |
+| Job                             | Schedule (UTC)          | What it does                                                                                                                                                      |
+| ------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `transfer-recordings`           | Every 15 minutes        | Copies `READY` recordings into R2 before Stream's 14-day copy lapses, reporting exhausted transfer attempts once per run.                                         |
+| `expire-recordings`             | Hourly :05, 00:00-03:00 | Expires lapsed Stream copies and recordings past retention, deletes R2 and preview objects, writes org audit rows, and deletes Stream's copy of transferred rows. |
+| `reconcile-orphaned-recordings` | Hourly :25, 00:00-03:00 | Recovers recordings whose `call.recording_ready` webhook never arrived by polling Stream for sessions 2 hours to 14 days old.                                     |
 
 ### The video client's timeout
 
@@ -1020,7 +1020,7 @@ The ticker job `stream-control-plane-drift` (`lib/stream/control-plane-drift.ts`
 
 #### Transfer failing
 
-1. Check the R2 secrets in `cron-intra-day.yml` and that the bucket exists
+1. Check the R2 secrets in the Netlify environment and that the bucket exists
 2. Read `lastTransferError` and `transferAttempts` on the row
 3. Check Stream URL hasn't expired (`streamUrlExpiresAt`)
 4. Review the `transfer-recordings` run output and its Sentry report

@@ -1,3 +1,4 @@
+import { BookingLockUnavailableError } from "@/utils/appointmentlock";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
@@ -62,6 +63,12 @@ export async function PATCH(
 
     return NextResponse.json({ data: collab });
   } catch (error) {
+    if (error instanceof BookingLockUnavailableError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     if (error instanceof CollaboratorIneligibleError) {
       return NextResponse.json(
         { error: error.message },

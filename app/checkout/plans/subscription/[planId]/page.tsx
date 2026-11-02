@@ -12,7 +12,7 @@ import {
 } from "@/app/checkout/components/referral-credits";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
-import { firstCycleWindow } from "@/lib/booking/entitlement";
+import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
 import {
   CheckoutInput,
   SubscriptionSearchParams,
@@ -46,7 +46,7 @@ import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import { useReferralPricing } from "../../useReferralPricing";
 import {
-  mintClientIdempotencyKey,
+  useCheckoutAttemptKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
   reportPaymentsError,
@@ -103,8 +103,7 @@ export default function SubscriptionCheckoutPage({
     );
   const [staleError, setStaleError] = useState<string | null>(null);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
-  // #828 — useState's lazy initializer runs once per mount.
-  const [idempotencyKey] = useState(mintClientIdempotencyKey);
+  const attemptKey = useCheckoutAttemptKey();
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
@@ -295,12 +294,11 @@ export default function SubscriptionCheckoutPage({
         body: JSON.stringify({
           ...checkoutData,
           isMockPayment,
-          // #828 — stable per-mount; the server dedupes retries on this key.
-          clientIdempotencyKey: idempotencyKey,
+          clientIdempotencyKey: attemptKey(checkoutData),
         }),
       });
     },
-    [idempotencyKey],
+    [attemptKey],
   );
 
   const handleCheckout = useCallback(
@@ -625,7 +623,7 @@ export default function SubscriptionCheckoutPage({
                     <div className="text-muted-foreground">First cycle</div>
                     <div className="text-right text-sm">
                       {firstCycle.start.toLocaleDateString()} →{" "}
-                      {firstCycle.end.toLocaleDateString()} ·{" "}
+                      {lastInstantBefore(firstCycle.end).toLocaleDateString()} ·{" "}
                       {planData?.data?.sessionsPerWeek || 1} session
                       {(planData?.data?.sessionsPerWeek || 1) === 1
                         ? ""

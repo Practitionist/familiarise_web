@@ -133,7 +133,7 @@ describe("Area 3 — Dashboard Appointment Display & Join-Button Timing Parity",
       );
     });
 
-    it("does not resurrect a RESCHEDULED or CANCELLED future slot when live slots have ended", () => {
+    it("does not resurrect a RESCHEDULED or CANCELLED future slot; the booking says it needs rescheduling", () => {
       const events = processAllEvents(
         {
           consultations: [
@@ -167,7 +167,13 @@ describe("Area 3 — Dashboard Appointment Display & Join-Button Timing Parity",
         baseNow,
       );
 
-      expect(events).toHaveLength(0);
+      // The dead slot is never the row's time or join target.
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        startsAt: null,
+        joinableOccurrence: null,
+        needsActionReason: "NEEDS_RESCHEDULING",
+      });
     });
   });
 

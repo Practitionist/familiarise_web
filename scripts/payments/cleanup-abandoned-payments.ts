@@ -35,6 +35,7 @@ import {
 } from "../../lib/payments/core/razorpay";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 import {
   transitionConsultationRequest,
   transitionOccurrenceCompletion,
@@ -388,7 +389,7 @@ async function reportLiveGatewaySkips(paymentIds: string[]): Promise<void> {
  * EXPIRED is the terminal race #1439 owns.
  */
 async function expirePendingPayments(
-  tx: Pick<Tx, "payment">,
+  tx: Pick<Tx, "payment" | "discountCode">,
   payments: AbandonedPayment[],
 ): Promise<AbandonedPayment[]> {
   const expired: AbandonedPayment[] = [];
@@ -399,7 +400,10 @@ async function expirePendingPayments(
       where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
       data: { paymentStatus: PaymentStatus.EXPIRED },
     });
-    if (count === 1) expired.push(payment);
+    if (count === 1) {
+      await returnDiscountUse(tx, payment.id);
+      expired.push(payment);
+    }
   }
   return expired;
 }
@@ -843,6 +847,7 @@ export async function retireOrphanPendingPayment(
     });
     if (count === 0) return false;
     await reverseCreditsForPayment(paymentId, tx);
+    await returnDiscountUse(tx, paymentId);
     return true;
   });
   return { outcome: claimed ? "retired" : "skipped", errors: [] };

@@ -111,7 +111,7 @@ which is how staff onboarding calls `createUser` and step-up calls
   not linger as a ghost device.
 - No cap on sessions per user. Expired rows are deleted daily by
   `lib/auth/cleanup-auth-tokens.ts`, the `auth-tokens` job in
-  `lib/cron/cleanup-registry.ts`, which `.github/workflows/cron-daily.yml` calls
+  `lib/cron/cleanup-registry.ts`, which the Netlify ticker calls daily at 03:00 UTC
   via `POST /api/cleanup/auth-tokens`.
 
 ### 3.1 Lifetimes
@@ -310,8 +310,8 @@ stateDiagram-v2
   Operators get a setup mail and give consent in the back office.
 - **Account-linked mail** is skipped for a brand-new user's first account; it
   fires only when a provider is added to an account that already had one.
-- **Purge.** `purge-unverified-users` (registry job, daily from
-  `.github/workflows/cron-daily.yml`) deletes never-verified, credential-only
+- **Purge.** `purge-unverified-users` (registry job, daily at 03:35 UTC from the
+  Netlify ticker) deletes never-verified, credential-only
   consumers older than 7 days with no profile, booking, payment, invoice,
   referral credit or membership (`lib/auth/purge-unverified-users.ts`).
 - In local development the code is logged to the server console

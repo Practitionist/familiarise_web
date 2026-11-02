@@ -7,7 +7,7 @@
  * VALIDATION LAYERS:
  * 1. Zod schema validation - Type-safe validation with automatic type inference
  * 2. ScheduleValidationService - Validates business rules (conflicts, availability, etc.)
- * 3. SubscriptionValidationService - Validates subscription-specific rules (weekly limits, etc.)
+ * 3. SubscriptionValidationService - Validates subscription-specific rules (cycle window and cap, plan total)
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -31,25 +31,9 @@ import {
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 interface ValidationResult extends SlotConflictResult {
-  subscriptionValidation?: {
-    isValid: boolean;
-    errors: string[];
-    warnings: string[];
-    weeklyInfo: Array<{
-      weekStart: Date;
-      weekEnd: Date;
-      existingCalls: number;
-      maxCalls: number;
-      canScheduleMore: boolean;
-      availableSlots: number;
-    }>;
-    totalCallsScheduled: number;
-    maxTotalCalls: number;
-    subscriptionPeriod: {
-      start: Date;
-      end: Date;
-    };
-  };
+  subscriptionValidation?: Awaited<
+    ReturnType<SubscriptionValidationService["validateSubscriptionSlots"]>
+  >;
 }
 
 const subscriptionInclude = {
@@ -144,6 +128,19 @@ export async function POST(
       );
       const consulteeUserId = subscription.requestedBy?.user?.id;
 
+      // Subscription rules (the current cycle's window and cap, the plan total);
+      // the cycle window is also the period the business validation clamps to.
+      const subscriptionValidationService = new SubscriptionValidationService(
+        prisma,
+      );
+      const subscriptionValidation =
+        await subscriptionValidationService.validateSubscriptionSlots(
+          subscriptionId,
+          body.slots,
+          [],
+          excludeOccurrenceIds,
+        );
+
       // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
       const validationService = new ScheduleValidationService(prisma);
       const validationResult = await validationService.validate(
@@ -163,8 +160,9 @@ export async function POST(
           durationInMonths: subscriptionPlan.durationInMonths,
           sessionsPerWeek: subscriptionPlan.sessionsPerWeek,
           sessionDurationInHours: subscriptionPlan.sessionDurationInHours,
-          schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
-          schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt,
+          schedulingPeriodStartsAt:
+            subscriptionValidation.subscriptionPeriod.start,
+          schedulingPeriodEndsAt: subscriptionValidation.subscriptionPeriod.end,
           schedulingTimezone: subscription.schedulingTimezone,
         },
         [],
@@ -181,22 +179,11 @@ export async function POST(
       };
       const conflictDetails = conflictDetailsBySlot(validationResult.conflicts);
 
-      // LAYER 3: Subscription-Specific Validation (weekly limits, total calls, etc.)
-      const subscriptionValidationService = new SubscriptionValidationService(
-        prisma,
-      );
-      const subscriptionValidation =
-        await subscriptionValidationService.validateSubscriptionSlots(
-          subscriptionId,
-          body.slots,
-          [],
-          excludeOccurrenceIds,
-        );
-
       const categorized = validationResult.isValid
         ? {
             conflicts: [],
             outsideAvailability: [],
+            tooSoon: [],
             validSlots: body.slots,
           }
         : categorizeValidationErrors({
@@ -213,6 +200,7 @@ export async function POST(
       const result: ValidationResult = {
         conflicts: categorized.conflicts,
         outsideAvailability: categorized.outsideAvailability,
+        tooSoon: categorized.tooSoon,
         validSlots: subscriptionValidation.isValid
           ? categorized.validSlots
           : [],
@@ -222,12 +210,20 @@ export async function POST(
       return NextResponse.json({ data: result });
     } catch (validationError) {
       // Zod validation errors - return 400 Bad Request
+      // The issue paths are developer detail: logged, never the user copy.
       if (validationError instanceof ZodError) {
-        const errorMessage = validationError.errors
-          .map((err) => `${err.path.join(".")}: ${err.message}`)
-          .join("; ");
-
-        return NextResponse.json({ error: errorMessage }, { status: 400 });
+        console.error(
+          "Validation request refused:",
+          JSON.stringify(validationError.errors),
+        );
+        return NextResponse.json(
+          {
+            error:
+              "This request couldn't be read. Reload the page and try again.",
+            errorCode: "VALIDATION_ERROR",
+          },
+          { status: 400 },
+        );
       }
       throw validationError; // Re-throw non-validation errors
     }
@@ -240,8 +236,8 @@ export async function POST(
     console.error("Validation error:", error);
     return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : "Failed to validate slots",
+        error: "Couldn't check these times. Try again in a moment.",
+        errorCode: "UNKNOWN_ERROR",
       },
       { status: 500 },
     );

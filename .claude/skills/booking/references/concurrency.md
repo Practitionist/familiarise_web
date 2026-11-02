@@ -17,11 +17,14 @@ rows tentative-inclusive. That last one is not interchangeable with the other
 two — an attendee slot carries a null `consultantProfileId` and so falls
 outside the constraint's predicate, and CAS knows nothing about a seat count.
 Neither half is optional. The payment webhook adds a fourth, narrower check on
-top of the exclusion constraint: the #827 confirm-time recheck inside its own
+top of the exclusion constraint: the confirm-time recheck inside its own
 Serializable transaction re-scans for a conflict before stamping a captured
 payment's occurrence CONFIRMED, so two concurrent capture webhooks for
 overlapping intervals resolve to one confirmation and one
 `doubleBookingBlocked` result rather than both landing (`lib/payments/webhooks/handlers.ts`).
+The recheck counts only rows that still hold their time
+(`OCCUPYING_OCCURRENCE_WHERE`), so a cancelled, returned or tombstoned row never
+blocks a capture on the time it freed.
 
 ## 1. One key shape per atom, minted in one file
 
@@ -31,24 +34,41 @@ no lock at all.
 
 | Atom                                    | Key shape                                            | Minted by                                 |
 | --------------------------------------- | ---------------------------------------------------- | ----------------------------------------- |
-| 30 minutes of one consultant's calendar | `slot-booking:<consultantProfileId>:<atomStartISO>`  | `lockSlotInterval` / `lockSlotBooking`    |
+| 30 minutes of one consultant's calendar | `slot-booking:<consultantProfileId>:<atomStartISO>`  | `tryLockSlotBatch` / `lockSlotBatch`      |
 | One consultee's booking activity        | `consultee-booking:<consulteeUserId>`                | `lockConsulteeBooking`                    |
 | One sellable event or plan              | `event-checkout:<appointmentType>:<eventOrPlanId>`   | `lockEventCheckout`                       |
-| One consultant's allocation pool        | `auto-allocate:<consultantProfileId>[:<scope>]`      | `lockAutoAllocate`                        |
+| One consultant's allocation pool        | `auto-allocate:<consultantProfileId>`                | `lockAutoAllocate`                        |
+| One consultant's open-request cap       | `request-cap:<consultantProfileId>`                  | `lockRequestCap`                          |
 | One consultation approval               | `consultation-approval:<consultationId>`             | `lockConsultationApproval`                |
 | One subscription approval               | `subscription-approval:<subscriptionId>`             | `lockSubscriptionApproval`                |
 | One pay-link mint                       | `approval-payment-mint:<kind>:<id>`, kind lowercased | `lockApprovalPaymentMint`                 |
 | One appointment's lifecycle             | `appointment-lock:<appointmentId>`                   | `lockAppointment` / `withAppointmentLock` |
 
-The `trial-slot-booking:` namespace is retired and must not come back. Nothing
-else read it, so a trial and a checkout for the same consultant-minute never
-contended; trials now take the shared `slot-booking:` atoms (#1093, #1170).
+Every path acquires in one global order, coarse to fine, so the families form
+a total order that cannot cycle. The locks are Redis try-locks with bounded
+retries, so a path that breaks the order times out; it never hangs.
 
-Every path acquires in one global order — **appointment / event / consultant →
-consultee → slot** — so the families form a total order that cannot cycle. The
-one deliberate nesting is approval → mint: the approval routes still hold their
-approval key when they mint the pay link, so the mint is its own atom
-underneath, never the reverse.
+1. The cron lease (sweeps only).
+2. `event-checkout:` — seat checkout's commit, offering delete, whole-event
+   cancel, webinar re-time and class make-up.
+3. `appointment-lock:` — every lifecycle door, seat leave, and the allocator on
+   an appointment that already exists.
+4. `consultation-approval:` / `subscription-approval:`, then
+   `approval-payment-mint:` as a leaf under the approval key.
+5. One consultant tier, never two at once: `auto-allocate:` (allocation) or
+   `request-cap:` (request-for-approval and trial requests).
+6. `consultee-booking:`, exactly one.
+7. **One atomic slot batch**: every `slot-booking:` atom of every profile the
+   write makes busy — the host, each ACCEPTED co-host, and the buyer's own
+   profile when the buyer is an expert too.
+8. Leaves that never nest a booking key: `recording-purchase:`, payout and
+   support families.
+
+The whole-event cancel takes `event-checkout:` before `appointment-lock:`, and
+the re-time door documents the same order at its head (`lib/booking/event-retime.ts`).
+The allocator takes the consultee key only after its search, so a buyer's own
+checkout never reads "another booking in progress on your account" because an
+expert is allocating for them.
 
 Every writer that moves one booking's lifecycle takes the `appointment-lock:`
 atom before it opens its transaction. That includes the reschedule withdraw
@@ -62,16 +82,43 @@ TTL and one retry so the lock outlives every attempt; a consultation plan has
 no checkout key, so the Serializable transaction and the in-WHERE guard carry
 that race alone.
 
-## 2. Slot locks are interval-granular and all-or-nothing
+## 2. Slot locks are one atomic batch per write
 
 `slotAtomStarts` floors the start to the half-hour grid (`SLOT_ATOM_MS` is
 `30 * 60 * 1000`) and returns one atom per 30 minutes of `[startsAt, endsAt)`,
 so an unaligned booking still collides with every aligned booking it overlaps.
-`lockSlotInterval` takes those keys in ascending order — a total order, hence
-deadlock-free — and on a held atom or a Redis fault releases everything already
-taken, in reverse, before throwing. With several atoms held it re-arms them all
-to a fresh shared deadline, since sequential acquisition erodes the earliest
-atoms' TTL; a failed re-arm means ownership was lost, so abort.
+`slotBatchKeys` turns every interval of every profile a write makes busy into
+one de-duplicated key list, sorted by code unit so the order never depends on
+the runtime's locale.
+
+`tryLockSlotBatch` (`utils/appointmentlock.ts`) sets every key in one Lua call
+with NX semantics, or sets none and returns the keys that were held. It never
+waits. All keys share one value, so `extendSlotInterval` re-arms the whole batch
+and `unlockSlotInterval` releases it in one compare-value call each; a failed
+re-arm means ownership was lost, so the caller aborts before writing. Every
+batch call has a 1.5-second Redis timeout: a slow Redis is an unavailable Redis,
+and the booking fails closed with `BookingLockUnavailableError` (503). An
+acquire that timed out gives back whatever it may still have set under its value.
+
+Who waits and who does not:
+
+- **Buyer doors wait.** Checkout, request-for-approval and trials call
+  `lockSlotBatch`, which retries the atomic batch inside the request-path budget
+  and then throws `SlotLockError` naming the first held time.
+- **The allocator never waits** (`lib/booking/allocation/slot-batch.ts`). Manual
+  and requested modes call `lockPickedSlots`: a held atom is 409 `TIMES_TAKEN`
+  carrying the taken times (never who holds them), and the other picks are kept.
+  Auto mode adds each held time to its exclusions and re-searches, at most
+  `MAX_ALLOCATION_RESEARCHES` (2) times inside one shared search budget, then
+  answers 409 `ALLOCATION_RACE` (retryable after 5 seconds). The batch is taken
+  after the search and before the write, and renewed at the top of the write
+  (`renewAllocationBatch`).
+- **Host-time writers never wait.** Webinar and class create, publish and
+  re-time, class make-up, co-host accept and meeting extension run inside
+  `withHostSlotBatch` (`lib/booking/host-slot-batch.ts`) over the host and every
+  ACCEPTED co-host; a held atom is `HostTimeHeldError`, a schedule conflict. A
+  meeting extension holds its extra minutes before it is saved and refuses when
+  it cannot.
 
 ## 3. Acquisition fails closed
 
@@ -109,10 +156,14 @@ A lock TTL is sized above the transaction it protects, then reduced by the drift
 factor (`effectiveTTL = floor(ttl * (1 - driftFactor))`). `APPROVAL_LOCK_TTL_MS`
 is 45 s against a 30 s Serializable transaction; `APPOINTMENT_LOCK_TTL_MS` is
 75 s against a 60 s reschedule transaction plus its maxWait; `lockAutoAllocate`
-and `lockConsulteeBooking` default to 150 s against a 120 s transaction. Per
-checkout type, `CHECKOUT_LOCK_TTL_MS` is `CONSULTATION` 60 s, `SUBSCRIPTION` and
-`WEBINAR` 120 s, `CLASS` 600 s, because a class checkout writes many sessions
-plus a gateway round trip.
+and `lockConsulteeBooking` default to 150 s. Per checkout type,
+`CHECKOUT_LOCK_TTL_MS` is `CONSULTATION` 60 s and `SUBSCRIPTION`, `WEBINAR` and
+`CLASS` 45 s each: one checkout attempt plus slack, renewed per attempt, because
+seat checkout holds the event key only around its commit (§11). Lifecycle doors
+under the event key (`withEventCheckoutLock`) use `EVENT_LIFECYCLE_LOCK_TTL_MS`,
+75 s. The allocator's slot batch lives `ALLOCATION_TX_MAX_WAIT_MS` plus
+`ALLOCATION_TX_TIMEOUT_MS` plus 15 s (`ALLOCATION_SLOT_BATCH_TTL_MS`), a
+host-time batch 60 s (`HOST_SLOT_BATCH_TTL_MS`), and `request-cap:` 60 s.
 
 Retries multiply the exposure: four Serializable attempts of up to 40 s each
 outlive a fixed 45 s grant. As of wave 5 (#1319) the approval path therefore
@@ -168,11 +219,15 @@ VOIDED session is a miss whose make-up reuses the ordinal.
 ## 8. Serializable retries, and what may not run inside one
 
 `withSerializableRetry` (`lib/db/serializable-retry.ts`) retries **only** the two
-transient rollbacks Postgres reports — `P2034` (SQLSTATE 40001, the driver
-adapter's mapping of a serialization failure) and a deadlock victim (40P01,
-detected by `isDeadlock` in `lib/db/pg-errors.ts` because the pinned adapter
-rethrows it unmapped) — up to `SERIALIZABLE_MAX_RETRIES` (3), four attempts
-total, with 50/100/200 ms backoff plus jitter. Each retry and each exhaustion
+transient rollbacks Postgres reports — a serialization failure (SQLSTATE 40001)
+and a deadlock victim (40P01, detected by `isDeadlock` in `lib/db/pg-errors.ts`
+because the pinned adapter rethrows it unmapped) — up to
+`SERIALIZABLE_MAX_RETRIES` (3), four attempts
+total, with 50/100/200 ms backoff plus jitter. A serialization failure has
+two shapes and both are retried through `isWriteConflict`: raised by a statement
+it arrives as Prisma `P2034`, and raised at COMMIT it escapes as the raw
+`DriverAdapterError` of kind `TransactionWriteConflict`, which Prisma does not
+map. Classify these by class and SQLSTATE, never by message text. Each retry and each exhaustion
 emits a `db.serializable_retry` metric tagged with the reason. Anything else (an `IllegalTransitionError`, a
 validation error, a 409) propagates immediately, by design: a business rejection
 must never be retried into accidental success. Because the callback runs up to
@@ -241,3 +296,40 @@ runs. Per-row failures go through `createRunFailureReporter`
 and a standing condition goes through `reportStandingFinding`
 (`lib/observability/standing-finding.ts`), one event per distinct id per day;
 never capture inside a row loop.
+
+## 11. Seat checkout holds the event key only around its commit
+
+A webinar or class seat checkout writes the PENDING `Payment` (a `premint_`
+intent) and the HELD seat under `event-checkout:` with the Serializable recount,
+releases the key, mints the gateway order, then fills the order id into the row
+by CAS (`lib/payments/checkout/seat-pre-mint.ts`). One buyer's gateway round
+trip therefore never holds the next buyer behind the event mutex. A seat that
+lapses before its order can be filled answers 409 `SEAT_HOLD_LAPSED`.
+
+The seat holds for `SEAT_CHECKOUT_HOLD_MS`: the 12-minute gateway window
+(`SEAT_GATEWAY_TIMEOUT_MS`, the order's capture window and the payment sheet's
+timeout) plus a 3-minute capture grace (`SEAT_CAPTURE_GRACE_MS`) for a late UPI
+or netbanking capture (`lib/payments/constants.ts`). `buildDeadSeatFilter`
+(`utils/scheduling-engine/occupancyPolicy.ts`) is the seat twin of
+`buildDeadHoldFilter`: a HELD seat whose own payment is EXPIRED, FAILED or
+PENDING past its window stops counting for capacity and for the buyer's own
+calendar at once, before any sweep releases it. A seat leave or removal stamps
+its refund owed in the commit that releases the seat, so the
+`retry-auto-refunds` sweep re-drives a crash.
+
+## Deprecated & Superseded Approaches
+
+- **Per-atom sequential slot locks.** `lockSlotInterval` used to take atoms one
+  by one and unwind on a held atom, which eroded the earliest atoms' TTL and let
+  two writers each hold half a window. It is now a thin wrapper over the atomic
+  batch; write new code against `tryLockSlotBatch` or `lockSlotBatch`.
+- **An allocator with no slot atoms, and day-sharded `auto-allocate:` keys.**
+  Allocation once relied on the consultant key and the exclusion constraint
+  alone, so it could place over a live checkout hold. The day shards are
+  collapsed into one key per consultant.
+- **The event key held across the gateway call.** Seat checkout once held
+  `event-checkout:` through the order mint with TTLs up to 600 s for classes, so
+  a slow gateway queued every other buyer.
+- **The `trial-slot-booking:` namespace.** Nothing else read it, so a trial and
+  a checkout for the same consultant-minute never contended. Trials take the
+  shared `slot-booking:` atoms; the namespace must not come back.

@@ -196,11 +196,10 @@ describe("fetchEventSlots when the page moves on mid-read", () => {
       "consultation",
       EVENT_ID,
       "consultant-1",
-      undefined,
       controller.signal,
     );
 
-    expect(result).toEqual({ data: [], weeklyConfirmedCallCounts: {} });
+    expect(result).toEqual({ data: [] });
     expect(reportSentryError).not.toHaveBeenCalled();
   });
 

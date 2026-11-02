@@ -1,6 +1,8 @@
 import type { TimePickerSubject } from "@/components/scheduling/time-picker-policy";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
+import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
+import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 
 /**
  * Turns one of the four offering types into what the "manage timings" page
@@ -13,10 +15,7 @@ import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
  */
 
 export type ManageTimingsAppointmentType =
-  | "CONSULTATION"
-  | "SUBSCRIPTION"
-  | "WEBINAR"
-  | "CLASS";
+  "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
 
 export interface ManageTimingsAppointmentLike {
   appointmentType: ManageTimingsAppointmentType;
@@ -36,7 +35,8 @@ export interface ManageTimingsAppointmentLike {
   subscription?: {
     id?: string | null;
     schedulingPeriodStartsAt?: string | Date | null;
-    schedulingPeriodEndsAt?: string | Date | null;
+    schedulingTimezone?: string | null;
+    planEndsAt?: string | Date | null;
     subscriptionPlan?: {
       sessionsPerWeek?: number | null;
       durationInMonths?: number | null;
@@ -102,11 +102,11 @@ function getEventDetails(
         durationInMonths:
           appointment.subscription?.subscriptionPlan?.durationInMonths || 1,
         durationInHours:
-          appointment.subscription?.subscriptionPlan
-            ?.sessionDurationInHours || 1,
+          appointment.subscription?.subscriptionPlan?.sessionDurationInHours ||
+          1,
         sessionDurationInHours:
-          appointment.subscription?.subscriptionPlan
-            ?.sessionDurationInHours || 1,
+          appointment.subscription?.subscriptionPlan?.sessionDurationInHours ||
+          1,
         totalSessions:
           appointment.subscription?.subscriptionPlan?.totalSessions ??
           undefined,
@@ -119,8 +119,7 @@ function getEventDetails(
         eventId: appointment.webinar?.id || "",
         sessionsPerWeek: 1,
         durationInMonths: 1,
-        durationInHours:
-          appointment.webinar?.webinarPlan?.durationInHours || 1,
+        durationInHours: appointment.webinar?.webinarPlan?.durationInHours || 1,
         title: appointment.webinar?.webinarPlan?.title || "Webinar",
       };
     case "CLASS": {
@@ -148,17 +147,29 @@ function getEventDetails(
   }
 }
 
-/** Only the recurring types carry a scheduling period to clamp to. */
+/** Only the recurring types carry a scheduling period to clamp to; a
+ * subscription's runs to its plan end. */
 function getSchedulingPeriod(appointment: ManageTimingsAppointmentLike): {
   start?: Date;
   end?: Date;
 } {
+  if (appointment.appointmentType === "SUBSCRIPTION") {
+    const sub = appointment.subscription;
+    if (!sub?.schedulingPeriodStartsAt) return {};
+    return {
+      start: new Date(sub.schedulingPeriodStartsAt),
+      end: subscriptionPlanEnd({
+        planEndsAt: sub.planEndsAt ?? null,
+        schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
+        schedulingTimezone: resolveSchedulingTimezone(sub.schedulingTimezone),
+        subscriptionPlan: {
+          durationInMonths: sub.subscriptionPlan?.durationInMonths ?? 1,
+        },
+      }),
+    };
+  }
   const event =
-    appointment.appointmentType === "SUBSCRIPTION"
-      ? appointment.subscription
-      : appointment.appointmentType === "CLASS"
-        ? appointment.class
-        : null;
+    appointment.appointmentType === "CLASS" ? appointment.class : null;
   return {
     start: event?.schedulingPeriodStartsAt
       ? new Date(event.schedulingPeriodStartsAt)

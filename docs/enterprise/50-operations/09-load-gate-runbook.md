@@ -21,6 +21,8 @@ The harness is built and has not been executed. Every number in the result
 table below is blank on purpose, and the first person to dispatch the workflow
 fills them in.
 
+The site-wide staged read-traffic test (100, 300 and 1,000 virtual users) is a different exercise, planned in [the load test plan](11-load-test-plan.md). It runs only after the database split.
+
 ## The warning that comes before everything else
 
 **One Supabase project serves both the development and the production

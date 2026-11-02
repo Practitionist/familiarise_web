@@ -65,7 +65,6 @@ export function CancellationPolicyCard({ orgId }: { orgId: string }) {
   });
 
   const [rows, setRows] = useState<TierRow[]>([]);
-  const [consultantInitiatedPct, setConsultantInitiatedPct] = useState("100");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
@@ -76,7 +75,6 @@ export function CancellationPolicyCard({ orgId }: { orgId: string }) {
     if (!data) return;
     const terms = data.policy ?? data.platformDefault;
     setRows(toRows(terms));
-    setConsultantInitiatedPct(String(terms.consultantInitiatedPct));
   }, [data]);
 
   const mutation = useMutation({
@@ -89,13 +87,11 @@ export function CancellationPolicyCard({ orgId }: { orgId: string }) {
         hoursBefore: row.hoursBefore.trim(),
         refundPct: row.refundPct.trim(),
       }));
-      const consultantPct = consultantInitiatedPct.trim();
       const isNumeric = (value: string) =>
         value !== "" && Number.isFinite(Number(value));
-      const everyFieldFilled =
-        tiers.every(
-          (tier) => isNumeric(tier.hoursBefore) && isNumeric(tier.refundPct),
-        ) && isNumeric(consultantPct);
+      const everyFieldFilled = tiers.every(
+        (tier) => isNumeric(tier.hoursBefore) && isNumeric(tier.refundPct),
+      );
       if (!everyFieldFilled) {
         throw new Error(
           "Every tier needs a notice period and a refund percentage",
@@ -112,7 +108,6 @@ export function CancellationPolicyCard({ orgId }: { orgId: string }) {
               hoursBefore: Number(tier.hoursBefore),
               refundPct: Number(tier.refundPct),
             })),
-            consultantInitiatedPct: Number(consultantPct),
           }),
         },
       );
@@ -271,23 +266,10 @@ export function CancellationPolicyCard({ orgId }: { orgId: string }) {
           <Plus className="w-4 h-4 mr-1" /> Add tier
         </Button>
 
-        <div className="max-w-xs">
-          <Label
-            htmlFor="consultant-initiated-pct"
-            className="text-xs text-zinc-500"
-          >
-            When the expert or our team cancels (%)
-          </Label>
-          <Input
-            id="consultant-initiated-pct"
-            type="number"
-            min={0}
-            max={100}
-            step="0.01"
-            value={consultantInitiatedPct}
-            onChange={(event) => setConsultantInitiatedPct(event.target.value)}
-          />
-        </div>
+        <p className="text-xs text-zinc-500">
+          When the expert or our team cancels, the buyer is always refunded in
+          full.
+        </p>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
         {success && (

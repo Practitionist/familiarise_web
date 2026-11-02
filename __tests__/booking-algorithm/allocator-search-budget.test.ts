@@ -14,16 +14,23 @@
  *
  * 2. There was no time budget at all, so the search could run past the request
  *    ceiling — and past the 150 s `auto-allocate` grant, which is never renewed.
- *    Now the walk stops and falls through to the SAME `SlotShortageError` a full
- *    calendar produces, which `allowPartial` already knows how to turn into
- *    "place what fits". No new error type: the routes map this one already.
+ *    Now the walk stops and answers SEARCH_TIMEOUT (503, retry copy, a Sentry
+ *    warning): a truncated walk never saw the whole calendar, so it is neither a
+ *    shortage nor a partial plan.
  */
 
 import "./setup";
 
+// The in-transaction availability re-read has its own suite; these isolate the allocator.
+jest.mock("../../lib/booking/allocation/coverage", () => ({
+  assertSlotsStillPublished: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // The allocator's slot batch reads co-host seats and an expert consultee's own profile.
+    consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
+    collaborator: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(),
     consultation: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
@@ -45,6 +52,14 @@ jest.mock("../../utils/appointmentlock", () => ({
     .fn()
     .mockResolvedValue({ key: "mock-consultee-key", value: "mock-value" }),
   unlockConsulteeBooking: jest.fn().mockResolvedValue(undefined),
+  tryLockSlotBatch: jest.fn().mockResolvedValue({ ok: true, grant: [] }),
+  extendSlotInterval: jest.fn().mockResolvedValue(true),
+  unlockSlotInterval: jest.fn().mockResolvedValue(undefined),
+}));
+
+const mockReportSentryError = jest.fn();
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryError: (...args: unknown[]) => mockReportSentryError(...args),
 }));
 
 const addBreadcrumb = jest.fn();
@@ -331,7 +346,7 @@ describe("the merged custom-availability index", () => {
 });
 
 describe("the search's time budget", () => {
-  it("stops the day walk and answers with the ordinary shortage", async () => {
+  it("stops the day walk and answers SEARCH_TIMEOUT, not a shortage", async () => {
     mockTx.class.findUnique.mockResolvedValue(
       classWith(customRows("2025-06-01T09:00:00.000Z", 120)),
     );
@@ -345,16 +360,17 @@ describe("the search's time budget", () => {
       mode: "auto",
     });
 
-    // A shortage, NOT a timeout and NOT a new error type: the routes already map
-    // SLOT_SHORTAGE and its placeable count.
     expect(result.success).toBe(false);
-    expect(result.errorCode).toBe("SLOT_SHORTAGE");
-    expect(result.httpStatus).toBe(400);
-    // The first day's session was placed before the budget bit, and the count
-    // says so: a partial answer beats an infrastructure timeout, and the count
-    // is what lets the consultant be offered "place 1 now".
-    expect(result.placeableSessions).toBe(1);
-    expect(result.requiredSessions).toBe(8);
+    expect(result.errorCode).toBe("SEARCH_TIMEOUT");
+    expect(result.httpStatus).toBe(503);
+    expect(result.error).toMatch(/try again/i);
+    expect(result.placeableSessions).toBeUndefined();
+    expect(mockTx.appointment.create).not.toHaveBeenCalled();
+    // A warning that ships (not an expected info event Sentry drops).
+    expect(mockReportSentryError).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: "SEARCH_TIMEOUT" }),
+      expect.objectContaining({ expected: false, level: "warning" }),
+    );
   });
 
   it("says it spent the budget, once, with the consultant and event named", async () => {
@@ -389,7 +405,7 @@ describe("the search's time budget", () => {
     );
   });
 
-  it("still honours allowPartial: a truncated search places what it found", async () => {
+  it("places nothing on a truncated search, even with allowPartial", async () => {
     mockTx.class.findUnique.mockResolvedValue(
       classWith(customRows("2025-06-01T09:00:00.000Z", 120)),
     );
@@ -402,14 +418,11 @@ describe("the search's time budget", () => {
       allowPartial: true,
     });
 
-    // "No more room" and "the clock ran out" are the same answer to the
-    // allocator, which is exactly why `allowPartial` needs no special case: the
-    // budget changes only how many days were walked.
-    expect(result.success).toBe(true);
-    expect(result.partial).toBe(true);
-    expect(result.placedSessions).toBeGreaterThan(0);
-    expect(result.placedSessions).toBeLessThan(8);
-    expect(result.unplacedSessions).toBe(8 - (result.placedSessions ?? 0));
+    // A partial plan from a walk that never saw the whole window would not be
+    // the earliest fit; the consultant retries or picks the times by hand.
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("SEARCH_TIMEOUT");
+    expect(placedOccurrences()).toHaveLength(0);
   });
 
   it("is never consulted when the search is cheap", async () => {
@@ -428,28 +441,6 @@ describe("the search's time budget", () => {
     expect(result.partial).toBeUndefined();
     expect(placedOccurrences()).toHaveLength(8);
     expect(budgetWarnings()).toHaveLength(0);
-  });
-
-  it("keeps the grid on the truncated path too", async () => {
-    // Rows published at 09:15: the truncated search snaps up to the grid and
-    // never emits the off-grid start the buyer path refuses.
-    mockTx.class.findUnique.mockResolvedValue(
-      classWith(customRows("2025-06-01T09:15:00.000Z", 120)),
-    );
-    mockSpendMs = 30_000;
-
-    await allocate({
-      eventType: "class",
-      eventId: "class-1",
-      mode: "auto",
-      allowPartial: true,
-    });
-
-    const placed = placedOccurrences();
-    expect(placed.length).toBeGreaterThan(0);
-    for (const o of placed) {
-      expect(new Date(o.startsAt).getTime() % THIRTY_MIN_MS).toBe(0);
-    }
   });
 });
 

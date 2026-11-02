@@ -55,9 +55,10 @@ replays the original batch.
 `lib/booking/allocation/guards.ts`. `initialAllocation: true` makes
 `assertNoConfirmedSlots` reject when the event already holds any confirmed
 (non-tentative, non-tombstoned) slot, and `expectedTentativeSlotCount` rejects
-when the live tentative count differs from what the client's page captured
-(#1012). Both throw `AllocationConflictError` → **HTTP 409** with
-`errorCode: "LOCK_CONTENTION"`. The guard runs once under the Redis locks and
+when the live tentative count differs from what the client's page captured.
+Both throw `AllocationConflictError` → **HTTP 409**: the first with
+`errorCode: "ALREADY_ALLOCATED"`, the second with
+`errorCode: "RESCHEDULE_STATE_CHANGED"`. The guard runs once under the Redis locks and
 again inside the write transaction behind a `pg_advisory_xact_lock`, and inside
 that lock a same-key double submit **replays** rather than 409s — only a
 different-key submit gets the conflict. That distinction is the subtlest thing
@@ -196,7 +197,7 @@ WHERE a."webinarId" = 'test-webinar-009'
 Now repeat the request with a **different** `Idempotency-Key`
 (`agent-009-alloc-key-B`) and the same body.
 
-**Expected:** **409** with `errorCode: "LOCK_CONTENTION"` and a message naming
+**Expected:** **409** with `errorCode: "ALREADY_ALLOCATED"` and a message naming
 the confirmed slot count. The side-effect to check is that the confirmed slot
 count is **unchanged** — the second tab must not have deleted and replaced the
 first tab's allocation.
@@ -227,8 +228,8 @@ async () => {
 };
 ```
 
-**Expected:** **409**, `errorCode: "LOCK_CONTENTION"`, and no change to any
-slot row.
+**Expected:** **409**, `errorCode: "RESCHEDULE_STATE_CHANGED"`, and no change to
+any slot row.
 
 ## Phase 6 — `isAuto` is required
 
@@ -249,10 +250,10 @@ the route's ZodError formatter. Then send `{ "isAuto": false }` with no `slots`.
 | 1   | Repeated `clientIdempotencyKey` on checkout          | one Payment, one slot             |
 | 2   | Omitted `clientIdempotencyKey`                       | key minted server-side, not null  |
 | 3   | Concurrent identical checkout                        | no 500; one Payment               |
-| 4   | Second tab, `initialAllocation: true`, different key | 409 `LOCK_CONTENTION`             |
+| 4   | Second tab, `initialAllocation: true`, different key | 409 `ALREADY_ALLOCATED`           |
 | 5   | Confirmed slot count after the 409                   | unchanged                         |
 | 6   | Same `Idempotency-Key` resubmitted to allocate       | 200 replay, not 409               |
-| 7   | Wrong `expectedTentativeSlotCount`                   | 409 `LOCK_CONTENTION`             |
+| 7   | Wrong `expectedTentativeSlotCount`                   | 409 `RESCHEDULE_STATE_CHANGED`    |
 | 8   | Missing `isAuto`                                     | 400                               |
 | 9   | `isAuto: false` with no `slots`                      | 400                               |
 | 10  | `/api/checkout` ignores an `Idempotency-Key` header  | contract, not a probe — see below |

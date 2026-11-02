@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireApiAuth } from "@/lib/auth-helpers";
+import type { Session } from "@/lib/auth";
+import type { RescheduleInitiatorRole } from "@prisma/client";
+import { requireApiAuth, resolveEventHostActor } from "@/lib/auth-helpers";
 import {
   applyRateLimit,
   eventMutationLimiter,
@@ -47,6 +49,42 @@ const DECLINE_OUTCOME_COPY: Record<RescheduleRespondCode, string> = {
     "Proposal declined. That original time has since been booked, so the consultant will place those sessions at new times.",
 };
 
+type OpenRequest = {
+  initiatorRole: RescheduleInitiatorRole;
+  appointment: {
+    consultationId: string | null;
+    subscriptionId: string | null;
+    organizationId: string | null;
+  } | null;
+};
+
+/**
+ * Whether this caller answers for the side that did not open the request,
+ * judged by the request's own side: a consultant-side proposal (the expert or
+ * a host-org operator) is answered by the consultee or the paying org's admin;
+ * a consultee-side one by the expert or a host-org operator.
+ */
+async function answersFor(
+  open: OpenRequest,
+  session: Session,
+  consulteeUserId: string | undefined,
+): Promise<boolean> {
+  const appointment = open.appointment;
+  if (!appointment) return false;
+  if (open.initiatorRole === "CONSULTANT") {
+    if (consulteeUserId && session.user.id === consulteeUserId) return true;
+    return isOrgAdminOfAppointment(session.user.id, appointment, "reschedule");
+  }
+  const event = appointment.consultationId
+    ? { type: "consultation" as const, id: appointment.consultationId }
+    : appointment.subscriptionId
+      ? { type: "subscription" as const, id: appointment.subscriptionId }
+      : null;
+  if (!event) return false;
+  const host = await resolveEventHostActor(session, event.type, event.id);
+  return host === "consultant" || host === "host-org";
+}
+
 /**
  * POST /api/appointments/[appointmentId]/reschedule/respond
  *
@@ -63,7 +101,7 @@ export async function POST(
   try {
     const { appointmentId } = await params;
     // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
-    const authResult = await requireApiAuth();
+    const authResult = await requireApiAuth({ expectUser: true });
     if (authResult.error) return authResult.error;
     const { session } = authResult;
     // Same budget as the sibling reschedule route: both move slots and money.
@@ -91,86 +129,33 @@ export async function POST(
       select: {
         id: true,
         initiatedById: true,
-        // #1846 — the released rows are NOT read here. This route used to
-        // recount them to decide the outcome code, which made it a second reader
-        // of a decision the module had already committed; the module now reports
-        // `restoredFully` and the route only words it.
+        initiatorRole: true,
         appointment: {
           select: {
             consultationId: true,
             subscriptionId: true,
-            // #1166 ORG-9 — needed to tell an org admin's initiation from a
-            // stranger's (see the side resolution below).
             organizationId: true,
             consultation: {
-              select: {
-                requestedBy: { select: { userId: true } },
-                consultationPlan: {
-                  select: { consultantProfile: { select: { userId: true } } },
-                },
-              },
+              select: { requestedBy: { select: { userId: true } } },
             },
             subscription: {
-              select: {
-                requestedBy: { select: { userId: true } },
-                subscriptionPlan: {
-                  select: { consultantProfile: { select: { userId: true } } },
-                },
-              },
+              select: { requestedBy: { select: { userId: true } } },
             },
           },
         },
       },
     });
 
-    // Same anti-oracle discipline as the withdraw route: "no open request",
-    // "not a participant" and "you are the initiator" all answer 404, so this
-    // route cannot be walked to learn which bookings hold live reschedules.
-    // Read each relation on its own rather than casting the union: a cast still
-    // compiles when the select shape changes, and would silently drop the
-    // consultant from the authorization set.
-    const consultation = open?.appointment?.consultation;
-    const subscription = open?.appointment?.subscription;
+    // "No open request", "not a participant" and "you are the initiator" all
+    // answer 404, so this route cannot be walked to learn which bookings hold
+    // live reschedules.
     const consulteeUserId =
-      consultation?.requestedBy?.userId ?? subscription?.requestedBy?.userId;
-    const consultantUserId =
-      consultation?.consultationPlan?.consultantProfile?.userId ??
-      subscription?.subscriptionPlan?.consultantProfile?.userId;
-
-    // #1166 ORG-9 — "the counterparty" is the side that did not open the
-    // request, and there are three possible openers, not two. An org admin
-    // rescheduling a session their organization funded matches NEITHER profile,
-    // so the old "is a participant and is not the initiator" test was true for
-    // BOTH parties at once: the consultee could accept a proposal made on their
-    // own behalf, and either party could answer a request the other had not
-    // seen. An org admin acts on the payer's side, so their initiation is a
-    // consultee-side initiation and the consultant is the one who answers.
-    //
-    // An initiator who is neither party nor a payer admin resolves to no side
-    // at all, which leaves nobody able to answer — the anti-oracle 404 below.
-    // Fail closed: a proposal from an unidentifiable opener should not be
-    // confirmable by whoever asks first.
-    const initiatedByConsultant =
-      !!open && !!consultantUserId && open.initiatedById === consultantUserId;
-    const initiatedByConsultee =
-      !!open && !!consulteeUserId && open.initiatedById === consulteeUserId;
-    const initiatedByPayerAdmin =
-      !!open &&
-      !initiatedByConsultant &&
-      !initiatedByConsultee &&
-      !!open.appointment &&
-      (await isOrgAdminOfAppointment(
-        open.initiatedById,
-        open.appointment,
-        "reschedule",
-      ));
-    const counterpartyUserId = initiatedByConsultant
-      ? consulteeUserId
-      : initiatedByConsultee || initiatedByPayerAdmin
-        ? consultantUserId
-        : undefined;
+      open?.appointment?.consultation?.requestedBy?.userId ??
+      open?.appointment?.subscription?.requestedBy?.userId;
     const isCounterparty =
-      !!counterpartyUserId && session.user.id === counterpartyUserId;
+      !!open &&
+      open.initiatedById !== session.user.id &&
+      (await answersFor(open, session, consulteeUserId));
     if (!open || !isCounterparty) {
       return NextResponse.json(
         { error: "No open reschedule request for this booking." },
@@ -270,12 +255,13 @@ export async function POST(
     // own consultant/consultee locks are keyed by person, not by appointment,
     // and never contend with a cancel at all. Lock order is unchanged: the
     // appointment atom is the coarsest and is taken before the allocator's.
-    const result = await withAppointmentLock(appointmentId, () =>
+    const result = await withAppointmentLock(appointmentId, (lock) =>
       acceptProposal({
         rescheduleRequestId: open.id,
         eventType,
         eventId,
         resolvedById: session.user.id,
+        heldAppointmentLock: lock,
       }),
     );
     if (!result.done) {

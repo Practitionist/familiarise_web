@@ -6,6 +6,7 @@ import { getMaintenanceState, type MaintenanceState } from "@/lib/maintenance";
 import { MaintenancePhase } from "@prisma/client";
 import { getStreamStatus } from "@/lib/stream/health";
 import prisma from "@/lib/prisma";
+import { TICK_CLAIM_JOB } from "@/lib/cron/schedule";
 import redis, { isMockRedis, isRedisCircuitOpen } from "@/lib/redis";
 
 type BetterStackHealth = {
@@ -124,7 +125,7 @@ async function readLatestCompletedCronExecutionAt(): Promise<string | null> {
       prisma as unknown as {
         systemJobExecution?: {
           findFirst?: (args: {
-            where: { status: "COMPLETED" };
+            where: { status: "COMPLETED"; jobName: { not: string } };
             orderBy: { startedAt: "desc" };
             select: { startedAt: true };
           }) => Promise<{ startedAt: Date | string } | null>;
@@ -132,8 +133,9 @@ async function readLatestCompletedCronExecutionAt(): Promise<string | null> {
       }
     ).systemJobExecution;
     if (typeof delegate?.findFirst !== "function") return null;
+    // A slot claim proves the ticker fired, not that any job completed.
     const latest = await delegate.findFirst({
-      where: { status: "COMPLETED" },
+      where: { status: "COMPLETED", jobName: { not: TICK_CLAIM_JOB } },
       orderBy: { startedAt: "desc" },
       select: { startedAt: true },
     });

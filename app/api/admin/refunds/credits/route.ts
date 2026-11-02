@@ -2,15 +2,16 @@ import { z } from "zod";
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { assertMoneyOpsBudget } from "@/lib/backoffice/money-limit";
-import { restoreClassSeatCredits } from "@/lib/payments/operations/booking-refund";
+import { restoreSessionCredits } from "@/lib/payments/operations/booking-refund";
 
 /** 400 copy for a missing/malformed `idempotencyKey` (via withOpsAction). */
 const KEY_REQUIRED_COPY =
   "idempotencyKey is required and must be a UUID — send the per-dialog key the refund dialog already mints. Without it this door cannot tell a double-click from a second refund, and would mint a fresh one instead, leaving the unique dedupe column inert.";
 
 /**
- * #1771 K-5 — "Return N sessions of credits" for a credit-funded class seat:
- * the credits rail restores whole or not at all, so partial returns are ops'.
+ * #1771 K-5 — "Return N sessions of credits" for a credit-funded class seat or
+ * cancelled subscription: the credits rail restores whole or not at all, so
+ * partial returns are ops'.
  */
 export const POST = withOpsAction(
   "refunds.manage",
@@ -34,7 +35,7 @@ export const POST = withOpsAction(
     target: ({ body }) => ({ kind: "Payment", id: body.paymentId }),
     run: async ({ body, actor }) => {
       await assertMoneyOpsBudget(actor.userId);
-      const result = await restoreClassSeatCredits({
+      const result = await restoreSessionCredits({
         paymentId: body.paymentId,
         sessions: body.sessions,
         reason: `ops credit return: ${body.reason}`,

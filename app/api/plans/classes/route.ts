@@ -20,6 +20,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { maxParticipantsSchema } from "@/schemas/plans";
+import { planTotalSessions } from "@/lib/booking/entitlement";
 
 export async function GET(request: NextRequest) {
   try {
@@ -198,6 +199,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const totalSessions = planTotalSessions({
+      sessionsPerWeek: sessionsPerWeek ?? 1,
+      durationInMonths,
+    });
     const newClassPlan = await prisma.classPlan.create({
       data: {
         title,
@@ -206,6 +211,8 @@ export async function POST(request: NextRequest) {
         price,
         sessionsPerWeek,
         sessionDurationInHours: sessionDurationInHours || 1,
+        totalSessions,
+        totalHours: totalSessions * (sessionDurationInHours || 1),
         emailSupport,
         maxParticipants,
         language,

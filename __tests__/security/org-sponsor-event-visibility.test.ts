@@ -32,24 +32,14 @@ const SRC = readFileSync(
 );
 
 describe("the org list matches org-OWNED rows only (#1166 ORG-8)", () => {
-  it("pins organizationId at the top level", () => {
-    // List/detail parity: the detail page admits only rows whose
-    // organizationId is this org, so the list must not offer more.
+  it("pins every tagged arm to this org, so funded-elsewhere rows cannot match", () => {
+    // The payment grounds ride the tag as an AND; the other arms are plans
+    // this org hosts. A row tagged to another org and hosted elsewhere fails both.
     const w = buildWhere({
       scope: { kind: "org", orgId: "acme" },
       userId: "irrelevant",
-    }) as Record<string, unknown>;
-    expect(w.organizationId).toBe("acme");
-  });
-
-  it("cannot match funded-elsewhere rows, because ownership is pinned first", () => {
-    const w = buildWhere({
-      scope: { kind: "org", orgId: "acme" },
-      userId: "irrelevant",
-    });
-    // Ownership (`organizationId: "acme"`) is pinned at the top level alongside
-    // the OR narrowing clause, so a row another org hosts cannot match.
-    expect(w).toMatchObject({
+    }) as { OR: Array<Record<string, unknown>> };
+    expect(w.OR[0]).toMatchObject({
       organizationId: "acme",
       OR: expect.arrayContaining([
         {
@@ -62,6 +52,10 @@ describe("the org list matches org-OWNED rows only (#1166 ORG-8)", () => {
         },
       ]),
     });
+    for (const arm of w.OR.slice(1)) {
+      expect(JSON.stringify(arm)).toContain('"organizationId":"acme"');
+      expect(JSON.stringify(arm)).not.toContain("payment");
+    }
   });
 });
 
@@ -77,7 +71,9 @@ describe("but only the sponsor's OWN seats are returned", () => {
     const start = SRC.indexOf("payment: {\n                where:");
     expect(start).toBeGreaterThan(-1);
     const block = SRC.slice(start, start + 400);
-    expect(block).toContain("paymentMethod: { in: ORG_FUNDED_PAYMENT_METHODS }");
+    expect(block).toContain(
+      "paymentMethod: { in: ORG_FUNDED_PAYMENT_METHODS }",
+    );
   });
 
   it("the payer include is attached ONLY on the org scope", () => {
@@ -90,7 +86,9 @@ describe("but only the sponsor's OWN seats are returned", () => {
     const start = SRC.indexOf("payment: {\n                where:");
     const block = SRC.slice(start, start + 400);
 
-    expect(block).toContain("user: { select: { id: true, name: true, email: true } }");
+    expect(block).toContain(
+      "user: { select: { id: true, name: true, email: true } }",
+    );
     // No money on this surface: amounts belong on Billing and Reimbursements,
     // both of which gate on finance permissions rather than operations.read.
     for (const field of ["amount", "amountPaise", "paymentIntent", "status"]) {

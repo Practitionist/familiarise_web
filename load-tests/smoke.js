@@ -28,8 +28,8 @@ export const options = {
   thresholds: {
     http_req_duration: ["p(95)<3000"],
     errors: ["rate<0.05"],
-    // availability is the public booking hot path (rate-limited 30/min/IP —
-    // expect 429s to register as errors if a single-IP run exceeds that)
+    // the availability grid is the public booking hot path (rate-limited
+    // 120/min/IP — expect 429s to register as errors if a single-IP run exceeds that)
     slot_availability_duration: ["p(95)<1500"],
   },
 };
@@ -85,10 +85,13 @@ export default function (data) {
 
   sleep(0.5);
 
-  // 2. Slot availability (public booking hot path)
+  // 2. Availability grid (public booking hot path): the coming week.
   group("slot_availability", function () {
+    const start = new Date();
+    const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000);
     const res = http.get(
-      `${BASE_URL}/api/slots/availability/${CONSULTANT_ID}`,
+      `${BASE_URL}/api/scheduling/availability-with-allocation/${CONSULTANT_ID}` +
+        `?startDateInUtc=${start.toISOString()}&endDateInUtc=${end.toISOString()}&timezone=Asia/Kolkata`,
       { headers },
     );
     slotAvailabilityTrend.add(res.timings.duration);

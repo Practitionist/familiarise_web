@@ -249,7 +249,7 @@ File: `app/api/admin/system-jobs/run/route.ts`
 
 ### C. `reconcile-document-storage` Safety Risk ✅ IMPLEMENTED
 
-**Problem**: The daily document storage reconciliation job (`jobs/cleanup/reconcile-document-storage.ts`) deletes files it considers orphaned. If Supabase Storage is temporarily unreachable (e.g. during migration), it may falsely mark valid files as orphaned and delete them.
+**Problem**: The daily document storage reconciliation job (`scripts/cleanup/reconcile-document-storage.ts`, daily on the ticker) deletes files it considers orphaned. If Supabase Storage is temporarily unreachable (e.g. during migration), it may falsely mark valid files as orphaned and delete them.
 
 **Implemented**: Added a lightweight storage health probe at the start of `reconcileDocumentStorage()` that lists a single item from the `documents` bucket. If storage is unreachable, the job aborts with a warning instead of proceeding to the deletion loop.
 File: `scripts/cleanup/reconcile-document-storage.ts`

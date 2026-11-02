@@ -20,7 +20,7 @@ export const POST = withOpsAction(
     target: ({ params }) => ({ kind: "Class", id: params.classId }),
     run: async ({ params, body, actor }) => {
       await assertMoneyOpsBudget(actor.userId);
-      const hosted = await hostedForClass(params.classId, actor.userId);
+      const hosted = await hostedForClass(params.classId);
       const appointmentId = hosted.appointment.id;
       const res = await cancelAppointment(
         new NextRequest(

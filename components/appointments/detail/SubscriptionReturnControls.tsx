@@ -28,6 +28,7 @@ import {
   returnBlock,
 } from "@/lib/booking/session-return-rules";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { lastInstantBefore } from "@/lib/booking/entitlement";
 import { formatForViewer } from "@/lib/time/viewer-zone";
 
 interface ReturnableSessionRow {
@@ -54,7 +55,7 @@ async function postReturn(appointmentId: string, occurrenceId: string) {
   );
   const data = (await res.json().catch(() => ({}))) as {
     error?: string;
-    schedulingPeriodEndsAt?: string;
+    planEndsAt?: string;
   };
   if (!res.ok) throw new Error(data.error ?? "Something went wrong");
   return data;
@@ -87,8 +88,8 @@ export function SubscriptionReturnControls({
     onSuccess: (data) => {
       toast({
         title: "Session returned to your plan",
-        description: data.schedulingPeriodEndsAt
-          ? `Your plan now runs until ${formatForViewer(new Date(data.schedulingPeriodEndsAt), viewer, "EEE d MMM")}. Your expert has been told, so a new time can be booked.`
+        description: data.planEndsAt
+          ? `Your plan now runs until ${formatForViewer(lastInstantBefore(new Date(data.planEndsAt)), viewer, "EEE d MMM")}. Your expert has been told, so a new time can be booked.`
           : "Your expert has been told, so a new time can be booked.",
       });
       onChanged();

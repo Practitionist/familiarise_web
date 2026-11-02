@@ -404,16 +404,16 @@ model SupportCase {
   callbackPhone  String? @db.VarChar(32)
   callbackWindow String? @db.VarChar(64)
 
-  ackDueAt          DateTime? @db.Timestamptz
-  acknowledgedAt    DateTime? @db.Timestamptz
-  resolutionDueAt   DateTime? @db.Timestamptz
-  resolvedAt        DateTime? @db.Timestamptz
+  ackDueAt               DateTime? @db.Timestamptz
+  acknowledgedAt         DateTime? @db.Timestamptz
+  resolutionDueAt        DateTime? @db.Timestamptz
+  resolvedAt             DateTime? @db.Timestamptz
   autoCloseLastAttemptAt DateTime? @db.Timestamptz
-  closedAt          DateTime? @db.Timestamptz
-  deletedAt         DateTime? @db.Timestamptz
-  firstAgentReplyAt DateTime? @db.Timestamptz
-  awaitingUserSince DateTime? @db.Timestamptz
-  pausedSeconds     Int       @default(0)
+  closedAt               DateTime? @db.Timestamptz
+  deletedAt              DateTime? @db.Timestamptz
+  firstAgentReplyAt      DateTime? @db.Timestamptz
+  awaitingUserSince      DateTime? @db.Timestamptz
+  pausedSeconds          Int       @default(0)
 
   messageSeq    Int       @default(0)
   lastMessageAt DateTime? @db.Timestamptz
@@ -548,18 +548,18 @@ model SupportCaseEvidenceRequest {
 }
 
 model SupportCaseDecision {
-  id               String        @id @default(uuid())
-  caseId           String
-  supportCase      SupportCase   @relation("CaseDecisions", fields: [caseId], references: [id], onDelete: Restrict)
-  decidedById      String
-  decidedBy        User          @relation(fields: [decidedById], references: [id], onDelete: Restrict)
-  clientActionId   String        @db.VarChar(128)
-  outcome          String        @db.VarChar(32)
-  explanation      String        @db.Text
-  privateRationale String?       @db.Text
-  appealUntil      DateTime      @db.Timestamptz
-  createdAt        DateTime      @default(now()) @db.Timestamptz
-  appeals          SupportCase[] @relation("CaseDecisionAppeals")
+  id                   String               @id @default(uuid())
+  caseId               String
+  supportCase          SupportCase          @relation("CaseDecisions", fields: [caseId], references: [id], onDelete: Restrict)
+  decidedById          String
+  decidedBy            User                 @relation(fields: [decidedById], references: [id], onDelete: Restrict)
+  clientActionId       String               @db.VarChar(128)
+  outcome              String               @db.VarChar(32)
+  explanation          String               @db.Text
+  privateRationale     String?              @db.Text
+  appealUntil          DateTime             @db.Timestamptz
+  createdAt            DateTime             @default(now()) @db.Timestamptz
+  appeals              SupportCase[]        @relation("CaseDecisionAppeals")
   /// A correcting decision names the one it replaces; one original per case is a sidecar partial index.
   supersedesDecisionId String?              @unique
   supersedes           SupportCaseDecision? @relation("DecisionSupersedes", fields: [supersedesDecisionId], references: [id], onDelete: Restrict)
@@ -1353,8 +1353,8 @@ model Organization {
   @@index([isPublic, status])
   @@index([dataResidencyRegion])
   @@index([billingAccountId])
-  @@map("organizations")
   @@index([lastAccrualRollupAt, id])
+  @@map("organizations")
 }
 
 model Invitation {
@@ -4124,14 +4124,20 @@ enum OfferingPlanStatus {
 }
 
 model Subscription {
-  id                       String   @id @default(cuid())
-  schedulingPeriodStartsAt DateTime @db.Timestamptz
-  schedulingPeriodEndsAt   DateTime @db.Timestamptz
+  id                       String    @id @default(cuid())
+  schedulingPeriodStartsAt DateTime  @db.Timestamptz
+  /// First-cycle end at purchase (exclusive); informational. Never read for
+  /// expiry or the live cycle: use subscriptionPlanEnd() and
+  /// subscriptionEntitlement().cycle.
+  schedulingPeriodEndsAt   DateTime  @db.Timestamptz
+  /// Fixed plan end (exclusive): start + durationInMonths on the consultant's
+  /// calendar, month-end clamped. Null rows derive it from the start.
+  planEndsAt               DateTime? @db.Timestamptz
   // #1076 — stamped from the owning consultant's user.timezone at creation, so
   // the per-day/week caps bucket on the consultant's days. Pinned at creation
   // rather than followed live: moving it would shift an existing booking's day
   // boundaries. The default only applies where the consultant has no zone.
-  schedulingTimezone       String   @default("Asia/Kolkata")
+  schedulingTimezone       String    @default("Asia/Kolkata")
 
   status             AppointmentStatus   @default(PENDING) @map("requestStatus")
   requestedBy        ConsulteeProfile    @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
@@ -4161,8 +4167,8 @@ model Subscription {
   /// check-constraints banner.
   sessionsTotal Int?
 
-  /// Sessions the consultee returned to the plan; each extended
-  /// `schedulingPeriodEndsAt` by 7 days. CHECK 0..2 lives in prisma/sql.
+  /// Sessions the consultee returned to the plan; each moved the plan end
+  /// 7 days later. CHECK 0..2 lives in prisma/sql.
   sessionsReturned Int @default(0)
 
   appointment               Appointment?
@@ -4429,6 +4435,9 @@ model Webinar {
   // single session without touching its siblings.
   maxParticipants Int?
 
+  /// Set by a host re-time: attendees may leave with a full refund until then.
+  retimeBy DateTime? @db.Timestamptz
+
   webinarPlan   WebinarPlan @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarPlanId String
 
@@ -4558,6 +4567,9 @@ model Class {
   maxParticipants Int?
 
   feedbackSummary String? @db.Text
+
+  /// Set by a host re-time: attendees may leave with a full refund until then.
+  retimeBy DateTime? @db.Timestamptz
 
   classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
@@ -5038,7 +5050,13 @@ enum CancellationPolicyStatus {
 /// "use the requested times" re-confirmed exactly what the consultee asked to
 /// move away from.
 model RescheduleRequest {
-  id String @id @default(uuid())
+  id               String    @id @default(uuid())
+  /// Released sessions as [{ ordinal, startsAt }] written in the release tx; the durable notice source.
+  releasedSessions Json?
+  /// The parent's status just before this release moved it, written in the release tx; restore reads it.
+  originStatus     String?   @db.VarChar(32)
+  /// Stamped in the tx that puts the booking back as it was (withdraw, decline, expiry); a restored request costs no reschedule.
+  restoredAt       DateTime? @db.Timestamptz
 
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   appointmentId String
@@ -5841,6 +5859,9 @@ model Payment {
   /// constraint is the race-proof dedupe: a double-click/retry that slips
   /// past the route's replay lookup dies on P2002 and replays the original.
   clientIdempotencyKey String?        @unique
+  /// Hash of the priced inputs (plan/event, window, coupon, credits, org, gateway)
+  /// behind clientIdempotencyKey; a replay with a different fingerprint mints anew.
+  requestFingerprint   String?        @db.VarChar(64)
   // #781 §B — financial rows Restrict their parents; removal = soft-delete.
   // Hard delete remains possible only while no money row references this.
   deletedAt            DateTime?      @db.Timestamptz
@@ -5876,6 +5897,8 @@ model Payment {
   refundOwedReason            String?
   refundOwedAt                DateTime?                    @db.Timestamptz
   refundOwedAttempts          Int                          @default(0)
+  // The sweep's next drive after a failed one (backoff); null = due now.
+  refundOwedNextAt            DateTime?
   // Referrals this payment qualified (at most one in practice).
   qualifyingReferrals         Referral[]                   @relation("ReferralQualifyingPayment")
   firstPaymentOfRelationships ExpertCustomerRelationship[]
@@ -5942,15 +5965,14 @@ model Payment {
   childPayments   Payment[] @relation("OverageSideCharge")
 
   // A6/A7/PM-16 — Timestamptz on the money models (#676).
-  createdAt     DateTime       @default(now()) @db.Timestamptz
-  updatedAt     DateTime       @updatedAt @db.Timestamptz
-  overageEvents OverageEvent[]
+  createdAt        DateTime       @default(now()) @db.Timestamptz
+  updatedAt        DateTime       @updatedAt @db.Timestamptz
+  overageEvents    OverageEvent[]
+  // Polling progress is separate from business modification and aging.
+  lastReconciledAt DateTime?      @db.Timestamptz
 
   // Allow multiple users to pay for same appointment (webinars/classes)
   @@unique([userId, appointmentId])
-  // Polling progress is separate from business modification and aging.
-  lastReconciledAt DateTime? @db.Timestamptz
-
   @@index([expiresAt, paymentStatus])
   @@index([isMockPayment])
   @@index([paymentStatus])
@@ -7483,6 +7505,7 @@ model SystemJobExecution {
   @@index([startedAt])
   @@index([status, startedAt])
   @@index([triggeredBy])
+  @@index([jobName, startedAt(sort: Desc)])
 }
 
 //////////////////////////////////////////////////// ANNOUNCEMENT SYSTEM ////////////////////////////////////////////////////
@@ -8116,14 +8139,14 @@ model OrgDataExportJob {
 /// Exact vendor object ownership for a single immutable export attempt.
 /// Deliberately has no parent FK so erasing an org/job cannot erase deletion work.
 model OrgDataExportArtifact {
-  exportJobId      String
-  attemptStartedAt DateTime @db.Timestamptz(3)
-  bucket           String
-  storagePath      String
-  expiresAt        DateTime @db.Timestamptz(3)
-  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  exportJobId           String
+  attemptStartedAt      DateTime  @db.Timestamptz(3)
+  bucket                String
+  storagePath           String
+  expiresAt             DateTime  @db.Timestamptz(3)
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
   lastDeleteAttemptedAt DateTime? @db.Timestamptz(3)
-  fileSizeBytes    BigInt?
+  fileSizeBytes         BigInt?
 
   @@id([exportJobId, attemptStartedAt])
   @@unique([bucket, storagePath])

@@ -58,13 +58,19 @@ const txStub = {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
   // The refund the cancel owes is stamped on the payment in the same commit.
-  payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  payment: {
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findMany: jest.fn().mockResolvedValue([]),
+    count: jest.fn().mockResolvedValue(0),
+  },
   // #1766 — a subscription cancel stamps the undelivered earnings tranches in
   // the same transaction.
   consultantEarnings: {
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+  // No session of a subscription was refunded on its own.
+  refund: { findMany: jest.fn().mockResolvedValue([]) },
   // An expert-side cancel of a paid booking writes a reliability strike.
   systemEvent: { create: jest.fn().mockResolvedValue({}) },
   // #1851 decision 2 — an act-for-org cancel writes the org's audit row.
@@ -93,6 +99,7 @@ const txStub = {
   },
 };
 
+jest.mock("next/headers", () => ({ headers: async () => new Headers() }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -146,6 +153,9 @@ jest.mock("../../utils/appointmentlock", () => ({
   __esModule: true,
   withAppointmentLock: jest.fn(
     async (_id: string, fn: () => Promise<unknown>) => fn(),
+  ),
+  withEventCheckoutLock: jest.fn(
+    async (_key: unknown, fn: () => Promise<unknown>) => fn(),
   ),
   BookingLockUnavailableError: class extends Error {},
   AppointmentBusyError: class extends Error {},
@@ -283,18 +293,26 @@ function bookingRows(opts: {
 }) {
   const live = (opts.liveSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
+    endsAt: new Date(Date.now() + (h + 1) * HOUR),
+    ordinal: 1,
     completionStatus: txCommitted ? "CANCELLED" : "SCHEDULED",
   }));
   const done = (opts.completedSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
+    endsAt: new Date(Date.now() + (h + 1) * HOUR),
+    ordinal: 1,
     completionStatus: "COMPLETED",
   }));
   const gone = (opts.cancelledSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
+    endsAt: new Date(Date.now() + (h + 1) * HOUR),
+    ordinal: 1,
     completionStatus: "CANCELLED",
   }));
   const unverified = (opts.unverifiedSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
+    endsAt: new Date(Date.now() + (h + 1) * HOUR),
+    ordinal: 1,
     completionStatus: "UNVERIFIED",
   }));
   return [

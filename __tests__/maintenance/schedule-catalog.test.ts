@@ -13,7 +13,7 @@ import {
 } from "@/lib/cron/schedule";
 
 describe("shared capability schedule catalog", () => {
-  it("dispatches one background copy every 15 minutes and preserves the ten-target cap for every tick of a week", () => {
+  it("dispatches one background copy every 15 minutes and stays under the tick cap for every tick of a week", () => {
     const counts = new Map<string, number>();
     const start = Date.UTC(2027, 0, 1);
     for (let tick = 0; tick < 7 * 24 * 12; tick++) {

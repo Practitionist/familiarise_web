@@ -18,7 +18,10 @@ export type OrgActorAction = "reschedule" | "cancel";
  * mutable array, and a `readonly` tuple is not assignable to one. The element
  * type still comes from the enum, so a typo here is still a compile error.
  */
-const ORG_FUNDING_PAYMENT_STATUSES: PaymentStatus[] = ["SUCCEEDED", "PENDING"];
+export const ORG_FUNDING_PAYMENT_STATUSES: PaymentStatus[] = [
+  "SUCCEEDED",
+  "PENDING",
+];
 
 // #1527 decision 8 — MANAGER may reschedule an org-funded booking; cancel
 // refunds, so it stays OWNER/MAINTAINER. The matrix is the single source.

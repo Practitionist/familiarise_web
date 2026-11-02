@@ -8,6 +8,7 @@
  */
 
 const refunds: unknown[] = [];
+const closes: { correlationId: string; createdAt: Date }[] = [];
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -15,6 +16,7 @@ jest.mock("../../lib/prisma", () => ({
     referralCreditUsage: {
       findMany: async () => [{ paymentId: "pay_1", amount: 59_000 }],
     },
+    systemEvent: { findMany: async () => closes },
   },
 }));
 
@@ -31,6 +33,22 @@ it("keeps the seat after an unrelated refund, drops it after an ops credit retur
     paymentId: "pay_1",
     createdAt: later,
     metadata: { source: "free-credit-partial" },
+  });
+  expect(await dropSettled([item])).toEqual([]);
+});
+
+it("drops a credit plan an operator closed as no credit owed after its event", async () => {
+  refunds.length = 0;
+  closes.length = 0;
+  closes.push({
+    correlationId: "partial-credit-closed:pay_1",
+    createdAt: new Date("2026-09-25T09:00:00Z"),
+  });
+  // A close older than this escalation does not answer it.
+  expect(await dropSettled([item])).toEqual([item]);
+  closes.push({
+    correlationId: "partial-credit-closed:pay_1",
+    createdAt: later,
   });
   expect(await dropSettled([item])).toEqual([]);
 });

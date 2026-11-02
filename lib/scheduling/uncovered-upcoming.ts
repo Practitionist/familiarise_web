@@ -21,15 +21,22 @@ import {
   partitionWeeklyRows,
 } from "@/utils/schedule/weekly-projection";
 import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-rows";
+import {
+  buildDeadHoldFilter,
+  OCCUPYING_OCCURRENCE_WHERE,
+} from "@/utils/scheduling-engine/occupancyPolicy";
 
 export interface UncoveredUpcoming {
   count: number;
   appointmentIds: string[];
+  /** Of `count`, the bookings still awaiting payment or approval (live holds). */
+  awaitingConfirmation: number;
 }
 
 export const NONE_UNCOVERED: UncoveredUpcoming = {
   count: 0,
   appointmentIds: [],
+  awaitingConfirmation: 0,
 };
 
 /** Bounded scan: a consultant with more upcoming sessions than this is told about the first ones. */
@@ -45,16 +52,21 @@ export async function findUncoveredUpcoming(
   },
   now: Date = new Date(),
 ): Promise<UncoveredUpcoming> {
+  // Every row that holds the host's time: confirmed sessions and live holds
+  // (requests, unpaid approvals, checkouts, pending reschedules), never a lapsed hold.
   const occurrences = await db.appointmentOccurrence.findMany({
     where: {
       consultantProfileId,
-      deletedAt: null,
-      isTentative: false,
-      completionStatus: "SCHEDULED",
+      ...OCCUPYING_OCCURRENCE_WHERE,
       startsAt: { gte: now },
-      appointment: { deletedAt: null },
+      appointment: { deletedAt: null, NOT: buildDeadHoldFilter(now) },
     },
-    select: { appointmentId: true, startsAt: true, endsAt: true },
+    select: {
+      appointmentId: true,
+      startsAt: true,
+      endsAt: true,
+      isTentative: true,
+    },
     orderBy: { startsAt: "asc" },
     take: SCAN_LIMIT,
   });
@@ -68,13 +80,19 @@ export async function findUncoveredUpcoming(
 
   const weekly = createWeeklyCoverage(weeklyRows);
   const ids = new Set<string>();
+  const awaiting = new Set<string>();
   for (const occ of occurrences) {
     const atoms = windowAtoms(occ.startsAt, occ.endsAt);
     if (findUncoveredAtomIn(atoms, weekly, customRows)) {
       ids.add(occ.appointmentId);
+      if (occ.isTentative) awaiting.add(occ.appointmentId);
     }
   }
-  return { count: ids.size, appointmentIds: Array.from(ids) };
+  return {
+    count: ids.size,
+    appointmentIds: Array.from(ids),
+    awaitingConfirmation: awaiting.size,
+  };
 }
 
 export interface AvailabilityWriteSettlement {

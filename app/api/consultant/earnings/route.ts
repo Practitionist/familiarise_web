@@ -10,7 +10,7 @@ import prisma from "@/lib/prisma";
 import { EarningStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { buildConsultantEarningsPayload } from "@/lib/data/consultant-earnings-analytics";
-import { resolveOrgScope } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { readPayoutRequirements } from "@/lib/data/consultant-payout-setup";
 
@@ -93,13 +93,9 @@ export async function GET(req: NextRequest) {
         { status: scopeResolution.status },
       );
     }
-    const organizationId =
-      scopeResolution.scope.kind === "personal"
-        ? null
-        : scopeResolution.scope.kind === "org" ||
-            scopeResolution.scope.kind === "orgMember"
-          ? scopeResolution.scope.orgId
-          : undefined; // "all" → no filter (org-data isolation for org/orgMember)
+    const organizationId = scopeToWhereOrgId(
+      scopeResolution.scope,
+    )?.organizationId;
 
     const payload = await buildConsultantEarningsPayload(consultantProfile.id, {
       status: status || undefined,

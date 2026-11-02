@@ -79,6 +79,7 @@ describe("#1689 & #1723 — Availability grid ETag key and CDN suffix matching",
   it("distinguishes ETag keys by webinarId and classId (#1689)", () => {
     const marker: AvailabilityGridMarker = {
       profileUpdatedAt: new Date("2027-06-01T00:00:00.000Z"),
+      consultantDeletedAt: null,
       availabilityUpdatedAt: new Date("2027-06-01T00:00:00.000Z"),
       availabilityRowCount: 4,
       slotsUpdatedAt: new Date("2027-06-01T00:00:00.000Z"),
@@ -96,6 +97,7 @@ describe("#1689 & #1723 — Availability grid ETag key and CDN suffix matching",
       timezone: "Asia/Kolkata",
       includeAppointmentDetails: false,
       consulteeUserId: null,
+      leadBucket: 0,
     };
 
     const hostOnlyEtag = availabilityGridEtag(marker, baseKey);
@@ -155,7 +157,11 @@ describe("#1689 — ScheduleValidationService checks ACCEPTED co-hosts", () => {
               {
                 consultantProfileId: "cohost-cp-1",
                 consultantProfile: {
-                  user: { id: "cohost-u-1", name: "Dr. CoHost", timezone: "UTC" },
+                  user: {
+                    id: "cohost-u-1",
+                    name: "Dr. CoHost",
+                    timezone: "UTC",
+                  },
                   scheduleType: "CUSTOM",
                   availabilityWindowsWeekly: [],
                   // Co-host has no custom availability covering 10:00-11:00
@@ -196,6 +202,7 @@ describe("#1689 — ScheduleValidationService checks ACCEPTED co-hosts", () => {
               subscription: null,
               webinar: null,
               class: null,
+              participants: [],
             },
           ]),
       },
@@ -326,9 +333,7 @@ describe("#1690 — Cross-midnight session bucketing and timezone-aware countWee
       ]);
       expect(pastEndRes.isValid).toBe(false);
       expect(
-        pastEndRes.errors.some((e) =>
-          e.includes("outside subscription period"),
-        ),
+        pastEndRes.errors.some((e) => e.includes("outside this cycle")),
       ).toBe(true);
     } finally {
       jest.useRealTimers();
@@ -419,4 +424,3 @@ describe("#1715 Bug 4 — Subscription slot limits use 30-min slots and totalSes
     expect(limits.maxSlots).toBe(12);
   });
 });
-

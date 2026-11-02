@@ -475,18 +475,27 @@ function rescheduledWire(
   input: AppointmentRescheduledInput,
   timezone: string,
 ): AppointmentRescheduledPayload {
-  const { oldDateTime: rawOld, newDateTime: rawNew, ...base } = input;
+  const {
+    oldDateTime: rawOld,
+    newDateTime: rawNew,
+    leaveBy: rawLeaveBy,
+    clash,
+    ...base
+  } = input;
   const oldDateTime = formatNotificationDateTime(rawOld, timezone);
   const hasDestination =
     input.outcome === "MOVED" || input.outcome === "PROPOSED";
   const newDateTimeIso = hasDestination ? rawNew : undefined;
   const newDateTime = formatNotificationDateTime(newDateTimeIso, timezone);
+  const leaveBy = formatNotificationDateTime(rawLeaveBy, timezone);
   return {
     ...appointmentWire(base, timezone),
     outcome: input.outcome,
     ...(oldDateTime ? { oldDateTime, oldDateTimeIso: rawOld } : {}),
     newDateTime: newDateTime ?? RESCHEDULE_AWAITING_TIME[input.outcome],
     ...(newDateTime ? { newDateTimeIso } : {}),
+    ...(leaveBy ? { leaveBy, leaveByIso: rawLeaveBy } : {}),
+    ...(clash ? { clash } : {}),
   };
 }
 

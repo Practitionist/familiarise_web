@@ -1,7 +1,7 @@
 // The one price derivation: plan gates, discount, GST, referral credits and
 // the buyer country, read in its own transaction before any lock.
 
-import { liveParticipant } from "@/lib/booking/participants";
+import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
 import prisma from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import { firstCycleWindow } from "@/lib/booking/entitlement";
@@ -39,7 +39,10 @@ import {
   assertSeatRemintable,
   assertClassEnrolmentOpen,
 } from "@/lib/payments/checkout/seats";
-import { resolvePriorRenewalEndsAt } from "@/lib/payments/checkout/renewal";
+import {
+  resolvePlanStart,
+  resolvePriorPlanEnd,
+} from "@/lib/payments/checkout/renewal";
 import { validateSlotAvailability } from "@/lib/payments/checkout/occupancy-validate";
 
 /**
@@ -108,11 +111,15 @@ export async function calculateAmountAndValidate(
       },
       label: string,
     ) => {
-      // A paused expert takes no new booking of any kind; approved pay-links are minted elsewhere.
-      if (p.consultantProfile?.acceptingRequests === false) {
+      // A paused expert takes no new 1:1 booking; webinar and class seats keep
+      // selling, and approved pay-links are minted elsewhere.
+      const oneToOne =
+        validatedData.appointmentType === "CONSULTATION" ||
+        validatedData.appointmentType === "SUBSCRIPTION";
+      if (oneToOne && p.consultantProfile?.acceptingRequests === false) {
         throw new BookingRuleError(
           "NOT_ACCEPTING_BOOKINGS",
-          "This expert is not taking new bookings right now. Pick another expert, or try again later.",
+          "This expert is not taking new 1:1 bookings right now. Pick another expert, or try again later.",
         );
       }
       // #1527 Q4 — new sales only. Pay-links minted for approved requests
@@ -230,7 +237,7 @@ export async function calculateAmountAndValidate(
           validatedData.schedulingPeriodStartsAt ||
           validatedData.renewsSubscriptionId
         ) {
-          const priorEndsAt = await resolvePriorRenewalEndsAt(
+          const priorPlanEnd = await resolvePriorPlanEnd(
             tx,
             validatedData.renewsSubscriptionId,
             user.consulteeProfile.id,
@@ -239,19 +246,11 @@ export async function calculateAmountAndValidate(
           const schedulingTimezone = resolveSchedulingTimezone(
             plan.consultantProfile?.user?.timezone,
           );
-          const now = new Date();
-          const requestedStart = validatedData.schedulingPeriodStartsAt
-            ? new Date(validatedData.schedulingPeriodStartsAt)
-            : now;
-          const effectiveStart = priorEndsAt
-            ? new Date(
-                Math.max(
-                  priorEndsAt.getTime(),
-                  requestedStart.getTime(),
-                  now.getTime(),
-                ),
-              )
-            : requestedStart;
+          const effectiveStart = resolvePlanStart(
+            validatedData.schedulingPeriodStartsAt,
+            priorPlanEnd,
+            new Date(),
+          );
           const { start, end } = firstCycleWindow(
             plan,
             effectiveStart,
@@ -278,8 +277,9 @@ export async function calculateAmountAndValidate(
             appointment: {
               include: {
                 occurrences: true,
+                // A lapsed seat hold holds no place (the seat twin of a dead hold).
                 participants: {
-                  where: { ...liveParticipant(), role: "CONSULTEE" },
+                  where: seatHoldingParticipant(new Date()),
                   select: { userId: true, status: true },
                 },
               },
@@ -345,8 +345,9 @@ export async function calculateAmountAndValidate(
             appointment: {
               include: {
                 occurrences: true,
+                // A lapsed seat hold holds no place (the seat twin of a dead hold).
                 participants: {
-                  where: { ...liveParticipant(), role: "CONSULTEE" },
+                  where: seatHoldingParticipant(new Date()),
                   select: { userId: true, status: true },
                 },
               },

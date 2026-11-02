@@ -18,6 +18,43 @@ export const RENEW_LOCK_SCRIPT = `
   end
 `;
 
+/** Sets every key or none: answers the held keys, or an empty list after setting all. */
+export const SLOT_BATCH_ACQUIRE_SCRIPT = `
+  -- slot-batch-acquire
+  local held = {}
+  for _, k in ipairs(KEYS) do
+    if redis.call("exists", k) == 1 then held[#held + 1] = k end
+  end
+  if #held > 0 then return held end
+  for _, k in ipairs(KEYS) do
+    redis.call("set", k, ARGV[1], "PX", ARGV[2])
+  end
+  return held
+`;
+
+/** Re-arms every key only when every key still carries the batch's value. */
+export const SLOT_BATCH_RENEW_SCRIPT = `
+  -- slot-batch-renew
+  for _, k in ipairs(KEYS) do
+    if redis.call("get", k) ~= ARGV[1] then return 0 end
+  end
+  for _, k in ipairs(KEYS) do redis.call("pexpire", k, ARGV[2]) end
+  return 1
+`;
+
+/** Deletes each key still carrying the batch's value. */
+export const SLOT_BATCH_RELEASE_SCRIPT = `
+  -- slot-batch-release
+  local n = 0
+  for _, k in ipairs(KEYS) do
+    if redis.call("get", k) == ARGV[1] then
+      redis.call("del", k)
+      n = n + 1
+    end
+  end
+  return n
+`;
+
 interface StoreEntry {
   value: string;
   expiry?: number;
@@ -145,6 +182,34 @@ export class MockRedis {
    * 3. INCR + PEXPIRE (fixed-window rate-limit counter)
    */
   async eval(script: string, keys: string[], args: string[]): Promise<unknown> {
+    if (script.includes("-- slot-batch-acquire")) {
+      const held = keys.filter((k) => this.getValidValue(k) !== null);
+      if (held.length > 0) return held;
+      for (const k of keys) {
+        this.store.set(k, {
+          value: String(args[0]),
+          expiry: Date.now() + Number(args[1]),
+        });
+      }
+      return [];
+    }
+    if (script.includes("-- slot-batch-renew")) {
+      if (keys.some((k) => this.getValidValue(k) !== String(args[0]))) {
+        return 0;
+      }
+      for (const k of keys) await this.pexpire(k, Number(args[1]));
+      return 1;
+    }
+    if (script.includes("-- slot-batch-release")) {
+      let released = 0;
+      for (const k of keys) {
+        if (this.getValidValue(k) === String(args[0])) {
+          this.store.delete(k);
+          released += 1;
+        }
+      }
+      return released;
+    }
     const lower = script.toLowerCase();
     if (lower.includes('"del"') || lower.includes("'del'")) {
       if (this.getValidValue(keys[0]) === String(args[0])) {

@@ -46,6 +46,7 @@ import {
   type RunFailureReporter,
 } from "@/lib/observability/run-failures";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
+import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 
 // Reminder fires when nextInvoiceDate is within this many days. Once
 // per cycle (gated by BillingSubscription.renewalReminderSentAt).
@@ -152,11 +153,7 @@ async function generateSubscriptionInvoices(opts: {
 
     // Advance cycle once — compute outside the tx for a stable target.
     const nextStart = sub.currentCycleEnd;
-    const nextEnd = new Date(nextStart);
-    if (sub.cycle === "MONTHLY") nextEnd.setMonth(nextEnd.getMonth() + 1);
-    else if (sub.cycle === "QUARTERLY")
-      nextEnd.setMonth(nextEnd.getMonth() + 3);
-    else nextEnd.setFullYear(nextEnd.getFullYear() + 1);
+    const nextEnd = nextPeriodEnd(nextStart, sub.cycle);
 
     // #1401 — held outside the transaction so the P2002 handler below can name
     // the number that collided; the value is only meaningful once the claim has

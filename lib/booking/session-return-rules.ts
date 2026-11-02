@@ -8,7 +8,7 @@
 export const RETURN_NOTICE_HOURS = 24;
 /** Sessions one plan may return; `subscription_sessions_returned_range` enforces it. */
 export const RETURN_CAP = 2;
-/** Each return extends `schedulingPeriodEndsAt` by exactly this many days. */
+/** Each return moves the plan end (`planEndsAt`) this many days later. */
 const RETURN_EXTENSION_DAYS = 7;
 /** The `BookingStatusHistory.reason` of the occurrence a return released. */
 export const RETURN_HISTORY_REASON = "RETURNED_TO_PLAN";

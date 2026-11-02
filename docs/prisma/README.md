@@ -88,6 +88,8 @@ workflow is not a gate — it never appears, so a required check would read as
 success. The comparison is schema-to-schema, so a pull request that adds no
 schema object never reads the database at all.
 
+**The release gate.** `check-db-schema-required.ts --live` is the same check pointed at the whole schema instead of the merge-base diff. It runs `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` (read-only, needs `DIRECT_URL`; the catalog read uses the same `DIRECT_URL`) and fails when the schema declares a table, column, enum type or enum value the live database lacks. It ignores the other direction and the sidecar objects in `prisma/sql/*.sql`. It runs as the "Release schema gate" job (`release-schema-gate`) in `.github/workflows/db-live-drift.yml` on pull requests into `prod` from branches of this repository; a fork's pull request gets no run. GitHub Free has no branch protection on private repositories, so it cannot be a required check: the release cutter runs `npx --no-install tsx scripts/ci/check-db-schema-required.ts --live` locally before opening the `prod` pull request and pastes the output into its body, and once Actions runs the job is the record. When it fails by listing objects the live database lacks, the human runs the push preflight and push first; when it fails because it could not compare (a missing URL, a failed diff or catalog read), fix that cause and re-run. On 2026-10-31 the live database was ahead of the schema, which the gate ignores: the `DigitalProduct*` tables and enums, and `RecordingPurchase.reconciledAt` with its index.
+
 The other direction — the database carrying objects the schema does not want —
 is deliberately **not** checked. That is the reconcile push's business, it is
 not a runtime failure, and a live-database check in both directions blocks every
@@ -132,6 +134,29 @@ currently hold:
 The reconcile push is therefore sequenced behind the `dev` → `prod` promotion:
 move the 20 entries from `knownDivergences` to `destructiveStatementsAllowed`,
 preflight, push, sidecars, assert, then empty both lists again.
+
+### Additive columns waiting for the next push
+
+The booking and scheduling hardening added seven nullable columns and no
+sidecar change. They are purely additive, so `npm run db:preflight -- --print`
+should list seven `ADD COLUMN` statements for them and nothing destructive, and
+they can be pushed before the deploy that reads them. No backfill is written
+(doctrine: no backfill migrations); every reader treats `NULL` as a row written
+before the column existed:
+
+| Column                               | Type          | Written by                                          | Reader fallback when `NULL`                                                                                                                      |
+| ------------------------------------ | ------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Subscription.planEndsAt`            | `timestamptz` | Subscription creation (the fixed plan end)          | `subscriptionPlanEnd` (`lib/booking/entitlement.ts`) derives it from `schedulingPeriodStartsAt` plus `durationInMonths` in `schedulingTimezone`. |
+| `Payment.requestFingerprint`         | `varchar(64)` | Checkout's payment row (the priced inputs' hash)    | An idempotent replay skips the fingerprint comparison and replays as before (`lib/payments/operations/checkout-replay.ts`).                      |
+| `RescheduleRequest.releasedSessions` | `jsonb`       | The reschedule release (ordinal and start per slot) | `countedReleases` (`lib/booking/released-sessions.ts`) skips the row, so it neither costs a reschedule nor floors a refund notice.               |
+| `RescheduleRequest.originStatus`     | `varchar(32)` | The reschedule release (the parent's prior status)  | The restore reads the release's `PENDING` history row instead (`lib/booking/reschedule-restore.ts`).                                             |
+| `RescheduleRequest.restoredAt`       | `timestamptz` | A withdraw, decline or expiry that restored         | Read as "not restored"; a legacy row has no release record, so it is not counted anyway.                                                         |
+| `Webinar.retimeBy`                   | `timestamptz` | A webinar re-time (the end of the free leave)       | No free leave is open; seat leave applies its normal refund window (`lib/booking/retime-leave.ts`, `lib/booking/seat-leave.ts`).                 |
+| `Class.retimeBy`                     | `timestamptz` | A class make-up (the end of the free leave)         | The same as `Webinar.retimeBy`.                                                                                                                  |
+
+After the push, smoke-test one full-row reader of each of the five models
+(lesson 6 above): a subscription detail, a checkout replay, a reschedule
+withdraw, and a webinar and a class detail page.
 
 ## Related material
 

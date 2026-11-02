@@ -11,7 +11,8 @@ import {
   SCHEDULING_INTERVAL_MS,
 } from "@/lib/appointments/occurrences";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
-import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { isHostMove, type FreedWindow } from "@/lib/booking/class-series";
 import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 import {
@@ -249,12 +250,21 @@ export async function createAppointments(
     // autoAllocate/manualAllocate, both under allocate()'s try, whose catch
     // reports every error reaching it (this one included). A second
     // capture here would be a pure dupe of the same instance.
-    if (isExclusionViolation(error) || isUniqueViolation(error)) {
-      // A concurrent booking winning the #440 overlap guard is the ordinary
-      // "someone else got there first" race, not a fault.
+    // Classified by constraint: the overlap guard is someone else getting the
+    // time first; a live-ordinal clash is a concurrent allocation of this
+    // event that already placed its sessions. The idempotency key's clash
+    // propagates raw so allocate() replays the winner; any other constraint
+    // is a fault.
+    if (isExclusionViolation(error)) {
       throw new AllocationConflictError(
-        "This time slot was just booked by someone else. Please pick another time.",
+        "One of these times was just booked. Pick another time and try again.",
         "SLOT_TAKEN",
+      );
+    }
+    if (isUniqueViolationOn(error, "ordinal")) {
+      throw new AllocationConflictError(
+        "This booking was just scheduled in another tab. Reload to see its sessions.",
+        "ALREADY_ALLOCATED",
       );
     }
     throw error;

@@ -31,7 +31,7 @@ export function refusalResponse(err: unknown): NextResponse | null {
   if (err instanceof BookingRuleError)
     return body(err.code, err.message, err.httpStatus);
   if (err instanceof RefundValidationError)
-    return body(err.code, err.message, 409);
+    return body(err.code, err.message, 409, err.detail);
   // Already paged inside refundPayment; the operator gets the code, not a 500.
   if (err instanceof RefundGatewayError)
     return body(err.code, err.message, 502);

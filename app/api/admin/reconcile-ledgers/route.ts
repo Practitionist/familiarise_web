@@ -7,6 +7,8 @@ import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { startLedgerReconciliation } from "@/lib/backoffice/ledger-run";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import { jobsMayRunHere } from "@/lib/cron/dispatch-refusal";
 
 /** A run can freeze wallets, so it is a money door: ADMIN, step-up, reason, ops log row. */
 export const POST = withOpsAction(
@@ -20,6 +22,12 @@ export const POST = withOpsAction(
       id: body.organizationId ?? "full",
     }),
     run: async ({ body, actor }) => {
+      if (!jobsMayRunHere()) {
+        throw new OpsRefusal(
+          "JOB_RUN_PRODUCTION_ONLY",
+          "Ledger reconciliation runs only on the production deploy; this deploy shares its database.",
+        );
+      }
       const report = await startLedgerReconciliation({
         organizationId: body.organizationId,
         triggeredById: actor.userId,

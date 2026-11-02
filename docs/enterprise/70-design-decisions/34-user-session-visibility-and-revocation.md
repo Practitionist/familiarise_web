@@ -243,7 +243,7 @@ load, and reloads the tab on 409 `IDENTITY_CHANGED`.
 ### 8. Expired-row cleanup
 
 `lib/auth/cleanup-auth-tokens.ts` is the `auth-tokens` job in
-`lib/cron/cleanup-registry.ts`. `cron-daily.yml` runs it through
+`lib/cron/cleanup-registry.ts`. The Netlify ticker runs it daily at 03:00 UTC through
 `POST /api/cleanup/auth-tokens`. There is no per-user session cap.
 
 ## Alternatives considered
