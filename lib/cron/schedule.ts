@@ -437,7 +437,7 @@ export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   "advance-program-cycles": DAILY_0300,
   "auto-renew-contracts": DAILY_0300,
   "irp-uploader": DAILY_0300,
-  // All day; the window starts on the first slot so a missing GSTIN warns once a day.
+  // All day, from its first slot.
   "heal-consumer-invoices": { startMinuteUtc: 110, windowMinutes: 1440 },
   "sweep-abandoned-overage-charges": DAILY_0300,
   "expire-contracts": DAILY_0300,

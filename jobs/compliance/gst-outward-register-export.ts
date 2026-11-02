@@ -23,6 +23,7 @@
 
 import prisma from "@/lib/prisma";
 import * as Sentry from "@sentry/nextjs";
+import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   buildOutwardRegister,
@@ -36,10 +37,7 @@ import {
 } from "@/lib/payments/billing/consumer-invoice";
 import { uploadPrivateFinanceObject } from "@/lib/storage/private-finance-object";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
-import {
-  SUPPLIER_UNAVAILABLE_MESSAGE,
-  getPlatformSupplier,
-} from "@/lib/pdf/supplier";
+import { platformSupplierForJob } from "@/lib/pdf/supplier";
 import {
   previousIstCalendarMonthStart,
   nextMonthStart,
@@ -300,6 +298,7 @@ export interface GstOutwardRegisterExportResult {
   skippedByHealer: number;
   documentCount: number;
   warnings: number;
+  skipped?: ConfigSkip;
 }
 
 /**
@@ -313,12 +312,21 @@ export async function runGstOutwardRegisterExport(opts: {
   limit: number;
   period?: string;
 }): Promise<GstOutwardRegisterExportResult> {
-  // A register needs the platform's own supplier identity. Without it the
-  // healer below no-ops (no consumer invoice can be minted) and the file
-  // would read as a month with no B2C supplies — a silent understatement
-  // rather than a visible failure.
-  if (!getPlatformSupplier()) {
-    throw new Error(SUPPLIER_UNAVAILABLE_MESSAGE);
+  // Without a supplier no consumer invoice can be minted, so a register would
+  // understate B2C supplies: an unset GSTIN skips, an unusable one throws.
+  if (!platformSupplierForJob()) {
+    const skipped: ConfigSkip = "PLATFORM_GSTIN not configured";
+    reportConfigSkip("gst-outward-register-export", skipped);
+    return {
+      success: true,
+      period: "",
+      storagePath: "",
+      mintedByHealer: 0,
+      skippedByHealer: 0,
+      documentCount: 0,
+      warnings: 0,
+      skipped,
+    };
   }
   // Fail-CLOSED, unlike the read-only compliance drafts. The healer inside
   // allocates numbers from a gapless statutory series, and two concurrent
