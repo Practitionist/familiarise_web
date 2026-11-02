@@ -1,6 +1,5 @@
 import "server-only";
 
-import Link from "next/link";
 import { HydrationBoundary } from "@tanstack/react-query";
 
 import {
@@ -22,9 +21,9 @@ import {
 import { seedLibraryPage } from "@/lib/library/library-seed";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { DisplayZoneProvider } from "@/lib/time/zoned-format";
-import { cn } from "@/utils/tailwind";
 
 import { DigitalProductLibrary } from "./DigitalProductLibrary";
+import { LibraryTabNav } from "./LibraryTabNav";
 import { OrgLibrary } from "./OrgLibrary";
 import { PersonalLibrary } from "./PersonalLibrary";
 
@@ -53,12 +52,6 @@ export type LibraryHolder =
       scope: LibraryScope | null;
       canSeeEveryone: boolean;
     };
-
-const TAB_LABEL: Record<LibraryTab, string> = {
-  purchases: "Purchases",
-  recordings: "Session recordings",
-  documents: "Session documents",
-};
 
 const DESCRIPTION: Record<
   LibraryHolder["kind"],
@@ -183,16 +176,6 @@ export function LibraryPage({
   searchParams: SearchParams;
 }>) {
   const active = resolveLibraryTab(searchParams.tab, tabs);
-  // The org's Mine · Everyone pick follows the reader across tabs.
-  const scope =
-    owner.kind === "org" && typeof searchParams.scope === "string"
-      ? searchParams.scope
-      : null;
-  const hrefFor = (tab: LibraryTab) => {
-    const params = new URLSearchParams({ tab });
-    if (scope) params.set("scope", scope);
-    return `${basePath}?${params.toString()}`;
-  };
   return (
     <>
       <DashboardHeader
@@ -201,29 +184,13 @@ export function LibraryPage({
       />
       <DashboardContent>
         {tabs.length > 1 && (
-          <nav
-            aria-label={`${title} sections`}
-            className="-mx-1 overflow-x-auto px-1"
-          >
-            <ul className="flex min-w-max items-center gap-6 border-b border-border">
-              {tabs.map((tab) => (
-                <li key={tab} className="shrink-0">
-                  <Link
-                    href={hrefFor(tab)}
-                    aria-current={tab === active ? "page" : undefined}
-                    className={cn(
-                      "-mb-px inline-flex items-center whitespace-nowrap border-b-2 px-0.5 py-3 text-sm font-medium transition-colors focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                      tab === active
-                        ? "border-foreground text-foreground"
-                        : "border-transparent text-muted-foreground hover:border-muted-foreground/50 hover:text-foreground",
-                    )}
-                  >
-                    {TAB_LABEL[tab]}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </nav>
+          <LibraryTabNav
+            title={title}
+            basePath={basePath}
+            tabs={tabs}
+            active={active}
+            carryScope={owner.kind === "org"}
+          />
         )}
         <LibraryPanel owner={owner} tab={active} searchParams={searchParams} />
       </DashboardContent>
