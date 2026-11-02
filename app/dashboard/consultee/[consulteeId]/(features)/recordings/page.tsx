@@ -39,7 +39,7 @@ export default async function ConsulteeRecordingsRoute({
   return (
     <>
       <DashboardHeader
-        title="Recordings"
+        title="Session recordings"
         description="Your sessions' recordings, by booking. A session your run missed shows a catch-up from another run."
       />
       <DashboardContent>
