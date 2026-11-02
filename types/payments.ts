@@ -98,6 +98,15 @@ export interface PaymentDetail {
   refunds: PaymentDetailRefund[];
   disputes: PaymentDetailDispute[];
   consumerInvoice?: PaymentConsumerInvoice | null;
+  /** Set on a digital product sale: the evidence shown before a refund. */
+  digitalProductPurchase?: PaymentDigitalProductPurchase | null;
+}
+
+export interface PaymentDigitalProductPurchase {
+  status: string;
+  firstDownloadedAt: string | null;
+  product: { title: string };
+  _count: { downloads: number };
 }
 
 // ─── Refund List (admin/refunds, staff/refunds) ────────────────────

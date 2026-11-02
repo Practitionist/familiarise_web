@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { RefundDoorDialog } from "@/components/dashboard/backoffice/money/RefundDoorDialog";
+import { DownloadEvidence } from "@/components/dashboard/backoffice/money/DownloadEvidence";
 import { ErrorState } from "@/components/dashboard/ErrorState";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -285,6 +286,17 @@ export function PaymentDetailPage({
           </CardContent>
         </Card>
       </div>
+
+      {payment.digitalProductPurchase && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Digital product</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <DownloadEvidence purchase={payment.digitalProductPurchase} />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Refunds List */}
       {payment.refunds && payment.refunds.length > 0 && (
