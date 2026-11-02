@@ -39,7 +39,7 @@ A worked example from the live organisation, read on 2026-10-31 over 30 days: `a
 | Verdict                           | Route answer | Run row                                                                    | Alert                                                    |
 | --------------------------------- | ------------ | -------------------------------------------------------------------------- | -------------------------------------------------------- |
 | `accepted`                        | 200          | `COMPLETED`; the canary takes a fail-open lease, so every run writes a row | None                                                     |
-| `rejecting` or `stats-unreadable` | 503          | `FAILED`; the tick also lists it under `failed`                            | Email, Better Stack error line, ops chat mirror          |
+| `rejecting` or `stats-unreadable` | 207          | `COMPLETED`, outcome `attention`; the tick files it as `ok`                | Email, Better Stack error line, ops chat mirror          |
 | `SENTRY_STATS_TOKEN` unset        | 200          | `CANCELLED`, outcome `skipped`, reason `SENTRY_STATS_TOKEN not configured` | None. It is a config skip, listed by `/api/health/jobs`. |
 
 `sendSentryIngestAlert` in `lib/observability/ingest-alert.ts` sends on two independent channels at once:
@@ -53,7 +53,7 @@ There is no cooldown. The job runs once a day, so an outage that lasts a week se
 
 After the verdict, the same run calls `checkSentryQuota` (`lib/observability/quota-alert.ts`), which emails once per billing period when accepted errors pass 70 % of `SENTRY_ERROR_QUOTA`. It uses the same token, and its failure never changes the canary's verdict.
 
-Because every run writes a row, `/api/health/jobs` judges the canary like any other paging target (a budget of 30.5 hours). A `FAILED` run does not count as having run, so if Sentry keeps rejecting events for longer than that budget the probe answers 503 as well; by then the canary's own email has fired twice and the signal pipeline is still broken. The canary's own 503 never reaches Sentry: `reportableToSentry()` in `netlify/functions/cron-tick.mts` keeps it out of the ticker's escalation, while it stays in the tick's `failed` list and in its run row.
+Because every run writes a row, `/api/health/jobs` judges the canary like any other paging target (a budget of 30.5 hours). An unhealthy verdict is a finding, not a failure: the route answers 207 through its `needsAttention` flag and the run is recorded as `attention`, which counts as having run. The probe therefore pages only when the canary itself stops running. A Sentry outage stays on the canary's own email and Better Stack line, so it never holds the probe at 503 and hides a second overdue job. A canary that crashes is still a `FAILED` run, and `reportableToSentry()` in `netlify/functions/cron-tick.mts` keeps it out of the ticker's Sentry escalation; the freshness probe catches it instead.
 
 ### The token
 
@@ -66,7 +66,7 @@ curl -sS -X POST https://<site>/api/cleanup/sentry-ingest-canary \
   -H "Authorization: Bearer $CRON_SECRET" | jq
 ```
 
-A healthy body is `{"healthy":true,"verdict":"accepted","accepted":<n>,"rejections":[],...}`. An unhealthy one answers 503 with `verdict`, `rejections`, `detail` and `alerted`. The admin Run door on the System Jobs page runs the same code in-process.
+A healthy body is `{"healthy":true,"verdict":"accepted","accepted":<n>,"rejections":[],...}`. An unhealthy one answers 207 with `verdict`, `rejections`, `detail` and `alerted`. The admin Run door on the System Jobs page runs the same code in-process.
 
 ## The remedy, and why you do not have to wait for the month
 

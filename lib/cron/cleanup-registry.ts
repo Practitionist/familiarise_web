@@ -2319,7 +2319,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       manualRun: "inline",
     },
     idle: {
-      alwaysRun: "A time-based check of Sentry's ingest outcomes; no rows.",
+      alwaysRun:
+        "A time-based check of Sentry's ingest outcomes; no queue to probe.",
     },
     build: () =>
       cleanupRoute({
@@ -2362,8 +2363,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             },
           );
         },
-        status: (result) => (result.healthy ? 200 : 503),
-        items: (r) => ({ processed: 1, errors: r.healthy ? 0 : 1 }),
+        // An unhealthy verdict is a finding with its own email; the run still counts as ran.
+        needsAttention: (result) => !result.healthy,
+        items: () => ({ processed: 1 }),
         failureMessage:
           "The Sentry ingest canary route failed to run. This is a fault in the canary, not a verdict about Sentry.",
       }),

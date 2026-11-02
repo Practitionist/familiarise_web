@@ -399,7 +399,7 @@ The second term tolerates one missed slot, but never more than six hours of one.
 
 The generated [cron jobs reference](04-cron-jobs-reference.md) prints every target's budget and tier on its "Freshness" line. The shortest budget is 50 minutes (the 10-minute outbox and export drains) and the longest is the quarterly TDS draft.
 
-Every target is judged, including `sentry-ingest-canary` and `stream-control-plane-drift`, which take a fail-open lease so each run writes a row. An unhealthy canary verdict records a `FAILED` run, so Sentry rejecting events for longer than the canary's 30.5-hour budget also turns the probe 503. `checkJobCoverage` (`lib/cron/job-coverage.ts`) proves at the start of every `npm run build` that each target has exactly one requirement under its live run-row name, so a rename or a dropped target fails the deploy even when GitHub Actions is not running.
+Every target is judged, including `sentry-ingest-canary` and `stream-control-plane-drift`, which take a fail-open lease so each run writes a row. An unhealthy canary verdict is a 207 `attention` run, which counts as having run, so a Sentry outage stays on the canary's own email and the probe pages only when the canary stops running. `checkJobCoverage` (`lib/cron/job-coverage.ts`) proves at the start of every `npm run build` that each target has exactly one requirement under its live run-row name, so a rename or a dropped target fails the deploy even when GitHub Actions is not running.
 
 ### Tiers
 
