@@ -2,7 +2,9 @@
  * POST /api/digital-products/purchases/[purchaseId]/verify — after a polling
  * timeout, ask Razorpay what the order holds and settle a capture the webhook
  * has not delivered yet, including a retry after a failed attempt on the same
- * order. Works without a Payment row; a REFUNDED purchase is never re-read.
+ * order. A PENDING order whose every attempt failed is marked FAILED, as the
+ * payment.failed webhook would; FAILED stays recoverable. A REFUNDED purchase
+ * is never re-read.
  */
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -12,6 +14,7 @@ import {
   FAILED_RECOVERY_MS,
   recoverStandaloneOrder,
 } from "@/scripts/payments/reconcile-standalone-purchases";
+import { handleDigitalProductPurchaseFailure } from "@/lib/payments/webhooks/digital-product-purchase";
 import { reportSentryError } from "@/lib/observability/report";
 
 type RouteParams = { params: Promise<{ purchaseId: string }> };
@@ -37,7 +40,10 @@ export async function POST(_request: Request, { params }: RouteParams) {
       Date.now() - purchase.createdAt.getTime() < FAILED_RECOVERY_MS);
   if (recoverable && purchase.gatewayOrderId) {
     try {
-      await recoverStandaloneOrder(purchase.gatewayOrderId);
+      const holding = await recoverStandaloneOrder(purchase.gatewayOrderId);
+      if (purchase.status === "PENDING" && holding === "failed") {
+        await handleDigitalProductPurchaseFailure(purchase.gatewayOrderId);
+      }
     } catch (error) {
       reportSentryError(error, {
         subsystem: "payments",

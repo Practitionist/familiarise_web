@@ -27,12 +27,14 @@ const STANDALONE_ORDER_TYPES: ReadonlySet<string> = new Set([
 
 /**
  * Ask Razorpay what a standalone sale order holds and route a captured payment
- * to its handler exactly as the webhook would. Throws when the gateway cannot answer.
+ * to its handler exactly as the webhook would; "failed" means every attempt
+ * on it failed. Throws when the gateway cannot answer.
  */
 export async function recoverStandaloneOrder(
   orderId: string,
-): Promise<"captured" | "live" | "empty"> {
+): Promise<"captured" | "live" | "empty" | "failed"> {
   const holding = await readRazorpayOrderHolding(orderId);
+  if (holding.kind === "empty") return holding.onlyFailed ? "failed" : "empty";
   if (holding.kind !== "captured") return holding.kind;
   const order = await fetchRazorpayOrder(orderId);
   if (!order) throw new Error("RAZORPAY_NOT_INITIALIZED");
