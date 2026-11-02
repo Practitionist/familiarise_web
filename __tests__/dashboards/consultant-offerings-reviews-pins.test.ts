@@ -3,17 +3,11 @@
  */
 
 /**
- * #1527 — three consultant pins: Delete is offered only on an untouched plan,
- * the Reviews inbox reads the session's own profile and nobody else's, and the
- * retired planner URL 308s to Group programs.
+ * Two consultant pins: Delete is offered only on an untouched plan, and the
+ * Reviews inbox reads the session's own profile and nobody else's.
  */
 
 jest.mock("server-only", () => ({}));
-
-const permanentRedirect = jest.fn();
-jest.mock("next/navigation", () => ({
-  permanentRedirect: (url: string) => permanentRedirect(url),
-}));
 
 const requireOwnConsultantProfile = jest.fn();
 jest.mock("../../lib/api/consultant-profile", () => ({
@@ -34,7 +28,6 @@ import {
   UNTOUCHED_PLAN,
 } from "@/lib/offerings/delete-guard";
 import { GET as getReviews } from "@/app/api/consultant/reviews/route";
-import PlannerRedirectPage from "@/app/dashboard/consultant/[consultantId]/(features)/planner/page";
 
 // #1846 — the card and the DELETE routes share one guard, so they cannot
 // disagree, and any seat ever held counts (no status filter), released or not.
@@ -78,19 +71,4 @@ it("reads the session's own reviews and ignores any id in the URL", async () => 
       needsReply: true,
     }),
   );
-});
-
-it("308s the planner URL to Group programs with its query kept", async () => {
-  await PlannerRedirectPage({
-    params: Promise.resolve({ consultantId: "cp-1" }),
-    searchParams: Promise.resolve({}),
-  });
-  await PlannerRedirectPage({
-    params: Promise.resolve({ consultantId: "cp-1" }),
-    searchParams: Promise.resolve({ q: "workshop", page: "2", a: ["1", "2"] }),
-  });
-  expect(permanentRedirect.mock.calls).toEqual([
-    ["/dashboard/consultant/cp-1/sell/programs"],
-    ["/dashboard/consultant/cp-1/sell/programs?q=workshop&page=2&a=1&a=2"],
-  ]);
 });

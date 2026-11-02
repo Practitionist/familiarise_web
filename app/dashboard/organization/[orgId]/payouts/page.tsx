@@ -1,6 +1,3 @@
-import { permanentRedirect } from "next/navigation";
-
-import { orgLegacyTabHref } from "@/lib/dashboard/org-tab-redirect";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { PayoutsPageClient } from "./PayoutsPageClient";
 
@@ -10,14 +7,10 @@ import { PayoutsPageClient } from "./PayoutsPageClient";
 // promise the client `use()`s.
 export default async function OrgPayoutsPage({
   params,
-  searchParams,
 }: Readonly<{
   params: Promise<{ orgId: string }>;
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }>) {
   const { orgId } = await params;
-  const legacy = orgLegacyTabHref(orgId, "payouts", await searchParams);
-  if (legacy) permanentRedirect(legacy);
   return (
     <PayoutsPageClient
       params={params}
