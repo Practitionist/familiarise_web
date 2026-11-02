@@ -1,5 +1,10 @@
 {
   "permissions": {
+    "ask": [
+      "mcp__supabase__apply_migration",
+      "mcp__supabase__merge_branch",
+      "mcp__supabase__reset_branch"
+    ],
     "deny": [
       "Bash(npx prisma db push*)",
       "Bash(prisma db push*)",

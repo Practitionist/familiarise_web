@@ -25,7 +25,7 @@
    - Every status transition on `Payment`, `Appointment`, `Refund`, or `Payout` must use conditional `updateMany` with the expected prior status in `WHERE` (CAS-in-WHERE), never read-then-update. Payment confirmation rules: `lib/payments/AGENTS.md`.
 3. **Schema & Sidecar Discipline (`prisma/schema.prisma` + `prisma/sql/*.sql`)**:
    - One Postgres database serves dev and prod across worktrees. **Never** run `prisma db push` or `npm run db:*` autonomously.
-   - Run `npx prisma generate` after editing `prisma/schema.prisma`. Never run database DDL or write SQL through an MCP server. Everything else: `prisma/AGENTS.md`.
+   - Run `npx prisma generate` after editing `prisma/schema.prisma`. Supabase MCP writes: DDL needs the owner's explicit approval; DML needs it unless every row is proven mock data. Everything else: `prisma/AGENTS.md`.
 4. **Locking (`Postgres` vs `Upstash Redis`)**:
    - Cron mutual exclusion (`withCronLock` in `lib/cron/with-cron-lock.ts`) is backed by Postgres (`SystemJobExecution` lease). Do not add Redis locks for cron jobs.
    - Upstash Redis (`lib/redis.ts`, `lib/rate-limit.ts`, `utils/appointmentlock.ts`) is used only for request rate limiting, maintenance-mode / `ops:active_cron_platform` edge state, and short-lived interactive checkout/payout mutexes.
