@@ -411,10 +411,15 @@ jobs:
           CI_LEAN_BUILD: "true"
 
   # The one required check: passes only when every job that applies to this run passed.
+  # Skipped (reported as passing) where its inputs skip for Dependabot, except on release runs, which fail closed.
   test-and-build:
     name: TypeScript, Tests & Build
     needs: [checks, unit-tests, build]
-    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+    if: >-
+      always() &&
+      (github.actor != 'dependabot[bot]' || github.event_name == 'workflow_dispatch' || github.base_ref == 'prod' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/staging') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
