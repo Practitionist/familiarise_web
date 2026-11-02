@@ -80,11 +80,17 @@ it("reads the session's own reviews and ignores any id in the URL", async () => 
   );
 });
 
-it("308s the planner URL to Group programs", async () => {
+it("308s the planner URL to Group programs with its query kept", async () => {
   await PlannerRedirectPage({
     params: Promise.resolve({ consultantId: "cp-1" }),
+    searchParams: Promise.resolve({}),
+  });
+  await PlannerRedirectPage({
+    params: Promise.resolve({ consultantId: "cp-1" }),
+    searchParams: Promise.resolve({ q: "workshop", page: "2", a: ["1", "2"] }),
   });
   expect(permanentRedirect.mock.calls).toEqual([
     ["/dashboard/consultant/cp-1/sell/programs"],
+    ["/dashboard/consultant/cp-1/sell/programs?q=workshop&page=2&a=1&a=2"],
   ]);
 });

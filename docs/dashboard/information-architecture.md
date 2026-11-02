@@ -138,7 +138,7 @@ The old `invoices`, `wallet`, `purchase-orders`, `disputes`, `member-spend`, `ru
 
 ## Legacy redirects
 
-Every moved route answers a `permanentRedirect` (308) that keeps the old query and drops any stale `tab`. The personal routes are recorded in `lib/dashboard/personal-legacy-routes.ts` and the organization routes in `ORG_TAB_REDIRECTS` (`lib/dashboard/org-tab-redirect.ts`).
+Every moved route answers a `permanentRedirect` (308) that keeps the old query, repeated keys included, and drops any stale `tab`; each redirect page must pass its `searchParams` to the helper. The personal routes are recorded in `lib/dashboard/personal-legacy-routes.ts` and the organization routes in `ORG_TAB_REDIRECTS` (`lib/dashboard/org-tab-redirect.ts`).
 
 | Old route                                             | New route                                                              |
 | ----------------------------------------------------- | ---------------------------------------------------------------------- |
