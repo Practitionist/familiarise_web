@@ -70,15 +70,12 @@ it("the personal support page says support cases, not requests", async () => {
   expect(screen.queryByText(/support request/i)).toBeNull();
 });
 
-it("the learner recordings page is titled Session recordings", () => {
+it("the learner Library labels attended recordings Session recordings", () => {
   const src = readFileSync(
-    join(
-      process.cwd(),
-      "app/dashboard/consultee/[consulteeId]/(features)/recordings/page.tsx",
-    ),
+    join(process.cwd(), "components/dashboard/library/LibraryPage.tsx"),
     "utf8",
   );
-  expect(src).toContain('title="Session recordings"');
+  expect(src).toContain('recordings: "Session recordings"');
 });
 
 it("notification settings call the support toggle Support Cases", async () => {

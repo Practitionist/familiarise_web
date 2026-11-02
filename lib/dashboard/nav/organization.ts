@@ -11,12 +11,12 @@ import {
   Handshake,
   Home,
   LayoutGrid,
+  Library,
   LifeBuoy,
   MessageSquare,
   ShieldCheck,
   UserCog,
   Users,
-  Video,
   Wallet,
 } from "lucide-react";
 
@@ -77,14 +77,10 @@ export function buildOrganizationNav(
   input: OrganizationNavInput,
 ): DashboardNav {
   const { orgId, role, canSponsor, canHost } = input;
-  // #1527 — every member's own session files (Mine); operations.read adds
-  // the Everyone tab inside, so the item itself is ungated.
+  // Every member's own session files (Mine); operations.read adds the
+  // Everyone scope inside, so the item itself is ungated.
   const library: NavGroup = {
-    label: "Library",
-    items: [
-      { name: "Session documents", icon: FileText, path: "documents" },
-      { name: "Session recordings", icon: Video, path: "recordings" },
-    ],
+    items: [{ name: "Library", icon: Library, path: "library" }],
   };
   if (input.suspended) {
     return {
@@ -287,6 +283,7 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   materials: "Materials",
   programs: "Programs",
   contracts: "Contracts",
+  library: "Library",
   documents: "Session documents",
   recordings: "Session recordings",
   support: "Help & support",

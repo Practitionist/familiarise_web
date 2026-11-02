@@ -139,7 +139,9 @@ it("opens an archived product's download view to a consultant-only buyer and nob
     amountPaise: 59_000,
   });
   expect(prepareEmail).toHaveBeenCalledWith(
-    expect.objectContaining({ libraryHref: "/dashboard/go/expert/purchases" }),
+    expect.objectContaining({
+      libraryHref: "/dashboard/go/library?tab=purchases",
+    }),
   );
 
   expect(await getPublicDigitalProductBySlug(product.slug)).toBeNull();

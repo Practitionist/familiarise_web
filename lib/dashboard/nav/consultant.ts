@@ -3,11 +3,11 @@ import {
   CalendarClock,
   CalendarRange,
   ExternalLink,
-  FileDown,
   FileText,
   Gift,
   Home,
   Inbox,
+  Library,
   LifeBuoy,
   MessageSquare,
   Settings,
@@ -65,13 +65,15 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
         items: [
           { name: "Session documents", icon: FileText, path: "documents" },
           { name: "Recordings", icon: Video, path: "recordings" },
-          { name: "My purchases", icon: FileDown, path: "purchases" },
         ],
       },
       {
         label: "Grow",
         items: [{ name: "Invite & earn", icon: Gift, path: "referrals" }],
       },
+      // The expert as a buyer: purchases, plus attended sessions when they
+      // also hold a learner profile.
+      { items: [{ name: "My library", icon: Library, path: "library" }] },
       {
         label: "Operations",
         items: [
@@ -115,7 +117,7 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   reviews: "Reviews",
   recordings: "Recordings",
   documents: "Session documents",
-  purchases: "My purchases",
+  library: "My library",
   earnings: "Earnings & payouts",
   referrals: "Invite & earn",
   settings: "Settings",

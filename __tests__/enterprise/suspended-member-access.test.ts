@@ -92,8 +92,7 @@ describe("where allowSuspended is used", () => {
       "lib/data/org-details-server.ts",
       `${DASH}/appointments/page.tsx`,
       `${DASH}/appointments/[appointmentId]/page.tsx`,
-      `${DASH}/documents/page.tsx`,
-      `${DASH}/recordings/page.tsx`,
+      `${DASH}/library/page.tsx`,
       "app/api/organizations/[orgId]/documents/route.ts",
       "app/api/organizations/[orgId]/recordings/route.ts",
     ];
@@ -160,8 +159,7 @@ it("the suspended nav is Overview, Appointments and the Library", () => {
   expect(flattenNav(nav).map((i) => i.path)).toEqual([
     "home",
     "appointments",
-    "documents",
-    "recordings",
+    "library",
   ]);
 });
 

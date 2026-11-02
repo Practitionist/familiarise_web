@@ -16,7 +16,7 @@ This page records the words the dashboards use for their pages and the navigatio
 | Support cases                   | The conversations a person opens with the support team                              | Booking requests                                                           |
 | Library                         | Only the buyer's or attendee's library                                              | The organization Catalog, whose icon is `LayoutGrid` rather than `Library` |
 
-In this phase the consultant dashboard keeps "Recordings" (the hosted sessions) and "My purchases" in its Library group, and the learner dashboard keeps "Digital products"; later phases move and replace them.
+The consultant dashboard still keeps "Session documents" and "Recordings" (the sessions the expert hosted) in a group labelled Library until they move to Studio; "My library" is the expert's buyer Library.
 
 ## Current navigation trees
 
@@ -27,25 +27,25 @@ Each tree is built by a pure function, so the groups below are what the sidebar 
 - Work: Home, Booking requests, Appointments, Messages
 - Business: Offerings, Availability, Reviews
 - Money: Earnings & payouts
-- Library: Session documents, Recordings, My purchases
+- Library: Session documents, Recordings (hosted sessions)
 - Grow: Invite & earn
+- My library (its own top-level item)
 - Operations: Help & support, Settings
 - Pinned: View public page. Mobile tabs: Home, Requests, Appointments, Messages.
 
 ### Consultee (`buildConsulteeNav`)
 
-- Home, Appointments, Messages
-- Library: Session documents, Session recordings, Digital products
+- Home, Appointments, Messages, Library
 - Money: Billing, Invite & earn
 - Operations: Help & support, Settings
-- Pinned: Find experts. Mobile tabs: Home, Appointments, Messages, Billing.
+- Pinned: Find experts. Mobile tabs: Home, Appointments, Library, Messages. Billing opens from the Menu sheet, and the "Needs you" card stays on Home.
 
 ### Organization (`buildOrganizationNav`)
 
 Items appear only when the viewer's role and the organization's capabilities pass the same gates the pages check.
 
 - Top: Overview, My Program, Compensation, Appointments, Messages, Booking requests, Plan collaborators
-- Library: Session documents, Session recordings
+- Library (one unlabelled item, so the group does not restate it)
 - People: Members
 - Sponsorship: Programs, Contracts
 - Hosting: Catalog (icon `LayoutGrid`)
@@ -53,12 +53,44 @@ Items appear only when the viewer's role and the organization's capabilities pas
 - Operations: Help & support
 - Insights: Analytics, Audit, Consent
 
-Organization settings is not a rail item. It opens from the avatar menu and from the mobile Menu sheet, which lists the row only for an ACTIVE membership whose role passes `canOpenOrgSettings`. A suspended member sees Overview, Appointments and the Library only.
+Organization settings is not a rail item. It opens from the avatar menu and from the mobile Menu sheet, which lists the row only for an ACTIVE membership whose role passes `canOpenOrgSettings`. A suspended member sees Overview, Appointments and Library only.
 
 ### Workspace (`buildWorkspaceNav`)
 
 - Overview, plus Activity and Spend when the person owns more than one organization
 - Operations: Help & support, Workspace settings
+
+## Library
+
+Library means only what the viewer bought, attended or was given access to. One server component, `LibraryPage` in `components/dashboard/library/LibraryPage.tsx`, renders it for every role. Its tabs live in the URL as `?tab=purchases|recordings|documents`, parsed through the `LibraryTabSchema` enum in `lib/dashboard/library-tabs.ts`. An unknown or unavailable tab opens the viewer's first tab. Each tab is a link, so switching tabs is a server navigation and the server reads only the active tab's data:
+
+- Purchases lists `readDigitalProductLibrary()` for the buyer's user id through `DigitalProductLibrary`.
+- Session recordings and Session documents seed page 1 of `readRecordingLibrary()` or `readDocumentLibrary()` and hand over to `PersonalLibrary` (learner side) or `OrgLibrary` (organization), which fetch filtered pages on the client.
+
+| Role         | Route                                     | Title      | Tabs                                                                                                                               |
+| ------------ | ----------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Learner      | `/dashboard/consultee/<id>/library`       | Library    | Purchases, Session recordings, Session documents                                                                                   |
+| Expert       | `/dashboard/consultant/<id>/library`      | My library | Purchases, plus Session recordings and Session documents only when the owner also has a learner profile; one tab hides the tab bar |
+| Organization | `/dashboard/organization/<orgId>/library` | Library    | Session documents, Session recordings, each keeping the Mine and Everyone scope (`?scope=`)                                        |
+
+An expert's attended sessions belong to their learner profile, so the expert's recordings and documents tabs read and link to the learner side (`/dashboard/consultee/<learner id>/…`). The organization Library keeps its gates: every member, a suspended one included, reads Mine (`requireOrgAccess` with `allowSuspended`), and Everyone needs an active member with `operations.read` (`libraryScopeFor()`).
+
+The account menu on every surface carries **My library**, which links to `/dashboard/go/library`. `resolveGoHref()` in `lib/dashboard/go.ts` sends a viewer with a learner profile to the learner Library, a viewer with only an expert profile to My library, and anyone else (an organization workspace operator, for example) to `/dashboard`. The go page forwards `?tab=`, so digital product receipts, the product page's "Open library" and "Back to library" links and the purchase email all use `/dashboard/go/library?tab=purchases` (`digitalProductLibraryHref()`); the email makes it absolute. Find lists My library under Account and matches it, and the Library rail items, on "purchases", "products", "recordings", "documents" and "downloads".
+
+## Legacy redirects
+
+Every moved route answers a `permanentRedirect` (308) that keeps the old query and drops any stale `tab`. The personal routes are recorded in `lib/dashboard/personal-legacy-routes.ts` and the organization routes in `ORG_TAB_REDIRECTS` (`lib/dashboard/org-tab-redirect.ts`).
+
+| Old route                                    | New route                                                |
+| -------------------------------------------- | -------------------------------------------------------- |
+| `/dashboard/consultee/<id>/products`         | `/dashboard/consultee/<id>/library?tab=purchases`        |
+| `/dashboard/consultee/<id>/recordings`       | `/dashboard/consultee/<id>/library?tab=recordings`       |
+| `/dashboard/consultee/<id>/documents`        | `/dashboard/consultee/<id>/library?tab=documents`        |
+| `/dashboard/consultant/<id>/purchases`       | `/dashboard/consultant/<id>/library`                     |
+| `/dashboard/organization/<orgId>/documents`  | `/dashboard/organization/<orgId>/library?tab=documents`  |
+| `/dashboard/organization/<orgId>/recordings` | `/dashboard/organization/<orgId>/library?tab=recordings` |
+
+The per-booking pages (`appointments/<id>/documents` and `appointments/<id>/recordings`) did not move, and neither did the expert's hosted Recordings and Session documents pages.
 
 ## Support wording
 
@@ -66,12 +98,11 @@ The support area is called Support cases wherever the viewer sees it: the first 
 
 ## Planned phases
 
-1. Glossary and labels: renames only, no route moves (this page describes the result).
-2. A shared buyer Library with Purchases, Session recordings and Session documents for every role that can buy, replacing the temporary "My purchases" and "Digital products" items.
+1. Glossary and labels: renames only, no route moves (done).
+2. A shared buyer Library with Purchases, Session recordings and Session documents for every role that can buy (this page describes the result).
 3. A consultant Studio group holding the hosted Recordings and Session documents, and the Sell grouping of offerings into sessions, group programs and products.
 4. The organization regrouping into My work, Sponsor and Host, with Billing and Payouts tabs merged to at most three visible plus a "More" menu.
-5. Cross-role entry points: a "My library" row in the account menu on every surface and a `library` path in the `/dashboard/go` resolver.
-6. Mobile tab changes and legacy redirects for every moved route.
+5. Public pages: expert profile anchor tabs, a products index with replays, breadcrumbs and a public header account menu.
 
 ## Deprecated & Superseded Approaches
 
@@ -80,3 +111,5 @@ The organization rail used to carry its own "Organization settings" item under O
 The support area used to be called "Support requests", with a first tab labelled "Requests". Both are now "Support cases", and "Requests" is reserved for booking requests. The component `SupportRequestView` and the `requestsHref` property keep their old identifiers; only the words the viewer reads changed.
 
 The Catalog item used the `Library` icon, which collided with the learner's Library group. It now uses `LayoutGrid`.
+
+The expert's temporary "My purchases" item (`/dashboard/consultant/<id>/purchases`), the learner's Library group with Session documents, Session recordings and Digital products (`documents`, `recordings` and `products`), and the organization's two Library items (`documents` and `recordings`, with `OrgLibraryPage` rendering each) were replaced by the one Library page per role. The old URLs only redirect now; do not link to them or add pages under them.

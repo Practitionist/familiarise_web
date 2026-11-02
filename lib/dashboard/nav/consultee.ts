@@ -1,15 +1,13 @@
 import {
   CalendarCheck,
   CreditCard,
-  FileDown,
-  FileText,
   Gift,
   Home,
+  Library,
   LifeBuoy,
   MessageSquare,
   Search,
   Settings,
-  Video,
 } from "lucide-react";
 
 import { personalSupportLinks, type DashboardNav } from "./types";
@@ -29,14 +27,7 @@ export function buildConsulteeNav(consulteeId: string): DashboardNav {
             path: "messages",
             badgeKey: "messages",
           },
-        ],
-      },
-      {
-        label: "Library",
-        items: [
-          { name: "Session documents", icon: FileText, path: "documents" },
-          { name: "Session recordings", icon: Video, path: "recordings" },
-          { name: "Digital products", icon: FileDown, path: "products" },
+          { name: "Library", icon: Library, path: "library" },
         ],
       },
       {
@@ -57,7 +48,8 @@ export function buildConsulteeNav(consulteeId: string): DashboardNav {
     support: personalSupportLinks(
       `/dashboard/consultee/${consulteeId}/support`,
     ),
-    mobileTabs: ["home", "appointments", "messages", "payments"],
+    // Billing lives in the Menu sheet; Home carries the "Needs you" card.
+    mobileTabs: ["home", "appointments", "library", "messages"],
     pinnedCta: {
       label: "Find experts",
       href: "/explore/experts",
@@ -78,9 +70,9 @@ export const CONSULTEE_PAGE_LABELS: Record<string, string> = {
   evidence: "Evidence requests",
   reports: "Reports & appeals",
   settings: "Settings",
+  library: "Library",
   documents: "Session documents",
   recordings: "Session recordings",
-  products: "Digital products",
   feedback: "Product feedback",
   help: "Help",
   reschedule: "Reschedule",

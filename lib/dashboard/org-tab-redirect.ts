@@ -1,7 +1,11 @@
+import { retiredRouteHref } from "./personal-legacy-routes";
+
 export const ORG_TAB_REDIRECTS = {
   "purchase-orders": { page: "billing", tab: "purchase-orders" },
   reimbursements: { page: "billing", tab: "member-spend" },
   disputes: { page: "billing", tab: "disputes" },
+  documents: { page: "library", tab: "documents" },
+  recordings: { page: "library", tab: "recordings" },
 } as const;
 
 export type OrgRetiredTabRoute = keyof typeof ORG_TAB_REDIRECTS;
@@ -16,15 +20,11 @@ export function orgTabHref(
   tab: string,
   searchParams: Record<string, string | string[] | undefined> = {},
 ): string {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(searchParams)) {
-    if (key === "tab" || value === undefined) continue;
-    for (const v of Array.isArray(value) ? value : [value]) {
-      params.append(key, v);
-    }
-  }
-  params.set("tab", tab);
-  return `/dashboard/organization/${orgId}/${page}?${params.toString()}`;
+  return retiredRouteHref(
+    `/dashboard/organization/${orgId}/${page}`,
+    tab,
+    searchParams,
+  );
 }
 
 export function orgRetiredRouteHref(
