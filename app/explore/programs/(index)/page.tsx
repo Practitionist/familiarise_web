@@ -10,7 +10,7 @@ import { sortPlanLevels } from "@/lib/labels/plan-labels";
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import ProgramsInteractiveContent from "./ProgramsInteractiveContent";
+import ProgramsInteractiveContent from "../ProgramsInteractiveContent";
 
 // #664 — the viewer's ACTIVE org memberships, as { orgId: orgName }. Viewer-
 // specific, so it must NOT enter the shared curated cache — it's fetched

@@ -7,7 +7,7 @@ This page records the words the dashboards use for their pages and the navigatio
 | Term                            | Means                                                                               | Not to be confused with                                                    |
 | ------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Recordings (in Studio)          | Recordings of sessions you hosted, which you can rename, delete or sell as a replay | Session recordings in Library                                              |
-| Session recordings (in Library) | Recordings of sessions you attended                                                 | Replays                                                                    |
+| Session recordings (in Library) | Recordings of sessions you attended (in an organization, also sessions you deliver) | Replays                                                                    |
 | Replays                         | A recording listed for sale, which is a product                                     | Raw recordings                                                             |
 | Digital products                | Files sold or given away, such as e-books, templates and packs                      | Plan materials                                                             |
 | Session documents               | Files exchanged in one specific booking                                             | Plan materials, which are files attached to a plan for its buyers          |
@@ -55,7 +55,7 @@ Items appear only when the viewer's role and the organization's capabilities pas
 - Operations: Help & support
 - Insights: Analytics, Audit, Consent
 
-Organization settings is not a rail item. It opens from the avatar menu and from the mobile Menu sheet, which always lists the row for any role that holds a settings section (`canOpenOrgSettings`). A suspended member sees Overview, Appointments and Library only.
+Organization settings is not a rail item. It opens from the avatar menu and from the mobile Menu sheet, which lists the row only for an ACTIVE membership whose role passes `canOpenOrgSettings`. A suspended member sees Overview, Appointments and Library only.
 
 ### Workspace (`buildWorkspaceNav`)
 

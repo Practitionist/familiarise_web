@@ -70,7 +70,7 @@ describe("organization support triage", () => {
     rows = [{ ...row, category: null }];
     renderTriage(0);
     expect(
-      await screen.findByText(/Support request · last activity/),
+      await screen.findByText(/Support case · last activity/),
     ).toBeTruthy();
   });
 
