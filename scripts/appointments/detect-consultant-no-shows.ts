@@ -53,7 +53,6 @@ import {
   type OutageWindow,
 } from "@/lib/booking/session-outcome";
 import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
-import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 
@@ -107,15 +106,30 @@ export async function detectConsultantNoShows(opts?: {
 // paid, whose slots have all ended past the grace window and where a
 // Meeting actually happened (the call took place — a precondition for
 // "the consultee showed up but the consultant didn't").
-// Only a live, undecided SCHEDULED slot is this job's to judge: a decided or
-// parked session is not, and neither is an incident-voided one.
+// Only a live, undecided SCHEDULED slot is this job's to judge.
 const JUDGEABLE_SLOT = {
-  ...LIVE_SLOT_WHERE,
-  completionStatus: "SCHEDULED",
+  deletedAt: null,
+  completionStatus: OccurrenceCompletionStatus.SCHEDULED,
   outcome: null,
   isTentative: false,
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
+// A decided or parked sibling makes the booking ops-owned, so this job must
+// not touch it. A settled incident void is history, not a decision on its rebook.
+const DECIDED_OR_PARKED = {
+  deletedAt: null,
+  OR: [
+    { outcome: { not: null } },
+    { completionStatus: OccurrenceCompletionStatus.UNVERIFIED },
+  ],
+  NOT: {
+    completionStatus: OccurrenceCompletionStatus.VOIDED,
+    outcome: "PLATFORM_OUTAGE",
+    seatsSettledAt: { not: null },
+  },
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** The in-memory twin of JUDGEABLE_SLOT; change both together. */
 function isJudgeableOccurrence(
   occurrence: {
     deletedAt: Date | null;
@@ -128,10 +142,31 @@ function isJudgeableOccurrence(
 ): boolean {
   return (
     occurrence.deletedAt === null &&
-    occurrence.completionStatus === "SCHEDULED" &&
+    occurrence.completionStatus === OccurrenceCompletionStatus.SCHEDULED &&
     occurrence.outcome === null &&
     !occurrence.isTentative &&
     occurrence.endsAt.getTime() < graceCutoff.getTime()
+  );
+}
+
+/** The in-memory twin of DECIDED_OR_PARKED; change both together. */
+function isOpsOwnedSibling(occurrence: {
+  deletedAt: Date | null;
+  completionStatus: OccurrenceCompletionStatus;
+  outcome: OccurrenceOutcome | null;
+  seatsSettledAt: Date | null;
+}): boolean {
+  if (occurrence.deletedAt !== null) return false;
+  if (
+    occurrence.completionStatus === OccurrenceCompletionStatus.VOIDED &&
+    occurrence.outcome === "PLATFORM_OUTAGE" &&
+    occurrence.seatsSettledAt !== null
+  ) {
+    return false;
+  }
+  return (
+    occurrence.outcome !== null ||
+    occurrence.completionStatus === OccurrenceCompletionStatus.UNVERIFIED
   );
 }
 
@@ -165,6 +200,7 @@ function findNoShowCandidates(
             endsAt: { lt: graceCutoff },
             meeting: { isNot: null },
           },
+          none: DECIDED_OR_PARKED,
         },
       },
     },
@@ -192,6 +228,7 @@ function findNoShowCandidates(
             },
           },
           occurrences: {
+            orderBy: { startsAt: "asc" },
             include: {
               meeting: {
                 include: { attendances: { select: { userId: true } } },
@@ -244,7 +281,11 @@ function evaluateConsultantNoShow(
     return null;
   }
 
-  const judged = (consultation.appointment?.occurrences ?? []).filter((o) =>
+  const occurrences = consultation.appointment?.occurrences ?? [];
+  // A decided or parked sibling means the sweep or a human owns the booking;
+  // the cohort and claim CAS carry the same veto.
+  if (occurrences.some(isOpsOwnedSibling)) return null;
+  const judged = occurrences.filter((o) =>
     isJudgeableOccurrence(o, graceCutoff),
   );
   if (judged.length === 0) return null;
@@ -373,8 +414,8 @@ type PresenceLookup = ReturnType<typeof makePresenceLookup>;
 // query only reads APPROVED/SCHEDULED, so once flipped a later run (or the
 // auto-complete cron) cannot re-process it. A concurrent cancel landing here wins
 // and this returns false → skip. On a successful claim we also reflect the
-// no-show on the judged slots (no NO_SHOW slot status exists — schema frozen,
-// #471 — CANCELLED is the closest; only undecided SCHEDULED slots move).
+// no-show on the judged slots (no NO_SHOW slot status exists — schema frozen;
+// CANCELLED is the closest; only undecided SCHEDULED slots move).
 async function claimConsultantNoShow(
   consultationId: string,
   appointmentId: string,
@@ -395,6 +436,7 @@ async function claimConsultantNoShow(
           appointment: {
             occurrences: {
               some: { id: { in: occurrenceIds }, ...JUDGEABLE_SLOT },
+              none: DECIDED_OR_PARKED,
             },
           },
         },
@@ -417,15 +459,12 @@ async function claimConsultantNoShow(
         to: OccurrenceCompletionStatus.CANCELLED,
         fromIn: [OccurrenceCompletionStatus.SCHEDULED],
         data: { deletedAt: new Date() },
-        // Zero live occurrences means a concurrent writer took the booking's
-        // sessions first; the parent cancel above rolls back with this throw
-        // rather than committing a no-show that claimed no session.
         allowZero: false,
         actorUserId: null,
         reason: "consultant no-show",
       });
-      // Every judged session must move; a partial release is a lost race, so
-      // roll the whole claim back rather than cancel the booking halfway.
+      // Zero rows or a partial move means a concurrent writer took a session;
+      // throw so the parent cancel rolls back with it.
       if (moved !== occurrenceIds.length) {
         throw new IllegalTransitionError(
           "AppointmentOccurrence",

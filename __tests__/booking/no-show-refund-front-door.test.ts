@@ -93,7 +93,7 @@ jest.mock("../../lib/prisma", () => {
     // The claim writes the expert's reliability strike.
     systemEvent: { create: jest.fn().mockResolvedValue({}) },
     // The claim stamps the owed refund; the drive clears it by CAS.
-    payment: { updateMany: async () => ({ count: 1 }) },
+    payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     refund: { findUnique: async () => null },
     $disconnect: jest.fn(),
   };
@@ -138,9 +138,12 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 import prisma from "../../lib/prisma";
 import { detectConsultantNoShows } from "../../scripts/appointments/detect-consultant-no-shows";
-
-const CONSULTANT_USER = "user-consultant";
-const CONSULTEE_USER = "user-consultee";
+import {
+  CONSULTANT_USER,
+  CONSULTEE_USER,
+  noShowOccurrence,
+  rebookedOccurrences,
+} from "../fixtures/no-show-occurrence";
 
 /**
  * A candidate the job will classify as a real no-show: the consultee
@@ -171,38 +174,24 @@ function noShowCandidate(payment: {
           ...payment,
         },
       ],
-      occurrences: [
-        {
-          id: "occ-1",
-          startsAt: new Date("2026-09-01T10:00:00Z"),
-          endsAt: new Date("2026-09-01T11:00:00Z"),
-          completionStatus: "SCHEDULED",
-          outcome: null,
-          deletedAt: null,
-          isTentative: false,
-          // #1569 — the shared classifier reads per-device presence intervals.
-          presences: [
-            {
-              userId: CONSULTEE_USER,
-              joinedAt: new Date("2026-09-01T10:00:00Z"),
-              leftAt: new Date("2026-09-01T11:00:00Z"),
-            },
-          ],
-          meeting: {
-            endedAt: new Date("2026-09-01T11:00:00Z"),
-            endedReason: "call_ended",
-            // #1280 — the detector now asks Stream to corroborate before any
-            // money moves, so the session needs a call id for it to ask about.
-            // Without one it refuses, which is the correct behaviour and not
-            // what these cases are exercising.
-            streamCallId: "slot-cons-1",
-            // Only the consultee shows up.
-            attendances: [{ userId: CONSULTEE_USER }],
-          },
-        },
-      ],
+      occurrences: [noShowOccurrence()],
     },
   };
+}
+
+type NoShowRun = Awaited<ReturnType<typeof detectConsultantNoShows>>;
+
+function mockIncident(startsAt: string, endsAt: string) {
+  (prisma.platformIncident.findMany as jest.Mock).mockResolvedValueOnce([
+    { startsAt: new Date(startsAt), endsAt: new Date(endsAt) },
+  ]);
+}
+
+function expectNoShowSkipped(result: NoShowRun) {
+  expect(result.detected).toBe(0);
+  expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
+  expect(prisma.systemEvent.create).not.toHaveBeenCalled();
+  expect(refundBookingPayment).not.toHaveBeenCalled();
 }
 
 describe("consultant no-show refunds", () => {
@@ -216,6 +205,7 @@ describe("consultant no-show refunds", () => {
       unique: 1,
       maxConcurrent: 1,
     }));
+    (prisma.payment.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
     recordSystemError.mockResolvedValue(undefined);
     refundBookingPayment.mockResolvedValue({
       amountRefundedPaise: 150000,
@@ -308,9 +298,21 @@ describe("consultant no-show refunds", () => {
       isTentative: false,
       meeting: { isNot: null },
     };
+    const decidedOrParked = {
+      deletedAt: null,
+      OR: [{ outcome: { not: null } }, { completionStatus: "UNVERIFIED" }],
+      NOT: {
+        completionStatus: "VOIDED",
+        outcome: "PLATFORM_OUTAGE",
+        seatsSettledAt: { not: null },
+      },
+    };
     const [query] = (prisma.consultation.findMany as jest.Mock).mock.calls[0];
     expect(query.where.appointment.occurrences.some).toMatchObject(slot);
-    expect(query.where.appointment.occurrences).not.toHaveProperty("none");
+    expect(query.where.appointment.occurrences.none).toEqual(decidedOrParked);
+    expect(query.include.appointment.include.occurrences.orderBy).toEqual({
+      startsAt: "asc",
+    });
     const [claim] = (prisma.consultation.updateMany as jest.Mock).mock.calls[0];
     expect(claim.where.appointment.occurrences.some).toMatchObject({
       id: { in: ["occ-1"] },
@@ -319,6 +321,7 @@ describe("consultant no-show refunds", () => {
       outcome: null,
       isTentative: false,
     });
+    expect(claim.where.appointment.occurrences.none).toEqual(decidedOrParked);
     const [release] = (
       prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
     ).mock.calls[0];
@@ -331,46 +334,25 @@ describe("consultant no-show refunds", () => {
     });
   });
 
+  it.each([
+    ["deleted", { deletedAt: new Date("2026-09-01T09:00:00Z") }],
+    ["rescheduled", { completionStatus: "RESCHEDULED" }],
+    ["decided", { outcome: "HELD" }],
+    ["tentative", { isTentative: true }],
+    ["not ended", { endsAt: new Date("2099-01-01T00:00:00Z") }],
+  ])("does not judge an occurrence that is %s", async (_label, patch) => {
+    const candidate = noShowCandidate({ id: "pay-1", amount: 150000 });
+    Object.assign(candidate.appointment.occurrences[0], patch);
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([candidate]);
+
+    const result = await detectConsultantNoShows();
+
+    expect(result.detected).toBe(0);
+  });
+
   it("judges the live rebooked occurrence after an incident voided the original", async () => {
-    const rebooked = noShowCandidate({ id: "pay-1", amount: 150000 });
-    const [original] = rebooked.appointment.occurrences;
-    const candidate = {
-      ...rebooked,
-      appointment: {
-        ...rebooked.appointment,
-        occurrences: [
-          {
-            ...original,
-            id: "occ-old",
-            completionStatus: "VOIDED",
-            outcome: "PLATFORM_OUTAGE",
-            meeting: { ...original.meeting, streamCallId: "slot-old" },
-          },
-          {
-            id: "occ-new",
-            startsAt: new Date("2026-09-08T10:00:00Z"),
-            endsAt: new Date("2026-09-08T11:00:00Z"),
-            completionStatus: "SCHEDULED",
-            outcome: null,
-            deletedAt: null,
-            isTentative: false,
-            presences: [
-              {
-                userId: CONSULTEE_USER,
-                joinedAt: new Date("2026-09-08T10:00:00Z"),
-                leftAt: new Date("2026-09-08T11:00:00Z"),
-              },
-            ],
-            meeting: {
-              endedAt: new Date("2026-09-08T11:00:00Z"),
-              endedReason: "call_ended",
-              streamCallId: "slot-new",
-              attendances: [{ userId: CONSULTEE_USER }],
-            },
-          },
-        ],
-      },
-    };
+    const candidate = noShowCandidate({ id: "pay-1", amount: 150000 });
+    candidate.appointment.occurrences = rebookedOccurrences();
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([candidate]);
     mockEvidence.mockImplementation(async (callId?: string) => ({
       unique: callId === "slot-old" ? 2 : 1,
@@ -410,61 +392,38 @@ describe("consultant no-show refunds", () => {
   });
 
   it("does not judge a rebooked occurrence that itself overlaps a declared incident", async () => {
-    const rebooked = noShowCandidate({ id: "pay-1", amount: 150000 });
-    const [original] = rebooked.appointment.occurrences;
-    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
-      {
-        ...rebooked,
-        appointment: {
-          ...rebooked.appointment,
-          occurrences: [
-            {
-              ...original,
-              id: "occ-old",
-              completionStatus: "VOIDED",
-              outcome: "PLATFORM_OUTAGE",
-              meeting: { ...original.meeting, streamCallId: "slot-old" },
-            },
-            {
-              id: "occ-new",
-              startsAt: new Date("2026-09-08T10:00:00Z"),
-              endsAt: new Date("2026-09-08T11:00:00Z"),
-              completionStatus: "SCHEDULED",
-              outcome: null,
-              deletedAt: null,
-              isTentative: false,
-              presences: [
-                {
-                  userId: CONSULTEE_USER,
-                  joinedAt: new Date("2026-09-08T10:00:00Z"),
-                  leftAt: new Date("2026-09-08T11:00:00Z"),
-                },
-              ],
-              meeting: {
-                endedAt: new Date("2026-09-08T11:00:00Z"),
-                endedReason: "call_ended",
-                streamCallId: "slot-new",
-                attendances: [{ userId: CONSULTEE_USER }],
-              },
-            },
-          ],
-        },
-      },
-    ]);
-    (prisma.platformIncident.findMany as jest.Mock).mockResolvedValueOnce([
-      {
-        startsAt: new Date("2026-09-08T10:30:00Z"),
-        endsAt: new Date("2026-09-08T12:00:00Z"),
-      },
-    ]);
+    const candidate = noShowCandidate({ id: "pay-1", amount: 150000 });
+    candidate.appointment.occurrences = rebookedOccurrences();
+    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([candidate]);
+    mockIncident("2026-09-08T10:30:00Z", "2026-09-08T12:00:00Z");
 
     const result = await detectConsultantNoShows();
 
     expect(result.detected).toBe(0);
-    expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
-    expect(prisma.systemEvent.create).not.toHaveBeenCalled();
-    expect(refundBookingPayment).not.toHaveBeenCalled();
+    expectNoShowSkipped(result);
   });
+
+  it.each([
+    ["HELD", { completionStatus: "COMPLETED", outcome: "HELD" }],
+    ["UNVERIFIED", { completionStatus: "UNVERIFIED", outcome: "INCONCLUSIVE" }],
+  ])(
+    "does not refund when a decided %s sibling exists",
+    async (_label, sibling) => {
+      const candidate = noShowCandidate({ id: "pay-1", amount: 150000 });
+      candidate.appointment.occurrences = [
+        noShowOccurrence({ id: "occ-sibling", ...sibling }),
+        noShowOccurrence(),
+      ];
+      (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
+        candidate,
+      ]);
+
+      const result = await detectConsultantNoShows();
+
+      expectNoShowSkipped(result);
+      expect(prisma.payment.updateMany).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not filter the candidate query on a positive amount", async () => {
     await detectConsultantNoShows();
@@ -503,19 +462,12 @@ describe("consultant no-show refunds", () => {
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
       noShowCandidate({ id: "pay-1", amount: 150000 }),
     ]);
-    (prisma.platformIncident.findMany as jest.Mock).mockResolvedValueOnce([
-      {
-        startsAt: new Date("2026-09-01T10:30:00Z"),
-        endsAt: new Date("2026-09-01T12:00:00Z"),
-      },
-    ]);
+    mockIncident("2026-09-01T10:30:00Z", "2026-09-01T12:00:00Z");
 
     const result = await detectConsultantNoShows();
 
     expect(result.detected).toBe(0);
-    expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
-    expect(prisma.systemEvent.create).not.toHaveBeenCalled();
-    expect(refundBookingPayment).not.toHaveBeenCalled();
+    expectNoShowSkipped(result);
   });
 
   it("leaves a session the consultant actually attended alone", async () => {
@@ -530,7 +482,6 @@ describe("consultant no-show refunds", () => {
     const result = await detectConsultantNoShows();
 
     expect(result.detected).toBe(0);
-    expect(refundBookingPayment).not.toHaveBeenCalled();
-    expect(prisma.consultation.updateMany).not.toHaveBeenCalled();
+    expectNoShowSkipped(result);
   });
 });

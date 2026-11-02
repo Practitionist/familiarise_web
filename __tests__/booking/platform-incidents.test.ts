@@ -236,6 +236,46 @@ function occ(
   };
 }
 
+type StrikeFixture = {
+  appointmentId: string;
+  occurrenceId?: string;
+};
+
+function strikeReader(opts: {
+  strikes: StrikeFixture[];
+  appointmentsInIncident?: string[];
+  occurrencesInIncident?: string[];
+}) {
+  return {
+    systemEvent: {
+      findMany: jest.fn(async () =>
+        opts.strikes.map(({ appointmentId, occurrenceId }) => ({
+          context: occurrenceId
+            ? { appointmentId, occurrenceId }
+            : { appointmentId },
+        })),
+      ),
+    },
+    platformIncident: {
+      findMany: jest.fn(async () => [{ startsAt: at(0), endsAt: at(60) }]),
+    },
+    appointmentOccurrence: {
+      findMany: jest.fn(
+        async ({ where }: { where: Record<string, unknown> }) =>
+          "id" in where
+            ? (opts.occurrencesInIncident ?? []).map((id) => ({ id }))
+            : (opts.appointmentsInIncident ?? []).map((appointmentId) => ({
+                appointmentId,
+              })),
+      ),
+    },
+  };
+}
+
+function strikeCount(reader: ReturnType<typeof strikeReader>) {
+  return countExpertStrikes("cp-1", at(-60), { db: reader as never });
+}
+
 describe("remedy rows", () => {
   it.each([
     [{ consultationId: "c" }, "REFUND_AT_DUE", 48 * 60],
@@ -448,71 +488,28 @@ describe("readers that must count incident refunds and skip incident strikes", (
   });
 
   it("drops a strike whose session sat inside a declared incident", async () => {
-    const strikeDb = {
-      systemEvent: {
-        findMany: jest.fn(async () =>
-          ["a", "b", "c"].map((appointmentId) => ({
-            context: { appointmentId },
-          })),
-        ),
-      },
-      platformIncident: {
-        findMany: jest.fn(async () => [{ startsAt: at(0), endsAt: at(60) }]),
-      },
-      appointmentOccurrence: {
-        findMany: jest.fn(
-          async ({ where }: { where: Record<string, unknown> }) =>
-            "id" in where ? [] : [{ appointmentId: "b" }],
-        ),
-      },
-    };
-    await expect(
-      countExpertStrikes("cp-1", at(-60), { db: strikeDb as never }),
-    ).resolves.toBe(2);
+    const reader = strikeReader({
+      strikes: ["a", "b", "c"].map((appointmentId) => ({ appointmentId })),
+      appointmentsInIncident: ["b"],
+    });
+    await expect(strikeCount(reader)).resolves.toBe(2);
   });
 
   it("counts a rebooked-session strike when only the appointment's other occurrence overlapped", async () => {
-    const strikeDb = {
-      systemEvent: {
-        findMany: jest.fn(async () => [
-          { context: { appointmentId: "a", occurrenceId: "occ-new" } },
-        ]),
-      },
-      platformIncident: {
-        findMany: jest.fn(async () => [{ startsAt: at(0), endsAt: at(60) }]),
-      },
-      appointmentOccurrence: {
-        findMany: jest.fn(
-          async ({ where }: { where: Record<string, unknown> }) =>
-            "id" in where ? [] : [{ appointmentId: "a" }],
-        ),
-      },
-    };
-    await expect(
-      countExpertStrikes("cp-1", at(-60), { db: strikeDb as never }),
-    ).resolves.toBe(1);
+    const reader = strikeReader({
+      strikes: [{ appointmentId: "a", occurrenceId: "occ-new" }],
+      appointmentsInIncident: ["a"],
+    });
+    await expect(strikeCount(reader)).resolves.toBe(1);
   });
 
   it("drops a strike whose own rebooked occurrence overlapped the incident", async () => {
-    const strikeDb = {
-      systemEvent: {
-        findMany: jest.fn(async () => [
-          { context: { appointmentId: "a", occurrenceId: "occ-new" } },
-        ]),
-      },
-      platformIncident: {
-        findMany: jest.fn(async () => [{ startsAt: at(0), endsAt: at(60) }]),
-      },
-      appointmentOccurrence: {
-        findMany: jest.fn(
-          async ({ where }: { where: Record<string, unknown> }) =>
-            "id" in where ? [{ id: "occ-new" }] : [{ appointmentId: "a" }],
-        ),
-      },
-    };
-    await expect(
-      countExpertStrikes("cp-1", at(-60), { db: strikeDb as never }),
-    ).resolves.toBe(0);
+    const reader = strikeReader({
+      strikes: [{ appointmentId: "a", occurrenceId: "occ-new" }],
+      appointmentsInIncident: ["a"],
+      occurrencesInIncident: ["occ-new"],
+    });
+    await expect(strikeCount(reader)).resolves.toBe(0);
   });
 
   it("suggests only an hour clearly above the weekly baseline", () => {
