@@ -1,7 +1,8 @@
-import { redirect } from "next/navigation";
+import { permanentRedirect, redirect } from "next/navigation";
 
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { orgLegacyTabHref } from "@/lib/dashboard/org-tab-redirect";
 import { resolveMaterialPlanRef } from "@/lib/plans/material-plan-ref";
 
 import { CatalogClient } from "./CatalogClient";
@@ -21,10 +22,13 @@ import { CatalogClient } from "./CatalogClient";
  */
 export default async function OrgCatalogPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ orgId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { orgId } = await params;
+  const query = await searchParams;
 
   const access = await requireOrgAccess(orgId, {
     readOnly: true,
@@ -34,6 +38,8 @@ export default async function OrgCatalogPage({
   if (access.error) {
     redirect(`/dashboard/organization/${orgId}/home`);
   }
+  const legacy = orgLegacyTabHref(orgId, "catalog", query);
+  if (legacy) permanentRedirect(legacy);
 
   const [expertMemberships, materials, materialsTotal, orgPlans] =
     await Promise.all([

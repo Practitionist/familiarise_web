@@ -66,12 +66,10 @@ const keep = (items: ItemSpec[]): NavItem[] =>
     .map(({ show: _show, ...rest }) => rest);
 
 /**
- * Permission-filtered org IA (#1527 Q7), a pure builder so tests can walk every
- * role × capability × funding combination. Visibility comes from
- * `org-permissions.ts` — the same matrix page guards and API routes check —
- * ANDed with the structural capability gates. The sidebar is cosmetic; guards
- * stay server-side. POs, disputes and member spend are Billing tabs; materials
- * and operator collaborators are Catalog tabs (Q7).
+ * Permission-filtered org IA, a pure builder so tests can walk every role ×
+ * capability combination. Visibility comes from `org-permissions.ts` — the
+ * same matrix page guards and API routes check — ANDed with the structural
+ * capability gates. The sidebar is cosmetic; guards stay server-side.
  */
 export function buildOrganizationNav(
   input: OrganizationNavInput,
@@ -104,8 +102,8 @@ export function buildOrganizationNav(
   // who deliver read collaborators in Catalog (#1527).
   const isExpertHost = can("myArrangement.read") && canHost;
 
-  const top: ItemSpec[] = [
-    { name: "Overview", icon: Home, path: "home" },
+  // Member-shaped: each item is gated, so most members see two or three.
+  const myWork: ItemSpec[] = [
     {
       name: "My Program",
       icon: GraduationCap,
@@ -120,8 +118,6 @@ export function buildOrganizationNav(
     },
     // Any ACTIVE member: learners attend and experts deliver org sessions.
     { name: "Appointments", icon: CalendarCheck, path: "appointments" },
-    // Org-scoped by route; Stream only returns channels the viewer is in.
-    { name: "Messages", icon: MessageSquare, path: "messages" },
     {
       // The profile is the real predicate: an OWNER who delivers gets it too.
       // Same test as the page, which redirects without a profile (#1527 P1-10).
@@ -131,7 +127,7 @@ export function buildOrganizationNav(
       show: input.consultantProfileId !== null && canHost,
     },
     {
-      // #1527-4c — experts keep it in Top; operators use Catalog › Collaborators.
+      // Experts' own plans; operators read every hosted plan in Host › Collaborators.
       name: "Plan collaborators",
       icon: Handshake,
       path: "collaborations",
@@ -150,7 +146,7 @@ export function buildOrganizationNav(
     },
   ];
 
-  const sponsorship: ItemSpec[] = [
+  const sponsor: ItemSpec[] = [
     {
       name: "Programs",
       icon: Briefcase,
@@ -163,39 +159,33 @@ export function buildOrganizationNav(
       path: "contracts",
       show: canSponsor && can("contracts.read"),
     },
-  ];
-
-  const hosting: ItemSpec[] = [
-    {
-      name: "Catalog",
-      icon: LayoutGrid,
-      path: "catalog",
-      show: canHost && can("catalog.manage"),
-    },
-  ];
-
-  const money: ItemSpec[] = [
     {
       name: "Billing",
       icon: CreditCard,
       path: "billing",
       show: canSponsor && can("billing.read"),
     },
+  ];
+
+  const host: ItemSpec[] = [
+    {
+      name: "Catalog",
+      icon: LayoutGrid,
+      path: "catalog",
+      show: canHost && can("catalog.manage"),
+    },
+    {
+      // Catalog's gate: operators read every plan the org hosts.
+      name: "Collaborators",
+      icon: Handshake,
+      path: "collaborators",
+      show: canHost && can("catalog.manage"),
+    },
     {
       name: "Payouts",
       icon: Wallet,
       path: "payouts",
       show: canHost && can("payouts.read"),
-    },
-  ];
-
-  const operations: ItemSpec[] = [
-    {
-      // Metadata-only triage (ADR 20) and org-tagged requests (#1527);
-      // each tab carries its own gate.
-      name: "Help & support",
-      icon: LifeBuoy,
-      path: "support",
     },
   ];
 
@@ -220,16 +210,21 @@ export function buildOrganizationNav(
     },
   ];
 
-  // "Hosting", not "Catalog": a group must not restate its only item.
   const groups: NavGroup[] = [
-    { items: keep(top) },
+    { items: [{ name: "Overview", icon: Home, path: "home" }] },
+    { label: "My work", items: keep(myWork) },
+    // Org-scoped by route; Stream only returns channels the viewer is in.
+    { items: [{ name: "Messages", icon: MessageSquare, path: "messages" }] },
     library,
     { label: "People", items: keep(people) },
-    { label: "Sponsorship", items: keep(sponsorship) },
-    { label: "Hosting", items: keep(hosting) },
-    { label: "Money", items: keep(money) },
-    { label: "Operations", items: keep(operations) },
+    { label: "Sponsor", items: keep(sponsor) },
+    { label: "Host", items: keep(host) },
     { label: "Insights", items: keep(insights) },
+    {
+      // Org triage (metadata only) and org-tagged cases; each tab carries its
+      // own gate. The Help menu's personal row reads "My support cases".
+      items: [{ name: "Help & support", icon: LifeBuoy, path: "support" }],
+    },
   ].filter((g) => g.items.length > 0);
   return {
     basePath: `/dashboard/organization/${orgId}`,
@@ -275,6 +270,7 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   "my-program": "My Program",
   compensation: "Compensation",
   collaborations: "Plan collaborators",
+  collaborators: "Collaborators",
   appointments: "Appointments",
   messages: "Messages",
   requests: "Booking requests",

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,9 +12,7 @@ import {
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
 import { EmptyState } from "@/components/dashboard/DataCard";
-import { Section } from "@/components/dashboard/Section";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
-import { InvitationsPanel } from "@/components/collaborators/InvitationsPanel";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -23,13 +22,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { isArchivedCatalogView } from "@/lib/dashboard/org-tab-redirect";
 import { CatalogPanel } from "./CatalogPanel";
 import {
   MaterialsPanel,
   type OrgMaterialRow,
   type OrgPlanOption,
 } from "./MaterialsPanel";
-import type { CatalogRow, CatalogResponse, Kind } from "./types";
+import type { CatalogResponse, CatalogRow, Kind } from "./types";
 
 interface Expert {
   consultantProfileId: string;
@@ -60,8 +60,8 @@ export function CatalogClient({
   const { data, isLoading, error } = useQuery<CatalogResponse>({
     queryKey,
     queryFn: async () => {
-      // One fetch drives both views; the client partitions on archivedAt so
-      // restoring does not need a second round trip.
+      // Archived rows ride along so the lists' Archived filter and a restore
+      // need no second round trip.
       const res = await fetch(
         `/api/organizations/${orgId}/catalog?includeArchived=true`,
       );
@@ -136,16 +136,17 @@ export function CatalogClient({
     return map;
   }, [experts]);
 
-  // The fetch asks for everything; the split happens here so restoring a plan
-  // does not need a second round trip.
-  const live = (rows: CatalogRow[] | undefined) =>
-    (rows ?? []).filter((r) => r.archivedAt === null);
-  const archivedWebinars = (data?.webinars ?? []).filter(
-    (r) => r.archivedAt !== null,
-  );
-  const archivedClasses = (data?.classes ?? []).filter(
-    (r) => r.archivedAt !== null,
-  );
+  // Read from the URL every render, so back/forward and links into or out of
+  // `?status=archived` re-pick the default tab. Without a tab, the archived
+  // view opens the first kind that has archived rows.
+  const searchParams = useSearchParams();
+  const showArchived = isArchivedCatalogView(searchParams?.get("status"));
+  const hasArchived = (rows?: CatalogRow[]) =>
+    rows?.some((r) => r.archivedAt !== null) ?? false;
+  const defaultTab =
+    showArchived && !hasArchived(data?.webinars) && hasArchived(data?.classes)
+      ? "classes"
+      : undefined;
 
   // No experts, nothing to publish — an org plan needs somebody to deliver it,
   // so say that plainly rather than opening a form that will 422.
@@ -158,13 +159,12 @@ export function CatalogClient({
       description="Catalog offerings are delivered by an organization expert. Invite one from Members, then come back to publish."
     />
   );
-  const hasArchived = archivedWebinars.length + archivedClasses.length > 0;
 
   return (
     <>
       <DashboardHeader
         title="Catalog"
-        description="Webinars and classes this organization owns and sells, their materials and their collaborators."
+        description="Webinars and classes this organization owns and sells, and their materials."
       />
       <DashboardContent>
         {!blocked && (
@@ -229,80 +229,42 @@ export function CatalogClient({
         )}
 
         <UrlTabs
+          defaultValue={defaultTab}
           tabs={[
             {
               value: "webinars",
               label: "Webinars",
-              content: blocked ? (
-                noExperts
-              ) : (
+              content: (
                 <CatalogPanel
                   kind="WEBINAR"
-                  rows={live(data?.webinars)}
+                  rows={data?.webinars ?? []}
                   isLoading={isLoading}
                   error={error}
                   onToggleArchive={archiveWebinar}
                   isMutating={setArchived.isPending}
                   expertNamesById={expertNamesById}
+                  blocked={blocked ? noExperts : undefined}
                 />
               ),
             },
             {
               value: "classes",
               label: "Classes",
-              content: blocked ? (
-                noExperts
-              ) : (
+              content: (
                 <CatalogPanel
                   kind="CLASS"
-                  rows={live(data?.classes)}
+                  rows={data?.classes ?? []}
                   isLoading={isLoading}
                   error={error}
                   onToggleArchive={archiveClass}
                   isMutating={setArchived.isPending}
                   expertNamesById={expertNamesById}
+                  blocked={blocked ? noExperts : undefined}
                 />
               ),
             },
             {
-              // Withdrawn plans answer "what did we stop selling"; hidden
-              // until something has been withdrawn.
-              value: "archived",
-              label: "Archived",
-              show: hasArchived,
-              content: (
-                <>
-                  {archivedWebinars.length > 0 && (
-                    <Section title="Webinars">
-                      <CatalogPanel
-                        kind="WEBINAR"
-                        rows={archivedWebinars}
-                        isLoading={isLoading}
-                        error={error}
-                        onToggleArchive={archiveWebinar}
-                        isMutating={setArchived.isPending}
-                        expertNamesById={expertNamesById}
-                      />
-                    </Section>
-                  )}
-                  {archivedClasses.length > 0 && (
-                    <Section title="Classes">
-                      <CatalogPanel
-                        kind="CLASS"
-                        rows={archivedClasses}
-                        isLoading={isLoading}
-                        error={error}
-                        onToggleArchive={archiveClass}
-                        isMutating={setArchived.isPending}
-                        expertNamesById={expertNamesById}
-                      />
-                    </Section>
-                  )}
-                </>
-              ),
-            },
-            {
-              // #1527-4d — materials belong to plans.
+              // Materials belong to plans.
               value: "materials",
               label: "Materials",
               content: (
@@ -312,13 +274,6 @@ export function CatalogClient({
                   plans={orgPlans}
                 />
               ),
-            },
-            {
-              // #1527-4c — operators read the org's hosted plans here;
-              // experts keep the Plan collaborators page for their own.
-              value: "collaborators",
-              label: "Collaborators",
-              content: <InvitationsPanel orgScope={orgId} orgView />,
             },
           ]}
         />

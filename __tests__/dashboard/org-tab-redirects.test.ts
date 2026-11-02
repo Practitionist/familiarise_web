@@ -33,6 +33,11 @@ import Disputes from "../../app/dashboard/organization/[orgId]/disputes/page";
 import Reimbursements from "../../app/dashboard/organization/[orgId]/reimbursements/page";
 import Materials from "../../app/dashboard/organization/[orgId]/materials/page";
 import Requests from "../../app/dashboard/organization/[orgId]/requests/page";
+import {
+  ORG_PAGE_TAB_MAP,
+  orgLegacyTabHref,
+  type OrgTabbedPage,
+} from "../../lib/dashboard/org-tab-redirect";
 
 type RedirectPage = (props: {
   params: Promise<{ orgId: string }>;
@@ -66,5 +71,57 @@ describe("retired org routes 308 to their tab", () => {
       }),
     ).rejects.toThrow("NEXT_PERMANENT_REDIRECT");
     expect(mockPermanentRedirect).toHaveBeenLastCalledWith(target);
+  });
+});
+
+describe("every old Billing, Payouts and Catalog ?tab= lands on its new tab", () => {
+  // Null: the value is a current tab and the URL stays as it is.
+  const EXPECTED: Record<OrgTabbedPage, Record<string, string | null>> = {
+    billing: {
+      invoices: null,
+      "accrued-usage": `${base}/billing?q=1&tab=invoices#accrued-usage`,
+      wallet: null,
+      license: `${base}/billing?q=1&tab=wallet#license`,
+      "purchase-orders": null,
+      disputes: null,
+      "member-spend": null,
+    },
+    payouts: {
+      runs: null,
+      earnings: `${base}/payouts?q=1&tab=runs#earnings`,
+      "payout-account": null,
+      "rate-cards": null,
+      "expert-routing": `${base}/payouts?q=1&tab=rate-cards#expert-routing`,
+    },
+    catalog: {
+      webinars: null,
+      classes: null,
+      archived: `${base}/catalog?q=1&status=archived`,
+      materials: null,
+      collaborators: `${base}/collaborators?q=1`,
+    },
+  };
+
+  const cases = (Object.keys(EXPECTED) as OrgTabbedPage[]).flatMap((page) =>
+    Object.entries(EXPECTED[page]).map(
+      ([tab, href]) => [page, tab, href] as const,
+    ),
+  );
+
+  it("covers every mapped value", () => {
+    for (const page of Object.keys(ORG_PAGE_TAB_MAP) as OrgTabbedPage[]) {
+      expect(Object.keys(EXPECTED[page]).sort()).toEqual(
+        Object.keys(ORG_PAGE_TAB_MAP[page]).sort(),
+      );
+    }
+  });
+
+  it.each(cases)("%s?tab=%s", (page, tab, href) => {
+    expect(orgLegacyTabHref("org-1", page, { q: "1", tab })).toBe(href);
+  });
+
+  it("leaves a missing or unknown tab to the page's first tab", () => {
+    expect(orgLegacyTabHref("org-1", "billing", {})).toBeNull();
+    expect(orgLegacyTabHref("org-1", "payouts", { tab: "nope" })).toBeNull();
   });
 });
