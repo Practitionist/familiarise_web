@@ -25,6 +25,38 @@ export function publicBreadcrumbItems(
   ];
 }
 
+function itemClass(isLast: boolean, isRoot: boolean): string {
+  if (isLast) return "flex min-w-0 items-center truncate text-foreground";
+  const width = isRoot
+    ? "hidden shrink-0 sm:flex"
+    : "max-w-[45%] sm:max-w-[16rem]";
+  return `flex min-w-0 items-center gap-1.5 ${width}`;
+}
+
+/** The breadcrumb band above a plan detail page. */
+export function PlanBreadcrumb({
+  plan,
+}: Readonly<{
+  plan: {
+    title: string;
+    consultantProfile: { id: string; user: { name: string | null } } | null;
+  };
+}>) {
+  const { consultantProfile } = plan;
+  return (
+    <div className="container mx-auto px-4 pt-6">
+      <PublicBreadcrumb
+        items={publicBreadcrumbItems(
+          consultantProfile
+            ? { id: consultantProfile.id, name: consultantProfile.user.name }
+            : null,
+          plan.title,
+        )}
+      />
+    </div>
+  );
+}
+
 export function PublicBreadcrumb({
   items,
 }: Readonly<{ items: PublicBreadcrumbItem[] }>) {
@@ -38,15 +70,7 @@ export function PublicBreadcrumb({
           return (
             <li
               key={`${index}-${item.label}`}
-              className={
-                isLast
-                  ? "flex min-w-0 items-center truncate text-foreground"
-                  : `flex min-w-0 items-center gap-1.5 ${
-                      isRoot
-                        ? "hidden shrink-0 sm:flex"
-                        : "max-w-[45%] sm:max-w-[16rem]"
-                    }`
-              }
+              className={itemClass(isLast, isRoot)}
               aria-current={isLast ? "page" : undefined}
             >
               {isLast || !item.href ? (

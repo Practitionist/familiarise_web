@@ -521,7 +521,7 @@ const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const remoteFacets = useDashboardFacets(
-    session?.user?.id,
+    session?.user,
     accountMenuOpen || isOpen,
   );
   const [isScrolled, setIsScrolled] = useState(false);
@@ -724,13 +724,12 @@ const Navbar = () => {
                       </DropdownMenuItem>
                     ))}
                     {facetsLoading && (
-                      <div
-                        role="status"
+                      <output
                         aria-label="Loading dashboards"
-                        className="px-2 py-1.5"
+                        className="block px-2 py-1.5"
                       >
                         <Skeleton className="h-4 w-32" />
-                      </div>
+                      </output>
                     )}
                     <DropdownMenuSeparator />
                     {baseLinks.map((link) => (
@@ -981,12 +980,10 @@ const Navbar = () => {
                       </li>
                     ))}
                     {facetsLoading && (
-                      <li
-                        role="status"
-                        aria-label="Loading dashboards"
-                        className="px-2 py-2"
-                      >
-                        <Skeleton className="h-4 w-32" />
+                      <li className="px-2 py-2">
+                        <output aria-label="Loading dashboards">
+                          <Skeleton className="h-4 w-32" />
+                        </output>
                       </li>
                     )}
                     <li>

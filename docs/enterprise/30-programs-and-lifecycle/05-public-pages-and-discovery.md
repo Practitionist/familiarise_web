@@ -112,10 +112,10 @@ Separate from marketplace discovery: public marketing routes that explain the
 sponsor product and route buyers to sales. These do **not** list private
 sponsor orgs.
 
-| Route | Role |
-|---|---|
-| `/enterprise` | B2B landing — Familiarise Enterprise overview |
-| `/enterprise/team-training` | Licensed-seat / cohort training narrative |
+| Route                              | Role                                             |
+| ---------------------------------- | ------------------------------------------------ |
+| `/enterprise`                      | B2B landing — Familiarise Enterprise overview    |
+| `/enterprise/team-training`        | Licensed-seat / cohort training narrative        |
 | `/enterprise/corporate-mentorship` | Credit-pool / sponsored 1:1 mentorship narrative |
 
 Navbar: **Enterprise** list dropdown (overview, program pages, Talk to sales).

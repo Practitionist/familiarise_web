@@ -10,16 +10,43 @@ async function fetchDashboardFacets() {
   return DashboardFacetsResponseSchema.parse(await res.json());
 }
 
-/** The viewer's dashboard facets, fetched the first time `enabled` turns true and kept for the session. */
+interface FacetUser {
+  id?: string;
+  role?: string | null;
+  consultantProfileId?: string | null;
+  consulteeProfileId?: string | null;
+  orgWorkspaceProfileId?: string | null;
+  staffProfileId?: string | null;
+  organizationMemberships?: readonly { organizationId: string; role: string }[];
+}
+
+/**
+ * The viewer's dashboard facets, fetched when the menu opens. The key carries
+ * what the session knows (profiles, role, active memberships), so a change the
+ * session sees refetches at once; the 30 s window bounds changes it does not
+ * carry (pending or suspended memberships), re-read on the next open.
+ */
 export function useDashboardFacets(
-  userId: string | undefined,
+  user: FacetUser | undefined,
   enabled: boolean,
 ): RemoteFacets {
+  const memberships = (user?.organizationMemberships ?? [])
+    .map((m) => `${m.organizationId}:${m.role}`)
+    .join(",");
   const query = useQuery({
-    queryKey: ["dashboard-facets", userId],
+    queryKey: [
+      "dashboard-facets",
+      user?.id,
+      user?.role,
+      user?.consultantProfileId,
+      user?.consulteeProfileId,
+      user?.orgWorkspaceProfileId,
+      user?.staffProfileId,
+      memberships,
+    ],
     queryFn: fetchDashboardFacets,
-    enabled: enabled && !!userId,
-    staleTime: Infinity,
+    enabled: enabled && !!user?.id,
+    staleTime: 30_000,
     retry: false,
   });
   if (query.data) return { status: "ready", facets: query.data.facets };

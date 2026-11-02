@@ -17,16 +17,16 @@ Therefore, never report a rendering or caching change as working until you have 
 
 Ask what the response depends on, because that determines the strategy and nothing else does.
 
-| The response varies by | Correct strategy | What to export |
-|---|---|---|
-| Nothing; it is the same for every visitor | Static, or ISR if the content changes | `export const revalidate = N` (omit for fully static) |
-| Public data that changes on a human timescale | ISR with a revalidate window | `export const revalidate = N` |
-| A high-cardinality or unbounded path parameter over public data | On-demand ISR | `export const revalidate = N` **and** `generateStaticParams()` returning `[]` |
-| The signed-in user, their role, their organisation, or their money | Dynamic | `export const dynamic = "force-dynamic"` |
+| The response varies by                                             | Correct strategy                      | What to export                                                                |
+| ------------------------------------------------------------------ | ------------------------------------- | ----------------------------------------------------------------------------- |
+| Nothing; it is the same for every visitor                          | Static, or ISR if the content changes | `export const revalidate = N` (omit for fully static)                         |
+| Public data that changes on a human timescale                      | ISR with a revalidate window          | `export const revalidate = N`                                                 |
+| A high-cardinality or unbounded path parameter over public data    | On-demand ISR                         | `export const revalidate = N` **and** `generateStaticParams()` returning `[]` |
+| The signed-in user, their role, their organisation, or their money | Dynamic                               | `export const dynamic = "force-dynamic"`                                      |
 
 Two corollaries that are easy to get wrong on this codebase.
 
-A page whose data is public but whose *chrome* differs for signed-in visitors is still a static page. The auth-dependent affordance belongs in a **client-only** component that resolves the session in the browser, not in the page's server render. Note that a server-rendered "dynamic island" is not an option on our pinned version: without PPR, a request-scoped read inside a `Suspense` boundary still forces the whole route dynamic — see the rejected-options section. Pulling a session read into the page body to swap one button converts the whole route to dynamic and forfeits the cache.
+A page whose data is public but whose _chrome_ differs for signed-in visitors is still a static page. The auth-dependent affordance belongs in a **client-only** component that resolves the session in the browser, not in the page's server render. Note that a server-rendered "dynamic island" is not an option on our pinned version: without PPR, a request-scoped read inside a `Suspense` boundary still forces the whole route dynamic — see the rejected-options section. Pulling a session read into the page body to swap one button converts the whole route to dynamic and forfeits the cache.
 
 A route parameter with unbounded cardinality must never be prerendered exhaustively at build. Returning `[]` from `generateStaticParams` means nothing is built ahead of time, each parameter renders on its first request, and the result is then cached and revalidated on the window. Confirm `dynamicParams` is left at its default of `true`, or unlisted parameters will 404 instead of rendering.
 
@@ -46,7 +46,7 @@ This was measured on #1110: `/` declared `revalidate = 3600` and the build table
 
 ## Step 2c — Read the route-table symbols precisely
 
-The build table distinguishes three states, and conflating the last two wastes time. `○` means prerendered as static HTML at build. `●` means prerendered as static HTML *using `generateStaticParams`*. `ƒ` means rendered on demand.
+The build table distinguishes three states, and conflating the last two wastes time. `○` means prerendered as static HTML at build. `●` means prerendered as static HTML _using `generateStaticParams`_. `ƒ` means rendered on demand.
 
 A `[param]` route with `generateStaticParams` returning `[]` renders as `●` with an **empty Revalidate column**, and this is correct rather than broken. The Revalidate column is populated from prerendered entries, and returning `[]` deliberately produces none, so a non-empty column there and an empty build-time prerender list are mutually exclusive by construction. Do not chase it.
 
@@ -72,17 +72,17 @@ import { PHASE_PRODUCTION_BUILD } from "next/constants";
 if (process.env.NEXT_PHASE === PHASE_PRODUCTION_BUILD) throw err;
 ```
 
-`PHASE_PRODUCTION_BUILD` is verified present in `next/constants` at Next 15.5.15 with the value `phase-production-build`. Import the constant rather than hardcoding the string. Pair the guard with a bounded retry and backoff, because #932 was a *cold* connect and a retry may therefore help. That it converts a hard failure into a success is untested — no measurement here exercised the retry path — so treat it as a hypothesis and measure before claiming it works.
+`PHASE_PRODUCTION_BUILD` is verified present in `next/constants` at Next 15.5.15 with the value `phase-production-build`. Import the constant rather than hardcoding the string. Pair the guard with a bounded retry and backoff, because #932 was a _cold_ connect and a retry may therefore help. That it converts a hard failure into a success is untested — no measurement here exercised the retry path — so treat it as a hypothesis and measure before claiming it works.
 
 ## Step 4 — Cache headers follow the strategy, and you do not choose them
 
 Next.js sets `Cache-Control` purely from the rendering strategy of each route. You cannot negotiate with this from inside the app.
 
-| Strategy | Header Next.js emits |
-|---|---|
-| Static, no revalidation | `s-maxage=31536000` |
+| Strategy                     | Header Next.js emits                                                  |
+| ---------------------------- | --------------------------------------------------------------------- |
+| Static, no revalidation      | `s-maxage=31536000`                                                   |
 | ISR, time-based revalidation | `s-maxage={revalidate}, stale-while-revalidate={expire - revalidate}` |
-| Dynamic | `private, no-cache, no-store, max-age=0, must-revalidate` |
+| Dynamic                      | `private, no-cache, no-store, max-age=0, must-revalidate`             |
 
 The third row is the whole argument against `force-dynamic` on public pages: it makes them uncacheable at every CDN by construction, so each visitor pays a full origin round trip. On this deployment that is Netlify `ap-southeast-1` to Supabase `ap-south-1`, and the tail was measured at 30–33 seconds. See "What the 23-second TTFB actually decomposes into" below — the cost is a ~24 second event-loop stall on a newly created instance, not the round trip and not the boot.
 
@@ -110,7 +110,7 @@ No ancestor of such a segment may have a `loading.tsx`, and that includes `app/l
 
 ## How to verify — the only four techniques that have worked here
 
-**Read the CI build route table.** This is authoritative for *build-time* classification — whether a route prerenders at build, and what revalidate the build applied — and it settled the #1110 dispute definitively. It is not authoritative for on-demand ISR, where a `●` route legitimately shows an empty Revalidate column and no build entries; confirm those at runtime from `cache-control` and a climbing `age` instead, as described in Step 2c. `○` means prerendered at build; `ƒ` means dynamic; the Revalidate column shows whether a `revalidate` export actually applied. Pull it from the `TypeScript, Tests & Build` check run with `gh run view --log` and paste the actual lines into your report. Never run `next build` locally — it is RAM-heavy and has taken this machine down.
+**Read the CI build route table.** This is authoritative for _build-time_ classification — whether a route prerenders at build, and what revalidate the build applied — and it settled the #1110 dispute definitively. It is not authoritative for on-demand ISR, where a `●` route legitimately shows an empty Revalidate column and no build entries; confirm those at runtime from `cache-control` and a climbing `age` instead, as described in Step 2c. `○` means prerendered at build; `ƒ` means dynamic; the Revalidate column shows whether a `revalidate` export actually applied. Pull it from the `TypeScript, Tests & Build` check run with `gh run view --log` and paste the actual lines into your report. Never run `next build` locally — it is RAM-heavy and has taken this machine down.
 
 **Stream the HTML and grep for markup that should be present.** Distinguish real markup (`">Members<"`) from the RSC flight payload (the bare string `Members`). If the string appears only in the payload, the content was **not** server-rendered, however much it looks present in the browser. When the bare-string count equals the markup count, there are no payload-only occurrences and the result is genuine.
 
@@ -126,7 +126,7 @@ A skeleton cannot fire First Contentful Paint. FCP requires text, an image, canv
 
 `next/dynamic` with `ssr: false` skips server rendering for the component **and all of its children**. Wrapping `{children}` in such a component removes an entire subtree from the HTML. Its options must also be an inline object literal at each call site, because SWC analyses them statically — hoisting them to a `const` passes `tsc`, ESLint and Jest and then fails the build.
 
-A client layout that returns a skeleton while its queries load returns that skeleton during SSR too, because nothing prefetched those queries on the server. The fix is to seed the query from a server component with `prefetchQuery` plus `dehydrate` and a `HydrationBoundary`. Both sides must derive an identical key *value*. That is why seeding failed here: the client keyed on `useSession()`, which is still pending during SSR, so its key was `["user-details", undefined]` while the server seeded the real id. Passing the resolved user id down from the server — the same serialized value on both sides — is what fixes it. The mismatch is invisible to `tsc` and to every test.
+A client layout that returns a skeleton while its queries load returns that skeleton during SSR too, because nothing prefetched those queries on the server. The fix is to seed the query from a server component with `prefetchQuery` plus `dehydrate` and a `HydrationBoundary`. Both sides must derive an identical key _value_. That is why seeding failed here: the client keyed on `useSession()`, which is still pending during SSR, so its key was `["user-details", undefined]` while the server seeded the real id. Passing the resolved user id down from the server — the same serialized value on both sides — is what fixes it. The mismatch is invisible to `tsc` and to every test.
 
 A `loading.tsx` creates an implicit Suspense boundary, which is what allows a layout to flush while its page is still pending.
 
@@ -148,20 +148,20 @@ This was measured on 2026-08-09 against deploy preview 1118, anonymously, on `/e
 
 The headline is that the 23-second figure was misattributed. Cold boot and render cost are both ruled out by measurement below.
 
-**The database is not the slow part, and the ~30 seconds is a stalled event loop on a newly created function instance.** This was settled on 2026-08-09 against deploy preview 1123 by a diagnostic route that reported instance identity, `process.uptime()`, an event-loop lag probe, and per-attempt connect timings in its response body — see "The connect budget cannot be enforced" below. The earlier reading on this page, that a pooler connection was the thing timing out, was wrong: the connect error is a *casualty* of the stall, not its cause.
+**The database is not the slow part, and the ~30 seconds is a stalled event loop on a newly created function instance.** This was settled on 2026-08-09 against deploy preview 1123 by a diagnostic route that reported instance identity, `process.uptime()`, an event-loop lag probe, and per-attempt connect timings in its response body — see "The connect budget cannot be enforced" below. The earlier reading on this page, that a pooler connection was the thing timing out, was wrong: the connect error is a _casualty_ of the stall, not its cause.
 
 The evidence is a bimodal distribution with nothing in the middle:
 
-| Batch | Concurrency | Instance state | Samples | Result |
-|---|---|---|---|---|
-| A | 1 (strictly sequential) | new | 8 | 1.80–2.72 s, median 1.88 s, no outliers |
-| B | 12 concurrent | mostly new | 12 | six at 1.90–4.66 s, six at 30.99–33.08 s |
-| C | 16 concurrent | 12 already warm | 16 | twelve at 2.64–2.94 s, four at 30.83–33.12 s |
-| D | 12 concurrent | all warm | 12 | 3.33–5.89 s, zero slow |
+| Batch | Concurrency             | Instance state  | Samples | Result                                       |
+| ----- | ----------------------- | --------------- | ------- | -------------------------------------------- |
+| A     | 1 (strictly sequential) | new             | 8       | 1.80–2.72 s, median 1.88 s, no outliers      |
+| B     | 12 concurrent           | mostly new      | 12      | six at 1.90–4.66 s, six at 30.99–33.08 s     |
+| C     | 16 concurrent           | 12 already warm | 16      | twelve at 2.64–2.94 s, four at 30.83–33.12 s |
+| D     | 12 concurrent           | all warm        | 12      | 3.33–5.89 s, zero slow                       |
 
 No sample in those four batches landed between 6.8 s and 30.8 s. The gap is the signature of the cold-instance stall: an instance either serves normally or loses roughly 24 seconds to it, with nothing in between. The shape replicated exactly on 2026-08-09 against `dev` at 1fa94c17 — eight sequential renders at 1.79–4.94 s with no outliers, then twelve concurrent renders splitting one fast at 1.85 s, six at 30.67–32.68 s and five hard 500s at 36.3 s.
 
-The pattern replicated on a second, independently built deploy: eight concurrent requests, all against brand-new instances, split five fast at 9.20–11.40 s and three slow at 34.16–36.76 s, with the same `prisma:error timeout exceeded when trying to connect` and a 29,155 ms invocation in the log (that error is a casualty of the stall, not its cause — see below). Note that the fast mode there is 9–11 s rather than 2–3 s, because *every* instance in that batch was new — so the fast mode is not a constant, but the gap is always present and the slow mode always lands at 30–37 s.
+The pattern replicated on a second, independently built deploy: eight concurrent requests, all against brand-new instances, split five fast at 9.20–11.40 s and three slow at 34.16–36.76 s, with the same `prisma:error timeout exceeded when trying to connect` and a 29,155 ms invocation in the log (that error is a casualty of the stall, not its cause — see below). Note that the fast mode there is 9–11 s rather than 2–3 s, because _every_ instance in that batch was new — so the fast mode is not a constant, but the gap is always present and the slow mode always lands at 30–37 s.
 
 Batch A settles the cold-boot question on its own: a brand-new instance rendering a real database-backed page sequentially costs about 1.9 seconds end to end. Boot is not the problem. Batch D settles the concurrency question: twelve simultaneous renders against warm instances cost 3.3–5.9 seconds and never degrade. What produces the tail is instance creation: concurrency forces new instances, and a new instance pays the stall.
 
@@ -171,11 +171,11 @@ Three further facts are worth carrying forward, because each one costs an aftern
 
 **On this path, one HTTP request was one function invocation.** Six concurrent uncached `/explore/experts/[consultantId]` document requests produced exactly six `Duration:` lines, and each client timing exceeded its matching invocation duration by a near-constant 0.37 s of CDN and network overhead. The 32.23 s request maps to a single invocation of 30,113.69 ms. So for these requests nothing chained, nothing was retried by the platform, and the document request was not followed by a second billable render.
 
-Do not promote that to a platform rule — it is a statement about anonymous document requests to this route. A logged-in dashboard navigation, a route that redirects, or a client-side RSC fetch can each add invocations. What it does rule out is explaining *this* measurement by a redirect chain, a middleware hop or an RSC follow-up, because none of those appeared.
+Do not promote that to a platform rule — it is a statement about anonymous document requests to this route. A logged-in dashboard navigation, a route that redirects, or a client-side RSC fetch can each add invocations. What it does rule out is explaining _this_ measurement by a redirect chain, a middleware hop or an RSC follow-up, because none of those appeared.
 
 **Do not plan on reading `Init Duration` here.** Netlify documents it as the cold-start discriminator, and staff describe a full Lambda-style report line — `Duration … Billed Duration … Memory Size … Max Memory Used … Init Duration …`. The Next.js server handler on this account does not emit that. Through both `netlify logs` and its historical API the line is reduced to `Duration:` and `Memory Usage:` only. A user on Netlify's own forum reports the identical absence for this same function ("I have checked my full log and I can't find any `init duration` in it"). Whether the dashboard UI shows more was not checked.
 
-Two substitutes work instead. An invocation *start* appears as an info line with an empty message, so start and end pair by adding the duration to the start timestamp — verified exact to the millisecond. And a genuine module load prints the Better Auth pair `Social provider github is missing clientId or clientSecret` / `… facebook …`, which makes each new instance countable.
+Two substitutes work instead. An invocation _start_ appears as an info line with an empty message, so start and end pair by adding the duration to the start timestamp — verified exact to the millisecond. And a genuine module load prints the Better Auth pair `Social provider github is missing clientId or clientSecret` / `… facebook …`, which makes each new instance countable.
 
 **You cannot add a `console.*` line to server code and read it in production.** `next.config.mjs` sets `compiler.removeConsole: process.env.NODE_ENV === "production"`, and this strips server-side console calls too, not just client bundles. It was tested directly: a `console.warn` added at Prisma client construction produced **zero** occurrences in the function log across a deploy where two module loads were independently confirmed by the Better Auth markers in the same window. The reason third-party lines still appear is that `node_modules` is not compiled by SWC — which is exactly why Better Auth and `prisma:error` survive while our own would not.
 
@@ -190,12 +190,12 @@ Yet a production invocation logged that connect timeout at t+29.78 s. The reason
 Measured on deploy preview 1123 with a diagnostic route that ran 400 ms of pure idle `await` **before touching the database at all**, then reported the loop lag it observed. Three of forty invocations came back like this:
 
 | instance age | `process.uptime()` | invocation | 400 ms idle phase took | max loop lag | first DB attempt |
-|---|---|---|---|---|---|
-| 40 ms | 3,363 ms | 1 | 23,905 ms | 23,746 ms | ok in 862 ms |
-| 39 ms | 3,361 ms | 1 | 24,634 ms | 24,534 ms | ok in 866 ms |
-| 100 ms | 3,355 ms | 1 | 24,823 ms | 24,655 ms | ok in 1,037 ms |
+| ------------ | ------------------ | ---------- | ---------------------- | ------------ | ---------------- |
+| 40 ms        | 3,363 ms           | 1          | 23,905 ms              | 23,746 ms    | ok in 862 ms     |
+| 39 ms        | 3,361 ms           | 1          | 24,634 ms              | 24,534 ms    | ok in 866 ms     |
+| 100 ms       | 3,355 ms           | 1          | 24,823 ms              | 24,655 ms    | ok in 1,037 ms   |
 
-The other thirty-seven, all on instances at least 47 s old, completed the same idle phase in 400–453 ms with lag of 1–70 ms. So the stall is roughly 24 seconds, it happens **before any database work**, and it happens only on a brand-new instance serving its first invocation. The database query that follows takes about a second — and in an earlier round where a connect *did* get caught by the stall and failed after 25.7 s and 26.1 s, the immediately retried attempt connected in 340 ms and 327 ms.
+The other thirty-seven, all on instances at least 47 s old, completed the same idle phase in 400–453 ms with lag of 1–70 ms. So the stall is roughly 24 seconds, it happens **before any database work**, and it happens only on a brand-new instance serving its first invocation. The database query that follows takes about a second — and in an earlier round where a connect _did_ get caught by the stall and failed after 25.7 s and 26.1 s, the immediately retried attempt connected in 340 ms and 327 ms.
 
 Three consequences worth carrying forward. No value of `PG_CONNECT_TIMEOUT_MS` can bound this, so do not propose tuning it. `prisma:error timeout exceeded when trying to connect` in the function log is not evidence that the pooler is unhealthy — check whether the instance was new before believing it. And the only lever that reliably helps is not invoking the function at all, because an ISR cache hit costs no instance and therefore pays no stall.
 
@@ -209,10 +209,10 @@ Do not treat the platform ceiling as a backstop either. Netlify documented 10 s 
 
 The "CPU-starved cold-boot" reading above became testable when Netlify shipped per-function `memory`/`vcpu` config (Credit-based Pro/Ent; `memory` and `vcpu` **scale together**, so setting either tests the same lever). Applied correctly at 2048 MB to the v2 handler and measured under the identical 12-way concurrent unique-key burst protocol:
 
-| Deploy | Handler memory | Result |
-|---|---|---|
-| control (1024 MB) | 1024 | 11/12 slow, TTFB 27.8–31.0 s |
-| treatment | 2048 | 11/12 slow, TTFB 35.9–37.6 s + one platform 500 |
+| Deploy            | Handler memory | Result                                          |
+| ----------------- | -------------- | ----------------------------------------------- |
+| control (1024 MB) | 1024           | 11/12 slow, TTFB 27.8–31.0 s                    |
+| treatment         | 2048           | 11/12 slow, TTFB 35.9–37.6 s + one platform 500 |
 
 No improvement, possibly worse. Reverted in 08b10ce4. Two conclusions: the CPU-share hypothesis for the stall is **weakened**, not confirmed — doubling per-instance CPU should have shrunk a CPU-bound stall and moved nothing; and any artifact claiming memory "resolved" the stall descends from a misattributed burst that ran during a hyperactive window (three deploys + two agent sessions within nine minutes) where residual warm capacity produced the fast numbers.
 
@@ -224,7 +224,7 @@ The warm-then-burst close-out (2026-08-23, preview-1148): idle→6-burst stalled
 
 ### Fail-open and a cacheable response are safe alone and dangerous together
 
-A fail-open path on an ISR route converts a transient database blip into a cached artefact. `fallbackOnTransientDbError` rethrew during `next build` but degraded at request time, and on `/explore/experts/[consultantId]` that produced HTTP 200 responses carrying the degraded shell at 66 KB against a healthy 104–118 KB. Ten of forty concurrent cold renders came back that way, each with `Cache-Status: "Netlify Durable"; fwd=uri-miss; stored`, and re-fetching them five minutes later returned the same broken page in 0.30–0.64 s with `"Netlify Durable"; hit` and `age: 318–350`. The broken page becomes the *fast* one, which is why nobody notices.
+A fail-open path on an ISR route converts a transient database blip into a cached artefact. `fallbackOnTransientDbError` rethrew during `next build` but degraded at request time, and on `/explore/experts/[consultantId]` that produced HTTP 200 responses carrying the degraded shell at 66 KB against a healthy 104–118 KB. Ten of forty concurrent cold renders came back that way, each with `Cache-Status: "Netlify Durable"; fwd=uri-miss; stored`, and re-fetching them five minutes later returned the same broken page in 0.30–0.64 s with `"Netlify Durable"; hit` and `age: 318–350`. The broken page becomes the _fast_ one, which is why nobody notices.
 
 Worse, the degrade is often cheap: several of those poisoned entries were produced in **0.47 s**, because a pooler that fails fast reaches the fallback fast. Do not assume a degraded render announces itself by being slow.
 
@@ -233,7 +233,7 @@ The fix, shipped in #1123, is that degrading is now opt-in per call site (`perRe
 **Both halves of the framework behaviour that makes rethrowing correct were verified by observation**, on a temporary ISR route shaped like the real one, on deploy preview 1123:
 
 - A render that throws returns **HTTP 500** with `Cache-Status: "Netlify Durable"; fwd=bypass, "Netlify Edge"; fwd=miss; fwd-status=500` — no `stored`, and three consecutive requests each re-rendered rather than hitting a cache. Nothing is persisted.
-- When a cached good copy already exists and the *revalidation* throws, the good copy keeps being served. Across 45 polls spanning several deliberately-throwing windows on a `revalidate = 10` route, every response was the good body with `age` climbing to 39–53 s, resetting only when a non-throwing window regenerated it. This matches Next's documented "Handling uncaught exceptions" paragraph.
+- When a cached good copy already exists and the _revalidation_ throws, the good copy keeps being served. Across 45 polls spanning several deliberately-throwing windows on a `revalidate = 10` route, every response was the good body with `age` climbing to 39–53 s, resetting only when a non-throwing window regenerated it. This matches Next's documented "Handling uncaught exceptions" paragraph.
 
 So on an ISR route, throwing is strictly better than degrading: the one unlucky visitor gets an error boundary, everyone else keeps the last good copy, and nothing bad is written down.
 

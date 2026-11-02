@@ -39,12 +39,12 @@ jest.mock("@/providers/AnnouncementBarProvider", () => ({
 import Navbar from "@/components/Navbar";
 
 const mockFetch = jest.fn();
-const renderNavbar = () =>
-  render(
-    <QueryClientProvider client={new QueryClient()}>
-      <Navbar />
-    </QueryClientProvider>,
-  );
+const tree = (client: QueryClient) => (
+  <QueryClientProvider client={client}>
+    <Navbar />
+  </QueryClientProvider>
+);
+const renderNavbar = (client = new QueryClient()) => render(tree(client));
 const FACETS = {
   facets: [
     {
@@ -125,5 +125,44 @@ describe("Navbar account menu", () => {
     await waitFor(() => expect(href("All dashboards")).toBe("/dashboard"));
     expect(href("My library")).toBe("/dashboard/go/library");
     expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeTruthy();
+  });
+
+  it("refetches on reopen when the session gains a membership", async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => FACETS });
+    const client = new QueryClient();
+    const view = renderNavbar(client);
+    openMenu();
+    await waitFor(() => expect(href("Acme")).toBeTruthy());
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+
+    mockUseSession.mockReturnValue({
+      data: {
+        user: {
+          ...USER,
+          organizationMemberships: [{ organizationId: "o2", role: "ADMIN" }],
+        },
+      },
+      isPending: false,
+    });
+    view.rerender(tree(client));
+    openMenu();
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+  });
+
+  it("refetches on reopen once the cached facets are older than 30 seconds", async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => FACETS });
+    const now = jest.spyOn(Date, "now");
+    const start = Date.now();
+    now.mockReturnValue(start);
+    renderNavbar();
+    openMenu();
+    await waitFor(() => expect(href("Acme")).toBeTruthy());
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+
+    now.mockReturnValue(start + 31_000);
+    openMenu();
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+    now.mockRestore();
   });
 });
