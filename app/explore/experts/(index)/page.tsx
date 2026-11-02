@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 import { Sparkles, Users, Star, TrendingUp } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { FeaturedExperts } from "./components/FeaturedExperts";
-import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
+import { FeaturedExperts } from "../components/FeaturedExperts";
+import ExpertsInteractiveContent from "../ExpertsInteractiveContent";
 import {
   getExpertsMetadata,
   getCuratedExperts,
@@ -41,7 +41,9 @@ const STAT_ICONS: Record<ExpertStatKey, LucideIcon> = {
   sessions: TrendingUp,
 };
 
-function HeroSection({ stats }: { stats: IPublicStat<ExpertStatKey>[] }) {
+function HeroSection({
+  stats,
+}: Readonly<{ stats: IPublicStat<ExpertStatKey>[] }>) {
   return (
     <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
       <div className="absolute inset-0">

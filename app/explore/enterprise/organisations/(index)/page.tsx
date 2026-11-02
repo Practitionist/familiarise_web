@@ -11,7 +11,7 @@ import { withBuildTimeRetry } from "@/lib/data/fail-open";
 
 import OrganisationsInteractiveContent, {
   OrganisationsGridSkeleton,
-} from "./OrganisationsInteractiveContent";
+} from "../OrganisationsInteractiveContent";
 
 // ISR, not force-dynamic. The directory reads no session and no searchParams
 // (filtering is client-side in OrganisationsInteractiveContent), and it lists
@@ -43,7 +43,9 @@ async function OrganisationsDirectory() {
   // to everyone (#1119).
   const [meta, firstPage] = await Promise.all([
     withBuildTimeRetry(getOrganisationsMetadata),
-    withBuildTimeRetry(() => getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS)),
+    withBuildTimeRetry(() =>
+      getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS),
+    ),
   ]);
 
   return (
