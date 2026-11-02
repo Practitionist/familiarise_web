@@ -5,7 +5,7 @@ import { deriveDeviceLabel } from "@/lib/auth/device-label";
  * The session visibility boundary (#1856, ADR 35).
  *
  * A session TOKEN is a bearer credential for the whole account.
- * BetterAuth's `listSessions()` (1.7.7) returns the raw token
+ * BetterAuth's `listSessions()` (1.7.14) returns the raw token
  * for every device, so the browser must never call it — every session
  * list in this app reads through THIS select instead. `token` is absent
  * by construction, and `userAgent` is read only to derive the display

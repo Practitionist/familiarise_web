@@ -298,8 +298,8 @@ export async function resolveMeetingAccess(
     select: { consultantProfileId: true },
   });
 
-  // A group-event room opens on the seat alone, so an unpaid HELD seat must not
-  // admit; a 1:1 is also gated by its own booking status.
+  // A group-event room opens on the seat alone, so it needs a fulfilled entitlement
+  // (`paidParticipant`); a 1:1 is also gated by its own booking status.
   const isGroupEvent = Boolean(appointment.webinar || appointment.class);
   const seat = await prisma.appointmentParticipant.findFirst({
     where: {

@@ -3,12 +3,11 @@
  */
 
 /**
- * A session lookup that fails is not "no session". The `customSession`
- * plugin swallows an adapter rejection into `null`, so `getSession()` settles
- * a null on a validly signed cookie with one row read: a thrown read, or a
- * null while the row is live, is a failure (`SessionLookupFailedError`, 503
- * `SESSION_LOOKUP_FAILED` + Retry-After from the guards); only a null with no
- * live row is "none" (401).
+ * A session lookup that fails is not "no session". `getSession()` settles a
+ * null on a validly signed cookie with one row read: a thrown read, or a null
+ * while the row is live, is a failure (`SessionLookupFailedError`, 503
+ * `SESSION_LOOKUP_FAILED` + Retry-After from the guards); a null with no live
+ * row, or a 401 from the refresh hook ending the session, is "none" (401).
  */
 
 const getSession = jest.fn();
@@ -36,6 +35,7 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
 
+import { APIError } from "better-auth/api";
 import { serializeSignedCookie } from "better-call";
 import { requireApiAuth } from "../../lib/auth-helpers";
 import { getSession as getServerSession } from "../../lib/auth-server";
@@ -152,6 +152,9 @@ describe("getSession() is tri-state", () => {
     getSession.mockResolvedValue(null);
     sessionFindUnique.mockResolvedValue(null);
     await expect(getServerSession()).resolves.toBeNull();
+    await expect(lookupSession()).resolves.toEqual({ kind: "none" });
+
+    getSession.mockRejectedValue(new APIError("UNAUTHORIZED"));
     await expect(lookupSession()).resolves.toEqual({ kind: "none" });
   });
 
