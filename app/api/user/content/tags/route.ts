@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { getTags, purgeTaxonomy } from "@/lib/data/taxonomy";
 import { apiError } from "@/lib/errors";
 import { validateTagName } from "@/utils/contentValidation";
 import { NextRequest, NextResponse } from "next/server";
@@ -31,15 +32,14 @@ export async function GET(request: NextRequest) {
 
     const { domainId } = parsed.data;
 
-    const tags = await prisma.tag.findMany({
-      where: domainId ? { domainId } : undefined,
-      include: { domain: { select: { id: true, name: true } } },
-      orderBy: { name: "asc" },
-    });
+    const tags = await getTags(domainId);
 
     return NextResponse.json(tags);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return apiError({ tag: "[Tags.GET]", error });
   }
 }
@@ -79,10 +79,7 @@ export async function POST(request: NextRequest) {
     // Validate tag name for format, gibberish, and profanity
     const validation = validateTagName(name);
     if (!validation.valid) {
-      return NextResponse.json(
-        { error: validation.error },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
     // Verify domain exists before upserting
@@ -90,10 +87,7 @@ export async function POST(request: NextRequest) {
       where: { id: domainId },
     });
     if (!domain) {
-      return NextResponse.json(
-        { error: "Domain not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Domain not found" }, { status: 404 });
     }
 
     const tag = await prisma.tag.upsert({
@@ -102,6 +96,8 @@ export async function POST(request: NextRequest) {
       create: { name, domainId },
       select: { id: true, name: true, domainId: true },
     });
+
+    purgeTaxonomy();
 
     return NextResponse.json({ tag });
   } catch (error) {
