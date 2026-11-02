@@ -118,6 +118,7 @@ async function readAllocationRequestOrThrow(
         schedulingPeriodStartsAt: true,
         schedulingPeriodEndsAt: true,
         schedulingTimezone: true,
+        planEndsAt: true,
         sessionsTotal: true,
         requestedBy: requestedBySelect,
         subscriptionPlan: {
@@ -146,6 +147,7 @@ async function readAllocationRequestOrThrow(
       occurrences,
       schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
       schedulingTimezone: subscription.schedulingTimezone,
+      planEndsAt: subscription.planEndsAt,
     });
     return toPlain<AllocationRequest>({
       id: subscription.id,

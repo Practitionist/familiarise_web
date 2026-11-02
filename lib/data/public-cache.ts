@@ -70,3 +70,12 @@ export function purgeOrgSurfaces(
     revalidatePath(`${ORGANISATIONS_DIRECTORY}/${slug}`);
   }
 }
+
+/** A digital product went on or off sale or its live listing changed: its page and the creator's profile section. */
+export function purgeDigitalProductSurfaces(product: {
+  consultantProfileId: string;
+  slug: string;
+}): void {
+  revalidatePath(`${EXPERTS_DIRECTORY}/${product.consultantProfileId}`);
+  revalidatePath(`/explore/products/${product.slug}`);
+}

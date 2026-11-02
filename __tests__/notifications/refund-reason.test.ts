@@ -44,12 +44,14 @@ describe("refundReasonLabel", () => {
   });
 
   it("humanises the whole-event parenthetical instead of shouting the enum", () => {
-    expect(
-      refundReasonLabel("whole-event class cancellation (OTHER)"),
-    ).toBe("the whole class was cancelled (a reason the other party did not specify)");
+    expect(refundReasonLabel("whole-event class cancellation (OTHER)")).toBe(
+      "the whole class was cancelled (a reason the other party did not specify)",
+    );
     expect(
       refundReasonLabel("whole-event webinar cancellation (MODERATION)"),
-    ).toBe("the whole webinar was cancelled (a moderation decision on this account)");
+    ).toBe(
+      "the whole webinar was cancelled (a moderation decision on this account)",
+    );
     // The cancel route's default placeholder would read "cancelled (cancelled)".
     expect(
       refundReasonLabel("whole-event class cancellation (cancelled)"),
@@ -78,8 +80,8 @@ describe("refundReasonLabel", () => {
     expect(refundReasonLabel("HOST_SESSION_NOT_MADE_UP")).toBe(
       "a cancelled session was never made up",
     );
-    expect(refundReasonLabel("SESSION_VOIDED_UNUSED_AT_PLAN_END")).toBe(
-      "an unused voided session at the end of the plan",
+    expect(refundReasonLabel("PLAN_ENDED_UNUSED_SESSIONS")).toBe(
+      "sessions not used by the end of the plan",
     );
   });
 

@@ -17,6 +17,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import type { Prisma, SystemEventSeverity } from "@prisma/client";
 import { emitTelemetryLog } from "@/lib/observability/betterstack-telemetry";
+import { entityIdOf } from "@/lib/observability/entity-id";
 import { currentRun } from "@/lib/cron/run-context";
 import {
   reportSentryError,
@@ -32,13 +33,29 @@ function severityToTelemetryLevel(
   return "info";
 }
 
+function currentJobRunId(): string | undefined {
+  return currentRun()?.runIds.at(-1);
+}
+
 /** Stamps the active job run on the event's context; `correlationId` stays the caller's own key. */
 function withJobRunId(
   context: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> | undefined {
-  const jobRunId = currentRun()?.runIds.at(-1);
+  const jobRunId = currentJobRunId();
   if (!jobRunId) return context ?? undefined;
   return { ...context, jobRunId };
+}
+
+function jobRunField(): { job_run_id?: string } {
+  const jobRunId = currentJobRunId();
+  return jobRunId ? { job_run_id: jobRunId } : {};
+}
+
+function entityField(context: Record<string, unknown> | null | undefined): {
+  entity_id?: string;
+} {
+  const entityId = entityIdOf(context);
+  return entityId ? { entity_id: entityId } : {};
 }
 
 export interface RecordSystemEventParams {
@@ -120,21 +137,18 @@ export async function recordSystemEvent(
     if (params.strict || params.__reportInsertFailureToCaller) throw err;
   }
 
-  // Fire-and-forget telemetry sink (#776 §K). The DB row above is the source
-  // of truth; this just gets the event somewhere an on-call human sees it.
-  // NOT awaited — `recordSystemEvent` runs on the webhook critical path (HMAC
-  // failure), so awaiting an external HTTP POST would let a stalled Better
-  // Stack block/DoS the handler. No-op unless ENABLE_BETTERSTACK_TELEMETRY is
-  // on; the call is internally best-effort, the `.catch` is belt-and-suspenders.
+  // Not awaited: this runs on the webhook critical path, and the row above is the truth.
+  // Fixed fields only; the context stays in Postgres and only its entity id leaves.
   void emitTelemetryLog({
     level: severityToTelemetryLevel(severity),
     message: params.message,
     category: params.category,
-    organizationId: params.organizationId,
-    correlationId: params.correlationId,
-    context: params.context,
-  }).catch((err) => {
-    console.error("[recordSystemEvent] telemetry sink failed:", err);
+    ...(params.organizationId
+      ? { organization_id: params.organizationId }
+      : {}),
+    ...(params.correlationId ? { correlation_id: params.correlationId } : {}),
+    ...jobRunField(),
+    ...entityField(params.context),
   });
 }
 

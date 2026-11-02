@@ -6,6 +6,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     systemJobExecution: { groupBy: (...a: unknown[]) => groupBy(...a) },
+    $queryRaw: async () => [],
   },
 }));
 
@@ -109,6 +110,7 @@ describe("GET /api/health/jobs/streaks", () => {
     const report = streakReportSchema.parse(await res.json());
     expect(report["abandoned-payments"]).toEqual({
       lastCompletedAt: null,
+      lastFailedAt: now.toISOString(),
       seenRecently: true,
     });
     expect(isRepeatedFailure(15, report["abandoned-payments"], now)).toBe(true);
@@ -134,7 +136,7 @@ describe("GET /api/health/jobs/streaks", () => {
     );
     const body = await res.json();
     expect(groupBy.mock.calls[0][0].where.jobName).toEqual({
-      in: ["cleanup-abandoned-payments"],
+      in: ["cleanup-abandoned-payments", "sentry-ingest-canary"],
     });
     expect(groupBy.mock.calls[0][0].where.result).toEqual({
       path: ["environment"],
@@ -143,7 +145,13 @@ describe("GET /api/health/jobs/streaks", () => {
     expect(body).toEqual({
       "abandoned-payments": {
         lastCompletedAt: started.toISOString(),
+        lastFailedAt: expect.any(String),
         seenRecently: true,
+      },
+      "sentry-ingest-canary": {
+        lastCompletedAt: null,
+        lastFailedAt: null,
+        seenRecently: false,
       },
     });
   });

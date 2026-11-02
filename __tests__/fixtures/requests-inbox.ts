@@ -203,16 +203,68 @@ const awaitingTrial = {
   }),
 };
 
-type Where = { status?: string | { in?: string[] } };
-const statusMatches = (row: { status: string }, where: Where) => {
+type Where = {
+  status?: string | { in?: string[] };
+  bookingSource?: unknown;
+  appointment?: {
+    payment?: {
+      some?: { paymentStatus?: string };
+      none?: { paymentStatus?: string };
+    };
+  };
+  AND?: Where[];
+  OR?: Where[];
+};
+type Row = {
+  status: string;
+  bookingSource?: string | null;
+  appointment?: { payment?: { paymentStatus: string }[] } | null;
+};
+const statusMatches = (row: Row, where: Where): boolean => {
+  const none = where.appointment?.payment?.none?.paymentStatus;
+  if (
+    none &&
+    (row.appointment?.payment ?? []).some((p) => p.paymentStatus === none)
+  ) {
+    return false;
+  }
   const s = where.status;
-  if (s === undefined) return true;
-  if (typeof s === "string") return row.status === s;
-  return (s.in ?? []).includes(row.status);
+  if (typeof s === "string" && row.status !== s) return false;
+  if (s && typeof s === "object" && !(s.in ?? []).includes(row.status)) {
+    return false;
+  }
+  if (
+    typeof where.bookingSource === "string" &&
+    row.bookingSource !== where.bookingSource
+  ) {
+    return false;
+  }
+  if (!(where.AND ?? []).every((part) => statusMatches(row, part))) {
+    return false;
+  }
+  // OR arms the fake understands: a bookingSource exclusion or a payment
+  // status on the wrapper; any other arm counts as a match.
+  return !where.OR || where.OR.some((part) => orArmMatches(row, part));
+};
+const orArmMatches = (row: Row, arm: Where): boolean => {
+  const source = arm.bookingSource;
+  if (source && typeof source === "object" && "not" in source) {
+    return row.bookingSource !== source.not;
+  }
+  const some = arm.appointment?.payment?.some?.paymentStatus;
+  if (some) {
+    return (row.appointment?.payment ?? []).some(
+      (p) => p.paymentStatus === some,
+    );
+  }
+  return true;
 };
 
-/** A tiny fake DB: every read honours `where.status`, nothing else. */
-export function serve<T extends { status: string }>(rows: T[]) {
+/**
+ * A tiny fake DB: every read honours `status` and an exact `bookingSource`,
+ * at the top level or inside `AND`, nothing else.
+ */
+export function serve<T extends Row>(rows: T[]) {
   return {
     findMany: async ({ where }: { where: Where }) =>
       rows.filter((r) => statusMatches(r, where)),

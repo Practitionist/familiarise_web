@@ -2,10 +2,13 @@
  * POST /api/admin/system-jobs/run — the admin Run door for every registered
  * cleanup job. It runs the registry's own handler in-process, inside an admin
  * run context, so a manual run and a ticker run share one implementation and
- * one execution trail. No CRON_SECRET reaches the browser.
+ * one execution trail. No CRON_SECRET reaches the browser. Off production the
+ * route refuses every job (409 `JOB_RUN_PRODUCTION_ONLY`); the database is shared.
+ * A `manualRun: "after"` job is persisted as an `AdminRunRequest` before its 202.
  */
 
 import { randomUUID } from "node:crypto";
+import type { AdminRunRequest } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -24,71 +27,96 @@ import {
   CLEANUP_JOB_BUILDERS,
   getCleanupJobHandlers,
 } from "@/lib/cron/cleanup-registry";
+import { jobsMayRunHere } from "@/lib/cron/dispatch-refusal";
 import { runOutcomeSchema } from "@/lib/cron/run-outcome";
-import { withRunContext } from "@/lib/cron/run-context";
 import {
-  isWindowedTarget,
-  latestWindowStart,
-  scheduleFor,
-} from "@/lib/cron/schedule";
+  auditStatusOf,
+  manualRunRequest,
+  openAdminRunWhere,
+  runAdminRunRequest,
+  type AdminRunAuditStatus,
+} from "@/lib/cron/admin-run-requests";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { withRunContext } from "@/lib/cron/run-context";
+import { isWindowedTarget, latestWindowStart } from "@/lib/cron/schedule";
 
 const runJobSchema = z.object({
   jobId: z.string().min(1, "Missing or invalid jobId"),
   // Every manual run carries a reason into the audit log.
   reason: opsReasonSchema,
+  // One per click, reused by its retries; absent from an older client, so the server mints one.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 const bodySchema = z.record(z.string(), z.unknown()).catch({});
 
-type RunStatus =
-  | "ACCEPTED"
-  | "SUCCEEDED"
-  | "PARTIAL"
-  | "FAILED"
-  | "HELD"
-  | "SKIPPED"
-  | "REFUSED"
-  | "PAUSED";
+/** The window a manual run repeats: the latest due one for a windowed job, none otherwise. */
+function manualRunWindow(slug: string, now: Date): Date | null | undefined {
+  return isWindowedTarget(slug) ? latestWindowStart(slug, now) : undefined;
+}
 
 /**
- * One bounded slice: the ticker's own limit and, for a calendar-windowed job,
- * the latest due window, so a manual run repeats that window's slice instead of
- * opening an off-cycle one. Null when a windowed job has had no window yet.
+ * Persists the request and its audit row in one transaction before any dispatch.
+ * A retry of the same click returns its request in any status; otherwise the job's open request.
  */
-function manualRunRequest(slug: string, now: Date): NextRequest | null {
-  const url = new URL(`/api/cleanup/${slug}`, "https://system-jobs.internal");
-  const limit = scheduleFor(slug)?.limit;
-  if (typeof limit === "number") url.searchParams.set("limit", String(limit));
-  if (isWindowedTarget(slug)) {
-    const windowStart = latestWindowStart(slug, now);
-    if (!windowStart) return null;
-    url.searchParams.set("windowStart", windowStart.toISOString());
+async function admitRunRequest(input: {
+  job: string;
+  idempotencyKey: string;
+  actorUserId: string;
+  actorRole: string;
+  reason: string;
+  windowStart: Date | null;
+}): Promise<{ request: AdminRunRequest; created: boolean }> {
+  const id = randomUUID();
+  try {
+    const request = await prisma.$transaction(async (tx) => {
+      const row = await tx.adminRunRequest.create({
+        data: {
+          id,
+          job: input.job,
+          idempotencyKey: input.idempotencyKey,
+          requestedBy: input.actorUserId,
+          windowStart: input.windowStart,
+        },
+      });
+      await recordOpsAction(tx, {
+        id,
+        actorUserId: input.actorUserId,
+        actorRole: input.actorRole,
+        surface: "systemJobs.manage",
+        action: "system-job.run",
+        targetKind: "SystemJob",
+        targetId: input.job,
+        reason: input.reason,
+        after: { status: "REQUESTED", requestId: id },
+      });
+      return row;
+    });
+    return { request, created: true };
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    const existing =
+      (await prisma.adminRunRequest.findUnique({
+        where: {
+          job_idempotencyKey: {
+            job: input.job,
+            idempotencyKey: input.idempotencyKey,
+          },
+        },
+      })) ??
+      (await prisma.adminRunRequest.findFirst({
+        where: openAdminRunWhere(input.job),
+      }));
+    if (!existing) throw error;
+    return { request: existing, created: false };
   }
-  return new NextRequest(url, { method: "POST" });
 }
 
 /** The audit status follows the outcome the run row recorded, so a 207 with failed items is PARTIAL. */
-function runStatusOf(res: NextResponse): RunStatus {
+function runStatusOf(res: NextResponse): AdminRunAuditStatus {
   if (res.status === 202) return "ACCEPTED";
   const parsed = runOutcomeSchema.safeParse(res.headers.get("x-run-outcome"));
-  if (!parsed.success) return "FAILED";
-  switch (parsed.data) {
-    case "completed":
-    case "attention":
-      return "SUCCEEDED";
-    case "partial":
-      return "PARTIAL";
-    case "failed":
-      return "FAILED";
-    case "held":
-      return "HELD";
-    case "skipped":
-      return "SKIPPED";
-    case "refused":
-      return "REFUSED";
-    case "paused":
-      return "PAUSED";
-  }
+  return auditStatusOf(parsed.success ? parsed.data : null);
 }
 
 /** Hands the recorded run outcome to the console so it can name it. */
@@ -111,6 +139,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
     const { jobId, reason } = parsed.data;
+    const idempotencyKey = parsed.data.idempotencyKey ?? randomUUID();
 
     const entry = Object.hasOwn(CLEANUP_JOB_BUILDERS, jobId)
       ? CLEANUP_JOB_BUILDERS[jobId]
@@ -123,10 +152,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // The route's own gate refuses too; checking first keeps a deferred payout run from a silent refusal.
-    const maintenanceState = await getMaintenanceState();
+    // Where jobs may run, checking maintenance first keeps a deferred payout run from a silent refusal;
+    // elsewhere the handler answers its 409 production-only refusal instead.
+    const mayRun = jobsMayRunHere();
+    const maintenanceState = mayRun ? await getMaintenanceState() : null;
     if (
-      maintenanceState.phase === "DEGRADED" &&
+      maintenanceState?.phase === "DEGRADED" &&
       FINANCIAL_JOB_NAMES.has(handlers.job)
     ) {
       return NextResponse.json(
@@ -137,7 +168,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         { status: 503 },
       );
     }
-    if (maintenanceState.phase === "OFFLINE") {
+    if (maintenanceState?.phase === "OFFLINE") {
       return NextResponse.json(
         {
           error: `All system jobs are blocked during OFFLINE maintenance. End maintenance mode first.`,
@@ -147,8 +178,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const runRequest = manualRunRequest(jobId, new Date());
-    if (!runRequest) {
+    const windowStart = manualRunWindow(jobId, new Date());
+    if (windowStart === null) {
       return NextResponse.json(
         {
           error: `Job "${jobId}" has had no calendar window yet, so there is no slice to repeat.`,
@@ -162,9 +193,43 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       `[System Jobs] ${user.name || user.email} (${user.role}) running job: ${jobId}`,
     );
 
+    // A run that outlives the edge timeout is persisted before the 202 and dispatched after it;
+    // the drain-admin-run-requests ticker job retries a dispatch that never claimed it.
+    if (entry.meta.manualRun === "after" && mayRun) {
+      const { request, created } = await admitRunRequest({
+        job: jobId,
+        idempotencyKey,
+        actorUserId: user.id,
+        actorRole: String(user.role ?? "UNKNOWN"),
+        reason,
+        windowStart: windowStart ?? null,
+      });
+      if (created) {
+        // scheduleAfter never rejects: it reports a failed dispatch, and the committed row waits for the drain.
+        void scheduleAfter(
+          () => runAdminRunRequest(request),
+          "admin.system-job.dispatch",
+        );
+      }
+      return NextResponse.json(
+        {
+          success: true,
+          accepted: true,
+          dispatched: true,
+          requestId: request.id,
+          status: request.status,
+          existing: !created,
+          message: created
+            ? "Queued. The request is recorded and its status shows under Run requests."
+            : "This run was already requested; its status shows under Run requests.",
+        },
+        { status: 202 },
+      );
+    }
+
     // The audit row's id is fixed up front so the run's execution row can point at it.
     const opsActionLogId = randomUUID();
-    const logRun = (status: RunStatus, httpStatus?: number) =>
+    const logRun = (status: AdminRunAuditStatus, httpStatus?: number) =>
       recordOpsAction(prisma, {
         id: opsActionLogId,
         actorUserId: user.id,
@@ -180,34 +245,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     const run = () =>
       withRunContext({ triggeredBy: `admin:${user.id}`, opsActionLogId }, () =>
-        handlers.invoke(runRequest),
+        handlers.invoke(manualRunRequest(jobId, windowStart ?? null)),
       );
-
-    // A payout run makes a gateway call per row and would meet the edge timeout inside the request.
-    if (entry.meta.manualRun === "after") {
-      scheduleAfter(async () => {
-        try {
-          const res = await run();
-          await logRun(runStatusOf(res), res.status);
-        } catch (err) {
-          await logRun("FAILED");
-          reportSentryError(err, {
-            subsystem: "admin",
-            op: "system-job",
-            extra: { jobId },
-          });
-        }
-      }, "admin.system-job.dispatch");
-      return NextResponse.json(
-        {
-          success: true,
-          dispatched: true,
-          message:
-            "Started in the background. The outcome is recorded in the ops log.",
-        },
-        { status: 202 },
-      );
-    }
 
     let res: NextResponse;
     try {

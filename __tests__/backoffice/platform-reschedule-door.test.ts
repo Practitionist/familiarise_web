@@ -61,9 +61,6 @@ jest.mock("../../lib/email/senders/booking", () => ({
 jest.mock("../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn().mockResolvedValue(undefined),
 }));
-jest.mock("../../lib/activity/log-activity", () => ({
-  logActivity: jest.fn().mockResolvedValue(undefined),
-}));
 jest.mock("../../lib/collaborators/recipients", () => ({
   collaboratorUserIds: jest.fn().mockResolvedValue([]),
 }));
@@ -188,7 +185,11 @@ function makeMockTx(appointment: unknown) {
       create: jest.fn().mockResolvedValue({}),
       groupBy: jest.fn().mockResolvedValue([]),
     },
-    rescheduleRequest: { create: jest.fn() },
+    rescheduleRequest: {
+      create: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    payment: { count: jest.fn().mockResolvedValue(0) },
   };
 }
 

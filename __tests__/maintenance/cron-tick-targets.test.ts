@@ -260,8 +260,8 @@ describe("cron-tick dueTargets cadence", () => {
     });
   });
 
-  it("never fires more than MAX_TARGETS_PER_TICK on any tick of 400 days, windows included", () => {
-    expect(MAX_TARGETS_PER_TICK).toBe(10);
+  it("keeps a free slot under MAX_TARGETS_PER_TICK on every tick of 400 days, windows included", () => {
+    expect(MAX_TARGETS_PER_TICK).toBe(12);
     // 400 days from 2026-11-01 cover every month start, every weekday and every quarter start.
     const start = Date.UTC(2026, 10, 1);
     let min = Infinity;
@@ -272,7 +272,7 @@ describe("cron-tick dueTargets cadence", () => {
       max = Math.max(max, n);
     }
     expect(min).toBeGreaterThanOrEqual(5);
-    expect(max).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
+    expect(max).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK - 1);
   });
 
   it("fires the orphaned-payments healer only at :10/:40", () => {
@@ -330,7 +330,7 @@ describe("cron-tick dueTargets cadence", () => {
     );
   });
 
-  it("fires the Sentry ingest canary every 6 hours at :50, not every tick", () => {
+  it("fires the Sentry ingest canary once a day at 00:50 UTC", () => {
     const name = "sentry-ingest-canary";
     const ticks = Array.from({ length: 24 * 12 }, (_, i) => i * 5).filter(
       (minuteOfDay) =>
@@ -347,7 +347,7 @@ describe("cron-tick dueTargets cadence", () => {
         ).includes(name),
     );
 
-    expect(ticks).toEqual([50, 410, 770, 1130]);
+    expect(ticks).toEqual([50]);
   });
   it("never reports the Sentry ingest canary's failure TO Sentry", () => {
     /**
@@ -517,11 +517,11 @@ describe("cron-tick calendar windows", () => {
     expect(ledgers.length).toBeGreaterThan(12);
     expect(ledgers.every((t) => t.getUTCMinutes() === 55)).toBe(true);
     expect(ledgers.some((t) => t.getUTCHours() === 23)).toBe(true);
-    // A tick exactly at the cap keeps the ledger slice.
-    const full = dueTargets(utc(4, 6, 55));
-    expect(full).toContain("reconcile-gateway-settlements");
-    expect(full).toContain("reconcile-ledgers");
-    expect(full).toHaveLength(MAX_TARGETS_PER_TICK);
+    // A busy settlement tick still keeps the ledger slice.
+    const busy = dueTargets(utc(4, 6, 55));
+    expect(busy).toContain("reconcile-gateway-settlements");
+    expect(busy).toContain("reconcile-ledgers");
+    expect(busy.length).toBeLessThanOrEqual(MAX_TARGETS_PER_TICK);
   });
 
   it("runs the TDS draft only on the 5th of January, April, July and October", () => {
@@ -558,23 +558,6 @@ describe("cron-tick failed-target reporting", () => {
   });
   afterEach(() => jest.useRealTimers());
 
-  it("reports a one-off failure as a warning on one shared fingerprint", () => {
-    const ev = buildFailedTargetEvent(
-      {
-        name: "release-earnings",
-        status: 500,
-        errorBody: "Internal Server Error - Request ID: abc",
-      },
-      false,
-    );
-    expect(ev.level).toBe("warning");
-    expect(ev.fingerprint).toEqual(["cron-tick", "target-failed-once"]);
-    expect(ev.tags).toMatchObject({
-      target: "release-earnings",
-      class: "platform",
-    });
-  });
-
   it("names the target in the message and fingerprint", () => {
     const ev = buildFailedTargetEvent({
       name: "sweep-stuck-webhook-events",
@@ -590,6 +573,13 @@ describe("cron-tick failed-target reporting", () => {
       status: 0,
       outcome: "network",
     });
+    expect(
+      buildFailedTargetEvent({
+        name: "release-earnings",
+        status: 500,
+        errorBody: "Internal Server Error - Request ID: abc",
+      }).tags,
+    ).toMatchObject({ target: "release-earnings", class: "platform" });
   });
 
   it("the shared repeat filter throttles per target, not across targets", () => {

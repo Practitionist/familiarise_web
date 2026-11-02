@@ -12,6 +12,9 @@ import {
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { reportSentryError } from "@/lib/observability/report";
+import { assertNotSelfBooking } from "@/lib/booking/self-booking";
+import { apiError } from "@/lib/errors/api-error";
+import { isRefusal } from "@/lib/errors/refusal";
 
 /**
  * #1778 — "Notify me if this time opens". POST registers (idempotent on the
@@ -43,11 +46,15 @@ async function consultee() {
       ),
     };
   }
-  return { userId: auth.session.user.id };
+  return {
+    userId: auth.session.user.id,
+    consultantProfileId: auth.session.user.consultantProfileId,
+  };
 }
 
 function answer(error: unknown, op: string) {
   if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+  if (isRefusal(error)) return apiError({ tag: `[${op}]`, error });
   reportSentryError(error, { subsystem: "bookings", op });
   return NextResponse.json(
     { error: "Something went wrong — please try again." },
@@ -68,6 +75,9 @@ export async function POST(request: Request) {
     );
   }
   try {
+    assertNotSelfBooking(who.consultantProfileId, {
+      consultantProfileId: body.data.consultantProfileId,
+    });
     const row = await registerBackupInterest({
       userId: who.userId,
       consultantProfileId: body.data.consultantProfileId,

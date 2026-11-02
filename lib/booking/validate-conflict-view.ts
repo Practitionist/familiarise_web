@@ -5,12 +5,21 @@ import type {
 
 type ConflictEntry = SlotConflictResult["conflicts"][number];
 
+/** Who is busy at a conflicting time, as a validate route reports it. */
+export const CONFLICT_WITH = {
+  /** The viewing consultant's own booking. */
+  you: "you",
+  /** The client already has a session elsewhere. */
+  client: "your client",
+  /** Any other viewer: a time, never a party. */
+  other: "another booking",
+} as const;
+
 /**
- * What a validate route says about a conflicting booking, by viewer. The
- * event's own consultant is a party to every booking on their calendar, so
- * they see the booking id and the other party's name (the grid PR links it);
- * anyone else — an org admin, staff — keeps "Another user", because that
- * booking's content is not theirs (ADR 20).
+ * What a validate route says about a conflicting booking: the time, never
+ * whose booking it is. The event's own consultant learns whether the clash is
+ * on their calendar (and gets the link to their own booking) or their client's;
+ * anyone else (an org admin, staff) only that the time is booked.
  */
 export function describeConflict(
   slot: string,
@@ -18,31 +27,31 @@ export function describeConflict(
   viewer: { userId: string; isEventConsultant: boolean },
   fallbackType: string,
 ): ConflictEntry {
-  const time = new Date(slot).toLocaleString();
+  const time = `${slot}Z`;
   if (!detail || !viewer.isEventConsultant) {
     return {
       slot,
       existingAppointment: {
-        type: detail?.type ?? fallbackType,
-        with: "Another user",
+        type: "Booking",
+        with: CONFLICT_WITH.other,
         time,
       },
     };
   }
-  const other = detail.otherParty;
-  let withWhom = "Another user";
-  if (other?.userId === viewer.userId) withWhom = "You (as a consultee)";
-  else if (other?.name) withWhom = other.name;
-  // A group event has no single other party; its plan title is the name.
-  else if (detail.title) withWhom = detail.title;
+  if (detail.onConsultantCalendar) {
+    return {
+      slot,
+      existingAppointment: {
+        type: detail.type ?? fallbackType,
+        with: CONFLICT_WITH.you,
+        time,
+        appointmentId: detail.appointmentId,
+      },
+    };
+  }
   return {
     slot,
-    existingAppointment: {
-      type: detail.type,
-      with: withWhom,
-      time,
-      appointmentId: detail.appointmentId,
-    },
+    existingAppointment: { type: "Booking", with: CONFLICT_WITH.client, time },
   };
 }
 
@@ -60,9 +69,7 @@ export async function findTentativeOccurrenceIdsForEvent(
     appointment?: Partial<Pick<(typeof prisma)["appointment"], "findMany">>;
   },
   where:
-    | { webinarId: string }
-    | { classId: string }
-    | { subscriptionId: string },
+    { webinarId: string } | { classId: string } | { subscriptionId: string },
 ): Promise<string[]> {
   const rows =
     (await db.appointment?.findMany?.({
@@ -96,6 +103,10 @@ export function categorizeValidationErrors(args: {
 } {
   const conflicts: SlotConflictResult["conflicts"] = [];
   const outsideAvailability: SlotConflictResult["outsideAvailability"] = [];
+  const tooSoon: NonNullable<SlotConflictResult["tooSoon"]> = [];
+  // A finding no bucket can pin to a slot (e.g. sessions not consecutive)
+  // refuses the whole set: nothing is reported valid then.
+  let unplaced = false;
   const weeklyDistributionErrors: {
     week: string;
     slotsCount: number;
@@ -129,9 +140,17 @@ export function categorizeValidationErrors(args: {
           }
         }
       }
+    } else if (error.startsWith("[TOO_SOON]")) {
+      for (const match of error.matchAll(
+        /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/g,
+      )) {
+        tooSoon.push({ slot: match[1] });
+      }
     } else if (error.startsWith("[WEEKLY_LIMIT]")) {
       const message = error.replace("[WEEKLY_LIMIT] ", "");
-      const sessionsMatch = message.match(/has (\d+) sessions but max is (\d+)/);
+      const sessionsMatch = message.match(
+        /has (\d+) sessions but max is (\d+)/,
+      );
       const weekMatch = message.match(/Week of (.+?) has/);
       if (sessionsMatch && weekMatch) {
         weeklyDistributionErrors.push({
@@ -140,20 +159,27 @@ export function categorizeValidationErrors(args: {
           maxAllowed: parseInt(sessionsMatch[2], 10),
         });
       }
+      unplaced = true;
+    } else {
+      unplaced = true;
     }
   }
 
-  const validSlots = args.slots.filter((bodySlot) => {
-    const bodySlotSeconds = new Date(bodySlot).toISOString().slice(0, 19);
-    return (
-      !conflicts.some((c) => c.slot === bodySlotSeconds) &&
-      !outsideAvailability.some((o) => o.slot === bodySlotSeconds)
-    );
-  });
+  const validSlots = unplaced
+    ? []
+    : args.slots.filter((bodySlot) => {
+        const bodySlotSeconds = new Date(bodySlot).toISOString().slice(0, 19);
+        return (
+          !conflicts.some((c) => c.slot === bodySlotSeconds) &&
+          !outsideAvailability.some((o) => o.slot === bodySlotSeconds) &&
+          !tooSoon.some((t) => t.slot === bodySlotSeconds)
+        );
+      });
 
   return {
     conflicts,
     outsideAvailability,
+    tooSoon,
     validSlots,
     weeklyDistributionErrors,
   };

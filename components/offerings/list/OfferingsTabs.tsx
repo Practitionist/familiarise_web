@@ -12,6 +12,7 @@ export function OfferingsTabs({
   const base = `/dashboard/consultant/${consultantId}/offerings`;
   const tabs = [
     { href: base, label: "My offerings" },
+    { href: `${base}/products`, label: "Digital products" },
     { href: `${base}/collaborations`, label: "Collaborations" },
   ];
   return (

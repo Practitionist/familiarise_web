@@ -11,7 +11,7 @@ const mockCapture = jest.fn();
 
 jest.mock("@/lib/pdf/supplier", () => ({
   ...jest.requireActual("@/lib/pdf/supplier"),
-  getPlatformSupplier: () => mockSupplier(),
+  platformSupplierForJob: () => mockSupplier(),
 }));
 jest.mock("@/lib/payments/billing/consumer-invoice", () => ({
   ...jest.requireActual("@/lib/payments/billing/consumer-invoice"),
@@ -46,14 +46,11 @@ beforeEach(() => {
 
 it("skips without reading payments when PLATFORM_GSTIN is unset", async () => {
   mockSupplier.mockReturnValue(null);
-  const result = await healConsumerInvoices({
-    limit: 25,
-    windowStart: now,
-    now,
-  });
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+  const result = await healConsumerInvoices({ limit: 25, now });
   expect(result.skipped).toBe("PLATFORM_GSTIN not configured");
   expect(mockFindMany).not.toHaveBeenCalled();
-  expect(mockCapture).toHaveBeenCalledTimes(1);
+  expect(mockCapture).not.toHaveBeenCalled();
 });
 
 it("mints from the pivot, wraps around, and treats a lost mint race as done", async () => {

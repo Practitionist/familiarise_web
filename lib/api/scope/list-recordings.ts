@@ -100,6 +100,7 @@ export interface ListRecordingsResult {
 }
 
 import { buildUserAppointmentAccessOr } from "./list-documents";
+import { orgOwnedAppointmentWhere } from "./list-appointments";
 
 /** Own appointments, plus every run of a shared-recordings webinar plan the caller holds a live seat in. */
 function recordingAppointmentAccessOr(
@@ -145,20 +146,13 @@ function buildWhere(params: ListRecordingsParams): Prisma.RecordingWhereInput {
   if (params.scope.kind === "org") {
     return {
       ...base,
-      organizationId: params.scope.orgId,
-      // Read-level twin of the DEACTIVATED refusal in `resolveOrgScope`, for
-      // the reason that one is opt-in: this query has no org row in scope to
-      // test, and the synchronous resolver cannot learn the org's status from
-      // the membership rows the caller pre-fetched. An ACTIVE membership
-      // outlives the org the teardown stamps DEACTIVATED, so without this a
-      // torn-down org's recordings — other people's sessions — keep serving
-      // through the personal `?orgScope=` door. SUSPENDED stays readable: its
-      // OWNER has to be able to find whatever got it suspended.
-      //
-      // Rides the denormalized `organizationId` the org arm already filters on,
-      // so the relation can never be NULL here and `is` cannot drop a matching
-      // row — same trade as `list-appointments.ts`.
-      organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
+      // A recording belongs to the org that owns its booking, on the same
+      // grounds as the org's appointment list (readable org included).
+      meeting: {
+        occurrence: {
+          appointment: orgOwnedAppointmentWhere(params.scope.orgId),
+        },
+      },
     };
   }
   // `orgMember` = ONE member's own rows within an org. It must never fall

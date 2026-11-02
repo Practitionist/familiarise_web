@@ -9,7 +9,7 @@ import {
   dayState,
   type DayMarkSlot,
 } from "@/app/explore/experts/[consultantId]/day-state";
-import { availabilityQueryKey } from "@/app/explore/experts/[consultantId]/hooks/useAvailabilityWindow";
+import { availabilityQueryKey } from "@/lib/scheduling/use-availability-window";
 
 const NOW = new Date("2026-10-14T10:00:00.000Z");
 const TARGET_DAY = new Date("2026-10-20T00:00:00.000Z");

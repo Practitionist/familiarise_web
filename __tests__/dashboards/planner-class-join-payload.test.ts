@@ -40,7 +40,7 @@ jest.mock("../../lib/auth-helpers", () => ({
 jest.mock("../../lib/api/scope/parse", () => ({
   __esModule: true,
   resolveOrgScope: () => ({ ok: true, scope: { kind: "all" } }),
-  scopeOrgId: () => null,
+  scopeToPlanHostWhere: () => undefined,
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,

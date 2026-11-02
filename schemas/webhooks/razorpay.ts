@@ -29,6 +29,7 @@ export const razorpayPaymentEntitySchema = z
     status: z.string(),
     order_id: z.string().nullable().optional(),
     notes: razorpayNotesSchema,
+    method: z.string().optional().catch(undefined),
     error_description: z.string().nullable().optional(),
     /** Gateway fee in paise, GST included; set once captured. */
     fee: z.number().int().nonnegative().nullable().optional(),
@@ -192,6 +193,7 @@ const orderEventPayloadSchema = z.object({
           id: z.string(),
           amount: z.number().int().optional(),
           notes: razorpayNotesSchema,
+          method: z.string().optional().catch(undefined),
           fee: z.number().int().nonnegative().nullable().optional(),
           tax: z.number().int().nonnegative().nullable().optional(),
         })

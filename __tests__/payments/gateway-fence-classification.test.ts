@@ -169,9 +169,26 @@ describe("gateway fence classification", () => {
   it.each([
     ["EVENT_CHECKOUT_BUSY", "Someone Just Beat You To It"],
     ["CONSULTEE_BOOKING_BUSY", "Booking Already In Progress"],
+    ["CHECKOUT_IN_PROGRESS", "Still Preparing Your Checkout"],
+    ["SEAT_HOLD_LAPSED", "Your Seat Hold Ended"],
   ])("gives %s a not-charged toast (%s)", (code, title) => {
     const toast = getErrorToast(code);
     expect(toast.title).toBe(title);
     expect(toast.description).toContain("card was not charged");
   });
+
+  // Resolved by code, so the 409 survives any rewording of the sentence.
+  it.each(["SEAT_HOLD_LAPSED", "CHECKOUT_IN_PROGRESS"])(
+    "classifies %s by its code as a 409 business answer",
+    (code) => {
+      const classified = classifyError(
+        Object.assign(new Error("Reworded sentence with no keywords"), {
+          code,
+        }),
+      );
+      expect(classified.httpStatus).toBe(409);
+      expect(classified.isBusinessError).toBe(true);
+      expect(classified.errorType).toBe(code);
+    },
+  );
 });

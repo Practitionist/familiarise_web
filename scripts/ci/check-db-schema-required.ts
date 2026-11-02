@@ -27,6 +27,11 @@
  * schema-bearing pull request, which is why the earlier whole-schema drift
  * check was moved out of pull-request CI. See docs/prisma/README.md.
  *
+ * `--live` is the release gate for a pull request into `prod`: it diffs the
+ * whole schema against the live database (`--from-config-datasource`) instead
+ * of against the merge base, so code cannot ship before the human-run push.
+ * Sidecar objects and the database-ahead direction are still never read.
+ *
  * Read-only: it reads a schema file and reads the catalog. It never writes.
  */
 import "dotenv/config";
@@ -117,11 +122,24 @@ export function requiredObjects(plan: string): RequiredObject[] {
   for (const statement of planStatements(plan)) {
     const createdTable = /\bCREATE\s+TABLE\s+"([^"]+)"/i.exec(statement);
     if (createdTable) {
-      out.push({
-        kind: "table",
-        name: createdTable[1],
-        ddl: `${statement.trim()};`,
-      });
+      const table = createdTable[1];
+      out.push({ kind: "table", name: table, ddl: `${statement.trim()};` });
+      // An earlier push of the same branch may have created the table without
+      // a column added since, so each column is required on its own.
+      const open = statement.indexOf("(");
+      const close = statement.lastIndexOf(")");
+      if (open !== -1 && close > open) {
+        for (const clause of splitClauses(statement.slice(open + 1, close))) {
+          const column = /^"([^"]+)"/.exec(clause);
+          if (!column) continue;
+          out.push({
+            kind: "column",
+            owner: table,
+            name: column[1],
+            ddl: `ALTER TABLE "${table}" ADD COLUMN ${clause};`,
+          });
+        }
+      }
       continue;
     }
 
@@ -280,6 +298,28 @@ function branchPlan(base: string): string {
   );
 }
 
+/** The plan that turns the live database into this branch's schema; needs DIRECT_URL (prisma.config.ts). */
+function livePlan(): string {
+  if (!process.env.DIRECT_URL) {
+    throw new Error(
+      "DIRECT_URL is not set, so the live database cannot be diffed",
+    );
+  }
+  const prismaBin = path.join(ROOT, "node_modules", ".bin", "prisma");
+  return execFileSync(
+    prismaBin,
+    [
+      "migrate",
+      "diff",
+      "--from-config-datasource",
+      "--to-schema",
+      SCHEMA,
+      "--script",
+    ],
+    { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+}
+
 /** Every table, column, enum type and enum value in the live database. */
 export type LiveCatalog = {
   tables: Set<string>;
@@ -344,6 +384,17 @@ export async function readLiveCatalog(
   }
 }
 
+/** The fix line for a missing object; a NOT NULL column with no default is flagged, since Postgres rejects it on a table with rows. */
+export function printedFix(o: RequiredObject): string {
+  const rejectsRows =
+    o.kind === "column" &&
+    /\bNOT\s+NULL\b/i.test(o.ddl) &&
+    !/\bDEFAULT\b/i.test(o.ddl);
+  return rejectsRows
+    ? `${o.ddl}  -- NOT NULL with no default: fails if "${o.owner}" already has rows`
+    : o.ddl;
+}
+
 /** Is this object present in the live database? */
 export function isPresent(o: RequiredObject, catalog: LiveCatalog): boolean {
   switch (o.kind) {
@@ -362,8 +413,32 @@ export function isPresent(o: RequiredObject, catalog: LiveCatalog): boolean {
   }
 }
 
+/** What the database lacks; a missing table's CREATE already carries its columns, so they are not listed again. */
+export function missingObjects(
+  required: RequiredObject[],
+  catalog: LiveCatalog,
+): RequiredObject[] {
+  const missing = required.filter((o) => !isPresent(o, catalog));
+  const missingTables = new Set(
+    missing.filter((o) => o.kind === "table").map((o) => o.name),
+  );
+  return missing.filter(
+    (o) => !(o.kind === "column" && o.owner && missingTables.has(o.owner)),
+  );
+}
+
 async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const live = argv.includes("--live");
   const connectionString = process.env.DATABASE_URL;
+  // The release gate has nothing to skip to: without the live database it must fail.
+  if (live && (!connectionString || !process.env.DIRECT_URL)) {
+    console.error(
+      "check-db-schema-required: --live needs DATABASE_URL and DIRECT_URL — refusing to pass without the live database.",
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (!connectionString) {
     // A gate that cannot run must not pass. Outside CI there is simply no live
     // database to compare against and skipping is the useful answer; inside
@@ -384,8 +459,13 @@ async function main(): Promise<void> {
   let plan: string;
   let ref = "origin/dev";
   try {
-    ref = baseRef(process.argv.slice(2));
-    plan = branchPlan(baseSchemaFile(ref));
+    if (live) {
+      ref = "the live database";
+      plan = livePlan();
+    } else {
+      ref = baseRef(argv);
+      plan = branchPlan(baseSchemaFile(ref));
+    }
   } catch (error) {
     // A diff that cannot be computed is not a pass.
     console.error(
@@ -404,8 +484,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  const catalog = await readLiveCatalog(connectionString);
-  const missing = required.filter((o) => !isPresent(o, catalog));
+  // --live reads the catalog from the same DIRECT_URL target the diff used.
+  const catalog = await readLiveCatalog(
+    (live && process.env.DIRECT_URL) || connectionString,
+  );
+  const missing = missingObjects(required, catalog);
 
   if (missing.length === 0) {
     console.log(
@@ -431,7 +514,7 @@ async function main(): Promise<void> {
       "",
       "Apply them to the shared database, then re-run this check:",
       "",
-      ...missing.map((o) => `  ${o.ddl}`),
+      ...missing.map((o) => `  ${printedFix(o)}`),
       "",
       "Do NOT run `prisma db push` from this branch. One database serves dev and prod,",
       "and a push from a branch that predates a column proposes to drop it.",

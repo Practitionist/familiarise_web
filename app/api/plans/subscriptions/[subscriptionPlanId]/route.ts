@@ -12,7 +12,7 @@ import {
   faqReplaceNested,
 } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
-import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { planTotalSessions } from "@/lib/booking/entitlement";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 import {
   archivedAtForArchive,
@@ -152,16 +152,7 @@ export async function PUT(
         validatedData.sessionDurationInHours ??
         existingPlan.sessionDurationInHours;
 
-      // Use accurate week counting instead of fixed * 4 approximation
-      const metricStartDate = new Date();
-      metricStartDate.setHours(0, 0, 0, 0);
-      const metricEndDate = new Date(metricStartDate);
-      metricEndDate.setMonth(metricEndDate.getMonth() + durationInMonths);
-      const estimatedWeeks = ScheduleCalculationService.countWeeks(
-        metricStartDate,
-        metricEndDate,
-      );
-      totalSessions = sessionsPerWeek * estimatedWeeks;
+      totalSessions = planTotalSessions({ sessionsPerWeek, durationInMonths });
       totalHours = totalSessions * sessionDurationInHours;
     }
 

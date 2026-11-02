@@ -18,7 +18,7 @@ import {
   CREDIT_NOTE_REFUND_STATUSES,
   mintConsumerInvoice,
 } from "@/lib/payments/billing/consumer-invoice";
-import { getPlatformSupplier } from "@/lib/pdf/supplier";
+import { platformSupplierForJob } from "@/lib/pdf/supplier";
 
 /** Payments created before this lookback are not healed automatically. */
 export const CONSUMER_INVOICE_LOOKBACK_DAYS = 90;
@@ -41,20 +41,14 @@ export interface HealConsumerInvoicesResult {
  */
 export async function healConsumerInvoices(opts: {
   limit: number;
-  windowStart?: Date;
   startedAt?: number;
   now?: Date;
   pivot?: string;
 }): Promise<HealConsumerInvoicesResult> {
-  // Null for an unset, malformed or wrong-state GSTIN: the run skips, no row is touched.
-  if (!getPlatformSupplier()) {
+  // An unset GSTIN skips before any row is read; a malformed or wrong-state one throws.
+  if (!platformSupplierForJob()) {
     const skipped: ConfigSkip = "PLATFORM_GSTIN not configured";
-    reportConfigSkip(
-      "heal-consumer-invoices",
-      skipped,
-      opts.windowStart,
-      opts.now,
-    );
+    reportConfigSkip("heal-consumer-invoices", skipped);
     return { scanned: 0, minted: 0, declined: 0, failed: 0, skipped };
   }
   // Fail-closed: every mint takes a number from the gapless Rule 46 series.

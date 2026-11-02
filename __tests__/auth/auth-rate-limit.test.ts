@@ -20,6 +20,7 @@ import {
   type RateLimitRedis,
 } from "../../lib/auth/rate-limit";
 import { betterAuth } from "better-auth";
+import { CLIENT_IP_HEADER } from "../../lib/request-ip";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import {
   ACCOUNT_TIERS,
@@ -220,7 +221,7 @@ describe("per-account sign-in throttle on a real instance", () => {
         headers: {
           "content-type": "application/x-www-form-urlencoded",
           origin: APP,
-          "x-forwarded-for": ip,
+          [CLIENT_IP_HEADER]: ip,
         },
         body: new URLSearchParams({ email: "victim@b.test", password }),
       }),
@@ -264,10 +265,10 @@ describe("per-account sign-in throttle on a real instance", () => {
 
   it("names the /24 or /48 the caller signs in from", () => {
     expect(
-      networkPrefix(new Headers({ "x-forwarded-for": "203.0.113.77" })),
+      networkPrefix(new Headers({ [CLIENT_IP_HEADER]: "203.0.113.77" })),
     ).toBe("203.0.113.0/24");
     expect(
-      networkPrefix(new Headers({ "x-forwarded-for": "2001:db8:abcd:12::1" })),
+      networkPrefix(new Headers({ [CLIENT_IP_HEADER]: "2001:db8:abcd:12::1" })),
     ).toBe("2001:0db8:abcd:0000:0000:0000:0000:0000");
   });
 

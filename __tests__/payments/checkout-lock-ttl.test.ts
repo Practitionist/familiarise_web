@@ -3,31 +3,27 @@
  */
 
 /**
- * #832 follow-up — bugs/finances/high-concurrency-and-spikes.md documents the
- * serverless-freeze worst case for CLASS: the platform can suspend the lock
- * holder AFTER the single checked renewal while Redis keeps counting the TTL
- * down, so the old 300s CLASS budget could expire mid-checkout and admit a
- * second instance.
+ * Checkout renews its grant at the top of every Serializable attempt, so a TTL
+ * only has to outlive one attempt plus slack. A key held by a crashed
+ * invocation (the event key is shared by every buyer of that event) must stall
+ * sales for seconds, not minutes.
  *
- * Asserts the IMPORTED constant (CodeRabbit #1220 triage): source-text regexes
- * break on formatter changes (600_000 ↔ 600000) and pass through duplicate-key
- * overrides — neither can lie here.
+ * Asserts the IMPORTED constant: source-text regexes break on formatter
+ * changes and pass through duplicate-key overrides.
  */
 
 import { CHECKOUT_LOCK_TTL_MS } from "../../utils/appointmentlock";
 
-describe("CHECKOUT_LOCK_TTL_MS (#832 serverless-freeze worst case)", () => {
-  it("raises CLASS to the documented freeze worst case: 600s", () => {
-    expect(CHECKOUT_LOCK_TTL_MS.CLASS).toBe(600_000);
+describe("CHECKOUT_LOCK_TTL_MS", () => {
+  it("sizes every event key to one attempt, never minutes", () => {
+    for (const type of ["SUBSCRIPTION", "WEBINAR", "CLASS"]) {
+      expect(CHECKOUT_LOCK_TTL_MS[type]).toBeLessThanOrEqual(60_000);
+      // One 25 s attempt plus the 10 s slack checkout renews to.
+      expect(CHECKOUT_LOCK_TTL_MS[type]).toBeGreaterThanOrEqual(35_000);
+    }
   });
 
-  it("no longer carries the insufficient 300s CLASS budget", () => {
-    expect(CHECKOUT_LOCK_TTL_MS.CLASS).not.toBe(300_000);
-  });
-
-  it("keeps the smaller shapes on their sized #832 budgets", () => {
+  it("keeps the consultation slot budget", () => {
     expect(CHECKOUT_LOCK_TTL_MS.CONSULTATION).toBe(60_000);
-    expect(CHECKOUT_LOCK_TTL_MS.SUBSCRIPTION).toBe(120_000);
-    expect(CHECKOUT_LOCK_TTL_MS.WEBINAR).toBe(120_000);
   });
 });

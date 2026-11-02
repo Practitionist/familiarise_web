@@ -10,6 +10,7 @@
 
 1. [Overview](#overview)
 2. [Platform Limits, Plan, Region and the MCP](#platform-limits-plan-region-and-the-mcp)
+   - [Billing](#billing)
 3. [Site & Branch Architecture](#site--branch-architecture)
 4. [Environment Variables — What's There and Why](#environment-variables--whats-there-and-why)
 5. [The BetterAuth / "Invalid Origin" Incident](#the-betterauth--invalid-origin-incident)
@@ -95,6 +96,18 @@ A request has two ceilings: the Lambda execution limit is 60 seconds, but the CD
 
 The Netlify MCP (`@netlify/mcp`, configured in `.mcp.json.example`) reads projects, deploys, teams, and env vars and writes env vars; it cannot read logs or change limits. Warm its npx cache by hand before the first `/mcp` connect, because a cold install takes ~28 s against a 30 s connect timeout and a timed-out install leaves a torn cache. Function logs come from `netlify logs --url <deploy permalink> --json`; plan capabilities from `netlify api listAccountsForUser`; deploy history with per-function memory and region from `netlify api listSiteDeploys`. The recipes are in `.claude/skills/deployment/netlify/mcp-and-cli.md`.
 
+### Billing
+
+Figures marked MEASURED come from Netlify receipts (team `teetangh`, invoices CFJUKK-00015 to CFJUKK-00020); figures marked DOCS come from Netlify's pricing pages or Netlify support (ticket #1112198, 17 September 2026). The agent-facing version, with the credit-plan details, is `.claude/skills/billing-guardrails/references/netlify.md`.
+
+- **Plan and price (MEASURED).** Legacy Pro at $19 per member per month. A second member (a Developer) was added on 5 October and billed $18.39 prorated, so the next bill is about $63 if invocations stay above 125,000.
+- **The only meter that has crossed a line (MEASURED).** The `familiarise` site's function invocations were 24,804 (May), 48,552 (June), 75,897 (August) and 282,162 (4 September to 3 October). Past 125,000 per site, Netlify adds a flat $25 up to 2,000,000, which is why the 6 October bill was $44. Bandwidth was 1.29, 1.60, 8.26 and 8.36 GB against 1 TB included, edge function invocations rose from 52,000 to 284,000 against 2,000,000 free, and build minutes peaked at 9,777 of 25,000.
+- **No hard cap (DOCS).** Legacy Pro has only usage alerts at 50, 75, 90 and 100 percent. Overage above 2,000,000 invocations is billed per 500,000 ([legacy plans](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-legacy-plans/legacy-pricing-plans/)).
+- **What counts (DOCS).** Keep-warm pings bill like real invocations (about 26,000 a month for three pings every five minutes; retired on 3 October). Both keep-warm figures were real at different times: 32,400 a month was the 4-minute configuration (three pings every four minutes), and about 26,000 a month is the support ticket's figure for three pings every five minutes. A cold-start stall bills as duration: 28 seconds at 1,024 MB is about 28 GB-seconds against the 1,000 GB-hour allowance.
+- **The ticker (MEASURED, then ESTIMATE).** Before the skip-idle change, the five-minute ticker made about 94,850 invocations a month on `dev` (8,640 ticks plus 86,210 target calls) plus 8,640 slot-claim calls, and 99.8 percent of runs in a 7-day window processed zero items. After it, the idle state is about 22,450 a month (8,640 ticks, 8,640 claim-and-probe calls and about 5,170 always-run dispatches) plus one call per due tick that has work. See `docs/decisions/2026-11-01-ticker-skip-idle-targets.md`.
+- **Uptime monitors.** Better Stack checks `familiarisenow.com` and `/api/health` every 3 minutes (`docs/maintenance/00-betterstack-setup.md`). The homepage is ISR (`revalidate = 3600` in `app/page.tsx`) and served from the CDN, so its check is not a function invocation; the `/api/health` check is, at about 14,400 a month per checking region. The owner decided on 2026-11-01 to keep both monitors unchanged.
+- **Credit-based plans (DOCS; PENDING, not decided).** Pro there is $20 flat with 3,000 credits and unlimited members. A production deploy costs 15 credits, Deploy Previews and branch deploys are free, compute is 10 credits per GB-hour (Serverless, Scheduled and Background Functions; Edge Functions do not count), web requests are 2 credits per 10,000, bandwidth is 20 credits per GB, and forms are free. A pack is 1,500 credits for $10, auto-recharge is off by default, and free-plan sites pause when credits run out. Our usage is estimated at 1,000 to 1,300 credits a month. The switch is permanent ("You cannot revert to a Legacy plan from a Credit-based plan"). An email asking Netlify support to confirm region pinning, Background Functions and seats before switching was drafted on 2026-11-01 and is not yet sent. Sources: [pricing](https://www.netlify.com/pricing/), [how credits work](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/how-credits-work/).
+
 ---
 
 ## Site & Branch Architecture
@@ -148,6 +161,15 @@ The `.env.sample` file is the canonical reference for what vars are needed. It i
 | `BETTER_AUTH_URL`             | `https://familiarisenow.com` | `http://localhost:3000` | **This was the root cause of the invalid origin bug** — see below      |
 | `BETTER_AUTH_TRUSTED_ORIGINS` | `https://familiarisenow.com` | `http://localhost:3000` | Comma-separated additional allowed CORS origins                        |
 | `NEXT_PUBLIC_APP_URL`         | `https://familiarisenow.com` | `http://localhost:3000` | Used by auth client + for building absolute URLs (e.g. referral links) |
+
+### Variables that must differ by context
+
+Two variables decide what a non-production deploy may do to the database it shares with production. Check both in the Netlify UI after any context change.
+
+- **`NEXT_PUBLIC_SENTRY_ENVIRONMENT`** is `production` in the production context only. It must stay `preview` on deploy-preview and branch-deploy. Only a `production` deploy runs background jobs and writes production-only shared state (the maintenance window, the discount-code pause and the `cron:heartbeat:last` key); every other deploy refuses jobs with 409 `JOB_RUN_PRODUCTION_ONLY` and skips those writes (`lib/cron/dispatch-refusal.ts`, `lib/production-state.ts`). Netlify's `deploy_context` is a Sentry tag only, so `branch-deploy` and `deploy-preview` both record `preview`.
+- **`CRON_SECRET`** has a separate value per context (set 2026-10-30), so a preview's secret cannot call production's cleanup routes.
+
+Local `next dev` is not a deploy: it still runs jobs, against whatever database `.env` names, but it never toggles maintenance or touches the heartbeat.
 
 ### Optional performance variables
 
@@ -1214,7 +1236,7 @@ Unlike Vercel Fluid Compute or an always-on Node server (which share one process
 If your SaaS handles payments, bookings, refunds, emails, or webhooks, you need reliable background sweeps:
 
 1. **Never rely on GitHub Actions `schedule:` for sub-hourly SLAs (`#866`):**
-   ADR 22 measured GitHub Actions `*/15 * * * *` workflows firing roughly once every **~100 minutes** during peak GitHub load — 6× slower than declared. Use GitHub Actions only as an hourly/daily/weekly backstop (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`), and use Netlify Scheduled Functions (`netlify/functions/cron-tick.mts` at `*/5 * * * *`) for latency-sensitive sweeps.
+   ADR 22 measured GitHub Actions `*/15 * * * *` workflows firing roughly once every **~100 minutes** during peak GitHub load — 6× slower than declared. Do not schedule registry jobs from GitHub Actions at all: every job, hourly, daily and weekly included, runs on the Netlify scheduled function (`netlify/functions/cron-tick.mts` at `*/5 * * * *`), and the three fleet workflows are deleted.
 2. **Undocumented Netlify Scheduled Function Trap — Returning `5xx` Triggers 3× Immediate Retries (`#1686`):**
    Netlify's docs state that Scheduled Functions ignore their return body and do not mention retries. In production logs (`2026-09-17`), we proved that **whenever a Scheduled Function returns HTTP `500`, Netlify immediately re-invokes it 3 times within ~10 seconds** (`22:50:18`, `22:50:25`, `22:50:35`), re-firing every downstream job 3×!
    - **Rule:** Scheduled functions must **always return HTTP `200`** (`statusFor` in `cron-tick.mts`) and report target failures via structured logs + Sentry Crons check-in (`sendCheckIn("error", durationMs)`).
@@ -1248,7 +1270,7 @@ If your SaaS handles payments, bookings, refunds, emails, or webhooks, you need 
 4. **Protect Sentry Error Quota with a Circuit Breaker + Ingest Canary (`#1868`, `#1933`):**
    When Sentry's monthly error quota is exhausted, Sentry continues returning `200 OK` for sessions and transactions while **silently dropping 100% of error events**. Protect your quota with:
    - Per-process rate limiting / circuit breaker in `sentry.shared.config.ts` (`#1933`) so a 5-minute database or Redis flap cannot emit 5,000 events.
-   - A six-hourly `sentry-ingest-canary` (`#1868`) that verifies a test event is actually stored and pages via email (not Sentry!) if ingest goes dark.
+   - A daily `sentry-ingest-canary` that reads Sentry's `stats_v2` error outcomes (it sends no event) and pages via email and Better Stack (not Sentry!) if ingest goes dark.
 
 ---
 
@@ -1450,6 +1472,6 @@ The following approaches were previously tested or deployed on Netlify and have 
 - **Scheduled Keep-Warm Pinger (`netlify/functions/keep-warm.mts` & `KEEP_WARM_CONCURRENCY`)**: Previously ran every 4 minutes (3 parallel pings = 32,400 invocations/month against `/api/perf/probe-bare`) to keep 3 Next.js Lambda containers warm while `#1124`'s cold-start stall was misattributed to AWS Lambda `ap-southeast-1` container provisioning. Both `netlify/functions/keep-warm.mts` and `__tests__/maintenance/keep-warm.test.ts` were permanently deleted in PR `#1972` once disabling `preloadEntriesOnStart` reduced cold starts across 12-way bursts to `0.97–1.90s` (guarded by `__tests__/lib/next-config-preload.test.ts`).
 - **2048 MB Per-Function Memory Overrides in `netlify.toml`**: Tested via A/B deployment to mitigate cold-instance stalls; raising Lambda memory to 2048 MB doubled GB-hour billing without preventing `NextNodeServer`'s 606-route preload stall.
 - **Standalone Background Function for Ledger Reconciliation (`netlify/functions/reconcile-ledgers-background.mts`)**: Previously used a 15-minute Netlify Background Function with multi-step database cursors (`advanceReconcileRun`, `ReconcileCursorState`) because row-by-row JS reconciliation timed out at the ~26 s edge cap (and Background Functions silently do not run on deploy previews). Superseded by rewriting `runLedgerReconciliation` (`scripts/reconcile/reconcile-ledgers.ts`) into 5 set-based SQL `GROUP BY` queries that complete in milliseconds inside standard Route Handlers (`/api/cleanup/reconcile-ledgers` and `/api/admin/reconcile-ledgers`).
-- **41 Standalone Per-Job GitHub Actions Cron YAML Files & 50 `/api/cleanup/<job>/route.ts` Route Wrappers**: Previously each scheduled sweep had its own `.github/workflows/<job>.yml` file, `jobs/<domain>/<job>.ts` wrapper, and individual `/api/cleanup/<job>/route.ts` folder. Consolidated into a single dynamic route (`app/api/cleanup/[job]/route.ts` backed by `lib/cron/cleanup-registry.ts`), `netlify/functions/cron-tick.mts` for sub-15-minute phase-staggered sweeps, and 3 tiered GitHub Actions workflows (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`).
+- **41 Standalone Per-Job GitHub Actions Cron YAML Files & 50 `/api/cleanup/<job>/route.ts` Route Wrappers**: Previously each scheduled sweep had its own `.github/workflows/<job>.yml` file, `jobs/<domain>/<job>.ts` wrapper, and individual `/api/cleanup/<job>/route.ts` folder. Consolidated into a single dynamic route (`app/api/cleanup/[job]/route.ts` backed by `lib/cron/cleanup-registry.ts`), and `netlify/functions/cron-tick.mts` for every schedule. (The three tiered GitHub Actions workflows that followed `cron-intra-day.yml`, `cron-daily.yml` and `cron-weekly.yml` were later deleted.)
 
 > **See Also**: [Lighthouse Audit & Core Web Vitals Playbook](../performance/05-lighthouse-audit-and-cwv-playbook.md) for client-side Core Web Vitals (LCP, TBT, CLS), `next/image` `remotePatterns` governance, lazy Sentry client SDK loading (`instrumentation-client.ts`), and application/platform anti-runaway billing guardrails (`#1973`).

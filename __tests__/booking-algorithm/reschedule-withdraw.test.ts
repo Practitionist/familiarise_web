@@ -34,7 +34,12 @@ describe("WITHDRAWN is a first-class terminal state", () => {
   it("cannot be reached from a request that already resolved", () => {
     // The CAS guard is what stops a withdrawal un-releasing slots that a
     // concurrent accept has already re-confirmed.
-    for (const settled of ["ACCEPTED", "AUTO_ACCEPTED", "DECLINED", "EXPIRED"]) {
+    for (const settled of [
+      "ACCEPTED",
+      "AUTO_ACCEPTED",
+      "DECLINED",
+      "EXPIRED",
+    ]) {
       expect(RESCHEDULE_ALLOWED_FROM.WITHDRAWN).not.toContain(settled);
     }
   });

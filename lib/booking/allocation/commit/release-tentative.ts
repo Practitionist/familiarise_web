@@ -11,6 +11,8 @@ import {
 import type { FreedWindow } from "@/lib/booking/class-series";
 import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/scheduling-engine/slotTimeUtils";
 import { getEventRelationField } from "@/lib/booking/allocation/identity";
+import { isVoidRequestRow } from "@/lib/booking/allocation/counts";
+import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 
 /**
  * Delete existing appointments for an event
@@ -263,6 +265,9 @@ export async function deleteExistingAppointments(
         occurrences: {
           include: {
             meeting: { select: { id: true } },
+            // An incident remedy cascades with its session; such a row is
+            // never deleted (see the refusal below).
+            _count: { select: { incidentRemedies: true } },
           },
         },
         _count: { select: { payment: true } },
@@ -288,11 +293,25 @@ export async function deleteExistingAppointments(
       (slot.completionStatus !== undefined &&
         !slot.isTentative &&
         new Date(slot.endsAt) <= now);
+    // Tombstoned and cancelled rows hold no time; they are history the
+    // re-plan keeps, never rows it deletes or frees.
+    const isReplaceable = (
+      slot: (typeof existingAppointments)[number]["occurrences"][number],
+    ): boolean =>
+      slot.meeting === null &&
+      !isProtectedSessionlessSlot(slot) &&
+      !isVoidRequestRow(slot);
     const freed = existingAppointments.flatMap((appointment) =>
-      appointment.occurrences.filter(
-        (slot) => slot.meeting === null && !isProtectedSessionlessSlot(slot),
-      ),
+      appointment.occurrences.filter(isReplaceable),
     );
+    // Until the busy-time ledger replaces this hard delete: a session that
+    // carries an incident remedy is never deleted under it.
+    if (freed.some((slot) => (slot._count?.incidentRemedies ?? 0) > 0)) {
+      throw new AllocationConflictError(
+        "A session in this booking has a platform-incident remedy attached. Settle the remedy before re-planning these sessions.",
+        "SESSION_HAS_REMEDY",
+      );
+    }
 
     await Promise.all(
       existingAppointments.map(async (appointment) => {
@@ -308,22 +327,27 @@ export async function deleteExistingAppointments(
         const hasProtectedSessionless = appointment.occurrences.some(
           isProtectedSessionlessSlot,
         );
+        const hasVoidHistory = appointment.occurrences.some(isVoidRequestRow);
         const occurrenceDeleteWhere: Prisma.AppointmentOccurrenceWhereInput =
           hasProtectedSessionless
             ? {
                 appointmentId: appointment.id,
                 meeting: { is: null },
+                deletedAt: null,
                 endsAt: { gt: now },
-                completionStatus: { not: "COMPLETED" },
+                completionStatus: { notIn: ["COMPLETED", "CANCELLED"] },
               }
             : {
                 appointmentId: appointment.id,
                 meeting: { is: null },
+                deletedAt: null,
+                completionStatus: { not: "CANCELLED" },
               };
         if (
           (appointment._count?.payment ?? 0) > 0 ||
           hasHeldSession ||
-          hasProtectedSessionless
+          hasProtectedSessionless ||
+          hasVoidHistory
         ) {
           // Keep the Appointment (and its Payment + ConsultantEarnings audit
           // trail); strip its slots. No-op for the slot-less subscription

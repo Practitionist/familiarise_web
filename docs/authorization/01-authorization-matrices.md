@@ -183,14 +183,9 @@ notion of _which_ organisation. `MAINTAINER` of org A and `MAINTAINER` of org B
 are the same string. The org axis is inherently two-keyed — `(orgId, role)` —
 and a statement list cannot be scoped per row of a `Membership` table.
 
-**3. `hasPermission` has a live defect, and we should not put a security guard
-on it.** better-auth issue **#7822** reports that `hasPermission` skips the
-_dynamic_ roles map for role names that collide with the plugin's built-in ones,
-so a role literally called `admin` or `user` is authorised from the built-in
-`defaultRoles` statement regardless of what the `roles` configuration says.
-
-In the installed `better-auth@1.7.7` the mechanism is visible in
-`node_modules/better-auth/dist/plugins/admin/has-permission.mjs`:
+**3. `hasPermission` is role-name lookup, not a policy engine, so we do not
+put a security guard on it.** In the installed `better-auth@1.7.14`
+(`node_modules/better-auth/dist/plugins/admin/has-permission.mjs`):
 
 ```js
 const acRoles = input.options?.roles || defaultRoles;
@@ -198,13 +193,14 @@ for (const role of roles)
   if (acRoles[role]?.authorize(input.permissions)?.success) return true;
 ```
 
-and `defaultRoles` is `{ admin: adminAc, user: userAc }` — **lowercase**. Our
-enum is uppercase (`ADMIN`, `STAFF`), and `lib/auth.ts` supplies an explicit
-`roles` map with uppercase keys, so today the two do not collide. The shape is
-live, though: renaming `ADMIN` to `admin` would silently promote it to the
-plugin's full `adminAc` statement, including `impersonate` and `set-password`,
-and the failure would be a _grant_, not a refusal — the class of bug that is
-found in an incident rather than in review.
+When `roles` is supplied, as `lib/auth.ts` does with an explicit uppercase map
+(`ADMIN`, `STAFF`), the built-in `defaultRoles` (`{ admin: adminAc, user:
+userAc }`) is never consulted. An earlier version of this page said a role named
+`admin` falls back to `defaultRoles` (better-auth issue #7822). That issue
+concerned the organization plugin's dynamic roles, is closed, and does not apply
+here. The real risks are narrower: if the `roles` option were ever dropped, every
+role would resolve against `defaultRoles`, and the check knows nothing about
+organisations (point 2).
 
 `staffAc` grants only `user: ["list", "get"]`: no `set-role`, no `ban`, no
 `session:*` (#1132 — `/admin/set-role` never compared actor to target rank, so

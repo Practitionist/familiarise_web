@@ -83,8 +83,6 @@ export interface BookingTimelineEntry {
   createdAt: string;
   /** Reschedule rows only — how many concrete times the proposal named. */
   proposedSlotCount?: number;
-  /** Reschedule rows only — always 1 now that the counter-round is gone. */
-  round?: number;
   /** Reschedule rows only — which side raised it. */
   initiatorRole?: RescheduleInitiatorRole;
   /** Reschedule rows only — null while the proposal is still open. */
@@ -152,7 +150,6 @@ export async function getBookingTimeline(
         select: {
           id: true,
           status: true,
-          round: true,
           reason: true,
           initiatorRole: true,
           createdAt: true,
@@ -257,7 +254,6 @@ export async function getBookingTimeline(
         : null,
       createdAt: request.createdAt.toISOString(),
       proposedSlotCount: request._count.proposedTimes,
-      round: request.round,
       initiatorRole: request.initiatorRole,
       resolvedAt: request.resolvedAt ? request.resolvedAt.toISOString() : null,
     }));

@@ -3,6 +3,7 @@ import {
   CalendarClock,
   CalendarRange,
   ExternalLink,
+  FileDown,
   FileText,
   Gift,
   Home,
@@ -64,6 +65,7 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
         items: [
           { name: "Session documents", icon: FileText, path: "documents" },
           { name: "Recordings", icon: Video, path: "recordings" },
+          { name: "My purchases", icon: FileDown, path: "purchases" },
         ],
       },
       {
@@ -113,6 +115,7 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   reviews: "Reviews",
   recordings: "Recordings",
   documents: "Session documents",
+  purchases: "My purchases",
   earnings: "Earnings & payouts",
   referrals: "Invite & earn",
   settings: "Settings",

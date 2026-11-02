@@ -11,6 +11,10 @@ const findNotifications = jest.fn();
 const deleteNotifications = jest.fn();
 const findEvents = jest.fn();
 const deleteEvents = jest.fn();
+const findRequests = jest.fn();
+const deleteRequests = jest.fn();
+const findSecondary = jest.fn();
+const deleteSecondary = jest.fn();
 const executeRaw = jest.fn();
 const acquire = jest.fn();
 
@@ -44,6 +48,24 @@ jest.mock("../../lib/prisma", () => ({
       findMany: (...args: unknown[]) => findEvents(...args),
       deleteMany: (...args: unknown[]) => deleteEvents(...args),
     },
+    adminRunRequest: {
+      findMany: (...args: unknown[]) => findRequests(...args),
+      deleteMany: (...args: unknown[]) => deleteRequests(...args),
+    },
+    ...Object.fromEntries(
+      [
+        "orgDataExportJob",
+        "cookiePreference",
+        "meetingPresence",
+        "meetingAttendance",
+      ].map((model) => [
+        model,
+        {
+          findMany: (...args: unknown[]) => findSecondary(model, ...args),
+          deleteMany: (...args: unknown[]) => deleteSecondary(model, ...args),
+        },
+      ]),
+    ),
     $executeRaw: (...args: unknown[]) => executeRaw(...args),
     $disconnect: jest.fn(),
   },
@@ -51,6 +73,12 @@ jest.mock("../../lib/prisma", () => ({
 
 import { Prisma } from "@prisma/client";
 import {
+  adminRunRequestRetentionCutoff,
+  anonymousCookieRetentionCutoff,
+  dataExportJobRetentionCutoff,
+  meetingPresenceRetentionCutoff,
+  noOpRunRetentionCutoff,
+  RUN_DELETE_BATCH,
   retentionCutoff,
   sentOutboxRetentionCutoff,
   failedEmailBodyScrubCutoff,
@@ -74,6 +102,8 @@ beforeEach(() => {
     findBatches,
     findNotifications,
     findEvents,
+    findRequests,
+    findSecondary,
   ]) {
     find.mockResolvedValue([]);
   }
@@ -84,6 +114,8 @@ beforeEach(() => {
     deleteBatches,
     deleteNotifications,
     deleteEvents,
+    deleteRequests,
+    deleteSecondary,
   ]) {
     mutate.mockResolvedValue({ count: 0 });
   }
@@ -91,8 +123,20 @@ beforeEach(() => {
 });
 afterEach(() => jest.useRealTimers());
 
-it("preserves every existing retention window", () => {
-  expect(retentionCutoff(NOW)).toEqual(new Date(NOW.getTime() - 90 * DAY));
+it("pins every retention window", () => {
+  expect(retentionCutoff(NOW)).toEqual(new Date(NOW.getTime() - 180 * DAY));
+  expect(noOpRunRetentionCutoff(NOW)).toEqual(
+    new Date(NOW.getTime() - 14 * DAY),
+  );
+  const oneYearBack = new Date(NOW);
+  oneYearBack.setUTCFullYear(oneYearBack.getUTCFullYear() - 1);
+  expect(dataExportJobRetentionCutoff(NOW)).toEqual(oneYearBack);
+  expect(meetingPresenceRetentionCutoff(NOW)).toEqual(
+    new Date(NOW.getTime() - 3 * 365 * DAY),
+  );
+  expect(anonymousCookieRetentionCutoff(NOW)).toEqual(
+    new Date("2025-09-23T03:26:00.000Z"),
+  );
   expect(sentOutboxRetentionCutoff(NOW)).toEqual(
     new Date(NOW.getTime() - 30 * DAY),
   );
@@ -102,11 +146,14 @@ it("preserves every existing retention window", () => {
   expect(deadLetterOutboxRetentionCutoff(NOW)).toEqual(
     new Date(NOW.getTime() - 90 * DAY),
   );
-  expect(emailEventRetentionCutoff(NOW)).toEqual(
-    new Date(NOW.getTime() - 30 * DAY),
+  expect(emailEventRetentionCutoff(new Date("2028-03-01T00:00:00Z"))).toEqual(
+    new Date("2027-03-01T00:00:00Z"),
   );
   expect(strandedCutoff(NOW)).toEqual(
     new Date(NOW.getTime() - 6 * 60 * 60 * 1000),
+  );
+  expect(adminRunRequestRetentionCutoff(NOW)).toEqual(
+    new Date(NOW.getTime() - 30 * DAY),
   );
 });
 
@@ -175,22 +222,56 @@ it("rechecks a stranded execution's heartbeat and status in the write", async ()
   expect(result.hasMore).toBe(true);
 });
 
-it("never selects or deletes RUNNING history rows for retention", async () => {
-  findJobs.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: "ended" }]);
-  deleteJobs.mockResolvedValue({ count: 1 });
+it("drains run history in whole DELETE batches, no-op runs before the 180-day tier", async () => {
+  executeRaw
+    .mockResolvedValueOnce(RUN_DELETE_BATCH)
+    .mockResolvedValueOnce(7)
+    .mockResolvedValueOnce(3);
   const result = await pruneSystemJobExecutions();
-  const where = {
-    status: { not: "RUNNING" },
-    startedAt: { lt: retentionCutoff(NOW) },
-  };
-  expect(findJobs).toHaveBeenNthCalledWith(
-    2,
-    expect.objectContaining({ where }),
-  );
-  expect(deleteJobs).toHaveBeenCalledWith({
-    where: { id: { in: ["ended"] }, ...where },
+  const queries: Prisma.Sql[] = executeRaw.mock.calls.map(([query]) => query);
+  expect(queries).toHaveLength(3);
+  const [noOp, , aged] = queries;
+  expect(noOp.sql).toContain("\"status\" = 'COMPLETED'");
+  expect(noOp.sql).toContain("NOT LIKE 'admin:%'");
+  expect(noOp.sql).toContain("'checkpoint'");
+  expect(noOp.sql).toContain('n."startedAt" > s."startedAt"');
+  expect(noOp.values).toContainEqual(noOpRunRetentionCutoff(NOW));
+  expect(aged.sql).toContain("\"status\" <> 'RUNNING'");
+  expect(aged.values).toContainEqual(retentionCutoff(NOW));
+  expect(result).toMatchObject({
+    pruned: RUN_DELETE_BATCH + 10,
+    noOpRunsPruned: RUN_DELETE_BATCH + 7,
+    hasMore: false,
   });
-  expect(result.pruned).toBe(1);
+});
+
+it("leaves the 180-day tier for a later run while no-op runs still drain", async () => {
+  executeRaw.mockImplementation(async () => {
+    jest.advanceTimersByTime(8_000);
+    return RUN_DELETE_BATCH;
+  });
+  const result = await pruneSystemJobExecutions();
+  expect(executeRaw).toHaveBeenCalledTimes(2);
+  expect(result).toMatchObject({
+    noOpRunsPruned: 2 * RUN_DELETE_BATCH,
+    pruned: 2 * RUN_DELETE_BATCH,
+    hasMore: true,
+  });
+});
+
+it("prunes meeting presence only once its occurrence ended three years ago", async () => {
+  findSecondary.mockImplementation(async (model: string) =>
+    model === "meetingPresence" ? [{ id: "presence-1" }] : [],
+  );
+  deleteSecondary.mockResolvedValue({ count: 1 });
+  const result = await pruneSystemJobExecutions();
+  const occurrenceEnded = {
+    occurrence: { endsAt: { lt: meetingPresenceRetentionCutoff(NOW) } },
+  };
+  expect(deleteSecondary).toHaveBeenCalledWith("meetingPresence", {
+    where: { ...occurrenceEnded, id: { in: ["presence-1"] } },
+  });
+  expect(result.meetingPresencePruned).toBe(1);
 });
 
 it.each([
@@ -297,12 +378,10 @@ it("stops admitting reads and writes when the shared start budget expires", asyn
 });
 
 it("resumes from remaining rows after a partially committed run crashes", async () => {
-  findJobs
-    .mockResolvedValueOnce([])
-    .mockResolvedValueOnce([{ id: "history-1" }]);
-  deleteJobs.mockResolvedValueOnce({ count: 1 });
+  findRequests.mockResolvedValueOnce([{ id: "request-1" }]);
+  deleteRequests.mockResolvedValueOnce({ count: 1 });
   findEmails.mockRejectedValueOnce(
-    new Error("connection lost after history deletion"),
+    new Error("connection lost after request deletion"),
   );
   await expect(pruneSystemJobExecutions()).rejects.toThrow("connection lost");
   findEmails
@@ -311,9 +390,9 @@ it("resumes from remaining rows after a partially committed run crashes", async 
   deleteEmails.mockResolvedValueOnce({ count: 1 });
   const retry = await pruneSystemJobExecutions();
   expect(retry).toMatchObject({
-    pruned: 0,
+    adminRunRequestsPruned: 0,
     failedEmailsPruned: 1,
     success: true,
   });
-  expect(deleteJobs).toHaveBeenCalledTimes(1);
+  expect(deleteRequests).toHaveBeenCalledTimes(1);
 });

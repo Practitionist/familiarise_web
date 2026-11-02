@@ -71,6 +71,8 @@ export const AUDIT_ACTIONS = {
     // audit-log reader a clean signal for permanent removal.
     PROGRAM_DELETED: "PROGRAM_DELETED",
     PROGRAM_ASSIGNED: "PROGRAM_ASSIGNED",
+    // Org money paid for a session delivered by one of the org's own OWNERs.
+    RELATED_PARTY_BOOKING: "RELATED_PARTY_BOOKING",
     PROGRAM_ASSIGNMENT_UPDATED: "PROGRAM_ASSIGNMENT_UPDATED",
     PROGRAM_UNASSIGNED: "PROGRAM_UNASSIGNED",
     // #1846 SM-C14 — one row per seat a terminated or expired contract closed.

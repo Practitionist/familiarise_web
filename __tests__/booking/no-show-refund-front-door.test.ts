@@ -284,8 +284,8 @@ describe("consultant no-show refunds", () => {
     );
   });
 
-  // A live, undecided SCHEDULED session is the only one this job may judge.
-  it("judges only live, undecided SCHEDULED occurrences in the cohort and the claim's CAS", async () => {
+  // The cohort reads live slots; the claim's CAS judges only undecided SCHEDULED ones.
+  it("scopes the cohort to live slots and the claim's CAS to undecided SCHEDULED occurrences", async () => {
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
       noShowCandidate({ id: "pay-1", amount: 150000 }),
     ]);
@@ -293,9 +293,8 @@ describe("consultant no-show refunds", () => {
 
     const slot = {
       deletedAt: null,
-      completionStatus: "SCHEDULED",
-      outcome: null,
-      isTentative: false,
+      completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+      endsAt: { lt: expect.any(Date) },
       meeting: { isNot: null },
     };
     const decidedOrParked = {
@@ -380,7 +379,7 @@ describe("consultant no-show refunds", () => {
     expect(release.where.id).toEqual({ in: ["occ-new"] });
     expect(prisma.systemEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        context: expect.objectContaining({ occurrenceId: "occ-new" }),
+        context: expect.objectContaining({ occurrenceIds: ["occ-new"] }),
       }),
     });
     expect(mockSendCancelledEmail).toHaveBeenCalledWith(

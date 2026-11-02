@@ -16,6 +16,7 @@ import { z } from "zod";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { revokeEnforcedDomainSessions } from "@/lib/sso/session-sweeps";
+import { stampSessionEnds } from "@/lib/auth/session-access-log";
 import {
   countProvenProviders,
   SSO_NOT_PROVEN_MESSAGE,
@@ -67,11 +68,13 @@ export const POST = withOpsAction(
         select: { id: true },
       });
 
-      if (body.enforce && !(before?.enforceSSO ?? false)) {
-        await revokeEnforcedDomainSessions(tx, params.orgId);
-      }
+      const swept =
+        body.enforce && !(before?.enforceSSO ?? false)
+          ? await revokeEnforcedDomainSessions(tx, params.orgId)
+          : null;
 
       return {
+        afterCommit: swept ? () => stampSessionEnds(swept.ended) : undefined,
         target: { kind: "OrganizationSSOSettings", id: settings.id },
         before: { enforceSSO: before?.enforceSSO ?? false },
         after: { enforceSSO: body.enforce },

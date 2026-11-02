@@ -6,7 +6,7 @@
 // DriverAdapterError; 40001 arrives pre-classified as P2034. No database.
 import { Prisma } from "@prisma/client";
 
-import { isDeadlock } from "@/lib/db/pg-errors";
+import { isDeadlock, isWriteConflict } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const p2034 = () =>
@@ -98,5 +98,41 @@ describe("withSerializableRetry with deadlocks", () => {
       "IllegalTransitionError",
     );
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// adapter-pg's mapped arm for 40001: what Prisma rethrows when the SSI abort
+// is raised by COMMIT rather than by a statement (no P2034 wrapping).
+const commitWriteConflict = () =>
+  Object.assign(new Error("TransactionWriteConflict"), {
+    name: "DriverAdapterError",
+    cause: { kind: "TransactionWriteConflict" },
+  });
+
+describe("isWriteConflict", () => {
+  it("matches P2034, the raw commit-time conflict and a 40001 SQLSTATE", () => {
+    expect(isWriteConflict(p2034())).toBe(true);
+    expect(isWriteConflict(commitWriteConflict())).toBe(true);
+    expect(isWriteConflict(adapterError("40001", "could not serialize"))).toBe(
+      true,
+    );
+  });
+
+  it("does not match a business rejection or another SQLSTATE", () => {
+    expect(isWriteConflict(new Error("TransactionWriteConflict"))).toBe(false);
+    expect(isWriteConflict(adapterError("23P01", "overlap"))).toBe(false);
+    expect(isWriteConflict({ code: "P2002" })).toBe(false);
+    expect(isWriteConflict(null)).toBe(false);
+  });
+});
+
+describe("withSerializableRetry with a conflict raised at COMMIT", () => {
+  it("replays the transaction and succeeds on a later attempt", async () => {
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(commitWriteConflict())
+      .mockResolvedValue("ok");
+    await expect(withSerializableRetry(fn)).resolves.toBe("ok");
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 });

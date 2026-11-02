@@ -2,6 +2,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
+import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
@@ -15,7 +16,7 @@ import {
   busyRetryToast,
   checkoutNeedsGateway,
   fetchCheckoutWithBusyRetry,
-  mintClientIdempotencyKey,
+  useCheckoutAttemptKey,
   reportPaymentsError,
 } from "@/app/checkout/plans/utils";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
@@ -117,6 +118,8 @@ type RazorpayCheckoutProps = RazorpayCheckoutSource & {
 
 interface GatewayOrder {
   id: string;
+  /** The checkout's own Payment row; its hold can be released on dismiss. */
+  paymentId?: string;
   amount: number;
   currency: string;
   customerId?: string;
@@ -140,10 +143,7 @@ export default function RazorpayCheckout({
   const { toast } = useToast();
   const { emiEnabled } = useCheckoutFlags();
   const [isProcessing, setIsProcessing] = useState(false);
-  // #828 — stable per-mount; the server dedupes retries on this key.
-  // useState's lazy initializer runs once, unlike a useRef(arg) expression
-  // which would mint a key every render.
-  const [idempotencyKey] = useState(mintClientIdempotencyKey);
+  const attemptKey = useCheckoutAttemptKey();
 
   const handleCheckout = async () => {
     // Before the spinner, so an abort leaves the button exactly as it was.
@@ -183,6 +183,7 @@ export default function RazorpayCheckout({
     // another device) auto-retries ONCE after the server-advised pause
     // instead of dead-ending; the stable idempotency key keeps the retry
     // dedupe-safe.
+    if (!checkoutData) return null;
     const response = await fetchCheckoutWithBusyRetry(
       () =>
         fetchWithIdentity("/api/checkout", {
@@ -190,7 +191,7 @@ export default function RazorpayCheckout({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...checkoutData,
-            clientIdempotencyKey: idempotencyKey,
+            clientIdempotencyKey: attemptKey(checkoutData),
           }),
         }),
       (waitSeconds) => toast(busyRetryToast(waitSeconds)),
@@ -234,6 +235,8 @@ export default function RazorpayCheckout({
 
     return {
       id: data.paymentIntent.id,
+      paymentId:
+        typeof data.paymentId === "string" ? data.paymentId : undefined,
       amount: data.paymentIntent.amount,
       currency: data.paymentIntent.currency,
       // #1771 row 1 — the server echoes a Customer only while saved cards are on.
@@ -241,6 +244,33 @@ export default function RazorpayCheckout({
       holdExpiresAt: data.holdExpiresAt,
       status: data.paymentIntent.status,
     };
+  };
+
+  /** Releases this checkout's hold (payment, seat or time) at the buyer's request. */
+  const cancelHeldCheckout = async (paymentId: string) => {
+    const couldNotCancel = {
+      title: "Couldn't cancel the checkout",
+      description:
+        "Your hold ends on its own in a few minutes; nothing is charged unless you pay.",
+      variant: "destructive" as const,
+    };
+    try {
+      const response = await fetch(
+        `/api/checkout/pending/${encodeURIComponent(paymentId)}`,
+        { method: "DELETE" },
+      );
+      toast(
+        response.ok
+          ? {
+              title: "Checkout cancelled",
+              description: "Nothing was charged, and the hold is released.",
+            }
+          : couldNotCancel,
+      );
+    } catch (error) {
+      reportPaymentsError(error);
+      toast(couldNotCancel);
+    }
   };
 
   /** Opens the Razorpay sheet on an order; false when it could not open. */
@@ -356,10 +386,24 @@ export default function RazorpayCheckout({
       },
       onDismiss: () => {
         setIsProcessing(false);
+        const { paymentId } = order;
         toast({
           title: "Payment not completed",
           description:
             "You closed the payment window before finishing. Your booking is still held — you can retry whenever you're ready.",
+          // Releasing the hold frees the time or seat for someone else now.
+          ...(paymentId
+            ? {
+                action: (
+                  <ToastAction
+                    altText="Cancel this checkout and release the hold"
+                    onClick={() => void cancelHeldCheckout(paymentId)}
+                  >
+                    Cancel checkout
+                  </ToastAction>
+                ),
+              }
+            : {}),
         });
       },
     });

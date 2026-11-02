@@ -38,6 +38,7 @@ import {
   INBOX_TYPES,
   inboxQueryKey,
   inboxQueryString,
+  isCursorSort,
   nextInboxSearch,
   readInboxParams,
   toStampDate,
@@ -69,15 +70,18 @@ import {
 } from "./components/RequestedSlotsDialog";
 import {
   EMPTY_STATE,
+  RANKED_WINDOW_NOTE,
   TOAST,
   TYPE_LABEL,
   approvedToast,
   errorSentence,
   nextReminderLine,
 } from "./labels";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 import {
   DecisionError,
   approveRequestedTimes,
+  classifyProposalConflict,
   classifyRequestedConflict,
   declineRequest,
 } from "./request-decision";
@@ -140,7 +144,7 @@ const requestPath = (row: InboxRowInput) =>
   }/${encodeURIComponent(row.id)}`;
 
 /**
- * Tabs, chips, sort and page live in the URL. Writes go through `replaceUrl`,
+ * Tabs, chips, sort, page and cursor live in the URL. Writes go through `replaceUrl`,
  * which the App Router syncs into `useSearchParams`: the URL changes
  * synchronously and no server round trip re-renders the page for a filter
  * click.
@@ -165,9 +169,9 @@ function useInboxUrlState() {
 }
 
 /**
- * The consultant Requests inbox (#1775): type tabs, chips, sort and deadline
- * buckets over `readRequestsInbox`, every word from the presentation layer,
- * one primary action per row. State lives in the URL; the RSC page seeds the
+ * The consultant Requests inbox: type tabs, chips, sort and deadline buckets
+ * over `readRequestsInbox`, every word from the presentation layer, one
+ * primary action per row. State lives in the URL; the RSC page seeds the
  * query and this component keeps it fresh (30 s stale, cache-first: no
  * mount/focus refetch — manual Refresh is the truth).
  */
@@ -178,7 +182,7 @@ export function RequestsInbox({
 }: Readonly<RequestsInboxProps>) {
   const { params, setParams } = useInboxUrlState();
   // A breadcrumb / link may name one row; it is highlighted and scrolled to once.
-  const focusId = useSearchParams().get("focus");
+  const focusId = params.focus;
   const viewer = useViewerZone(viewerZone);
   const queryClient = useQueryClient();
 
@@ -190,12 +194,15 @@ export function RequestsInbox({
     chip,
     sort: params.sort,
     page: params.page,
+    after: params.after,
+    focus: params.focus,
   };
   const queryKey = inboxQueryKey(queryArgs);
+  const queryString = inboxQueryString(queryArgs);
 
   const query = useQuery({
     queryKey,
-    queryFn: () => fetchInbox(inboxQueryString(queryArgs)),
+    queryFn: () => fetchInbox(queryString),
     staleTime: 30_000,
     // Perf: cache-first tab switches. The old `always` refetched even with
     // fresh cache, so every mount felt like a reload. `true` (stale-only)
@@ -222,37 +229,56 @@ export function RequestsInbox({
     });
   }, [consultantProfileId, queryClient]);
 
-  // "N new · Refresh": a return to the tab refetches ONLY when the cached
-  // payload is stale (>30s); if the total grew, say so rather than letting
-  // rows move silently under the pointer (#1705). Previously every
-  // visibilitychange refired unconditionally.
+  // "N new · Refresh": a return to the tab (throttled to a stale cache) reads
+  // the inbox into a pending slot without touching the rows on screen. A
+  // changed total offers the swap; an unchanged one swaps in silently.
   const [newBadge, setNewBadge] = useState<string | null>(null);
-  const knownTotalRef = useRef<number | null>(null);
-  const returnedRef = useRef(false);
+  const pendingRef = useRef<RequestsInboxPayload | null>(null);
+  const currentRef = useRef({ key: queryKey, qs: queryString });
   const lastFetchRef = useRef<number>(Date.now());
-  const { refetch } = query;
+  useEffect(() => {
+    currentRef.current = { key: queryKey, qs: queryString };
+  });
+  useEffect(() => {
+    if (dataUpdatedAt) lastFetchRef.current = dataUpdatedAt;
+  }, [dataUpdatedAt]);
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState !== "visible") return;
-      // Throttle: skip when the cache is still fresh — tab switches stay instant.
       if (Date.now() - lastFetchRef.current < 30_000) return;
       lastFetchRef.current = Date.now();
-      returnedRef.current = true;
-      void refetch();
+      const { key, qs } = currentRef.current;
+      void fetchInbox(qs)
+        .then((fresh) => {
+          if (currentRef.current.qs !== qs) return;
+          const shown = queryClient.getQueryData<RequestsInboxPayload>(key);
+          const badge = shown
+            ? requestsFreshnessBadge(shown.meta.total, fresh.meta.total)
+            : null;
+          if (badge) {
+            pendingRef.current = fresh;
+            setNewBadge(badge);
+          } else {
+            queryClient.setQueryData(key, fresh);
+          }
+        })
+        .catch(() => undefined);
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [refetch]);
+  }, [queryClient]);
+  const applyPending = () => {
+    setNewBadge(null);
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    if (pending) queryClient.setQueryData(queryKey, pending);
+    else void query.refetch();
+  };
+  // A pending payload belongs to the view it was read for.
   useEffect(() => {
-    if (!data || isPlaceholderData) return;
-    lastFetchRef.current = dataUpdatedAt;
-    const known = knownTotalRef.current;
-    if (returnedRef.current && known !== null) {
-      setNewBadge(requestsFreshnessBadge(known, data.meta.total));
-    }
-    returnedRef.current = false;
-    knownTotalRef.current = data.meta.total;
-  }, [data, dataUpdatedAt, isPlaceholderData]);
+    pendingRef.current = null;
+    setNewBadge(null);
+  }, [queryString]);
 
   const scrolledRef = useRef(false);
   useEffect(() => {
@@ -298,6 +324,8 @@ export function RequestsInbox({
           chip,
           sort: params.sort,
           page: 1,
+          after: null,
+          focus: null,
         };
         const key = inboxQueryKey(args).join("|");
         if (prefetchedKeysRef.current.has(key)) return;
@@ -322,6 +350,7 @@ export function RequestsInbox({
 
   // ---- selection + batch -------------------------------------------------
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchRunning, setBatchRunning] = useState(false);
   const selectedRows = rows.filter(
     (r) => selected.has(r.id) && isDialogFreeApproval(r),
   );
@@ -330,10 +359,13 @@ export function RequestsInbox({
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const changedElsewhere = useCallback(() => {
-    toast({ title: TOAST.changedElsewhere });
-    invalidate();
-  }, [invalidate]);
+  const changedElsewhere = useCallback(
+    (message: string = TOAST.changedElsewhere) => {
+      toast({ title: message });
+      invalidate();
+    },
+    [invalidate],
+  );
 
   // ---- approve (requested times / proposal) -------------------------------
   const [approveTarget, setApproveTarget] = useState<InboxRowInput | null>(
@@ -341,10 +373,16 @@ export function RequestsInbox({
   );
   const [confirmation, setConfirmation] =
     useState<RequestedSlotsConfirmation | null>(null);
+  // A retryable refusal shown inside the dialog; `attempt` re-checks the times.
+  const [refusal, setRefusal] = useState<{
+    message: string;
+    attempt: number;
+  } | null>(null);
   const attemptKeyRef = useRef<AllocationAttemptKey | null>(null);
   const closeApprove = () => {
     setApproveTarget(null);
     setConfirmation(null);
+    setRefusal(null);
     attemptKeyRef.current = null;
   };
   const approve = useMutation({
@@ -358,7 +396,7 @@ export function RequestsInbox({
       const proposal = answerableProposal(row);
       if (proposal) {
         // Confirming proposed times ANSWERS the proposal (#1163).
-        const response = await fetch(
+        const response = await fetchWithIdentity(
           `/api/appointments/${row.appointmentId}/reschedule/respond`,
           {
             method: "POST",
@@ -370,8 +408,21 @@ export function RequestsInbox({
           error?: string;
           code?: string;
         };
-        if (response.status === 409 || response.status === 404) {
-          return { kind: "stale" as const };
+        const conflict = classifyProposalConflict(response.status, body.code);
+        if (conflict === "stay-open") {
+          return {
+            kind: "retry" as const,
+            message: errorSentence(
+              body.code,
+              body.error ?? "Those times can't be booked right now.",
+            ),
+          };
+        }
+        if (conflict === "stale") {
+          return {
+            kind: "stale" as const,
+            message: errorSentence(body.code, TOAST.changedElsewhere),
+          };
         }
         if (!response.ok) {
           throw new Error(
@@ -382,6 +433,7 @@ export function RequestsInbox({
           kind: "done" as const,
           appointmentId: row.appointmentId,
           awaitingPayment: false,
+          payExpiresAt: null,
         };
       }
       const result = await approveRequestedTimes(
@@ -393,9 +445,23 @@ export function RequestsInbox({
         attemptKeyRef,
         override,
       );
+      // The request moved on: close, refresh, say why plainly. A slot taken,
+      // a busy lock or a co-host clash leaves it allocatable: stay and retry.
       const conflict = classifyRequestedConflict(result);
-      if (conflict === "stale" || conflict === "genuine-conflict") {
-        return { kind: "stale" as const };
+      if (conflict === "stay-open") {
+        return {
+          kind: "retry" as const,
+          message: errorSentence(
+            result.errorCode,
+            result.error ?? "Those times can't be booked right now.",
+          ),
+        };
+      }
+      if (conflict !== null) {
+        return {
+          kind: "stale" as const,
+          message: errorSentence(result.errorCode, TOAST.changedElsewhere),
+        };
       }
       if (!result.success) {
         throw new Error(
@@ -406,17 +472,29 @@ export function RequestsInbox({
         kind: "done" as const,
         appointmentId: result.data?.[0]?.id ?? null,
         awaitingPayment: result.awaitingPayment === true,
+        payExpiresAt: result.payExpiresAt ?? null,
       };
     },
     onSuccess: (outcome) => {
       if (outcome.kind === "stale") {
         closeApprove();
-        changedElsewhere();
+        changedElsewhere(outcome.message);
         return;
       }
+      if (outcome.kind === "retry") {
+        // A refused attempt is spent: the next confirm is a new one.
+        attemptKeyRef.current = null;
+        setRefusal((prev) => ({
+          message: outcome.message,
+          attempt: (prev?.attempt ?? 0) + 1,
+        }));
+        invalidate();
+        return;
+      }
+      setRefusal(null);
       // No optimistic removal: the refetch moves an unpaid approval to the
       // "Awaiting payment" chip (the read includes APPROVED_PENDING_PAYMENT).
-      toast({ title: approvedToast(outcome) });
+      toast({ title: approvedToast(outcome, { zone: viewer.zone }) });
       setConfirmation({
         appointmentHref: outcome.appointmentId
           ? `/dashboard/consultant/${consultantProfileId}/appointments/${outcome.appointmentId}`
@@ -605,14 +683,105 @@ export function RequestsInbox({
   const loading = query.isPending && !data;
   const refreshing = query.isFetching;
   // The error card must not also blank the tab counts.
-  const lastCountsRef = useRef<
-    NonNullable<typeof data>["meta"]["counts"] | undefined
-  >(undefined);
-  if (data?.meta.counts) lastCountsRef.current = data.meta.counts;
-  const counts = data?.meta.counts ?? lastCountsRef.current;
+  const [lastCounts, setLastCounts] = useState(data?.meta.counts);
+  useEffect(() => {
+    if (data?.meta.counts) setLastCounts(data.meta.counts);
+  }, [data]);
+  const counts = data?.meta.counts ?? lastCounts;
+  const timeSort = isCursorSort(params.sort) || params.sort === "deadline";
   const totalPages = data
-    ? Math.max(1, Math.ceil(data.meta.total / data.meta.limit))
+    ? Math.max(1, Math.ceil(data.meta.windowSize / data.meta.limit))
     : 1;
+
+  // Cursor pages go forward by the server's cursor; back by the ones we came through.
+  const [cursorTrail, setCursorTrail] = useState<(string | null)[]>([]);
+  useEffect(() => {
+    setCursorTrail([]);
+  }, [params.type, params.chip, params.sort]);
+  const nextCursorPage = (cursor: string) => {
+    setCursorTrail((trail) => [...trail, params.after]);
+    setParamsTransition({ after: cursor });
+  };
+  const prevCursorPage = () => {
+    const previous = cursorTrail[cursorTrail.length - 1] ?? null;
+    setCursorTrail((trail) => trail.slice(0, -1));
+    setParamsTransition({ after: previous });
+  };
+
+  const renderPager = (meta: RequestsInboxPayload["meta"]) => {
+    if (meta.paging === "cursor") {
+      if (meta.nextCursor === null && params.after === null) return null;
+      // A reload or deep link lands mid-list with no trail: no start offset.
+      const from =
+        params.after === null || cursorTrail.length > 0
+          ? cursorTrail.length * meta.limit + 1
+          : null;
+      return (
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span aria-live="polite">
+            {from === null
+              ? `Showing ${rows.length} of ${meta.total}`
+              : `Showing ${from}–${from + rows.length - 1} of ${meta.total}`}
+          </span>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={refreshing || params.after === null}
+              onClick={prevCursorPage}
+            >
+              Prev
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={refreshing || meta.nextCursor === null}
+              onClick={() => meta.nextCursor && nextCursorPage(meta.nextCursor)}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    const truncated = meta.total > meta.windowSize;
+    if (meta.windowSize <= meta.limit && !truncated) return null;
+    return (
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span aria-live="polite">
+          {truncated
+            ? RANKED_WINDOW_NOTE(meta.windowSize, meta.total, params.sort)
+            : `Showing ${(meta.page - 1) * meta.limit + 1}–${Math.min(
+                meta.windowSize,
+                meta.page * meta.limit,
+              )} of ${meta.windowSize}`}
+        </span>
+        {totalPages > 1 && (
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={refreshing || meta.page <= 1}
+              onClick={() => setParamsTransition({ page: meta.page - 1 })}
+            >
+              Prev
+            </Button>
+            <span className="tabular-nums">
+              {meta.page} / {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={refreshing || meta.page >= totalPages}
+              onClick={() => setParamsTransition({ page: meta.page + 1 })}
+            >
+              Next
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderBody = () => {
     if (query.isError && (!data || isPlaceholderData)) {
@@ -663,7 +832,9 @@ export function RequestsInbox({
       >
         <InboxBuckets
           rows={rows}
-          flat={chip === "declined"}
+          // Time sorts read top to bottom in time order; buckets would reorder them.
+          flat={chip === "declined" || timeSort}
+          totals={data?.meta.bucketTotals ?? null}
           renderRow={(row) => (
             <InboxRow
               key={row.id}
@@ -673,7 +844,8 @@ export function RequestsInbox({
               selected={selected.has(row.id)}
               busy={
                 busyId === row.id ||
-                (approve.isPending && approveTarget?.id === row.id)
+                (approve.isPending && approveTarget?.id === row.id) ||
+                (batchRunning && selected.has(row.id))
               }
               note={notes[row.id] ?? null}
               focused={focusId === row.id}
@@ -689,45 +861,11 @@ export function RequestsInbox({
             />
           )}
         />
-        {data && data.meta.total > data.meta.limit && (
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span aria-live="polite">
-              Showing {(data.meta.page - 1) * data.meta.limit + 1}&ndash;
-              {Math.min(
-                data.meta.total,
-                data.meta.page * data.meta.limit,
-              )} of {data.meta.total}
-            </span>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={refreshing || data.meta.page <= 1}
-                onClick={() =>
-                  setParamsTransition({ page: data.meta.page - 1 })
-                }
-              >
-                Prev
-              </Button>
-              <span className="tabular-nums">
-                {data.meta.page} / {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={refreshing || data.meta.page >= totalPages}
-                onClick={() =>
-                  setParamsTransition({ page: data.meta.page + 1 })
-                }
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-        )}
+        {data && renderPager(data.meta)}
         <BatchApproveBar
           rows={selectedRows}
           busy={approve.isPending}
+          onRunningChange={setBatchRunning}
           onClear={() => setSelected(new Set())}
           onFinished={() => {
             setSelected(new Set());
@@ -774,10 +912,7 @@ export function RequestsInbox({
                 variant="secondary"
                 size="sm"
                 className="gap-1.5 bg-amber-100 text-amber-900 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-200"
-                onClick={() => {
-                  setNewBadge(null);
-                  void query.refetch();
-                }}
+                onClick={applyPending}
               >
                 {newBadge} &middot; Refresh
               </Button>
@@ -796,6 +931,7 @@ export function RequestsInbox({
             disabled={refreshing}
             onClick={() => {
               setNewBadge(null);
+              pendingRef.current = null;
               void query.refetch();
             }}
           >
@@ -828,6 +964,7 @@ export function RequestsInbox({
           if (!open && !approve.isPending) closeApprove();
         }}
         confirmation={confirmation}
+        refusal={refusal}
         requestId={approveTarget?.id ?? ""}
         requestType={
           approveTarget
@@ -837,9 +974,7 @@ export function RequestsInbox({
         requestedSlots={(() => {
           if (!approveTarget) return [];
           const proposal = answerableProposal(approveTarget);
-          const slots = proposal
-            ? proposal.proposedTimes.filter((t) => t.round === proposal.round)
-            : approveTarget.slots;
+          const slots = proposal ? proposal.proposedTimes : approveTarget.slots;
           return slots.map((s) => toStampDate(s.startsAt).toISOString());
         })()}
         requestedSlotsWithStatus={approveTarget?.slots.map((s) => ({

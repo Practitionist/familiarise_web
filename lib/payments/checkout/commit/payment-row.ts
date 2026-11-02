@@ -16,6 +16,7 @@ import {
   SEAT_CHECKOUT_OPEN_MESSAGE,
 } from "@/lib/payments/checkout/seats";
 import type { CheckoutCommitInput } from "@/lib/payments/checkout/commit/types";
+import { checkoutRequestFingerprint } from "@/lib/payments/operations/checkout-replay";
 
 export async function writeCheckoutPayment(
   tx: Tx,
@@ -116,6 +117,7 @@ export async function writeCheckoutPayment(
     paymentIntent: mintedOrder.id,
     clientIdempotencyKey:
       validatedData.clientIdempotencyKey ?? globalThis.crypto.randomUUID(),
+    requestFingerprint: checkoutRequestFingerprint(validatedData),
     paymentGateway: validatedData.paymentGateway,
     paymentStatus: skipPayment
       ? PaymentStatus.SUCCEEDED

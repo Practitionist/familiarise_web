@@ -16,8 +16,8 @@ The canonical, code-level description is
 claim checks, secret encryption, callback URLs and failure handling. The wider
 sign-in stack is in the [authentication overview](../../authentication/README.md).
 
-Auth runs on `better-auth` 1.7.7 with the `@better-auth/sso` 1.7.7 and
-`@better-auth/passkey` 1.7.7 plugins. SSO is OIDC-only; SAML and SCIM are not
+Auth runs on `better-auth` 1.7.14 with the `@better-auth/sso` 1.7.14 and
+`@better-auth/passkey` 1.7.14 plugins. SSO is OIDC-only; SAML and SCIM are not
 supported.
 
 ## The path to an enforced SSO tenant

@@ -960,3 +960,81 @@ export function breakDownSlotsPreservingStatus(
 
   return result;
 }
+
+export type GridCell = TIntervalTiming & {
+  isAllocated: boolean;
+  bookingStatus: BookingStatus;
+};
+
+/**
+ * Busy cells for occupied time the published windows do not cover: an
+ * occurrence `[s, e)` paints every 30-min UTC atom `[floor30(s), ceil30(e))`
+ * that no existing cell overlaps, clipped to `[rangeStart, rangeEnd)`. Each
+ * synthetic cell is exactly one atom, so off-grid and long occurrences never
+ * overlap a cell or each other.
+ */
+export function synthesizeOrphanCells(args: {
+  existing: Iterable<{ startsAt: string; endsAt: string }>;
+  occupied: Iterable<{ startsAt: Date | string; endsAt: Date | string }>;
+  rangeStart: Date;
+  rangeEnd: Date;
+  timezone: string;
+  type: "WEEKLY" | "CUSTOM";
+}): GridCell[] {
+  const coveredAtoms = new Set<number>();
+  const markAtoms = (startMs: number, endMs: number) => {
+    for (
+      let atom = Math.floor(startMs / THIRTY_MIN_MS);
+      atom * THIRTY_MIN_MS < endMs;
+      atom++
+    ) {
+      coveredAtoms.add(atom);
+    }
+  };
+  for (const cell of args.existing) {
+    const startMs = new Date(cell.startsAt).getTime();
+    const endMs = new Date(cell.endsAt).getTime();
+    if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs)
+      continue;
+    markAtoms(startMs, endMs);
+  }
+
+  const loc = makeLocalizer(args.timezone);
+  const rangeStartMs = args.rangeStart.getTime();
+  const rangeEndMs = args.rangeEnd.getTime();
+  const cells: GridCell[] = [];
+  for (const occurrence of args.occupied) {
+    const startMs = new Date(occurrence.startsAt).getTime();
+    const endMs = new Date(occurrence.endsAt).getTime();
+    if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs)
+      continue;
+    for (
+      let atom = Math.floor(startMs / THIRTY_MIN_MS);
+      atom * THIRTY_MIN_MS < endMs;
+      atom++
+    ) {
+      const atomStartMs = atom * THIRTY_MIN_MS;
+      const atomEndMs = atomStartMs + THIRTY_MIN_MS;
+      if (atomEndMs <= rangeStartMs || atomStartMs >= rangeEndMs) continue;
+      if (coveredAtoms.has(atom)) continue;
+      coveredAtoms.add(atom);
+      const start = new Date(atomStartMs);
+      const end = new Date(atomEndMs);
+      cells.push({
+        slotId: `orphan-${atomStartMs}`,
+        dateInISO: start.toISOString(),
+        dayOfWeek: dayMap[loc.dayIndex(start)],
+        startsAt: start.toISOString(),
+        endsAt: end.toISOString(),
+        availabilityWindowId: "",
+        appointmentOccurrenceId: "",
+        localStartTime: loc.timeP(start),
+        localEndTime: loc.timeP(end),
+        type: args.type,
+        isAllocated: true,
+        bookingStatus: BOOKING_STATUS.FULLY_BOOKED,
+      });
+    }
+  }
+  return cells;
+}

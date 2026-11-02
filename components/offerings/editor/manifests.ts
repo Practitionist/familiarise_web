@@ -510,6 +510,86 @@ export const CLASS_MANIFEST: OfferingManifest = {
   ],
 };
 
+/** A standalone file sale: listing, price and files; no calendar, no FAQ. */
+export const DIGITAL_PRODUCT_MANIFEST: OfferingManifest = {
+  type: "digital-product",
+  noun: "digital product",
+  sections: [
+    {
+      id: "details",
+      title: "Details",
+      description: "What buyers download, why they want it and its price.",
+      icon: FileText,
+      fields: [
+        {
+          name: "title",
+          kind: "text",
+          label: "Title",
+          placeholder: "e.g. Interview prep workbook",
+          required: true,
+          span: 6,
+        },
+        {
+          name: "subtitle",
+          kind: "text",
+          label: "Subtitle",
+          description: "One line that appears under the title.",
+          span: 6,
+        },
+        {
+          name: "description",
+          kind: "textarea",
+          label: "Description",
+          placeholder: "What is inside, who it is for and how to use it.",
+          required: true,
+          span: 6,
+        },
+        {
+          name: "category",
+          kind: "select",
+          label: "Category",
+          description:
+            "Decides which file types fit. It is fixed once the product is published.",
+          required: true,
+          span: 3,
+          options: [
+            { value: "DOCUMENT", label: "Document or e-book" },
+            { value: "TEMPLATE", label: "Template" },
+            { value: "ARCHIVE", label: "ZIP bundle" },
+            { value: "IMAGE", label: "Images" },
+            { value: "AUDIO", label: "Audio" },
+          ],
+        },
+        {
+          name: "price",
+          kind: "price",
+          label: "Price (₹)",
+          currencyName: "priceCurrency",
+          description:
+            "Use ₹0 to give it away; buyers still sign in to claim it.",
+          required: true,
+          span: 3,
+        },
+        {
+          name: "coverImagePath",
+          kind: "image",
+          label: "Cover image",
+          description: "Shown on the product card and page.",
+          span: 6,
+        },
+      ],
+    },
+    {
+      id: "files",
+      title: "Files",
+      description: "Buyers always download the latest version of each file.",
+      icon: FileText,
+      fields: [],
+      slot: "files",
+    },
+  ],
+};
+
 export const OFFERING_MANIFESTS = {
   consultation: CONSULTATION_MANIFEST,
   subscription: SUBSCRIPTION_MANIFEST,

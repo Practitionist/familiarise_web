@@ -16,31 +16,12 @@ import { tentativeSlotCountOf } from "@/lib/booking/allocation/counts";
 import { findIdempotentAllocation } from "@/lib/booking/allocation/idempotency";
 
 /**
- * Multi-tab guard for `initialAllocation` requests. Auto locks the whole
- * consultant while manual shards by day (#860) — different Redis keys — and
- * group events have no consultee lock, so a cross-mode race from two tabs
- * can slip past the locks; without this the manual path would silently
- * delete-and-replace the winner's allocation. Any confirmed (non-tentative)
- * slot means the event was already allocated elsewhere → typed 409.
- * Called out-of-txn under the locks AND re-checked inside the write txn.
- */
-/**
- * In-transaction variant of the guard. Under Read Committed, two
- * concurrent transactions could BOTH count zero confirmed slots before
- * either commits (group events don't share a Redis lock across modes), so
- * the count alone is not atomic. The advisory xact lock serializes the
- * guarded transactions per event: the loser blocks until the winner
- * commits. After the lock, a same-key double submit must REPLAY the
- * winner's committed batch (the base-client read sees it post-commit)
- * rather than trip the guard with a 409; only a different-key submit gets
- * the conflict. Raw SQL is unavoidable — Prisma has no advisory-lock API.
- *
- * #1692 — armed on EVERY allocation transaction, as its first statement,
- * not only on fresh ones: a webinar reschedule from two tabs takes
- * day-sharded Redis keys and used to serialise on nothing, and a same-key
- * retry of a reschedule met the key's unique index as a 409 instead of a
- * replay. Only the confirmed-slot assertion stays gated on `fresh`, since
- * a reschedule legitimately has confirmed slots.
+ * The allocation transaction's first statement: an advisory xact lock per
+ * event, so every re-check below reads what the previous writer of this event
+ * committed. After it a same-key double submit replays the winner's batch
+ * instead of tripping a guard; a fresh allocation also asserts that no
+ * confirmed slot exists yet (a reschedule legitimately has some). Raw SQL is
+ * unavoidable — Prisma has no advisory-lock API.
  */
 export async function guardAllocationInTx(
   tx: Tx,
@@ -184,11 +165,38 @@ export async function assertExpectedTentativeSlotCountInTx(
 }
 
 /**
+ * The picked 30-minute atoms merged into contiguous [start, end) intervals,
+ * ascending; unparseable entries are skipped (the mode's parser refuses them).
+ */
+export function mergeContiguousIntervals(
+  slotStrings: readonly string[],
+): Array<{ start: Date; end: Date }> {
+  const starts = [
+    ...new Set(
+      slotStrings
+        .map((s) => new Date(s).getTime())
+        .filter((t) => !Number.isNaN(t)),
+    ),
+  ].sort((a, b) => a - b);
+  const intervals: Array<{ start: number; end: number }> = [];
+  for (const start of starts) {
+    const last = intervals[intervals.length - 1];
+    if (last?.end === start) last.end = start + SCHEDULING_INTERVAL_MS;
+    else intervals.push({ start, end: start + SCHEDULING_INTERVAL_MS });
+  }
+  return intervals.map((i) => ({
+    start: new Date(i.start),
+    end: new Date(i.end),
+  }));
+}
+
+/**
  * One read on `AppointmentOccurrence_consultantProfileId_startsAt_endsAt_idx`
  * with the exclusion constraint's own predicate (confirmed, live, this
- * consultant) over the envelope of the proposed slots, minus the event's
- * own rows. A hit is a SLOT_TAKEN 409 nobody has to wait for. A fault in
- * the probe is reported and ignored: it is an optimisation, not a guard.
+ * consultant), one OR-arm per picked interval, minus the event's own rows: a
+ * session that sits between two picked times is not a conflict. A hit is a
+ * SLOT_TAKEN 409 nobody has to wait for. A fault in the probe is reported and
+ * ignored: it is an optimisation, not a guard.
  */
 export async function probeConfirmedOverlap(
   consultantProfileId: string,
@@ -196,13 +204,9 @@ export async function probeConfirmedOverlap(
   eventId: string,
   slotStrings: string[],
 ): Promise<void> {
-  const starts = slotStrings
-    .map((s) => new Date(s).getTime())
-    .filter((t) => !Number.isNaN(t));
-  if (starts.length === 0) return;
-  const earliest = new Date(Math.min(...starts));
-  const latest = new Date(Math.max(...starts) + SCHEDULING_INTERVAL_MS);
-  const relationField = getEventRelationField(eventType);
+  const intervals = mergeContiguousIntervals(slotStrings);
+  if (intervals.length === 0) return;
+  const relationField = `${getEventRelationField(eventType)}Id`;
   let taken: { startsAt: Date } | null;
   try {
     taken = await prisma.appointmentOccurrence.findFirst({
@@ -216,10 +220,17 @@ export async function probeConfirmedOverlap(
             OccurrenceCompletionStatus.RESCHEDULED,
           ],
         },
-        startsAt: { lt: latest },
-        endsAt: { gt: earliest },
+        OR: intervals.map(({ start, end }) => ({
+          startsAt: { lt: end },
+          endsAt: { gt: start },
+        })),
+        // A row of another event type has a NULL relation; `NOT { x: id }`
+        // alone would drop it (NULL <> id is not true in SQL).
         appointment: {
-          NOT: { [`${relationField}Id`]: eventId },
+          OR: [
+            { [relationField]: null },
+            { [relationField]: { not: eventId } },
+          ],
         } as Prisma.AppointmentWhereInput,
       },
       select: { startsAt: true },
@@ -235,8 +246,9 @@ export async function probeConfirmedOverlap(
   }
   if (taken) {
     throw new AllocationConflictError(
-      `Slot taken: ${taken.startsAt.toISOString()} is already booked. Please pick another time.`,
+      "One of the times you picked is already booked. Pick another time and try again.",
       "SLOT_TAKEN",
+      { takenStartsAt: taken.startsAt.toISOString() },
     );
   }
 }

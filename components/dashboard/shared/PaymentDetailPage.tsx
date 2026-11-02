@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { RefundDoorDialog } from "@/components/dashboard/backoffice/money/RefundDoorDialog";
+import { DownloadEvidence } from "@/components/dashboard/backoffice/money/DownloadEvidence";
 import { ErrorState } from "@/components/dashboard/ErrorState";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -237,7 +238,11 @@ export function PaymentDetailPage({
 
         <Card>
           <CardHeader>
-            <CardTitle>Appointment Information</CardTitle>
+            <CardTitle>
+              {payment.digitalProductPurchase
+                ? "Purchase Information"
+                : "Appointment Information"}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {payment.appointment ? (
@@ -268,6 +273,25 @@ export function PaymentDetailPage({
                   </p>
                 </div>
               </>
+            ) : payment.digitalProductPurchase ? (
+              <>
+                <div>
+                  <Label className="text-muted-foreground">Purchase</Label>
+                  <p className="font-medium text-foreground break-words">
+                    Digital product:{" "}
+                    {payment.digitalProductPurchase.product.title}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">User</Label>
+                  <p className="text-foreground">
+                    {payment.user?.name || "N/A"}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {payment.user?.email}
+                  </p>
+                </div>
+              </>
             ) : (
               <p className="text-muted-foreground">
                 No appointment associated yet
@@ -285,6 +309,17 @@ export function PaymentDetailPage({
           </CardContent>
         </Card>
       </div>
+
+      {payment.digitalProductPurchase && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Digital product</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <DownloadEvidence purchase={payment.digitalProductPurchase} />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Refunds List */}
       {payment.refunds && payment.refunds.length > 0 && (

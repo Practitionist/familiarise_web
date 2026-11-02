@@ -26,6 +26,9 @@ import {
   restoreDiscountCodes,
 } from "../../actions/maintenance/pause-discount-codes";
 
+// Maintenance state is production state; other deploys skip the write.
+process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
+
 beforeEach(() => jest.clearAllMocks());
 it("preserves the first snapshot through concurrent repeated pauses", async () => {
   let snapshot: string | null = null;

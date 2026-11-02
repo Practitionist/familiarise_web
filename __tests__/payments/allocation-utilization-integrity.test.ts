@@ -11,15 +11,22 @@
 
 import "../booking-algorithm/setup";
 
+// The in-transaction availability re-read has its own suite; this isolates the allocator.
+jest.mock("../../lib/booking/allocation/coverage", () => ({
+  assertSlotsStillPublished: jest.fn(async () => undefined),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // The allocator's slot batch reads co-host seats and an expert consultee's own profile.
+    consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
+    collaborator: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(),
     consultation: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
-    appointment: { findMany: jest.fn() },
+    appointment: { findMany: jest.fn(), findFirst: jest.fn() },
     rescheduleRequest: { findFirst: jest.fn() },
   },
   ALLOCATION_TX_MAX_WAIT_MS: 8000,
@@ -27,6 +34,10 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 jest.mock("../../utils/appointmentlock", () => ({
+  // allocate() takes an existing booking's appointment lock first.
+  withAppointmentLock: (_id: string, fn: (lock: unknown) => unknown) =>
+    fn({ key: "appointment-lock" }),
+  renewAppointmentLock: async () => true,
   lockAutoAllocate: jest
     .fn()
     .mockResolvedValue({ key: "mock-key", value: "mock-value" }),
@@ -35,6 +46,9 @@ jest.mock("../../utils/appointmentlock", () => ({
     .fn()
     .mockResolvedValue({ key: "mock-consultee-key", value: "mock-value" }),
   unlockConsulteeBooking: jest.fn().mockResolvedValue(undefined),
+  tryLockSlotBatch: jest.fn().mockResolvedValue({ ok: true, grant: [] }),
+  extendSlotInterval: jest.fn().mockResolvedValue(true),
+  unlockSlotInterval: jest.fn().mockResolvedValue(undefined),
 }));
 
 const recordBookingUtilization = jest.fn().mockResolvedValue({

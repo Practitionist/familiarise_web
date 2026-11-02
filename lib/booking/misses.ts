@@ -26,6 +26,16 @@ export const UNSETTLED_MISS = {
   deletedAt: null,
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
+/**
+ * An unsettled miss that holds its booking's earnings. A subscription's misses
+ * do not: its earnings release per delivered tranche, and the money a miss is
+ * owed is settled at plan end or by the cancel quote.
+ */
+export const EARNINGS_HOLDING_MISS = {
+  ...UNSETTLED_MISS,
+  appointment: { subscriptionId: null },
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
 /** When the session was lost; the make-up window runs from here. */
 export const missedAt = (o: {
   hostCancelledAt?: Date | null;

@@ -1,17 +1,35 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { z } from "zod";
+import { Calendar, Clock, Loader2 } from "lucide-react";
+import { differenceInCalendarDays } from "date-fns";
+
+import { SlotStatusIcon } from "@/components/scheduling/SlotStatusIcon";
+import { SlotStatusLegend } from "@/components/scheduling/SlotStatusLegend";
+import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
 import { Button } from "@/components/ui/button";
-import { TIntervalTiming } from "@/types/slots";
-import {
-  breakDownSlotsByDuration,
-  mergeConsecutiveSlots,
-} from "@/utils/scheduling-engine/intervals";
+import { useNowTick } from "@/hooks/use-now-tick";
 import { useToast } from "@/hooks/use-toast";
-import { format as formatTz } from "date-fns-tz";
-import { Calendar, Clock, Loader2, Check } from "lucide-react";
+import { useSession } from "@/lib/auth-client";
+import {
+  BUYER_LEGEND_KEYS,
+  SLOT_STATUS_TOKENS,
+  type SlotStatusKey,
+} from "@/lib/scheduling/interval-status-tokens";
+import {
+  calendarDateKey,
+  calendarDayOf,
+  dayRangeBounds,
+} from "@/lib/time/grid-zone";
+import {
+  sameWindow,
+  windowsForDay,
+  type SlotWithStatus,
+} from "@/lib/scheduling/booking-windows";
+import { AvailabilityReadError } from "@/lib/scheduling/use-availability-window";
+import { useDisplayZone } from "@/lib/time/use-display-zone";
 import { cn } from "@/utils/tailwind";
-import { Badge } from "@/components/ui/badge";
 
 export interface SelectedSlot {
   startsAt: Date;
@@ -20,25 +38,47 @@ export interface SelectedSlot {
   slotType: "WEEKLY" | "CUSTOM";
 }
 
-// Slot status types for visual representation
-type SlotStatus = "available" | "partial" | "booked" | "selected";
+const atomSchema = z.object({
+  slotId: z.string().optional(),
+  startsAt: z.string(),
+  endsAt: z.string(),
+  availabilityWindowId: z.string(),
+  type: z.enum(["WEEKLY", "CUSTOM"]),
+  localStartTime: z.string().optional(),
+  localEndTime: z.string().optional(),
+  isAllocated: z.boolean().optional(),
+  bookingStatus: z
+    .enum(["available", "partially-booked", "fully-booked"])
+    .optional(),
+  tooSoon: z.boolean().optional(),
+  limitReached: z.boolean().optional(),
+});
+const gridAnswerSchema = z.object({
+  data: z.record(z.string(), z.array(atomSchema)).nullish(),
+});
+type GridAtom = z.infer<typeof atomSchema>;
 
-// Color classes for different slot states
-const slotColorClasses: Record<SlotStatus, string> = {
-  available: "bg-green-100 hover:bg-green-200 text-green-800 border-green-400",
-  partial:
-    "bg-yellow-100 hover:bg-yellow-200 text-yellow-800 border-yellow-400",
-  booked: "bg-red-100 text-red-600 cursor-not-allowed border-red-400",
-  selected: "bg-gray-900 hover:bg-gray-800 text-white border-gray-900",
-};
-
-// Determine slot status based on allocation
-function getSlotStatus(slot: TIntervalTiming, isSelected: boolean): SlotStatus {
-  if (isSelected) return "selected";
-  if (slot.isAllocated) return "booked";
-  // Note: partiallyBooked can be added to TIntervalTiming type if needed in future
+/**
+ * How a trial time paints, or `null` when it is already over (not listed).
+ * Only "available" can be picked; a contended time is never offered here.
+ */
+export function trialTimeStatus(
+  window: SlotWithStatus,
+  nowMs: number,
+): SlotStatusKey | null {
+  if (new Date(window.startsAt).getTime() < nowMs) return null;
+  if (window.bookingStatus === "fully-booked") return "fullyBooked";
+  if (window.bookingStatus === "partially-booked") return "partiallyBooked";
+  if (window.isAllocated) return "fullyBooked";
+  if (window.tooSoon || window._isPast) return "tooSoon";
+  if (window.limitReached) return "limitReached";
   return "available";
 }
+
+type DayRead =
+  | { state: "loading" }
+  | { state: "error" }
+  | { state: "ready"; atoms: GridAtom[] };
 
 interface TrialScheduleCalendarProps {
   consultantId: string;
@@ -56,235 +96,216 @@ export function TrialScheduleCalendar({
   onCancel,
   isProcessing = false,
   consulteeUserName,
-}: TrialScheduleCalendarProps) {
+}: Readonly<TrialScheduleCalendarProps>) {
   const { toast } = useToast();
-  const [timezone] = useState(
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
-  );
-  const [currentDate, setCurrentDate] = useState(
-    () => new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-  );
-  const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
-  const [slotTimings, setSlotTimings] = useState<TIntervalTiming[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(null);
-  const [isLoadingSlots, setIsLoadingSlots] = useState(false);
+  const { data: session, isPending: isSessionPending } = useSession();
+  const displayZone = useDisplayZone(session?.user?.timezone ?? null);
+  const zone = displayZone.zone;
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const zoneReady = mounted && !isSessionPending;
 
-  const durationInHours = trialDurationMinutes / 60;
+  const now = useNowTick(60_000);
+  const today = calendarDayOf(now, zone);
+  // Calendar dates (local fields only); null means "today in the zone".
+  const [pickedDate, setPickedDate] = useState<Date | null>(null);
+  const [viewMonth, setViewMonth] = useState<Date | null>(null);
+  const selectedDate = pickedDate ?? today;
+  const shownMonth =
+    viewMonth ?? new Date(today.getFullYear(), today.getMonth(), 1, 12);
+  const selectedKey = calendarDateKey(selectedDate);
 
-  // Fetch availability slots when date changes
+  const [selectedSlot, setSelectedSlot] = useState<SlotWithStatus | null>(null);
+  const [read, setRead] = useState<DayRead>({ state: "loading" });
+  const [retryCount, setRetryCount] = useState(0);
+  // Only the newest date's answer may land: a slower answer for a date the
+  // user already left must not overwrite the one now on screen.
+  const latestRequestRef = useRef(0);
+
   useEffect(() => {
-    async function fetchSlots() {
-      if (!selectedDate || !consultantId || !timezone) {
-        setSlotTimings([]);
-        return;
-      }
+    if (!zoneReady || !consultantId) return;
+    const requestId = latestRequestRef.current + 1;
+    latestRequestRef.current = requestId;
+    const controller = new AbortController();
+    const [year, month, day] = selectedKey.split("-").map(Number);
+    const calendarDay = new Date(year, month - 1, day, 12);
+    const { start, end } = dayRangeBounds(calendarDay, calendarDay, zone);
+    setRead({ state: "loading" });
 
-      setIsLoadingSlots(true);
-      try {
-        const startDateInUtc = new Date(selectedDate);
-        startDateInUtc.setHours(0, 0, 0, 0);
-        startDateInUtc.setTime(startDateInUtc.getTime() - 24 * 60 * 60 * 1000);
-        const endDateInUtc = new Date(selectedDate);
-        endDateInUtc.setHours(23, 59, 59, 999);
-        endDateInUtc.setTime(endDateInUtc.getTime() + 24 * 60 * 60 * 1000);
-
-        const response = await fetch(
-          `/api/scheduling/availability-with-allocation/${consultantId}?` +
-            `startDateInUtc=${startDateInUtc.toISOString()}&` +
-            `endDateInUtc=${endDateInUtc.toISOString()}&` +
-            `timezone=${encodeURIComponent(timezone)}`,
-        );
-
+    const url =
+      `/api/scheduling/availability-with-allocation/${consultantId}` +
+      `?startDateInUtc=${start.toISOString()}` +
+      `&endDateInUtc=${end.toISOString()}` +
+      `&timezone=${encodeURIComponent(zone)}`;
+    fetch(url, { credentials: "include", signal: controller.signal })
+      .then(async (response) => {
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(
-            errorData.error || "Failed to fetch availability slots",
-          );
+          const detail: unknown = await response.json().catch(() => null);
+          throw new AvailabilityReadError(response.status, detail);
         }
+        return gridAnswerSchema.parse(await response.json());
+      })
+      .then((answer) => {
+        if (latestRequestRef.current !== requestId) return;
+        setRead({ state: "ready", atoms: answer.data?.[selectedKey] ?? [] });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        if (latestRequestRef.current !== requestId) return;
+        console.warn("Trial picker availability read failed", error);
+        setRead({ state: "error" });
+      });
+    return () => controller.abort();
+  }, [zoneReady, consultantId, selectedKey, zone, retryCount]);
 
-        const { data } = await response.json();
-        const selectedDateKey = formatTz(selectedDate, "yyyy-MM-dd", {
-          timeZone: timezone,
-        });
-        const slotsForSelectedDate = data[selectedDateKey] || [];
-        setSlotTimings(slotsForSelectedDate);
-      } catch (error) {
-        console.error("Error fetching slots:", error);
-        toast({
-          title: "Error fetching availability",
-          description:
-            error instanceof Error ? error.message : "Please try again",
-          variant: "destructive",
-        });
-        setSlotTimings([]);
-      } finally {
-        setIsLoadingSlots(false);
-      }
-    }
+  const times = useMemo(() => {
+    if (read.state !== "ready") return [];
+    return windowsForDay(
+      read.atoms,
+      trialDurationMinutes / 60,
+      zone,
+      now.getTime(),
+    ).flatMap((window) => {
+      const status = trialTimeStatus(window, now.getTime());
+      return status === null ? [] : [{ window, status }];
+    });
+  }, [read, trialDurationMinutes, zone, now]);
 
-    fetchSlots();
-  }, [selectedDate, consultantId, timezone, toast]);
+  // The confirm button acts only on a pick the latest read still offers.
+  const liveSelection =
+    selectedSlot === null
+      ? null
+      : (times.find(
+          ({ window, status }) =>
+            status === "available" && sameWindow(window, selectedSlot),
+        )?.window ?? null);
 
-  // Filter slots by trial duration
-  const availableSlots = useMemo(() => {
-    if (
-      !slotTimings ||
-      slotTimings.length === 0 ||
-      !timezone ||
-      !selectedDate
-    ) {
-      return [];
-    }
-
-    const slotsWithAllocation = slotTimings.map((slot) => ({
-      ...slot,
-      isAllocated: slot.isAllocated || false,
-    }));
-
-    // Merge consecutive available slots into contiguous blocks
-    // This allows longer durations (45min, 60min) to be scheduled across multiple adjacent 30-min slots
-    const mergedSlots = mergeConsecutiveSlots(slotsWithAllocation);
-
-    const brokenDownSlots = breakDownSlotsByDuration(
-      mergedSlots,
-      durationInHours,
-      [],
-      timezone,
+  const pickDate = (date: Date) => {
+    setPickedDate(date);
+    setSelectedSlot(null);
+  };
+  const shiftMonth = (delta: number) =>
+    setViewMonth(
+      new Date(shownMonth.getFullYear(), shownMonth.getMonth() + delta, 1, 12),
     );
 
-    // Filter out slots in the past AND allocated slots
-    const now = new Date();
-    return brokenDownSlots.filter((slot) => {
-      const slotStart = new Date(slot.startsAt);
-      // Exclude past slots and allocated (booked) slots
-      return slotStart > now && !slot.isAllocated;
-    });
-  }, [slotTimings, durationInHours, timezone, selectedDate]);
-
-  // Render calendar days
-  const renderCalendar = useCallback(() => {
+  const renderCalendar = () => {
     const daysInMonth = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth() + 1,
+      shownMonth.getFullYear(),
+      shownMonth.getMonth() + 1,
       0,
     ).getDate();
     const firstDayOfMonth = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth(),
+      shownMonth.getFullYear(),
+      shownMonth.getMonth(),
       1,
     ).getDay();
-
     const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
-    const days = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const todayKey = calendarDateKey(today);
+    const cells = [];
 
-    // Empty cells for days before the first day of month
     for (let i = 0; i < adjustedFirstDay; i++) {
-      days.push(
+      cells.push(
         <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11" />,
       );
     }
 
-    // Day cells
     for (let i = 1; i <= daysInMonth; i++) {
       const date = new Date(
-        currentDate.getFullYear(),
-        currentDate.getMonth(),
+        shownMonth.getFullYear(),
+        shownMonth.getMonth(),
         i,
+        12,
       );
-      const isSelected =
-        selectedDate?.getDate() === i &&
-        selectedDate?.getMonth() === currentDate.getMonth() &&
-        selectedDate?.getFullYear() === currentDate.getFullYear();
-      const isPast = date < today;
+      const key = calendarDateKey(date);
+      const isSelected = key === selectedKey;
+      const isPast = key < todayKey;
 
-      days.push(
+      cells.push(
         <button
-          key={i}
+          key={key}
+          type="button"
           disabled={isPast}
-          className={`w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center
-            ${
-              isSelected
-                ? "bg-gray-900 text-white shadow-md"
-                : isPast
-                  ? "text-gray-300 cursor-not-allowed"
-                  : "text-gray-700 hover:bg-gray-100"
-            }`}
-          onClick={() => {
-            if (!isPast) {
-              setSelectedDate(date);
-              setSelectedSlot(null);
-            }
-          }}
+          aria-pressed={isSelected}
+          aria-label={date.toLocaleDateString(undefined, {
+            day: "numeric",
+            month: "long",
+          })}
+          className={cn(
+            "w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center",
+            isSelected
+              ? "bg-gray-900 text-white shadow-md"
+              : isPast
+                ? "text-gray-300 cursor-not-allowed"
+                : "text-gray-700 hover:bg-gray-100",
+          )}
+          onClick={() => pickDate(date)}
         >
           {i}
         </button>,
       );
     }
 
-    return days;
-  }, [currentDate, selectedDate]);
+    return cells;
+  };
 
   const handleConfirm = () => {
-    if (!selectedSlot) {
-      toast({
-        title: "Please select a time slot",
-        variant: "destructive",
-      });
+    if (!liveSelection) {
+      toast({ title: "Pick a time first", variant: "destructive" });
       return;
     }
-
     onSlotSelect({
-      startsAt: new Date(selectedSlot.startsAt),
-      endsAt: new Date(selectedSlot.endsAt),
-      availabilityWindowId: selectedSlot.availabilityWindowId,
-      slotType: selectedSlot.type,
+      startsAt: new Date(liveSelection.startsAt),
+      endsAt: new Date(liveSelection.endsAt),
+      availabilityWindowId: liveSelection.availabilityWindowId,
+      slotType: liveSelection.type,
     });
   };
 
+  const canGoBack = differenceInCalendarDays(shownMonth, today) > 0;
+
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="border-b border-gray-200 pb-4">
-        <h2 className="text-xl font-semibold text-gray-900">
-          Schedule Trial
-        </h2>
+        <h2 className="text-xl font-semibold text-gray-900">Schedule Trial</h2>
         <p className="text-sm text-gray-500 mt-1">
           {consulteeUserName
-            ? `Select a ${trialDurationMinutes}-minute slot for the trial session with ${consulteeUserName}`
-            : `Select a ${trialDurationMinutes}-minute slot for the trial session`}
+            ? `Pick a ${trialDurationMinutes}-minute time for the trial with ${consulteeUserName}`
+            : `Pick a ${trialDurationMinutes}-minute time for the trial`}
         </p>
+        <ZoneSwitch
+          zone={zone}
+          usingDeviceZone={displayZone.usingDeviceZone}
+          canSwitch={displayZone.canSwitch}
+          onToggle={() => {
+            displayZone.toggle();
+            setSelectedSlot(null);
+          }}
+          now={now}
+          className="mt-2"
+        />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8">
-        {/* Calendar Section */}
         <div>
           <h3 className="text-base font-medium mb-4 flex items-center text-gray-900">
             <Calendar className="mr-2 h-5 w-5 text-gray-500" />
             Select a Date
           </h3>
           <div className="bg-gray-50 p-4 lg:p-5 rounded-xl border border-gray-200">
-            {/* Month Navigation */}
             <div className="flex justify-between items-center mb-4">
               <Button
                 variant="ghost"
                 size="sm"
+                aria-label="Previous month"
+                disabled={!canGoBack}
                 className="text-gray-600 hover:text-gray-900 hover:bg-gray-100 h-9 w-9"
-                onClick={() =>
-                  setCurrentDate(
-                    new Date(
-                      currentDate.getFullYear(),
-                      currentDate.getMonth() - 1,
-                      1,
-                    ),
-                  )
-                }
+                onClick={() => shiftMonth(-1)}
               >
                 &lt;
               </Button>
               <span className="font-semibold text-gray-900">
-                {currentDate.toLocaleString("default", {
+                {shownMonth.toLocaleString("default", {
                   month: "long",
                   year: "numeric",
                 })}
@@ -292,22 +313,14 @@ export function TrialScheduleCalendar({
               <Button
                 variant="ghost"
                 size="sm"
+                aria-label="Next month"
                 className="text-gray-600 hover:text-gray-900 hover:bg-gray-100 h-9 w-9"
-                onClick={() =>
-                  setCurrentDate(
-                    new Date(
-                      currentDate.getFullYear(),
-                      currentDate.getMonth() + 1,
-                      1,
-                    ),
-                  )
-                }
+                onClick={() => shiftMonth(1)}
               >
                 &gt;
               </Button>
             </div>
 
-            {/* Weekday Headers */}
             <div className="grid grid-cols-7 gap-2 text-center text-sm font-medium text-gray-500 mb-2">
               <div>Mo</div>
               <div>Tu</div>
@@ -318,138 +331,118 @@ export function TrialScheduleCalendar({
               <div>Su</div>
             </div>
 
-            {/* Calendar Days */}
             <div className="grid grid-cols-7 gap-1">{renderCalendar()}</div>
           </div>
         </div>
 
-        {/* Slots Section */}
         <div>
           <h3 className="text-base font-medium mb-4 flex items-center text-gray-900">
             <Clock className="mr-2 h-5 w-5 text-gray-500" />
-            Available {trialDurationMinutes}-min Slots
+            Available {trialDurationMinutes}-minute times
           </h3>
 
-          <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 min-h-[280px] max-h-[350px] overflow-y-auto">
-            {isLoadingSlots ? (
+          <div
+            className="bg-gray-50 p-4 rounded-xl border border-gray-200 min-h-[280px] max-h-[350px] overflow-y-auto"
+            aria-busy={read.state === "loading"}
+          >
+            {read.state === "loading" ? (
               <div className="flex items-center justify-center h-full py-8">
                 <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
-                <span className="ml-2 text-gray-500">Loading slots...</span>
+                <span className="ml-2 text-gray-500">Loading times…</span>
               </div>
-            ) : availableSlots.length > 0 ? (
+            ) : read.state === "error" ? (
+              <div
+                role="alert"
+                className="flex flex-col items-center justify-center h-full py-8 text-center"
+              >
+                <p className="text-gray-700 text-sm">
+                  We couldn&apos;t load the times for this day.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => setRetryCount((count) => count + 1)}
+                >
+                  Try again
+                </Button>
+              </div>
+            ) : times.length > 0 ? (
               <>
                 <div className="space-y-2">
-                  {availableSlots.map((slot, index) => {
+                  {times.map(({ window, status }) => {
                     const isSelected =
-                      selectedSlot?.slotId === slot.slotId &&
-                      selectedSlot?.localStartTime === slot.localStartTime;
-                    const slotStatus = getSlotStatus(slot, isSelected);
-                    const isDisabled = slotStatus === "booked";
-
+                      liveSelection !== null &&
+                      sameWindow(window, liveSelection);
+                    const paint: SlotStatusKey = isSelected
+                      ? "selected"
+                      : status;
+                    const token = SLOT_STATUS_TOKENS[paint];
+                    const selectable = status === "available";
                     return (
                       <button
-                        key={`${slot.slotId}-${index}`}
-                        disabled={isDisabled}
+                        key={window.startsAt}
+                        type="button"
+                        disabled={!selectable}
+                        aria-pressed={selectable ? isSelected : undefined}
+                        aria-label={`${window.localStartTime} to ${window.localEndTime}, ${token.label}`}
+                        data-status={paint}
                         className={cn(
-                          "w-full p-3 text-sm font-medium transition-all duration-200 rounded-lg text-left border",
-                          slotColorClasses[slotStatus],
-                          isSelected && "ring-2 ring-gray-900 ring-offset-1",
+                          "w-full p-3 text-sm font-medium transition-colors duration-150 rounded-lg text-left border",
+                          token.className,
+                          selectable ? "cursor-pointer" : "cursor-not-allowed",
                         )}
-                        onClick={() => !isDisabled && setSelectedSlot(slot)}
+                        onClick={() => setSelectedSlot(window)}
                       >
-                        <div className="flex items-center justify-between w-full">
-                          <div className="flex items-center">
+                        <span className="flex items-center justify-between w-full">
+                          <span className="flex items-center">
                             <Clock
-                              className={cn(
-                                "mr-2 h-4 w-4",
-                                isSelected
-                                  ? "text-white"
-                                  : "text-current opacity-60",
-                              )}
+                              aria-hidden="true"
+                              className="mr-2 h-4 w-4 opacity-70"
                             />
-                            <span>
-                              {slot.localStartTime} - {slot.localEndTime}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {slotStatus === "booked" && (
-                              <Badge
-                                variant="secondary"
-                                className="text-xs bg-gray-200 text-gray-500"
-                              >
-                                Booked
-                              </Badge>
-                            )}
-                            {slotStatus === "partial" && (
-                              <Badge
-                                variant="outline"
-                                className="text-xs bg-amber-50 text-amber-700 border-amber-300"
-                              >
-                                Partial
-                              </Badge>
-                            )}
-                            {isSelected && (
-                              <Check className="h-4 w-4 text-white" />
-                            )}
-                          </div>
-                        </div>
+                            {window.localStartTime} - {window.localEndTime}
+                          </span>
+                          <span className="flex items-center gap-1 text-xs">
+                            {paint !== "available" && token.label}
+                            <SlotStatusIcon name={token.icon} />
+                          </span>
+                        </span>
                       </button>
                     );
                   })}
                 </div>
-
-                {/* Legend */}
-                <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-gray-200 text-xs text-gray-600">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded bg-green-200 border border-green-500" />
-                    <span>Available</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded bg-yellow-200 border border-yellow-500" />
-                    <span>Partial</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded bg-red-200 border border-red-500" />
-                    <span>Booked</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-3 h-3 rounded bg-gray-900 border border-gray-900" />
-                    <span>Selected</span>
-                  </div>
-                </div>
+                <SlotStatusLegend
+                  keys={BUYER_LEGEND_KEYS}
+                  className="mt-4 pt-4 border-t border-gray-200 bg-gray-50"
+                />
               </>
             ) : (
               <div className="flex flex-col items-center justify-center h-full py-8 text-center">
                 <Clock className="h-10 w-10 text-gray-300 mb-3" />
                 <p className="text-gray-500 text-sm">
-                  No available slots for this date.
+                  No free times on this day.
                 </p>
-                <p className="text-gray-400 text-xs mt-1">
-                  Try selecting a different date.
-                </p>
+                <p className="text-gray-400 text-xs mt-1">Try another date.</p>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Trial Info */}
       <div className="bg-gray-100 border border-gray-300 rounded-lg p-3">
         <p className="text-sm text-gray-800">
           <span className="font-medium">Duration:</span> {trialDurationMinutes}{" "}
           minutes
         </p>
-        <p className="text-xs text-gray-600 mt-1">Timezone: {timezone}</p>
       </div>
 
-      {/* Actions */}
       <div className="flex justify-end gap-3 pt-2 border-t border-gray-200">
         <Button variant="outline" onClick={onCancel} disabled={isProcessing}>
           Cancel
         </Button>
         <Button
           onClick={handleConfirm}
-          disabled={!selectedSlot || isProcessing}
+          disabled={!liveSelection || isProcessing}
           className="bg-gray-900 hover:bg-gray-800 text-white"
         >
           {isProcessing ? (

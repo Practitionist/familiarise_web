@@ -10,7 +10,7 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
+import { resolveOrgScope, scopeToPlanHostWhere } from "@/lib/api/scope/parse";
 
 // =============================================================================
 // Prisma Query Types - Derived from actual query shape for type safety
@@ -289,45 +289,9 @@ export async function GET(
         { status: scopeResolution.status },
       );
     }
-    // For Webinar (1:1 appointment) — `appointment.is.organizationId`.
-    // For Class (1:many appointments) — `appointments.some.organizationId`.
-    //
-    // Personal scope: include events that have NO appointment yet (unbooked)
-    // OR have an appointment with organizationId=null. Using only
-    // `{ appointment: { is: { organizationId: null } } }` would exclude
-    // freshly created unbooked events, hiding them from the consultant's
-    // own inventory view. Issue: #732 (planner inventory vs booking-history
-    // semantics — flagged in the May 2026 readiness audit).
-    // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
-    const plannerOrgId = scopeOrgId(scopeResolution.scope);
-    const webinarApptOrg: Prisma.WebinarWhereInput | undefined =
-      scopeResolution.scope.kind === "personal"
-        ? {
-            OR: [
-              { appointment: { is: null } },
-              { appointment: { is: { organizationId: null } } },
-            ],
-          }
-        : plannerOrgId
-          ? {
-              appointment: {
-                is: { organizationId: plannerOrgId },
-              },
-            }
-          : undefined;
-    const classApptOrg: Prisma.ClassWhereInput | undefined =
-      scopeResolution.scope.kind === "personal"
-        ? {
-            OR: [
-              { appointment: null },
-              { appointment: { organizationId: null } },
-            ],
-          }
-        : plannerOrgId
-          ? {
-              appointment: { organizationId: plannerOrgId },
-            }
-          : undefined;
+    // Split on the plan's host org: personal inventory is every event on a
+    // plan no org hosts, booked or not.
+    const planHost = scopeToPlanHostWhere(scopeResolution.scope);
 
     // Read once, so the owned and collaborated class queries bound their slot
     // rows to the same instant and a session cannot straddle the two.
@@ -344,15 +308,13 @@ export async function GET(
       // Owned plans
       prisma.webinar.findMany({
         where: {
-          webinarPlan: { consultantProfileId: consultantId },
-          ...(webinarApptOrg ?? {}),
+          webinarPlan: { consultantProfileId: consultantId, ...planHost },
         },
         include: webinarInclude,
       }),
       prisma.class.findMany({
         where: {
-          classPlan: { consultantProfileId: consultantId },
-          ...(classApptOrg ?? {}),
+          classPlan: { consultantProfileId: consultantId, ...planHost },
         },
         include: classSlotsAround,
       }),
@@ -360,22 +322,22 @@ export async function GET(
       prisma.webinar.findMany({
         where: {
           webinarPlan: {
+            ...planHost,
             collaborators: {
               some: { consultantProfileId: consultantId, status: "ACCEPTED" },
             },
           },
-          ...(webinarApptOrg ?? {}),
         },
         include: webinarInclude,
       }),
       prisma.class.findMany({
         where: {
           classPlan: {
+            ...planHost,
             collaborators: {
               some: { consultantProfileId: consultantId, status: "ACCEPTED" },
             },
           },
-          ...(classApptOrg ?? {}),
         },
         include: classSlotsAround,
       }),

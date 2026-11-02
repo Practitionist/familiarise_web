@@ -65,6 +65,8 @@ export const ErrorTypes = {
   ORG_NOT_OPERATIONAL: "ORG_NOT_OPERATIONAL_ERROR",
   ORG_CANNOT_SPONSOR: "ORG_CANNOT_SPONSOR_ERROR",
   ORG_MEMBERSHIP_REQUIRED: "ORG_MEMBERSHIP_REQUIRED_ERROR",
+  // Org money funds LEARNER memberships only.
+  SPONSOR_SEAT_ROLE: "SPONSOR_SEAT_ROLE_ERROR",
   ORG_CREDIT_LIMIT_REACHED: "ORG_CREDIT_LIMIT_REACHED_ERROR",
   CONSULTANT_NOT_ON_PANEL: "CONSULTANT_NOT_ON_PANEL_ERROR",
   CONSULTANT_EXCLUSIVE_ENGAGEMENT: "CONSULTANT_EXCLUSIVE_ENGAGEMENT_ERROR",
@@ -119,6 +121,10 @@ export const ErrorTypes = {
   SLOT_NOT_ON_GRID: "SLOT_NOT_ON_GRID",
   // Another buyer took this 1:1 time first; rides as `code` beside AVAILABILITY_ERROR.
   SLOT_TAKEN: "SLOT_TAKEN",
+  // A seat checkout whose hold ended before its gateway order was filled in.
+  SEAT_HOLD_LAPSED: "SEAT_HOLD_LAPSED",
+  // A replay of a seat checkout whose order is still being minted; 409 + retryAfter.
+  CHECKOUT_IN_PROGRESS: "CHECKOUT_IN_PROGRESS",
 
   // Catch-all
   UNKNOWN: "UNKNOWN_ERROR",
@@ -427,6 +433,13 @@ const BUSINESS_ERROR_ENTRIES = [
     userMessage:
       "You are not an active member of this organisation, so it cannot sponsor this booking.",
   },
+  {
+    code: "SPONSOR_SEAT_ROLE",
+    errorType: ErrorTypes.SPONSOR_SEAT_ROLE,
+    httpStatus: 409,
+    userMessage:
+      "Sponsored seats are for learners in your organisation. Book this session yourself instead.",
+  },
   // #1744 row 4 — no userMessage: the thrown sentence names the rupee limit
   // and the outstanding figure (assertWithinInvoiceCreditLimit).
   {
@@ -547,6 +560,11 @@ const BUSINESS_ERROR_ENTRIES = [
     httpStatus: 400,
   },
   {
+    code: "INVALID_PLAN_START",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 400,
+  },
+  {
     code: "INCIDENT_REMEDY_NOT_FOUND",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 404,
@@ -567,6 +585,14 @@ const BUSINESS_ERROR_ENTRIES = [
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
   },
+  // A seat checkout whose event is not on the plan it names.
+  {
+    code: "PLAN_EVENT_MISMATCH",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 409,
+    userMessage:
+      "This session no longer matches its plan. Refresh and try again.",
+  },
   // #1527 Q4 — a new sale against a DRAFT 1:1 or subscription plan.
   {
     code: "PLAN_NOT_PUBLISHED",
@@ -578,6 +604,20 @@ const BUSINESS_ERROR_ENTRIES = [
     code: "PAYMENT_LINK_FAILED",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 502,
+  },
+  {
+    code: "SEAT_HOLD_LAPSED",
+    errorType: ErrorTypes.SEAT_HOLD_LAPSED,
+    httpStatus: 409,
+    userMessage:
+      "Your seat was held for a while, but payment didn't open in time. Your card was not charged — start checkout again.",
+  },
+  {
+    code: "CHECKOUT_IN_PROGRESS",
+    errorType: ErrorTypes.CHECKOUT_IN_PROGRESS,
+    httpStatus: 409,
+    userMessage:
+      "Your checkout is still being prepared. Try again in a moment — your card was not charged.",
   },
 ] as const satisfies ReadonlyArray<BusinessErrorEntry>;
 

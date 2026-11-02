@@ -73,7 +73,7 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 }));
 
 jest.mock("../../lib/payments/operations/refund-owed", () => ({
-  ...jest.requireActual("../helpers/booking-expiry-test-doubles")
+  ...jest.requireActual("../fixtures/booking-expiry-test-doubles")
     .refundOwedTestModule,
   driveRefundOwed: (...args: unknown[]) => mockDriveRefundOwed(...args),
 }));
@@ -142,7 +142,7 @@ jest.mock("../../lib/prisma", () => {
     bookingExpiryPrismaModels,
     withNoRefundOwedMarker,
     countRefundOwedBatch,
-  } = jest.requireActual("../helpers/booking-expiry-test-doubles");
+  } = jest.requireActual("../fixtures/booking-expiry-test-doubles");
   const paymentRows = jest.fn(async (): Promise<{ id: string }[]> => []);
   const db: Record<string, unknown> = {
     ...bookingExpiryPrismaModels(),

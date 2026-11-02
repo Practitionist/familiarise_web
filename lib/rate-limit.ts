@@ -6,7 +6,7 @@ import { Ratelimit } from "@upstash/ratelimit";
 import redis from "@/lib/redis-edge";
 import { NextResponse } from "next/server";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
-import { clientIpFrom } from "@/lib/request-ip";
+import { stampedClientIp } from "@/lib/request-ip";
 
 type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];
 
@@ -214,6 +214,23 @@ export const staffCreateLimiter = makeLimiter(
 /** 5 per 15 minutes per user — POST /api/user/reauthenticate (password and TOTP guesses) */
 export const reauthLimiter = makeLimiter(5, "15 m", "rl:reauth");
 
+/** 60 per minute per creator — upload URL plus commit for a full 20-file product, with retry headroom */
+export const digitalProductUploadLimiter = makeLimiter(
+  60,
+  "1 m",
+  "rl:digital-product-upload",
+);
+/**
+ * ~30 per 10 minutes per user — digital product file downloads. Upstash's
+ * sliding window floors the previous bucket's weighted count, so a burst
+ * straddling a bucket boundary can admit one or two more.
+ */
+export const digitalProductDownloadLimiter = makeLimiter(
+  30,
+  "10 m",
+  "rl:digital-product-download",
+);
+
 /**
  * Seconds until the sliding window admits the caller again, floored at 1.
  */
@@ -265,11 +282,11 @@ export async function applyRateLimit(
   }
 }
 
-/** The client IP from the header this runtime's edge sets (`lib/request-ip.ts`). */
+/** For route handlers: the client IP middleware stamped on the request. */
 export function getClientIp(req: {
   headers: { get(name: string): string | null };
 }): string {
-  return clientIpFrom(req.headers);
+  return stampedClientIp(req.headers);
 }
 
 /**

@@ -89,8 +89,35 @@ jest.mock("../../lib/prisma", () => ({
       updateMany: async () => ({ count: 1 }),
     },
     appointment: {
+      // The refund context reads the trial's wrapper; the fixtures describe
+      // only its policy and sessions.
+      findFirst: async (...a: unknown[]) => {
+        const row = (await mockAppointmentFindUnique(...a)) as {
+          occurrences?: { startsAt: Date; completionStatus?: string }[];
+        } | null;
+        return (
+          row && {
+            id: "appt-trial",
+            payment: [],
+            subscription: null,
+            consultation: null,
+            trial: null,
+            ...row,
+            occurrences: (row.occurrences ?? []).map((o) => ({
+              completionStatus: "SCHEDULED",
+              isTentative: false,
+              ordinal: 1,
+              endsAt: new Date(o.startsAt.getTime() + 3_600_000),
+              ...o,
+            })),
+          }
+        );
+      },
       findUnique: (...a: unknown[]) => mockAppointmentFindUnique(...a),
     },
+    // No session of the trial was ever released by a reschedule.
+    appointmentOccurrence: { findMany: async () => [] },
+    rescheduleRequest: { findMany: async () => [] },
   },
 }));
 
@@ -460,23 +487,13 @@ describe("quoteTrialRefund — a rebooked trial is quoted on its live session", 
       { startsAt: new Date(Date.now() - 4 * 3_600_000), status: "VOIDED" },
       { startsAt: new Date(Date.now() + 72 * 3_600_000), status: "SCHEDULED" },
     ];
-    // The read applies its own where, as Postgres would.
-    mockAppointmentFindUnique.mockImplementation(
-      async (args: {
-        select: {
-          occurrences: { where?: { completionStatus?: { in: string[] } } };
-        };
-      }) => {
-        const allowed = args.select.occurrences.where?.completionStatus?.in;
-        return {
-          cancellationPolicy: null,
-          occurrences: rows
-            .filter((r) => !allowed || allowed.includes(r.status))
-            .slice(0, 1)
-            .map(({ startsAt }) => ({ startsAt })),
-        };
-      },
-    );
+    mockAppointmentFindUnique.mockResolvedValue({
+      cancellationPolicy: null,
+      occurrences: rows.map(({ startsAt, status }) => ({
+        startsAt,
+        completionStatus: status,
+      })),
+    });
 
     const quote = await quoteTrialRefund({
       appointmentId: APPOINTMENT_ID,

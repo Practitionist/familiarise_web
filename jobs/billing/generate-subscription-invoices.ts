@@ -46,10 +46,39 @@ import {
   type RunFailureReporter,
 } from "@/lib/observability/run-failures";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
+import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 
 // Reminder fires when nextInvoiceDate is within this many days. Once
 // per cycle (gated by BillingSubscription.renewalReminderSentAt).
 const RENEWAL_REMINDER_WINDOW_DAYS = 7;
+
+/** Subscriptions due by `asOf` on a billable org's ACTIVE, in-term contract. */
+function dueSubscriptionWhere(
+  asOf: Date,
+  now: Date,
+): Prisma.BillingSubscriptionWhereInput {
+  return {
+    nextInvoiceDate: { lte: asOf },
+    contract: {
+      organization: { status: { in: BILLABLE_ORG_STATUSES } },
+      status: "ACTIVE",
+      OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+    },
+  };
+}
+
+/** Unreminded subscriptions renewing within the reminder window after `now`. */
+function renewalReminderWhere(now: Date): Prisma.BillingSubscriptionWhereInput {
+  const horizon = new Date(now);
+  horizon.setDate(horizon.getDate() + RENEWAL_REMINDER_WINDOW_DAYS);
+  return {
+    renewalReminderSentAt: null,
+    nextInvoiceDate: { gt: now, lte: horizon },
+    contract: {
+      organization: { status: { in: BILLABLE_ORG_STATUSES } },
+    },
+  };
+}
 
 export interface GenerateSubscriptionInvoicesResult {
   generated: number;
@@ -81,19 +110,7 @@ async function generateSubscriptionInvoices(opts: {
   const remindersSent = await sendRenewalReminders(now, opts.limit);
 
   const dueSubs = await prisma.billingSubscription.findMany({
-    where: {
-      nextInvoiceDate: { lte: asOf },
-      contract: {
-        organization: { status: { in: BILLABLE_ORG_STATUSES } },
-        // E2E-audit P0 fix — only bill contracts that are ACTIVE and within
-        // their term. This cron used to filter on org status alone, so a
-        // TERMINATED / EXPIRED / superseded contract kept issuing invoices
-        // every cycle forever (its docstring even claimed the expire cron
-        // enforced this — it doesn't; that cron only stamps contract status).
-        status: "ACTIVE",
-        OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
-      },
-    },
+    where: dueSubscriptionWhere(asOf, now),
     include: {
       contract: {
         include: {
@@ -152,11 +169,7 @@ async function generateSubscriptionInvoices(opts: {
 
     // Advance cycle once — compute outside the tx for a stable target.
     const nextStart = sub.currentCycleEnd;
-    const nextEnd = new Date(nextStart);
-    if (sub.cycle === "MONTHLY") nextEnd.setMonth(nextEnd.getMonth() + 1);
-    else if (sub.cycle === "QUARTERLY")
-      nextEnd.setMonth(nextEnd.getMonth() + 3);
-    else nextEnd.setFullYear(nextEnd.getFullYear() + 1);
+    const nextEnd = nextPeriodEnd(nextStart, sub.cycle);
 
     // #1401 — held outside the transaction so the P2002 handler below can name
     // the number that collided; the value is only meaningful once the claim has
@@ -417,17 +430,8 @@ async function sendRenewalReminders(
   now: Date,
   limit: number | undefined,
 ): Promise<number> {
-  const horizon = new Date(now);
-  horizon.setDate(horizon.getDate() + RENEWAL_REMINDER_WINDOW_DAYS);
-
   const due = await prisma.billingSubscription.findMany({
-    where: {
-      renewalReminderSentAt: null,
-      nextInvoiceDate: { gt: now, lte: horizon },
-      contract: {
-        organization: { status: { in: BILLABLE_ORG_STATUSES } },
-      },
-    },
+    where: renewalReminderWhere(now),
     include: {
       contract: {
         include: {

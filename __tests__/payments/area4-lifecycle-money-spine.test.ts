@@ -23,6 +23,8 @@ jest.mock("../../lib/prisma", () => ({
     appointmentOccurrence: {
       findMany: jest.fn(),
     },
+    rescheduleRequest: { findMany: jest.fn().mockResolvedValue([]) },
+    refund: { findMany: jest.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -71,14 +73,14 @@ describe("Area 4 — Lifecycle & Money Spine Fixes (F-4.1 through F-4.17)", () =
   });
 
   describe("F-4.12 (User Decision A1) — Reschedule notice floor prevents cancellation tier laundering", () => {
-    it("clamps hoursUntilNextSession to the minimum notice from a tombstoned rescheduled occurrence", async () => {
+    it("clamps hoursUntilNextSession to the consultee's own short-notice move of this session", async () => {
       const nowMs = Date.now();
       const rescheduleMoment = new Date(nowMs - 22 * 60 * 60 * 1000);
-      // Tombstoned slot started 6 hours after the reschedule moment
+      // The released slot started 6 hours after the consultee moved it.
       const tombstonedStart = new Date(
         rescheduleMoment.getTime() + 6 * 60 * 60 * 1000,
       );
-      // New rescheduled slot starts 5 days (120 hours) in the future
+      // The new slot starts 5 days (120 hours) in the future.
       const futureStart = new Date(nowMs + 120 * 60 * 60 * 1000);
       const futureEnd = new Date(futureStart.getTime() + 60 * 60 * 1000);
 
@@ -98,25 +100,30 @@ describe("Area 4 — Lifecycle & Money Spine Fixes (F-4.1 through F-4.17)", () =
           {
             startsAt: futureStart,
             endsAt: futureEnd,
+            ordinal: 1,
             completionStatus: "SCHEDULED",
             isTentative: false,
-            updatedAt: rescheduleMoment,
-            deletedAt: null,
           },
         ],
         subscription: null,
+        consultation: { requestedBy: { userId: "consultee-1" } },
+        trial: null,
       });
-
-      (
-        prisma.appointmentOccurrence.findMany as jest.Mock
-      ).mockResolvedValueOnce([
+      // The release record the reschedule wrote; the released row itself is
+      // gone once the new time was allocated.
+      (prisma.rescheduleRequest.findMany as jest.Mock).mockResolvedValueOnce([
         {
-          startsAt: tombstonedStart,
-          updatedAt: rescheduleMoment,
-          deletedAt: rescheduleMoment,
-          completionStatus: "RESCHEDULED",
+          status: "ACCEPTED",
+          createdAt: rescheduleMoment,
+          releasedSessions: [
+            { ordinal: 1, startsAt: tombstonedStart.toISOString() },
+          ],
+          releasedOccurrenceIds: ["occ-old"],
         },
       ]);
+      (
+        prisma.appointmentOccurrence.findMany as jest.Mock
+      ).mockResolvedValueOnce([]);
 
       const ctx = await resolveBookingRefundContext(
         { consultationId: "cons-1" },
@@ -124,9 +131,46 @@ describe("Area 4 — Lifecycle & Money Spine Fixes (F-4.1 through F-4.17)", () =
         prisma as never,
       );
 
-      // Without clamping, hoursUntilNextSession would be ~120 hours (5 days).
-      // With the reschedule notice floor, it is clamped to 6 hours.
+      // Without the floor it would be ~120 hours; the consultee's own move gave 6.
       expect(ctx.hoursUntilNextSession).toBe(6);
+    });
+
+    it("never substitutes the floor for a missing live session", async () => {
+      const nowMs = Date.now();
+      (prisma.appointment.findFirst as jest.Mock).mockResolvedValueOnce({
+        id: "apt-1",
+        cancellationPolicy: null,
+        payment: [
+          {
+            id: "pay-1",
+            amount: 10000,
+            paymentIntent: "pay_123",
+            refunds: [],
+            disputes: [],
+          },
+        ],
+        occurrences: [
+          {
+            startsAt: new Date(nowMs - 3 * 60 * 60 * 1000),
+            endsAt: new Date(nowMs - 2 * 60 * 60 * 1000),
+            ordinal: 1,
+            completionStatus: "UNVERIFIED",
+            isTentative: false,
+          },
+        ],
+        subscription: null,
+        consultation: { requestedBy: { userId: "consultee-1" } },
+        trial: null,
+      });
+
+      const ctx = await resolveBookingRefundContext(
+        { consultationId: "cons-1" },
+        undefined,
+        prisma as never,
+      );
+
+      expect(ctx.hoursUntilNextSession).toBeNull();
+      expect(ctx.windowState).toBe("DELIVERED");
     });
   });
 

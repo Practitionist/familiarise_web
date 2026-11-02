@@ -238,14 +238,14 @@ Note two structural facts the diagram encodes: `DataBreach` has **no foreign key
 
 ## 5. Compliance crons
 
-Each cron runs as a GitHub Action (`.github/workflows/*.yml`) calling a thin shim in `jobs/compliance/*`; each also exposes a `CRON_SECRET`-gated manual trigger at `POST /api/cleanup/*`.
+Each job is one implementation registered in `lib/cron/cleanup-registry.ts` and run by the Netlify ticker through `/api/cleanup/<job>`, which is also the `CRON_SECRET`-gated manual trigger.
 
 - `irp-uploader` performs e-invoice IRN generation (env-gated, see §1).
-- `consent-retention-sweeper` purges `ConsentArtifact` rows past `auditRetainedUntil`.
+- `consent-retention-sweeper` counts `ConsentArtifact` rows past `auditRetainedUntil`; deleting them needs its `?delete=1` gate, which stays off until the hash-only consent archive exists.
 - `databreach-deadline-alerts` runs the 72-hour DPDP breach-reporting clock hourly.
 - `msme-payment-alerts` warns finance before the 15/45-day deadline a default would lock.
 
-Audit-log retention (7 years for INVOICE/PAYOUT/WALLET/CONTRACT/CONSENT categories, 2 years otherwise) is enforced by `prune-audit-logs` (`jobs/cleanup/`).
+Audit-log retention (8 years for INVOICE/PAYOUT/WALLET/CONTRACT/CONSENT categories, 2 years otherwise) is enforced by `prune-audit-logs` (`scripts/cleanup/prune-audit-logs.ts`); see the [retention table](../../compliance/02-dpdp-and-privacy.md#retention-windows).
 
 ## 6. Other rails
 

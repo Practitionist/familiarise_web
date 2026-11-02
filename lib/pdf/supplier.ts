@@ -65,3 +65,14 @@ export function getPlatformSupplier(): PlatformSupplier | null {
     email: billingEmail(),
   };
 }
+
+/**
+ * The supplier for a GST job: null while PLATFORM_GSTIN is unset (pre-registration,
+ * a config skip); throws when it is set but malformed or from another state.
+ */
+export function platformSupplierForJob(): PlatformSupplier | null {
+  if (!process.env.PLATFORM_GSTIN?.trim()) return null;
+  const supplier = getPlatformSupplier();
+  if (!supplier) throw new Error(SUPPLIER_UNAVAILABLE_MESSAGE);
+  return supplier;
+}

@@ -33,6 +33,19 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+const STAND_DOWNS: ReadonlySet<RunOutcome> = new Set([
+  "held",
+  "skipped",
+  "refused",
+  "paused",
+]);
+
+/** A run that stood down (held, skipped, refused, paused): reported to the operator, never as an error. */
+export function isStandDownOutcome(outcome: unknown): boolean {
+  const parsed = runOutcomeSchema.safeParse(outcome);
+  return parsed.success && STAND_DOWNS.has(parsed.data);
+}
+
 /** The label of a recorded outcome, or null when the value is not one. */
 export function outcomeLabel(outcome: unknown): string | null {
   const parsed = runOutcomeSchema.safeParse(outcome);

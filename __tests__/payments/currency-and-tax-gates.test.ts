@@ -438,13 +438,11 @@ describe("a capture whose payment was refunded before the invoice", () => {
 });
 
 /**
- * #1757 — with PLATFORM_GSTIN unset the mint no-ops with a single console line
- * per process, so on real traffic every capture accrued an un-invoiced supply
- * silently. The no-op stays (fail-open pre-launch); it now also reports ONE
- * expected Sentry warning per process naming the env, not one per capture.
+ * With PLATFORM_GSTIN unset the mint no-ops and logs once per process; the
+ * healer's config-skip run row carries the signal, not Sentry.
  */
-describe("the mint gate is visible (#1757)", () => {
-  it("two mints with no supplier → one CONSUMER_INVOICE_MINT_DISABLED warning", async () => {
+describe("the mint gate stays out of Sentry", () => {
+  it("two mints with no supplier → no invoice and no Sentry message", async () => {
     (getPlatformSupplier as jest.Mock).mockReturnValue(null);
     const create = jest.fn();
     const paymentRow = {
@@ -489,15 +487,7 @@ describe("the mint gate is visible (#1757)", () => {
     expect(first.consumerInvoiceId).toBeNull();
     expect(second.consumerInvoiceId).toBeNull();
     expect(create).not.toHaveBeenCalled();
-    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
-    expect(reportSentryMessage).toHaveBeenCalledWith(
-      "CONSUMER_INVOICE_MINT_DISABLED",
-      expect.objectContaining({
-        expected: true,
-        level: "warning",
-        extra: expect.objectContaining({ env: "PLATFORM_GSTIN" }),
-      }),
-    );
+    expect(reportSentryMessage).not.toHaveBeenCalled();
   });
 });
 

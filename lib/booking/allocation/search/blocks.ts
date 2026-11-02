@@ -156,8 +156,7 @@ export function bestFittingBlockInRow(
  *
  * `budget` bounds the row walk only. The remembered best survives a truncated
  * walk, so a search that ran out of time still returns the best block it had
- * found rather than nothing — which is what lets the caller answer with a
- * shortage instead of a timeout.
+ * found; a truncated walk that found nothing answers SEARCH_TIMEOUT upstream.
  */
 export function bestBlockForSingleSession(
   eventType: EventType,
@@ -187,8 +186,10 @@ export function bestBlockForSingleSession(
       now.getTime() + (maxWeeksToSearch * 7 + 1) * DAY_MS,
     );
     const occurrencesByRow = sortedWeekly.map((slot) =>
+      // A row still running now keeps its remaining candidates (each one is
+      // skipped below if it starts before now), exactly as a custom row does.
       weeklyRowIntervalsInRange(slot, now, horizon)
-        .filter((occurrence) => occurrence.start > now)
+        .filter((occurrence) => occurrence.end > now)
         .slice(0, maxWeeksToSearch),
     );
     for (let week = 0; week < maxWeeksToSearch; week++) {

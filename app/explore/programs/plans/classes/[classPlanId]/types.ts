@@ -24,7 +24,7 @@ export type TClassPlanDetailsData = Omit<
     include: {
       consultantProfile: {
         select: ConsultantPublicScalars & {
-          user: { select: { id: true; name: true; email: true; image: true } };
+          user: { select: { id: true; name: true; image: true } };
           domain: true;
           subDomains: true;
           tags: true;

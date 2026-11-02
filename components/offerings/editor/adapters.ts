@@ -8,14 +8,17 @@
  * than another 900-line dialog.
  */
 
-import type { ZodTypeAny } from "zod";
+import { z, type ZodTypeAny } from "zod";
 import {
   ClassPlanSchema,
   ConsultationPlanSchema,
   SubscriptionPlanSchema,
   WebinarPlanSchema,
 } from "@/schemas/plans";
-import { PlanLevel } from "@prisma/client";
+import { DigitalProductCategory, PlanLevel } from "@prisma/client";
+import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import { DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE } from "@/lib/digital-products/constants";
+import { DIGITAL_PRODUCT_PRICE_RULE } from "@/schemas/digital-products";
 import type { TPlanImageType } from "@/lib/supabase";
 import { ConsultationService } from "@/components/planner/services/plans/consultation-service";
 import { SubscriptionService } from "@/components/planner/services/plans/subscription-service";
@@ -342,3 +345,87 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       ),
   },
 };
+
+/** The digital product form; the price is edited in rupees and sent as paise. */
+export const digitalProductFormSchema = z.object({
+  title: z.string().trim().min(3, "At least 3 characters").max(120),
+  subtitle: z.string().trim().max(200).nullable().optional(),
+  description: z.string().trim().min(10, "At least 10 characters").max(10_000),
+  category: z.nativeEnum(DigitalProductCategory),
+  price: z
+    .number()
+    .min(0)
+    .max(500_000, "At most ₹5,00,000")
+    .refine(
+      (rupees) =>
+        rupees === 0 ||
+        Math.round(rupees * 100) >= DIGITAL_PRODUCT_MIN_PAID_PRICE_PAISE,
+      DIGITAL_PRODUCT_PRICE_RULE,
+    ),
+  priceCurrency: z.literal("INR"),
+  // Written by the cover-image route, never by the form's save.
+  coverImagePath: z.string().nullable().optional(),
+});
+export type DigitalProductFormValues = z.infer<typeof digitalProductFormSchema>;
+
+export const DIGITAL_PRODUCT_DEFAULTS: DigitalProductFormValues = {
+  title: "",
+  subtitle: "",
+  description: "",
+  category: DigitalProductCategory.DOCUMENT,
+  price: 0,
+  priceCurrency: "INR",
+  coverImagePath: null,
+};
+
+async function productRequest(
+  url: string,
+  init: RequestInit,
+  fallback: string,
+): Promise<unknown> {
+  const res = await fetch(url, {
+    ...init,
+    headers: { "Content-Type": "application/json" },
+  });
+  const body: unknown = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(errorMessageFromBody(body, fallback));
+  return body;
+}
+
+const savedProductSchema = z.object({ data: z.object({ id: z.string() }) });
+
+/** Create the product, or update the listing of `productId`; returns its id. */
+export async function saveDigitalProduct(
+  values: DigitalProductFormValues,
+  productId?: string,
+): Promise<string> {
+  const listing = {
+    title: values.title,
+    subtitle: values.subtitle?.trim() || null,
+    description: values.description,
+    category: values.category,
+    pricePaise: Math.round(values.price * 100),
+  };
+  const body = await productRequest(
+    productId
+      ? `/api/digital-products/${encodeURIComponent(productId)}`
+      : "/api/digital-products",
+    { method: productId ? "PATCH" : "POST", body: JSON.stringify(listing) },
+    "Couldn't save the product",
+  );
+  return savedProductSchema.parse(body).data.id;
+}
+
+/** Put the product on sale, or take it off sale; buyers keep their access. */
+export async function setDigitalProductLifecycle(
+  productId: string,
+  action: "publish" | "archive",
+): Promise<void> {
+  await productRequest(
+    `/api/digital-products/${encodeURIComponent(productId)}/${action}`,
+    { method: "POST" },
+    action === "publish"
+      ? "Couldn't publish the product"
+      : "Couldn't take the product off sale",
+  );
+}

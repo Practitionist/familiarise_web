@@ -202,10 +202,39 @@ export function findDestructive(
  *  is decided from here. */
 export type PlanEntry = { marker: string | null; statement: string };
 
+/** Split on statement-ending `;` only: one inside a quoted literal or identifier
+ *  (`DEFAULT 'a;b'`, with `''`/`""` escapes) or a comment is part of the text. */
+function splitStatements(plan: string): string[] {
+  const chunks: string[] = [];
+  let start = 0;
+  let i = 0;
+  while (i < plan.length) {
+    const ch = plan[i];
+    if (ch === "'" || ch === '"') {
+      // A doubled quote is an escape, so scanning on reads it as close-then-open.
+      const close = plan.indexOf(ch, i + 1);
+      i = close === -1 ? plan.length : close + 1;
+    } else if (ch === "-" && plan[i + 1] === "-") {
+      const eol = plan.indexOf("\n", i);
+      i = eol === -1 ? plan.length : eol + 1;
+    } else if (ch === "/" && plan[i + 1] === "*") {
+      const end = plan.indexOf("*/", i + 2);
+      i = end === -1 ? plan.length : end + 2;
+    } else {
+      if (ch === ";") {
+        chunks.push(plan.slice(start, i));
+        start = i + 1;
+      }
+      i++;
+    }
+  }
+  chunks.push(plan.slice(start));
+  return chunks;
+}
+
 /** Prisma emits one statement per `;`, each preceded by a `-- comment` line. */
 export function planEntries(plan: string): PlanEntry[] {
-  return plan
-    .split(";")
+  return splitStatements(plan)
     .map((chunk) => ({
       marker: /^[ \t]*--[ \t]*(\S.*)$/m.exec(chunk)?.[1]?.trim() ?? null,
       statement: chunk.replace(/^[ \t]*(--[^\n]*\n)+/gm, "").trim(),

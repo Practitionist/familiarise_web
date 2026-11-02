@@ -89,6 +89,7 @@ export const POST = withOpsAction(
         dedupeKey,
         // A partial ops refund is not a cancellation: the seat stays live.
         keepSeat: amountPaise !== undefined,
+        settlesOwedByHand: true,
       }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
       return {
         target: { kind: "Payment", id: body.paymentId },

@@ -1503,7 +1503,7 @@ Refunds are two-phase. A Refund record reserves an amount before a gateway call;
 
 When a confirmed refund fully reverses a booking with collected CHARGE_MEMBER overage batches, the cascade does not make nested gateway calls inside that transaction or try to reverse the side charge as if it shared the parent's tender. Instead, it stamps `Payment.refundOwedKey` on each charged side Payment in the same transaction that completes the parent cascade. The stable key is `overage-credit-back:<parentPaymentId>:<sidePaymentId>`; null `refundOwedPaise` means the child's full remaining refundable balance. This state-as-outbox marker survives process failure and is later driven through the ordinary refund front door by `scripts/payments/retry-auto-refunds.ts`.
 
-The owed-refund worker waits 15 minutes, skips a payment with an existing PENDING refund or a live dispute, and uses the marker key as the refund dedupe key. Success/replay clears the marker; a still-PENDING gateway refund remains owned by refund reconciliation; failures are counted on the payment and retried until the third failed drive, when an operator is asked to refund manually. A marker older than two hours is surfaced in an operations event. `__tests__/payments/overage-credit-back-owed.test.ts` checks multiple child payments, idempotent replay, and retry after a gateway failure. A partial parent refund does not trigger this full-booking overage credit-back; the new marker branch is guarded by full completion of the parent refund.
+The owed-refund worker waits 15 minutes, skips a payment with an existing PENDING refund or a live dispute, and uses the marker key as the refund dedupe key. Success/replay clears the marker; a still-PENDING gateway refund remains owned by refund reconciliation; failures are counted on the payment and retried after 1 hour and then 4 hours (`refundOwedNextAt`) until the third failed drive, when an operator is asked to refund manually. A marker older than six hours is surfaced in an operations event. `__tests__/payments/overage-credit-back-owed.test.ts` checks multiple child payments, idempotent replay, and retry after a gateway failure. A partial parent refund does not trigger this full-booking overage credit-back; the new marker branch is guarded by full completion of the parent refund.
 
 ### 5.12. Organization payout batch
 
@@ -2031,7 +2031,7 @@ flowchart TD
 
 Withdrawal is an irreversible event on an artifact. Re-granting creates a new artifact; it does not rewrite the prior evidence. `withdrawConsent` can target a single purpose and accepted legacy aliases, moves `auditRetainedUntil` to at least seven calendar years after withdrawal, and clears Stream's local sync cache where relevant. Withdrawal does not erase already collected data by itself.
 
-`jobs/compliance/consent-retention-sweeper.ts` runs weekly and counts expired rows by default. Adding `?delete=1` to its cleanup route (or `--delete` to the script) deletes them in bounded batches once the consent-proof archive exists; the admin system-jobs Run button passes no argument, so it only counts. The distinct `scripts/cleanup/prune-audit-logs.ts` policy prunes org audit rows at category-specific age thresholds: seven years for financial/compliance categories and two years for other categories. Neither worker is a general data-retention engine for every model.
+The `consent-retention-sweeper` registry job runs weekly on the Netlify ticker (Sunday 00:25 UTC) and counts expired rows; the ticker never sends the delete flag. Adding `?delete=1` to its cleanup route deletes them in bounded batches once the consent-proof archive exists; the admin system-jobs Run button passes no argument, so it only counts. The distinct `scripts/cleanup/prune-audit-logs.ts` policy prunes org audit rows at category-specific age thresholds: seven years for financial/compliance categories and two years for other categories. Neither worker is a general data-retention engine for every model.
 
 | Transition       | Durable write                                     | Follow-up                                   | Failure behavior                                 |
 | ---------------- | ------------------------------------------------- | ------------------------------------------- | ------------------------------------------------ |
@@ -2174,7 +2174,7 @@ Audit pruning in `scripts/cleanup/prune-audit-logs.ts` writes a per-org `AUDIT_P
 
 `DataBreach` records detection time, affected user IDs, root cause, a Board reference, Board-report time, and principal-notification evidence. `POST /api/admin/data-breaches` requires the compliance permission and creates a record with `detectedAt=now`; `GET` exposes the count of affected people rather than their IDs.
 
-`jobs/compliance/databreach-deadline-alerts.ts` runs hourly from GitHub Actions. At twelve hours or less before the configured seventy-two-hour interval, it alerts admins through Novu, guarded email delivery, and ops chat. It sorts oldest incident first and links the compliance dashboard. It is an internal alert path. Source review found no Board filing connector or route that writes `reportedAt`, no route that writes `principalsNotifiedAt`, and no affected-person notification path. Therefore the implemented control starts the clock and reminds staff; it does not itself prove Board or principal notice was sent.
+The `databreach-deadline-alerts` registry job runs hourly on the Netlify ticker (at :15 UTC). At twelve hours or less before the configured seventy-two-hour interval, it alerts admins through Novu, guarded email delivery, and ops chat. It sorts oldest incident first and links the compliance dashboard. It is an internal alert path. Source review found no Board filing connector or route that writes `reportedAt`, no route that writes `principalsNotifiedAt`, and no affected-person notification path. Therefore the implemented control starts the clock and reminds staff; it does not itself prove Board or principal notice was sent.
 
 The Rules Gazette contains the applicable commencement schedule. Use the [official notification](https://www.meity.gov.in/static/uploads/2025/11/53450e6e5dc0bfa85ebd78686cadad39.pdf) to plan delivery, and get counsel to confirm required notice content and the operational meaning of detection. Do not label an internal email as a completed statutory report.
 
@@ -2276,7 +2276,7 @@ The ticker always responds successfully after target execution and reports failu
 
 #### 8.2.2. Batch schedules
 
-GitHub Actions retains non-money batch schedules such as audit pruning, consent retention and breach deadline alerts, plus CI/CD. Money reconciliation, payouts and statutory exports are owned by the active platform ticker in bounded slices. A configured workflow does not prove a recent successful run. Read the executable schedules and the [job inventory](../maintenance/04-cron-jobs-reference.md) before changing ownership; a lease does not prevent sequential duplicate executions.
+The active platform ticker owns every registered job, including audit pruning, consent retention and breach deadline alerts, money reconciliation, payouts and statutory exports, in bounded slices. GitHub Actions keeps CI/CD, the cron heartbeat, the live-database drift check and the security audit. A configured workflow does not prove a recent successful run. Read the executable schedules and the [job inventory](../maintenance/04-cron-jobs-reference.md) before changing ownership; a lease does not prevent sequential duplicate executions.
 
 | Work category            | Examples                                                        | Current scheduling shape                              | Recovery signal                                  |
 | ------------------------ | --------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------ |
@@ -2284,9 +2284,9 @@ GitHub Actions retains non-money batch schedules such as audit pruning, consent 
 | Delivery outbox          | outbound webhooks, Resend, Novu                                 | Netlify ticker with target limits                     | pending/retry/dead-letter counts                 |
 | User lifecycle sweeps    | booking reminders/expiry, Stream erasure                        | Netlify ticker at configured interval                 | summary counts and retry rows                    |
 | Data export              | `process-data-exports`                                          | 10m ticker target                                     | `OrgDataExportJob` state and summary             |
-| Statutory monitoring     | breach deadline, MSME risk                                      | breach alerts: Actions; MSME risk: ticker             | structured alert + admin queue                   |
+| Statutory monitoring     | breach deadline, MSME risk                                      | breach alerts and MSME risk: ticker                   | structured alert + admin queue                   |
 | Money batch              | ledger, payout, tax/accounting exports                          | bounded ticker slices or authenticated manual batches | completed report, execution evidence and backlog |
-| Retention                | audit and consent records                                       | daily or weekly Actions schedule                      | deleted/count summary and retention backlog      |
+| Retention                | audit and consent records                                       | ticker target at its configured interval              | deleted/count summary and retention backlog      |
 
 #### 8.2.3. Cron lease and job execution
 
@@ -2318,7 +2318,7 @@ Use correlation IDs to join a job execution to the domain row and, where availab
 
 `app/api/cleanup/[job]/route.ts` resolves a slug through `getCleanupJobHandlers`. The shared `cleanupRoute` factory validates `CRON_SECRET` (or supported Vercel cron secret), checks maintenance, parses and clamps `limit`, emits run logs, and maps results to HTTP status. A lock loser is 409; maintenance is a deliberate refusal; real callback failure is 500; a successful run with an operator-attention condition can be 207.
 
-`/api/admin/system-jobs/run` provides a staff-controlled execution path for registered jobs; `/api/staff/system-jobs/executions` exposes job history. Both routes should dispatch the same core used by the scheduled endpoint. Permission checks and the job's lock remain in force for manual runs. Do not add a separate admin-only implementation or bypass the lease for convenience.
+`/api/admin/system-jobs/run` provides a staff-controlled execution path for registered jobs; `/api/staff/system-jobs/executions` exposes job history. Both routes should dispatch the same core used by the scheduled endpoint. Permission checks and the job's lock remain in force for manual runs, and off production the run refuses with 409 `JOB_RUN_PRODUCTION_ONLY`. Do not add a separate admin-only implementation or bypass the lease for convenience.
 
 For cleanups that use `?limit=`, the shared parser rejects malformed present values, clamps to a maximum, and lets jobs set a bounded default. Bounded work is especially important on a serverless host: a large database cohort or slow vendor could otherwise outlive the function timeout. Ensure oldest-first work can drain over successive runs and that retry rows keep their own due time.
 
@@ -2450,9 +2450,7 @@ Deployment docs and the root agent contract describe an Upstash REST key named `
 
 #### 8.7.3. Request IP and cache variation
 
-`lib/rate-limit.ts:getClientIp` currently prefers `req.ip`, then `x-nf-client-connection-ip`, then the first `x-forwarded-for` value; it does not gate the Netlify header by runtime and does not use `x-vercel-forwarded-for`. `lib/auth.ts` supplies an ordered list of Netlify, Vercel, and generic forwarded headers without selecting a header based on the host. This differs from the explicit runtime trust rules in `AGENTS.md`.
-
-**Recommendation:** use one server-only request-IP helper that selects the trusted host header only when its runtime flag is true, with a carefully defined standard-proxy fallback for local and container hosts. Add coverage for spoofed cross-platform headers and multi-hop `X-Forwarded-For`. Do not accept caller-supplied host headers as equivalent to a platform-injected value.
+Edge middleware resolves the client IP once with `edgeClientIp` in `lib/request-ip.ts`: `x-vercel-forwarded-for` on Vercel, `fly-client-ip` on Fly, and otherwise the rightmost `x-forwarded-for` hop, which is the visitor on Netlify's edge and behind a standard proxy. It overwrites `x-familiarise-client-ip` with that address on every request it forwards. `lib/rate-limit.ts:getClientIp`, Better Auth's `ipAddressHeaders` in `lib/auth.ts` and the sign-in throttle read only that header, because inside the Node function every forwarded header names the edge function's egress address. `__tests__/security/client-ip-runtime.test.ts` pins the per-host resolution, the forged-prefix case and the overwrite of a forged stamp.
 
 Public consultant list responses vary by query through `Netlify-Vary`; the public cookie-aware detail branch uses a cookie key in `Netlify-Vary` but does not add standard `Vary: Cookie`. Follow `AGENTS.md` and pair the CDN-specific header with the standard cache variation header wherever the response changes by cookie. Private identity responses should remain `private, no-store`.
 

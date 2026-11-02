@@ -3,12 +3,20 @@ import { z } from "zod";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { deleteBoundedPage } from "@/lib/cron/run-deadline";
+import {
+  SESSION_SNAPSHOT,
+  recordSessionEnds,
+  sessionAccessLogReady,
+} from "@/lib/auth/session-access-log";
+import { SESSION_EXPIRES_IN_SECONDS } from "@/lib/auth/session-lifetime";
 
 export interface AuthTokenCleanupResult {
   success: boolean;
   /** Includes BetterAuth password-reset tokens, which live in `Verification`. */
   verificationTokensDeleted: number;
+  /** Expired sessions, each stamped EXPIRED into the access log first. */
   sessionsDeleted: number;
+  accessLogsDeleted: number;
   idempotencyRecordsDeleted: number;
   staleInvitationsExpired: number;
   totalCleaned: number;
@@ -21,6 +29,8 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const ACCESS_LOG_RETENTION_MS = 180 * DAY_MS;
 const cleanupLimit = z.number().int().min(1).max(500).default(100);
 const START_BUDGET_MS = 16_000;
 
@@ -49,6 +59,7 @@ async function cleanupAuthTokensUnlocked(
   const errors: string[] = [];
   let verificationTokensDeleted = 0;
   let sessionsDeleted = 0;
+  let accessLogsDeleted = 0;
   let idempotencyRecordsDeleted = 0;
   let staleInvitationsExpired = 0;
   const now = new Date();
@@ -85,13 +96,15 @@ async function cleanupAuthTokensUnlocked(
       prisma.verification.deleteMany({ where: { ...where, id: { in: ids } } }),
     () => prisma.verification.findFirst({ where, select: { id: true } }),
   );
-  sessionsDeleted = await prune(
-    "Session",
-    () => prisma.session.findMany(selection),
-    (ids) =>
-      prisma.session.deleteMany({ where: { ...where, id: { in: ids } } }),
-    () => prisma.session.findFirst({ where, select: { id: true } }),
-  );
+  // Until the access-log table exists, expired sessions stay as the trail.
+  if (await sessionAccessLogReady(prisma)) {
+    const sessions = await pruneSessions(now, limit, outOfTime);
+    const logs = await pruneAccessLogs(now, limit, outOfTime);
+    sessionsDeleted = sessions.deleted;
+    accessLogsDeleted = logs.deleted;
+    hasMore ||= sessions.hasMore || logs.hasMore;
+    errors.push(...sessions.errors, ...logs.errors);
+  }
   // An expired idempotency row may be refreshed in place after selection.
   idempotencyRecordsDeleted = await prune(
     "Idempotency",
@@ -113,6 +126,7 @@ async function cleanupAuthTokensUnlocked(
   const totalCleaned =
     verificationTokensDeleted +
     sessionsDeleted +
+    accessLogsDeleted +
     idempotencyRecordsDeleted +
     staleInvitationsExpired;
 
@@ -124,6 +138,7 @@ async function cleanupAuthTokensUnlocked(
     success: errors.length === 0,
     verificationTokensDeleted,
     sessionsDeleted,
+    accessLogsDeleted,
     idempotencyRecordsDeleted,
     staleInvitationsExpired,
     totalCleaned,
@@ -131,6 +146,108 @@ async function cleanupAuthTokensUnlocked(
     timestamp: new Date().toISOString(),
     hasMore,
   };
+}
+
+type DrainResult = { deleted: number; hasMore: boolean; errors: string[] };
+
+/** Runs `page` until a page comes back short, a page fails, or the budget is spent. */
+async function drain(
+  label: string,
+  limit: number,
+  outOfTime: () => boolean,
+  page: () => Promise<{ picked: number; deleted: number }>,
+): Promise<DrainResult> {
+  let deleted = 0;
+  for (;;) {
+    if (outOfTime()) return { deleted, hasMore: true, errors: [] };
+    try {
+      const result = await page();
+      deleted += result.deleted;
+      if (result.picked < limit) return { deleted, hasMore: false, errors: [] };
+    } catch (error) {
+      return {
+        deleted,
+        hasMore: true,
+        errors: [`${label} cleanup: ${messageOf(error)}`],
+      };
+    }
+  }
+}
+
+/**
+ * Expired sessions: delete, then stamp EXPIRED (ended at `expiresAt`) only the
+ * rows the delete removed, in one transaction. A session refreshed after the
+ * read fails the delete's expiry check and stays unstamped; a failed stamp
+ * rolls the delete back for the next run.
+ */
+function pruneSessions(now: Date, limit: number, outOfTime: () => boolean) {
+  const where = { expiresAt: { lt: now } };
+  return drain("Session", limit, outOfTime, () =>
+    prisma.$transaction(async (tx) => {
+      const rows = await tx.session.findMany({
+        where,
+        select: SESSION_SNAPSHOT,
+        orderBy: [{ expiresAt: "asc" }, { id: "asc" }],
+        take: limit,
+      });
+      if (rows.length === 0) return { picked: 0, deleted: 0 };
+      const ids = rows.map((row) => row.id);
+      const { count } = await tx.session.deleteMany({
+        where: { ...where, id: { in: ids } },
+      });
+      const kept =
+        count === rows.length
+          ? new Set<string>()
+          : new Set(
+              (
+                await tx.session.findMany({
+                  where: { id: { in: ids } },
+                  select: { id: true },
+                })
+              ).map((row) => row.id),
+            );
+      const ended = rows.filter((row) => !kept.has(row.id));
+      if (
+        !(await recordSessionEnds(tx, ended, "EXPIRED", now, {
+          sessionsLocked: true,
+        }))
+      ) {
+        throw new Error("access-log stamp failed; expired sessions kept");
+      }
+      return { picked: rows.length, deleted: count };
+    }),
+  );
+}
+
+/**
+ * CERT-In keeps an access-log row 180 days after its session ended. A row never
+ * stamped (its end write failed) is aged from its start plus one session length.
+ */
+function pruneAccessLogs(now: Date, limit: number, outOfTime: () => boolean) {
+  const cutoff = new Date(now.getTime() - ACCESS_LOG_RETENTION_MS);
+  const where = {
+    OR: [
+      { endedAt: { lt: cutoff } },
+      {
+        endedAt: null,
+        startedAt: {
+          lt: new Date(cutoff.getTime() - SESSION_EXPIRES_IN_SECONDS * 1000),
+        },
+      },
+    ],
+  };
+  return drain("SessionAccessLog", limit, outOfTime, async () => {
+    const rows = await prisma.sessionAccessLog.findMany({
+      where,
+      select: { id: true },
+      take: limit,
+    });
+    if (rows.length === 0) return { picked: 0, deleted: 0 };
+    const { count } = await prisma.sessionAccessLog.deleteMany({
+      where: { ...where, id: { in: rows.map((row) => row.id) } },
+    });
+    return { picked: rows.length, deleted: count };
+  });
 }
 
 /** Expires lapsed PENDING invitations, writing one MEMBER/INVITE_EXPIRED audit row each. */

@@ -9,7 +9,7 @@ import {
   STORE_TIMEOUT_MS,
   withTimeout,
 } from "@/lib/auth/rate-limit";
-import { clientIpFrom } from "@/lib/request-ip";
+import { stampedClientIp } from "@/lib/request-ip";
 
 const SIGN_IN_PATH = "/sign-in/email";
 const FAILURE_WINDOW_MS = 15 * 60 * 1000;
@@ -44,10 +44,10 @@ export function waitSecondsFor(
   return tiers.find((tier) => failures >= tier.failures)?.waitSeconds ?? 0;
 }
 
-/** The client's /24 (IPv4) or /48 (IPv6), from the header this runtime trusts. */
+/** The client's /24 (IPv4) or /48 (IPv6), from the middleware-stamped IP. */
 export function networkPrefix(headers: Headers | undefined): string {
   if (!headers) return "unknown_ip";
-  const ip = normalizeIP(clientIpFrom(headers), { ipv6Subnet: 48 });
+  const ip = normalizeIP(stampedClientIp(headers), { ipv6Subnet: 48 });
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip)
     ? `${ip.split(".").slice(0, 3).join(".")}.0/24`
     : ip;

@@ -6,7 +6,10 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { roundTime, timeToMinutes12h } from "../utils/time";
-import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
+import {
+  mergeConsecutiveSlotsForDisplay,
+  overviewStatusKey,
+} from "../utils/mergeSlots";
 import type { PickerInterval } from "../types";
 import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/interval-status-tokens";
 
@@ -17,6 +20,8 @@ interface DayWithSlots {
 
 interface CustomAvailabilityProps {
   days: DayWithSlots[];
+  /** The display zone; booked dates are read in it. */
+  zone: string;
   onPrevWeek?: () => void;
   onNextWeek?: () => void;
 }
@@ -25,6 +30,7 @@ const VISIBLE_SLOT_COUNT = 5;
 
 export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
   days,
+  zone,
   onPrevWeek,
   onNextWeek,
 }) => {
@@ -35,7 +41,8 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
     return days.map((day) => {
       const sorted = day.slots.slice().sort((a, b) => {
         return (
-          timeToMinutes12h(a.localStartTime) - timeToMinutes12h(b.localStartTime)
+          timeToMinutes12h(a.localStartTime) -
+          timeToMinutes12h(b.localStartTime)
         );
       });
       return {
@@ -53,13 +60,14 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
     }, 0);
   }, [mergedDays]);
 
-  // Get the date for booked slots in user timezone
+  // The date of a booked time, read in the display zone.
   const getBookedSlotDate = (slot: PickerInterval) => {
     if (!slot.startsAt) return "";
     const date = new Date(slot.startsAt);
     return date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
+      timeZone: zone,
     });
   };
 
@@ -121,10 +129,10 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                   <div key={date.toISOString()} className="space-y-2">
                     {visibleSlots.length > 0 ? (
                       visibleSlots.map((slot) => {
-                        const bookingStatus = slot.bookingStatus || "available";
-                        const isFullyBooked = bookingStatus === "fully-booked";
+                        const statusKey = overviewStatusKey(slot);
+                        const isFullyBooked = statusKey === "fullyBooked";
                         const isPartiallyBooked =
-                          bookingStatus === "partially-booked";
+                          statusKey === "partiallyBooked";
                         const bookedDate =
                           isFullyBooked || isPartiallyBooked || slot.isAllocated
                             ? getBookedSlotDate(slot)
@@ -136,15 +144,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                             className={`
                               w-full min-h-[4.5rem] px-2 py-2 text-xs rounded-xl
                               border shadow-lg backdrop-blur-sm relative overflow-hidden
-                              ${
-                                isFullyBooked
-                                  ? SLOT_STATUS_TOKENS.fullyBooked.className
-                                  : isPartiallyBooked
-                                    ? SLOT_STATUS_TOKENS.partiallyBooked.className
-                                    : slot.isAllocated
-                                      ? SLOT_STATUS_TOKENS.rescheduling.className
-                                      : SLOT_STATUS_TOKENS.available.className
-                              }
+                              ${SLOT_STATUS_TOKENS[statusKey].className}
                             `}
                           >
                             {/* Glossy overlay for buttons */}
@@ -173,21 +173,26 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                                 </div>
                               )}
                               {slot.isAllocated &&
-                                !isFullyBooked &&
-                                !isPartiallyBooked && (
+                                statusKey === "available" && (
                                   <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
                                     Request
                                     <br />
                                     Approval {bookedDate && `(${bookedDate})`}
                                   </div>
                                 )}
+                              {(statusKey === "tooSoon" ||
+                                statusKey === "limitReached") && (
+                                <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
+                                  {SLOT_STATUS_TOKENS[statusKey].label}
+                                </div>
+                              )}
                             </div>
                           </div>
                         );
                       })
                     ) : (
                       <div className="min-h-[4.5rem] flex items-center justify-center text-xs text-muted-foreground/70 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-border shadow-sm">
-                        No slots
+                        No times
                       </div>
                     )}
                   </div>
@@ -210,7 +215,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
                   ) : (
                     <>
                       <ChevronDown className="w-3.5 h-3.5" />
-                      Show {totalHidden} more slots
+                      Show {totalHidden} more times
                     </>
                   )}
                 </button>

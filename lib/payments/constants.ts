@@ -17,6 +17,21 @@ export const APPROVAL_PAYMENT_REMINDER_MS = APPROVAL_PAYMENT_EXPIRATION_MS / 2;
 /** A direct checkout's PENDING window; the slot frees when it lapses. */
 export const DIRECT_CHECKOUT_HOLD_MS = 30 * 60 * 1000;
 
+/** A webinar/class seat's gateway window: the order's capture window and the payment sheet's timeout. */
+export const SEAT_GATEWAY_TIMEOUT_MS = 12 * 60 * 1000;
+
+/** A late UPI or netbanking capture that the gateway accepted inside its window still lands on a counted seat. */
+export const SEAT_CAPTURE_GRACE_MS = 3 * 60 * 1000;
+
+/** A seat's PENDING window (Payment.expiresAt): it counts until then and stops counting at once after. */
+export const SEAT_CHECKOUT_HOLD_MS =
+  SEAT_GATEWAY_TIMEOUT_MS + SEAT_CAPTURE_GRACE_MS;
+
+/** What a seat's payment sheet is sized to: the hold less the capture grace. */
+export function seatGatewayDeadline(holdExpiresAt: Date): Date {
+  return new Date(holdExpiresAt.getTime() - SEAT_CAPTURE_GRACE_MS);
+}
+
 /** Minimum booking lead time in milliseconds (15 minutes) */
 export const MINIMUM_BOOKING_LEAD_TIME_MS = 15 * 60 * 1000;
 

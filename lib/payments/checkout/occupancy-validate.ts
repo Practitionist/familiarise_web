@@ -13,6 +13,7 @@ import { Prisma } from "@prisma/client";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import {
   buildConsultantOccupancyWhere,
+  buildDeadSeatFilter,
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
   OCCUPYING_OCCURRENCE_WHERE,
@@ -360,20 +361,41 @@ export async function validateSlotAvailability(
  */
 export async function assertConsulteeHasNoOverlappingSession(
   tx: Tx,
-  window: {
-    userId: string;
-    startsAt: string | Date;
-    endsAt: string | Date;
-    /** #1463 — the buyer's own open order for exactly this window. */
-    selfHoldAppointmentIds: string[];
-  },
+  window: ConsulteeWindow,
 ): Promise<void> {
+  if (await consulteeHasOverlappingSession(tx, window)) {
+    throw new Error("You already have a session booked during this time.");
+  }
+}
+
+type ConsulteeWindow = {
+  userId: string;
+  startsAt: string | Date;
+  endsAt: string | Date;
+  /** #1463 — the buyer's own open order for exactly this window. */
+  selfHoldAppointmentIds: string[];
+};
+
+/** Whether the buyer already holds a live session overlapping the window (the predicate above). */
+export async function consulteeHasOverlappingSession(
+  tx: Tx,
+  window: ConsulteeWindow,
+): Promise<boolean> {
+  // An expert buying from another expert is busy on their own calendar too:
+  // their hosted sessions and ACCEPTED co-host seats, not only their seats.
+  const buyerProfile = await tx.consultantProfile.findUnique({
+    where: { userId: window.userId },
+    select: { id: true },
+  });
+  const now = new Date();
   const conflict = await tx.appointment.findFirst({
     where: {
       AND: [
-        { OR: buildOccupiedAppointmentFilter() },
+        buyerProfile
+          ? buildConsultantOccupancyWhere(buyerProfile.id, window.userId, now)
+          : { OR: buildOccupiedAppointmentFilter() },
         // #1319 — parity with step 1 of validateSlotAvailability.
-        { NOT: buildDeadHoldFilter(new Date()) },
+        { NOT: buildDeadHoldFilter(now) },
         // #1463 — the buyer's own open order for this exact window is the thing
         // they are trying to finish paying for, not a competing session on their
         // calendar. Without this the availability fix would only move the wall
@@ -384,7 +406,19 @@ export async function assertConsulteeHasNoOverlappingSession(
         // userId (User.id) is the right scope — the roster keys on User, not
         // ConsulteeProfile, so this catches conflicts from any org and from
         // marketplace bookings with no org at all.
-        { participants: { some: liveParticipant(window.userId) } },
+        ...(buyerProfile
+          ? []
+          : [
+              {
+                participants: {
+                  some: {
+                    ...liveParticipant(window.userId),
+                    // A seat whose own payment lapsed no longer holds the buyer's time.
+                    NOT: buildDeadSeatFilter(now),
+                  },
+                },
+              },
+            ]),
         {
           occurrences: {
             some: {
@@ -402,7 +436,5 @@ export async function assertConsulteeHasNoOverlappingSession(
     },
     select: { id: true },
   });
-  if (conflict) {
-    throw new Error("You already have a session booked during this time.");
-  }
+  return conflict !== null;
 }

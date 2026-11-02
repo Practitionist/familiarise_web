@@ -105,6 +105,7 @@ export async function settleSubscriptionCycleWithNotice(
           sessionsTotal: true,
           schedulingPeriodStartsAt: true,
           schedulingTimezone: true,
+          planEndsAt: true,
           requestedBy: { select: { userId: true } },
           subscriptionPlan: {
             select: {
@@ -142,6 +143,7 @@ export async function settleSubscriptionCycleWithNotice(
     occurrences: wrapper.occurrences,
     schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
     schedulingTimezone: sub.schedulingTimezone,
+    planEndsAt: sub.planEndsAt,
     now: args.now,
   });
 

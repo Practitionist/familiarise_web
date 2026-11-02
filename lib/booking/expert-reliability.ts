@@ -28,9 +28,9 @@ export async function recordExpertStrike(
     consultantProfileId: string;
     cause: ExpertMissCause;
     appointmentId: string;
+    /** The sessions the strike is for; an incident over another session of the booking does not void it. */
+    occurrenceIds: string[];
     organizationId?: string | null;
-    /** The judged session, when the strike is about one particular occurrence. */
-    occurrenceId?: string;
   },
 ): Promise<boolean> {
   if (args.cause === "PLATFORM_VOID") return false;
@@ -44,7 +44,7 @@ export async function recordExpertStrike(
         strike: args.cause,
         consultantProfileId: args.consultantProfileId,
         appointmentId: args.appointmentId,
-        ...(args.occurrenceId ? { occurrenceId: args.occurrenceId } : {}),
+        occurrenceIds: args.occurrenceIds,
       },
       correlationId: expertReliabilityCorrelationId(args.consultantProfileId),
     },
@@ -62,7 +62,7 @@ const STRIKE_READ_CAP = 2_000;
 const INCIDENT_LOOKBACK_MS = 7 * 86_400_000;
 const strikeContextSchema = z.object({
   appointmentId: z.string(),
-  occurrenceId: z.string().optional(),
+  occurrenceIds: z.array(z.string()).optional(),
 });
 type StrikeContext = z.infer<typeof strikeContextSchema>;
 
@@ -71,58 +71,61 @@ const strikeContextOf = (context: Prisma.JsonValue): StrikeContext | null => {
   return parsed.success ? parsed.data : null;
 };
 
-type IncidentWindow = { startsAt: Date; endsAt: Date };
-
-async function incidentWindows(
+/**
+ * The sessions inside a declared incident, among those the strikes name; a
+ * strike recorded without its sessions is judged by its whole booking.
+ */
+async function incidentCovered(
   db: StrikeReader,
+  contexts: StrikeContext[],
   since: Date,
-): Promise<IncidentWindow[]> {
-  return db.platformIncident.findMany({
+): Promise<(context: StrikeContext) => boolean> {
+  const occurrenceIds = [
+    ...new Set(contexts.flatMap((c) => c.occurrenceIds ?? [])),
+  ];
+  const bookingIds = [
+    ...new Set(
+      contexts
+        .filter((c) => !c.occurrenceIds?.length)
+        .map((c) => c.appointmentId),
+    ),
+  ];
+  if (occurrenceIds.length === 0 && bookingIds.length === 0) return () => false;
+  const incidents = await db.platformIncident.findMany({
     where: { endsAt: { gt: new Date(since.getTime() - INCIDENT_LOOKBACK_MS) } },
     select: { startsAt: true, endsAt: true },
     take: 200,
   });
-}
-
-/** Appointments with a session inside a declared incident: their unscoped strikes never count. */
-async function incidentAppointmentIds(
-  db: StrikeReader,
-  appointmentIds: string[],
-  incidents: IncidentWindow[],
-): Promise<Set<string>> {
-  if (appointmentIds.length === 0 || incidents.length === 0) return new Set();
+  if (incidents.length === 0) return () => false;
   const rows = await db.appointmentOccurrence.findMany({
     where: {
-      appointmentId: { in: appointmentIds },
-      OR: incidents.map((w) => ({
-        startsAt: { lt: w.endsAt },
-        endsAt: { gt: w.startsAt },
-      })),
+      AND: [
+        {
+          OR: [
+            ...(occurrenceIds.length > 0
+              ? [{ id: { in: occurrenceIds } }]
+              : []),
+            ...(bookingIds.length > 0
+              ? [{ appointmentId: { in: bookingIds } }]
+              : []),
+          ],
+        },
+        {
+          OR: incidents.map((w) => ({
+            startsAt: { lt: w.endsAt },
+            endsAt: { gt: w.startsAt },
+          })),
+        },
+      ],
     },
-    select: { appointmentId: true },
-    distinct: ["appointmentId"],
+    select: { id: true, appointmentId: true },
   });
-  return new Set(rows.map((r) => r.appointmentId));
-}
-
-/** Occurrences that themselves overlap a declared incident: their strikes never count. */
-async function incidentOccurrenceIds(
-  db: StrikeReader,
-  occurrenceIds: string[],
-  incidents: IncidentWindow[],
-): Promise<Set<string>> {
-  if (occurrenceIds.length === 0 || incidents.length === 0) return new Set();
-  const rows = await db.appointmentOccurrence.findMany({
-    where: {
-      id: { in: occurrenceIds },
-      OR: incidents.map((w) => ({
-        startsAt: { lt: w.endsAt },
-        endsAt: { gt: w.startsAt },
-      })),
-    },
-    select: { id: true },
-  });
-  return new Set(rows.map((r) => r.id));
+  const sessions = new Set(rows.map((r) => r.id));
+  const bookings = new Set(rows.map((r) => r.appointmentId));
+  return (context) =>
+    context.occurrenceIds?.length
+      ? context.occurrenceIds.some((id) => sessions.has(id))
+      : bookings.has(context.appointmentId);
 }
 
 /** The strikes in the window, less those on a session a declared incident voided. */
@@ -131,31 +134,11 @@ async function countableStrikes<R extends { context: Prisma.JsonValue }>(
   rows: R[],
   since: Date,
 ): Promise<R[]> {
-  const contexts = rows.map((r) => strikeContextOf(r.context));
-  const appointmentIds = [
-    ...new Set(contexts.flatMap((c) => (c ? [c.appointmentId] : []))),
-  ];
-  const occurrenceIds = [
-    ...new Set(
-      contexts.flatMap((c) => (c?.occurrenceId ? [c.occurrenceId] : [])),
-    ),
-  ];
-  if (appointmentIds.length === 0 && occurrenceIds.length === 0) return rows;
-  const incidents = await incidentWindows(db, since);
-  if (incidents.length === 0) return rows;
-  const [coveredAppointments, coveredOccurrences] = await Promise.all([
-    incidentAppointmentIds(db, appointmentIds, incidents),
-    incidentOccurrenceIds(db, occurrenceIds, incidents),
-  ]);
-  if (coveredAppointments.size === 0 && coveredOccurrences.size === 0) {
-    return rows;
-  }
-  return rows.filter((_, i) => {
-    const context = contexts[i];
-    if (!context) return true;
-    return context.occurrenceId
-      ? !coveredOccurrences.has(context.occurrenceId)
-      : !coveredAppointments.has(context.appointmentId);
+  const contexts = rows.flatMap((r) => strikeContextOf(r.context) ?? []);
+  const covered = await incidentCovered(db, contexts, since);
+  return rows.filter((r) => {
+    const context = strikeContextOf(r.context);
+    return !context || !covered(context);
   });
 }
 

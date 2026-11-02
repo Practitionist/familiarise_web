@@ -46,6 +46,20 @@ jest.mock("../../lib/booking/class-sessions", () => ({
 const stampRefundOwed = jest.fn();
 const driveRefundOwed = jest.fn();
 jest.mock("../../lib/payments/operations/refund-owed", () => ({
+  REFUND_OWED_SELECT: { id: true, refundOwedKey: true, refundOwedPaise: true },
+  markerFromRow: (row: {
+    id: string;
+    refundOwedKey: string | null;
+    refundOwedPaise: number | null;
+  }) =>
+    row.refundOwedKey
+      ? {
+          paymentId: row.id,
+          amountPaise: row.refundOwedPaise,
+          key: row.refundOwedKey,
+          reason: "refund owed",
+        }
+      : null,
   stampRefundOwed: (...a: unknown[]) => stampRefundOwed(...a),
   driveRefundOwed: (...a: unknown[]) => driveRefundOwed(...a),
 }));
@@ -229,6 +243,8 @@ function occ(
       classId: null,
       webinarId: null,
       trial: null,
+      subscription: null,
+      class: null,
       participants: [{ userId: "u1", paymentId: "pay-1", createdAt: at(-60) }],
       payment: [{ id: "pay-1", userId: "u1" }],
       ...appointment,
@@ -238,7 +254,7 @@ function occ(
 
 type StrikeFixture = {
   appointmentId: string;
-  occurrenceId?: string;
+  occurrenceIds?: string[];
 };
 
 function strikeReader(opts: {
@@ -249,9 +265,9 @@ function strikeReader(opts: {
   return {
     systemEvent: {
       findMany: jest.fn(async () =>
-        opts.strikes.map(({ appointmentId, occurrenceId }) => ({
-          context: occurrenceId
-            ? { appointmentId, occurrenceId }
+        opts.strikes.map(({ appointmentId, occurrenceIds }) => ({
+          context: occurrenceIds?.length
+            ? { appointmentId, occurrenceIds }
             : { appointmentId },
         })),
       ),
@@ -261,12 +277,25 @@ function strikeReader(opts: {
     },
     appointmentOccurrence: {
       findMany: jest.fn(
-        async ({ where }: { where: Record<string, unknown> }) =>
-          "id" in where
-            ? (opts.occurrencesInIncident ?? []).map((id) => ({ id }))
+        async ({
+          where,
+        }: {
+          where: {
+            AND?: Array<{ OR?: Array<Record<string, unknown>> }>;
+          };
+        }) => {
+          const scope = where.AND?.[0]?.OR ?? [];
+          const byOccurrence = scope.some((clause) => "id" in clause);
+          return byOccurrence
+            ? (opts.occurrencesInIncident ?? []).map((id) => ({
+                id,
+                appointmentId: "a",
+              }))
             : (opts.appointmentsInIncident ?? []).map((appointmentId) => ({
+                id: `${appointmentId}-occ`,
                 appointmentId,
-              })),
+              }));
+        },
       ),
     },
   };
@@ -497,7 +526,7 @@ describe("readers that must count incident refunds and skip incident strikes", (
 
   it("counts a rebooked-session strike when only the appointment's other occurrence overlapped", async () => {
     const reader = strikeReader({
-      strikes: [{ appointmentId: "a", occurrenceId: "occ-new" }],
+      strikes: [{ appointmentId: "a", occurrenceIds: ["occ-new"] }],
       appointmentsInIncident: ["a"],
     });
     await expect(strikeCount(reader)).resolves.toBe(1);
@@ -505,7 +534,7 @@ describe("readers that must count incident refunds and skip incident strikes", (
 
   it("drops a strike whose own rebooked occurrence overlapped the incident", async () => {
     const reader = strikeReader({
-      strikes: [{ appointmentId: "a", occurrenceId: "occ-new" }],
+      strikes: [{ appointmentId: "a", occurrenceIds: ["occ-new"] }],
       appointmentsInIncident: ["a"],
       occurrencesInIncident: ["occ-new"],
     });

@@ -17,6 +17,8 @@
  */
 
 type MockDelegate = Record<string, jest.Mock>;
+/** The buyer's own ConsultantProfile, when they are an expert too. */
+const mockBuyer = { profile: null as { id: string } | null };
 let txClient: Record<string, MockDelegate>;
 
 /** The scalar slice of a Payment the reuse lookup filters on. */
@@ -57,6 +59,20 @@ jest.mock("../../lib/prisma", () => ({
       updateMany: jest.fn(async () => ({ count: 1 })),
       // #1695 — the post-mint abort tombstone is written on the global client.
       create: jest.fn(async () => ({})),
+      // A failed seat mint looks its pre-mint row up to release the seat.
+      findUnique: jest.fn(async () => null),
+    },
+    // A dual-role buyer's own profile and the event's sessions (self atoms).
+    consultantProfile: {
+      findUnique: jest.fn(async () => mockBuyer.profile),
+    },
+    appointmentOccurrence: {
+      findMany: jest.fn(async () => [
+        {
+          startsAt: new Date("2031-01-01T10:00:00.000Z"),
+          endsAt: new Date("2031-01-01T11:00:00.000Z"),
+        },
+      ]),
     },
     webinar: {
       findUnique: jest.fn(async () => webinarRow()),
@@ -81,6 +97,8 @@ jest.mock("../../utils/appointmentlock", () => ({
   },
   CHECKOUT_WAIT_RETRY_CONFIG: { retryCount: 5 },
   lockSlotBooking: jest.fn(async () => []),
+  lockSlotBatch: jest.fn(async () => [{ key: "slot-booking:cp-buyer:x" }]),
+  unlockSlotInterval: jest.fn(async () => undefined),
   unlockSlotBooking: jest.fn(async () => undefined),
   lockEventCheckout: jest.fn(async () => ({
     key: "event-checkout",
@@ -106,6 +124,11 @@ jest.mock("../../lib/payments/index", () => ({
   __esModule: true,
   createPaymentIntent: jest.fn(),
   cancelPaymentIntent: jest.fn(),
+}));
+jest.mock("../../lib/booking/pending-payment-expiry", () => ({
+  __esModule: true,
+  ...jest.requireActual("../../lib/booking/pending-payment-expiry"),
+  cancelGatewayOrders: jest.fn(async () => undefined),
 }));
 jest.mock("../../lib/profiles/ensure-consultee-profile", () => ({
   __esModule: true,
@@ -212,7 +235,12 @@ jest.mock("../../lib/payments/operations/cancellation-policy-store", () => ({
 }));
 
 import prisma from "../../lib/prisma";
-import { createPaymentIntent } from "../../lib/payments/index";
+import {
+  cancelPaymentIntent,
+  createPaymentIntent,
+} from "../../lib/payments/index";
+import { cancelGatewayOrders } from "../../lib/booking/pending-payment-expiry";
+import { PaymentError } from "../../lib/payments/core/types";
 import {
   createEarningsFromPayment,
   resolvePaymentForEarnings,
@@ -343,6 +371,7 @@ function checkoutInput(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   reuseState.rows = [];
+  mockBuyer.profile = null;
   txClient = {
     user: { findUnique: jest.fn(async () => userRow()) },
     membership: { findFirst: jest.fn(async () => null) },
@@ -352,7 +381,10 @@ beforeEach(() => {
         organizationId: null,
       })),
     },
-    webinar: { findUnique: jest.fn(async () => webinarRow()) },
+    webinar: {
+      findUnique: jest.fn(async () => webinarRow()),
+      count: jest.fn(async () => 1),
+    },
     appointmentOccurrence: {
       update: jest.fn(async ({ where }: { where: unknown }) => where),
     },
@@ -372,9 +404,12 @@ beforeEach(() => {
       updateManyAndReturn: jest.fn(async () => []),
       // The buyer's prior seat payment on this event; none here.
       findFirst: jest.fn(async () => null),
+      // The seat's order is filled into its pre-mint row after the commit.
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
     paymentLeg: {
       create: jest.fn(async () => ({})),
+      updateMany: jest.fn(async () => ({ count: 1 })),
       findMany: jest.fn(async () => [{ source: "CARD", amountPaise: 100000 }]),
     },
   };
@@ -609,7 +644,7 @@ function gateDb(rows: Array<Record<string, unknown>>) {
 }
 
 describe("#1220-triage — reuse gates", () => {
-  test("CONSULTATION: a different slot time is superseded, never resumed", async () => {
+  test("CONSULTATION: a live order for a different slot time is neither resumed nor superseded", async () => {
     const row = openSibling({
       appointment: {
         consultationId: "cons_1",
@@ -628,10 +663,9 @@ describe("#1220-triage — reuse gates", () => {
         slotWindow: SLOT,
       },
     );
+    // Two tabs, one plan, two windows: both checkouts stay live.
     expect(reusable).toBeNull();
-    expect(supersede).toEqual([
-      { id: "pay-open", reason: "slot-window-mismatch" },
-    ]);
+    expect(supersede).toEqual([]);
   });
 
   test("CONSULTATION: identical slot window resumes", async () => {
@@ -694,7 +728,7 @@ describe("#1220-triage — reuse gates", () => {
     expect(supersede).toEqual([{ id: "pay-open", reason: "amount-mismatch" }]);
   });
 
-  test("SUBSCRIPTION: period mismatch supersedes; both-null request matches both-null rows only", async () => {
+  test("SUBSCRIPTION: a live order for another period is left alone; both-null matches both-null only", async () => {
     const withPeriod = openSibling({
       id: "pay-period",
       appointment: {
@@ -721,7 +755,7 @@ describe("#1220-triage — reuse gates", () => {
       },
     );
     expect(gated.reusable?.id).toBe("pay-period");
-    expect(gated.supersede.map((s) => s.id)).toEqual(["pay-noperiod"]);
+    expect(gated.supersede).toEqual([]);
 
     // Keyless request must not resume a hold that carries a period.
     const keyless = await findReusablePendingOrderPayment(
@@ -737,15 +771,50 @@ describe("#1220-triage — reuse gates", () => {
       },
     );
     expect(keyless.reusable).toBeNull();
-    expect(keyless.supersede.map((s) => s.id)).toEqual(["pay-period"]);
+    expect(keyless.supersede).toEqual([]);
   });
 });
 
-describe("#1695 — a post-mint abort leaves an EXPIRED tombstone for the orphaned order", () => {
-  it("writes the minted order as EXPIRED so a late capture has a row to be refunded against", async () => {
-    // The gateway order is minted before the booking transaction; an abort
-    // inside it (the CREDIT_SHORTFALL retry shape) used to leave a live
-    // Razorpay order with no Payment row, which cannot be voided.
+describe("a dual-role seat buyer's own calendar", () => {
+  it("takes the buyer's own atoms for the event's sessions and frees them before the mint", async () => {
+    const locks = jest.requireMock("../../utils/appointmentlock") as {
+      lockSlotBatch: jest.Mock;
+      unlockSlotInterval: jest.Mock;
+    };
+    mockBuyer.profile = { id: "cp-buyer" };
+
+    await handleCheckout(checkoutInput(), "user-1");
+
+    expect(locks.lockSlotBatch).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          consultantProfileId: "cp-buyer",
+          startsAt: new Date("2031-01-01T10:00:00.000Z"),
+        }),
+      ],
+      expect.any(Number),
+      expect.anything(),
+    );
+    const released = locks.unlockSlotInterval.mock.invocationCallOrder[0];
+    const minted = (createPaymentIntent as jest.Mock).mock
+      .invocationCallOrder[0];
+    expect(released).toBeLessThan(minted);
+  });
+
+  it("takes no self atoms for a buyer who hosts nothing", async () => {
+    const locks = jest.requireMock("../../utils/appointmentlock") as {
+      lockSlotBatch: jest.Mock;
+    };
+    locks.lockSlotBatch.mockClear();
+
+    await handleCheckout(checkoutInput(), "user-1");
+
+    expect(locks.lockSlotBatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("seat checkout mints its order after the commit", () => {
+  it("an aborted seat commit mints no gateway order, so nothing is orphaned", async () => {
     txClient.payment.create = jest.fn(async () => {
       throw new Error(
         "CREDIT_SHORTFALL: expected 500 paise credits but only 0 available. Aborting for retry.",
@@ -754,18 +823,51 @@ describe("#1695 — a post-mint abort leaves an EXPIRED tombstone for the orphan
 
     await expect(handleCheckout(checkoutInput(), "user-1")).rejects.toThrow();
 
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("commits the seat under a pre-mint intent, then fills in the minted order", async () => {
+    const res = await handleCheckout(checkoutInput(), "user-1");
+
+    const written = (txClient.payment.create as jest.Mock).mock.calls[0][0]
+      .data as { paymentIntent: string };
+    expect(written.paymentIntent).toMatch(/^premint_/);
     expect(createPaymentIntent).toHaveBeenCalledTimes(1);
-    expect(prisma.payment.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        paymentIntent: "order_NEW",
-        paymentStatus: "EXPIRED",
-        paymentGateway: "RAZORPAY",
-        userId: "user-1",
-      }),
+    expect(txClient.payment.updateMany).toHaveBeenCalledWith({
+      where: { paymentIntent: written.paymentIntent, paymentStatus: "PENDING" },
+      data: { paymentIntent: "order_NEW" },
     });
-    const written = (prisma.payment.create as jest.Mock).mock.calls[0][0].data;
-    expect(written.appointmentId).toBeUndefined();
-    expect(written.expiresAt).toBeInstanceOf(Date);
+    expect(res).toMatchObject({ paymentIntent: { id: "order_NEW" } });
+  });
+
+  it("a gateway failure after the seat commit answers the gateway's own error", async () => {
+    (createPaymentIntent as jest.Mock).mockRejectedValueOnce(
+      new PaymentError("The gateway is unavailable", "GATEWAY_UNAVAILABLE"),
+    );
+
+    await expect(
+      handleCheckout(checkoutInput(), "user-1"),
+    ).rejects.toMatchObject({
+      name: "PaymentError",
+      code: "GATEWAY_UNAVAILABLE",
+    });
+    // The pre-mint id names no gateway order: nothing to cancel or tombstone.
+    expect(cancelPaymentIntent).not.toHaveBeenCalled();
+    expect(prisma.payment.create).not.toHaveBeenCalled();
+  });
+
+  it("a seat hold that lapsed before its order was filled answers SEAT_HOLD_LAPSED and voids the fresh order", async () => {
+    txClient.payment.updateMany = jest.fn(async () => ({ count: 0 }));
+
+    await expect(
+      handleCheckout(checkoutInput(), "user-1"),
+    ).rejects.toMatchObject({ code: "SEAT_HOLD_LAPSED", httpStatus: 409 });
+    expect(cancelGatewayOrders).toHaveBeenCalledWith(
+      [{ paymentIntent: "order_NEW", gateway: "RAZORPAY" }],
+      expect.anything(),
+    );
+    expect(cancelPaymentIntent).not.toHaveBeenCalled();
   });
 });
 

@@ -26,6 +26,7 @@ const Body = z.object({
   notes: z.string().max(2000).optional(),
   expectedRefundPaise: z.number().int().nonnegative().safe(),
   expectedCreditRestoresInFull: z.boolean().optional(),
+  expectedPaid: z.boolean().optional(),
 });
 
 const CancelRefusal = z.object({
@@ -97,6 +98,7 @@ async function cancelUnderGrant(
         notes: body.notes,
         expectedRefundPaise: body.expectedRefundPaise,
         expectedCreditRestoresInFull: body.expectedCreditRestoresInFull,
+        expectedPaid: body.expectedPaid,
       }),
     },
   );

@@ -1,7 +1,7 @@
 /**
  * The dashboard boundary retries a server-thrown error once, and a
  * failed retry must land on the error card even when it arrives as an UPDATE of
- * the same instance (a mount-once decision left the page on "Reconnecting…").
+ * the same instance (a mount-once decision left the page on "Loading again…").
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -61,7 +61,7 @@ describe("DashboardRouteError auto-retry", () => {
         />,
       );
     });
-    expect(container.textContent).toContain("Reconnecting");
+    expect(container.textContent).toContain("Loading again");
 
     act(() => {
       jest.advanceTimersByTime(1000);
@@ -80,7 +80,7 @@ describe("DashboardRouteError auto-retry", () => {
       );
     });
     expect(container.textContent).toContain("card d1");
-    expect(container.textContent).not.toContain("Reconnecting");
+    expect(container.textContent).not.toContain("Loading again");
   });
 
   it("shows the card straight away for a client error (no digest)", () => {
@@ -94,6 +94,6 @@ describe("DashboardRouteError auto-retry", () => {
       );
     });
     expect(container.textContent).toContain("card");
-    expect(container.textContent).not.toContain("Reconnecting");
+    expect(container.textContent).not.toContain("Loading again");
   });
 });
