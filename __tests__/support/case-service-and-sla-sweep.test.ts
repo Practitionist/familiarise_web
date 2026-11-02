@@ -372,7 +372,7 @@ const emailed = () =>
   (stageEmail as jest.Mock).mock.calls.map((call) => call[0].to);
 
 describe("case turn notification routing", () => {
-  it("bells the assignee on a staff reply but never emails them", async () => {
+  it("bells the assignee on another staff member's reply but never emails them", async () => {
     mockPresenter();
     mockRecipientEmails();
     (cases.findUnique as jest.Mock).mockResolvedValueOnce(
@@ -381,7 +381,7 @@ describe("case turn notification routing", () => {
     await appendSupportCaseTurn(
       {
         caseId: "case",
-        authorUserId: "staff",
+        authorUserId: "staff2",
         sender: "AGENT",
         body: "Reply",
         isInternal: false,
@@ -390,13 +390,14 @@ describe("case turn notification routing", () => {
     );
     const recipients = (stageBell as jest.Mock).mock.calls[0][1].recipients;
     expect(recipients).toEqual(
-      expect.arrayContaining(["customer", "presenter"]),
+      expect.arrayContaining(["customer", "presenter", "staff"]),
     );
-    expect(recipients).not.toContain("staff");
+    expect(recipients).not.toContain("staff2");
     expect(emailed()).toEqual(
       expect.arrayContaining(["customer@example.com", "presenter@example.com"]),
     );
     expect(emailed()).not.toContain("staff@example.com");
+    expect(emailed()).not.toContain("staff2@example.com");
   });
 
   it("emails correspondents, not the assignee, when a presenter replies", async () => {

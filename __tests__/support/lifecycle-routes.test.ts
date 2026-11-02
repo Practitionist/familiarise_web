@@ -322,6 +322,9 @@ describe("PATCH /api/support/cases/[caseId]", () => {
         statusCode: "RESOLVED",
         ticketUrl: expect.any(String),
       });
+      expect(email).toMatchObject({ title: "Help" });
+      expect(JSON.stringify(email)).not.toContain("Refund");
+      expect(JSON.stringify(email)).not.toContain("5000");
       expect(email).not.toHaveProperty("resolutionNotes");
       expect(email).not.toHaveProperty("refundAmount");
     }
