@@ -1,5 +1,4 @@
 import { permanentRedirect, redirect } from "next/navigation";
-import { z } from "zod";
 
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -7,9 +6,6 @@ import { orgLegacyTabHref } from "@/lib/dashboard/org-tab-redirect";
 import { resolveMaterialPlanRef } from "@/lib/plans/material-plan-ref";
 
 import { CatalogClient } from "./CatalogClient";
-
-/** `?status=archived` opens the lists on their withdrawn plans. */
-const CatalogStatusSchema = z.enum(["archived"]);
 
 /**
  * /dashboard/organization/[orgId]/catalog — the offerings this org OWNS.
@@ -95,7 +91,6 @@ export default async function OrgCatalogPage({
       })}
       materialsTotal={materialsTotal}
       orgPlans={orgPlans}
-      showArchived={CatalogStatusSchema.safeParse(query.status).success}
     />
   );
 }

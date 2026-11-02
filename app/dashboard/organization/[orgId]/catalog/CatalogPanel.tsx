@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Library, Archive, Undo2, Loader2 } from "lucide-react";
 
 import { EmptyState } from "@/components/dashboard/DataCard";
@@ -10,6 +11,8 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { isArchivedCatalogView } from "@/lib/dashboard/org-tab-redirect";
+import { replaceUrl } from "@/lib/navigation/history";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 import type { CatalogRow, Kind } from "./types";
@@ -128,7 +131,6 @@ function StatusChips({
 export function CatalogPanel({
   kind,
   rows,
-  initialArchived,
   isLoading,
   error,
   onToggleArchive,
@@ -138,7 +140,6 @@ export function CatalogPanel({
 }: Readonly<{
   kind: Kind;
   rows: CatalogRow[];
-  initialArchived: boolean;
   isLoading: boolean;
   error: unknown;
   onToggleArchive: (planId: string, restore: boolean) => void;
@@ -147,10 +148,25 @@ export function CatalogPanel({
   /** Replaces the live list when nobody can deliver; Archived still opens. */
   blocked?: ReactNode;
 }>) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Archived lives in the URL (`?status=archived`), read every render so any
+  // navigation into or out of it applies; the live chips are local.
+  const archivedView = isArchivedCatalogView(searchParams?.get("status"));
+  const [liveFilter, setLiveFilter] =
+    useState<Exclude<StatusFilter, "ARCHIVED">>("ALL");
   // The Archived view never falls back to live rows; with none it says so.
-  const [filter, setStatusFilter] = useState<StatusFilter>(
-    initialArchived ? "ARCHIVED" : "ALL",
-  );
+  const filter: StatusFilter = archivedView ? "ARCHIVED" : liveFilter;
+
+  const setStatusFilter = (next: StatusFilter) => {
+    if (next !== "ARCHIVED") setLiveFilter(next);
+    if ((next === "ARCHIVED") === archivedView) return;
+    const params = new URLSearchParams(window.location.search);
+    if (next === "ARCHIVED") params.set("status", "archived");
+    else params.delete("status");
+    const qs = params.toString();
+    replaceUrl(qs ? `${pathname}?${qs}` : pathname);
+  };
   const hasArchived = rows.some((r) => r.archivedAt !== null);
 
   const filteredRows = useMemo(

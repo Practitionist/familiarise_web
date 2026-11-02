@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { isArchivedCatalogView } from "@/lib/dashboard/org-tab-redirect";
 import { CatalogPanel } from "./CatalogPanel";
 import {
   MaterialsPanel,
@@ -40,14 +42,12 @@ export function CatalogClient({
   materials,
   materialsTotal,
   orgPlans,
-  showArchived,
 }: Readonly<{
   orgId: string;
   experts: Expert[];
   materials: OrgMaterialRow[];
   materialsTotal: number;
   orgPlans: OrgPlanOption[];
-  showArchived: boolean;
 }>) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -136,7 +136,11 @@ export function CatalogClient({
     return map;
   }, [experts]);
 
-  // `?status=archived` without a tab opens the first kind that has archived rows.
+  // Read from the URL every render, so back/forward and links into or out of
+  // `?status=archived` re-pick the default tab. Without a tab, the archived
+  // view opens the first kind that has archived rows.
+  const searchParams = useSearchParams();
+  const showArchived = isArchivedCatalogView(searchParams?.get("status"));
   const hasArchived = (rows?: CatalogRow[]) =>
     rows?.some((r) => r.archivedAt !== null) ?? false;
   const defaultTab =
@@ -234,7 +238,6 @@ export function CatalogClient({
                 <CatalogPanel
                   kind="WEBINAR"
                   rows={data?.webinars ?? []}
-                  initialArchived={showArchived}
                   isLoading={isLoading}
                   error={error}
                   onToggleArchive={archiveWebinar}
@@ -251,7 +254,6 @@ export function CatalogClient({
                 <CatalogPanel
                   kind="CLASS"
                   rows={data?.classes ?? []}
-                  initialArchived={showArchived}
                   isLoading={isLoading}
                   error={error}
                   onToggleArchive={archiveClass}
