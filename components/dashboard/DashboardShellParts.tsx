@@ -134,7 +134,7 @@ export const HELP_CENTER_HREF = "/support";
 
 /**
  * Header "Help" menu (#1527): the public Help Center in a new tab, then the
- * viewer's own Support requests and Send feedback when they have them. Icon +
+ * viewer's own Support cases and Send feedback when they have them. Icon +
  * label at md+, icon-only below.
  */
 export function HelpMenu({
@@ -177,7 +177,7 @@ export function HelpMenu({
               className="flex w-full items-center gap-2"
             >
               <Inbox className="h-4 w-4 text-zinc-500" />
-              Support requests
+              {support.label}
             </Link>
           </DropdownMenuItem>
         )}

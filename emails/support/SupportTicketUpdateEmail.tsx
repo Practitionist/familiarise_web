@@ -26,8 +26,8 @@ export function supportTicketUpdateSubject({
   statusLabel,
 }: Pick<SupportTicketUpdateEmailProps, "reference" | "statusLabel">): string {
   return reference
-    ? `Your ticket ${reference} is now ${statusLabel}`
-    : `Your ticket is now ${statusLabel}`;
+    ? `Your support case ${reference} is now ${statusLabel}`
+    : `Your support case is now ${statusLabel}`;
 }
 
 export default function SupportTicketUpdateEmail({
@@ -45,7 +45,7 @@ export default function SupportTicketUpdateEmail({
       <Text style={heading}>{subject}</Text>
       <Text style={paragraph}>Hi {recipientName},</Text>
       <Text style={paragraph}>
-        The status of your ticket{" "}
+        The status of your support case{" "}
         {reference && (
           <>
             <strong>{reference}</strong>{" "}
@@ -56,7 +56,7 @@ export default function SupportTicketUpdateEmail({
       <Text style={paragraph}>{nextStepText}</Text>
       <Section style={buttonContainer}>
         <Button style={button} href={ticketUrl}>
-          View ticket
+          View case
         </Button>
       </Section>
     </EmailLayout>

@@ -389,7 +389,7 @@ async function deliverSlaNoticeEmails(
           from: DEFAULT_FROM_ADDRESS,
           to: row.escalationContactEmail,
           subject,
-          html: `<p>${escapedSubject} for your organization's support request <strong>${escapedRef}</strong>.</p>`,
+          html: `<p>${escapedSubject} for your organization's support case <strong>${escapedRef}</strong>.</p>`,
         },
         "support-sla-alert-org",
         { entityRef: dedupeKey, budgetMs: EMAIL_BUDGET_MS.JOB },

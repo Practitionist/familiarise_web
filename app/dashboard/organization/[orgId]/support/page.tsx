@@ -30,7 +30,7 @@ export default async function OrganizationSupportPage({
     <>
       <PageHeader
         headingLevel={2}
-        title="Support requests"
+        title="Support cases"
         description="Your organization’s operations and billing conversations with the Familiarise team."
         actions={
           canCreate ? (

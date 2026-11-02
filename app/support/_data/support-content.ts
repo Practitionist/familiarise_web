@@ -1541,9 +1541,9 @@ export const supportArticles: SupportArticle[] = [
   {
     slug: "tickets-and-contact",
     category: "help",
-    title: "How do I contact support and track my request?",
+    title: "How do I contact support and track my support case?",
     excerpt:
-      "Per-booking help vs general requests, reference numbers, response times, and platform status.",
+      "Per-booking help vs general support cases, reference numbers, response times, and platform status.",
     updated: "October 2026",
     contactCategory: "general",
     related: ["help/report-a-problem", "help/privacy-cookies-safety"],

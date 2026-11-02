@@ -132,7 +132,7 @@ export function ProductFeedbackPage() {
       <PageHeader
         headingLevel={2}
         title="Product feedback"
-        description="Ideas and suggestions to improve Familiarise. For help with a booking or account, open Support requests."
+        description="Ideas and suggestions to improve Familiarise. For help with a booking or account, open Support cases."
         actions={
           !compose ? (
             <Button onClick={() => setCompose(true)}>

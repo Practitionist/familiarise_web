@@ -180,7 +180,7 @@ function OrgDashboardShellInner({
         consultantProfileId: org?.membership.consultantProfileId ?? null,
         suspended: org?.membership.status === "SUSPENDED",
       }),
-      // Help › Support requests is the viewer's own page, never this org's
+      // Help › My support cases is the viewer's own page, never this org's
       // operator triage queue (#1527).
       support: sessionUser ? supportLinksFor(sessionUser) : null,
     }),

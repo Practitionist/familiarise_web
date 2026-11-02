@@ -30,7 +30,7 @@ const FRIENDLY_COPY: Record<string, string> = {
   CASE_DECIDED:
     "This request has a decision, so it can't be reopened. You can appeal the decision instead.",
   REOPEN_WINDOW_EXPIRED:
-    "This request was resolved more than 14 days ago. Start a new request if you still need help.",
+    "This support case was resolved more than 14 days ago. Start a new support case if you still need help.",
   REOPEN_NOT_ALLOWED: "Only the person who raised this request can reopen it.",
   CASE_ALREADY_DECIDED:
     "This case already has a decision. An admin can supersede it while its appeal window is open.",
