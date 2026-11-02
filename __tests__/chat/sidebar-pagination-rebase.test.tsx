@@ -54,8 +54,9 @@ jest.mock("stream-chat-react", () => ({
 jest.mock("../../components/chat/ChatPaneContext", () => ({
   useChatPane: () => ({ openConversation: jest.fn() }),
 }));
+let mockScope: { kind: string; orgId?: string } = { kind: "personal" };
 jest.mock("../../hooks/useOrgScope", () => ({
-  useOrgScope: () => ({ scope: { kind: "personal" } }),
+  useOrgScope: () => ({ scope: mockScope }),
 }));
 jest.mock("../../lib/auth-client", () => ({
   useSession: () => ({ data: { user: { role: "CONSULTEE" } } }),
@@ -153,9 +154,12 @@ function serveInbox(recentCount: number, { withOldPin = true } = {}) {
   mockClient.channel.mockImplementation((type: string, id: string) =>
     all.find((row) => row.cid === `${type}:${id}`),
   );
+  let clock = Date.UTC(2026, 10, 3);
   global.fetch = jest.fn(async (_url: string, init: { body: string }) => {
     const { channelId, action } = JSON.parse(init.body);
-    if (action === "pin") pinned.set(channelId, new Date().toISOString());
+    // A server clock that always ticks, so pins processed back to back never tie.
+    if (action === "pin")
+      pinned.set(channelId, new Date(clock++).toISOString());
     if (action === "unpin") pinned.delete(channelId);
     if (action === "hide") hidden.add(channelId);
     return { ok: true, json: async () => ({}) };
@@ -175,6 +179,7 @@ function serveInbox(recentCount: number, { withOldPin = true } = {}) {
 beforeEach(() => {
   handlers.clear();
   mockOpened = null;
+  mockScope = { kind: "personal" };
   mockClient.queryChannels.mockReset();
   mockClient.channel.mockReset();
 });
@@ -317,4 +322,167 @@ it("keeps the open conversation listed when an unpin moves it past the loaded ro
 
   await loadEverything(container);
   expect([...rows(container)].sort()).toEqual([...server.names()].sort());
+});
+
+/** Rejects the next `count` messaging reads, as a transient Stream outage would. */
+function failMessagingReads(count: number) {
+  const original = mockClient.queryChannels.getMockImplementation()!;
+  let left = count;
+  mockClient.queryChannels.mockImplementation((filter, sort, options) => {
+    if (filter.type !== "messaging" || left === 0) {
+      return original(filter, sort, options);
+    }
+    left -= 1;
+    return Promise.reject(new Error("Transient Stream read failure"));
+  });
+}
+
+/** Holds each messaging read (its page cut when issued) until `stop()`. */
+function holdMessagingReads() {
+  const original = mockClient.queryChannels.getMockImplementation()!;
+  const held: Array<() => void> = [];
+  let holding = true;
+  mockClient.queryChannels.mockImplementation(async (filter, sort, options) => {
+    const page = await original(filter, sort, options);
+    if (!holding || filter.type !== "messaging") return page;
+    return new Promise((resolve) => held.push(() => resolve(page)));
+  });
+  return {
+    held,
+    stop: () => {
+      holding = false;
+    },
+  };
+}
+
+/** A hide the server refuses, which starts the silent undo refresh. */
+function failHides() {
+  const answer = global.fetch;
+  global.fetch = jest.fn((url: string, init: { body: string }) =>
+    JSON.parse(init.body).action === "hide"
+      ? Promise.resolve({ ok: false, json: async () => ({}) })
+      : answer(url, init),
+  ) as unknown as typeof fetch;
+}
+
+describe("when a re-read fails or lands out of order", () => {
+  let errors: jest.SpyInstance;
+  beforeEach(() => {
+    errors = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => errors.mockRestore());
+
+  it("retries a failed re-read once and repairs the list", async () => {
+    const server = serveInbox(20);
+    const { container } = await mount();
+    failMessagingReads(1);
+    await choose(container, "Old pinned", "Unpin");
+    await waitFor(() =>
+      expect(rows(container)).toEqual(server.names().slice(0, 20)),
+    );
+    await loadEverything(container);
+    expect(rows(container)).toEqual(server.names());
+  });
+
+  it("re-reads on Load more when the retry fails too, so nothing is skipped", async () => {
+    const server = serveInbox(20);
+    const { container } = await mount();
+    failMessagingReads(2);
+    await choose(container, "Old pinned", "Unpin");
+    await waitFor(() => expect(errors).toHaveBeenCalled());
+    expect(rows(container)).not.toContain("Recent person 19");
+
+    await loadEverything(container);
+    expect(rows(container)).toEqual(server.names());
+  });
+
+  it("drops an older refresh that lands after a newer re-read", async () => {
+    const server = serveInbox(20);
+    const { container } = await mount();
+    const reads = holdMessagingReads();
+    failHides();
+    await choose(container, "Recent person 5", "Remove from list");
+    await waitFor(() => expect(reads.held).toHaveLength(1));
+    reads.stop();
+    await choose(container, "Old pinned", "Unpin");
+    await waitFor(() =>
+      expect(rows(container)).toEqual(server.names().slice(0, 20)),
+    );
+
+    await act(async () => reads.held[0]());
+    expect(rows(container)).toEqual(server.names().slice(0, 20));
+    await loadEverything(container);
+    expect(rows(container)).toEqual(server.names());
+  });
+
+  it("accepts a newer refresh that lands after an older re-read", async () => {
+    const server = serveInbox(20);
+    const { container } = await mount();
+    const reads = holdMessagingReads();
+    await choose(container, "Old pinned", "Unpin");
+    await waitFor(() => expect(reads.held).toHaveLength(1));
+    server.row("recent-19").data.last_message_at = "2026-11-03T00:00:00Z";
+    failHides();
+    await choose(container, "Recent person 5", "Remove from list");
+    await waitFor(() => expect(reads.held).toHaveLength(2));
+    reads.stop();
+
+    await act(async () => reads.held[0]());
+    await act(async () => reads.held[1]());
+    expect(rows(container)).toEqual(server.names().slice(0, 20));
+    expect(rows(container)[0]).toBe("Recent person 19");
+    await loadEverything(container);
+    expect(rows(container)).toEqual(server.names());
+  });
+
+  it("shows the server's pin order once overlapping pins settle", async () => {
+    const server = serveInbox(20);
+    const { container } = await mount();
+    const answer = global.fetch;
+    const queued: Array<() => void> = [];
+    global.fetch = jest.fn(
+      (url: string, init: { body: string }) =>
+        new Promise((resolve) => queued.push(() => resolve(answer(url, init)))),
+    ) as unknown as typeof fetch;
+    for (const name of [
+      "Recent person 3",
+      "Recent person 6",
+      "Recent person 9",
+    ]) {
+      await choose(container, name, "Pin to top");
+    }
+    // The server handles the requests in reverse, so the last click pins first.
+    while (queued.length > 0) await act(async () => queued.pop()!());
+
+    await waitFor(() =>
+      expect(rows(container)).toEqual(server.names().slice(0, 20)),
+    );
+    expect(rows(container).slice(0, 3)).toEqual([
+      "Recent person 3",
+      "Recent person 6",
+      "Recent person 9",
+    ]);
+  });
+
+  it("drops a re-read cut for the previous scope", async () => {
+    serveInbox(20);
+    const { container, rerender } = await mount();
+    const reads = holdMessagingReads();
+    await choose(container, "Old pinned", "Unpin");
+    await waitFor(() => expect(reads.held).toHaveLength(1));
+    reads.stop();
+    const personal = mockClient.queryChannels.getMockImplementation()!;
+    const orgRow = dm("org-person", "Org person", "2026-11-01T00:00:00Z");
+    mockClient.queryChannels.mockImplementation((filter, sort, options) =>
+      mockScope.kind === "org"
+        ? Promise.resolve(filter.type === "messaging" ? [orgRow] : [])
+        : personal(filter, sort, options),
+    );
+
+    mockScope = { kind: "org", orgId: "org_2" };
+    rerender(<ChatSidebar />);
+    await waitFor(() => expect(rows(container)).toEqual(["Org person"]));
+    await act(async () => reads.held[0]());
+    expect(rows(container)).toEqual(["Org person"]);
+  });
 });

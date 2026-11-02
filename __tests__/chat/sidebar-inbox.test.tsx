@@ -143,7 +143,19 @@ beforeEach(() => {
   mockClient.channel.mockImplementation((type: string, id: string) =>
     held.get(`${type}:${id}`),
   );
-  fetchMock = jest.fn(async () => ({ ok: true, json: async () => ({}) }));
+  karen.state.membership = {};
+  liam.state.membership = {};
+  asha.state.membership = { pinned_at: "2026-10-20T00:00:00Z" };
+  // The server records a pin, so the re-read that follows reports it.
+  fetchMock = jest.fn(async (_url: string, init: { body: string }) => {
+    const { channelId, action } = JSON.parse(init.body);
+    const row = [karen, liam, asha].find((c) => c.id === channelId);
+    if (row && action === "pin") {
+      row.state.membership = { pinned_at: new Date().toISOString() };
+    }
+    if (row && action === "unpin") row.state.membership = {};
+    return { ok: true, json: async () => ({}) };
+  });
   global.fetch = fetchMock as unknown as typeof fetch;
 });
 
