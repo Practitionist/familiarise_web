@@ -38,8 +38,8 @@ A worked example from the live organisation, read on 2026-10-31 over 30 days: `a
 
 | Verdict                           | Route answer | Run row                                                                    | Alert                                                    |
 | --------------------------------- | ------------ | -------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `accepted`                        | 200          | None; the canary takes no lease, so only the tick summary records it       | None                                                     |
-| `rejecting` or `stats-unreadable` | 503          | None; the tick lists it under `failed`                                     | Email, Better Stack error line, ops chat mirror          |
+| `accepted`                        | 200          | `COMPLETED`; the canary takes a fail-open lease, so every run writes a row | None                                                     |
+| `rejecting` or `stats-unreadable` | 503          | `FAILED`; the tick also lists it under `failed`                            | Email, Better Stack error line, ops chat mirror          |
 | `SENTRY_STATS_TOKEN` unset        | 200          | `CANCELLED`, outcome `skipped`, reason `SENTRY_STATS_TOKEN not configured` | None. It is a config skip, listed by `/api/health/jobs`. |
 
 `sendSentryIngestAlert` in `lib/observability/ingest-alert.ts` sends on two independent channels at once:
@@ -53,7 +53,7 @@ There is no cooldown. The job runs once a day, so an outage that lasts a week se
 
 After the verdict, the same run calls `checkSentryQuota` (`lib/observability/quota-alert.ts`), which emails once per billing period when accepted errors pass 70 % of `SENTRY_ERROR_QUOTA`. It uses the same token, and its failure never changes the canary's verdict.
 
-The canary's own 503 never reaches Sentry: `reportableToSentry()` in `netlify/functions/cron-tick.mts` keeps it out of the ticker's escalation, while it stays in the tick's `failed` list and in its run row.
+Because every run writes a row, `/api/health/jobs` judges the canary like any other paging target (a budget of 30.5 hours). A `FAILED` run does not count as having run, so if Sentry keeps rejecting events for longer than that budget the probe answers 503 as well; by then the canary's own email has fired twice and the signal pipeline is still broken. The canary's own 503 never reaches Sentry: `reportableToSentry()` in `netlify/functions/cron-tick.mts` keeps it out of the ticker's escalation, while it stays in the tick's `failed` list and in its run row.
 
 ### The token
 

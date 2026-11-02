@@ -390,32 +390,7 @@ confirm `healthy: true`. No need to wait for the period to roll.
 
 ## The canary: the one check that can catch the above
 
-`lib/observability/ingest-canary.ts` posts a real, minimal error envelope and
-classifies the **response** — status, the `x-sentry-rate-limits` header, and
-the body. It is wired into the five-minute `cron-tick` ticker and has a
-bare-Node job twin at `jobs/observability/sentry-ingest-canary.ts` for the
-Actions schedule.
-
-Three design points, each of which exists because of how the failure presented:
-
-- **A raw `fetch`, not the SDK.** `captureException` + `flush()` cannot answer
-  this: `flush()` returns a boolean, not a reason, and a dropped event is
-  indistinguishable from a delivered one. The ingest response is the only
-  evidence available while ingest is broken.
-- **A 2xx is not assumed to be success.** Sentry can answer 200 and report a
-  drop in the body, so the body is read rather than assumed — treating 200 as
-  healthy is precisely how this stayed invisible.
-- **It emails, and never reports to Sentry.** A check that reports its own
-  failure through the failing system is not a check. The alert goes through
-  Resend (`lib/observability/ingest-alert.ts`), a separate quota and a separate
-  provider, and says what to do: the reader's dashboard looks healthy and cannot
-  derive the fix. Recipient is `OBSERVABILITY_ALERT_EMAIL`, defaulting to the
-  platform support mailbox.
-
-The canary event carries a fixed fingerprint, so repeated runs collapse into
-one issue with a count rather than hundreds of near-identical ones, and it
-carries no user, org, IP or URL — it is an infrastructure probe and should never
-become a record about a person.
+The ingest canary (`lib/observability/ingest-canary.ts`) is the registry job `sentry-ingest-canary`, a daily ticker target. It sends no event: it reads the last day's error outcomes from Sentry's `stats_v2` API and judges them. It emails through Resend (`lib/observability/ingest-alert.ts`, a separate provider and quota) and never reports to Sentry, because a check that reports its own failure through the failing system is not a check. Every run writes a run row under a fail-open lease, so `/api/health/jobs` also notices a canary that has stopped running. The full design is in [06-ingest-canary.md](./06-ingest-canary.md).
 
 ## What was verified, and what was not
 

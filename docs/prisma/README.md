@@ -66,7 +66,7 @@ shared Postgres. So the branch's schema is not a proposal for the database — i
 is a claim about what the database already contains, and until the database
 agrees, every reader of the new object 500s with _"does not exist in the current
 database"_. The preview build passes, because the build only runs
-`prisma generate`.
+`prisma generate` and the file-only job-coverage check (`npm run cron:coverage`), which reads no database.
 
 `scripts/ci/check-db-schema-required.ts` is the check that closes the gap. It
 diffs the branch's **merge base** schema against the branch's own schema, which

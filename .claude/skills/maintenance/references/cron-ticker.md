@@ -4,7 +4,7 @@
 
 `lib/cron/cleanup-registry.ts` supplies the single implementation dispatch for
 `/api/cleanup/[job]`. Its bearer check uses `CRON_SECRET`. The Netlify scheduled
-adapter runs every five minutes and schedules every registered job (77 targets);
+adapter runs every five minutes and schedules every registered job (80 targets);
 no Actions workflow schedules a registry job. Check executable target metadata
 rather than assuming a registered job is scheduled.
 
@@ -37,7 +37,9 @@ whose execution was expired cannot overwrite that history. Only an owned,
 successful finish on production refreshes `cron:heartbeat:last` (`touchRedisHeartbeat`
 skips the write off production through `mayWriteProductionState`, so a preview
 cannot mask a dead production ticker). This shared timestamp is a
-liveness hint, not evidence that every capability completed.
+liveness hint, not evidence that every capability completed. Nothing in GitHub Actions
+writes this key any more; `.github/workflows/cron-heartbeat.yml` only watches the
+Actions-scheduled workflows (`db-live-drift`, `security-audit`).
 
 The typed outcome in `lib/cron/job-outcome.ts` classifies a result as success,
 partial failure, failure or hold. A job's own `success`/`overallSuccess` boolean
@@ -67,7 +69,7 @@ admitted slices resume the report. It answers 200 with summary status RUNNING wh
 remains and 207 once a completed audit has discrepancies; it is listed in
 `PARTIAL_FAILURE_TARGETS`, so that 207 counts as failed.
 
-No GitHub Actions workflow schedules a registry job: every registered job, including the former daily, weekly and hourly housekeeping batch, runs on the ticker (77 targets, at most 12 per tick). The three fleet workflows `cron-daily.yml`, `cron-intra-day.yml` and `cron-weekly.yml` and their `tsx` wrappers are deleted; run a job by hand through the admin Run door or `POST /api/cleanup/<slug>` with the `CRON_SECRET` bearer. The weekly `consent-retention-sweeper` is count-only from the ticker, which never sends the delete flag. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. A 503 carrying an explicit `DEGRADED`/`OFFLINE` phase is a planned maintenance hold; an unreadable-state 503 remains `failed`.
+No GitHub Actions workflow schedules a registry job: every registered job, including the former daily, weekly and hourly housekeeping batch, runs on the ticker (80 targets, at most 12 per tick). The three fleet workflows `cron-daily.yml`, `cron-intra-day.yml` and `cron-weekly.yml` and their `tsx` wrappers are deleted; run a job by hand through the admin Run door or `POST /api/cleanup/<slug>` with the `CRON_SECRET` bearer. The weekly `consent-retention-sweeper` is count-only from the ticker, which never sends the delete flag. When a job is already running, `withCronLock` returns `409`, which the ticker records as `lockHeld` rather than `failed`. A 503 carrying an explicit `DEGRADED`/`OFFLINE` phase is a planned maintenance hold; an unreadable-state 503 remains `failed`.
 
 A per-job lease does not serialize different jobs touching the same payment or
 payout. Conditional state transitions, transactionally staged obligations and
@@ -110,11 +112,15 @@ disabled Sentry monitor accepts no check-ins: verify the monitor is active and
 that accepted check-ins and missed-run alerts actually arrive. Independent
 absence monitoring must inspect completed capabilities and oldest outstanding
 obligations, not the ticker's always-200 response or `/api/health` alone.
-`/api/health/jobs` is that probe: one requirement per ticker target that writes a
-run row, `maxAge = gap + min(gap, 6 h) + 30 min` over the target's longest gap
+`/api/health/jobs` is that probe: one requirement per ticker target (every target
+writes a run row; `jobNameFor` never returns `null`), `maxAge = gap + min(gap, 6 h) + 30 min` over the target's longest gap
 between due slots, `paging` unless the target is in the housekeeping set
 `WATCHED_TARGETS`, 503 when a paging job lapses. An external Better Stack monitor
-polls it (owner step, runbook in `docs/maintenance/00-betterstack-setup.md`).
+polls it (owner step, runbook in `docs/maintenance/00-betterstack-setup.md`), and
+Sentry's free uptime monitor is the second watcher. The probe also answers 503 from the
+daily `ops-digest` row (`RELEASE_LAG_OVERDUE`, and `STANDING_CONFIG_SKIP` once Razorpay
+keys are live). `checkJobCoverage` (`lib/cron/job-coverage.ts`) enforces target,
+requirement and `MANUAL_ONLY` coverage inside `npm run build` (`npm run cron:coverage`).
 
 ## Explicit maintenance booking remediation
 
@@ -155,7 +161,9 @@ Never create 3-layer wrappers. A job has one implementation, registered in
    Only the resumable ledger target yields when the due roster exceeds this bound;
    the dispatcher does not truncate other due work. The target gets a `paging`
    freshness budget automatically; add it to `WATCHED_TARGETS`
-   (`lib/cron/operational-health.ts`) only if it is housekeeping.
+   (`lib/cron/operational-health.ts`) only if it is housekeeping. Its core must write
+   a run row (take `withCronLock`, fail-open if read-only), because `npm run build`
+   runs `checkJobCoverage` and fails on a target with no requirement.
 8. If the job moves money or payouts, add its slug to `FINANCIAL_JOB_NAMES`
    (`lib/cron/financial-jobs.ts`). The maintenance gate then also stops it in
    `DEGRADED`, and the lock-registry test requires a fail-closed lock.
@@ -197,7 +205,9 @@ See `docs/stream/17-channel-lifecycle.md#organisation-wind-down-completion`.
 
 Redis cron locks, production fallbacks for incomplete unit-test mocks, shared
 heartbeats described as proof of complete fleet health, and the hand-kept
-completion-SLO list (replaced by budgets derived from the schedule) are superseded. Recovery
+completion-SLO list (replaced by budgets derived from the schedule) are superseded. So is
+`cron-heartbeat.yml` as a runtime watchdog: it ran on Actions and stopped with the jobs it
+watched. A target whose healthy run left no run row (`jobNameFor` returning `null`) is gone too. Recovery
 is not guaranteed by a parallel Actions workflow or by making every HTTP result 200. Keep the required Netlify standby; platform moves change adapters, not
 transaction or replay guarantees.
 

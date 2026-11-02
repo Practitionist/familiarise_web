@@ -485,8 +485,8 @@ are observed.
 
 A tick's HTTP200 is not a health assertion. Workers return `X-Job-Outcome`, and
 execution history distinguishes successful completion, partial failure, failure
-and hold. Owned successful finishes advance the shared heartbeat, which the daily
-Actions watchdog also writes. Treat it as an activity hint. Monitor individual
+and hold. Owned successful finishes advance the shared heartbeat (`cron:heartbeat:last`,
+written only by `withCronLock`). Treat it as an activity hint. Monitor individual
 capabilities and oldest outstanding work so a healthy email drain
 cannot mask stopped recording copies or compliance alerts.
 
