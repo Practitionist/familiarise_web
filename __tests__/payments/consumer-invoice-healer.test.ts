@@ -11,7 +11,7 @@ const mockCapture = jest.fn();
 
 jest.mock("@/lib/pdf/supplier", () => ({
   ...jest.requireActual("@/lib/pdf/supplier"),
-  getPlatformSupplier: () => mockSupplier(),
+  platformSupplierForJob: () => mockSupplier(),
 }));
 jest.mock("@/lib/payments/billing/consumer-invoice", () => ({
   ...jest.requireActual("@/lib/payments/billing/consumer-invoice"),

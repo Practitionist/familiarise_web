@@ -4,7 +4,7 @@ type: how-to
 band: 70-operations
 audience: sde3
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-02
 ---
 
 # Money go-live checklist
@@ -24,6 +24,7 @@ Use this page to take the money subsystem from sandbox to real money: first the 
 - `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` hold the live pair (`rzp_live_...`). `NEXT_PUBLIC_RAZORPAY_KEY_ID` holds the same key id. A secret is never given a `NEXT_PUBLIC_` prefix.
 - `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` is deleted from production. While it is unset, `lib/payments/core/razorpay.ts` throws `RAZORPAY_TEST_KEY_IN_PRODUCTION` at boot if a test key ever reaches production; set to `true` it only logs, which is for a pre-launch deploy that must not move money.
 - `RAZORPAY_WEBHOOK_SECRET` holds the live payment-webhook secret.
+- `PLATFORM_GSTIN` holds the platform's GSTIN as soon as GST registration is granted. Until then `heal-consumer-invoices`, `gst-outward-register-export` and `irp-uploader` record a config skip on every run (reason `PLATFORM_GSTIN not configured`) and checkout mints no consumer tax invoice. After setting it and redeploying, run `heal-consumer-invoices` from the System Jobs page and confirm its row is `completed`, then confirm `/api/health/jobs` no longer lists any of the three under `configSkips`. A malformed or other-state value fails these runs instead of skipping them.
 
 ### 1.3 Webhooks (dashboard)
 
