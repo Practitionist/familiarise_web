@@ -19,6 +19,9 @@ interface Entry {
   externalAttrs?: number;
   /** Central-directory extra field bytes. */
   extra?: Buffer;
+  /** Local-header name and extra field, when they differ from the central ones. */
+  localName?: string;
+  localExtra?: Buffer;
 }
 
 /** A structurally valid archive; entry data is zero filler of the compressed size. */
@@ -30,15 +33,18 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
     const name = Buffer.from(e.name, "utf8");
     const compressed = e.compressed ?? 16;
     const uncompressed = e.uncompressed ?? compressed;
+    const localName = Buffer.from(e.localName ?? e.name, "utf8");
+    const localExtra = e.localExtra ?? Buffer.alloc(0);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(e.flags ?? 0x0800, 6);
     local.writeUInt16LE(8, 8);
     local.writeUInt32LE(compressed, 18);
     local.writeUInt32LE(uncompressed, 22);
-    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(localName.length, 26);
+    local.writeUInt16LE(localExtra.length, 28);
     const data = Buffer.alloc(compressed);
-    locals.push(local, name, data);
+    locals.push(local, localName, localExtra, data);
 
     const extra = e.extra ?? Buffer.alloc(0);
     const central = Buffer.alloc(46);
@@ -53,7 +59,7 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
     central.writeUInt32LE(e.externalAttrs ?? 0, 38);
     central.writeUInt32LE(offset, 42);
     centrals.push(central, name, extra);
-    offset += 30 + name.length + compressed;
+    offset += 30 + localName.length + localExtra.length + compressed;
   }
   const cd = Buffer.concat(centrals);
   const eocd = Buffer.alloc(22);
@@ -243,4 +249,49 @@ it("applies every name rule to the Unicode Path name as well", async () => {
   for (const [zip, problem] of cases) {
     await expect(inspect(zip)).resolves.toMatchObject({ ok: false, problem });
   }
+});
+
+it("requires each local header to repeat its central name and polices its Unicode Path", async () => {
+  await expect(
+    inspect(buildZip([{ name: "notes.txt", localName: "notes.exe" }])),
+  ).resolves.toMatchObject({ ok: false, problem: "LOCAL_HEADER_MISMATCH" });
+  await expect(
+    inspect(
+      buildZip([
+        {
+          name: "guide.txt",
+          flags: 0,
+          localExtra: unicodePath("guide.txt", "payload.exe"),
+        },
+      ]),
+    ),
+  ).resolves.toMatchObject({ ok: false, problem: "EXECUTABLE_ENTRY" });
+  // A local extra longer than the over-read takes a second read and still passes.
+  await expect(
+    inspect(
+      buildZip([
+        { name: "guide.txt", localExtra: Buffer.alloc(2000) },
+        { name: "notes.txt" },
+      ]),
+    ),
+  ).resolves.toMatchObject({ ok: true, entries: 2 });
+
+  // 1,000 entries of 4 KiB: the tail, the central directory, then coalesced 1 MiB local reads.
+  const zip = buildZip(
+    Array.from({ length: 1000 }, (_, i) => ({
+      name: `f${i}.txt`,
+      compressed: 4096,
+    })),
+  );
+  let reads = 0;
+  const result = await inspectZip(
+    async (start, end) => {
+      reads += 1;
+      return new Uint8Array(zip.subarray(start, end + 1));
+    },
+    zip.length,
+    { checkEntryTypes: true },
+  );
+  expect(result).toMatchObject({ ok: true, entries: 1000 });
+  expect(reads).toBe(6);
 });

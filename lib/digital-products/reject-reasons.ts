@@ -42,6 +42,8 @@ export const ASSET_REJECT_MESSAGES: Record<string, string> = {
     "Archives inside the ZIP aren't allowed. Unpack them into the main archive.",
   ZIP_EXECUTABLE_ENTRY:
     "The archive contains a program or script, which isn't allowed. Remove it and upload again.",
+  ZIP_LOCAL_HEADER_MISMATCH:
+    "A file inside the archive is named differently in two places, which can hide what it really is. Re-create the archive with a standard ZIP tool.",
   NEWER_VERSION_EXISTS: "A newer version of this file was already uploaded.",
   LINEAGE_DELETED:
     "The file this replaced was removed, so this version was discarded.",

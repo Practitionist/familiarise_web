@@ -21,7 +21,8 @@ export type ZipProblem =
   | "UNICODE_PATH_INVALID"
   | "SYMLINK_ENTRY"
   | "NESTED_ARCHIVE"
-  | "EXECUTABLE_ENTRY";
+  | "EXECUTABLE_ENTRY"
+  | "LOCAL_HEADER_MISMATCH";
 
 export type ZipInspection =
   | { ok: true; entries: number; totalUncompressedBytes: number }
@@ -36,6 +37,14 @@ const EOCD_SIG = 0x06054b50;
 const ZIP64_LOCATOR_SIG = 0x07064b50;
 const ZIP64_EOCD_SIG = 0x06064b50;
 const CENTRAL_HEADER_SIG = 0x02014b50;
+const LOCAL_HEADER_SIG = 0x04034b50;
+const LOCAL_HEADER_BYTES = 30;
+/** Read past each local name: room for a Unicode Path copy of it and the usual timestamp, unix and Zip64 extras. */
+const LOCAL_EXTRA_SLACK = 512;
+/** Local-header reads closer than this are merged into one range read, up to LOCAL_READ_MAX bytes. */
+const LOCAL_READ_GAP = 64 * 1024;
+const LOCAL_READ_MAX = 1024 * 1024;
+const LOCAL_READ_CONCURRENCY = 8;
 const ZIP64_EXTRA_ID = 0x0001;
 const UNICODE_PATH_EXTRA_ID = 0x7075;
 const U16_MAX = 0xffff;
@@ -200,17 +209,20 @@ interface ExtraField {
   data: DataView;
 }
 
-/** Every extra field of an entry; a field that runs past the extra block is corrupt. */
-function extraFields(extra: DataView): ExtraField[] {
+/** Every extra field of an entry; a field that runs past the extra block is `problem`. */
+function extraFields(
+  extra: DataView,
+  problem: ZipProblem = "CENTRAL_DIRECTORY_CORRUPT",
+): ExtraField[] {
   const fields: ExtraField[] = [];
   let at = 0;
   while (at < extra.byteLength) {
     if (at + 4 > extra.byteLength) {
-      throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT", "truncated extra field");
+      throw new ZipFault(problem, "truncated extra field");
     }
     const len = extra.getUint16(at + 2, true);
     if (at + 4 + len > extra.byteLength) {
-      throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT", "truncated extra field");
+      throw new ZipFault(problem, "truncated extra field");
     }
     fields.push({
       id: extra.getUint16(at, true),
@@ -281,118 +293,292 @@ function unicodePath(
   }
 }
 
+/** The path and, in a plain archive, the entry-type rules every name an extractor may honour must pass. */
+function policeNames(names: readonly string[], options: ZipInspectOptions) {
+  for (const candidate of names) {
+    if (isUnsafePath(candidate)) {
+      throw new ZipFault("UNSAFE_PATH", candidate);
+    }
+  }
+  for (const candidate of names) {
+    if (candidate.endsWith("/") || !options.checkEntryTypes) continue;
+    const ext = extensionOf(candidate);
+    if (NESTED_ARCHIVE_EXTENSIONS.has(ext)) {
+      throw new ZipFault("NESTED_ARCHIVE", candidate);
+    }
+    if (EXECUTABLE_EXTENSIONS.has(ext)) {
+      throw new ZipFault("EXECUTABLE_ENTRY", candidate);
+    }
+  }
+}
+
+interface CentralEntry {
+  name: string;
+  rawName: Uint8Array;
+  localOffset: number;
+}
+
 /** Parse and police every central-directory record; pure over the directory bytes. */
-export function inspectCentralDirectory(
+function readCentralDirectory(
   cd: Uint8Array,
   dir: { entries: number; offset: number },
   options: ZipInspectOptions,
-): ZipInspection {
-  try {
-    const dv = view(cd);
-    let at = 0;
-    let total = 0;
-    for (let i = 0; i < dir.entries; i++) {
-      if (
-        at + 46 > cd.length ||
-        dv.getUint32(at, true) !== CENTRAL_HEADER_SIG
-      ) {
-        throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT");
-      }
-      const madeBy = dv.getUint16(at + 4, true);
-      const flags = dv.getUint16(at + 8, true);
-      const method = dv.getUint16(at + 10, true);
-      const compressed32 = dv.getUint32(at + 20, true);
-      const uncompressed32 = dv.getUint32(at + 24, true);
-      const nameLen = dv.getUint16(at + 28, true);
-      const extraLen = dv.getUint16(at + 30, true);
-      const commentLen = dv.getUint16(at + 32, true);
-      const diskStart = dv.getUint16(at + 34, true);
-      const externalAttrs = dv.getUint32(at + 38, true);
-      const localOffset32 = dv.getUint32(at + 42, true);
-      const end = at + 46 + nameLen + extraLen + commentLen;
-      if (end > cd.length) throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT");
-      if (diskStart !== 0 && diskStart !== U16_MAX) {
-        throw new ZipFault("MULTI_DISK");
-      }
-
-      const rawName = cd.subarray(at + 46, at + 46 + nameLen);
-      const name = decodeName(rawName, (flags & 0x0800) !== 0);
-      const fields = extraFields(
-        new DataView(cd.buffer, cd.byteOffset + at + 46 + nameLen, extraLen),
-      );
-      // Extractors differ on which name they honour, so every name rule applies to both.
-      const unicodeName = unicodePath(fields, rawName);
-      const names = unicodeName === null ? [name] : [name, unicodeName];
-      // Bit 0 is traditional encryption, bit 6 strong encryption, method 99 AES.
-      if ((flags & 0x0041) !== 0 || method === 99) {
-        throw new ZipFault("ENCRYPTED_ENTRY", name);
-      }
-      for (const candidate of names) {
-        if (isUnsafePath(candidate)) {
-          throw new ZipFault("UNSAFE_PATH", candidate);
-        }
-      }
-      const unixMode = madeBy >> 8 === 3 ? externalAttrs >>> 16 : 0;
-      if ((unixMode & 0o170000) === 0o120000) {
-        throw new ZipFault("SYMLINK_ENTRY", name);
-      }
-
-      const sizes = zip64Sizes(
-        fields,
-        {
-          uncompressed: uncompressed32 === U32_MAX,
-          compressed: compressed32 === U32_MAX,
-          offset: localOffset32 === U32_MAX,
-        },
-        {
-          uncompressed: uncompressed32,
-          compressed: compressed32,
-          localOffset: localOffset32,
-        },
-      );
-      if (sizes.localOffset >= dir.offset) {
-        throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT", name);
-      }
-
-      for (const candidate of names) {
-        if (candidate.endsWith("/") || !options.checkEntryTypes) continue;
-        const ext = extensionOf(candidate);
-        if (NESTED_ARCHIVE_EXTENSIONS.has(ext)) {
-          throw new ZipFault("NESTED_ARCHIVE", candidate);
-        }
-        if (EXECUTABLE_EXTENSIONS.has(ext)) {
-          throw new ZipFault("EXECUTABLE_ENTRY", candidate);
-        }
-      }
-      if (
-        sizes.uncompressed >= ZIP_LIMITS.ratioFloorBytes &&
-        sizes.uncompressed >
-          Math.max(sizes.compressed, 1) * ZIP_LIMITS.maxEntryRatio
-      ) {
-        const ratio = Math.round(
-          sizes.uncompressed / Math.max(sizes.compressed, 1),
-        );
-        throw new ZipFault("COMPRESSION_RATIO", `${name} (${ratio}:1)`);
-      }
-      total += sizes.uncompressed;
-      if (total > ZIP_LIMITS.maxTotalUncompressedBytes) {
-        throw new ZipFault("TOO_LARGE_UNCOMPRESSED");
-      }
-      at = end;
+): { total: number; entries: CentralEntry[] } {
+  const dv = view(cd);
+  let at = 0;
+  let total = 0;
+  const entries: CentralEntry[] = [];
+  for (let i = 0; i < dir.entries; i++) {
+    if (at + 46 > cd.length || dv.getUint32(at, true) !== CENTRAL_HEADER_SIG) {
+      throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT");
     }
-    if (at !== cd.length) throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT");
-    return { ok: true, entries: dir.entries, totalUncompressedBytes: total };
-  } catch (error) {
-    if (error instanceof ZipFault) {
-      return { ok: false, problem: error.problem, detail: error.detail };
+    const madeBy = dv.getUint16(at + 4, true);
+    const flags = dv.getUint16(at + 8, true);
+    const method = dv.getUint16(at + 10, true);
+    const compressed32 = dv.getUint32(at + 20, true);
+    const uncompressed32 = dv.getUint32(at + 24, true);
+    const nameLen = dv.getUint16(at + 28, true);
+    const extraLen = dv.getUint16(at + 30, true);
+    const commentLen = dv.getUint16(at + 32, true);
+    const diskStart = dv.getUint16(at + 34, true);
+    const externalAttrs = dv.getUint32(at + 38, true);
+    const localOffset32 = dv.getUint32(at + 42, true);
+    const end = at + 46 + nameLen + extraLen + commentLen;
+    if (end > cd.length) throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT");
+    if (diskStart !== 0 && diskStart !== U16_MAX) {
+      throw new ZipFault("MULTI_DISK");
     }
-    throw error;
+
+    const rawName = cd.subarray(at + 46, at + 46 + nameLen);
+    const name = decodeName(rawName, (flags & 0x0800) !== 0);
+    const fields = extraFields(
+      new DataView(cd.buffer, cd.byteOffset + at + 46 + nameLen, extraLen),
+    );
+    // Extractors differ on which name they honour, so every name rule applies to both.
+    const unicodeName = unicodePath(fields, rawName);
+    const names = unicodeName === null ? [name] : [name, unicodeName];
+    // Bit 0 is traditional encryption, bit 6 strong encryption, method 99 AES.
+    if ((flags & 0x0041) !== 0 || method === 99) {
+      throw new ZipFault("ENCRYPTED_ENTRY", name);
+    }
+    policeNames(names, options);
+    const unixMode = madeBy >> 8 === 3 ? externalAttrs >>> 16 : 0;
+    if ((unixMode & 0o170000) === 0o120000) {
+      throw new ZipFault("SYMLINK_ENTRY", name);
+    }
+
+    const sizes = zip64Sizes(
+      fields,
+      {
+        uncompressed: uncompressed32 === U32_MAX,
+        compressed: compressed32 === U32_MAX,
+        offset: localOffset32 === U32_MAX,
+      },
+      {
+        uncompressed: uncompressed32,
+        compressed: compressed32,
+        localOffset: localOffset32,
+      },
+    );
+    if (sizes.localOffset >= dir.offset) {
+      throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT", name);
+    }
+
+    if (
+      sizes.uncompressed >= ZIP_LIMITS.ratioFloorBytes &&
+      sizes.uncompressed >
+        Math.max(sizes.compressed, 1) * ZIP_LIMITS.maxEntryRatio
+    ) {
+      const ratio = Math.round(
+        sizes.uncompressed / Math.max(sizes.compressed, 1),
+      );
+      throw new ZipFault("COMPRESSION_RATIO", `${name} (${ratio}:1)`);
+    }
+    total += sizes.uncompressed;
+    if (total > ZIP_LIMITS.maxTotalUncompressedBytes) {
+      throw new ZipFault("TOO_LARGE_UNCOMPRESSED");
+    }
+    entries.push({ name, rawName, localOffset: sizes.localOffset });
+    at = end;
+  }
+  if (at !== cd.length) throw new ZipFault("CENTRAL_DIRECTORY_CORRUPT");
+  return { total, entries };
+}
+
+interface Span {
+  start: number;
+  endInclusive: number;
+}
+
+interface Chunk {
+  start: number;
+  bytes: Uint8Array;
+}
+
+/** Merge spans into range reads: neighbours within LOCAL_READ_GAP share one read of at most LOCAL_READ_MAX bytes. */
+function coalesce(spans: readonly Span[]): Span[] {
+  const reads: Span[] = [];
+  for (const span of [...spans].sort((a, b) => a.start - b.start)) {
+    const last = reads.at(-1);
+    const end = last ? Math.max(last.endInclusive, span.endInclusive) : 0;
+    if (
+      last &&
+      span.start - last.endInclusive - 1 <= LOCAL_READ_GAP &&
+      end - last.start + 1 <= LOCAL_READ_MAX
+    ) {
+      last.endInclusive = end;
+    } else {
+      reads.push({ ...span });
+    }
+  }
+  return reads;
+}
+
+/** Read the coalesced spans, LOCAL_READ_CONCURRENCY at a time; chunks come back sorted by start. */
+async function readSpans(
+  read: RangeReader,
+  spans: readonly Span[],
+): Promise<Chunk[]> {
+  const reads = coalesce(spans);
+  const chunks: Chunk[] = new Array(reads.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < reads.length) {
+      const i = next++;
+      const { start, endInclusive } = reads[i];
+      chunks[i] = { start, bytes: await read(start, endInclusive) };
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(LOCAL_READ_CONCURRENCY, reads.length) },
+      worker,
+    ),
+  );
+  return chunks;
+}
+
+/** Bytes [start, start + length) from the one chunk holding them all, or null. */
+function bytesAt(
+  chunks: readonly Chunk[],
+  start: number,
+  length: number,
+): Uint8Array | null {
+  let lo = 0;
+  let hi = chunks.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (chunks[mid].start <= start) lo = mid;
+    else hi = mid - 1;
+  }
+  const chunk = chunks[lo];
+  if (!chunk || chunk.start > start) return null;
+  const from = start - chunk.start;
+  if (from + length > chunk.bytes.length) return null;
+  return chunk.bytes.subarray(from, from + length);
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
+
+/**
+ * Extractors that stream (libarchive, `tar -tf`) name entries from the local
+ * headers, so each must repeat its central name byte for byte, and its own
+ * Unicode Path must pass the same name rules.
+ */
+async function inspectLocalHeaders(
+  read: RangeReader,
+  entries: readonly CentralEntry[],
+  dirOffset: number,
+  options: ZipInspectOptions,
+): Promise<void> {
+  const mismatch = (entry: CentralEntry, detail: string) =>
+    new ZipFault("LOCAL_HEADER_MISMATCH", `${entry.name} (${detail})`);
+  // One over-read per header usually covers its name and extra; a longer extra gets a second read.
+  const first = await readSpans(
+    read,
+    entries.map((e) => ({
+      start: e.localOffset,
+      endInclusive:
+        Math.min(
+          dirOffset,
+          e.localOffset +
+            LOCAL_HEADER_BYTES +
+            2 * e.rawName.length +
+            LOCAL_EXTRA_SLACK,
+        ) - 1,
+    })),
+  );
+  const tails: Array<{ entry: CentralEntry; nameLen: number; span: Span }> = [];
+  const checkTail = (
+    entry: CentralEntry,
+    nameLen: number,
+    tail: Uint8Array,
+  ) => {
+    if (!sameBytes(tail.subarray(0, nameLen), entry.rawName)) {
+      throw mismatch(entry, "name differs");
+    }
+    const localRaw = tail.subarray(0, nameLen);
+    const fields = extraFields(
+      new DataView(
+        tail.buffer,
+        tail.byteOffset + nameLen,
+        tail.byteLength - nameLen,
+      ),
+      "LOCAL_HEADER_MISMATCH",
+    );
+    const unicodeName = unicodePath(fields, localRaw);
+    if (unicodeName !== null) policeNames([unicodeName], options);
+  };
+  for (const entry of entries) {
+    const fixed = bytesAt(first, entry.localOffset, LOCAL_HEADER_BYTES);
+    if (!fixed) throw mismatch(entry, "header outside the archive");
+    const dv = view(fixed);
+    if (dv.getUint32(0, true) !== LOCAL_HEADER_SIG) {
+      throw mismatch(entry, "bad signature");
+    }
+    const nameLen = dv.getUint16(26, true);
+    const extraLen = dv.getUint16(28, true);
+    if (nameLen !== entry.rawName.length) throw mismatch(entry, "name differs");
+    const tailStart = entry.localOffset + LOCAL_HEADER_BYTES;
+    if (tailStart + nameLen + extraLen > dirOffset) {
+      throw mismatch(entry, "header outside the archive");
+    }
+    const tail = bytesAt(first, tailStart, nameLen + extraLen);
+    if (tail) {
+      checkTail(entry, nameLen, tail);
+    } else {
+      tails.push({
+        entry,
+        nameLen,
+        span: {
+          start: tailStart,
+          endInclusive: tailStart + nameLen + extraLen - 1,
+        },
+      });
+    }
+  }
+  if (tails.length === 0) return;
+  const second = await readSpans(
+    read,
+    tails.map((t) => t.span),
+  );
+  for (const { entry, nameLen, span } of tails) {
+    const tail = bytesAt(
+      second,
+      span.start,
+      span.endInclusive - span.start + 1,
+    );
+    if (!tail) throw mismatch(entry, "header outside the archive");
+    checkTail(entry, nameLen, tail);
   }
 }
 
 /**
  * Inspect an archive through range reads only: the EOCD (and Zip64 records)
- * from the tail, then the central directory. Entry data and local headers are never read.
+ * from the tail, the central directory, then every local header in coalesced
+ * reads. Entry data is never read.
  */
 export async function inspectZip(
   read: RangeReader,
@@ -431,5 +617,14 @@ export async function inspectZip(
   if (cd.length !== dir.size) {
     return { ok: false, problem: "CENTRAL_DIRECTORY_CORRUPT" };
   }
-  return inspectCentralDirectory(cd, dir, options);
+  try {
+    const { total, entries } = readCentralDirectory(cd, dir, options);
+    await inspectLocalHeaders(read, entries, dir.offset, options);
+    return { ok: true, entries: dir.entries, totalUncompressedBytes: total };
+  } catch (error) {
+    if (error instanceof ZipFault) {
+      return { ok: false, problem: error.problem, detail: error.detail };
+    }
+    throw error;
+  }
 }
