@@ -58,7 +58,7 @@ import { SessionConversation } from "./SessionConversation";
 export interface SupportRequestViewProps {
   /** `c_<caseId>` or `b_<appointmentId>` (lib/support/case-key.ts). */
   caseKey: string;
-  /** The Support requests list, for the back link. */
+  /** The Support cases list, for the back link. */
   requestsHref: string;
   /** `<tree>/appointments` when this dashboard has booking pages. */
   appointmentsBase?: string;
@@ -185,7 +185,7 @@ function SessionRequest({
         ]
           .filter(Boolean)
           .join(" · ")}
-        back={{ href: props.requestsHref, label: "Support requests" }}
+        back={{ href: props.requestsHref, label: "Support cases" }}
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-4">
@@ -445,7 +445,7 @@ function TicketRequest({
         ]
           .filter(Boolean)
           .join(" · ")}
-        back={{ href: props.requestsHref, label: "Support requests" }}
+        back={{ href: props.requestsHref, label: "Support cases" }}
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="min-w-0 space-y-4">

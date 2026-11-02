@@ -64,7 +64,7 @@ function resolveSegmentCrumb(ctx: Readonly<SegmentCrumbCtx>): Crumb | null {
   const { seg, acc, overrideLabel, pageLabels } = ctx;
   if (acc.endsWith("/support/requests")) {
     return {
-      label: "Support requests",
+      label: "Support cases",
       href: acc.slice(0, -"/requests".length),
     };
   }

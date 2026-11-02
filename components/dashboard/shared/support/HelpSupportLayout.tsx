@@ -34,7 +34,7 @@ export function HelpSupportLayout({
   )
     return children;
   const items = [
-    { label: "Requests", href: root, icon: MessagesSquare },
+    { label: "Support cases", href: root, icon: MessagesSquare },
     { label: "Evidence requests", href: `${root}/evidence`, icon: FileCheck },
     ...(!organization
       ? [

@@ -69,7 +69,7 @@ function buildSupportTicketReceivedEmail(
   userIds: string[];
   spec: RecipientEmailSpec;
 } {
-  const subject = `Support request received (${args.reference})`;
+  const subject = `Support case received (${args.reference})`;
   return {
     userIds: [args.ownerUserId],
     spec: {
@@ -91,7 +91,7 @@ function buildSupportTicketReceivedEmail(
             React.createElement(
               Text,
               { style: paragraph, key: "body" },
-              `We received your support request `,
+              `We received your support case `,
               React.createElement("strong", null, args.reference),
               args.slaWindow
                 ? ` (${args.title}). Our team expects to respond within ${args.slaWindow}.`
@@ -172,7 +172,7 @@ export function supportNextStepText(status: SupportCaseStatus): string {
     case "IN_PROGRESS":
       return "A member of the support team is working on it and will reply on the ticket.";
     case "ESCALATED":
-      return "The platform team is reviewing it and will update you in the support request.";
+      return "The platform team is reviewing it and will update you in the support case.";
     case "RESOLVED":
       return "If this fixed the problem, nothing more is needed. A reply won't reopen it: if it didn't fix the problem, open the request and choose \"This didn't fix it\" within 14 days, or appeal if we made a decision on it.";
     case "CLOSED":

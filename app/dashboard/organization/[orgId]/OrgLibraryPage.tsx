@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Org Library › Documents | Recordings: Mine · Everyone as URL tabs
+ * Org Library › Session documents | Session recordings: Mine · Everyone as URL tabs
  * (`?scope=`). Mine is the member's own bookings; Everyone is the
  * `operations.read` oversight view, counts only, re-checked by the route.
  */
@@ -25,7 +25,7 @@ const COPY: Record<
   { title: string; description: string; empty: Record<LibraryScope, string> }
 > = {
   documents: {
-    title: "Documents",
+    title: "Session documents",
     description:
       "Files shared in this organization's 1:1 bookings. Everyone shows counts, never file names.",
     empty: {
@@ -35,7 +35,7 @@ const COPY: Record<
     },
   },
   recordings: {
-    title: "Recordings",
+    title: "Session recordings",
     description:
       "Recordings of this organization's sessions. Everyone shows counts, never titles.",
     empty: {

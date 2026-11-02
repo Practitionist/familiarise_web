@@ -10,11 +10,10 @@ import {
   GraduationCap,
   Handshake,
   Home,
-  Library,
+  LayoutGrid,
   LifeBuoy,
   MessageSquare,
   ShieldCheck,
-  Settings,
   UserCog,
   Users,
   Video,
@@ -84,7 +83,7 @@ export function buildOrganizationNav(
     label: "Library",
     items: [
       { name: "Session documents", icon: FileText, path: "documents" },
-      { name: "Recordings", icon: Video, path: "recordings" },
+      { name: "Session recordings", icon: Video, path: "recordings" },
     ],
   };
   if (input.suspended) {
@@ -173,7 +172,7 @@ export function buildOrganizationNav(
   const hosting: ItemSpec[] = [
     {
       name: "Catalog",
-      icon: Library,
+      icon: LayoutGrid,
       path: "catalog",
       show: canHost && can("catalog.manage"),
     },
@@ -201,12 +200,6 @@ export function buildOrganizationNav(
       name: "Help & support",
       icon: LifeBuoy,
       path: "support",
-    },
-    {
-      name: "Organization settings",
-      icon: Settings,
-      path: "settings",
-      show: canOpenOrgSettings(role),
     },
   ];
 
@@ -295,7 +288,7 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   programs: "Programs",
   contracts: "Contracts",
   documents: "Session documents",
-  recordings: "Recordings",
+  recordings: "Session recordings",
   support: "Help & support",
   evidence: "Evidence requests",
   activity: "Member support activity",
@@ -317,7 +310,7 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
 /**
  * #1762-11 — true when `href` lands on an org page this viewer's nav offers,
  * so Home's CTAs never point at a page that would bounce them. Settings is
- * off the rail (#1527): it opens when the role holds any settings section.
+ * in the avatar menu and mobile Menu, not the rail: it opens when the role holds any settings section.
  */
 export function canOpenOrgPage(
   input: Omit<OrganizationNavInput, "orgId">,

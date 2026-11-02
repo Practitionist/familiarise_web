@@ -50,6 +50,12 @@ Platform-wide orientation and end-to-end cross-subsystem explainers.
 
 ---
 
+### Dashboard
+
+- [information-architecture.md](./dashboard/information-architecture.md) - The dashboard glossary, the current navigation trees for every role, and the planned regrouping phases
+
+---
+
 ### Booking
 
 Booking system, slot allocation, validation, and scheduling logic for all 5 event types.

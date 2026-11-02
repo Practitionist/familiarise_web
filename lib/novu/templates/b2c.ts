@@ -482,7 +482,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
       "The requester, confirming ticket intake and expected response window.",
     category: "support",
     inApp: {
-      subject: "Support request received",
+      subject: "Support case received",
       body: `We received ${TICKET}. Expected response within {{payload.slaWindow | default: '24 hours'}}.`,
       redirect: "dashboardUrl",
     },

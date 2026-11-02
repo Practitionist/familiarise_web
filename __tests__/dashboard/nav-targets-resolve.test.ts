@@ -11,6 +11,8 @@
  * combination instead of regex-scanning layout source.
  */
 
+jest.mock("@/lib/auth-client", () => ({ useSession: jest.fn() }));
+
 import { existsSync } from "fs";
 import { join } from "path";
 import type { MemberRole } from "@prisma/client";
@@ -27,7 +29,12 @@ import { buildConsulteeNav } from "@/lib/dashboard/nav/consultee";
 import { buildOrganizationNav } from "@/lib/dashboard/nav/organization";
 import { buildWorkspaceNav } from "@/lib/dashboard/nav/workspace";
 import { flattenNav, type DashboardNav } from "@/lib/dashboard/nav/types";
-import { canOpenOrgSettings } from "@/lib/dashboard/org-settings-sections";
+import { accountSettingsLinks } from "@/components/dashboard/DashboardShellParts";
+import {
+  canOpenOrgSettings,
+  orgSettingsHref,
+  orgSettingsLabel,
+} from "@/lib/dashboard/org-settings-sections";
 
 const APP = join(process.cwd(), "app/dashboard");
 
@@ -217,7 +224,7 @@ describe("org nav targets resolve for every role × capability", () => {
  */
 describe("org nav role walk (#1527 matrix)", () => {
   const OPS = ["analytics"];
-  // #1527 — Library (Documents · Recordings) is every member's.
+  // #1527 — Library (Session documents · Session recordings) is every member's.
   const BASE = [
     "home",
     "appointments",
@@ -235,7 +242,6 @@ describe("org nav role walk (#1527 matrix)", () => {
       "catalog",
       "billing",
       "payouts",
-      "settings",
       ...OPS,
       "audit",
       "consent",
@@ -247,7 +253,6 @@ describe("org nav role walk (#1527 matrix)", () => {
       "catalog",
       "billing",
       "payouts",
-      "settings",
       ...OPS,
       "audit",
       "consent",
@@ -260,7 +265,6 @@ describe("org nav role walk (#1527 matrix)", () => {
       "contracts",
       "billing",
       "payouts",
-      "settings",
       "audit",
     ],
     // Decision 1 (no Payouts) and no Contracts; programs for seat assignment.
@@ -368,18 +372,36 @@ describe("where Settings lives", () => {
     "SUPPORT",
     "EXPERT",
     "LEARNER",
-  ] as const)("%s sees only permitted organization settings", (role) => {
-    const nav = buildOrganizationNav({
-      orgId: "org-1",
-      role,
-      canSponsor: true,
-      canHost: true,
-      consultantProfileId: null,
-    });
-    expect(flattenNav(nav).some((item) => item.path === "settings")).toBe(
-      canOpenOrgSettings(role),
-    );
-  });
+  ] as const)(
+    "%s has no org settings rail item; the account links carry it",
+    (role) => {
+      const nav = buildOrganizationNav({
+        orgId: "org-1",
+        role,
+        canSponsor: true,
+        canHost: true,
+        consultantProfileId: null,
+      });
+      expect(flattenNav(nav).some((item) => item.path === "settings")).toBe(
+        false,
+      );
+      const links = accountSettingsLinks({
+        name: null,
+        image: null,
+        roleLabel: "",
+        settingsHref: null,
+        orgSettings: canOpenOrgSettings(role)
+          ? {
+              label: orgSettingsLabel("Acme"),
+              href: orgSettingsHref("org-1"),
+            }
+          : null,
+      });
+      expect(links.some((link) => link.key === "org")).toBe(
+        canOpenOrgSettings(role),
+      );
+    },
+  );
 
   it("the avatar menu's org entry follows the settings sections", () => {
     const roles: MemberRole[] = [

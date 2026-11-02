@@ -44,4 +44,21 @@ describe("Find index", () => {
     expect(results[0].href).toBe(`${nav.basePath}/invoices`);
     expect(results.map((e) => e.label)).toContain("Payments");
   });
+
+  it("the old words still find the renamed pages", () => {
+    const nav = buildOrganizationNav({
+      orgId: "org-1",
+      role: "OWNER",
+      canSponsor: true,
+      canHost: true,
+      consultantProfileId: null,
+    });
+    const index = buildFindIndex({ nav });
+    expect(filterFind(index, "recordings").map((e) => e.label)).toContain(
+      "Session recordings",
+    );
+    expect(filterFind(index, "support requests").map((e) => e.label)).toContain(
+      "Help & support",
+    );
+  });
 });
