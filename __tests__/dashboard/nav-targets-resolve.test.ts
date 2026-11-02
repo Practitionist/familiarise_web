@@ -241,6 +241,17 @@ describe("org nav targets resolve for every role × capability", () => {
       consultantProfileId: "cp-1",
     });
     expect(flattenNav(nav).length).toBeLessThanOrEqual(18);
+    expect(nav.groups.map((g) => g.label ?? g.items[0].name)).toEqual([
+      "Overview",
+      "My work",
+      "Messages",
+      "Library",
+      "People",
+      "Sponsor",
+      "Host",
+      "Insights",
+      "Help & support",
+    ]);
     expect(nav.mobileTabs).toEqual([
       "home",
       "appointments",
@@ -271,6 +282,7 @@ describe("org nav role walk (#1527 matrix)", () => {
       "programs",
       "contracts",
       "catalog",
+      "collaborators",
       "billing",
       "payouts",
       ...OPS,
@@ -282,6 +294,7 @@ describe("org nav role walk (#1527 matrix)", () => {
       "programs",
       "contracts",
       "catalog",
+      "collaborators",
       "billing",
       "payouts",
       ...OPS,
@@ -303,6 +316,7 @@ describe("org nav role walk (#1527 matrix)", () => {
       ...BASE,
       "programs",
       "catalog",
+      "collaborators",
       "billing",
       ...OPS,
       "audit",

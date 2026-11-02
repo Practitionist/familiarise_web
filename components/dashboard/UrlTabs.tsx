@@ -35,21 +35,18 @@ export interface UrlTab {
   show?: boolean;
 }
 
-export function UrlTabs({
-  tabs,
+/**
+ * The active tab of `visible`, read from `?<paramName>=`, and the change
+ * handler that writes it back without a soft navigation.
+ */
+export function useUrlTab(
+  visible: readonly UrlTab[],
   paramName = "tab",
-  className,
-  onTabChange,
-}: {
-  tabs: UrlTab[];
-  paramName?: string;
-  className?: string;
-  onTabChange?: (value: string) => void;
-}) {
+  onTabChange?: (value: string) => void,
+): { active: string | undefined; onValueChange: (value: string) => void } {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const visible = tabs.filter((t) => t.show !== false);
   const requested = searchParams?.get(paramName);
   // Fall back to the first visible tab when the param is absent or names a tab
   // this user can't see — a stale bookmark shouldn't render an empty page.
@@ -91,6 +88,23 @@ export function UrlTabs({
     },
     [onTabChange, paramName, pathname],
   );
+
+  return { active, onValueChange };
+}
+
+export function UrlTabs({
+  tabs,
+  paramName = "tab",
+  className,
+  onTabChange,
+}: {
+  tabs: UrlTab[];
+  paramName?: string;
+  className?: string;
+  onTabChange?: (value: string) => void;
+}) {
+  const visible = tabs.filter((t) => t.show !== false);
+  const { active, onValueChange } = useUrlTab(visible, paramName, onTabChange);
 
   if (!active) return null;
 

@@ -20,7 +20,8 @@ const VISIBILITY_LABEL: Record<CatalogRow["visibility"], string> = {
   ORG_AND_PUBLIC: "Public + members",
 };
 
-type DraftFilter = "ALL" | "PUBLISHED" | "DRAFT";
+/** The status chips; "ARCHIVED" alone lists withdrawn plans. */
+type StatusFilter = "ALL" | "PUBLISHED" | "DRAFT" | "ARCHIVED";
 
 export function isCatalogRowDraft(row: CatalogRow): boolean {
   if (typeof row.isDraft === "boolean") return row.isDraft;
@@ -71,6 +72,7 @@ export function resolveCatalogExpertName(
 export function CatalogPanel({
   kind,
   rows,
+  initialArchived,
   isLoading,
   error,
   onToggleArchive,
@@ -79,21 +81,31 @@ export function CatalogPanel({
 }: Readonly<{
   kind: Kind;
   rows: CatalogRow[];
+  initialArchived: boolean;
   isLoading: boolean;
   error: unknown;
   onToggleArchive: (planId: string, restore: boolean) => void;
   isMutating: boolean;
   expertNamesById?: Record<string, string>;
 }>) {
-  const [draftFilter, setDraftFilter] = useState<DraftFilter>("ALL");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    initialArchived ? "ARCHIVED" : "ALL",
+  );
+  const hasArchived = rows.some((r) => r.archivedAt !== null);
+  // With nothing withdrawn the Archived chip is hidden, so it cannot stay picked.
+  const filter =
+    statusFilter === "ARCHIVED" && !hasArchived ? "ALL" : statusFilter;
 
-  const filteredRows = useMemo(() => {
-    if (draftFilter === "ALL") return rows;
-    return rows.filter((r) => {
-      const draft = isCatalogRowDraft(r);
-      return draftFilter === "DRAFT" ? draft : !draft;
-    });
-  }, [rows, draftFilter]);
+  const filteredRows = useMemo(
+    () =>
+      rows.filter((r) => {
+        if (filter === "ARCHIVED") return r.archivedAt !== null;
+        if (r.archivedAt !== null) return false;
+        if (filter === "ALL") return true;
+        return isCatalogRowDraft(r) === (filter === "DRAFT");
+      }),
+    [rows, filter],
+  );
 
   // Memoized so the array and its cell closures survive re-renders that do not
   // change the handler — previously reallocated on every call, twice per render.
@@ -222,22 +234,26 @@ export function CatalogPanel({
       <div className="flex flex-wrap items-center gap-1.5">
         {(
           [
-            { value: "ALL", label: "All statuses" },
-            { value: "PUBLISHED", label: "Published" },
-            { value: "DRAFT", label: "Drafts" },
+            { value: "ALL", label: "All statuses", show: true },
+            { value: "PUBLISHED", label: "Published", show: true },
+            { value: "DRAFT", label: "Drafts", show: true },
+            { value: "ARCHIVED", label: "Archived", show: hasArchived },
           ] as const
-        ).map((opt) => (
-          <Button
-            key={opt.value}
-            type="button"
-            size="sm"
-            variant={draftFilter === opt.value ? "secondary" : "ghost"}
-            className="h-7 px-2.5 text-xs"
-            onClick={() => setDraftFilter(opt.value)}
-          >
-            {opt.label}
-          </Button>
-        ))}
+        )
+          .filter((opt) => opt.show)
+          .map((opt) => (
+            <Button
+              key={opt.value}
+              type="button"
+              size="sm"
+              variant={filter === opt.value ? "secondary" : "ghost"}
+              aria-pressed={filter === opt.value}
+              className="h-7 px-2.5 text-xs"
+              onClick={() => setStatusFilter(opt.value)}
+            >
+              {opt.label}
+            </Button>
+          ))}
       </div>
       <ResponsiveTable
         columns={columns}

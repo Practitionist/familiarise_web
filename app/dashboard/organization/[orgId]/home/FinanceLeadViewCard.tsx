@@ -90,7 +90,7 @@ function SponsorFinance({ orgId }: Readonly<{ orgId: string }>) {
             label="Not yet invoiced"
             value={formatCurrencyAmount(b.pendingCharges.amount, "INR")}
             hint={`${b.pendingCharges.paymentCount} bookings`}
-            href={`${base}/billing?tab=accrued-usage`}
+            href={`${base}/billing?tab=invoices#accrued-usage`}
           />
         )}
       </StatRow>

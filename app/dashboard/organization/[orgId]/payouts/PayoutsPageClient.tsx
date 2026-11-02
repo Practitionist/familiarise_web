@@ -6,7 +6,8 @@ import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
-import { UrlTabs } from "@/components/dashboard/UrlTabs";
+import { Section } from "@/components/dashboard/Section";
+import { TabsWithOverflow } from "@/components/dashboard/shared/TabsWithOverflow";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -21,8 +22,8 @@ import { RateCardsPanel } from "./RateCardsPanel";
 import { ExpertPayoutRoutingPanel } from "./ExpertPayoutRoutingPanel";
 
 /**
- * Org Payouts (#1527 Q6/Q7): Runs · Earnings · Payout account · Rate cards ·
- * Expert routing — everything a hosting org is paid through, one page.
+ * Org Payouts: Runs & earnings · Payout account · Rate cards & routing —
+ * everything a hosting org is paid through, on one page.
  */
 export function PayoutsPageClient({
   params,
@@ -52,25 +53,25 @@ export function PayoutsPageClient({
         description="What this organization earns from its offerings, and where it is paid."
       />
       <DashboardContent>
-        <UrlTabs
+        <TabsWithOverflow
           tabs={[
             {
               value: "runs",
-              label: "Runs",
+              label: "Runs & earnings",
               content: (
-                <PayoutRunsPanel
-                  orgId={orgId}
-                  orgSlug={org.organization.slug}
-                  canManage={can("payouts.manage")}
-                  canApprove={can("payouts.approve")}
-                  livePayoutsEnabled={livePayoutsEnabled}
-                />
+                <>
+                  <PayoutRunsPanel
+                    orgId={orgId}
+                    orgSlug={org.organization.slug}
+                    canManage={can("payouts.manage")}
+                    canApprove={can("payouts.approve")}
+                    livePayoutsEnabled={livePayoutsEnabled}
+                  />
+                  <Section id="earnings" title="Earnings">
+                    <OrgEarningsPanel orgId={orgId} />
+                  </Section>
+                </>
               ),
-            },
-            {
-              value: "earnings",
-              label: "Earnings",
-              content: <OrgEarningsPanel orgId={orgId} />,
             },
             {
               value: "payout-account",
@@ -85,24 +86,22 @@ export function PayoutsPageClient({
             },
             {
               value: "rate-cards",
-              label: "Rate cards",
+              label: "Rate cards & routing",
               content: (
-                <RateCardsPanel
-                  orgId={orgId}
-                  canManage={can("payouts.manage")}
-                />
-              ),
-            },
-            {
-              value: "expert-routing",
-              label: "Expert routing",
-              // #1846 — a Billing admin changes where experts are paid here,
-              // without the member list it cannot read.
-              content: (
-                <ExpertPayoutRoutingPanel
-                  orgId={orgId}
-                  canManage={can("members.payoutRecipient.change")}
-                />
+                <>
+                  <RateCardsPanel
+                    orgId={orgId}
+                    canManage={can("payouts.manage")}
+                  />
+                  {/* A Billing admin changes where experts are paid here,
+                      without the member list it cannot read. */}
+                  <Section id="expert-routing" title="Expert routing">
+                    <ExpertPayoutRoutingPanel
+                      orgId={orgId}
+                      canManage={can("members.payoutRecipient.change")}
+                    />
+                  </Section>
+                </>
               ),
             },
           ]}
