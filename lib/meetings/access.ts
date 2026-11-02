@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
 import { isPresenterRole } from "@/lib/collaborators/roles";
 import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
@@ -298,8 +298,14 @@ export async function resolveMeetingAccess(
     select: { consultantProfileId: true },
   });
 
+  // A group-event room opens on the seat alone, so an unpaid HELD seat must not
+  // admit; a 1:1 is also gated by its own booking status.
+  const isGroupEvent = Boolean(appointment.webinar || appointment.class);
   const seat = await prisma.appointmentParticipant.findFirst({
-    where: { appointmentId: appointment.id, ...liveParticipant(userId) },
+    where: {
+      appointmentId: appointment.id,
+      ...(isGroupEvent ? paidParticipant(userId) : liveParticipant(userId)),
+    },
     select: { id: true },
   });
   const isParticipant = seat !== null;

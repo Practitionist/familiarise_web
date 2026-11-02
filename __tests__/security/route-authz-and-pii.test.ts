@@ -118,6 +118,42 @@ describe("consultant statutory PII is never returned by a bare include", () => {
   });
 });
 
+describe("the plan detail reads do not serve the host's email", () => {
+  // `/api/plans/{webinars,classes}/[id]` are public and CDN-cached, and the same
+  // fetchers feed all four detail pages, whose result is serialised to the
+  // browser. Both [id] routes used to select `user.email` and skip the
+  // visibility gate the pages apply.
+  const strip = (rel: string) =>
+    read(rel)
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+
+  it("lib/data/plan-details.ts selects the owner without an email", () => {
+    const src = strip("lib/data/plan-details.ts");
+    expect(src).not.toMatch(/email\s*:\s*true/);
+    expect(src).toContain("planConsultantUserSelect");
+  });
+
+  it("the shared owner select carries no email", () => {
+    expect(strip("lib/api/plans/consultant-projection.ts")).not.toMatch(
+      /email\s*:\s*true/,
+    );
+  });
+
+  it.each([
+    "app/api/plans/webinars/[webinarPlanId]/route.ts",
+    "app/api/plans/classes/[classPlanId]/route.ts",
+  ])("%s GET answers through the visibility gate", (rel) => {
+    const src = strip(rel);
+    const start = src.indexOf("export async function GET");
+    const next = src.indexOf("export async function", start + 1);
+    const get = src.slice(start, next === -1 ? undefined : next);
+    expect(get).toContain("planDetailResponse(");
+    // The cache header lives in the helper, which varies it by visibility.
+    expect(get).not.toMatch(/s-maxage/);
+  });
+});
+
 describe("participant rosters do not return full User rows", () => {
   const ROUTES = [
     "app/api/participants/consultations/[consultationId]/route.ts",
