@@ -77,24 +77,33 @@ export function DigitalProductLibrary({
                         className="h-4 w-4 shrink-0 text-muted-foreground"
                         aria-hidden
                       />
-                      <span className="min-w-0 flex-1 truncate">
-                        {file.originalName}
-                      </span>
-                      {file.updatedSincePurchase && (
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          New
-                        </span>
-                      )}
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {formatFileSize(file.sizeBytes)}
-                      </span>
-                      <Button asChild size="sm" variant="outline">
-                        <a href={downloadHref(product.productId, file.id)}>
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className="line-clamp-2 break-words"
+                          title={file.originalName}
+                        >
+                          {file.originalName}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatFileSize(file.sizeBytes)}
+                          {file.updatedSincePurchase && " · New"}
+                        </p>
+                      </div>
+                      <Button
+                        asChild
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0 px-2.5 sm:px-3"
+                      >
+                        <a
+                          href={downloadHref(product.productId, file.id)}
+                          aria-label={`Download ${file.originalName}`}
+                        >
                           <Download
-                            className="mr-1.5 h-3.5 w-3.5"
+                            className="h-3.5 w-3.5 sm:mr-1.5"
                             aria-hidden
                           />
-                          Download
+                          <span className="hidden sm:inline">Download</span>
                         </a>
                       </Button>
                     </li>

@@ -2,7 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { FileText } from "lucide-react";
+import { ArrowLeft, ChevronRight, FileText } from "lucide-react";
 
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -92,9 +92,52 @@ export default async function DigitalProductPage({
           buyerId: viewer.kind === "buyer" && user?.id ? user.id : null,
         });
 
+  const expertHref = `/explore/experts/${product.creator.consultantProfileId}`;
+  const expertName = product.creator.name ?? "Expert";
+  const libraryHref = viewer.kind === "owned" ? viewer.libraryHref : null;
+
+  // DOM order is the mobile order: header, purchase panel, then the long description.
   return (
-    <div className="container mx-auto grid max-w-5xl gap-8 px-4 py-10 lg:grid-cols-[1.6fr_1fr]">
-      <div className="space-y-6">
+    <div className="container mx-auto grid max-w-5xl gap-x-8 gap-y-6 px-4 py-6 sm:py-10 lg:grid-cols-[1.6fr_1fr]">
+      <div className="flex min-w-0 items-center justify-between gap-3 text-sm text-muted-foreground lg:col-span-2">
+        <nav aria-label="Breadcrumb" className="min-w-0">
+          <ol className="flex min-w-0 items-center gap-1.5">
+            <li className="hidden shrink-0 sm:block">
+              <Link href="/explore/experts" className="hover:text-foreground">
+                Experts
+              </Link>
+            </li>
+            <li aria-hidden className="hidden shrink-0 sm:block">
+              <ChevronRight className="h-3.5 w-3.5" />
+            </li>
+            <li className="min-w-0 max-w-[45%] shrink-0 truncate sm:max-w-[16rem]">
+              <Link href={expertHref} className="hover:text-foreground">
+                {expertName}
+              </Link>
+            </li>
+            <li aria-hidden className="shrink-0">
+              <ChevronRight className="h-3.5 w-3.5" />
+            </li>
+            <li
+              aria-current="page"
+              className="min-w-0 truncate text-foreground"
+            >
+              {product.title}
+            </li>
+          </ol>
+        </nav>
+        {libraryHref && (
+          <Link
+            href={libraryHref}
+            className="inline-flex shrink-0 items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+            Back to library
+          </Link>
+        )}
+      </div>
+
+      <div className="min-w-0 space-y-6 lg:col-start-1">
         <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-xl bg-muted">
           {product.coverImagePath ? (
             <Image
@@ -117,47 +160,26 @@ export default async function DigitalProductPage({
             {DIGITAL_PRODUCT_CATEGORY_LABEL[product.category]} ·{" "}
             {product.fileCount} {product.fileCount === 1 ? "file" : "files"}
           </span>
-          <h1 className="text-2xl font-bold tracking-tight">{product.title}</h1>
+          <h1 className="break-words text-2xl font-bold tracking-tight">
+            {product.title}
+          </h1>
           {product.subtitle && (
             <p className="text-muted-foreground">{product.subtitle}</p>
           )}
           <p className="text-sm text-muted-foreground">
             By{" "}
             <Link
-              href={`/explore/experts/${product.creator.consultantProfileId}`}
+              href={expertHref}
               className="font-medium text-foreground underline-offset-4 hover:underline"
             >
               {product.creator.name ?? "this expert"}
             </Link>
             {product.creator.headline ? ` · ${product.creator.headline}` : ""}
           </p>
-          <p className="whitespace-pre-line text-sm leading-relaxed">
-            {product.description}
-          </p>
         </div>
-
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold">What you get</h2>
-          <ul className="divide-y rounded-lg border text-sm">
-            {product.files.map((file) => (
-              <li key={file.id} className="flex items-center gap-3 p-3">
-                <FileText
-                  className="h-4 w-4 shrink-0 text-muted-foreground"
-                  aria-hidden
-                />
-                <span className="min-w-0 flex-1 truncate">
-                  {file.originalName}
-                </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {formatFileSize(file.sizeBytes)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
       </div>
 
-      <aside className="h-fit space-y-4 rounded-xl border bg-card p-6 lg:sticky lg:top-24">
+      <aside className="h-fit min-w-0 space-y-4 rounded-xl border bg-card p-4 sm:p-6 lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-2">
         <ProductPurchasePanel
           productId={product.id}
           slug={product.slug}
@@ -170,6 +192,35 @@ export default async function DigitalProductPage({
           <ReportProductButton productId={product.id} />
         )}
       </aside>
+
+      <div className="min-w-0 space-y-6 lg:col-start-1">
+        <p className="whitespace-pre-line break-words text-sm leading-relaxed">
+          {product.description}
+        </p>
+
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold">What you get</h2>
+          <ul className="divide-y rounded-lg border text-sm">
+            {product.files.map((file) => (
+              <li key={file.id} className="flex items-center gap-3 p-3">
+                <FileText
+                  className="h-4 w-4 shrink-0 text-muted-foreground"
+                  aria-hidden
+                />
+                <span
+                  className="min-w-0 flex-1 break-words"
+                  title={file.originalName}
+                >
+                  {file.originalName}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {formatFileSize(file.sizeBytes)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
     </div>
   );
 }

@@ -290,7 +290,10 @@ export function ProductPurchasePanel({
         <ul className="divide-y rounded-md border text-sm">
           {files.map((file) => (
             <li key={file.id} className="flex items-center gap-2 p-2.5">
-              <span className="min-w-0 flex-1 truncate">
+              <span
+                className="line-clamp-2 min-w-0 flex-1 break-words"
+                title={file.originalName}
+              >
                 {file.originalName}
               </span>
               <span className="shrink-0 text-xs text-muted-foreground">
