@@ -5,11 +5,13 @@
 /**
  * The digital product receipt is rendered before the settling transaction,
  * staged through the outbox on that transaction at most once per purchase,
- * and links to the buyer's library, never to a file.
+ * links to the buyer's library, never to a file, and is a required notice no
+ * notification preference skips.
  */
 
 const mockStage = jest.fn();
 const mockClaims: string[] = [];
+const mockPreferences: { row: object | null } = { row: null };
 
 jest.mock("../../lib/email/deliver", () => ({
   deliver: jest.fn(),
@@ -33,7 +35,7 @@ jest.mock("../../lib/prisma", () => {
           email: "buyer_1@example.com",
           name: "Asha",
           timezone: "Asia/Kolkata",
-          notificationPreferences: null,
+          notificationPreferences: mockPreferences.row,
         },
       ],
     },
@@ -89,4 +91,25 @@ it("stages one receipt per purchase, linking the library and no file", async () 
   // A re-run of the capture or claim stages nothing.
   expect(await stageDigitalProductPurchaseEmail(prisma, receipt)).toEqual([]);
   expect(mockStage).toHaveBeenCalledTimes(1);
+});
+
+it("stages the receipt even when the buyer turned payment emails off", async () => {
+  mockStage.mockResolvedValue({ id: "fe_2", idempotencyKey: "k2" });
+  mockPreferences.row = {
+    allNotifications: false,
+    emailEnabled: false,
+    paymentNotifications: false,
+  };
+  const receipt = await prepareDigitalProductPurchaseEmail({
+    purchaseId: "dpp_2",
+    buyerId: "buyer_1",
+    productTitle: "Interview workbook",
+    creatorName: null,
+    amountPaise: 0,
+    libraryHref: "/dashboard/go/client/products",
+  });
+  expect(await stageDigitalProductPurchaseEmail(prisma, receipt)).toHaveLength(
+    1,
+  );
+  expect(mockStage.mock.calls.at(-1)?.[0].html).not.toContain("unsubscribe");
 });

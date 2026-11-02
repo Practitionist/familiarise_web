@@ -76,7 +76,7 @@ async function buildReceipt(
 
 /**
  * Stage the receipt inside the transaction that settles or claims the purchase
- * and stamp it handled; a preference skip is handled too, a failed preparation stays owed.
+ * and stamp it handled; a buyer with no deliverable address is handled too, a failed preparation stays owed.
  */
 export async function stageDigitalProductReceipt(
   tx: ReceiptStagingTx & Pick<Tx, "digitalProductPurchase">,

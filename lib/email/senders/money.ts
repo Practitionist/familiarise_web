@@ -169,7 +169,8 @@ export async function prepareDigitalProductPurchaseEmail(
   const libraryUrl = absolute(args.libraryHref);
   const spec: RecipientEmailSpec = {
     emailType: MONEY_EMAIL_TYPES.DIGITAL_PRODUCT_PURCHASED,
-    category: "payments",
+    // A purchase receipt is transactional, like PAYMENT_SUCCESS: no preference skips it.
+    category: null,
     from: SENDERS.payments,
     entityRef: `digital-product-purchase:${args.purchaseId}`,
     subject: () => digitalProductPurchaseSubject(args.productTitle, free),
