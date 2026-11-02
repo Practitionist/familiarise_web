@@ -12,8 +12,17 @@ const mockNotFound = jest.fn(() => {
 const mockReader = jest.fn();
 
 jest.mock("next/navigation", () => ({ notFound: () => mockNotFound() }));
+const mockSession = jest.fn();
+const mockMembership = jest.fn();
+
 jest.mock("@/lib/auth-server", () => ({
-  getSession: async () => ({ user: { id: "u1" } }),
+  getSession: () => mockSession(),
+}));
+jest.mock("@/lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    membership: { findFirst: (args: unknown) => mockMembership(args) },
+  },
 }));
 jest.mock("@/lib/data/plan-details", () => ({
   getClassPlanDetail: (id: string) => mockReader(id),
@@ -35,6 +44,14 @@ jest.mock(
   () => ({ fetchOrgBySlug: (id: string) => mockReader(id) }),
 );
 
+const PUBLIC_PLAN = {
+  id: "plan",
+  visibility: "PUBLIC",
+  organizationId: null,
+  archivedAt: null,
+  status: "PUBLISHED",
+};
+
 const SEGMENTS = [
   {
     dir: "app/explore/experts/[consultantId]",
@@ -51,22 +68,22 @@ const SEGMENTS = [
   {
     dir: "app/explore/programs/plans/classes/[classPlanId]",
     param: "classPlanId",
-    found: { id: "c" },
+    found: PUBLIC_PLAN,
   },
   {
     dir: "app/explore/programs/plans/consultations/[consultationPlanId]",
     param: "consultationPlanId",
-    found: { id: "c" },
+    found: PUBLIC_PLAN,
   },
   {
     dir: "app/explore/programs/plans/subscriptions/[subscriptionPlanId]",
     param: "subscriptionPlanId",
-    found: { id: "s" },
+    found: PUBLIC_PLAN,
   },
   {
     dir: "app/explore/programs/plans/webinars/[webinarPlanId]",
     param: "webinarPlanId",
-    found: { id: "w" },
+    found: PUBLIC_PLAN,
   },
 ];
 
@@ -82,6 +99,10 @@ describe("public dynamic segments 404 from their layout", () => {
   beforeEach(() => {
     mockNotFound.mockClear();
     mockReader.mockReset();
+    mockSession.mockReset();
+    mockSession.mockResolvedValue({ user: { id: "u1" } });
+    mockMembership.mockReset();
+    mockMembership.mockResolvedValue(null);
   });
 
   it.each(SEGMENTS)(
@@ -113,6 +134,41 @@ describe("public dynamic segments 404 from their layout", () => {
       expect(mockNotFound).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("plan layouts gate visibility, not just existence", () => {
+  const PLAN_DIR = "app/explore/programs/plans/classes/[classPlanId]";
+  const run = async () => {
+    const Layout = await load(PLAN_DIR);
+    return Layout({
+      children: "kids",
+      params: Promise.resolve({ classPlanId: "p" }),
+    });
+  };
+
+  it("404s an archived plan", async () => {
+    mockReader.mockResolvedValue({ ...PUBLIC_PLAN, archivedAt: new Date() });
+    await expect(run()).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+
+  it("404s an ORG_ONLY plan for a non-member", async () => {
+    mockReader.mockResolvedValue({
+      ...PUBLIC_PLAN,
+      visibility: "ORG_ONLY",
+      organizationId: "org1",
+    });
+    await expect(run()).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+
+  it("renders an ORG_ONLY plan for an active member", async () => {
+    mockReader.mockResolvedValue({
+      ...PUBLIC_PLAN,
+      visibility: "ORG_ONLY",
+      organizationId: "org1",
+    });
+    mockMembership.mockResolvedValue({ id: "m1" });
+    await expect(run()).resolves.toBe("kids");
+  });
 });
 
 describe("no loading.tsx sits above a public dynamic page", () => {
