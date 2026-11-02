@@ -26,11 +26,20 @@ jest.mock("next/navigation", () => ({
   usePathname: () => "/dashboard/consultee/c1/support",
   useSearchParams: () => new URLSearchParams(),
 }));
+jest.mock("@/hooks/useSessionFeedback", () => ({
+  bookingFeedbackKey: (id: string) => ["feedback", id],
+  useSessionFeedback: () => ({
+    comments: {},
+    ratingCauses: {},
+    supportOpen: true,
+  }),
+}));
 jest.mock("@/components/support/PlatformSupportSheet", () => ({
   PlatformSupportSheet: () => null,
 }));
 
 import { NotificationPreferencesPanel } from "@/components/notifications/NotificationPreferencesPanel";
+import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { SupportRequestsPage } from "@/components/dashboard/shared/support/SupportRequestsPage";
 
 it("the personal support page says support cases, not requests", async () => {
@@ -94,4 +103,22 @@ it.each([
   const src = readFileSync(join(process.cwd(), file), "utf8");
   expect(src).toContain("Open a support case");
   expect(src).not.toContain("Open a support request");
+});
+
+it("an unrated session with an open case says support case", () => {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <SessionRatingRow
+        appointmentId="a1"
+        bookingAppointmentId="b1"
+        occurrenceId="o1"
+        existingRating={null}
+      />
+    </QueryClientProvider>,
+  );
+  expect(
+    screen.getByRole("button", {
+      name: "Support case in progress · Rate anyway",
+    }),
+  ).toBeInTheDocument();
 });

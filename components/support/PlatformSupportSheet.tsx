@@ -91,7 +91,8 @@ function platformLiveStatus(
   offline: boolean,
 ): string {
   if (isPending) return "Sending message…";
-  if (done && !done.resolved) return "Request escalated to our support team.";
+  if (done && !done.resolved)
+    return "Support case escalated to our support team.";
   if (offline) return "You are offline. Draft preserved.";
   return "";
 }

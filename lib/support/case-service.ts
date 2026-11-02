@@ -1107,7 +1107,7 @@ async function reopenRefusalTx(
       status: 409 as const,
       code: "REOPEN_WINDOW_EXPIRED" as const,
       error:
-        "This request was resolved more than 14 days ago. Start a new request if you still need help.",
+        "This support case was resolved more than 14 days ago. Start a new support case if you still need help.",
     };
   return null;
 }

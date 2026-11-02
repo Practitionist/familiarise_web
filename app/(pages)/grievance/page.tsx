@@ -134,7 +134,7 @@ export default function GrievanceRedressalPage() {
                     4(4)–4(5):
                   </strong>{" "}
                   Statutory ceiling is acknowledgement within 48 hours and
-                  redressal within 1 month with a trackable ticket handle;{" "}
+                  redressal within 1 month with a trackable case reference;{" "}
                   {COMPANY_INFO.name} applies our stricter acknowledgement{" "}
                   <strong>({GRIEVANCE_OFFICER.ackPromise})</strong> and
                   resolution{" "}
