@@ -17,12 +17,14 @@ jest.mock("../../lib/cron/cleanup-route", () => ({
   bearerMatches: (header: string | null, secret: string) =>
     header === `Bearer ${secret}`,
 }));
+const mockFindFirst = jest.fn<Promise<unknown>, unknown[]>(async () => null);
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     systemJobExecution: {
       groupBy: jest.fn(),
       findMany: jest.fn(async () => []),
+      findFirst: (...args: unknown[]) => mockFindFirst(...args),
     },
     $queryRaw: jest.fn(async () => []),
   },
@@ -260,5 +262,59 @@ describe("operational absence checks", () => {
     const response = await GET(request());
     expect(response.status).toBe(503);
     expect((await response.json()).error).toBe("JOB_HISTORY_UNAVAILABLE");
+  });
+});
+
+describe("digest verdicts on the probe", () => {
+  /** The newest completed digest row, with one paging-tier standing skip first seen `days` ago. */
+  const digestRow = (days: number) => ({
+    result: {
+      environment: "production",
+      summary: {
+        success: true,
+        heartbeat: "pinged",
+        headline: "0 new, 1 standing",
+        newItems: 0,
+        standingItems: 1,
+        unavailableSections: [],
+        standingSkips: [
+          {
+            jobName: "irp-uploader",
+            tier: "paging",
+            reason: "PLATFORM_GSTIN not configured",
+            firstSeenAt: minutesAgo(days * 24 * 60).toISOString(),
+          },
+        ],
+      },
+    },
+  });
+
+  const probe = async (keyId: string, days: number) => {
+    process.env.RAZORPAY_KEY_ID = keyId;
+    groupBy.mockResolvedValueOnce(groupRows());
+    mockFindFirst.mockResolvedValueOnce(digestRow(days));
+    return GET(request());
+  };
+
+  it("answers 503 with live keys and a paging skip older than 7 days", async () => {
+    const response = await probe("rzp_live_x", 8);
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      healthy: false,
+      reasons: ["STANDING_CONFIG_SKIP"],
+      standingConfigSkips: [
+        expect.objectContaining({ jobName: "irp-uploader" }),
+      ],
+    });
+  });
+
+  it.each([
+    ["test keys", "rzp_test_x", 30],
+    ["live keys and a 6-day skip", "rzp_live_x", 6],
+  ])("answers 200 with %s", async (_case, keyId, days) => {
+    const response = await probe(keyId, days);
+    expect(response.status).toBe(200);
+    expect((await response.json()).healthy).toBe(true);
   });
 });

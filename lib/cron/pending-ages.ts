@@ -30,7 +30,7 @@ export const PENDING_AGE_LIMITS_MS: Readonly<
 export const DISPUTE_RESPONSE_LEAD_MS = 48 * HOUR_MS;
 
 /** The stuck-webhook sweep stops re-driving an event after this; older unprocessed rows are given up. */
-const WEBHOOK_GIVE_UP_MS = 168 * HOUR_MS;
+export const WEBHOOK_GIVE_UP_MS = 168 * HOUR_MS;
 
 const ageOf = (oldestDuePoint: Prisma.Sql, now: Date) =>
   Prisma.sql`GREATEST(0, COALESCE(EXTRACT(EPOCH FROM ${now}::timestamptz - (${oldestDuePoint})), 0))::int`;

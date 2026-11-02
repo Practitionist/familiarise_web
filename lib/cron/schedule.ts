@@ -84,6 +84,7 @@ export const TARGETS = [
   "consent-retention-sweeper",
   "expire-onboarding-drafts",
   "drain-admin-run-requests",
+  "ops-digest",
   ...STREAM_LIFECYCLE_JOBS,
 ] as const;
 
@@ -192,6 +193,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "expire-onboarding-drafts": null,
   // One open request per after-mode job.
   "drain-admin-run-requests": 2,
+  "ops-digest": null,
   "expire-recordings": null,
   "reconcile-orphaned-recordings": null,
   "wind-down-deactivated-orgs": null,
@@ -282,6 +284,8 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "expire-onboarding-drafts": 1440,
   // Backstop only: the admin route dispatches at once; every shorter cadence breaks the tick cap.
   "drain-admin-run-requests": 60,
+  // Daily at 03:50 UTC (09:20 IST): the 03:30 tick has no free slot on a month start.
+  "ops-digest": 1440,
   "expire-recordings": 60,
   "reconcile-orphaned-recordings": 60,
   "wind-down-deactivated-orgs": 60,
@@ -370,6 +374,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "consent-retention-sweeper": 25,
   "expire-onboarding-drafts": 35,
   "drain-admin-run-requests": 40,
+  "ops-digest": 230,
   "expire-recordings": 5,
   "reconcile-orphaned-recordings": 25,
   "wind-down-deactivated-orgs": 55,
@@ -640,6 +645,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "consent-retention-sweeper": 20_000,
   "expire-onboarding-drafts": 20_000,
   "drain-admin-run-requests": 24_000,
+  "ops-digest": 24_000,
 };
 
 /**

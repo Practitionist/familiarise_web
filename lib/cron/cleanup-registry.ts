@@ -1226,6 +1226,36 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       }),
   },
 
+  // @cleanup-twin ops-digest
+  "ops-digest": {
+    meta: {
+      title: "Daily ops digest",
+      description:
+        "Email the daily operations digest to the observability inbox, then ping its Better Stack heartbeat",
+      category: "Alerts",
+      manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Sent every day: its arrival is the signal.",
+    },
+    build: () =>
+      cleanupRoute({
+        job: "ops-digest",
+        run: async () => {
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
+          const { runOpsDigest } =
+            await import("@/lib/observability/ops-digest");
+          // Fail-open: read-only, and a repeat costs one extra email.
+          return withCronLock("ops-digest", { failMode: "open" }, () =>
+            runOpsDigest(),
+          );
+        },
+        status: (r) => (r.success ? 200 : 500),
+        items: () => ({ processed: 1 }),
+        failureMessage: "Failed to build the daily ops digest",
+      }),
+  },
+
   // @cleanup-twin process-data-exports
   "process-data-exports": {
     meta: {
