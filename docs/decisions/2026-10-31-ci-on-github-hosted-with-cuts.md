@@ -32,7 +32,7 @@ The savings overlap, so they do not add up. The study projects today's 18,000 mi
 
 - A **release run** is a PR into `prod`, a push to `staging` or `prod`, or a manual run. It keeps the cold `tsc`, a full `eslint .`, the 2-shard full jest suite and the Build.
 - Every other run (PRs into `dev`, `staging` or `feat/**`, pushes to `dev`) is a changed-files run: ESLint and Prettier on changed files, and changed-file jest on pull requests only.
-- The required check is `TypeScript, Tests & Build`, which passes only when every job that applies to the run passed. Draft PRs run nothing.
+- The required check is `TypeScript, Tests & Build`, which passes only when every job that applies to the run passed. Draft PRs run nothing. Dependabot runs skip its three inputs, so the check is skipped too and GitHub reports that as passing; a release run by Dependabot still runs the check and fails, so nothing reaches `prod` unchecked.
 - A cold `tsc` stays on release runs because a warm incremental `tsc` can mask errors.
 
 ## Numbers behind it
