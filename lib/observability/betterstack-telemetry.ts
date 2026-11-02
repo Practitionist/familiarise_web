@@ -1,87 +1,171 @@
 /**
- * Better Stack Telemetry — structured log ingest.
+ * Better Stack Telemetry (logs) ingest. Distinct from `lib/betterstack.ts`,
+ * which talks to the Uptime and incident API.
  *
- * Distinct from `lib/betterstack.ts`, which talks to the Uptime/Incident
- * Management API. This module ships operational events to the Better Stack
- * *Telemetry* (logs) pipeline so a failed reconcile, a stuck payout, a
- * webhook-queue backlog, or an HMAC failure can page someone — the
- * `recordSystemEvent` table alone is cold storage nobody watches (#776 §K).
- *
- * Ingest is the standard HTTP source endpoint: POST a JSON event (or array)
- * with `Authorization: Bearer <BETTERSTACK_SOURCE_TOKEN>`. The ingesting host
- * is source-specific, so it's configured via `BETTERSTACK_INGEST_URL`.
- *
- * Best-effort by contract: this must never throw into the caller. It mirrors
- * the swallow-and-console pattern of `recordSystemEvent` so an ingest outage
- * can't cascade into a worker. Gated by `ENABLE_BETTERSTACK_TELEMETRY` so it
- * stays inert (zero network calls) until a source token is provisioned.
+ * Every event is built from the fixed field set in {@link telemetryEventSchema}:
+ * identifiers only, never names, emails or a caller's free-form context. A send
+ * never throws; it resolves to a {@link TelemetryOutcome} that a run tallies on
+ * its execution row, and a rejection is never reported to Sentry.
  */
 
-import * as Sentry from "@sentry/nextjs";
-import { ENABLE_BETTERSTACK_TELEMETRY } from "@/lib/feature-flags";
+import { z } from "zod";
+import { ENTITY_ID_PATTERN } from "@/lib/observability/entity-id";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 
-type TelemetryLevel = "info" | "warn" | "error";
+/** Ingest answers a run counts: 402 quota spent, 403 bad source token, 5xx, no answer, any other non-2xx. */
+export type IngestRejection = "402" | "403" | "5xx" | "network" | "other";
+export type TelemetryOutcome = "sent" | "skipped" | IngestRejection;
 
-export interface TelemetryLog {
-  level: TelemetryLevel;
-  message: string;
-  /** Functional bucket — mirrors SystemEvent.category (PAYOUT/RECONCILE/...). */
-  category?: string;
-  organizationId?: string | null;
-  correlationId?: string | null;
-  /** Arbitrary structured fields — flattened into the event. */
-  context?: Record<string, unknown> | null;
+const SEND_TIMEOUT_MS = 2_000;
+const MESSAGE_MAX_CHARS = 500;
+
+const id = z.string().regex(ENTITY_ID_PATTERN);
+const count = z.number().int().nonnegative();
+const targetNames = z.array(z.string().max(64)).max(100);
+
+/** Seconds the oldest item in each queue has waited past its due point; 0 means none is waiting. */
+export const pendingAgesSchema = z
+  .object({
+    refundsOwed: count,
+    payoutsStuck: count,
+    dunningNotices: count,
+    disputesDue: count,
+    webhookEvents: count,
+    emailRetries: count,
+    notificationRetries: count,
+  })
+  .strict();
+export type PendingAges = z.infer<typeof pendingAgesSchema>;
+
+const telemetryEventSchema = z
+  .object({
+    dt: z.string().datetime(),
+    level: z.enum(["info", "warn", "error"]),
+    message: z.string().min(1).max(MESSAGE_MAX_CHARS),
+    category: z.string().max(64).optional(),
+    organization_id: id.optional(),
+    correlation_id: z.string().max(200).optional(),
+    job_run_id: id.optional(),
+    entity_id: id.optional(),
+    // The Sentry ingest canary's verdict.
+    verdict: z.string().max(64).optional(),
+    accepted: count.optional(),
+    rejected: count.optional(),
+    // The ticker's per-tick summary.
+    tickId: z.string().uuid().optional(),
+    durationMs: count.optional(),
+    okCount: count.optional(),
+    acceptedCount: count.optional(),
+    lockHeld: targetNames.optional(),
+    lockUnavailableCount: count.optional(),
+    lockUnavailable: targetNames.optional(),
+    failed: z
+      .array(z.object({ name: z.string().max(64), status: count }).strict())
+      .max(100)
+      .optional(),
+    skippedIdleCount: count.optional(),
+    error: z.string().max(MESSAGE_MAX_CHARS).optional(),
+    oldestPendingAgeS: pendingAgesSchema.optional(),
+  })
+  .strict();
+
+export type TelemetryLog = Omit<z.input<typeof telemetryEventSchema>, "dt">;
+
+/** The rejection bucket for an ingest HTTP status, or null for a 2xx. */
+export function ingestRejectionOf(status: number): IngestRejection | null {
+  if (status >= 200 && status < 300) return null;
+  if (status === 402) return "402";
+  if (status === 403) return "403";
+  if (status >= 500) return "5xx";
+  return "other";
 }
 
-/**
- * Ship one event to Better Stack Telemetry. No-op (and no network) when the
- * flag is off or the source token is unset. Never throws.
- */
-export async function emitTelemetryLog(log: TelemetryLog): Promise<void> {
-  if (!ENABLE_BETTERSTACK_TELEMETRY) return;
+type OutcomeSink = (sending: Promise<TelemetryOutcome>) => void;
+let outcomeSink: OutcomeSink | null = null;
 
+/** Installed by the run context so a job run counts its sends; leaf module, no Node imports. */
+export function setTelemetryOutcomeSink(next: OutcomeSink): void {
+  outcomeSink = next;
+}
+
+async function send(
+  log: TelemetryLog,
+  fetchImpl: typeof fetch,
+): Promise<TelemetryOutcome> {
+  // Read per call: the ticker keeps this module loaded across warm invocations.
+  if (process.env.ENABLE_BETTERSTACK_TELEMETRY !== "true") return "skipped";
   const token = process.env.BETTERSTACK_SOURCE_TOKEN;
   const url = process.env.BETTERSTACK_INGEST_URL;
   if (!token || !url) {
-    // Flag on but unconfigured — warn once-ish and move on. Don't spam.
     console.warn(
       "[BetterStack Telemetry] ENABLE_BETTERSTACK_TELEMETRY set but BETTERSTACK_SOURCE_TOKEN/BETTERSTACK_INGEST_URL missing; skipping",
     );
-    return;
+    return "skipped";
   }
-
+  const event = telemetryEventSchema.safeParse({
+    ...log,
+    dt: new Date().toISOString(),
+    message: scrubStringValue(log.message).slice(0, MESSAGE_MAX_CHARS),
+    ...(log.correlation_id
+      ? { correlation_id: scrubStringValue(log.correlation_id) }
+      : {}),
+    ...(log.error
+      ? { error: scrubStringValue(log.error).slice(0, MESSAGE_MAX_CHARS) }
+      : {}),
+  });
+  if (!event.success) {
+    console.warn(
+      JSON.stringify({
+        event: "betterstack-event-invalid",
+        issues: event.error.issues.map((issue) => issue.path.join(".")),
+      }),
+    );
+    return "skipped";
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
   try {
-    // `dt` is Better Stack's reserved timestamp field; the rest are free-form.
-    const payload = {
-      dt: new Date().toISOString(),
-      level: log.level,
-      message: log.message,
-      ...(log.category ? { category: log.category } : {}),
-      ...(log.organizationId ? { organization_id: log.organizationId } : {}),
-      ...(log.correlationId ? { correlation_id: log.correlationId } : {}),
-      ...(log.context ?? {}),
-    };
-
-    // Hard timeout so a stalled ingest connection can never hang/leak — even
-    // though callers fire-and-forget, an unbounded fetch would pin a socket.
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 3000);
-    try {
-      await fetch(url, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-        signal: ac.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch (err) {
-    // Ingest is best-effort; the DB SystemEvent row is the source of truth.
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "betterstack" }, level: "warning" });
-    console.error("[BetterStack Telemetry] ingest failed:", err);
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(event.data),
+      signal: controller.signal,
+    });
+    const rejection = ingestRejectionOf(res.status);
+    if (rejection === null) return "sent";
+    console.warn(
+      JSON.stringify({
+        event: "betterstack-ingest-rejected",
+        status: res.status,
+        message: event.data.message,
+      }),
+    );
+    return rejection;
+  } catch {
+    console.warn(
+      JSON.stringify({
+        event: "betterstack-ingest-unreachable",
+        message: event.data.message,
+      }),
+    );
+    return "network";
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+/**
+ * Ships one event. Never throws: the outcome is `skipped` when telemetry is off
+ * or the event is invalid, `sent` on a 2xx, and a rejection bucket otherwise.
+ */
+export function emitTelemetryLog(
+  log: TelemetryLog,
+  fetchImpl: typeof fetch = fetch,
+): Promise<TelemetryOutcome> {
+  const sending = send(log, fetchImpl).catch((): TelemetryOutcome => "network");
+  outcomeSink?.(sending);
+  return sending;
 }

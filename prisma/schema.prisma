@@ -3275,9 +3275,7 @@ model ConsultantProfile {
   collaborations        Collaborator[] @relation("Collaborator")
   invitedCollaborations Collaborator[] @relation("CollaboratorInvitedBy")
 
-  // Trials and activity logs
-  trials       Trial[]
-  activityLogs ActivityLog[]
+  trials Trial[]
 
   // ADR 18 — program curated panels this consultant is listed on (enforced at checkout, #971)
   programAllowlists ProgramConsultantAllowlist[]
@@ -4292,54 +4290,6 @@ enum TrialStatus {
   CONVERTED // Consultee subscribed after trial
   CANCELLED // Cancelled by consultee, lapsed unpaid, or TRIAL_UNANSWERED after 48 h
   REJECTED // Declined by consultant
-}
-
-// Activity tracking for consultant dashboard
-
-model ActivityLog {
-  id           String       @id @default(cuid())
-  activityType ActivityType
-  description  String
-  metadata     Json? // Additional context (e.g., plan name, amount)
-
-  // Actor (who performed the action)
-  actorId    String
-  actorName  String
-  actorImage String?
-
-  // Target consultant
-  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id])
-  consultantProfileId String
-
-  // Optional references
-  consultationId String?
-  subscriptionId String?
-  webinarId      String?
-  classId        String?
-  trialId        String?
-
-  createdAt DateTime @default(now())
-
-  @@index([consultantProfileId, createdAt(sort: Desc)])
-}
-
-enum ActivityType {
-  CONSULTATION_BOOKED
-  /// B14 — reschedule previously wrote no activity at all (cancel did).
-  APPOINTMENT_RESCHEDULED
-  CONSULTATION_COMPLETED
-  CONSULTATION_CANCELLED
-  SUBSCRIPTION_REQUESTED
-  SUBSCRIPTION_APPROVED
-  SUBSCRIPTION_CANCELLED
-  WEBINAR_REGISTERED
-  CLASS_ENROLLED
-  TRIAL_REQUESTED
-  TRIAL_SCHEDULED
-  TRIAL_COMPLETED
-  TRIAL_CONVERTED
-  REVIEW_SUBMITTED
-  MESSAGE_RECEIVED
 }
 
 enum BookingSource {

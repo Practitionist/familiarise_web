@@ -66,7 +66,7 @@ flowchart LR
 |  - Single atomic `prisma.$transaction(async (tx) => ...)` (`PG_POOL_MAX=1` safe):                 |
 |    1. Insert `EmailEvent` (`@unique svixId`)                                                      |
 |    2. Upsert `EmailSuppression` + transition `Waitlist` on bounce/complaint/suppressed/unsub      |
-|  - Post-commit: `prune-system-job-executions` scrubs `SENT` bodies at 7d & prunes rows at 30d/90d |
+|  - Post-commit: `prune-system-job-executions` scrubs `SENT` bodies at 7d & prunes outbox rows at 30d/90d and `EmailEvent` at 1 year (calendar) |
 +---------------------------------------------------------------------------------------------------+
 ```
 
@@ -231,7 +231,7 @@ Both `EmailEvent` creation (`@unique` on `svixId`) and recipient suppression / w
 | **Pre-Send Suppression Block** | `email.suppressed`                                                                                                                              | Fired when Resend blocks an outbound message due to upstream suppression; synchronizes `EmailSuppression` (`MANUAL`) via `tx` and marks `Waitlist` (`BOUNCED`) so future sends short-circuit locally without API calls. |
 | **Audience / Contact Sync**    | `contact.created`, `contact.updated`, `contact.deleted`, `contact.topics.updated`                                                               | When `type === "contact.deleted"` or `type === "contact.updated"` with `unsubscribed === true`, upserts `EmailSuppression` (`MANUAL`) via `tx` and marks `Waitlist` (`UNSUBSCRIBED`).                                   |
 | **Sending Domain Health**      | `domain.created`, `domain.updated`, `domain.deleted`                                                                                            | Calls `recordSystemErrorSafe` **after transaction commit** when `domain.updated` reports `status` as `"failed"` or `"not_started"`, or when `domain.deleted` fires.                                                     |
-| **Telemetry & Inbound Events** | `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.opened`, `email.clicked`, `email.failed`, `email.scheduled`, `email.received` | Persisted idempotently on `EmailEvent` for delivery auditing; `prune-system-job-executions` prunes `EmailEvent` rows older than **30 days** every day at `04:15 UTC`.                                                   |
+| **Telemetry & Inbound Events** | `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.opened`, `email.clicked`, `email.failed`, `email.scheduled`, `email.received` | Persisted idempotently on `EmailEvent` for delivery auditing; `prune-system-job-executions` prunes `EmailEvent` rows older than **1 year (calendar)** in its nightly window (20:00–23:30 UTC).                          |
 
 ---
 
@@ -275,6 +275,6 @@ flowchart LR
 - **Asymmetric Bell-Only or Email-Only Producers & Inline Request-Blocking Sends**: Superseded by atomic dual-channel staging (`stageBell` / `notify*({ tx | deferAttempt: true })` + `defineLifecycleStager` / `stage*Email(tx, ...)`) paired with unified post-commit concurrent flushing via `flushNotificationsAfter` (`lib/novu/stage-then-attempt.ts`).
 - **Immediate `nextRetryAt: NOW()` on Outbox Insert & Content-Hashed Retry Keys**: Superseded by `nextRetryAt: NOW() + 60s` inline lease grace windows and `<EMAIL_TYPE>/failed-email/<row.id>` keys (`idempotencyKeyFor(..., row.id)`), eliminating concurrent inline-vs-relay races and preventing Resend's 24-hour payload hash cache from silently dropping legitimate repeat emails.
 - **Dropping RFC 8058 Unsubscribe Headers on Relay Retries & Mutating DB on `GET /api/waitlist/unsubscribe`**: Superseded by stateless `reconstructUnsubscribeHeaders(row)` header extraction on retry and read-only HTML confirmation on `GET /api/waitlist/unsubscribe` so link scanners cannot trigger false unsubscribes.
-- **Per-Row Loop Sentry Captures in Outbox Sweepers & Non-Transactional Webhook Suppression**: Superseded by per-tick alert aggregation in `runEmailRetryTick` (`email.outbox.dead_letter` gauge + `postOpsChat`) and single-`$transaction(tx)` `EmailEvent` + `EmailSuppression` writes with 30-day batched pruning.
+- **Per-Row Loop Sentry Captures in Outbox Sweepers & Non-Transactional Webhook Suppression**: Superseded by per-tick alert aggregation in `runEmailRetryTick` (`email.outbox.dead_letter` gauge + `postOpsChat`) and single-`$transaction(tx)` `EmailEvent` + `EmailSuppression` writes with batched pruning.
 - **Inbound forwarding via ImprovMX (planned, never configured)**: the design routed role addresses (`support@`, `ops@`, `dpdp@`, `billing@`) on `familiarisenow.com` to the operator inbox through MX records `mx1.improvmx.com` and `mx2.improvmx.com`. Those records were never created; the apex now publishes a null MX instead. Delete any residual references instead of configuring them.
 - **Personal-inbox DMARC reports and an unpublished root SPF**: the `rua` target used to be a personal Gmail that never authorised external reports, and the apex had no SPF. Both were replaced on 2026-10-28 by the records in the deployment inventory.

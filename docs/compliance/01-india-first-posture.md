@@ -54,9 +54,12 @@ inherited the PIB date. The gazette says 13 Nov 2025, so 18 months is
 1. **IT Rules 2021 r.3(2)(a)(i)** — acknowledge a grievance within **24 hours**,
    dispose within **15 days**. Not a guideline; a rule.
 2. **CERT-In Directions 28.04.2022** — cyber incident report within **6 hours**;
-   ICT logs retained **180 days inside India**; a nominated Point of Contact.
-   Binds "any entity whatsoever", so it reaches us as a body corporate. **This is
-   the only hard India-localisation rule that binds us directly.**
+   ICT logs retained **180 days**; a nominated Point of Contact. Binds "any
+   entity whatsoever", so it reaches us as a body corporate. The 180 days is
+   binding; the location is not. CERT-In's FAQs (May 2022, Q35) say: "The logs
+   may be stored outside India also as long as the obligation to produce logs to
+   CERT-In is adhered to by the entities in a reasonable time." So CERT-In sets
+   a retention period for us, not a localisation rule.
 3. **IT Rules r.3(1)(f)** — notify users of changes to the privacy policy or
    user agreement, at least annually, if we are an intermediary. (We almost
    certainly are: PRS lists online marketplaces as intermediaries.)
@@ -97,8 +100,10 @@ fresh consent. The purposes list is a hard boundary.
 - **DPDP imposes no data localisation.** s.16 / Rule 15 is a _may-restrict_ power
   aimed at exposure to a **foreign State**, not an adequacy regime. Transfer is
   permitted by default; the CG restricts by order.
-- **The two hard India-storage rules are CERT-In (logs) and RBI (payment data)** —
-  and only the first binds us directly.
+- **CERT-In sets a log-retention period, not a storage location.** ICT logs must
+  be kept 180 days and may sit outside India if they can be produced to CERT-In
+  in reasonable time (FAQ Q35). The only India-storage rule is RBI's payment-data
+  directive, and it does not bind us directly.
 - **RBI** (6 Apr 2018 circular + 26 Jun 2019 FAQs) does not bind us; it binds
   Razorpay, and reaches us **contractually**. Razorpay will impose KYC-onboarding
   of every consultant before payout. **Sharpest Sentry risk: never let a payment

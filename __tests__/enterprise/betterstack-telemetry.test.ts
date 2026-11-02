@@ -3,12 +3,8 @@
  */
 
 /**
- * Better Stack Telemetry sink (#776 §K). The contract: no network when the
- * flag is off, a Bearer-authed POST when on+configured, and NEVER throws into
- * the caller (recordSystemEvent's critical path must survive an ingest outage).
- *
- * The flag is read at module load, so each case sets env + jest.resetModules
- * and re-imports.
+ * Better Stack Telemetry sink: no network when the flag is off, a Bearer-authed
+ * POST of fixed fields when configured, and a typed outcome instead of a throw.
  */
 
 describe("emitTelemetryLog", () => {
@@ -31,9 +27,8 @@ describe("emitTelemetryLog", () => {
     const fetchSpy = jest.fn();
     global.fetch = fetchSpy as never;
 
-    const { emitTelemetryLog } = await import(
-      "@/lib/observability/betterstack-telemetry"
-    );
+    const { emitTelemetryLog } =
+      await import("@/lib/observability/betterstack-telemetry");
     await emitTelemetryLog({ level: "error", message: "boom" });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -45,28 +40,29 @@ describe("emitTelemetryLog", () => {
     const fetchSpy = jest.fn();
     global.fetch = fetchSpy as never;
 
-    const { emitTelemetryLog } = await import(
-      "@/lib/observability/betterstack-telemetry"
-    );
+    const { emitTelemetryLog } =
+      await import("@/lib/observability/betterstack-telemetry");
     await emitTelemetryLog({ level: "warn", message: "x" });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("POSTs with a Bearer source token when on+configured", async () => {
+  it("POSTs only the fixed fields with a Bearer source token when on+configured", async () => {
     process.env.ENABLE_BETTERSTACK_TELEMETRY = "true";
     process.env.BETTERSTACK_SOURCE_TOKEN = "tok-123";
     process.env.BETTERSTACK_INGEST_URL = "https://in.example.com";
-    const fetchSpy = jest.fn().mockResolvedValue({ ok: true });
+    const fetchSpy = jest.fn().mockResolvedValue({ status: 202 });
     global.fetch = fetchSpy as never;
 
-    const { emitTelemetryLog } = await import(
-      "@/lib/observability/betterstack-telemetry"
-    );
-    await emitTelemetryLog({
-      level: "error",
-      message: "stuck payout",
-      category: "PAYOUT",
-    });
+    const { emitTelemetryLog } =
+      await import("@/lib/observability/betterstack-telemetry");
+    await expect(
+      emitTelemetryLog({
+        level: "error",
+        message: "stuck payout for priya@example.com",
+        category: "PAYOUT",
+        entity_id: "pay_123",
+      }),
+    ).resolves.toBe("sent");
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, opts] = fetchSpy.mock.calls[0];
@@ -74,25 +70,29 @@ describe("emitTelemetryLog", () => {
     expect(opts.method).toBe("POST");
     expect(opts.headers.Authorization).toBe("Bearer tok-123");
     const body = JSON.parse(opts.body);
-    expect(body.level).toBe("error");
-    expect(body.message).toBe("stuck payout");
-    expect(body.category).toBe("PAYOUT");
+    expect(Object.keys(body).sort()).toEqual(
+      ["category", "dt", "entity_id", "level", "message"].sort(),
+    );
+    expect(body.message).not.toContain("priya@example.com");
   });
 
-  it("never throws when the ingest call fails", async () => {
+  it("buckets rejections and network failures without throwing", async () => {
     process.env.ENABLE_BETTERSTACK_TELEMETRY = "true";
     process.env.BETTERSTACK_SOURCE_TOKEN = "tok";
     process.env.BETTERSTACK_INGEST_URL = "https://in.example.com";
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    const { emitTelemetryLog } =
+      await import("@/lib/observability/betterstack-telemetry");
+    const outcomes: string[] = [];
+    for (const status of [402, 403, 503, 429]) {
+      global.fetch = jest.fn().mockResolvedValue({ status }) as never;
+      outcomes.push(await emitTelemetryLog({ level: "warn", message: "x" }));
+    }
     global.fetch = jest
       .fn()
       .mockRejectedValue(new Error("network down")) as never;
-    jest.spyOn(console, "error").mockImplementation(() => {});
+    outcomes.push(await emitTelemetryLog({ level: "error", message: "x" }));
 
-    const { emitTelemetryLog } = await import(
-      "@/lib/observability/betterstack-telemetry"
-    );
-    await expect(
-      emitTelemetryLog({ level: "error", message: "x" }),
-    ).resolves.toBeUndefined();
+    expect(outcomes).toEqual(["402", "403", "5xx", "other", "network"]);
   });
 });

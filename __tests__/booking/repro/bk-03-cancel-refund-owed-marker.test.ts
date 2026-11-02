@@ -207,12 +207,6 @@ jest.mock("../../../lib/email/senders/booking", () => ({
   __esModule: true,
   stageAppointmentCancelledEmail: async () => [],
 }));
-jest.mock("../../../lib/activity/log-activity", () => ({
-  __esModule: true,
-  logConsultationCancelled: async () => undefined,
-  logSubscriptionCancelled: async () => undefined,
-}));
-
 import { NextRequest } from "next/server";
 import { notifyAppointmentCancelled } from "../../../lib/novu";
 import { POST } from "../../../app/api/appointments/[appointmentId]/cancel/route";

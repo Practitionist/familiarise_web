@@ -24,7 +24,8 @@ const claimSchema = z.object({
 /**
  * Claims one five-minute ticker slot and probes its due targets for work. The
  * tick id is the row's primary key, so a second dispatch of the same slot gets
- * `false`; `idle` lists the targets to skip, recorded on the claim row first.
+ * `false`; `idle` lists the targets to skip, recorded on the claim row first,
+ * and `pendingAges` carries the queue gauges the ticker puts on its summary.
  */
 export async function POST(request: NextRequest) {
   const secret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
@@ -47,9 +48,9 @@ export async function POST(request: NextRequest) {
   try {
     const { default: prisma } = await import("@/lib/prisma");
     // A probe that cannot run skips nothing; the slot is still claimed.
-    const idle = await import("@/lib/cron/idle-probe")
-      .then(({ idleTargets }) => idleTargets(due, prisma))
-      .catch((): string[] => []);
+    const { idle, pendingAges } = await import("@/lib/cron/idle-probe")
+      .then(({ probeTick }) => probeTick(due, prisma))
+      .catch(() => ({ idle: [], pendingAges: null }));
     const now = new Date();
     await prisma.systemJobExecution.create({
       data: {
@@ -73,7 +74,10 @@ export async function POST(request: NextRequest) {
       },
       select: { id: true },
     });
-    return NextResponse.json({ claimed: true, idle }, { headers: HEADERS });
+    return NextResponse.json(
+      { claimed: true, idle, ...(pendingAges ? { pendingAges } : {}) },
+      { headers: HEADERS },
+    );
   } catch (error) {
     if (isUniqueViolation(error)) {
       return NextResponse.json({ claimed: false }, { headers: HEADERS });

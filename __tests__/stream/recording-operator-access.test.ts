@@ -27,7 +27,8 @@ jest.mock("@sentry/nextjs", () => ({
 // depends on Better Stack config; the DB row is the assertion that matters.
 jest.mock("../../lib/observability/betterstack-telemetry", () => ({
   __esModule: true,
-  emitTelemetryLog: jest.fn(async () => undefined),
+  emitTelemetryLog: jest.fn(async () => "skipped"),
+  setTelemetryOutcomeSink: jest.fn(),
 }));
 
 jest.mock("../../lib/auth-server", () => ({

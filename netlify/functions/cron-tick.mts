@@ -17,9 +17,9 @@
  * wraps its core in `withCronLock`, so overlapping runs answer 409 from the
  * loser — expected, not an error.
  *
- * Deliberately light: no `@netlify/functions` import, only `zod`,
- * `process.env` and the global `fetch`/`AbortController` the Netlify
- * Functions runtime already provides. `@sentry/node` and the shared error
+ * Deliberately light: no `@netlify/functions` import, only `zod`, the
+ * Sentry-free Better Stack emitter, `process.env` and the global
+ * `fetch`/`AbortController` the Netlify Functions runtime already provides. `@sentry/node` and the shared error
  * budget are imported lazily, only for the missing-secret fatal and for
  * {@link alertFailedTargets}.
  *
@@ -47,6 +47,11 @@ import {
 } from "../../lib/cron/failure-streak";
 import { jobOutcomeSchema, type JobOutcome } from "../../lib/cron/job-outcome";
 import { offProductionDeploy } from "../../lib/cron/deploy-context";
+import {
+  emitTelemetryLog,
+  pendingAgesSchema,
+  type PendingAges,
+} from "../../lib/observability/betterstack-telemetry";
 
 export const config = { schedule: "*/5 * * * *" };
 
@@ -63,6 +68,8 @@ interface TickBody {
   /** Due targets whose idle probe found no work; recorded on the claim row, never dispatched. */
   skippedIdle: string[];
   durationMs: number;
+  /** Queue gauges from the slot claim; absent when the claim could not read them. */
+  oldestPendingAgeS?: PendingAges;
 }
 
 /**
@@ -593,17 +600,19 @@ export function tickIdForSlot(slot: Date): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
-/** Covers a cold start plus the app's idle probes (2.75 s worst case), its commit and the claim insert. */
+/** Covers a cold start plus the app's idle probes and queue gauges (2.75 s worst case), its commit and the claim insert. */
 const TICK_CLAIM_TIMEOUT_MS = 5_000;
 const tickClaimReply = z.object({
   claimed: z.boolean(),
   idle: z.array(z.string()).optional(),
+  pendingAges: pendingAgesSchema.optional(),
 });
 
 /**
  * Claims the slot in Postgres through the app, which also names the scheduled
- * targets its probes found idle. `claimed` is false only when another dispatch
- * holds the slot; an unreachable or unreadable reply runs every target.
+ * targets its probes found idle and the queue gauges. `claimed` is false only
+ * when another dispatch holds the slot; an unreachable or unreadable reply runs
+ * every target and carries no gauges.
  */
 export async function claimTickSlot(
   baseUrl: string,
@@ -612,7 +621,11 @@ export async function claimTickSlot(
   slot: Date,
   scheduled: readonly Target[],
   fetchImpl: typeof fetch = fetch,
-): Promise<{ claimed: boolean; idle: ReadonlySet<string> }> {
+): Promise<{
+  claimed: boolean;
+  idle: ReadonlySet<string>;
+  pendingAges?: PendingAges;
+}> {
   const runAll = { claimed: true, idle: new Set<string>() };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TICK_CLAIM_TIMEOUT_MS);
@@ -633,6 +646,9 @@ export async function claimTickSlot(
           scheduled.some((target) => target === name),
         ),
       ),
+      ...(parsed.data.pendingAges
+        ? { pendingAges: parsed.data.pendingAges }
+        : {}),
     };
   } catch {
     return runAll;
@@ -814,6 +830,7 @@ export default async function cronTick(
     failed,
     skippedIdle,
     durationMs,
+    ...(claim.pendingAges ? { oldestPendingAgeS: claim.pendingAges } : {}),
   };
   console.log(JSON.stringify(body));
   // Check-in and alert waiting share the remaining ticker budget; aborts do not cancel target work.
@@ -833,57 +850,29 @@ export default async function cronTick(
   return jsonResponse(body, statusFor(failed));
 }
 
-/**
- * One Better Stack Telemetry line per tick, independent of Sentry. Inline
- * because `lib/observability/betterstack-telemetry` pulls `@sentry/nextjs`
- * into the function bundle; same env contract, never throws.
- */
+/** One Better Stack summary per tick, the event the freshness alert keys on; never throws. */
 async function emitTickSummary(body: TickBody, error?: string): Promise<void> {
-  const token = process.env.BETTERSTACK_SOURCE_TOKEN;
-  const url = process.env.BETTERSTACK_INGEST_URL;
-  if (process.env.ENABLE_BETTERSTACK_TELEMETRY !== "true" || !token || !url) {
-    return;
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 2_000);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        dt: new Date().toISOString(),
-        level: error || body.failed.length > 0 ? "error" : "info",
-        message: "cron-tick summary",
-        category: "CRON",
-        tickId: body.tickId,
-        durationMs: body.durationMs,
-        okCount: body.ok.length,
-        acceptedCount: body.accepted.length,
-        lockHeld: body.lockHeld,
-        lockUnavailableCount: body.lockUnavailable.length,
-        lockUnavailable: body.lockUnavailable,
-        failed: body.failed,
-        skippedIdleCount: body.skippedIdle.length,
-        ...(error ? { error } : {}),
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      console.error(
-        JSON.stringify({
-          event: "betterstack-summary-rejected",
-          status: res.status,
-        }),
-      );
-    }
-  } catch {
-    // Telemetry is best effort.
-  } finally {
-    clearTimeout(timer);
-  }
+  await emitTelemetryLog(
+    {
+      level: error || body.failed.length > 0 ? "error" : "info",
+      message: "cron-tick summary",
+      category: "CRON",
+      tickId: body.tickId,
+      durationMs: body.durationMs,
+      okCount: body.ok.length,
+      acceptedCount: body.accepted.length,
+      lockHeld: body.lockHeld,
+      lockUnavailableCount: body.lockUnavailable.length,
+      lockUnavailable: body.lockUnavailable,
+      failed: body.failed,
+      skippedIdleCount: body.skippedIdle.length,
+      ...(body.oldestPendingAgeS
+        ? { oldestPendingAgeS: body.oldestPendingAgeS }
+        : {}),
+      ...(error ? { error } : {}),
+    },
+    fetch,
+  );
 }
 
 async function boundedAlert(
