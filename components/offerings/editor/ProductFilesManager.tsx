@@ -153,6 +153,57 @@ async function uploadOne(params: {
   return commit(productId, presign.assetId);
 }
 
+const day = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    timeZone: "Asia/Kolkata",
+  });
+
+/** A file's history in words: when it was added, or when it was last replaced. */
+function historyText(asset: OwnedProductAsset): string | null {
+  if (!asset.verifiedAt) return null;
+  return `${asset.version > 1 ? "Updated" : "Added"} ${day(asset.verifiedAt)}`;
+}
+
+/** One toast for a batch: the reason for a single rejection, otherwise a count that points to the list. */
+export function verdictToast(names: string[], results: CommitResult[]) {
+  const rejected = results
+    .map((r, i) => ({ ...r, name: names[i] }))
+    .filter((r) => r.status === "REJECTED");
+  const verified = results.filter((r) => r.status === "VERIFIED").length;
+  if (rejected.length === 0) {
+    return { title: verified === 1 ? "File verified" : "Files verified" };
+  }
+  if (results.length === 1) {
+    return {
+      title: `${rejected[0].name} was rejected`,
+      description: describeRejectReason(rejected[0].reason).message,
+      variant: "destructive" as const,
+    };
+  }
+  return {
+    title: `${rejected.length} ${rejected.length === 1 ? "file was" : "files were"} rejected`,
+    description: `${verified > 0 ? `${verified} verified. ` : ""}See Rejected uploads in Files for why.`,
+    variant: "destructive" as const,
+  };
+}
+
+/** What removing a file costs: who loses it, and the published product's one-file floor. */
+function removeImpact(
+  asset: OwnedProductAsset | null,
+  buyerCount: number,
+  isPublished: boolean,
+): string {
+  const loss =
+    asset?.status === "VERIFIED" && buyerCount > 0
+      ? `${buyerCount} ${buyerCount === 1 ? "buyer" : "buyers"} will lose access to this file. They'll see it listed as removed by you.`
+      : "Buyers will no longer see this file.";
+  return isPublished
+    ? `${loss} A published product keeps at least one file.`
+    : loss;
+}
+
 /** The friendly sentence, with the code and its detail kept small for support. */
 function RejectReason({ stored }: Readonly<{ stored: string | null }>) {
   const { message, code, detail } = describeRejectReason(stored);
@@ -176,12 +227,15 @@ export function ProductFilesManager({
   productId,
   category,
   isPublished,
+  buyerCount,
   assets,
   onChanged,
 }: Readonly<{
   productId: string;
   category: DigitalProductCategory;
   isPublished: boolean;
+  /** Buyers holding access now; they lose a removed file. */
+  buyerCount: number;
   assets: OwnedProductAsset[];
   onChanged: () => Promise<unknown>;
 }>) {
@@ -211,22 +265,8 @@ export function ProductFilesManager({
     });
     void onChanged();
   };
-  const reportVerdicts = (names: string[], results: CommitResult[]) => {
-    const rejected = results
-      .map((r, i) => ({ ...r, name: names[i] }))
-      .filter((r) => r.status === "REJECTED");
-    if (rejected.length > 0) {
-      toast({
-        title: `${rejected.length} file${rejected.length === 1 ? " was" : "s were"} rejected`,
-        description: rejected
-          .map((r) => `${r.name}: ${describeRejectReason(r.reason).message}`)
-          .join(" "),
-        variant: "destructive",
-      });
-    } else {
-      toast({ title: "Files verified" });
-    }
-  };
+  const reportVerdicts = (names: string[], results: CommitResult[]) =>
+    toast(verdictToast(names, results));
 
   const add = useMutation({
     mutationFn: async (files: File[]) => {
@@ -246,6 +286,8 @@ export function ProductFilesManager({
             onProgress: (percent) => setProgress({ name: file.name, percent }),
           }),
         );
+        // Each verdict shows at once, so a rejected file never sits as unverified.
+        void onChanged();
       }
       return { names: files.map((f) => f.name), results };
     },
@@ -388,7 +430,12 @@ export function ProductFilesManager({
       ) : (
         <ul className="divide-y rounded-md border">
           {rows.map((asset, index) => {
-            const chip = STATUS_CHIP[asset.status];
+            // A PENDING row during an upload batch is being checked now.
+            const checking = asset.status === "PENDING" && busy;
+            const chip = checking
+              ? { label: "Checking…", tone: "info" as const }
+              : STATUS_CHIP[asset.status];
+            const history = historyText(asset);
             return (
               <li key={asset.id} className="flex items-start gap-3 p-3 text-sm">
                 <FileText
@@ -405,8 +452,13 @@ export function ProductFilesManager({
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <StatusBadge label={chip.label} tone={chip.tone} />
                     <span>{formatFileSize(asset.sizeBytes)}</span>
-                    {asset.version > 1 && <span>Version {asset.version}</span>}
+                    {history && <span>{history}</span>}
                   </div>
+                  {asset.displayName !== asset.originalName && (
+                    <p className="text-xs text-muted-foreground">
+                      Buyers see it as {asset.displayName}
+                    </p>
+                  )}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-0.5">
                   {asset.status === "VERIFIED" && (
@@ -427,7 +479,7 @@ export function ProductFilesManager({
                       </a>
                     </Button>
                   )}
-                  {asset.status === "PENDING" && (
+                  {asset.status === "PENDING" && !checking && (
                     <Button
                       type="button"
                       size="sm"
@@ -521,6 +573,11 @@ export function ProductFilesManager({
                   >
                     {asset.originalName}
                   </p>
+                  {asset.version > 1 && (
+                    <p className="text-xs text-muted-foreground">
+                      Replacement for {asset.displayName}
+                    </p>
+                  )}
                   <RejectReason stored={asset.rejectReason} />
                 </div>
                 <Button
@@ -550,9 +607,7 @@ export function ProductFilesManager({
               Remove {deleting?.originalName}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {isPublished
-                ? "Buyers will no longer see this file. A published product keeps at least one file."
-                : "Buyers will no longer see this file."}
+              {removeImpact(deleting, buyerCount, isPublished)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

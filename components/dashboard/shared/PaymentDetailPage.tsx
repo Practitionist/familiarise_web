@@ -238,7 +238,11 @@ export function PaymentDetailPage({
 
         <Card>
           <CardHeader>
-            <CardTitle>Appointment Information</CardTitle>
+            <CardTitle>
+              {payment.digitalProductPurchase
+                ? "Purchase Information"
+                : "Appointment Information"}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {payment.appointment ? (
@@ -257,6 +261,25 @@ export function PaymentDetailPage({
                   </Label>
                   <p className="font-mono text-sm text-foreground break-all">
                     {payment.appointment.id}
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">User</Label>
+                  <p className="text-foreground">
+                    {payment.user?.name || "N/A"}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    {payment.user?.email}
+                  </p>
+                </div>
+              </>
+            ) : payment.digitalProductPurchase ? (
+              <>
+                <div>
+                  <Label className="text-muted-foreground">Purchase</Label>
+                  <p className="font-medium text-foreground break-words">
+                    Digital product:{" "}
+                    {payment.digitalProductPurchase.product.title}
                   </p>
                 </div>
                 <div>

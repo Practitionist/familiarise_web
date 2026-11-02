@@ -259,6 +259,7 @@ export function DigitalProductEditorContainer({
               productId={product.id}
               category={product.category}
               isPublished={status === "PUBLISHED"}
+              buyerCount={product.buyerCount}
               assets={product.assets}
               onChanged={refresh}
             />

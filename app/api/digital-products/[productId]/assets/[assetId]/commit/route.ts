@@ -34,7 +34,14 @@ export async function POST(_request: Request, { params }: RouteParams) {
       rejectReason: true,
     },
   });
-  if (!asset) return jsonError(404, "NOT_FOUND", "File not found");
+  // Removing a file discards its in-flight replacements, rows included.
+  if (!asset) {
+    return jsonError(
+      404,
+      "UPLOAD_DISCARDED",
+      "This upload was discarded, usually because the file it was replacing was removed. Add it again as a new file if you still need it.",
+    );
+  }
   if (asset.status !== "PENDING") {
     return NextResponse.json({
       data: { id: asset.id, status: asset.status, reason: asset.rejectReason },
