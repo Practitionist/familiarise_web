@@ -136,7 +136,7 @@ export function requiredObjects(plan: string): RequiredObject[] {
             kind: "column",
             owner: table,
             name: column[1],
-            ddl: `ALTER TABLE "${table}" ADD COLUMN ${clause.replace(/\s+/g, " ")};`,
+            ddl: `ALTER TABLE "${table}" ADD COLUMN ${clause};`,
           });
         }
       }
@@ -384,6 +384,17 @@ export async function readLiveCatalog(
   }
 }
 
+/** The fix line for a missing object; a NOT NULL column with no default is flagged, since Postgres rejects it on a table with rows. */
+export function printedFix(o: RequiredObject): string {
+  const rejectsRows =
+    o.kind === "column" &&
+    /\bNOT\s+NULL\b/i.test(o.ddl) &&
+    !/\bDEFAULT\b/i.test(o.ddl);
+  return rejectsRows
+    ? `${o.ddl}  -- NOT NULL with no default: fails if "${o.owner}" already has rows`
+    : o.ddl;
+}
+
 /** Is this object present in the live database? */
 export function isPresent(o: RequiredObject, catalog: LiveCatalog): boolean {
   switch (o.kind) {
@@ -503,7 +514,7 @@ async function main(): Promise<void> {
       "",
       "Apply them to the shared database, then re-run this check:",
       "",
-      ...missing.map((o) => `  ${o.ddl}`),
+      ...missing.map((o) => `  ${printedFix(o)}`),
       "",
       "Do NOT run `prisma db push` from this branch. One database serves dev and prod,",
       "and a push from a branch that predates a column proposes to drop it.",

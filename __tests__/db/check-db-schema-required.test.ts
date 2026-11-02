@@ -18,6 +18,7 @@ import {
   describeObject,
   isPresent,
   missingObjects,
+  printedFix,
   requiredObjects,
   splitClauses,
   type LiveCatalog,
@@ -171,6 +172,18 @@ ALTER TYPE "SupportCaseStatus" ADD VALUE 'ON_HOLD';
     );
   });
 
+  it("keeps a created column's default literal byte for byte", () => {
+    const plan = `CREATE TABLE "Note" (
+    "id" TEXT NOT NULL,
+    "label" TEXT NOT NULL DEFAULT 'two  spaces',
+
+    CONSTRAINT "Note_pkey" PRIMARY KEY ("id")
+);`;
+    expect(requiredObjects(plan).find((r) => r.name === "label")?.ddl).toBe(
+      `ALTER TABLE "Note" ADD COLUMN "label" TEXT NOT NULL DEFAULT 'two  spaces';`,
+    );
+  });
+
   it("reads an empty plan as nothing to require", () => {
     expect(requiredObjects("-- This is an empty migration.")).toEqual([]);
   });
@@ -301,6 +314,32 @@ describe("the live catalog comparison", () => {
         catalog,
       ),
     ).toBe(false);
+  });
+});
+
+describe("the printed fix", () => {
+  it("flags a NOT NULL column with no default, which a table with rows rejects", () => {
+    expect(
+      printedFix({
+        kind: "column",
+        owner: "Note",
+        name: "body",
+        ddl: 'ALTER TABLE "Note" ADD COLUMN "body" TEXT NOT NULL;',
+      }),
+    ).toBe(
+      'ALTER TABLE "Note" ADD COLUMN "body" TEXT NOT NULL;  -- NOT NULL with no default: fails if "Note" already has rows',
+    );
+  });
+
+  it("prints a column with a default, or a nullable one, as is", () => {
+    for (const ddl of [
+      'ALTER TABLE "Note" ADD COLUMN "pinned" BOOLEAN NOT NULL DEFAULT false;',
+      'ALTER TABLE "Note" ADD COLUMN "seenAt" TIMESTAMPTZ;',
+    ]) {
+      expect(
+        printedFix({ kind: "column", owner: "Note", name: "x", ddl }),
+      ).toBe(ddl);
+    }
   });
 });
 
