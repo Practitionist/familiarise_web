@@ -123,7 +123,9 @@ describe("?status=archived never shows live rows", () => {
     rerender(panel(rows));
     expect(screen.getAllByText("Plan live").length).toBeGreaterThan(0);
   });
+});
 
+describe("CatalogClient under ?status=archived", () => {
   const body = {
     webinars: [{ ...row("live-webinar", null), title: "Live webinar" }],
     classes: [

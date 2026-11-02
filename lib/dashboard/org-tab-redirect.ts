@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { retiredRouteHref } from "./personal-legacy-routes";
+import { retiredRouteHref, type SearchParams } from "./personal-legacy-routes";
 
 export const ORG_TAB_REDIRECTS = {
   "purchase-orders": { page: "billing", tab: "purchase-orders" },
@@ -23,7 +23,7 @@ export function orgTabHref(
   orgId: string,
   page: string,
   tab: OrgTab,
-  searchParams: Record<string, string | string[] | undefined> = {},
+  searchParams: SearchParams = {},
 ): string {
   return retiredRouteHref(
     `/dashboard/organization/${orgId}/${page}`,
@@ -35,7 +35,7 @@ export function orgTabHref(
 export function orgRetiredRouteHref(
   orgId: string,
   route: OrgRetiredTabRoute,
-  searchParams: Record<string, string | string[] | undefined> = {},
+  searchParams: SearchParams = {},
 ): string {
   const target = ORG_TAB_REDIRECTS[route];
   return orgTabHref(orgId, target.page, target.tab, searchParams);
@@ -131,7 +131,7 @@ export const ORG_PAGE_TAB_MAP: {
 export function orgLegacyTabHref(
   orgId: string,
   page: OrgTabbedPage,
-  searchParams: Record<string, string | string[] | undefined>,
+  searchParams: SearchParams,
 ): string | null {
   const parsed = ORG_PAGE_TAB_SCHEMAS[page].safeParse(searchParams.tab);
   if (!parsed.success) return null;

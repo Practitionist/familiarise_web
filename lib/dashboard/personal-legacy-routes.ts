@@ -1,7 +1,7 @@
 import type { LibraryTab } from "./library-tabs";
 import { SELL_HOME, SellableKindSchema, type SellTab } from "./sell-pages";
 
-type SearchParams = Record<string, string | string[] | undefined>;
+export type SearchParams = Record<string, string | string[] | undefined>;
 
 interface LegacyTarget {
   page: string;
