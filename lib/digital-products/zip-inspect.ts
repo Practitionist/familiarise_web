@@ -1,4 +1,5 @@
-import { crc32 } from "node:zlib";
+import { crc32, createInflateRaw } from "node:zlib";
+import { once } from "node:events";
 import { ZIP_LIMITS } from "@/lib/digital-products/constants";
 
 /** Reads bytes [start, endInclusive] of the archive. */
@@ -25,7 +26,9 @@ export type ZipProblem =
   | "LOCAL_HEADER_MISMATCH"
   | "UNLISTED_DATA"
   | "EMBEDDED_ZIP_RECORD"
-  | "STORED_DESCRIPTOR_TOO_LARGE";
+  | "ENTRY_DATA_MISMATCH"
+  | "UNVERIFIABLE_ENTRY"
+  | "DEEP_SCAN_TOO_LARGE";
 
 export type ZipInspection =
   | { ok: true; entries: number; totalUncompressedBytes: number }
@@ -56,7 +59,9 @@ const DESCRIPTOR_FORMS: ReadonlyMap<
 const MAX_DESCRIPTOR_BYTES = 24;
 /** Flags a local header must share with its central record: encryption (0, 6), descriptor (3), UTF-8 names (11). */
 const SHARED_FLAG_BITS = 0x0001 | 0x0008 | 0x0040 | 0x0800;
-/** Stored descriptor data is scanned in pieces of this size, each overlapping the last by 3 bytes. */
+const STORED = 0;
+const DEFLATE = 8;
+/** Descriptor-sized entry data is read in pieces of this size; stored pieces overlap the last by 3 bytes. */
 const SCAN_CHUNK_BYTES = 8 * 1024 * 1024;
 /** The third and fourth bytes after "PK" of every ZIP record signature a hidden entry needs. */
 const RECORD_SIGNATURE_TAILS: ReadonlySet<number> = new Set([
@@ -580,12 +585,22 @@ async function inspectLocalHeaders(
     new ZipFault("LOCAL_HEADER_MISMATCH", `${entry.name} (${detail})`);
   const unlisted = (detail: string) => new ZipFault("UNLISTED_DATA", detail);
   const sorted = [...entries].sort((a, b) => a.localOffset - b.localOffset);
-  const scanned = sorted.filter((e) => e.descriptor && e.method === 0);
-  const scanBytes = scanned.reduce((sum, e) => sum + e.compressed, 0);
-  if (scanBytes > ZIP_LIMITS.maxStoredDescriptorScanBytes) {
+  // A descriptor-sized entry's true end is known only from its data, so it is read.
+  const deep = sorted.filter((e) => e.descriptor);
+  const unverifiable = deep.find(
+    (e) => e.method !== STORED && e.method !== DEFLATE,
+  );
+  if (unverifiable) {
     throw new ZipFault(
-      "STORED_DESCRIPTOR_TOO_LARGE",
-      `${Math.ceil(scanBytes / (1024 * 1024))} MB`,
+      "UNVERIFIABLE_ENTRY",
+      `${unverifiable.name} (method ${unverifiable.method})`,
+    );
+  }
+  const deepBytes = deep.reduce((sum, e) => sum + e.compressed, 0);
+  if (deepBytes > ZIP_LIMITS.maxDeepScanCompressedBytes) {
+    throw new ZipFault(
+      "DEEP_SCAN_TOO_LARGE",
+      `${Math.ceil(deepBytes / (1024 * 1024))} MB`,
     );
   }
   const nextOffset = (i: number) =>
@@ -721,7 +736,7 @@ async function inspectLocalHeaders(
       throw mismatch(entry, "data descriptor differs");
     }
   });
-  await scanStoredDescriptorData(read, scanned, headerEnds);
+  await deepScan(read, deep, headerEnds);
 }
 
 /** Where "PK" plus a record signature tail first starts in `bytes`, or -1. */
@@ -738,44 +753,119 @@ function findRecordSignature(bytes: Uint8Array): number {
   return -1;
 }
 
+interface Piece extends Span {
+  entry: CentralEntry;
+}
+
 /**
- * A stored entry with a data descriptor has no length a streaming extractor
- * can trust, so a ZIP record signature inside its data could start a hidden entry.
+ * Inflate one DEFLATE entry from its pieces in order: the stream must end
+ * exactly at the central compressed size, with the central size and CRC.
  */
-async function scanStoredDescriptorData(
+async function inflateEntry(
+  entry: CentralEntry,
+  parts: readonly Uint8Array[],
+): Promise<ZipFault | null> {
+  const inflate = createInflateRaw();
+  let out = 0;
+  let crc = 0;
+  let oversized = false;
+  let ended = false;
+  let failed = false;
+  inflate.on("data", (chunk: Buffer) => {
+    out += chunk.length;
+    crc = crc32(chunk, crc);
+    // A bomb stops at the declared size, which the ratio and total limits already bound.
+    if (out > entry.uncompressed) {
+      oversized = true;
+      inflate.destroy();
+    }
+  });
+  const settled = new Promise<void>((resolve) => {
+    inflate.once("end", () => {
+      ended = true;
+      resolve();
+    });
+    inflate.once("error", () => {
+      failed = true;
+      resolve();
+    });
+    inflate.once("close", () => resolve());
+  });
+  for (const part of parts) {
+    if (ended || failed || oversized) break;
+    if (!inflate.write(part)) {
+      await Promise.race([once(inflate, "drain"), settled]);
+    }
+  }
+  if (!inflate.destroyed) inflate.end();
+  await settled;
+  const mismatch = (detail: string) =>
+    new ZipFault("ENTRY_DATA_MISMATCH", `${entry.name} (${detail})`);
+  if (oversized) return mismatch("inflates past its declared size");
+  if (failed || !ended) return mismatch("not a complete deflate stream");
+  if (inflate.bytesWritten !== entry.compressed) {
+    return new ZipFault(
+      "UNLISTED_DATA",
+      `${entry.compressed - inflate.bytesWritten} bytes after the deflate stream of ${entry.name}`,
+    );
+  }
+  if (out !== entry.uncompressed || crc !== entry.crc) {
+    return mismatch("size or CRC differs");
+  }
+  return null;
+}
+
+/**
+ * Bit-3 entries carry their length after the data, so a streaming extractor
+ * finds their end from the data itself: a stored entry must hold no ZIP
+ * record signature, and a DEFLATE stream must end exactly where the central
+ * directory says. The reads share one compressed-byte budget.
+ */
+async function deepScan(
   read: RangeReader,
-  scanned: readonly CentralEntry[],
+  deep: readonly CentralEntry[],
   headerEnds: ReadonlyMap<CentralEntry, number>,
 ): Promise<void> {
-  const pieces: Array<Span & { entry: CentralEntry }> = [];
-  for (const entry of scanned) {
+  const pieces: Piece[] = [];
+  for (const entry of deep) {
     const start = headerEnds.get(entry) ?? 0;
     const end = start + entry.compressed;
+    const overlap = entry.method === STORED ? 3 : 0;
     for (let at = start; at < end; at += SCAN_CHUNK_BYTES) {
       pieces.push({
         entry,
-        start: Math.max(start, at - 3),
+        start: Math.max(start, at - overlap),
         endInclusive: Math.min(end, at + SCAN_CHUNK_BYTES) - 1,
       });
     }
   }
   const reads = coalesce(pieces);
+  const chunks: Chunk[] = new Array(reads.length);
   const found: { fault: ZipFault | null } = { fault: null };
+  const pieceBytes = (piece: Piece, within: readonly Chunk[]) => {
+    const bytes = bytesAt(
+      within,
+      piece.start,
+      piece.endInclusive - piece.start + 1,
+    );
+    if (!bytes) {
+      found.fault ??= new ZipFault("UNLISTED_DATA", "archive ends early");
+    }
+    return bytes;
+  };
   let next = 0;
   const worker = async () => {
     while (found.fault === null && next < reads.length) {
-      const { start, endInclusive } = reads[next++];
+      const i = next++;
+      const { start, endInclusive } = reads[i];
       const chunk = { start, bytes: await read(start, endInclusive) };
+      chunks[i] = chunk;
+      // Stored pieces are scanned as they land, so a hit stops further reads.
       for (const piece of pieces) {
+        if (piece.entry.method !== STORED) continue;
         if (piece.start < start || piece.endInclusive > endInclusive) continue;
-        const bytes = bytesAt(
-          [chunk],
-          piece.start,
-          piece.endInclusive - piece.start + 1,
-        );
-        if (!bytes) {
-          found.fault ??= new ZipFault("UNLISTED_DATA", "archive ends early");
-        } else if (findRecordSignature(bytes) >= 0) {
+        const bytes = pieceBytes(piece, [chunk]);
+        if (bytes && findRecordSignature(bytes) >= 0) {
           found.fault ??= new ZipFault("EMBEDDED_ZIP_RECORD", piece.entry.name);
         }
         if (found.fault) return;
@@ -789,12 +879,24 @@ async function scanStoredDescriptorData(
     ),
   );
   if (found.fault) throw found.fault;
+  for (const entry of deep) {
+    if (entry.method !== DEFLATE) continue;
+    const parts: Uint8Array[] = [];
+    for (const piece of pieces) {
+      if (piece.entry !== entry) continue;
+      const bytes = pieceBytes(piece, chunks);
+      if (!bytes) throw found.fault ?? new ZipFault("UNLISTED_DATA");
+      parts.push(bytes);
+    }
+    const fault = await inflateEntry(entry, parts);
+    if (fault) throw fault;
+  }
 }
 
 /**
  * Inspect an archive through range reads only: the EOCD (and Zip64 records)
- * from the tail, the central directory, then every local header in coalesced
- * reads. Entry data is never read.
+ * from the tail, the central directory, every local header in coalesced
+ * reads, and the data of bit-3 entries only.
  */
 export async function inspectZip(
   read: RangeReader,

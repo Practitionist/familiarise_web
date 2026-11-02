@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  */
-import { crc32 } from "node:zlib";
+import { crc32, deflateRawSync } from "node:zlib";
 import { inspectZip } from "@/lib/digital-products/zip-inspect";
 import { checkFileSignature } from "@/lib/digital-products/file-signature";
 import {
@@ -32,7 +32,17 @@ interface Entry {
   method?: number;
   /** Entry data; defaults to zero filler of the compressed size. */
   data?: Buffer;
+  /** CRC-32 of the uncompressed data, written to every header that carries one. */
+  crc?: number;
 }
+
+/** A real DEFLATE entry body for `text`, with its CRC and sizes. */
+const deflated = (text: string) => ({
+  method: 8,
+  data: deflateRawSync(Buffer.from(text)),
+  uncompressed: Buffer.byteLength(text),
+  crc: crc32(Buffer.from(text)),
+});
 
 /** A structurally valid archive; entry data is zero filler of the compressed size. */
 function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
@@ -56,6 +66,7 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
       18,
     );
     local.writeUInt32LE(e.descriptor ? 0 : uncompressed, 22);
+    if (!e.descriptor) local.writeUInt32LE(e.crc ?? 0, 14);
     local.writeUInt16LE(localName.length, 26);
     local.writeUInt16LE(localExtra.length, 28);
     const data = e.data ?? Buffer.alloc(compressed);
@@ -65,6 +76,7 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
     if (e.descriptor) {
       const at = e.descriptor === "signed" ? 4 : 0;
       if (at) descriptor.writeUInt32LE(0x08074b50, 0);
+      descriptor.writeUInt32LE(e.crc ?? 0, at);
       descriptor.writeUInt32LE(compressed, at + 4);
       descriptor.writeUInt32LE(uncompressed, at + 8);
     }
@@ -86,6 +98,7 @@ function buildZip(entries: Entry[], comment = Buffer.alloc(0)): Buffer {
     central.writeUInt16LE(e.madeBy ?? 20, 4);
     central.writeUInt16LE(flags, 8);
     central.writeUInt16LE(e.method ?? 8, 10);
+    central.writeUInt32LE(e.crc ?? 0, 16);
     central.writeUInt32LE(compressed, 20);
     central.writeUInt32LE(uncompressed, 24);
     central.writeUInt16LE(name.length, 28);
@@ -326,8 +339,8 @@ it("requires each local header to repeat its central name and polices its Unicod
     await expect(
       inspect(
         buildZip([
-          { name: "a.txt", descriptor },
-          { name: "b.txt", descriptor },
+          { name: "a.txt", descriptor, ...deflated("alpha ".repeat(50)) },
+          { name: "b.txt", descriptor, ...deflated("beta") },
         ]),
       ),
     ).resolves.toMatchObject({ ok: true, entries: 2 });
@@ -384,12 +397,6 @@ it("scans stored entries with a data descriptor for ZIP records, within a cap", 
     ok: false,
     problem: "EMBEDDED_ZIP_RECORD",
   });
-  // A deflate entry with a descriptor is not scanned.
-  await expect(
-    inspect(
-      buildZip([{ name: "a.txt", descriptor: "signed", data: embedded }]),
-    ),
-  ).resolves.toMatchObject({ ok: true });
 
   // Over the cap: refused from the central sizes, before any local read.
   const big = stored(Buffer.alloc(16));
@@ -405,7 +412,7 @@ it("scans stored entries with a data descriptor for ZIP records, within a cap", 
   );
   expect(result).toMatchObject({
     ok: false,
-    problem: "STORED_DESCRIPTOR_TOO_LARGE",
+    problem: "DEEP_SCAN_TOO_LARGE",
   });
   // Only the tail and the central directory were read.
   expect(reads).toBe(2);
@@ -417,6 +424,8 @@ const REREVIEW_FIXTURES = {
     "UEsDBBQAAAgAAAAAAAAIge7vKAAAACgAAAALAAAAcGF5bG9hZC5leGVNWiBpbmVydCByZXZpZXcgZml4dHVyZTsgbmV2ZXIgZXhlY3V0ZWQKUEsFBgAAAAAAAAAAAAAAAFEAAAAAAA==",
   localStoredCentralDeflate:
     "UEsDBBQACAgAAAAAAAAAAAAAAAAAAAAAAAAJAAAAbm90ZXMudHh0aGVsbG9QSwcIhqYQNgUAAAAFAAAAUEsDBBQAAAgAAAAAAAAIge7vKAAAACgAAAALAAAAcGF5bG9hZC5leGVNWiBpbmVydCByZXZpZXcgZml4dHVyZTsgbmV2ZXIgZXhlY3V0ZWQKUEsHCIJfe0RmAAAAZgAAAFBLAQIUABQACAgIAAAAAACCX3tEZgAAAGYAAAAJAAAAAAAAAAAAAAAAAAAAAABub3Rlcy50eHRQSwUGAAAAAAEAAQA3AAAAnQAAAAAA",
+  deflateDescriptorHiddenLocal:
+    "UEsDBBQACAgIAAAAAAAAAAAAAAAAAAAAAAAJAAAAbm90ZXMudHh0y0jNyckHAFBLBwiGphA2BwAAAAUAAABQSwMEFAAACAAAAAAAAAiB7u8oAAAAKAAAAAsAAABwYXlsb2FkLmV4ZU1aIGluZXJ0IHJldmlldyBmaXh0dXJlOyBuZXZlciBleGVjdXRlZApQSwcIhqYQNmgAAAAFAAAAUEsBAhQAFAAICAgAAAAAAIamEDZoAAAABQAAAAkAAAAAAAAAAAAAAAAAAAAAAG5vdGVzLnR4dFBLBQYAAAAAAQABADcAAACfAAAAAAA=",
   normalStored:
     "UEsDBBQAAAgAAAAAAACGphA2BQAAAAUAAAAJAAAAbm90ZXMudHh0aGVsbG9QSwECFAAUAAAIAAAAAAAAhqYQNgUAAAAFAAAACQAAAAAAAAAAAAAAAAAAAAAAbm90ZXMudHh0UEsFBgAAAAABAAEANwAAACwAAAAAAA==",
 } as const;
@@ -442,7 +451,62 @@ it("refuses records before an empty directory and local/central method or flag m
   });
 });
 
-// Needs an owner decision: inflating bit-3 deflate data to find where its stream really ends.
-it.todo(
-  "refuses deflate-descriptor-hidden-local.zip: a valid DEFLATE stream and descriptor before an unlisted exe, with the central compressed size inflated to cover both and a matching outer descriptor",
-);
+it("inflates bit-3 DEFLATE entries and requires each stream to end at its central size", async () => {
+  // macOS Archive Utility and streamed zipfile/ZipOutputStream archives look like this.
+  const macStyle = buildZip([
+    {
+      name: "guide/intro.txt",
+      descriptor: "signed",
+      ...deflated("intro ".repeat(400)),
+    },
+    {
+      name: "__MACOSX/guide/._intro.txt",
+      descriptor: "signed",
+      ...deflated("resource fork"),
+    },
+    { name: "guide/notes.txt", descriptor: "unsigned", ...deflated("notes") },
+  ]);
+  await expect(inspect(macStyle)).resolves.toMatchObject({
+    ok: true,
+    entries: 3,
+  });
+
+  // A valid stream and descriptor end early, hiding a payload.exe record inside the declared size.
+  await expect(
+    inspect(fixture("deflateDescriptorHiddenLocal")),
+  ).resolves.toMatchObject({ ok: false, problem: "UNLISTED_DATA" });
+
+  const body = deflated("checksummed text");
+  await expect(
+    inspect(
+      buildZip([
+        {
+          name: "a.txt",
+          descriptor: "signed",
+          ...body,
+          crc: (body.crc ^ 1) >>> 0,
+        },
+      ]),
+    ),
+  ).resolves.toMatchObject({ ok: false, problem: "ENTRY_DATA_MISMATCH" });
+  await expect(
+    inspect(buildZip([{ name: "a.bin", descriptor: "signed", method: 12 }])),
+  ).resolves.toMatchObject({ ok: false, problem: "UNVERIFIABLE_ENTRY" });
+
+  // Over the shared budget: refused from the central sizes after only the tail and directory reads.
+  const big = buildZip([
+    { name: "a.txt", descriptor: "signed", ...deflated("x") },
+  ]);
+  big.writeUInt32LE(65 * MB, big.indexOf(Buffer.from([0x50, 0x4b, 1, 2])) + 20);
+  let reads = 0;
+  const result = await inspectZip(
+    async (start, end) => {
+      reads += 1;
+      return new Uint8Array(big.subarray(start, end + 1));
+    },
+    big.length,
+    { checkEntryTypes: true },
+  );
+  expect(result).toMatchObject({ ok: false, problem: "DEEP_SCAN_TOO_LARGE" });
+  expect(reads).toBe(2);
+});
