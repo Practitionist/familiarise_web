@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 import { Sparkles, Users, Star, TrendingUp } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { FeaturedExperts } from "./components/FeaturedExperts";
-import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
+import { FeaturedExperts } from "../components/FeaturedExperts";
+import ExpertsInteractiveContent from "../ExpertsInteractiveContent";
 import {
   getExpertsMetadata,
   getCuratedExperts,
