@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(npx prisma db push*)",
+      "Bash(prisma db push*)",
+      "Bash(npm run db:*)",
+      "Bash(npm run dev*)",
+      "Bash(npx next dev*)",
+      "Bash(next dev*)",
+      "Bash(npm run build*)",
+      "Bash(npx next build*)",
+      "Bash(next build*)"
+    ]
+  }
+}

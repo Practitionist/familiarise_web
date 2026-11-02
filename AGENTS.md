@@ -1,25 +1,19 @@
-# Familiarise Web — Agent Architecture & Anti-Over-Engineering Rules
+# Familiarise Web — Agent Rules
 
-> Canonical instructions for all AI coding agents (`CLAUDE.md` is a symlink to `AGENTS.md`).
-> Read domain skills under `.claude/skills/<domain>/SKILL.md` on demand; **this root file overrides any conflicting style or wrapper convention in `.claude/`.**
+> Canonical instructions for every AI coding agent. Each `CLAUDE.md` is only `@AGENTS.md` (an import of the `AGENTS.md` beside it); never put content in a `CLAUDE.md`.
+> Directory rules live in nested `AGENTS.md` files (`lib/cron/`, `lib/payments/`, `lib/booking/`, `prisma/`, `docs/`). Read the nearest one before editing there; Claude Code loads it when it first reads a file in that directory.
+> Domain playbooks are skills under `.claude/skills/<domain>/SKILL.md`, read on demand. **This root file overrides any conflicting style or wrapper convention in `.claude/`.**
 
 ## 1. Anti-Over-Engineering Rules (Strictly Enforced)
 
-1. **No 3-Layer Cron/Script Wrappers**:
-   - Never create parallel `scripts/<domain>/<job>.ts` + `jobs/<domain>/<job>.ts` + `app/api/cleanup/<job>/route.ts` files.
-   - A background job has **one** implementation function registered in `lib/cron/cleanup-registry.ts` (dispatched via `/api/cleanup/[job]` and `/api/admin/system-jobs/run`). Do not add new `GITHUB_OUTPUT` wrapper scripts under `jobs/**` or `scripts/**`.
+1. **No 3-Layer Cron/Script Wrappers**: a background job has **one** implementation function registered in `lib/cron/cleanup-registry.ts`. Never add parallel `scripts/<domain>/<job>.ts`, `jobs/<domain>/<job>.ts` or `app/api/cleanup/<job>/route.ts` files, or new `GITHUB_OUTPUT` wrappers. Details: `lib/cron/AGENTS.md`.
 2. **No Speculative Abstractions, Flags, or State Machines**:
    - Do not add feature flags, env-var tuning knobs, fallback dual-reads, or multi-step state machines unless required by an active user flow today.
    - Delete dead code and unused exports outright; never keep `@deprecated` re-exports or "back-compat" shims for internal callers.
-3. **No JS Reconcilers for Postgres-Enforced Invariants**:
-   - Before writing a reconciliation check or runtime assertion, check `prisma/sql/{check-constraints,ledger-triggers,payment-legs-triggers}.sql`.
-   - If a Postgres `CHECK` constraint, `EXCLUDE USING gist` index (`occurrence_no_confirmed_overlap`), or `CONSTRAINT TRIGGER` (`ledger_txn_balanced`, `payment_legs_sum_to_amount`, `ledger_*_immutable`) already prevents an invalid state at `COMMIT`, **do not** write application-level sweeps to re-verify it. Only reconcile across external vendor boundaries (Razorpay, Stream, Resend, Supabase Storage).
-   - `occurrence_no_confirmed_overlap` guards only one host's live, non-tentative, non-cancelled occurrences. It does **not** cover tentative holds, co-host seats, a consultant booking as a client, or webinar/class attendee seats; those stay app-enforced (slot locks, the Serializable seat count) until the busy-time ledger lands. It also ignores CANCELLED and RESCHEDULED rows, while the app's occupancy checks still treat a RESCHEDULED row as holding its time.
-   - The allocator takes slot atoms like every other host-time writer: one all-or-nothing `tryLockSlotBatch` (`utils/appointmentlock.ts`) over the host, ACCEPTED co-hosts and an expert buyer's own profile, after its search and before its write.
-4. **No Dual Schedulers by Default & Fleet Cron Switch (`ops:active_cron_platform`)**:
-   - Latency-sensitive recovery sweeps run on the 5/15-min ticker (`netlify/functions/cron-tick.mts` or active platform scheduler -> `/api/cleanup/[job]?limit=N`), gated dynamically via Upstash REST key `ops:active_cron_platform` (`"netlify"` vs active Mumbai host), read once per tick and failing open when absent or unreachable, so standby Netlify never double-fires scheduled jobs. Money reconcilers (disputes, ledgers, payout status, stuck payouts), money batch jobs (payout batching and processing, invoice and contract lifecycle, dunning) and the statutory exports (GST register, TDS return draft) also run on the ticker in bounded, windowed slices. The housekeeping, compliance and retention jobs run on the ticker too, so no GitHub Actions workflow schedules a registry job.
+3. **No JS Reconcilers for Postgres-Enforced Invariants**: before writing a reconciliation check or runtime assertion, read `prisma/AGENTS.md` and the `prisma/sql/*.sql` sidecars. Only reconcile across external vendor boundaries (Razorpay, Stream, Resend, Supabase Storage). Booking-overlap limits: `lib/booking/AGENTS.md`.
+4. **No Dual Schedulers by Default**: every scheduled job runs on the one ticker, gated by `ops:active_cron_platform`; no second scheduler and no GitHub Actions schedule for a registry job. Details: `lib/cron/AGENTS.md`.
 5. **No Ticket-Number Archaeology in Code Comments**:
-   - **NEVER** write multi-paragraph docblocks or inline comments citing historical PR/issue numbers (`#1234`, `FIX #568`, `P1-W02a`, `owner decision Q3`) or narrating what old deleted code used to do.
+   - **NEVER** write multi-paragraph docblocks or inline comments citing historical PR/issue numbers (`#1234`, `FIX #568`, `P1-W02a`, `owner decision Q3`) or narrating what old deleted code used to do. CI (`scripts/ci/check-comment-archaeology.ts`) fails added comment lines that do.
    - Comments must state **only** the current invariant or non-obvious runtime constraint in 1–2 concise lines. Git blame owns history.
 
 ## 2. Core Runtime, Database & Multi-Host Portability Invariants
@@ -28,13 +22,10 @@
    - Single-invocation serverless runtimes (`NETLIFY=true`) run with `PG_POOL_MAX=1`, while multi-request runtimes (`Cloud Run` / `Vercel Fluid` / `Fly`) share a bounded pool (`PG_POOL_MAX=5..10`). Inside `prisma.$transaction(async (tx) => ...)`, **every** helper call must receive and query `tx`, never the global `prisma` client (which deadlocks under `PG_POOL_MAX=1`).
 2. **Money & State Transitions**:
    - All money columns are `BigInt` paise in Postgres (mapped to `number` at the Prisma client boundary in `lib/prisma.ts`). Settlement is INR-only.
-   - Every status transition on `Payment`, `Appointment`, `Refund`, or `Payout` must use conditional `updateMany` with the expected prior status in `WHERE` (CAS-in-WHERE), never read-then-update.
-   - Gateway card captures are confirmed only by `handlePaymentSuccess` (`lib/payments/webhooks/handlers.ts`), reached from the webhook, client verify, the reconcile sweep and the admin recover door. The only other `SUCCEEDED` writers are the no-gateway rails, the overage side-payments and the standalone sales (replays and digital products): `payment-row.ts`, `overage-handlers.ts`, `overage-settlement.ts`, `recording-purchase.ts`, `digital-product-purchase.ts` and their shared auto-refund stamp in `standalone-sale-capture.ts` (full list in `docs/start-here/02-money-system-hld.md` §1).
+   - Every status transition on `Payment`, `Appointment`, `Refund`, or `Payout` must use conditional `updateMany` with the expected prior status in `WHERE` (CAS-in-WHERE), never read-then-update. Payment confirmation rules: `lib/payments/AGENTS.md`.
 3. **Schema & Sidecar Discipline (`prisma/schema.prisma` + `prisma/sql/*.sql`)**:
    - One Postgres database serves dev and prod across worktrees. **Never** run `prisma db push` or `npm run db:*` autonomously.
-   - Check live-DB drift read-only with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`; a plain `db push` would drop the `prisma/sql` sidecar uniques.
-   - Run `npx prisma generate` after editing `prisma/schema.prisma`. Any new `CHECK`, partial unique index, or trigger belongs in `prisma/sql/*.sql`. A trigger that rebuilds a summary or aggregate must be `FOR EACH STATEMENT` with transition tables, or a dirty-mark plus a sweep. Guard and constraint triggers stay `FOR EACH ROW`.
-   - Never run database DDL or write SQL through an MCP server. The reviewed Supabase MCP entry is read-only and project-scoped; schema changes go through `prisma/schema.prisma`, the human-run `db:push` preflight, and `prisma/sql/*.sql` sidecars.
+   - Run `npx prisma generate` after editing `prisma/schema.prisma`. Never run database DDL or write SQL through an MCP server. Everything else: `prisma/AGENTS.md`.
 4. **Locking (`Postgres` vs `Upstash Redis`)**:
    - Cron mutual exclusion (`withCronLock` in `lib/cron/with-cron-lock.ts`) is backed by Postgres (`SystemJobExecution` lease). Do not add Redis locks for cron jobs.
    - Upstash Redis (`lib/redis.ts`, `lib/rate-limit.ts`, `utils/appointmentlock.ts`) is used only for request rate limiting, maintenance-mode / `ops:active_cron_platform` edge state, and short-lived interactive checkout/payout mutexes.
@@ -52,19 +43,18 @@
    - Typecheck: `npx tsc --noEmit`
    - Lint: `npm run lint` (errors fail CI; warnings are advisory)
    - Format check: `npm run format:check`
-   - Targeted Jest test: `npx jest path/to/test.ts` (never run `next dev`, `next build`, or `db:push` unless instructed).
+   - Targeted Jest test: `npx jest path/to/test.ts`
+   - Never run `next dev`, `next build`, `npm run db:*` or `prisma db push` unless instructed. `.claude/settings.json` denies them to Claude Code, so the human runs them.
 
 ## 4. Engineering, Documentation & Review Practices
 
 1. **Strict TypeScript & Zod Boundary Validation**:
-   - Never add `eslint-disable*`, `@ts-ignore`, `@ts-expect-error`, or `@ts-nocheck`; fix the underlying type. If a lint rule is wrong for a path, disable it for that path in `eslint.config.mjs` with a one-line reason.
+   - Inline escapes (`eslint-disable*`, `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`) are rejected by `eslint.config.mjs` (`noInlineConfig`, `ban-ts-comment`): fix the underlying type. If a lint rule is wrong for a path, disable it for that path in `eslint.config.mjs` with a one-line reason.
    - Parse untrusted payloads, webhook bodies, and raw string enums through Zod schemas (`schemas/**` or `z.enum(...)`) and derive types with `z.infer<typeof schema>`. Do not use unsafe `as` casts or runtime `typeof fn === "function"` duck-typing on typed module imports.
 2. **React & Sentry Discipline**:
    - List every effect dependency; never suppress `react-hooks/exhaustive-deps`. Never write `ref.current` during render — React is 18.3 (no `useEffectEvent`), so sync latest-value refs in an effect declared before the one that reads them.
    - Never capture to Sentry per row inside a loop or sweep; collect failures and report once per run. All errors share the free plan's 5,000/month quota.
-3. **80–85% Current Architecture / 10–15% Deprecated Documentation Discipline**:
-   - **80–85%** of every documentation file must focus on the **currently implemented architecture**, active workflows, state diagrams, sequence diagrams, and engineering invariants.
-   - Reserve **10–15% at the bottom** of architecture/domain docs (`## Deprecated & Superseded Approaches`) to briefly record what was previously implemented and why it was superseded. This lets AI agents and engineers recognize and delete residual artifacts from older implementations instead of rediscovering or re-implementing them, without bloating docs with standalone historical investigation logs.
+3. **Documentation Split**: keep 80–85% of every doc on the current architecture and 10–15% in a closing `## Deprecated & Superseded Approaches`. Details: `docs/AGENTS.md`.
 4. **Contiguous Numbering Discipline**:
    - Whenever a numbered file, folder, subfolder, seed phase, or index table entry (`x, x+1, x+2`) is deleted or inserted, immediately renumber all subsequent items (`x+2` -> `x+1`, etc.) and update all imports and cross-references in the same commit so numbering remains strictly contiguous with zero gaps or duplicates.
 5. **CodeRabbit CLI & PR Comment Triage**:
