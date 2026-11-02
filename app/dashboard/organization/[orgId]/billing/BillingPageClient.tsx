@@ -1,6 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+
+import { useScrollToHashOnReady } from "@/hooks/useScrollToHashOnReady";
 import { FileText, Lock } from "lucide-react";
 
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
@@ -12,7 +14,8 @@ import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
-import { UrlTabs } from "@/components/dashboard/UrlTabs";
+import { Section } from "@/components/dashboard/Section";
+import { TabsWithOverflow } from "@/components/dashboard/shared/TabsWithOverflow";
 import { CreateTicketDialog } from "@/components/dashboard/shared/support/CreateTicketDialog";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { BillingBlockBanner } from "@/components/billing/BillingBlockBanner";
@@ -52,9 +55,11 @@ function resolveInvoicePaymentBlockReason(
 }
 
 /**
- * Org Billing: every money tab the org's funding shape uses on a single page.
- * Each tab shows when the funding source, flags, and viewer permissions make
- * it meaningful. Orgs request invoices from the platform via support tickets.
+ * Org Billing: every money surface the org's funding shape uses on one page.
+ * Each section shows when the funding source, flags and viewer permissions make
+ * it meaningful; a tab shows when any of its sections does, and tabs past the
+ * third sit under "More". Orgs request invoices from the platform via support
+ * tickets.
  */
 export function BillingPageClient({
   orgId,
@@ -101,6 +106,11 @@ export function BillingPageClient({
   const invoicePaymentBlocked =
     org?.status === "PENDING_VERIFICATION" || org?.status === "SUSPENDED";
   const invoicePaymentReason = resolveInvoicePaymentBlockReason(org?.status);
+
+  // Both stacked sections sit under panels fed by the billing summary.
+  const sectionsReady = allowed && summary.isSuccess;
+  useScrollToHashOnReady("accrued-usage", sectionsReady);
+  useScrollToHashOnReady("license", sectionsReady);
 
   if (!allowed) return null;
 
@@ -177,48 +187,51 @@ export function BillingPageClient({
           />
         )}
 
-        <UrlTabs
+        <TabsWithOverflow
           tabs={[
             {
               value: "invoices",
-              label: "Invoices",
+              label: "Invoices & usage",
               content: (
-                <InvoicesPanel
-                  orgId={orgId}
-                  summary={summary}
-                  canPay={can("billing.manage")}
-                  orgStatus={org?.status}
-                  moneyMoveBlocked={invoicePaymentBlocked}
-                  moneyMoveReason={invoicePaymentReason}
-                />
+                <>
+                  <InvoicesPanel
+                    orgId={orgId}
+                    summary={summary}
+                    canPay={can("billing.manage")}
+                    orgStatus={org?.status}
+                    moneyMoveBlocked={invoicePaymentBlocked}
+                    moneyMoveReason={invoicePaymentReason}
+                  />
+                  {/* A wallet shortfall also accrues, so real postings keep it. */}
+                  {(fundingSource === "INVOICE" ||
+                    (receivables?.totalPostings ?? 0) > 0) && (
+                    <Section id="accrued-usage" title="Accrued usage">
+                      <AccruedUsagePanel receivables={receivables} />
+                    </Section>
+                  )}
+                </>
               ),
-            },
-            {
-              value: "accrued-usage",
-              label: "Accrued usage",
-              // A wallet shortfall also accrues, so real postings keep it.
-              show:
-                fundingSource === "INVOICE" ||
-                (receivables?.totalPostings ?? 0) > 0,
-              content: <AccruedUsagePanel receivables={receivables} />,
             },
             {
               value: "wallet",
-              label: "Wallet",
-              show: fundingSource === "WALLET",
+              label: "Wallet & licence",
+              show: fundingSource === "WALLET" || fundingSource === "LICENSE",
               content: (
-                <WalletTab
-                  orgId={orgId}
-                  moneyMoveBlocked={walletTopUpBlocked}
-                  moneyMoveReason={walletTopUpReason}
-                />
+                <>
+                  {fundingSource === "WALLET" && (
+                    <WalletTab
+                      orgId={orgId}
+                      moneyMoveBlocked={walletTopUpBlocked}
+                      moneyMoveReason={walletTopUpReason}
+                    />
+                  )}
+                  {fundingSource === "LICENSE" && (
+                    <div id="license">
+                      <LicensePanel summary={summary.data} />
+                    </div>
+                  )}
+                </>
               ),
-            },
-            {
-              value: "license",
-              label: "License",
-              show: fundingSource === "LICENSE",
-              content: <LicensePanel summary={summary.data} />,
             },
             {
               value: "purchase-orders",

@@ -124,9 +124,11 @@ function usePlanList(
   key: "consultationPlans" | "subscriptionPlans",
   path: string,
   consultantId: string,
+  enabled: boolean,
 ) {
   return useQuery({
     queryKey: [key, consultantId],
+    enabled,
     queryFn: async () => {
       // The list route caps at 50; the owner arm returns drafts too (Q4).
       const response = await fetch(
@@ -141,8 +143,18 @@ function usePlanList(
   });
 }
 
-export const useConsultationPlans = (consultantId: string) =>
-  usePlanList("consultationPlans", PLAN_PATH.consultation, consultantId);
+export const useConsultationPlans = (consultantId: string, enabled: boolean) =>
+  usePlanList(
+    "consultationPlans",
+    PLAN_PATH.consultation,
+    consultantId,
+    enabled,
+  );
 
-export const useSubscriptionPlans = (consultantId: string) =>
-  usePlanList("subscriptionPlans", PLAN_PATH.subscription, consultantId);
+export const useSubscriptionPlans = (consultantId: string, enabled: boolean) =>
+  usePlanList(
+    "subscriptionPlans",
+    PLAN_PATH.subscription,
+    consultantId,
+    enabled,
+  );

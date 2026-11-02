@@ -2,6 +2,8 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { useScrollToHashOnReady } from "@/hooks/useScrollToHashOnReady";
+
 import { Section } from "@/components/dashboard/Section";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { ErrorState } from "@/components/dashboard/ErrorState";
@@ -39,7 +41,8 @@ const other = (r: Recipient): Recipient =>
 export function ExpertPayoutRoutingPanel({
   orgId,
   canManage,
-}: Readonly<{ orgId: string; canManage: boolean }>) {
+  anchorId,
+}: Readonly<{ orgId: string; canManage: boolean; anchorId?: string }>) {
   const queryClient = useQueryClient();
   const queryKey = ["org-expert-payout-routing", orgId];
   const { data, isPending, isError, refetch } = useQuery({
@@ -52,6 +55,8 @@ export function ExpertPayoutRoutingPanel({
       return ((await res.json()) as { data: ExpertRouting[] }).data;
     },
   });
+
+  useScrollToHashOnReady(anchorId, !isPending);
 
   const change = async (row: ExpertRouting) => {
     const res = await fetchWithReauth(

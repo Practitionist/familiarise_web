@@ -103,6 +103,17 @@ describe("resolveGoHref", () => {
     expect(
       resolveGoHref("auto", ["payments"], { ...dual, role: "CONSULTANT" }),
     ).toBe("/dashboard/consultee/ce-1/payments");
+    // Sell, Collaborations and the editors exist only on the expert side.
+    const learnerFirst = { ...dual, role: "CONSULTEE" };
+    for (const path of [
+      ["sell", "products"],
+      ["collaborations"],
+      ["offerings", "webinar", "new"],
+    ]) {
+      expect(resolveGoHref("auto", path, learnerFirst)).toBe(
+        `/dashboard/consultant/cp-1/${path.join("/")}`,
+      );
+    }
     expect(resolveGoHref("auto", ["..", "admin"], dual)).toBe("/dashboard");
     expect(resolveGoHref("nope", [], dual)).toBe("/dashboard");
   });

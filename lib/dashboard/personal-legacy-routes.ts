@@ -1,11 +1,12 @@
 import type { LibraryTab } from "./library-tabs";
+import { SELL_HOME, SellableKindSchema, type SellTab } from "./sell-pages";
 
-type SearchParams = Record<string, string | string[] | undefined>;
+export type SearchParams = Record<string, string | string[] | undefined>;
 
 interface LegacyTarget {
   page: string;
   /** Null opens the page's default tab. */
-  tab: LibraryTab | null;
+  tab: LibraryTab | SellTab | null;
 }
 
 /** Retired consultee routes; each answers a 308 to its Library tab. */
@@ -18,6 +19,10 @@ export const CONSULTEE_LEGACY_ROUTES = {
 /** Retired consultant routes; each answers a 308 to its new page. */
 export const CONSULTANT_LEGACY_ROUTES = {
   purchases: { page: "library", tab: null },
+  offerings: { page: "sell/sessions", tab: null },
+  "offerings/products": { page: "sell/products", tab: null },
+  "offerings/collaborations": { page: "collaborations", tab: null },
+  planner: { page: "sell/programs", tab: null },
 } as const satisfies Record<string, LegacyTarget>;
 
 export type ConsulteeLegacyRoute = keyof typeof CONSULTEE_LEGACY_ROUTES;
@@ -67,5 +72,23 @@ export function consultantLegacyHref(
     `/dashboard/consultant/${consultantId}/${target.page}`,
     target.tab,
     searchParams,
+  );
+}
+
+/** The old Offerings list: `?type=` picks the Sell page and tab, then drops. */
+export function offeringsListLegacyHref(
+  consultantId: string,
+  searchParams: SearchParams = {},
+): string {
+  const { type, ...rest } = searchParams;
+  const parsed = SellableKindSchema.safeParse(type);
+  if (!parsed.success) {
+    return consultantLegacyHref(consultantId, "offerings", rest);
+  }
+  const home = SELL_HOME[parsed.data];
+  return retiredRouteHref(
+    `/dashboard/consultant/${consultantId}/sell/${home.page}`,
+    home.tab,
+    rest,
   );
 }

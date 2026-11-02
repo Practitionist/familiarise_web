@@ -1,27 +1,21 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { useParams } from "next/navigation";
-import {
-  DashboardContent,
-  DashboardHeader,
-} from "@/components/dashboard/PageScaffold";
-import { NewOfferingMenu } from "@/components/offerings/list/NewOfferingMenu";
-import { OfferingsTabs } from "@/components/offerings/list/OfferingsTabs";
-import { DigitalProductList } from "@/components/offerings/list/DigitalProductList";
+import { consultantLegacyHref } from "@/lib/dashboard/personal-legacy-routes";
 
-export default function DigitalProductsPage() {
-  const consultantId = useParams().consultantId as string;
-  return (
-    <>
-      <DashboardHeader
-        title="Offerings"
-        description="Files you sell once, for buyers to keep"
-        actions={<NewOfferingMenu consultantId={consultantId} />}
-      />
-      <OfferingsTabs consultantId={consultantId} />
-      <DashboardContent>
-        <DigitalProductList consultantId={consultantId} />
-      </DashboardContent>
-    </>
+/** Moved to Sell › Products; the old URL answers a 308 with its query kept. */
+export default async function OfferingsProductsRedirect({
+  params,
+  searchParams,
+}: Readonly<{
+  params: Promise<{ consultantId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}>) {
+  const { consultantId } = await params;
+  permanentRedirect(
+    consultantLegacyHref(
+      consultantId,
+      "offerings/products",
+      await searchParams,
+    ),
   );
 }

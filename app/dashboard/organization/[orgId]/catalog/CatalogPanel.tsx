@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Library, Archive, Undo2, Loader2 } from "lucide-react";
 
 import { EmptyState } from "@/components/dashboard/DataCard";
@@ -10,6 +11,8 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { isArchivedCatalogView } from "@/lib/dashboard/org-tab-redirect";
+import { replaceUrl } from "@/lib/navigation/history";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 import type { CatalogRow, Kind } from "./types";
@@ -20,7 +23,8 @@ const VISIBILITY_LABEL: Record<CatalogRow["visibility"], string> = {
   ORG_AND_PUBLIC: "Public + members",
 };
 
-type DraftFilter = "ALL" | "PUBLISHED" | "DRAFT";
+/** The status chips; "ARCHIVED" alone lists withdrawn plans. */
+type StatusFilter = "ALL" | "PUBLISHED" | "DRAFT" | "ARCHIVED";
 
 export function isCatalogRowDraft(row: CatalogRow): boolean {
   if (typeof row.isDraft === "boolean") return row.isDraft;
@@ -54,6 +58,62 @@ export function resolveCatalogExpertName(
   return "—";
 }
 
+function RowStatusBadge({ row }: Readonly<{ row: CatalogRow }>) {
+  if (row.archivedAt) {
+    return <StatusBadge label="Archived" tone="neutral" size="sm" />;
+  }
+  return isCatalogRowDraft(row) ? (
+    <StatusBadge label="Draft" tone="caution" size="sm" />
+  ) : (
+    <StatusBadge label="Published" tone="success" size="sm" />
+  );
+}
+
+/** The status chips; Archived toggles, so a second press returns to All. */
+function StatusChips({
+  filter,
+  onChange,
+  showLive,
+  showArchived,
+}: Readonly<{
+  filter: StatusFilter;
+  onChange: (next: StatusFilter) => void;
+  showLive: boolean;
+  showArchived: boolean;
+}>) {
+  const options = [
+    { value: "ALL", label: "All statuses", show: showLive },
+    { value: "PUBLISHED", label: "Published", show: showLive },
+    { value: "DRAFT", label: "Drafts", show: showLive },
+    { value: "ARCHIVED", label: "Archived", show: showArchived },
+  ] as const;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {options
+        .filter((opt) => opt.show)
+        .map((opt) => (
+          <Button
+            key={opt.value}
+            type="button"
+            size="sm"
+            variant={filter === opt.value ? "secondary" : "ghost"}
+            aria-pressed={filter === opt.value}
+            className="h-7 px-2.5 text-xs"
+            onClick={() =>
+              onChange(
+                opt.value === "ARCHIVED" && filter === "ARCHIVED"
+                  ? "ALL"
+                  : opt.value,
+              )
+            }
+          >
+            {opt.label}
+          </Button>
+        ))}
+    </div>
+  );
+}
+
 /**
  * One kind's table.
  *
@@ -76,6 +136,7 @@ export function CatalogPanel({
   onToggleArchive,
   isMutating,
   expertNamesById,
+  blocked,
 }: Readonly<{
   kind: Kind;
   rows: CatalogRow[];
@@ -84,16 +145,40 @@ export function CatalogPanel({
   onToggleArchive: (planId: string, restore: boolean) => void;
   isMutating: boolean;
   expertNamesById?: Record<string, string>;
+  /** Replaces the live list when nobody can deliver; Archived still opens. */
+  blocked?: ReactNode;
 }>) {
-  const [draftFilter, setDraftFilter] = useState<DraftFilter>("ALL");
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Archived lives in the URL (`?status=archived`), read every render so any
+  // navigation into or out of it applies; the live chips are local.
+  const archivedView = isArchivedCatalogView(searchParams?.get("status"));
+  const [liveFilter, setLiveFilter] =
+    useState<Exclude<StatusFilter, "ARCHIVED">>("ALL");
+  // The Archived view never falls back to live rows; with none it says so.
+  const filter: StatusFilter = archivedView ? "ARCHIVED" : liveFilter;
 
-  const filteredRows = useMemo(() => {
-    if (draftFilter === "ALL") return rows;
-    return rows.filter((r) => {
-      const draft = isCatalogRowDraft(r);
-      return draftFilter === "DRAFT" ? draft : !draft;
-    });
-  }, [rows, draftFilter]);
+  const setStatusFilter = (next: StatusFilter) => {
+    if (next !== "ARCHIVED") setLiveFilter(next);
+    if ((next === "ARCHIVED") === archivedView) return;
+    const params = new URLSearchParams(window.location.search);
+    if (next === "ARCHIVED") params.set("status", "archived");
+    else params.delete("status");
+    const qs = params.toString();
+    replaceUrl(qs ? `${pathname}?${qs}` : pathname);
+  };
+  const hasArchived = rows.some((r) => r.archivedAt !== null);
+
+  const filteredRows = useMemo(
+    () =>
+      rows.filter((r) => {
+        if (filter === "ARCHIVED") return r.archivedAt !== null;
+        if (r.archivedAt !== null) return false;
+        if (filter === "ALL") return true;
+        return isCatalogRowDraft(r) === (filter === "DRAFT");
+      }),
+    [rows, filter],
+  );
 
   // Memoized so the array and its cell closures survive re-renders that do not
   // change the handler — previously reallocated on every call, twice per render.
@@ -103,21 +188,12 @@ export function CatalogPanel({
         key: "title",
         header: "Offering",
         primary: true,
-        cell: (r) => {
-          const draft = isCatalogRowDraft(r);
-          return (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">{r.title}</span>
-              {r.archivedAt ? (
-                <StatusBadge label="Archived" tone="neutral" size="sm" />
-              ) : draft ? (
-                <StatusBadge label="Draft" tone="caution" size="sm" />
-              ) : (
-                <StatusBadge label="Published" tone="success" size="sm" />
-              )}
-            </div>
-          );
-        },
+        cell: (r) => (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{r.title}</span>
+            <RowStatusBadge row={r} />
+          </div>
+        ),
       },
       {
         key: "expert",
@@ -189,6 +265,7 @@ export function CatalogPanel({
   );
 
   if (isLoading) {
+    if (blocked) return blocked;
     return (
       <div className="flex items-center justify-center py-12 text-muted-foreground">
         <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -207,11 +284,35 @@ export function CatalogPanel({
     );
   }
 
+  if (blocked && !hasArchived) return blocked;
+
+  const noun = kind === "WEBINAR" ? "webinars" : "classes";
+
+  if (filter === "ARCHIVED" && !hasArchived) {
+    return (
+      <EmptyState
+        icon={Archive}
+        title={`No archived ${noun}`}
+        description="Offerings you withdraw from sale are listed here."
+        action={
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setStatusFilter("ALL")}
+          >
+            Show live {noun}
+          </Button>
+        }
+      />
+    );
+  }
+
   if (rows.length === 0) {
     return (
       <EmptyState
         icon={Library}
-        title={`No ${kind === "WEBINAR" ? "webinars" : "classes"} yet`}
+        title={`No ${noun} yet`}
         description="Offerings you publish here are owned by the organization and delivered by one of its experts."
       />
     );
@@ -219,32 +320,22 @@ export function CatalogPanel({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-1.5">
-        {(
-          [
-            { value: "ALL", label: "All statuses" },
-            { value: "PUBLISHED", label: "Published" },
-            { value: "DRAFT", label: "Drafts" },
-          ] as const
-        ).map((opt) => (
-          <Button
-            key={opt.value}
-            type="button"
-            size="sm"
-            variant={draftFilter === opt.value ? "secondary" : "ghost"}
-            className="h-7 px-2.5 text-xs"
-            onClick={() => setDraftFilter(opt.value)}
-          >
-            {opt.label}
-          </Button>
-        ))}
-      </div>
-      <ResponsiveTable
-        columns={columns}
-        rows={filteredRows}
-        getRowId={(r) => r.id}
-        empty="No offerings match the selected status filter."
+      <StatusChips
+        filter={filter}
+        onChange={setStatusFilter}
+        showLive={!blocked}
+        showArchived={hasArchived}
       />
+      {blocked && filter !== "ARCHIVED" ? (
+        blocked
+      ) : (
+        <ResponsiveTable
+          columns={columns}
+          rows={filteredRows}
+          getRowId={(r) => r.id}
+          empty="No offerings match the selected status filter."
+        />
+      )}
     </div>
   );
 }

@@ -9,8 +9,8 @@
  * covers the host-perspective "my plans with collaborators" section.
  *
  * Access: members who deliver for the org (`deliversForOrg`, the nav's own
- * predicate — #1527). Operators read the org's hosted plans as Catalog ›
- * Collaborators (#1527-4c).
+ * predicate — #1527). Operators read the org's hosted plans on the
+ * Collaborators page.
  */
 
 import { notFound } from "next/navigation";
@@ -31,8 +31,7 @@ export default async function OrgCollaborationsPage({
   const { orgId } = await params;
 
   const access = await requireOrgAccess(orgId, { readOnly: true });
-  // Same predicate as the nav item (#1527); operators use Catalog ›
-  // Collaborators.
+  // Same predicate as the nav item (#1527); operators use Collaborators.
   if (access.error || !deliversForOrg(access.member)) {
     notFound();
   }

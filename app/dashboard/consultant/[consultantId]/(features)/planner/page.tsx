@@ -1,12 +1,17 @@
 import { permanentRedirect } from "next/navigation";
 
-/**
- * #1527 §9 — the Event Planner is "Offerings" now, at `/offerings`. The old
- * URL answers a 308 so bookmarks, emails and onboarding links keep working.
- */
+import { consultantLegacyHref } from "@/lib/dashboard/personal-legacy-routes";
+
+/** The old webinar and class planner; it 308s to Group programs with its query kept. */
 export default async function PlannerRedirectPage({
   params,
-}: Readonly<{ params: Promise<{ consultantId: string }> }>) {
+  searchParams,
+}: Readonly<{
+  params: Promise<{ consultantId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}>) {
   const { consultantId } = await params;
-  permanentRedirect(`/dashboard/consultant/${consultantId}/offerings`);
+  permanentRedirect(
+    consultantLegacyHref(consultantId, "planner", await searchParams),
+  );
 }

@@ -5,6 +5,7 @@
  * would hide. Pages only; no record search. Pure, so tests walk it.
  */
 
+import { goLibraryHref } from "../go";
 import type { DashboardNav } from "./types";
 
 export interface FindEntry {
@@ -35,7 +36,20 @@ const SYNONYMS: Record<string, string[]> = {
   support: ["help", "ticket", "requests", "support requests", "cases"],
   documents: ["files", "uploads", "materials"],
   recordings: ["recordings", "videos", "replays"],
-  library: ["purchases", "products", "recordings", "documents", "downloads"],
+  library: [
+    "purchases",
+    "products",
+    "recordings",
+    "documents",
+    "downloads",
+    "ebooks",
+    "templates",
+  ],
+  sessions: ["offerings", "consultations", "subscriptions", "1:1"],
+  programs: ["offerings", "webinars", "classes", "cohorts"],
+  products: ["offerings", "digital products", "replays", "downloads"],
+  collaborations: ["co-host", "invitations", "collaborators"],
+  collaborators: ["co-host", "invitations", "collaborations"],
   analytics: ["reports", "metrics", "stats"],
   audit: ["log", "history"],
   settings: ["preferences", "account", "configure"],
@@ -49,6 +63,9 @@ const SYNONYMS: Record<string, string[]> = {
 
 const lastSegment = (path: string) =>
   path.split(/[/?#]/).findLast(Boolean) ?? path;
+
+// A personal tree's own Library is the buyer Library that go/library opens.
+const PERSONAL_BASE = /^\/dashboard\/(consultant|consultee)\//;
 
 export function buildFindIndex({
   nav,
@@ -77,6 +94,12 @@ export function buildFindIndex({
     for (const item of group.items) {
       add(item.name, `${nav.basePath}/${item.path}`, group.label ?? "Pages");
     }
+  }
+  if (
+    PERSONAL_BASE.test(nav.basePath) &&
+    nav.groups.some((g) => g.items.some((i) => i.path === "library"))
+  ) {
+    seen.add(goLibraryHref());
   }
   for (const link of account) add(link.label, link.href, "Account");
   for (const group of settings) {

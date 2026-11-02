@@ -1084,7 +1084,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Create and publish",
         paragraphs: [
-          "Open Offerings and create a 1-on-1 consultation, a subscription, a webinar, or a class. Each editor asks for a title, description, topics, learning outcomes, prerequisites, who it is for, what is included, and a price, plus the scheduling details its type needs.",
+          "Open any Sell page, choose New, and pick a 1-on-1 consultation, a subscription, a webinar, or a class. Each editor asks for a title, description, topics, learning outcomes, prerequisites, who it is for, what is included, and a price, plus the scheduling details its type needs.",
           "Save draft keeps an offering private while you work on it: drafts never appear on your public page. Publish makes it bookable. A published consultation or subscription can be taken back to draft, while a published webinar or class cannot.",
         ],
       },
@@ -1139,7 +1139,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Inviting collaborators",
         paragraphs: [
-          "The host of a webinar or class can invite other experts to deliver it with them. Invitations you send and receive live under Offerings › Collaborations, where each invited expert accepts or declines.",
+          "The host of a webinar or class can invite other experts to deliver it with them. Invitations you send and receive live under Sell › Collaborations, where each invited expert accepts or declines.",
         ],
       },
       {
