@@ -477,7 +477,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Auth token cleanup",
       description:
-        "Delete expired verification tokens, sessions 180 days after expiry and stale invitations",
+        "Delete expired verification tokens and sessions (logged to the access log first), access-log rows 180 days after their session ended, and stale invitations",
       category: "Cleanup",
       manualRun: "inline",
     },
@@ -496,6 +496,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           hasMore: r.hasMore,
           verificationTokensDeleted: r.verificationTokensDeleted,
           sessionsDeleted: r.sessionsDeleted,
+          accessLogsDeleted: r.accessLogsDeleted,
           idempotencyRecordsDeleted: r.idempotencyRecordsDeleted,
           staleInvitationsExpired: r.staleInvitationsExpired,
           totalCleaned: r.totalCleaned,
