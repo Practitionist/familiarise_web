@@ -8,10 +8,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { goHref } from "@/lib/dashboard/go";
 import { formatFileSize } from "@/lib/documents/document-utils";
-import {
-  getEntitledDigitalProductBySlug,
-  getPublicDigitalProductBySlug,
-} from "@/lib/data/digital-products-public";
+import { getDigitalProductForViewer } from "@/lib/data/digital-products-public";
 import { quoteDigitalProductForBuyer } from "@/lib/payments/pricing/digital-product-price";
 import { findDigitalProductEntitlement } from "@/lib/payments/digital-product-entitlement";
 import { DIGITAL_PRODUCT_CATEGORY_LABEL } from "@/lib/digital-products/constants";
@@ -30,8 +27,14 @@ export async function generateMetadata({
   params,
 }: Readonly<{ params: Params }>): Promise<Metadata> {
   const { slug } = await params;
-  const product = await getPublicDigitalProductBySlug(slug).catch(() => null);
-  if (!product) return { title: "Product not found" };
+  const session = await getSession();
+  const product = await getDigitalProductForViewer(
+    slug,
+    session?.user?.id ?? null,
+  ).catch(() => null);
+  if (!product) {
+    return { title: "Product not found", robots: { index: false } };
+  }
   const creator = product.creator.name;
   return {
     title: `${product.title}${creator ? ` by ${creator}` : ""} — Familiarise`,
@@ -46,9 +49,7 @@ export default async function DigitalProductPage({
   const session = await getSession();
   const user = session?.user;
   // A product off sale still opens for its buyers: not discoverable, no checkout.
-  const product =
-    (await getPublicDigitalProductBySlug(slug)) ??
-    (user?.id ? await getEntitledDigitalProductBySlug(slug, user.id) : null);
+  const product = await getDigitalProductForViewer(slug, user?.id ?? null);
   if (!product) notFound();
 
   let viewer: ProductViewer = { kind: "signed-out" };

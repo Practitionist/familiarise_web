@@ -146,3 +146,13 @@ export const getEntitledDigitalProductBySlug = cache(
     return row ? toPublicProduct(row) : null;
   },
 );
+
+/** The product page's product for this viewer: on sale, or one they hold off sale. */
+export const getDigitalProductForViewer = cache(
+  async (
+    slug: string,
+    viewerId: string | null,
+  ): Promise<PublicProduct | null> =>
+    (await getPublicDigitalProductBySlug(slug)) ??
+    (viewerId ? await getEntitledDigitalProductBySlug(slug, viewerId) : null),
+);
