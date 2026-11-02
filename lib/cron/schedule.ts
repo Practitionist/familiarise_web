@@ -527,6 +527,36 @@ export function latestWindowStart(name: Target, at: Date): Date | null {
   return null;
 }
 
+/** A fixed span holding at least two of every calendar window, quarterly ones included. */
+const GAP_SPAN_DAYS = 800;
+const GAP_EPOCH_MINUTE = Date.UTC(2027, 0, 1) / 60_000;
+
+/**
+ * The longest gap in minutes between two consecutive due slots of a target.
+ * Every interval divides the day and every offset sits on a five-minute tick.
+ */
+export function maxSlotGapMinutes(name: Target): number {
+  const every = TARGET_EVERY_MINUTES[name] ?? 5;
+  const w = TARGET_WINDOWS[name];
+  if (!w) return every;
+  const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
+  let gap = 0;
+  let previousLast: number | null = null;
+  for (let d = 0; d < GAP_SPAN_DAYS; d++) {
+    const opens = GAP_EPOCH_MINUTE + d * 1440 + w.startMinuteUtc;
+    const at = new Date(opens * 60_000);
+    if (windowStartFor(name, at)?.getTime() !== at.getTime()) continue;
+    const first = opens + ((((offset - opens) % every) + every) % every);
+    const closes = opens + w.windowMinutes;
+    if (first >= closes) continue;
+    const last = first + Math.floor((closes - 1 - first) / every) * every;
+    if (last > first) gap = Math.max(gap, every);
+    if (previousLast !== null) gap = Math.max(gap, first - previousLast);
+    previousLast = last;
+  }
+  return gap;
+}
+
 /** Every target whose slot falls on this tick, before idle skips and the cap. */
 export function scheduledTargets(now: Date): Target[] {
   const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();

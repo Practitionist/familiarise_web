@@ -131,8 +131,8 @@ remain owned by the existing erasure/revocation retry flow.
 ## Completion, alarms and operations
 
 `/api/health/jobs` requires successful owned COMPLETED executions scoped to the
-server environment: 45 minutes for transfer, 90 minutes for orphaned sessions,
-27 hours for each daily lifecycle capability. A 202 or another job's heartbeat
+server environment: 60 minutes for transfer, 90 minutes for orphaned sessions,
+28.5 hours for each daily lifecycle capability, each derived from the schedule. A 202 or another job's heartbeat
 cannot satisfy one capability's requirement. A successful bounded slice is still
 not evidence of complete vendor cleanup or acceptable backlog age.
 

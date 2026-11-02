@@ -23,14 +23,17 @@ Use one registered implementation per job and keep the required Netlify standby.
 `lib/cron/schedule.ts` owns configured cadence, windows and HTTP request bounds;
 the registry does not define phase or timeout fields. Regenerate the AST-derived
 inventory with `npm run cron:reference` and verify `npm run cron:reference:check`.
-The catalog has no worker, database or environment imports. Its twelve-target figure
+The catalog has no worker, database or environment imports. Every target's
+freshness budget for `/api/health/jobs` is derived from it
+(`lib/cron/operational-health.ts`), so a new target is absence-monitored the
+moment it is scheduled; never hand-list a budget. Its twelve-target figure
 (`MAX_TARGETS_PER_TICK`) is a tested design bound; at runtime `capToTick` applies it to the targets left after idle
 skips, and the busiest tick holds 11. No Actions workflow schedules a registry job, so a job with
 no ticker target runs nowhere.
 
 Every registry entry carries a required `idle` field: either `{ hasWork(db, now, outOfTime) }`, a probe exported from the job's own core module that reuses the job's claim predicate, or `{ alwaysRun: "<reason>" }`. The ticker's slot-claim call (`POST /api/health/jobs/tick?due=...`) runs the probes, then the queue gauges, through `probeTick` (`lib/cron/idle-probe.ts`: one transaction on the single connection with a 750 ms `SET LOCAL statement_timeout`, no statement started after the 2 s budget, and every probe checks `outOfTime()` before each statement and answers "has work" once it is true) and the ticker dispatches only the due targets that were not idle. A throwing probe, a cancelled statement, a probe cut short by the budget, an always-run job and a target the budget never reached are dispatched (fail open). The skip writes no `SystemJobExecution` row: the claim row lists it under `result.idle`, and the health readers (`lib/cron/idle-skips.ts`) count it as a finished run that found nothing. `__tests__/maintenance/idle-probe-drift.test.ts` enforces that a probe shares the `...Where` builders with the claim query.
 
-Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion. Its requested fail-closed 15-minute lease is capped on Netlify at 90 seconds, renewed every 30 seconds; renewal loss does not cancel the core, so preserve domain claim and publication fencing. The recording's stale-claim threshold remains 15 minutes. Session recovery runs via HTTP at :10/:40. The five daily lifecycle targets queue the narrow `stream-maintenance-background` worker in staggered daily windows; their Actions steps are removed. All six migrated cores fail closed, and daily completion health has a 27-hour budget. See `docs/stream/09-background-sync.md` for slice bounds and continuation.
+Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion. Its requested fail-closed 15-minute lease is capped on Netlify at 90 seconds, renewed every 30 seconds; renewal loss does not cancel the core, so preserve domain claim and publication fencing. The recording's stale-claim threshold remains 15 minutes. Session recovery runs via HTTP at :10/:40. The five daily lifecycle targets queue the narrow `stream-maintenance-background` worker in staggered daily windows; their Actions steps are removed. All six migrated cores fail closed, and each daily lifecycle job has a 28.5-hour freshness budget. See `docs/stream/09-background-sync.md` for slice bounds and continuation.
 
 Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
 including Prisma import failures. Completion is conditional on the same execution

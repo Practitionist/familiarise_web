@@ -8,10 +8,7 @@ import {
   type IdleCompletion,
 } from "@/lib/cron/idle-skips";
 import { jobEnvironment } from "@/lib/cron/run-outcome";
-import {
-  assessOperationalCompletions,
-  OPERATIONAL_COMPLETION_REQUIREMENTS,
-} from "@/lib/cron/operational-health";
+import { freshnessBudgetMinutes } from "@/lib/cron/operational-health";
 import {
   JOB_SCHEDULES,
   jobNameFor,
@@ -43,12 +40,12 @@ const IST_OFFSET_MS = 330 * MINUTE_MS;
 
 export interface MissedWindow {
   /**
-   * `unscheduled`: no SLO and no ticker cadence, so nothing to miss.
+   * `unscheduled`: no ticker target, so nothing to miss.
    * `no-runs`: a non-production deployment has no successful run of its own,
    * so the window cannot be judged there.
    */
   state: "ok" | "missed" | "unscheduled" | "no-runs";
-  basis: "slo" | "interval" | "window" | null;
+  basis: "slo" | "window" | null;
 }
 
 export interface JobRunMetric {
@@ -138,9 +135,8 @@ function missedWindow(
 }
 
 /**
- * Missed when the job's completion SLO has lapsed or, for a calendar-windowed
- * job, its latest due window passed with no finished run; else, for a ticker
- * job, when two interval slots (plus a tick) passed with no finished run.
+ * Missed when a calendar-windowed job's latest due window passed with no
+ * finished run, or when the job's freshness budget has lapsed.
  */
 export function assessMissedWindow(args: {
   jobName: string;
@@ -149,25 +145,14 @@ export function assessMissedWindow(args: {
 }): MissedWindow {
   const { jobName, lastSuccessAt, now } = args;
   const schedule = scheduleForJob(jobName);
-  const windowMissed =
-    schedule?.window && missedWindow(schedule, lastSuccessAt, now);
-  if (OPERATIONAL_COMPLETION_REQUIREMENTS.some((r) => r.jobName === jobName)) {
-    if (windowMissed) return { state: "missed", basis: "window" };
-    const { jobs } = assessOperationalCompletions(
-      [{ jobName, endedAt: lastSuccessAt }],
-      now,
-    );
-    const overdue = jobs.find((j) => j.jobName === jobName)?.overdue ?? true;
-    return { state: overdue ? "missed" : "ok", basis: "slo" };
-  }
   if (!schedule) return { state: "unscheduled", basis: null };
-  if (schedule.window) {
-    return { state: windowMissed ? "missed" : "ok", basis: "window" };
+  if (schedule.window && missedWindow(schedule, lastSuccessAt, now)) {
+    return { state: "missed", basis: "window" };
   }
-  const limitMs = (2 * schedule.everyMinutes + 5) * MINUTE_MS;
+  const budgetMs = freshnessBudgetMinutes(schedule.name) * MINUTE_MS;
   const missed =
-    !lastSuccessAt || now.getTime() - lastSuccessAt.getTime() > limitMs;
-  return { state: missed ? "missed" : "ok", basis: "interval" };
+    !lastSuccessAt || now.getTime() - lastSuccessAt.getTime() > budgetMs;
+  return { state: missed ? "missed" : "ok", basis: "slo" };
 }
 
 export interface MetricInputs {
@@ -193,14 +178,13 @@ const roundMs = (v: number | null | undefined) =>
 
 /**
  * Folds the four reads into one row per job; missed jobs sort first. A job off
- * the ticker with no SLO drops out once it has no run in 7 days and no success in 90.
+ * the ticker drops out once it has no run in 7 days and no success in 90.
  */
 export function buildJobRunMetrics(input: MetricInputs): JobRunMetrics {
   const days = istDayKeys(input.now);
   const names = new Set<string>([
     ...input.counts.map((c) => c.jobName),
     ...input.lastSuccess.map((l) => l.jobName),
-    ...OPERATIONAL_COMPLETION_REQUIREMENTS.map((r) => r.jobName),
     ...TICKER_JOB_NAMES,
   ]);
   const jobs = [...names].map((jobName): JobRunMetric => {
@@ -336,7 +320,7 @@ export async function readJobRunMetrics(
         AND "result"->>'environment' = ${environment}
       GROUP BY 1, 2`),
   );
-  // A partial run ran to the end, the same freshness rule the SLOs use.
+  // A partial run ran to the end, the same rule the freshness budgets use.
   const lastSuccess = await prisma.systemJobExecution.groupBy({
     by: ["jobName"],
     where: {
