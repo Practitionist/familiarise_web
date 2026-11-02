@@ -591,9 +591,7 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
   // Skip generating hidden-source-map buffers on non-production Netlify previews to stay under the 8 GB container RSS cap.
   sourcemaps: {
-    disable:
-      CI_LEAN_BUILD ||
-      (process.env.NETLIFY === "true" && process.env.CONTEXT !== "production"),
+    disable: CI_LEAN_BUILD || false, // TEST ONLY: production-equivalent source maps on this preview; revert before merge
   },
   widenClientFileUpload: process.env.NETLIFY !== "true" && !CI_LEAN_BUILD,
   // A CI PR build is never deployed, so it must not create or finalize a
