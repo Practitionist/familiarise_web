@@ -21,6 +21,7 @@
  * transitions an anonymous visitor can actually observe. (#932)
  */
 import { revalidatePath, revalidateTag } from "next/cache";
+import { PUBLIC_PRODUCTS_TAG } from "@/lib/digital-products/constants";
 
 const EXPERTS_DIRECTORY = "/explore/experts";
 const ORGANISATIONS_DIRECTORY = "/explore/enterprise/organisations";
@@ -78,4 +79,6 @@ export function purgeDigitalProductSurfaces(product: {
 }): void {
   revalidatePath(`${EXPERTS_DIRECTORY}/${product.consultantProfileId}`);
   revalidatePath(`/explore/products/${product.slug}`);
+  revalidateTag(PUBLIC_PRODUCTS_TAG);
+  revalidatePath("/explore/products");
 }

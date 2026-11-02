@@ -33,7 +33,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     });
 
     // Take the replay off the public library immediately.
-    revalidatePath("/explore/recordings");
+    revalidatePath("/explore/products");
     if (updated.slug) revalidatePath(`/explore/recordings/${updated.slug}`);
 
     return NextResponse.json({ data: updated });

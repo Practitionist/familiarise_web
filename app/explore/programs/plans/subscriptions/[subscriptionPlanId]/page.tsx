@@ -1,3 +1,7 @@
+import {
+  PublicBreadcrumb,
+  publicBreadcrumbItems,
+} from "@/components/explore/PublicBreadcrumb";
 import { notFound } from "next/navigation";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
@@ -61,5 +65,26 @@ export default async function SubscriptionDetailsPage({
     notFound();
   }
 
-  return <SubscriptionDetails plan={plan} />;
+  const breadcrumb = (
+    <div className="container mx-auto px-4 pt-6">
+      <PublicBreadcrumb
+        items={publicBreadcrumbItems(
+          plan.consultantProfile
+            ? {
+                id: plan.consultantProfile.id,
+                name: plan.consultantProfile.user.name,
+              }
+            : null,
+          plan.title,
+        )}
+      />
+    </div>
+  );
+
+  return (
+    <>
+      {breadcrumb}
+      <SubscriptionDetails plan={plan} />
+    </>
+  );
 }

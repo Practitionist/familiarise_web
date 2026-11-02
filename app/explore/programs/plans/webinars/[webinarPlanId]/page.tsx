@@ -1,3 +1,7 @@
+import {
+  PublicBreadcrumb,
+  publicBreadcrumbItems,
+} from "@/components/explore/PublicBreadcrumb";
 import { notFound } from "next/navigation";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
@@ -39,11 +43,29 @@ export default async function WebinarDetailsPage({
   const nextSession =
     firstWebinarInstance?.appointment?.occurrences?.[0]?.startsAt;
 
+  const breadcrumb = (
+    <div className="container mx-auto px-4 pt-6">
+      <PublicBreadcrumb
+        items={publicBreadcrumbItems(
+          webinarData.consultantProfile
+            ? {
+                id: webinarData.consultantProfile.id,
+                name: webinarData.consultantProfile.user.name,
+              }
+            : null,
+          webinarData.title,
+        )}
+      />
+    </div>
+  );
   return (
-    <WebinarDetails
-      plan={webinarData}
-      nextSession={nextSession}
-      webinarId={firstWebinarInstance?.id}
-    />
+    <>
+      {breadcrumb}
+      <WebinarDetails
+        plan={webinarData}
+        nextSession={nextSession}
+        webinarId={firstWebinarInstance?.id}
+      />
+    </>
   );
 }

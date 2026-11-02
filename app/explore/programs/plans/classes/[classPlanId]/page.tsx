@@ -1,3 +1,7 @@
+import {
+  PublicBreadcrumb,
+  publicBreadcrumbItems,
+} from "@/components/explore/PublicBreadcrumb";
 import { notFound } from "next/navigation";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
@@ -42,5 +46,26 @@ export default async function ClassDetailsPage({
     imageUrl: generateProgramImageUrl(classPlan.imageUrl),
   };
 
-  return <ClassDetails plan={planWithDefaults} />;
+  const breadcrumb = (
+    <div className="container mx-auto px-4 pt-6">
+      <PublicBreadcrumb
+        items={publicBreadcrumbItems(
+          classPlan.consultantProfile
+            ? {
+                id: classPlan.consultantProfile.id,
+                name: classPlan.consultantProfile.user.name,
+              }
+            : null,
+          classPlan.title,
+        )}
+      />
+    </div>
+  );
+
+  return (
+    <>
+      {breadcrumb}
+      <ClassDetails plan={planWithDefaults} />
+    </>
+  );
 }

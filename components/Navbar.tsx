@@ -19,7 +19,7 @@ import {
   Star,
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
-import { accountSettingsHref } from "@/lib/dashboard/account-href";
+import { accountMenuLinks } from "@/lib/navigation/account-menu";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
@@ -33,6 +33,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -538,6 +540,8 @@ const Navbar = () => {
     closeMenu();
   };
 
+  const accountLinks = accountMenuLinks(session?.user ?? {});
+
   const getUserImage = () => {
     return authView.image && authView.image !== ""
       ? authView.image
@@ -674,30 +678,41 @@ const Navbar = () => {
                   <Skeleton className="h-9 w-28 rounded-md" />
                 </div>
               ) : isAuthedView ? (
-                <div className="flex items-center gap-3">
-                  {/* #1527 — straight to the viewer's Settings › Account;
-                      /profile would only 308 there. */}
-                  <Link
-                    href={
-                      accountSettingsHref(session?.user ?? {}) ?? "/profile"
-                    }
-                    aria-label="Account settings"
-                  >
-                    <Avatar className="h-9 w-9 border-2 border-zinc-200 hover:border-zinc-400 transition-colors cursor-pointer">
-                      <AvatarImage src={getUserImage()} alt="Profile" />
-                      <AvatarFallback className="bg-zinc-900 text-white text-sm">
-                        {authView.name?.charAt(0) ?? "U"}
-                      </AvatarFallback>
-                    </Avatar>
-                  </Link>
-                  <Button
-                    variant="ghost"
-                    onClick={handleSignOut}
-                    className={`text-sm ${showDarkStyle ? "text-zinc-300 hover:text-white hover:bg-white/10" : "text-muted-foreground hover:text-foreground"}`}
-                  >
-                    Sign out
-                  </Button>
-                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="Account menu"
+                      className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <Avatar className="h-9 w-9 border-2 border-zinc-200 hover:border-zinc-400 transition-colors cursor-pointer">
+                        <AvatarImage src={getUserImage()} alt="Profile" />
+                        <AvatarFallback className="bg-zinc-900 text-white text-sm">
+                          {authView.name?.charAt(0) ?? "U"}
+                        </AvatarFallback>
+                      </Avatar>
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    {authView.name && (
+                      <>
+                        <DropdownMenuLabel className="truncate">
+                          {authView.name}
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                      </>
+                    )}
+                    {accountLinks.map((link) => (
+                      <DropdownMenuItem key={link.key} asChild>
+                        <Link href={link.href}>{link.label}</Link>
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={handleSignOut}>
+                      Sign out
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               ) : (
                 <Button
                   asChild
@@ -910,7 +925,7 @@ const Navbar = () => {
                   <Skeleton className="h-4 w-32 rounded" />
                 </div>
               ) : isAuthedView ? (
-                <div className="flex items-center justify-between">
+                <div className="space-y-3">
                   <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10 border border-zinc-700">
                       <AvatarImage src={getUserImage()} alt="Profile" />
@@ -922,13 +937,28 @@ const Navbar = () => {
                       {authView.name}
                     </span>
                   </div>
-                  <Button
-                    variant="ghost"
-                    onClick={handleSignOut}
-                    className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                  >
-                    Sign out
-                  </Button>
+                  <ul aria-label="Account" className="space-y-1">
+                    {accountLinks.map((link) => (
+                      <li key={link.key}>
+                        <Link
+                          href={link.href}
+                          onClick={closeMenu}
+                          className="block rounded-md px-2 py-2 text-sm text-zinc-200 hover:bg-white/10"
+                        >
+                          {link.label}
+                        </Link>
+                      </li>
+                    ))}
+                    <li>
+                      <Button
+                        variant="ghost"
+                        onClick={handleSignOut}
+                        className="h-auto w-full justify-start px-2 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                      >
+                        Sign out
+                      </Button>
+                    </li>
+                  </ul>
                 </div>
               ) : (
                 /* Mirrors the desktop bar: no marketing CTAs, sign in only. */

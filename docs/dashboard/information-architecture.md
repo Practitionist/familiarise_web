@@ -77,6 +77,15 @@ An expert's attended sessions belong to their learner profile, so the expert's r
 
 The account menu on every surface carries **My library**, which links to `/dashboard/go/library`. `resolveGoHref()` in `lib/dashboard/go.ts` sends a viewer with a learner profile to the learner Library, a viewer with only an expert profile to My library, and anyone else (an organization workspace operator, for example) to `/dashboard`. The go page forwards `?tab=`, so digital product receipts, the product page's "Open library" and "Back to library" links and the purchase email all use `/dashboard/go/library?tab=purchases` (`digitalProductLibraryHref()`); the email makes it absolute. Find lists My library under Account and matches it, and the Library rail items, on "purchases", "products", "recordings", "documents" and "downloads".
 
+## Public pages
+
+The public site follows the same words as the dashboards.
+
+- **Expert profile.** `/explore/experts/<id>` is one scrolling page with a sticky tab bar (`ProfileAnchorTabs`): About, Sessions, Programs, Products & replays and Reviews. Each tab links to a section id (`#about`, `#sessions`, `#programs`, `#products`, `#reviews`). A tab is hidden when its section is empty (no 1:1 or subscription plans, no classes or webinars, no digital products, no reviews), and the bar disappears when only About is left. An `IntersectionObserver` marks the section being read with `aria-current`; the tabs are plain links, so the keyboard and a no-script visit work, and on a narrow screen the bar scrolls sideways. The page's data reads did not change.
+- **Products index.** `/explore/products` has two tabs in the URL, `?tab=products|replays`, parsed through `ProductsTabSchema` in `lib/explore/products-tabs.ts` (anything else opens Digital products). Digital products lists `listPublicDigitalProducts()` (`lib/data/digital-products-public.ts`): the same `digitalProductDiscoverableWhere()` visibility as the product page, newest first, 48 at most, cached for 300 seconds under the `digital-products` tag that `purgeDigitalProductSurfaces()` clears. Replays renders the same `listPublicRecordings()` grid the old Recordings Library showed. The page sits in an `(index)` route group beside `[slug]`, so its `loading.tsx` stays out of the detail pages' ancestors.
+- **Breadcrumbs.** Product, replay and the four plan detail pages show Experts › Expert name › Item title through `PublicBreadcrumb` (`components/explore/PublicBreadcrumb.tsx`); a plan with no consultant drops the middle crumb.
+- **Account menu.** The signed-in avatar in the public header opens a menu (`accountMenuLinks()` in `lib/navigation/account-menu.ts`): Expert dashboard (`/dashboard/go/expert`) when the session has a consultant profile, Learner dashboard (`/dashboard/go/client`) when it has a learner profile, Dashboard (`/dashboard`) when it has neither, then My library (`/dashboard/go/library`), Settings (`accountSettingsHref()`) and Sign out. The mobile sheet lists the same rows. The facets come from the session user, not the organization lookup the dashboard switcher makes, so the header never fetches on its own.
+
 ## Legacy redirects
 
 Every moved route answers a `permanentRedirect` (308) that keeps the old query and drops any stale `tab`. The personal routes are recorded in `lib/dashboard/personal-legacy-routes.ts` and the organization routes in `ORG_TAB_REDIRECTS` (`lib/dashboard/org-tab-redirect.ts`).
@@ -89,6 +98,7 @@ Every moved route answers a `permanentRedirect` (308) that keeps the old query a
 | `/dashboard/consultant/<id>/purchases`       | `/dashboard/consultant/<id>/library`                     |
 | `/dashboard/organization/<orgId>/documents`  | `/dashboard/organization/<orgId>/library?tab=documents`  |
 | `/dashboard/organization/<orgId>/recordings` | `/dashboard/organization/<orgId>/library?tab=recordings` |
+| `/explore/recordings` (the index only)       | `/explore/products?tab=replays`                          |
 
 The per-booking pages (`appointments/<id>/documents` and `appointments/<id>/recordings`) did not move, and neither did the expert's hosted Recordings and Session documents pages.
 
@@ -102,7 +112,7 @@ The support area is called Support cases wherever the viewer sees it: the first 
 2. A shared buyer Library with Purchases, Session recordings and Session documents for every role that can buy (this page describes the result).
 3. A consultant Studio group holding the hosted Recordings and Session documents, and the Sell grouping of offerings into sessions, group programs and products.
 4. The organization regrouping into My work, Sponsor and Host, with Billing and Payouts tabs merged to at most three visible plus a "More" menu.
-5. Public pages: expert profile anchor tabs, a products index with replays, breadcrumbs and a public header account menu.
+5. Public pages: expert profile anchor tabs, a products index with replays, breadcrumbs and a public header account menu (done; see Public pages).
 
 ## Deprecated & Superseded Approaches
 
@@ -113,3 +123,5 @@ The support area used to be called "Support requests", with a first tab labelled
 The Catalog item used the `Library` icon, which collided with the learner's Library group. It now uses `LayoutGrid`.
 
 The expert's temporary "My purchases" item (`/dashboard/consultant/<id>/purchases`), the learner's Library group with Session documents, Session recordings and Digital products (`documents`, `recordings` and `products`), and the organization's two Library items (`documents` and `recordings`, with `OrgLibraryPage` rendering each) were replaced by the one Library page per role. The old URLs only redirect now; do not link to them or add pages under them.
+
+The public "Recordings Library" at `/explore/recordings` was folded into the Replays tab of `/explore/products`. The index only redirects (308, query kept); `/explore/recordings/<slug>` still serves a replay. Do not link to the old index or add a page back there. The avatar used to be a plain link to Settings with a separate Sign out button; do not restore it.
