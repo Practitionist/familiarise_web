@@ -41,6 +41,12 @@ jest.mock("../../lib/data/plan-details", () => ({
   getClassPlanDetail: (...a: unknown[]) => mockGetClassPlanDetail(...a),
 }));
 
+const mockViewerSeatAppointmentIds = jest.fn(async () => [] as string[]);
+jest.mock("../../lib/data/viewer-seats", () => ({
+  viewerSeatAppointmentIds: (...a: unknown[]) =>
+    mockViewerSeatAppointmentIds(...(a as [])),
+}));
+
 // The page modules import their presentational components, which drag in the
 // whole UI tree. Stub them — these tests are about the gate, not the markup.
 jest.mock(
@@ -68,6 +74,7 @@ const hiddenPlan = {
   archivedAt: new Date("2026-01-01T00:00:00Z"),
   imageUrl: null,
   webinars: [],
+  classes: [],
 };
 
 /** The slice of a detail page module these tests drive. */
@@ -153,6 +160,88 @@ describe("plan detail pages apply canViewPlanDetail", () => {
       await expect(
         Page({ params: Promise.resolve(params) }),
       ).resolves.toBeDefined();
+    },
+  );
+});
+
+describe("event detail pages hand down only the viewer's own seat", () => {
+  const props = (element: unknown) =>
+    (element as { props: Record<string, unknown> }).props;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCanViewPlanDetail.mockResolvedValue(true);
+  });
+
+  it("webinar page asks about the signed-in viewer and passes the answer down", async () => {
+    mockGetWebinarPlanDetail.mockResolvedValue({
+      ...hiddenPlan,
+      webinars: [{ id: "w1", appointment: { id: "appt-1", occurrences: [] } }],
+    });
+    mockViewerSeatAppointmentIds.mockResolvedValue(["appt-1"]);
+    const Page = (
+      await import("../../app/explore/programs/plans/webinars/[webinarPlanId]/page")
+    ).default;
+
+    const element = await Page({
+      params: Promise.resolve({ webinarPlanId: "plan-1" }),
+    });
+
+    expect(mockViewerSeatAppointmentIds).toHaveBeenCalledWith("user-1", [
+      "appt-1",
+    ]);
+    expect(props(element).isRegistered).toBe(true);
+  });
+
+  it("class page asks about the signed-in viewer across the batches", async () => {
+    mockGetClassPlanDetail.mockResolvedValue({
+      ...hiddenPlan,
+      classes: [
+        { id: "c1", appointment: { id: "appt-8" } },
+        { id: "c2", appointment: null },
+        { id: "c3", appointment: { id: "appt-9" } },
+      ],
+    });
+    mockViewerSeatAppointmentIds.mockResolvedValue(["appt-9"]);
+    const Page = (
+      await import("../../app/explore/programs/plans/classes/[classPlanId]/page")
+    ).default;
+
+    const element = await Page({
+      params: Promise.resolve({ classPlanId: "plan-1" }),
+    });
+
+    expect(mockViewerSeatAppointmentIds).toHaveBeenCalledWith("user-1", [
+      "appt-8",
+      "appt-9",
+    ]);
+    expect(props(element).enrolledAppointmentIds).toEqual(["appt-9"]);
+  });
+
+  it.each([
+    [
+      "webinar",
+      mockGetWebinarPlanDetail,
+      "../../app/explore/programs/plans/webinars/[webinarPlanId]/page",
+      { webinarPlanId: "plan-1" },
+    ],
+    [
+      "class",
+      mockGetClassPlanDetail,
+      "../../app/explore/programs/plans/classes/[classPlanId]/page",
+      { classPlanId: "plan-1" },
+    ],
+  ])(
+    "%s page reads no seats for a plan the gate rejects",
+    async (_name, fetcher, path, params) => {
+      fetcher.mockResolvedValue(hiddenPlan);
+      mockCanViewPlanDetail.mockResolvedValue(false);
+      const Page = (await import(path)).default;
+
+      await expect(Page({ params: Promise.resolve(params) })).rejects.toThrow(
+        "NEXT_NOT_FOUND",
+      );
+      expect(mockViewerSeatAppointmentIds).not.toHaveBeenCalled();
     },
   );
 });

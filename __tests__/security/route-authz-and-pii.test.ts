@@ -154,6 +154,45 @@ describe("the plan detail reads do not serve the host's email", () => {
   });
 });
 
+describe("public plan payloads do not say who holds a seat", () => {
+  // Both [id] routes and both list routes are public and CDN-cached, so an
+  // attendee `userId` in them is readable by anyone. A seat is a count here;
+  // "am I enrolled" is read for the signed-in viewer on its own request.
+  const strip = (rel: string) =>
+    read(rel)
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+
+  it("lib/data/plan-details.ts counts seats and never selects who holds them", () => {
+    const src = strip("lib/data/plan-details.ts");
+    expect(src).not.toMatch(/participants\s*:\s*\{\s*select\s*:\s*\{\s*userId/);
+    expect(src).not.toMatch(/userId\s*:\s*true/);
+    expect(src).toContain("seatHoldingParticipant");
+  });
+
+  it.each([
+    "app/api/plans/webinars/route.ts",
+    "app/api/plans/classes/route.ts",
+  ])("%s has no includeRegistration door for attendee ids", (rel) => {
+    const src = strip(rel);
+    expect(src).not.toContain("includeRegistration");
+    expect(src).not.toMatch(/participants/);
+  });
+
+  it("the shared list cache key no longer varies on includeRegistration", () => {
+    expect(strip("app/api/plans/shared/plan-filters.ts")).not.toContain(
+      "includeRegistration",
+    );
+  });
+
+  it("the viewer's own seats come from an authenticated no-store route", () => {
+    const src = read("app/api/participants/event-seats/route.ts");
+    expect(src).toContain("requireApiAuth");
+    expect(src).toContain("private, no-store");
+    expect(src).toContain("auth.session.user.id");
+  });
+});
+
 describe("participant rosters do not return full User rows", () => {
   const ROUTES = [
     "app/api/participants/consultations/[consultationId]/route.ts",

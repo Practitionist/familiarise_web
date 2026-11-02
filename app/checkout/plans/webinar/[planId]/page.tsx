@@ -33,7 +33,7 @@ import {
   reportPaymentsError,
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
-import { getWebinarCapacity } from "@/lib/events/capacity";
+import { eventCapacityFromCount } from "@/lib/events/capacity";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import { useReferralPricing } from "../../useReferralPricing";
@@ -88,10 +88,9 @@ export type CheckoutWebinarPlanData = Omit<WebinarPlan, "price"> & {
     appointment:
       | (Appointment & {
           occurrences: AppointmentOccurrence[];
-          // `participants` is what makes a seat count a seat (#1554) —
-          // `fetchWebinarPlanDetail` includes it, and
-          // `countWebinarParticipants` answers 0 in silence when it is absent.
-          participants: { userId: string }[];
+          // Seats taken, host excluded: the public payload carries a count and
+          // never who holds the seats.
+          _count: { participants: number };
         })
       | null;
   })[];
@@ -103,6 +102,17 @@ export type CheckoutWebinarPlanData = Omit<WebinarPlan, "price"> & {
 type PlanResponse = {
   data: CheckoutWebinarPlanData;
 };
+
+function webinarSeats(
+  webinar: CheckoutWebinarPlanData["webinars"][number],
+  maxParticipants: number,
+) {
+  return eventCapacityFromCount({
+    instance: webinar,
+    plan: { maxParticipants },
+    taken: webinar.appointment?._count.participants ?? 0,
+  });
+}
 
 type PageProps = {
   params: Promise<{ planId: string }>;
@@ -342,15 +352,7 @@ export default function WebinarCheckoutPage({
         // Seats can go while this tab sits open. The server holds the real
         // gate under the allocation lock; this stops the buyer paying into a
         // rejection.
-        if (
-          getWebinarCapacity({
-            webinar: targetWebinar,
-            plan: { maxParticipants: planData.data.maxParticipants },
-            excludeUserIds: planData.data.consultantProfile?.user?.id
-              ? [planData.data.consultantProfile.user.id]
-              : [],
-          }).isFull
-        ) {
+        if (webinarSeats(targetWebinar, planData.data.maxParticipants).isFull) {
           throw new Error("This webinar is now full.");
         }
 
@@ -422,7 +424,6 @@ export default function WebinarCheckoutPage({
       planData?.data?.id,
       planData?.data?.webinars,
       planData?.data?.maxParticipants,
-      planData?.data?.consultantProfile?.user?.id,
       handleApiError,
       handleCheckoutSuccess,
       toast,
@@ -470,15 +471,7 @@ export default function WebinarCheckoutPage({
       // Refresh the cached plan so isSoldOut re-derives behind this click.
       queryClient.setQueryData(checkoutPlanKey, fresh);
 
-      if (
-        getWebinarCapacity({
-          webinar: freshWebinar,
-          plan: { maxParticipants: fresh.data.maxParticipants },
-          excludeUserIds: fresh.data.consultantProfile?.user?.id
-            ? [fresh.data.consultantProfile.user.id]
-            : [],
-        }).isFull
-      ) {
+      if (webinarSeats(freshWebinar, fresh.data.maxParticipants).isFull) {
         toast({
           title: "This webinar is now full",
           description:
@@ -634,11 +627,7 @@ export default function WebinarCheckoutPage({
   // out webinar advertised its full capacity and took the money anyway.
   const capacity =
     targetWebinar && planDetails
-      ? getWebinarCapacity({
-          webinar: targetWebinar,
-          plan: { maxParticipants: planDetails.maxParticipants },
-          excludeUserIds: userDetails?.id ? [userDetails.id] : [],
-        })
+      ? webinarSeats(targetWebinar, planDetails.maxParticipants)
       : null;
   const isSoldOut = capacity?.isFull ?? false;
 

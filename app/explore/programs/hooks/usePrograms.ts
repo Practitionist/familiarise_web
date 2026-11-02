@@ -3,10 +3,6 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import {
-  isUserEnrolled,
-  isUserRegisteredForWebinar,
-} from "@/lib/payments/utils/participants";
-import {
   ITEMS_PER_PAGE,
   generateProgramImageUrl,
   type Program,
@@ -21,6 +17,7 @@ import {
   type ClassPlanApiItem,
   type WebinarPlanApiItem,
 } from "./_helpers";
+import { useMyEventSeats } from "./useMyEventSeats";
 
 interface UseProgramsOptions {
   userId?: string | null;
@@ -37,7 +34,6 @@ export function usePrograms(
   options: UseProgramsOptions = {},
 ) {
   const { userId, filters = {} } = options;
-  const includeRegistration = !!userId;
   const filterStr = buildFilterParams(filters);
 
   const {
@@ -48,22 +44,18 @@ export function usePrograms(
     isLoading,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ["programs", programType, userId, filterStr],
+    queryKey: ["programs", programType, filterStr],
     queryFn: async ({ pageParam = 0 }) => {
       const requests = [];
 
-      const registrationParam = includeRegistration
-        ? "&includeRegistration=true"
-        : "";
-
       if (programType === "all" || programType === "class") {
         requests.push(
-          `/api/plans/classes?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}&include=classes${registrationParam}${filterStr}`,
+          `/api/plans/classes?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}&include=classes${filterStr}`,
         );
       }
       if (programType === "all" || programType === "webinar") {
         requests.push(
-          `/api/plans/webinars?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}${registrationParam}${filterStr}`,
+          `/api/plans/webinars?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}${filterStr}`,
         );
       }
 
@@ -81,17 +73,12 @@ export function usePrograms(
           const formattedClasses = classResponse.data.map(
             (plan): ClassPlanProgram => {
               const typedPlan = plan as ClassPlanApiItem;
-              const classes = typedPlan.classes || [];
-              const isRegistered = userId
-                ? classes.some((c) => isUserEnrolled(c.appointment, userId))
-                : false;
 
               return {
                 ...typedPlan,
-                classes,
+                classes: typedPlan.classes || [],
                 type: "class",
                 imageUrl: generateProgramImageUrl(typedPlan.imageUrl),
-                isRegistered,
               } as ClassPlanProgram;
             },
           );
@@ -108,18 +95,12 @@ export function usePrograms(
             const formattedWebinars = webinarResponse.data.map(
               (plan): WebinarPlanProgram => {
                 const typedPlan = plan as WebinarPlanApiItem;
-                const webinars = typedPlan.webinars || [];
-                const isRegistered =
-                  userId && webinars.length > 0
-                    ? isUserRegisteredForWebinar(webinars, userId)
-                    : false;
 
                 return {
                   ...typedPlan,
-                  webinars,
+                  webinars: typedPlan.webinars || [],
                   type: "webinar",
                   imageUrl: generateProgramImageUrl(typedPlan.imageUrl),
-                  isRegistered,
                 } as WebinarPlanProgram;
               },
             );
@@ -173,9 +154,21 @@ export function usePrograms(
     retry: 2,
   });
 
+  // "Am I registered" is the viewer's own and comes from their own request, so
+  // the shared list payload (and its cache) never depends on who is looking.
+  const seats = useMyEventSeats(userId);
   const programs = useMemo(
-    () => (data ? data.pages.map((d) => d.programs).flat() : []),
-    [data],
+    () =>
+      (data ? data.pages.map((d) => d.programs).flat() : []).map(
+        (program): Program => ({
+          ...program,
+          isRegistered: (program.type === "class"
+            ? seats.classPlanIds
+            : seats.webinarPlanIds
+          ).has(program.id),
+        }),
+      ),
+    [data, seats],
   );
 
   return {

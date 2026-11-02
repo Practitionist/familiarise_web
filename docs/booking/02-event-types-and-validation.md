@@ -138,13 +138,29 @@ and the plan's otherwise, which is what `effectiveMaxParticipants` in
 checkout gates, the explore pages, the planner cards, the participants screen —
 reads from that module, so there is one answer to "is this event full".
 
-A seat is taken by any user connected to one of the event's slots, whether or
-not their payment has settled. Registration connects the buyer to the event's
-shared session slots, so tentativeness is a property of the slot rather than of
-an individual registrant and cannot be filtered per person. An abandoned
-checkout releases its seat when `jobs/payments/cleanup-abandoned-payments.ts`
-disconnects the buyer, or immediately if they cancel the pending checkout
-themselves.
+A seat is a live `AppointmentParticipant` row with the `CONSULTEE` role, whether
+or not its payment has settled: a `HELD` seat holds its place for the checkout
+window, and an abandoned checkout releases it when
+`scripts/payments/cleanup-abandoned-payments.ts` flips the row to `CANCELLED`
+(or immediately, if the buyer cancels the pending checkout). The host's own row
+has another role, so it never takes a seat.
+
+Two readers count seats, and they read different things on purpose:
+
+- **The server gates** (checkout, the allocation lock, the revalidation) read
+  the roster inside the lock through `getWebinarCapacity` and `getClassCapacity`.
+- **Public payloads** (the plan list and detail routes, and the explore and
+  checkout pages built from them) carry a seat _count_ per event, taken with
+  `seatHoldingParticipant(now)` so a lapsed unpaid hold stops counting, and turn
+  it into capacity with `eventCapacityFromCount`. They never carry who holds the
+  seats: those responses are public and CDN-cached, so an attendee id in them
+  would be readable by anyone.
+
+"Am I enrolled" is the viewer's own and is read on their own request. The
+explore detail pages are server components that look up the signed-in viewer's
+seats with `viewerSeatAppointmentIds` and pass the result down;
+the explore list asks `GET /api/participants/event-seats`, which answers
+`private, no-store` with only the caller's plan ids.
 
 The organizer edits capacity from the planner, which submits to
 `PATCH /api/bookings/{webinars,classes}/crud-with-plan`. Raising it simply

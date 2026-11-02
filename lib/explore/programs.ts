@@ -16,20 +16,10 @@ export const ITEMS_PER_PAGE = 12;
 
 export type ProgramType = "all" | "class" | "webinar";
 
-// Type for registration data from API — the roster is the appointment's live
-// participant rows (#1554), seat ids only.
-interface SeatHolder {
-  userId: string;
-}
-
-interface WebinarWithAppointment {
-  appointment?: {
-    participants?: SeatHolder[];
-  } | null;
-}
-
-interface ClassAppointment {
-  participants?: SeatHolder[];
+// A public list never says who holds a seat. "Am I registered" is the viewer's
+// own and arrives as `isRegistered` from `useMyEventSeats`.
+export interface WebinarInstance {
+  id: string;
 }
 
 export interface ClassInstance {
@@ -37,7 +27,8 @@ export interface ClassInstance {
   schedulingPeriodStartsAt?: string | Date | null;
   /** Per-instance capacity override; null inherits the plan's value. */
   maxParticipants?: number | null;
-  appointment?: ClassAppointment | null;
+  /** `_count` is the seats taken, host excluded. */
+  appointment?: { id: string; _count?: { participants: number } } | null;
 }
 
 type ProgramConsultantProfile = {
@@ -77,7 +68,7 @@ export type ClassPlanProgram = Omit<PrismaClassPlan, "price"> & {
 
 export type WebinarPlanProgram = Omit<PrismaWebinarPlan, "price"> & {
   price: number;
-  webinars?: WebinarWithAppointment[];
+  webinars?: WebinarInstance[];
   type: "webinar";
   imageUrl: string;
   isRegistered?: boolean;

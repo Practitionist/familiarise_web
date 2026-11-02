@@ -1,6 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import {
@@ -30,8 +29,6 @@ const WebinarRecordingFlagsSchema = WebinarPlanSchema.pick({
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const includeRegistration =
-      searchParams.get("includeRegistration") === "true";
 
     const filters = parsePlanFilters(searchParams);
     const { sort, page, limit, skip } = filters;
@@ -39,7 +36,7 @@ export async function GET(request: NextRequest) {
     const orderBy = buildPlanOrderBy(sort) as
       Prisma.WebinarPlanOrderByWithRelationInput | undefined;
 
-    // Build include object based on whether registration data is requested
+    // The list never carries who holds a seat: that is the viewer's own business.
     const include: Record<string, unknown> = {
       consultantProfile: { select: planConsultantSelect },
       topics: true,
@@ -50,22 +47,6 @@ export async function GET(request: NextRequest) {
         },
       },
     };
-
-    if (includeRegistration) {
-      include.webinars = {
-        include: {
-          appointment: {
-            include: {
-              // #1554 — seat ids only; the explore card's registration check.
-              participants: {
-                where: liveParticipant(),
-                select: { userId: true },
-              },
-            },
-          },
-        },
-      };
-    }
 
     // For trending sort, use a two-step Prisma approach:
     // 1. Ranked ids from the cached 60s scan (IDs + nested slot IDs only)

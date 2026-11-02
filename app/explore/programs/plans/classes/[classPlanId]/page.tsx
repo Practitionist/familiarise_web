@@ -3,6 +3,7 @@ import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
 import { reportSentryError } from "@/lib/observability/report";
 import { getClassPlanDetail } from "@/lib/data/plan-details";
+import { viewerSeatAppointmentIds } from "@/lib/data/viewer-seats";
 import { ClassDetails } from "./components/ClassDetails";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 
@@ -42,5 +43,15 @@ export default async function ClassDetailsPage({
     imageUrl: generateProgramImageUrl(classPlan.imageUrl),
   };
 
-  return <ClassDetails plan={planWithDefaults} />;
+  const enrolledAppointmentIds = await viewerSeatAppointmentIds(
+    session?.user?.id,
+    classPlan.classes.flatMap((c) => (c.appointment ? [c.appointment.id] : [])),
+  );
+
+  return (
+    <ClassDetails
+      plan={planWithDefaults}
+      enrolledAppointmentIds={enrolledAppointmentIds}
+    />
+  );
 }

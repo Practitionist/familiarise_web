@@ -3,6 +3,7 @@ import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
 import { reportSentryError } from "@/lib/observability/report";
 import { getWebinarPlanDetail } from "@/lib/data/plan-details";
+import { viewerSeatAppointmentIds } from "@/lib/data/viewer-seats";
 import { WebinarDetails } from "./components/WebinarDetails";
 
 // Stream behind the static layout's instant skeleton; don't prerender at build (#932).
@@ -38,12 +39,18 @@ export default async function WebinarDetailsPage({
   const firstWebinarInstance = webinarData.webinars?.[0];
   const nextSession =
     firstWebinarInstance?.appointment?.occurrences?.[0]?.startsAt;
+  const appointmentId = firstWebinarInstance?.appointment?.id;
+  const isRegistered = appointmentId
+    ? (await viewerSeatAppointmentIds(session?.user?.id, [appointmentId]))
+        .length > 0
+    : false;
 
   return (
     <WebinarDetails
       plan={webinarData}
       nextSession={nextSession}
       webinarId={firstWebinarInstance?.id}
+      isRegistered={isRegistered}
     />
   );
 }
