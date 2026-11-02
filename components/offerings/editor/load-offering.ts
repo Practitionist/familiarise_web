@@ -122,13 +122,18 @@ export function useOfferingEvent(
 
 const ownedAssetSchema = z.object({
   id: z.string(),
+  lineageId: z.string(),
   originalName: z.string(),
+  /** The lineage's first name, which buyers see. */
+  displayName: z.string(),
   mimeType: z.string(),
   sizeBytes: z.number(),
   order: z.number(),
   version: z.number(),
   status: z.nativeEnum(DigitalProductAssetStatus),
   rejectReason: z.string().nullable(),
+  verifiedAt: z.string().nullable(),
+  createdAt: z.string(),
 });
 export type OwnedProductAsset = z.infer<typeof ownedAssetSchema>;
 
@@ -145,7 +150,10 @@ const ownedProductSchema = z.object({
   takenDownAt: z.string().nullable(),
   takedownReason: z.string().nullable(),
   assets: z.array(ownedAssetSchema),
+  /** SUCCEEDED and REFUNDED sales; any keeps the product from being deleted. */
   purchaseCount: z.number(),
+  /** Buyers who hold access now. */
+  buyerCount: z.number(),
 });
 export type OwnedDigitalProduct = z.infer<typeof ownedProductSchema>;
 

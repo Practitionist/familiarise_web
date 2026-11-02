@@ -1,10 +1,13 @@
 /**
  * GET    /api/digital-products/[productId] — the public listing, or the owner's full view.
  * PATCH  /api/digital-products/[productId] — the owner edits the listing.
- * DELETE /api/digital-products/[productId] — the owner deletes a product nobody has bought.
+ * DELETE /api/digital-products/[productId] — the owner deletes a product nobody bought or was refunded.
  */
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { cancelRazorpayOrder } from "@/lib/payments/core/razorpay";
+import { lineageDisplayNames } from "@/lib/digital-products/lineage";
 import { requireApiSession } from "@/lib/auth-helpers";
 import { updateDigitalProductSchema } from "@/schemas/digital-products";
 import {
@@ -21,6 +24,53 @@ import {
 } from "@/lib/digital-products/constants";
 
 type RouteParams = { params: Promise<{ productId: string }> };
+
+/** Rejected uploads the owner still sees, newest first. */
+const OWNER_REJECTED_LIMIT = 10;
+
+const OWNER_ASSET_SELECT = {
+  id: true,
+  lineageId: true,
+  originalName: true,
+  mimeType: true,
+  sizeBytes: true,
+  order: true,
+  version: true,
+  status: true,
+  rejectReason: true,
+  verifiedAt: true,
+  supersededAt: true,
+  createdAt: true,
+} as const satisfies Prisma.DigitalProductAssetSelect;
+
+/** Each lineage's live versions, its previous version and the latest rejected uploads. */
+async function ownerAssets(productId: string) {
+  const [live, previous, rejected] = await Promise.all([
+    prisma.digitalProductAsset.findMany({
+      where: { productId, status: { in: ["PENDING", "VERIFIED"] } },
+      orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+      select: OWNER_ASSET_SELECT,
+    }),
+    prisma.digitalProductAsset.findMany({
+      where: { productId, status: "SUPERSEDED", purgedAt: null },
+      orderBy: { version: "desc" },
+      distinct: ["lineageId"],
+      select: OWNER_ASSET_SELECT,
+    }),
+    prisma.digitalProductAsset.findMany({
+      where: { productId, status: "REJECTED" },
+      orderBy: { createdAt: "desc" },
+      take: OWNER_REJECTED_LIMIT,
+      select: OWNER_ASSET_SELECT,
+    }),
+  ]);
+  const assets = [...live, ...previous, ...rejected];
+  const names = await lineageDisplayNames(prisma, assets);
+  return assets.map((a) => ({
+    ...a,
+    displayName: names.get(a.lineageId) ?? a.originalName,
+  }));
+}
 
 export async function GET(_request: Request, { params }: RouteParams) {
   const { productId } = await params;
@@ -47,31 +97,29 @@ export async function GET(_request: Request, { params }: RouteParams) {
       takedownReason: true,
       publishedAt: true,
       archivedAt: true,
-      assets: {
-        orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-        select: {
-          id: true,
-          originalName: true,
-          mimeType: true,
-          sizeBytes: true,
-          order: true,
-          version: true,
-          status: true,
-          rejectReason: true,
-          verifiedAt: true,
-        },
-      },
-      _count: { select: { purchases: true } },
     },
   });
   if (!product) return jsonError(404, "NOT_FOUND", "Product not found");
 
-  const { _count, ...view } = product;
-  const isOwner = viewerProfileId === product.consultantProfileId;
-  // Any purchase row, even a failed one, keeps a product from being deleted.
-  if (isOwner) {
+  if (viewerProfileId === product.consultantProfileId) {
+    const [assets, sales] = await Promise.all([
+      ownerAssets(productId),
+      prisma.digitalProductPurchase.groupBy({
+        by: ["status"],
+        where: { productId, status: { in: ["SUCCEEDED", "REFUNDED"] } },
+        _count: { _all: true },
+      }),
+    ]);
+    const count = (status: string) =>
+      sales.find((s) => s.status === status)?._count._all ?? 0;
+    // Only a sale or a refund keeps the product from being deleted; buyerCount holds access now.
     return NextResponse.json({
-      data: { ...view, purchaseCount: _count.purchases },
+      data: {
+        ...product,
+        assets,
+        purchaseCount: count("SUCCEEDED") + count("REFUNDED"),
+        buyerCount: count("SUCCEEDED"),
+      },
     });
   }
   if (
@@ -81,19 +129,37 @@ export async function GET(_request: Request, { params }: RouteParams) {
   ) {
     return jsonError(404, "NOT_FOUND", "Product not found");
   }
-  const { takedownReason: _reason, archivedAt: _archived, ...listing } = view;
+  const verified = await prisma.digitalProductAsset.findMany({
+    where: { productId, status: "VERIFIED" },
+    orderBy: [{ order: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true,
+      lineageId: true,
+      version: true,
+      originalName: true,
+      mimeType: true,
+      sizeBytes: true,
+      order: true,
+    },
+  });
+  const names = await lineageDisplayNames(prisma, verified);
+  const {
+    takedownReason: _reason,
+    archivedAt: _archived,
+    ...listing
+  } = product;
   return NextResponse.json({
     data: {
       ...listing,
-      assets: listing.assets
-        .filter((a) => a.status === "VERIFIED")
-        .map(({ id, originalName, mimeType, sizeBytes, order }) => ({
+      assets: verified.map(
+        ({ id, lineageId, originalName, mimeType, sizeBytes, order }) => ({
           id,
-          originalName,
+          originalName: names.get(lineageId) ?? originalName,
           mimeType,
           sizeBytes,
           order,
-        })),
+        }),
+      ),
     },
   });
 }
@@ -194,17 +260,50 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
   const owned = await requireOwnedProduct(productId);
   if (!owned.ok) return owned.error;
 
-  // A sold product is archived, never deleted: buyers keep lifetime access.
-  const deleted = await prisma.digitalProduct.deleteMany({
-    where: { id: productId, purchases: { none: {} } },
+  // Product lock first, as the settle takes it before the purchase CAS.
+  const orderIds = await prisma.$transaction(async (tx) => {
+    await lockDigitalProductRow(tx, productId);
+    // A sold or refunded product is archived, never deleted: its sale rows are money evidence.
+    const sold = await tx.digitalProductPurchase.findFirst({
+      where: {
+        productId,
+        OR: [
+          { status: { in: ["SUCCEEDED", "REFUNDED"] } },
+          { paymentId: { not: null } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (sold) return null;
+    const abandoned = await tx.digitalProductPurchase.findMany({
+      where: { productId, status: { in: ["PENDING", "FAILED"] } },
+      select: { gatewayOrderId: true },
+    });
+    await tx.digitalProductPurchase.deleteMany({
+      where: {
+        productId,
+        status: { in: ["PENDING", "FAILED"] },
+        paymentId: null,
+      },
+    });
+    await tx.digitalProduct.delete({ where: { id: productId } });
+    return abandoned.flatMap((p) =>
+      p.gatewayOrderId ? [p.gatewayOrderId] : [],
+    );
   });
-  if (deleted.count === 0) {
+  if (orderIds === null) {
     return jsonError(
       409,
       "HAS_PURCHASES",
       "This product has buyers; archive it instead",
     );
   }
+  // Best effort: a late capture on a deleted order is auto-refunded by the orphan-capture path.
+  await Promise.all(
+    orderIds.map((orderId) =>
+      cancelRazorpayOrder(orderId).catch(() => "unknown" as const),
+    ),
+  );
   // Its objects lose their rows and the storage sweep deletes them.
   return NextResponse.json({ data: { id: productId, deleted: true } });
 }

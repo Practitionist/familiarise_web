@@ -148,6 +148,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+import { requireApiAuth } from "../../lib/auth-helpers";
 import { POST as purchase } from "../../app/api/digital-products/[productId]/purchase/route";
 import { POST as claim } from "../../app/api/digital-products/[productId]/claim/route";
 import { GET as download } from "../../app/api/digital-products/[productId]/assets/[assetId]/download/route";
@@ -229,6 +230,28 @@ it("mints one order at the quoted amount for overlapping purchases and refuses a
   const empty = await claim(req(), params);
   expect(empty.status).toBe(409);
   expect((await empty.json()).code).toBe("NO_DELIVERABLE");
+  expect(rows).toHaveLength(0);
+});
+
+it("answers the owner's own purchase and claim with OWN_PRODUCT and the owner copy", async () => {
+  const asOwner = {
+    session: {
+      user: { id: "owner_1", consultantProfileId: "cp_owner", role: "USER" },
+    },
+  } as Awaited<ReturnType<typeof requireApiAuth>>;
+  jest.mocked(requireApiAuth).mockResolvedValueOnce(asOwner);
+  const bought = await purchase(req(), params);
+  expect(bought.status).toBe(400);
+  expect(await bought.json()).toEqual({
+    code: "OWN_PRODUCT",
+    error: "This is your own product — buyers will see a Buy button here.",
+  });
+  product.pricePaise = 0;
+  jest.mocked(requireApiAuth).mockResolvedValueOnce(asOwner);
+  const claimed = await claim(req(), params);
+  expect(claimed.status).toBe(400);
+  expect((await claimed.json()).code).toBe("OWN_PRODUCT");
+  expect(createRazorpayOrder).not.toHaveBeenCalled();
   expect(rows).toHaveLength(0);
 });
 

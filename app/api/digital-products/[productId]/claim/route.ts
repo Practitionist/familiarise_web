@@ -16,6 +16,7 @@ import {
   prepareDigitalProductReceipt,
   stageDigitalProductReceipt,
 } from "@/lib/digital-products/purchase-email";
+import { ownProductNotice } from "@/lib/digital-products/constants";
 import {
   checkProductForSale,
   SALE_REFUSAL_STATUS,
@@ -47,7 +48,13 @@ export async function POST(_request: Request, { params }: RouteParams) {
     const sale = await checkProductForSale(productId, auth.session.user);
     if (!sale.ok) {
       return NextResponse.json(
-        { error: "This product is not available", code: sale.code },
+        {
+          error:
+            sale.code === "OWN_PRODUCT"
+              ? ownProductNotice(true)
+              : "This product is not available",
+          code: sale.code,
+        },
         { status: SALE_REFUSAL_STATUS[sale.code] },
       );
     }

@@ -169,7 +169,7 @@ beforeEach(() => {
   mockRefund.mockResolvedValue({ refundId: "rf-1" });
 });
 
-it("settles a capture atomically and refunds mismatched, duplicate and orphan captures", async () => {
+it("settles a capture atomically and refunds mismatched and duplicate captures", async () => {
   mockTx.digitalProductPurchase.findUnique.mockResolvedValueOnce(
     purchase("PENDING"),
   );
@@ -240,17 +240,25 @@ it("settles a capture atomically and refunds mismatched, duplicate and orphan ca
   });
   expect(mockCreateEarnings).not.toHaveBeenCalled();
   expect(mockStageReceipt).not.toHaveBeenCalled();
+});
 
-  // The purchase row is gone: refund the buyer the notes name.
-  jest.clearAllMocks();
+it("refunds a late capture whose purchase was deleted with its product to the buyer the notes name", async () => {
   mockTx.digitalProductPurchase.findUnique.mockResolvedValueOnce(null);
   mockTx.user.findUnique.mockResolvedValueOnce({ id: "u-1" });
   await handleDigitalProductPurchaseSuccess("order_9", "pay_D", NOTES, 59000);
   expect(mockTx.payment.create.mock.calls[0][0].data).toMatchObject({
     userId: "u-1",
     paymentIntent: "order_9",
+    description: expect.stringMatching(/its purchase no longer exists/),
   });
-  expect(mockRefund).toHaveBeenCalledTimes(1);
+  expect(mockTx.digitalProductPurchase.updateMany).not.toHaveBeenCalled();
+  expect(mockCreateEarnings).not.toHaveBeenCalled();
+  expect(mockStageReceipt).not.toHaveBeenCalled();
+  expect(mockRefund).toHaveBeenCalledWith(
+    expect.objectContaining({
+      dedupeKey: "digital-product-capture:pay-order_9",
+    }),
+  );
 });
 
 it("settles under the product row lock and refunds when the last file was removed first", async () => {

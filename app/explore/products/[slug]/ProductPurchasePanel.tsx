@@ -15,6 +15,7 @@ import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import { formatFileSize } from "@/lib/documents/document-utils";
+import { ownProductNotice } from "@/lib/digital-products/constants";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { DigitalProductQuote } from "@/lib/payments/pricing/digital-product-price";
 
@@ -331,7 +332,7 @@ export function ProductPurchasePanel({
       )}
       {viewer.kind === "owner" && (
         <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
-          This is your product. Buyers see the button here.
+          {ownProductNotice(isFree)}
         </p>
       )}
       {viewer.kind === "buyer" && viewer.refundedAt && (

@@ -15,6 +15,7 @@ import {
 import { savedCardCustomerId } from "@/lib/payments/core/saved-card-customer";
 import { deriveDigitalProductChargeForBuyer } from "@/lib/payments/pricing/digital-product-price";
 import type { digitalProductChargeNotesSchema } from "@/lib/payments/webhooks/digital-product-purchase";
+import { ownProductNotice } from "@/lib/digital-products/constants";
 import {
   checkProductForSale,
   SALE_REFUSAL_STATUS,
@@ -39,7 +40,13 @@ export async function POST(_request: Request, { params }: RouteParams) {
     const sale = await checkProductForSale(productId, auth.session.user);
     if (!sale.ok) {
       return NextResponse.json(
-        { error: "This product is not available to buy", code: sale.code },
+        {
+          error:
+            sale.code === "OWN_PRODUCT"
+              ? ownProductNotice(false)
+              : "This product is not available to buy",
+          code: sale.code,
+        },
         { status: SALE_REFUSAL_STATUS[sale.code] },
       );
     }

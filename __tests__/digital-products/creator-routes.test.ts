@@ -53,11 +53,35 @@ const assetModel = {
   aggregate: async () => ({ _max: { version: 1 } }),
   create: (...a: [{ data: object }]) => assetCreate(...a),
 };
+const purchases: Array<{
+  status: string;
+  gatewayOrderId: string | null;
+  paymentId: string | null;
+}> = [];
+const productDelete = jest.fn(async () => product);
+const purchaseDeleteMany = jest.fn(async () => ({ count: 0 }));
+const cancelOrder = jest.fn(async (_id: string) => "no_live_payment");
+jest.mock("../../lib/payments/core/razorpay", () => ({
+  cancelRazorpayOrder: (id: string) => cancelOrder(id),
+}));
 const tx = {
   digitalProductAsset: assetModel,
   digitalProduct: {
     findUnique: async () => product,
     updateMany: (...a: unknown[]) => publish(...a),
+    delete: (...a: unknown[]) => productDelete(...(a as [])),
+  },
+  digitalProductPurchase: {
+    findFirst: async () =>
+      purchases.find(
+        (p) =>
+          p.status === "SUCCEEDED" ||
+          p.status === "REFUNDED" ||
+          p.paymentId !== null,
+      ) ?? null,
+    findMany: async () =>
+      purchases.filter((p) => p.status === "PENDING" || p.status === "FAILED"),
+    deleteMany: (...a: unknown[]) => purchaseDeleteMany(...(a as [])),
   },
   $executeRaw: async () => 1,
 };
@@ -83,6 +107,7 @@ import { requireApiAuth } from "../../lib/auth-helpers";
 import { POST as publishRoute } from "../../app/api/digital-products/[productId]/publish/route";
 import { POST as uploadUrl } from "../../app/api/digital-products/[productId]/assets/upload-url/route";
 import { POST as replace } from "../../app/api/digital-products/[productId]/assets/[assetId]/replace/route";
+import { DELETE as deleteProduct } from "../../app/api/digital-products/[productId]/route";
 
 const params = { params: Promise.resolve({ productId: "dp_1" }) };
 const json = (body: unknown) =>
@@ -93,6 +118,7 @@ const json = (body: unknown) =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  purchases.length = 0;
   process.env.R2_DIGITAL_PRODUCTS_BUCKET = "digital-products";
 });
 
@@ -167,4 +193,38 @@ it("reserves a PENDING file under a fresh key and versions a replacement in its 
     order: 3,
     status: "PENDING",
   });
+});
+
+it("deletes a product with only abandoned checkouts, and keeps one with a sale or a refund", async () => {
+  purchases.push(
+    { status: "PENDING", gatewayOrderId: "order_p", paymentId: null },
+    { status: "FAILED", gatewayOrderId: "order_f", paymentId: null },
+  );
+  const deleted = await deleteProduct(json({}), params);
+  expect(deleted.status).toBe(200);
+  expect(purchaseDeleteMany).toHaveBeenCalledWith({
+    where: {
+      productId: "dp_1",
+      status: { in: ["PENDING", "FAILED"] },
+      paymentId: null,
+    },
+  });
+  expect(productDelete).toHaveBeenCalledWith({ where: { id: "dp_1" } });
+  // After commit, best effort; a late capture is refunded as an orphan.
+  expect(cancelOrder.mock.calls.map(([id]) => id)).toEqual([
+    "order_p",
+    "order_f",
+  ]);
+
+  jest.clearAllMocks();
+  purchases.push({
+    status: "REFUNDED",
+    gatewayOrderId: "order_r",
+    paymentId: "pay_1",
+  });
+  const kept = await deleteProduct(json({}), params);
+  expect(kept.status).toBe(409);
+  expect((await kept.json()).code).toBe("HAS_PURCHASES");
+  expect(productDelete).not.toHaveBeenCalled();
+  expect(cancelOrder).not.toHaveBeenCalled();
 });

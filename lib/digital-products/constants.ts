@@ -171,3 +171,8 @@ export function allowedExtensionsFor(
 export function categoryFileRule(category: DigitalProductCategory): string {
   return `The ${DIGITAL_PRODUCT_CATEGORY_LABEL[category]} category takes ${allowedExtensionsFor(category).join(", ")} files.`;
 }
+
+/** What an owner sees wherever a buyer would buy or claim their own product. */
+export function ownProductNotice(free: boolean): string {
+  return `This is your own product — buyers will see ${free ? "a Get for free" : "a Buy"} button here.`;
+}
