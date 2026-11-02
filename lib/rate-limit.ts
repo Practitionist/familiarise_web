@@ -220,7 +220,11 @@ export const digitalProductUploadLimiter = makeLimiter(
   "1 m",
   "rl:digital-product-upload",
 );
-/** 30 per 10 minutes per user — digital product file downloads */
+/**
+ * ~30 per 10 minutes per user — digital product file downloads. Upstash's
+ * sliding window floors the previous bucket's weighted count, so a burst
+ * straddling a bucket boundary can admit one or two more.
+ */
 export const digitalProductDownloadLimiter = makeLimiter(
   30,
   "10 m",
