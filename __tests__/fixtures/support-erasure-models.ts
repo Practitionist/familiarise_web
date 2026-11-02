@@ -9,7 +9,7 @@ export function supportScrubModels() {
       findMany: jest.fn(async () => []),
       updateMany: none(),
     },
-    digitalProduct: { updateMany: none() },
+    digitalProduct: { findMany: jest.fn(async () => []), updateMany: none() },
     digitalProductAsset: {
       findMany: jest.fn(async () => []),
       updateMany: none(),

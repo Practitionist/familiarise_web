@@ -10,13 +10,18 @@ const ERASURE_PURGE_BATCH = 500;
  * In the scrub transaction: take the erased creator's products off sale and
  * retire their files, and drop the erased buyer's download trail, free claims,
  * failed attempts and report text. Paid purchases stay with their Payment.
+ * Answers the products it took off sale so the caller can purge them after commit.
  */
 export async function scrubDigitalProductsTx(
   tx: Tx,
   userId: string,
   now: Date,
-): Promise<void> {
+): Promise<{ consultantProfileId: string; slug: string }[]> {
   const ownProducts = { consultantProfile: { userId } };
+  const onSale = await tx.digitalProduct.findMany({
+    where: { ...ownProducts, status: { not: "ARCHIVED" } },
+    select: { consultantProfileId: true, slug: true },
+  });
   await tx.digitalProduct.updateMany({
     where: { ...ownProducts, status: { not: "ARCHIVED" } },
     data: { status: "ARCHIVED", archivedAt: now },
@@ -39,6 +44,7 @@ export async function scrubDigitalProductsTx(
     where: { reporterId: userId },
     data: { reason: "[erased]" },
   });
+  return onSale;
 }
 
 /**

@@ -187,3 +187,6 @@ export function digitalProductLibraryHref(user: {
     ? goLibraryHref("purchases")
     : null;
 }
+
+/** Next data-cache tag of the public products listing. */
+export const PUBLIC_PRODUCTS_TAG = "digital-products";

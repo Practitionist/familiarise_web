@@ -1,9 +1,11 @@
 import "server-only";
 
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import type { DigitalProductCategory, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { digitalProductDiscoverableWhere } from "@/lib/api/plans/visibility";
+import { PUBLIC_PRODUCTS_TAG } from "@/lib/digital-products/constants";
 import { lineageDisplayNames } from "@/lib/digital-products/lineage";
 
 /**
@@ -66,6 +68,47 @@ export const getConsultantDigitalProducts = cache(
       fileCount: _count.assets,
     }));
   },
+);
+
+export interface PublicProductListItem extends PublicProductCard {
+  creator: { consultantProfileId: string; name: string | null };
+}
+
+/** The marketplace listing: products on sale, newest first. Purged by `purgeDigitalProductSurfaces`. */
+export const listPublicDigitalProducts = unstable_cache(
+  async (perPage: number): Promise<PublicProductListItem[]> => {
+    const rows = await prisma.digitalProduct.findMany({
+      where: {
+        ...digitalProductDiscoverableWhere(),
+        consultantProfile: { deletedAt: null },
+      },
+      orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
+      take: perPage,
+      select: {
+        id: true,
+        slug: true,
+        title: true,
+        subtitle: true,
+        category: true,
+        pricePaise: true,
+        coverImagePath: true,
+        _count: { select: { assets: { where: VERIFIED } } },
+        consultantProfile: {
+          select: { id: true, user: { select: { name: true } } },
+        },
+      },
+    });
+    return rows.map(({ _count, consultantProfile, ...row }) => ({
+      ...row,
+      fileCount: _count.assets,
+      creator: {
+        consultantProfileId: consultantProfile.id,
+        name: consultantProfile.user.name,
+      },
+    }));
+  },
+  ["public-digital-products"],
+  { revalidate: 300, tags: [PUBLIC_PRODUCTS_TAG] },
 );
 
 const PRODUCT_PAGE_SELECT = {

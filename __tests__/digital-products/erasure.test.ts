@@ -20,7 +20,7 @@ import type { Db, Tx } from "../../lib/prisma";
 const updateMany = jest.fn(async () => ({ count: 1 }));
 const deleteMany = jest.fn(async () => ({ count: 1 }));
 const db = {
-  digitalProduct: { updateMany },
+  digitalProduct: { updateMany, findMany: jest.fn(async () => []) },
   digitalProductAsset: {
     updateMany,
     findMany: jest.fn(async () => [

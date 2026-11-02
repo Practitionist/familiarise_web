@@ -1,31 +1,17 @@
-import { Suspense } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { PlayCircle, Clock } from "lucide-react";
-import { listPublicRecordings } from "@/lib/data/recordings-explore";
+import { listPublicReplayCards } from "@/lib/data/recordings-explore";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import { formatCurrencyAmount } from "@/utils/formatting";
-
-// ISR — same rationale as /explore/experts: anonymous, session-free listing;
-// prerendered HTML off the CDN. Unpublish purges on demand at its write site.
-export const revalidate = 300;
-
-export const metadata = {
-  title: "Recordings Library | Familiarise",
-  description:
-    "Recorded webinars and classes from verified consultants. Replays are not on sale yet; attendees watch their sessions from their dashboard.",
-};
 
 function formatPrice(paise: number): string {
   return formatCurrencyAmount(paise, "INR");
 }
 
-async function RecordingsGrid() {
-  // Deliberately LOUD: __tests__/explore/isr-routes-never-fail-open.test.ts
-  // enforces that ISR listings never mask data-layer failures.
-  const { items } = await withBuildTimeRetry(() =>
-    listPublicRecordings({ perPage: 48 }),
-  );
+export async function ReplaysGrid() {
+  // A failing read reaches the error boundary; the listing never degrades to empty.
+  const items = await withBuildTimeRetry(() => listPublicReplayCards(48));
 
   if (items.length === 0) {
     return (
@@ -45,7 +31,9 @@ async function RecordingsGrid() {
         <Link
           key={rec.id}
           href={
-            rec.slug ? `/explore/recordings/${rec.slug}` : `/explore/recordings`
+            rec.slug
+              ? `/explore/recordings/${rec.slug}`
+              : "/explore/products?tab=replays"
           }
           className="group rounded-xl border bg-card overflow-hidden hover:shadow-md transition-shadow"
         >
@@ -89,31 +77,6 @@ async function RecordingsGrid() {
           </div>
         </Link>
       ))}
-    </div>
-  );
-}
-
-export default function ExploreRecordingsPage() {
-  return (
-    <div className="container mx-auto px-4 py-10 space-y-8">
-      <header className="space-y-2 text-center">
-        <h1 className="text-3xl font-bold tracking-tight">
-          Recordings Library
-        </h1>
-        <p className="text-muted-foreground max-w-2xl mx-auto">
-          Replays of webinars and classes, published by their consultants.
-          Replay sales are coming soon.
-        </p>
-      </header>
-      <Suspense
-        fallback={
-          <div className="py-24 text-center text-muted-foreground">
-            Loading recordings…
-          </div>
-        }
-      >
-        <RecordingsGrid />
-      </Suspense>
     </div>
   );
 }

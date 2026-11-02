@@ -57,6 +57,10 @@
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import type { Db } from "@/lib/prisma";
+import {
+  purgeDigitalProductSurfaces,
+  purgeRecordingSurfaces,
+} from "@/lib/data/public-cache";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -352,34 +356,42 @@ async function unpublishHostedGroupRecordingsOnErasure(
   userId: string,
   now: Date,
 ): Promise<void> {
+  let listedSlugs: (string | null)[] = [];
   if (db.recording?.updateMany) {
-    await db.recording.updateMany({
-      where: {
-        listingStatus: "PUBLISHED",
-        meeting: {
-          occurrence: {
-            appointment: {
-              OR: [
-                {
-                  webinar: {
-                    webinarPlan: { consultantProfile: { userId } },
-                  },
+    const where: Prisma.RecordingWhereInput = {
+      listingStatus: "PUBLISHED",
+      meeting: {
+        occurrence: {
+          appointment: {
+            OR: [
+              {
+                webinar: {
+                  webinarPlan: { consultantProfile: { userId } },
                 },
-                {
-                  class: {
-                    classPlan: { consultantProfile: { userId } },
-                  },
+              },
+              {
+                class: {
+                  classPlan: { consultantProfile: { userId } },
                 },
-              ],
-            },
+              },
+            ],
           },
         },
       },
+    };
+    const listed =
+      (await db.recording.findMany?.({
+        where,
+        select: { slug: true },
+      })) ?? [];
+    await db.recording.updateMany({
+      where,
       data: {
         listingStatus: "UNPUBLISHED",
         unpublishedAt: now,
       },
     });
+    if (Array.isArray(listed)) listedSlugs = listed.map((row) => row.slug);
   }
 
   if (db.recordingConsent?.updateMany) {
@@ -388,6 +400,9 @@ async function unpublishHostedGroupRecordingsOnErasure(
       data: { decision: "DECLINED", decidedAt: now },
     });
   }
+
+  // After the scrub transaction has committed, and last so a purge failure cannot skip the steps above.
+  if (listedSlugs.length > 0) purgeRecordingSurfaces(listedSlugs);
 }
 
 async function cleanupUserRecordingsOnErasure(
@@ -841,6 +856,7 @@ export async function scrubUser(
     );
 
   let collaborationsRemoved: CollaborationRef[] = [];
+  let archivedProducts: { consultantProfileId: string; slug: string }[] = [];
   let supportAttachmentPathsToRemove: string[] = [];
   let erasureRequestId: string | null = null;
   let principalOutboxQueued = false;
@@ -933,7 +949,7 @@ export async function scrubUser(
       data: { requestNotes: null },
     });
     supportAttachmentPathsToRemove = await scrubSupportPiiTx(tx, userId, now);
-    await scrubDigitalProductsTx(tx, userId, now);
+    archivedProducts = await scrubDigitalProductsTx(tx, userId, now);
 
     // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
     // every split and roster; the same flip the moderation ban runs.
@@ -1174,6 +1190,8 @@ export async function scrubUser(
     supportAttachmentPathsToRemove,
     userId,
   );
+  // After commit, whether or not the creator had replays: a cached listing would keep their products.
+  for (const product of archivedProducts) purgeDigitalProductSurfaces(product);
   const productFileFailures = await purgeErasedCreatorFiles(
     prisma,
     userId,

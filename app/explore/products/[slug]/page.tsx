@@ -2,7 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { ArrowLeft, ChevronRight, FileText } from "lucide-react";
+import { ArrowLeft, FileText } from "lucide-react";
 
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -22,6 +22,10 @@ import {
   ProductPurchasePanel,
   type ProductViewer,
 } from "./ProductPurchasePanel";
+import {
+  PublicBreadcrumb,
+  publicBreadcrumbItems,
+} from "@/components/explore/PublicBreadcrumb";
 import { ReportProductButton } from "@/components/digital-products/ReportProductButton";
 
 // Ownership is per viewer, so the page renders per request.
@@ -125,39 +129,21 @@ export default async function DigitalProductPage({
         });
 
   const expertHref = `/explore/experts/${product.creator.consultantProfileId}`;
-  const expertName = product.creator.name ?? "Expert";
   const libraryHref = viewer.kind === "owned" ? viewer.libraryHref : null;
 
   // DOM order is the mobile order: header, purchase panel, then the long description.
   return (
     <div className="container mx-auto grid max-w-5xl gap-x-8 gap-y-6 px-4 py-6 sm:py-10 lg:grid-cols-[1.6fr_1fr]">
       <div className="flex min-w-0 items-center justify-between gap-3 text-sm text-muted-foreground lg:col-span-2">
-        <nav aria-label="Breadcrumb" className="min-w-0">
-          <ol className="flex min-w-0 items-center gap-1.5">
-            <li className="hidden shrink-0 sm:block">
-              <Link href="/explore/experts" className="hover:text-foreground">
-                Experts
-              </Link>
-            </li>
-            <li aria-hidden className="hidden shrink-0 sm:block">
-              <ChevronRight className="h-3.5 w-3.5" />
-            </li>
-            <li className="min-w-0 max-w-[45%] shrink-0 truncate sm:max-w-[16rem]">
-              <Link href={expertHref} className="hover:text-foreground">
-                {expertName}
-              </Link>
-            </li>
-            <li aria-hidden className="shrink-0">
-              <ChevronRight className="h-3.5 w-3.5" />
-            </li>
-            <li
-              aria-current="page"
-              className="min-w-0 truncate text-foreground"
-            >
-              {product.title}
-            </li>
-          </ol>
-        </nav>
+        <PublicBreadcrumb
+          items={publicBreadcrumbItems(
+            {
+              id: product.creator.consultantProfileId,
+              name: product.creator.name,
+            },
+            product.title,
+          )}
+        />
         {libraryHref && (
           <Link
             href={libraryHref}
