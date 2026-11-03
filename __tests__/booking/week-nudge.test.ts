@@ -68,6 +68,14 @@ it("runs on the first day, the next and the third, not in between", () => {
   expect(day(4)).toBeNull();
 });
 
+it("skips the first day for a plan scheduled with Auto, not the later ones", () => {
+  const day = (n: number) =>
+    weekNudgeFor(plan(delivered), at(WEEK_TWO, 24 * n + 10), TZ, true);
+  expect(day(0)).toBeNull();
+  expect(day(1)).toMatchObject({ weekNumber: 2, sessionsToPlace: 3 });
+  expect(day(3)).not.toBeNull();
+});
+
 it("anchors on the consultant's own zone", () => {
   // 09:00 IST on Mon 9 Mar is 03:30 UTC; a London consultant waits for 09:00 London.
   expect(

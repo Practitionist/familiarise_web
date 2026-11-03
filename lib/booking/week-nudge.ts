@@ -2,7 +2,8 @@
 // place. Daytime only: the ladder starts at 09:00 on the week's first day in
 // the consultant's zone, runs on that day, the next and the third (+0/+1/+3
 // days), and anything due outside 08:00–21:00 local (or inside the
-// consultant's quiet hours) waits for the next run. One bell and one email
+// consultant's quiet hours) waits for the next run. A plan scheduled with Auto
+// skips the first day; the sweep places it. One bell and one email
 // per consultant per local day list every plan due; the outbox rows dedupe.
 
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
@@ -28,6 +29,7 @@ import { deriveTransactionId } from "@/lib/novu/outbox";
 import { computeQuietHoursNotBefore } from "@/lib/novu/quiet-hours";
 import { formatDateRangeLabel } from "@/lib/time/display";
 import { getAppUrl } from "@/lib/url";
+import { plansScheduledOnAuto } from "@/lib/data/plan-schedule-choice";
 
 /** Days after the week's first morning on which the consultant is reminded. */
 export const WEEK_NUDGE_DAYS = [0, 1, 3] as const;
@@ -60,11 +62,14 @@ export function inWakingHours(now: Date, zone: string): boolean {
  * The plan week the consultant is reminded about today, or null. Only the
  * CURRENT plan week counts (a next week opened early is the consultant being
  * ahead), and only on a ladder day from 09:00 local on the week's first day.
+ * A plan scheduled with Auto skips the first day, while the sweep places it;
+ * the later days still remind when the week is still unplaced.
  */
 export function weekNudgeFor(
   input: SubscriptionEntitlementInput,
   now: Date,
   consultantZone: string,
+  planOnAuto = false,
 ): WeekNudge | null {
   const entitlement = subscriptionEntitlement({ ...input, now });
   const { nextBatch, ordinal, count, windowEnd } = entitlement.cycle;
@@ -93,6 +98,7 @@ export function weekNudgeFor(
       86_400_000,
   );
   if (!(WEEK_NUDGE_DAYS as readonly number[]).includes(daysIn)) return null;
+  if (planOnAuto && daysIn === 0) return null;
   return {
     weekNumber: ordinal + 1,
     weekCount: count,
@@ -234,6 +240,7 @@ async function readNudgeablePlans(
 function dueNudgeFor(
   sub: NudgePlan,
   now: Date,
+  planOnAuto: boolean,
 ): {
   consultantProfileId: string;
   userId: string;
@@ -256,6 +263,7 @@ function dueNudgeFor(
     },
     now,
     zone,
+    planOnAuto,
   );
   if (!nudge) return null;
   return {
@@ -387,8 +395,10 @@ export async function nudgeUnplacedPlanWeeks(limits: {
     { userId: string; zone: string; plans: DuePlan[] }
   >();
   try {
-    for (const sub of await readNudgeablePlans(now, budget)) {
-      const due = dueNudgeFor(sub, now);
+    const plans = await readNudgeablePlans(now, budget);
+    const onAuto = await plansScheduledOnAuto(plans.map((sub) => sub.id));
+    for (const sub of plans) {
+      const due = dueNudgeFor(sub, now, onAuto.has(sub.id));
       if (!due) continue;
       const entry = byConsultant.get(due.consultantProfileId) ?? {
         userId: due.userId,
