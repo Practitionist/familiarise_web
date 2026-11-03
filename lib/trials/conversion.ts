@@ -3,15 +3,20 @@ import { transitionTrial } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import type { Tx } from "@/lib/prisma";
 
+/** A plan paid this long after the trial ended is not its conversion. */
+export const TRIAL_CONVERSION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
 /**
- * A completed trial converts when a subscription with the same expert is PAID:
- * at capture, or at a checkout that settles with no gateway. Never at checkout
- * start, so an abandoned checkout leaves the trial COMPLETED. CAS on
- * COMPLETED → CONVERTED; losing it never fails the capture.
+ * A completed trial converts when a subscription to any plan of the same
+ * expert is PAID within 30 days of the trial's completion: at capture, or at a
+ * checkout that settles with no gateway. Never at checkout start, so an
+ * abandoned checkout leaves the trial COMPLETED. CAS on COMPLETED → CONVERTED;
+ * losing it never fails the capture.
  */
 export async function convertCompletedTrial(
   tx: Tx,
   subscriptionId: string,
+  paidAt: Date = new Date(),
 ): Promise<string | null> {
   const subscription = await tx.subscription.findUnique({
     where: { id: subscriptionId },
@@ -27,6 +32,9 @@ export async function convertCompletedTrial(
       consultantProfileId: subscription.subscriptionPlan.consultantProfileId,
       status: TrialStatus.COMPLETED,
       convertedToSubscriptionId: null,
+      completedAt: {
+        gte: new Date(paidAt.getTime() - TRIAL_CONVERSION_WINDOW_MS),
+      },
     },
     select: { id: true },
   });

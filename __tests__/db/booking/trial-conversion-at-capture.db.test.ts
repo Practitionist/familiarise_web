@@ -32,7 +32,7 @@ jest.mock("../../../lib/novu", () => {
 import { handleCheckout } from "../../../lib/payments/checkout";
 import { confirmExistingAppointment } from "../../../lib/payments/webhooks/handlers";
 
-async function seedTrialledPlan() {
+async function seedTrialledPlan(completedDaysAgo = 1) {
   const host = await seedHost();
   await publishEveryHour(host);
   const buyer = await seedBuyer();
@@ -53,7 +53,7 @@ async function seedTrialledPlan() {
       consultantProfileId: host.consultantProfileId,
       subscriptionPlanId: plan.id,
       status: "COMPLETED",
-      completedAt: new Date(Date.now() - 24 * 3_600_000),
+      completedAt: new Date(Date.now() - completedDaysAgo * 24 * 3_600_000),
     },
   });
   return { host, buyer, plan, trial };
@@ -102,5 +102,33 @@ it("checkout start leaves the trial COMPLETED; the capture converts it", async (
   expect(await trialOf(trial.id)).toEqual({
     status: "CONVERTED",
     convertedToSubscriptionId: payment.appointment!.subscriptionId,
+  });
+});
+
+it("a plan paid more than 30 days after the trial ended is not its conversion", async () => {
+  const { buyer, plan, trial } = await seedTrialledPlan(31);
+  await handleCheckout(
+    {
+      appointmentType: "SUBSCRIPTION",
+      planId: plan.id,
+      schedulingPeriodStartsAt: futureAt(2, 0).toISOString(),
+      paymentGateway: "RAZORPAY",
+      clientIdempotencyKey: `trial-conv-late-${randomUUID()}`,
+      consumerStateCode: "29",
+    },
+    buyer.userId,
+  );
+  const payment = await prisma.payment.findFirstOrThrow({
+    where: { userId: buyer.userId },
+    select: { appointmentId: true },
+  });
+  await prisma.$transaction(
+    (tx) =>
+      confirmExistingAppointment(tx, payment.appointmentId!, buyer.userId),
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
+  expect(await trialOf(trial.id)).toEqual({
+    status: "COMPLETED",
+    convertedToSubscriptionId: null,
   });
 });

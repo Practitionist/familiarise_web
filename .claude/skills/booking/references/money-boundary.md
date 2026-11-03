@@ -293,7 +293,9 @@ takes the late-capture path and is refunded in full
 
 **A trial converts only when the plan is paid.** `convertCompletedTrial`
 (`lib/trials/conversion.ts`) moves the consultee's COMPLETED trial with the same
-expert (any plan) to CONVERTED and stamps `convertedToSubscriptionId`, by CAS.
+expert (any plan) to CONVERTED and stamps `convertedToSubscriptionId`, by CAS,
+only when the plan is paid within 30 days of `Trial.completedAt`
+(`TRIAL_CONVERSION_WINDOW_MS`); a later purchase is not its conversion.
 It runs in `confirmApprovalStatus` at capture (`lib/payments/webhooks/handlers.ts`)
 and at a no-gateway subscription checkout that settles at once (`skipPayment` in
 `lib/payments/checkout/handlers/subscription.ts`), never at checkout start, so an
