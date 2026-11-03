@@ -259,6 +259,8 @@ Never run `prisma db push` as part of a rendering change. There is deferred, unr
 
 ## Sources
 
+For the general App Router rules this file builds on (Server and Client Components, status codes, route handlers, middleware, React 18.3 limits and a PR checklist), see `.claude/skills/nextjs/SKILL.md`.
+
 These were opened as primary sources rather than summarised second-hand.
 
 - [Using a CDN with Next.js](https://nextjs.org/docs/app/guides/cdn-caching) — the exact per-strategy `Cache-Control` values.
