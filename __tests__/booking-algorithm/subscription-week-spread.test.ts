@@ -36,6 +36,7 @@ import type {
   EventType,
 } from "../../utils/scheduling-engine/types";
 import { weeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
+import type { AllocationPreference } from "@/utils/scheduling-engine/preferenceScoring";
 
 const IST = "Asia/Kolkata";
 const IST_OFFSET = 330;
@@ -79,7 +80,11 @@ const weekConfig: EventConfig = {
   schedulingTimezone: IST,
 };
 
-const place = (consultant: ConsultantAllocationData, eventType: EventType) =>
+const place = (
+  consultant: ConsultantAllocationData,
+  eventType: EventType,
+  preference?: AllocationPreference,
+) =>
   findAvailableSlots(
     {
       appointment: { findMany: jest.fn().mockResolvedValue([]) },
@@ -91,6 +96,9 @@ const place = (consultant: ConsultantAllocationData, eventType: EventType) =>
     weekConfig,
     [],
     [],
+    undefined,
+    undefined,
+    preference,
   );
 
 const weekdaysOf = (slots: Date[]) => [
@@ -120,21 +128,9 @@ it("still places every session when only consecutive days are open", async () =>
 });
 
 it("keeps the free day between sessions when a preference is set too", async () => {
-  const slots = await findAvailableSlots(
-    {
-      appointment: { findMany: jest.fn().mockResolvedValue([]) },
-    } as unknown as PrismaLike,
-    consultantOn(DAYS),
-    6,
-    2,
-    "subscription",
-    weekConfig,
-    [],
-    [],
-    undefined,
-    undefined,
-    { preferredDays: "WEEKDAYS" },
-  );
+  const slots = await place(consultantOn(DAYS), "subscription", {
+    preferredDays: "WEEKDAYS",
+  });
   expect(slots).toHaveLength(6);
   expect(weekdaysOf(slots)).toEqual([1, 3, 5]);
 });

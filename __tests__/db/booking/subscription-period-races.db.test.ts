@@ -15,6 +15,7 @@ import {
   overlappingOccupyingPairs,
   seedConsultee,
   seedHost,
+  seedPaidSubscription,
   type SeededConsultee,
   type SeededHost,
 } from "./harness";
@@ -131,75 +132,6 @@ async function publishMornings(host: SeededHost, days: number[]) {
       endsAt: futureAt(day, 10),
     })),
   });
-}
-
-/** A paid subscription (2 sessions a week, 1 month) whose first cycle is not placed yet. */
-async function seedPaidSubscription(
-  host: SeededHost,
-  subscriber: SeededConsultee,
-  periodStart: Date,
-) {
-  const price = BigInt(400_000);
-  const plan = await prisma.subscriptionPlan.create({
-    data: {
-      title: "Database tier subscription",
-      price,
-      consultantProfileId: host.consultantProfileId,
-      sessionsPerWeek: 2,
-      durationInMonths: 1,
-      sessionDurationInHours: 1,
-      totalSessions: 8,
-    },
-  });
-  const subscription = await prisma.subscription.create({
-    data: {
-      subscriptionPlanId: plan.id,
-      requestedById: subscriber.consulteeProfileId,
-      status: "PENDING",
-      bookingSource: "DIRECT_CHECKOUT",
-      schedulingPeriodStartsAt: periodStart,
-      schedulingPeriodEndsAt: new Date(
-        periodStart.getTime() + 30 * 24 * HOUR_MS,
-      ),
-      planEndsAt: new Date(periodStart.getTime() + 30 * 24 * HOUR_MS),
-      schedulingTimezone: "UTC",
-      sessionsTotal: 8,
-    },
-  });
-  const appointment = await prisma.appointment.create({
-    data: { appointmentType: "SUBSCRIPTION", subscriptionId: subscription.id },
-  });
-  await prisma.appointmentParticipant.createMany({
-    data: [
-      {
-        appointmentId: appointment.id,
-        userId: host.userId,
-        role: "CONSULTANT",
-        status: "CONFIRMED",
-      },
-      {
-        appointmentId: appointment.id,
-        userId: subscriber.userId,
-        role: "CONSULTEE",
-        status: "CONFIRMED",
-      },
-    ],
-  });
-  await prisma.payment.create({
-    data: {
-      amount: price,
-      originalAmount: price,
-      paymentMethod: "card",
-      paymentIntent: `order_dbtier_${randomUUID()}`,
-      paymentGateway: "RAZORPAY",
-      paymentStatus: "SUCCEEDED",
-      userId: subscriber.userId,
-      appointmentId: appointment.id,
-      isMockPayment: true,
-      legs: { create: [{ source: "CARD", amountPaise: price }] },
-    },
-  });
-  return { subscriptionId: subscription.id, appointmentId: appointment.id };
 }
 
 function checkoutAt(planId: string, startsAt: Date) {

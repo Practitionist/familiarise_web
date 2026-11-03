@@ -200,9 +200,9 @@ describe.each(["consultation", "subscription"] as const)(
 );
 
 describe("a stranded booking (released, no open proposal)", () => {
-  it("answers 409 USE_CANCEL_ENDPOINT instead of declining", async () => {
+  // The proposal lapsed without a restore: the session stays released.
+  async function strandedBooking() {
     const booking = await movingBooking("consultation");
-    // The proposal lapsed without a restore: the session stays released.
     await prisma.rescheduleRequest.updateMany({
       where: { appointmentId: booking.appointmentId },
       data: {
@@ -211,6 +211,11 @@ describe("a stranded booking (released, no open proposal)", () => {
         resolvedAt: new Date(),
       },
     });
+    return booking;
+  }
+
+  it("answers 409 USE_CANCEL_ENDPOINT instead of declining", async () => {
+    const booking = await strandedBooking();
     const res = await decline(
       "consultation",
       "detail",
@@ -221,15 +226,7 @@ describe("a stranded booking (released, no open proposal)", () => {
   });
 
   it("refuses an approval with PLACE_RELEASED_SESSIONS", async () => {
-    const booking = await movingBooking("consultation");
-    await prisma.rescheduleRequest.updateMany({
-      where: { appointmentId: booking.appointmentId },
-      data: {
-        status: "EXPIRED",
-        openForAppointmentId: null,
-        resolvedAt: new Date(),
-      },
-    });
+    const booking = await strandedBooking();
     const id = booking.consultationId!;
     const res = await patchConsultation(
       json(`http://localhost/api/bookings/consultations/${id}`, "PATCH", {

@@ -65,9 +65,10 @@ const trialOf = (id: string) =>
     select: { status: true, convertedToSubscriptionId: true },
   });
 
-it("checkout start leaves the trial COMPLETED; the capture converts it", async () => {
-  const { buyer, plan, trial } = await seedTrialledPlan();
+type Seeded = Awaited<ReturnType<typeof seedTrialledPlan>>;
 
+/** Starts the plan's checkout and returns the buyer's payment row. */
+async function startCheckout({ buyer, plan }: Seeded) {
   await handleCheckout(
     {
       appointmentType: "SUBSCRIPTION",
@@ -79,55 +80,45 @@ it("checkout start leaves the trial COMPLETED; the capture converts it", async (
     },
     buyer.userId,
   );
-
-  // Abandoned here, the trial is still a plain completed trial.
-  expect(await trialOf(trial.id)).toEqual({
-    status: "COMPLETED",
-    convertedToSubscriptionId: null,
-  });
-
-  const payment = await prisma.payment.findFirstOrThrow({
+  return prisma.payment.findFirstOrThrow({
     where: { userId: buyer.userId },
     select: {
+      id: true,
       appointmentId: true,
       appointment: { select: { subscriptionId: true } },
     },
   });
-  await prisma.$transaction(
-    (tx) =>
-      confirmExistingAppointment(tx, payment.appointmentId!, buyer.userId),
+}
+
+/** The capture's confirmation, as the webhook runs it. */
+const confirmCapture = (appointmentId: string, userId: string) =>
+  prisma.$transaction(
+    (tx) => confirmExistingAppointment(tx, appointmentId, userId),
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
   );
 
-  expect(await trialOf(trial.id)).toEqual({
+it("checkout start leaves the trial COMPLETED; the capture converts it", async () => {
+  const seeded = await seedTrialledPlan();
+  const payment = await startCheckout(seeded);
+
+  // Abandoned here, the trial is still a plain completed trial.
+  expect(await trialOf(seeded.trial.id)).toEqual({
+    status: "COMPLETED",
+    convertedToSubscriptionId: null,
+  });
+
+  await confirmCapture(payment.appointmentId!, seeded.buyer.userId);
+  expect(await trialOf(seeded.trial.id)).toEqual({
     status: "CONVERTED",
     convertedToSubscriptionId: payment.appointment!.subscriptionId,
   });
 });
 
 it("a plan paid more than 30 days after the trial ended is not its conversion", async () => {
-  const { buyer, plan, trial } = await seedTrialledPlan(31);
-  await handleCheckout(
-    {
-      appointmentType: "SUBSCRIPTION",
-      planId: plan.id,
-      schedulingPeriodStartsAt: futureAt(2, 0).toISOString(),
-      paymentGateway: "RAZORPAY",
-      clientIdempotencyKey: `trial-conv-late-${randomUUID()}`,
-      consumerStateCode: "29",
-    },
-    buyer.userId,
-  );
-  const payment = await prisma.payment.findFirstOrThrow({
-    where: { userId: buyer.userId },
-    select: { appointmentId: true },
-  });
-  await prisma.$transaction(
-    (tx) =>
-      confirmExistingAppointment(tx, payment.appointmentId!, buyer.userId),
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
-  expect(await trialOf(trial.id)).toEqual({
+  const seeded = await seedTrialledPlan(31);
+  const payment = await startCheckout(seeded);
+  await confirmCapture(payment.appointmentId!, seeded.buyer.userId);
+  expect(await trialOf(seeded.trial.id)).toEqual({
     status: "COMPLETED",
     convertedToSubscriptionId: null,
   });
@@ -135,22 +126,8 @@ it("a plan paid more than 30 days after the trial ended is not its conversion", 
 
 it("is judged at the capture, not when a late reconcile confirms it", async () => {
   // Captured 29 days after the trial ended, confirmed by a sweep on day 31.
-  const { buyer, plan, trial } = await seedTrialledPlan(31);
-  await handleCheckout(
-    {
-      appointmentType: "SUBSCRIPTION",
-      planId: plan.id,
-      schedulingPeriodStartsAt: futureAt(2, 0).toISOString(),
-      paymentGateway: "RAZORPAY",
-      clientIdempotencyKey: `trial-conv-reconciled-${randomUUID()}`,
-      consumerStateCode: "29",
-    },
-    buyer.userId,
-  );
-  const payment = await prisma.payment.findFirstOrThrow({
-    where: { userId: buyer.userId },
-    select: { id: true, appointmentId: true },
-  });
+  const seeded = await seedTrialledPlan(31);
+  const payment = await startCheckout(seeded);
   await prisma.payment.update({
     where: { id: payment.id },
     data: {
@@ -158,10 +135,6 @@ it("is judged at the capture, not when a late reconcile confirms it", async () =
       capturedAt: new Date(Date.now() - 2 * 24 * 3_600_000),
     },
   });
-  await prisma.$transaction(
-    (tx) =>
-      confirmExistingAppointment(tx, payment.appointmentId!, buyer.userId),
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-  );
-  expect((await trialOf(trial.id)).status).toBe("CONVERTED");
+  await confirmCapture(payment.appointmentId!, seeded.buyer.userId);
+  expect((await trialOf(seeded.trial.id)).status).toBe("CONVERTED");
 });
