@@ -44,6 +44,19 @@ export function leadMsFor(
   }
 }
 
+/**
+ * The lead a buyer's pick on an expert page needs: a REQUEST-mode plan is paid
+ * only after approval, so a priced one uses the request lead.
+ */
+export function leadMsForPlan(
+  requestMode: boolean,
+  price: number | string | null | undefined,
+): number {
+  return leadMsFor(requestMode ? "request" : "book", {
+    settled: Number(price ?? 0) <= 0,
+  });
+}
+
 /** "15 minutes" / "2 hours" / "24 hours": a lead time in words. */
 export function leadLabel(leadMs: number): string {
   const minutes = Math.round(leadMs / 60_000);

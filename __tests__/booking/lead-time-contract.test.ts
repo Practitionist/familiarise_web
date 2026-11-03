@@ -12,6 +12,7 @@ import {
   assertUnpaidApprovalFits,
   isTooSoonFor,
   leadMsFor,
+  leadMsForPlan,
   RESCHEDULE_MIN_LEAD_HOURS,
 } from "@/lib/booking/lead-time";
 import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
@@ -178,4 +179,12 @@ it("keeps lead-time.ts free of server-side booking modules", () => {
     "@/lib/booking/booking-rule-error",
     "@/lib/payments/constants",
   ]);
+});
+
+describe("an expert page's pick", () => {
+  it("uses the request lead only for a priced REQUEST-mode plan", () => {
+    expect(leadMsForPlan(true, 1500)).toBe(2 * HOUR);
+    expect(leadMsForPlan(true, 0)).toBe(leadMsFor("book"));
+    expect(leadMsForPlan(false, 1500)).toBe(leadMsFor("book"));
+  });
 });

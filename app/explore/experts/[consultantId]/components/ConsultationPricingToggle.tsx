@@ -1,6 +1,6 @@
 "use client";
 
-import { leadMsFor } from "@/lib/booking/lead-time";
+import { leadMsForPlan } from "@/lib/booking/lead-time";
 import {
   HELD_BY_SOMEONE_ELSE,
   NotifyWhenFreeButton,
@@ -137,13 +137,10 @@ export default function ConsultationPricingToggle({
   );
 
   const selectedDuration = activePlanOption?.durationInHours ?? 1;
-  // A REQUEST-mode plan is paid only after approval, so a priced one needs the
-  // request lead time; the list never offers a time request-for-approval refuses.
+  // The list never offers a time request-for-approval refuses.
   const requestMode =
     (consultantDetails.bookingMode ?? "INSTANT") === "REQUEST";
-  const leadMs = leadMsFor(requestMode ? "request" : "book", {
-    settled: Number(activePlanOption?.price ?? 0) <= 0,
-  });
+  const leadMs = leadMsForPlan(requestMode, activePlanOption?.price);
 
   useEffect(() => {
     onDurationChange?.(selectedDuration);
@@ -217,14 +214,14 @@ export default function ConsultationPricingToggle({
     );
     if (intentPlan) setActiveConsultationOption(intentPlan.id);
 
-    // Matched against the intent plan's own windows, so the restored pick is
-    // still live once the plan tab switches to it.
+    // Matched against the intent plan's own windows and lead, so the restored
+    // pick is still live once the plan tab switches to it.
     const match = windowsForDay(
       slotTimings,
       intentPlan?.durationInHours ?? selectedDuration,
       timezone,
       Date.now(),
-      leadMs,
+      intentPlan ? leadMsForPlan(requestMode, intentPlan.price) : leadMs,
     ).find((slot) => sameWindow(slot, intent.slot) && isBookableWindow(slot));
     if (match) {
       setSelectedSlot(match);
@@ -239,6 +236,7 @@ export default function ConsultationPricingToggle({
     selectedDuration,
     timezone,
     leadMs,
+    requestMode,
     consultationOptions,
     consultantDetails.id,
     session?.user?.id,
