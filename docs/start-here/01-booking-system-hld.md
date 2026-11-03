@@ -148,7 +148,7 @@ Three things keep a plan moving without the consultant remembering:
 - **The top-up.** The `reconcile-occurrence-availability` sweep re-runs auto allocation for a short plan when its consultant changed availability since the last attempt, or when that attempt is at least 6 hours old, so a week that opens on the calendar is filled without an availability edit. Changed calendars go first, then the rest oldest attempt first, at most 25 plans and 60 seconds a run. It places weeks on its own only for a plan its consultant scheduled with Auto (the choice is the `reason` on the allocation's history row, `lib/booking/allocation/schedule-choice.ts`); every other plan gets the reminder, which opens the allocate page with a one-tap "Auto-schedule this week".
 - **The phone.** The allocate page on a phone offers "Auto-schedule this week", one auto allocation (a top-up for a plan that already has sessions); the desktop Auto button reads the same for a plan.
 
-The consultee's cycle-done notice says "Your latest {plan} sessions are done" and claims no week number, because it can fire while a session of that week is still unplaced. The booking card reads "Week done · the next 3 to be scheduled." for either side, only while a week is open to place into.
+The consultee's cycle-done notice says "Your latest {plan} sessions are done" and claims no week number, because it can fire while a session of that week is still unplaced. The booking card reads "Week done · the next 3 to be scheduled." for either side, only while a week is open to place into. A plan that ended with sessions never delivered reads "Plan ended · N sessions were not held.", plus the plan-end refund once it is stored ("₹X refunded.").
 
 ## 4. Concurrency layers
 

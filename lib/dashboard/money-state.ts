@@ -32,6 +32,7 @@ import {
   type PaymentDisplayLike,
 } from "@/lib/appointments/payment-display";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { PLAN_END_REFUND_REASON } from "@/lib/payments/refund-reasons";
 
 export type Viewer = "CONSULTANT" | "CONSULTEE" | "ORG_ADMIN";
 
@@ -144,6 +145,8 @@ export type RefundInput = {
   status: string;
   /** #1780 — the gateway's refund id once it has one; a placeholder before. */
   refundId?: string | null;
+  /** Who wrote it and why (`PLAN_END_REFUND_REASON` for an ended plan's unused sessions). */
+  reason?: string | null;
   createdAt?: Date | string | null;
   updatedAt?: Date | string | null;
 };
@@ -196,7 +199,14 @@ export interface BookingPresentationInput {
   } | null;
   names: { payer: string; consultant: string };
   /** #1775 C-5 — a subscription's entitlement summary (lib/booking/entitlement). */
-  entitlement?: { remaining: number; nextBatch: number } | null;
+  entitlement?: {
+    remaining: number;
+    nextBatch: number;
+    /** Sessions of the plan that were never delivered. */
+    notHeld?: number;
+    /** The plan's end has passed. */
+    planEnded?: boolean;
+  } | null;
   /** #1780 E-5 — a class seat's series ledger summary. */
   series?: {
     misses: number;
@@ -294,6 +304,35 @@ function allocationWait(
   )
     return "NEXT_CYCLE";
   return null;
+}
+/**
+ * A plan that ended with sessions never delivered says so, before and after
+ * the plan-end sweep, with the settlement's stored refund when there is one;
+ * null when the plan was fully held or has not ended.
+ */
+function planEndedShortWhy(input: BookingPresentationInput): string | null {
+  const e = input.entitlement;
+  if (!e?.planEnded || !e.notHeld) return null;
+  const head = `Plan ended · ${
+    e.notHeld === 1 ? "1 session was" : `${e.notHeld} sessions were`
+  } not held.`;
+  const settled = input.refunds.filter(
+    (r) => r.reason === PLAN_END_REFUND_REASON,
+  );
+  const sum = (status: string) =>
+    settled
+      .filter((r) => r.status === status)
+      .reduce((total, r) => total + Number(r.amountPaise), 0);
+  const currency =
+    input.payments.find((p) => p.paymentStatus === "SUCCEEDED")?.currency ??
+    "INR";
+  const refunded = sum("SUCCEEDED");
+  if (refunded > 0) return `${head} ${money(refunded, currency)} refunded.`;
+  const onItsWay = sum("PENDING");
+  if (onItsWay > 0) {
+    return `${head} ${money(onItsWay, currency)} refund on its way.`;
+  }
+  return head;
 }
 const CONFIRMED_FAMILY = new Set(["APPROVED", "SCHEDULED", "IN_PROGRESS"]);
 const COMPLETED_FAMILY = new Set(["COMPLETED", "CONVERTED"]);
@@ -455,7 +494,10 @@ function deriveBooking(
         };
   }
   if (COMPLETED_FAMILY.has(status))
-    return { state: "COMPLETED", why: "Every session has been held." };
+    return {
+      state: "COMPLETED",
+      why: planEndedShortWhy(input) ?? "Every session has been held.",
+    };
   const wait = allocationWait(input, live, paid, now);
   if (wait === "CYCLE_1") {
     const by = allocateDeadline(input.payments);
@@ -514,7 +556,10 @@ function deriveBooking(
           };
     }
     if (live.every((o) => isOccurrencePastGrace(o, now))) {
-      return { state: "COMPLETED", why: "Every session has been held." };
+      return {
+        state: "COMPLETED",
+        why: planEndedShortWhy(input) ?? "Every session has been held.",
+      };
     }
     const noun =
       kind === "CONSULTATION" || kind === "TRIAL"

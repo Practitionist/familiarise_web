@@ -244,8 +244,16 @@ function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
 
 function entitlementSummary(
   e: SubscriptionEntitlement | null,
+  now = new Date(),
 ): BookingPresentationInput["entitlement"] {
-  return e ? { remaining: e.remaining, nextBatch: e.cycle.nextBatch } : null;
+  return e
+    ? {
+        remaining: e.remaining,
+        nextBatch: e.cycle.nextBatch,
+        notHeld: Math.max(0, e.total - e.completed),
+        planEnded: now.getTime() >= e.planEndsAt.getTime(),
+      }
+    : null;
 }
 
 /** Who pays and who delivers, by name; the derivation swaps in "you" per viewer. */
