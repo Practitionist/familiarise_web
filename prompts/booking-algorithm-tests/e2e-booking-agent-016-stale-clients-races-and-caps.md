@@ -9,7 +9,7 @@
 > taken"); a cancel dialog's refund figure is bound to the click (409
 > `REFUND_QUOTE_CHANGED`); a cancel retry replays the committed result; cancel
 > racing a reschedule leaves one consistent outcome; and reschedules are capped
-> per side from the release history. Fixture suffix `-016`.
+> per side from the release records. Fixture suffix `-016`.
 
 You are a senior QA engineer. Prove no stale or racing client can charge, refund
 or move something other than what its user saw, and that every loser gets a typed
@@ -150,15 +150,20 @@ from the network panel if the body differs).
 After each cycle count:
 
 ```sql
-SELECT COUNT(DISTINCT h."createdAt") AS releases
-FROM "BookingStatusHistory" h
-WHERE h."appointmentId" = '<APPT_5>' AND h.entity = 'OCCURRENCE'
-  AND h."toStatus" = 'RESCHEDULED' AND h."actorUserId" = '<CONSULTEE_A_USER_ID>';
+SELECT COUNT(*) AS releases
+FROM "RescheduleRequest" r
+WHERE r."appointmentId" = '<APPT_5>' AND r."initiatorRole" = 'CONSULTEE'
+  AND r.status <> 'WITHDRAWN' AND r."restoredAt" IS NULL
+  AND r."releasedSessions" IS NOT NULL;
 ```
 
-**Expected:** cycles 1 and 2 succeed (`releases` 1, then 2); the **third** consultee
-release answers `422`, `code: "MAX_RESCHEDULES_EXCEEDED"` (2 per baseline session).
-The allocator replacing occurrences between cycles must not reset the count.
+Each release with no proposed times opens a preference-only `RescheduleRequest`
+that records the session it released (`releasedSessions`), and the expert's
+placement closes it. **Expected:** cycles 1 and 2 succeed (`releases` 1, then 2);
+the **third** consultee release of the same session answers `422`,
+`code: "MAX_RESCHEDULES_EXCEEDED"` (2 per session, by ordinal). The allocator
+replacing occurrences between cycles must not reset the count, and a request that
+was withdrawn or restored would not have counted.
 
 Repeat for the **expert** on a fresh booking `<APPT_6>`: the first two expert
 reschedules succeed and the third answers `409`, `code: "EXPERT_RESCHEDULE_CAP"`

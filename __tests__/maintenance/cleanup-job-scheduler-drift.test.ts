@@ -2,88 +2,106 @@
  * @jest-environment node
  */
 
-/**
- * Every `/api/cleanup/[job]` slug must have a scheduler: a Netlify ticker
- * target, a step in a `cron-*.yml` workflow, or an explicit `MANUAL_ONLY` entry.
- * The registry and ticker are read as text so the check needs neither Prisma nor Redis.
- */
+/** The build-time job coverage check, on the real registry and on each violation it must catch. */
 
 import fs from "node:fs";
 import path from "node:path";
 
-import { TARGETS } from "@/lib/cron/schedule";
-import { MANUAL_ONLY } from "@/lib/cron/manual-only";
+import { checkJobCoverage, registrySlugs } from "@/lib/cron/job-coverage";
 
-const ROOT = path.join(__dirname, "..", "..");
-const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
+const REGISTRY = path.join(
+  __dirname,
+  "..",
+  "..",
+  "lib",
+  "cron",
+  "cleanup-registry.ts",
+);
+const slugs = registrySlugs(fs.readFileSync(REGISTRY, "utf8"));
 
-/** Slug plus the `job:` name its entry runs under, which workflows may use instead. */
-function registryJobs(): { slug: string; names: string[] }[] {
-  const src = fs.readFileSync(
-    path.join(ROOT, "lib", "cron", "cleanup-registry.ts"),
-    "utf8",
-  );
-  return src
-    .split(/\/\/ @cleanup-twin /)
-    .slice(1)
-    .map((block) => {
-      const slug = block.match(/^([a-z0-9-]+)/)?.[1];
-      if (!slug) {
-        throw new Error(
-          `cleanup-registry.ts: "@cleanup-twin" marker without a slug near: ${block.slice(0, 60)}`,
-        );
-      }
-      const job = block.match(/job: "([a-z0-9-]+)"/)?.[1];
-      return { slug, names: job ? [slug, job] : [slug] };
-    });
-}
+const fixture = {
+  registrySlugs: ["a", "b", "manual"],
+  targets: ["a", "b"],
+  manualOnly: { manual: "operator only" },
+  requirements: [
+    { target: "a", jobName: "a", tier: "paging" },
+    { target: "b", jobName: "run-b", tier: "watched" },
+  ],
+  jobNameOf: (target: string) => (target === "b" ? "run-b" : target),
+};
 
-function tickerTargets(): Set<string> {
-  return new Set(TARGETS);
-}
-
-function workflowText(): string {
-  return fs
-    .readdirSync(WORKFLOW_DIR)
-    .filter((f) => /^cron-.*\.yml$/.test(f))
-    .map((f) => fs.readFileSync(path.join(WORKFLOW_DIR, f), "utf8"))
-    .join("\n")
-    .split("\n")
-    .filter((l) => !l.trim().startsWith("#"))
-    .join("\n");
-}
-
-describe("cleanup job schedulers", () => {
-  const jobs = registryJobs();
-  const keys = jobs.map((j) => j.slug);
-  const targets = tickerTargets();
-  const workflows = workflowText();
-  const manual = Object.keys(MANUAL_ONLY);
-
-  it("reads a non-trivial registry", () => {
-    expect(keys.length).toBeGreaterThan(40);
-    expect(targets.size).toBeGreaterThan(10);
+describe("job coverage", () => {
+  it("passes on the real registry, schedule and requirements", () => {
+    expect(slugs.length).toBeGreaterThan(40);
+    expect(checkJobCoverage({ registrySlugs: slugs })).toEqual([]);
+    expect(checkJobCoverage(fixture)).toEqual([]);
   });
 
-  it("gives every registry job a ticker target, a workflow step, or a MANUAL_ONLY reason", () => {
-    const unscheduled = jobs
-      .filter(({ slug, names }) => {
-        if (targets.has(slug) || manual.includes(slug)) return false;
-        return !names.some((n) =>
-          new RegExp(
-            `(id:\\s*${n}\\s*$)|(/${n}\\.ts)|(api/cleanup/${n}(?![a-z0-9-]))`,
-            "m",
-          ).test(workflows),
-        );
-      })
-      .map((j) => j.slug);
-    expect(unscheduled).toEqual([]);
-  });
-
-  it("keeps MANUAL_ONLY entries real and unscheduled", () => {
-    for (const slug of manual) {
-      expect(keys).toContain(slug);
-      expect(targets.has(slug)).toBe(false);
-    }
+  it.each([
+    [
+      "an unscheduled registry job",
+      { registrySlugs: [...fixture.registrySlugs, "orphan"] },
+      /"orphan" has no ticker target/,
+    ],
+    [
+      "a ticker target with no registry job",
+      { targets: [...fixture.targets, "ghost"] },
+      /Ticker target "ghost" has no registry job/,
+    ],
+    [
+      "an empty registry parse",
+      { registrySlugs: [] },
+      /no `\/\/ @cleanup-twin <slug>` markers/,
+    ],
+    [
+      "a MANUAL_ONLY entry with no job",
+      { manualOnly: { ...fixture.manualOnly, ghost: "gone" } },
+      /MANUAL_ONLY entry "ghost" names no registry job/,
+    ],
+    [
+      "a MANUAL_ONLY entry that is also scheduled",
+      { manualOnly: { ...fixture.manualOnly, a: "both" } },
+      /"a" is also a ticker target/,
+    ],
+    [
+      "a target without a requirement",
+      { requirements: fixture.requirements.slice(0, 1) },
+      /"b" has 0 freshness requirements/,
+    ],
+    [
+      "a requirement under a renamed run row",
+      {
+        requirements: [
+          fixture.requirements[0],
+          { target: "b", jobName: "old-b", tier: "watched" },
+        ],
+      },
+      /watches "old-b", but the target writes run rows as "run-b"/,
+    ],
+    [
+      "a requirement for a dead target",
+      {
+        requirements: [
+          ...fixture.requirements,
+          { target: "gone", jobName: "gone", tier: "paging" },
+        ],
+      },
+      /names "gone", which is not a ticker target/,
+    ],
+    [
+      "a requirement without a tier",
+      {
+        requirements: [
+          fixture.requirements[0],
+          { target: "b", jobName: "run-b", tier: "" },
+        ],
+      },
+      /has tier ""/,
+    ],
+  ])("catches %s", (_case, override, message) => {
+    const violations = checkJobCoverage({ ...fixture, ...override });
+    expect(violations).toEqual(
+      expect.arrayContaining([expect.stringMatching(message)]),
+    );
   });
 });

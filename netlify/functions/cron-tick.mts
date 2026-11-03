@@ -6,28 +6,31 @@
  * booking sweeps, the session-outcome jobs, the drains, hourly payout
  * processing, the dispute and payout reconcilers, and the money batch jobs,
  * the daily ledger reconcile, the GST register and the quarterly TDS draft
- * inside their calendar windows ({@link TARGET_WINDOWS}). GitHub Actions runs
- * only non-money batch jobs and is NOT a backstop for a ticker target: a
- * target missing here runs nowhere unless a workflow names it.
- * A tick first reads the fleet switch `ops:active_cron_platform` and skips every
- * target unless this host is the active one ({@link otherActivePlatform}).
+ * inside their calendar windows ({@link TARGET_WINDOWS}), and the housekeeping,
+ * compliance and retention jobs. No workflow schedules a registry job, so a
+ * target missing here runs nowhere.
+ * Only the production deploy dispatches. A tick reads the fleet switch
+ * `ops:active_cron_platform` and skips every target unless this host is the
+ * active one ({@link otherActivePlatform}), then claims its five-minute slot
+ * in Postgres so a second dispatch of the same slot stands down.
  * It never writes money state itself: every target is `CRON_SECRET`-gated and
  * wraps its core in `withCronLock`, so overlapping runs answer 409 from the
  * loser — expected, not an error.
  *
- * Deliberately light: no `@netlify/functions` import, only `zod`,
- * `process.env` and the global `fetch`/`AbortController` the Netlify
- * Functions runtime already provides. `@sentry/node` and the shared error
+ * Deliberately light: no `@netlify/functions` import, only `zod`, the
+ * Sentry-free Better Stack emitter, `process.env` and the global
+ * `fetch`/`AbortController` the Netlify Functions runtime already provides. `@sentry/node` and the shared error
  * budget are imported lazily, only for the missing-secret fatal and for
  * {@link alertFailedTargets}.
  *
  * The tick always answers 200; see {@link statusFor} for why.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
-  dueTargets,
+  capToTick,
+  scheduledTargets,
   scheduleFor,
   targetRequest,
   isFirstDueTickOfHour,
@@ -38,10 +41,17 @@ import {
 import {
   isPlatformErrorBody,
   isRepeatedFailure,
+  lastRunFailed,
   streakReportSchema,
   type StreakReport,
 } from "../../lib/cron/failure-streak";
 import { jobOutcomeSchema, type JobOutcome } from "../../lib/cron/job-outcome";
+import { offProductionDeploy } from "../../lib/cron/deploy-context";
+import {
+  emitTelemetryLog,
+  pendingAgesSchema,
+  type PendingAges,
+} from "../../lib/observability/betterstack-telemetry";
 
 export const config = { schedule: "*/5 * * * *" };
 
@@ -55,7 +65,11 @@ interface TickBody {
   /** Failed targets whose fail-closed lease the database could not grant; they write no run row. */
   lockUnavailable: string[];
   failed: { name: string; status: number }[];
+  /** Due targets whose idle probe found no work; recorded on the claim row, never dispatched. */
+  skippedIdle: string[];
   durationMs: number;
+  /** Queue gauges from the slot claim; absent when the claim could not read them. */
+  oldestPendingAgeS?: PendingAges;
 }
 
 /**
@@ -132,6 +146,8 @@ async function hitTarget(
   lockUnavailable?: boolean;
   errorBody?: string;
   outcome?: JobOutcome;
+  /** The tick's own abort fired; the target may still be running. */
+  aborted?: boolean;
 }> {
   const { url, timeoutMs } = targetRequest(baseUrl, name, now);
   const controller = new AbortController();
@@ -189,10 +205,51 @@ async function hitTarget(
       ...(errorBody ? { errorBody } : {}),
     };
   } catch {
-    return { name, status: 0, maintenance: false };
+    return {
+      name,
+      status: 0,
+      maintenance: false,
+      aborted: controller.signal.aborted,
+    };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** A retry needs at least this much of the tick's target budget left. */
+const RETRY_MIN_REMAINING_MS = 5_000;
+
+/**
+ * A request that never reached the app (a connection failure, not our abort,
+ * or Netlify's own 500 page) is retried once while the tick has time left.
+ */
+export function isRetryable(result: {
+  status: number;
+  aborted?: boolean;
+  errorBody?: string;
+}): boolean {
+  if (result.status === 0) return result.aborted !== true;
+  return result.status === 500 && isPlatformErrorBody(result.errorBody);
+}
+
+async function hitTargetOnceMore(
+  ...args: Parameters<typeof hitTarget>
+): ReturnType<typeof hitTarget> {
+  const first = await hitTarget(...args);
+  const deadline = args[4];
+  if (!isRetryable(first) || deadline - Date.now() < RETRY_MIN_REMAINING_MS) {
+    return first;
+  }
+  console.log(
+    JSON.stringify({
+      event: "cron-tick-target-retry",
+      target: first.name,
+      status: first.status,
+    }),
+  );
+  const retried = await hitTarget(...args);
+  // A 409 here is likely the lease the crashed first call took; keep its failure.
+  return retried.status === 409 ? first : retried;
 }
 
 /** Targets whose 207 means some rows failed; every other target's 207 is a successful run that flagged rows. */
@@ -233,20 +290,9 @@ export function bucketFor(
 }
 
 /**
- * #1868 — which failed targets are reported to Sentry itself.
- *
- * The Sentry ingest canary is excluded. An unhealthy canary answers 503 with
- * no `phase`, so `bucketFor` files it under `failed`, and `alertFailedTargets`
- * reports to Sentry — the very system whose outage the canary just detected.
- * During a quota outage that is one event per tick that can never arrive; after
- * recovery, one more per tick spent from the allowance being protected. A
- * monitor that reports its own failure through the failing system is not a
- * monitor.
- *
- * The canary is still counted as failed: it stays in the HTTP status and the
- * response body, so a 503 remains visible in the tick's output and the job
- * history. Only the Sentry report is suppressed, and the email alert — which
- * fails open, so this same outage cannot silence it — carries the signal.
+ * Which failed targets are reported to Sentry itself. The ingest canary is
+ * excluded: its unhealthy verdict is a 207 finding, and a crashed canary is
+ * caught by the freshness probe, never by the system whose ingest it checks.
  */
 export function reportableToSentry(name: string): boolean {
   return name !== "sentry-ingest-canary";
@@ -281,20 +327,16 @@ async function alertMissingSecret(error: string): Promise<void> {
   }
 }
 
-/**
- * The Sentry event for one failing target. A repeat failure is an error issue
- * per target; a one-off is a warning on one shared fingerprint, target in tags.
- */
-export function buildFailedTargetEvent(
-  failed: { name: string; status: number; errorBody?: string },
-  repeated = true,
-) {
+/** The Sentry event for a target that keeps failing: one error issue per target. */
+export function buildFailedTargetEvent(failed: {
+  name: string;
+  status: number;
+  errorBody?: string;
+}) {
   return {
     message: `cron-tick: target ${failed.name} failed`,
-    level: repeated ? ("error" as const) : ("warning" as const),
-    fingerprint: repeated
-      ? ["cron-tick", failed.name]
-      : ["cron-tick", "target-failed-once"],
+    level: "error" as const,
+    fingerprint: ["cron-tick", failed.name],
     tags: {
       subsystem: "cron",
       op: "cron-tick",
@@ -313,11 +355,6 @@ export function buildFailedTargetEvent(
   };
 }
 
-/**
- * Report each failing target to Sentry, once an hour per target. `statusFor`
- * answers 200 regardless, so without this a broken sweep only shows in the log;
- * a total outage is bounded by the shared 10/hour breaker.
- */
 /** Bounded read of each failing target's last COMPLETED run; null means history unknown. */
 async function fetchStreaks(
   baseUrl: string,
@@ -344,6 +381,7 @@ async function fetchStreaks(
   }
 }
 
+/** Judges each failing target on its first due tick of the hour; only repeats page Sentry. */
 async function alertFailedTargets(
   failed: { name: string; status: number; errorBody?: string }[],
   tickStart: Date,
@@ -357,6 +395,26 @@ async function alertFailedTargets(
     history.secret,
     due.map((f) => f.name),
   );
+  // A one-off stays in the logs; only a repeat (isRepeatedFailure) reaches Sentry.
+  const repeated = due.filter((f) =>
+    isRepeatedFailure(
+      scheduleFor(f.name)?.everyMinutes ?? 5,
+      streaks?.[f.name],
+      tickStart,
+    ),
+  );
+  for (const f of due) {
+    if (repeated.includes(f)) continue;
+    console.warn(
+      JSON.stringify({
+        event: "cron-tick.target-failed-once",
+        target: f.name,
+        status: f.status,
+        ...(isPlatformErrorBody(f.errorBody) ? { class: "platform" } : {}),
+      }),
+    );
+  }
+  if (repeated.length === 0) return;
   try {
     const Sentry = await import("@sentry/node");
     const { applyErrorBudget } = await import("../../sentry.shared.config");
@@ -382,14 +440,8 @@ async function alertFailedTargets(
         stackFrameVariables: false,
       },
     });
-    for (const f of due) {
-      const everyMinutes = scheduleFor(f.name)?.everyMinutes ?? 5;
-      const repeated = isRepeatedFailure(
-        everyMinutes,
-        streaks?.[f.name],
-        tickStart,
-      );
-      const event = buildFailedTargetEvent(f, repeated);
+    for (const f of repeated) {
+      const event = buildFailedTargetEvent(f);
       Sentry.captureMessage(event.message, event);
     }
     await Sentry.flush(2_000);
@@ -526,9 +578,123 @@ export async function otherActivePlatform(
   }
 }
 
-export default async function cronTick(_req: Request): Promise<Response> {
+const SLOT_MS = 5 * 60_000;
+
+/** The tick's id: a custom (version 8) UUID hashed from the five-minute slot, so a second dispatch carries the same id. */
+export function tickIdForSlot(slot: Date): string {
+  const hex = createHash("sha256")
+    .update(`cron-tick:${slot.toISOString()}`)
+    .digest("hex");
+  const variant = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** Covers a cold start plus the app's idle probes and queue gauges (2.75 s worst case), its commit and the claim insert. */
+const TICK_CLAIM_TIMEOUT_MS = 5_000;
+const tickClaimReply = z.object({
+  claimed: z.boolean(),
+  idle: z.array(z.string()).optional(),
+  pendingAges: pendingAgesSchema.optional(),
+});
+
+/**
+ * Claims the slot in Postgres through the app, which also names the scheduled
+ * targets its probes found idle and the queue gauges. `claimed` is false only
+ * when another dispatch holds the slot; an unreachable or unreadable reply runs
+ * every target and carries no gauges.
+ */
+export async function claimTickSlot(
+  baseUrl: string,
+  secret: string,
+  tickId: string,
+  slot: Date,
+  scheduled: readonly Target[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<{
+  claimed: boolean;
+  idle: ReadonlySet<string>;
+  pendingAges?: PendingAges;
+}> {
+  const runAll = { claimed: true, idle: new Set<string>() };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TICK_CLAIM_TIMEOUT_MS);
+  try {
+    const query = `tickId=${encodeURIComponent(tickId)}&slot=${encodeURIComponent(slot.toISOString())}&due=${scheduled.map(encodeURIComponent).join(",")}`;
+    const res = await fetchImpl(`${baseUrl}/api/health/jobs/tick?${query}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}` },
+      signal: controller.signal,
+    });
+    if (!res.ok) return runAll;
+    const parsed = tickClaimReply.safeParse(await res.json());
+    if (!parsed.success) return runAll;
+    return {
+      claimed: parsed.data.claimed,
+      idle: new Set(
+        (parsed.data.idle ?? []).filter((name) =>
+          scheduled.some((target) => target === name),
+        ),
+      ),
+      ...(parsed.data.pendingAges
+        ? { pendingAges: parsed.data.pendingAges }
+        : {}),
+    };
+  } catch {
+    return runAll;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Accepted background targets whose newest finished run failed: a 202 only
+ * admits the run, so the previous run's outcome stands in for the target's.
+ */
+async function failedBackgroundTargets(
+  accepted: string[],
+  history: { baseUrl: string; secret: string },
+): Promise<string[]> {
+  if (accepted.length === 0) return [];
+  const streaks = await fetchStreaks(history.baseUrl, history.secret, accepted);
+  return accepted.filter((name) => lastRunFailed(streaks?.[name]));
+}
+
+/** One Better Stack heartbeat per completed tick; unset skips it, a failure never fails the tick. */
+async function pingHeartbeat(): Promise<void> {
+  const url = process.env.BETTERSTACK_HEARTBEAT_URL;
+  if (!url) return;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) {
+      console.error(
+        JSON.stringify({ event: "heartbeat-rejected", status: res.status }),
+      );
+    }
+  } catch {
+    console.error(JSON.stringify({ event: "heartbeat-unavailable" }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export default async function cronTick(
+  _req: Request,
+  context?: unknown,
+): Promise<Response> {
   const started = Date.now();
-  const tickId = randomUUID();
+  // Netlify's "Run now" also fires previews and branch deploys; only production dispatches.
+  const deployContext = offProductionDeploy(context);
+  if (deployContext) {
+    console.log(
+      JSON.stringify({ event: "cron-tick", skipped: true, deployContext }),
+    );
+    return jsonResponse({ skipped: true, deployContext }, 200);
+  }
+  const tickDate = new Date(Math.round(started / 60_000) * 60_000);
+  const slot = new Date(Math.floor(tickDate.getTime() / SLOT_MS) * SLOT_MS);
+  const tickId = tickIdForSlot(slot);
   const otherPlatform = await otherActivePlatform();
   if (otherPlatform !== null) {
     console.log(
@@ -553,6 +719,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
           lockHeld: [],
           lockUnavailable: [],
           failed: [],
+          skippedIdle: [],
           durationMs: Date.now() - started,
         },
         error,
@@ -564,18 +731,32 @@ export default async function cronTick(_req: Request): Promise<Response> {
   }
 
   // Netlify sets URL to the site's primary deploy URL; CRON_TICK_BASE_URL is
-  // the override for local runs (`netlify dev`) and any deploy where URL
-  // resolves somewhere other than this app.
+  // the override for a host where URL resolves somewhere other than this app.
   // S8786 — a quantified trailing-slash regex risks catastrophic
   // backtracking; strip one slash at a time instead.
   let baseUrl = process.env.CRON_TICK_BASE_URL || process.env.URL || "";
   while (baseUrl.endsWith("/")) baseUrl = baseUrl.slice(0, -1);
-  const tickDate = new Date(Math.round(started / 60_000) * 60_000);
-  const targets = dueTargets(tickDate);
+  const scheduled = scheduledTargets(tickDate);
+  const claim = await claimTickSlot(baseUrl, secret, tickId, slot, scheduled);
+  if (!claim.claimed) {
+    console.log(
+      JSON.stringify({ event: "cron-tick", duplicate: true, tickId }),
+    );
+    return jsonResponse({ duplicate: true, tickId }, 200);
+  }
+  const skippedIdle = scheduled.filter((name) => claim.idle.has(name));
+  const targets = capToTick(scheduled.filter((name) => !claim.idle.has(name)));
 
   const settled = await Promise.allSettled(
     targets.map((name) =>
-      hitTarget(baseUrl, secret, name, tickDate, started + 24_000, tickId),
+      hitTargetOnceMore(
+        baseUrl,
+        secret,
+        name,
+        tickDate,
+        started + 24_000,
+        tickId,
+      ),
     ),
   );
 
@@ -614,6 +795,19 @@ export default async function cronTick(_req: Request): Promise<Response> {
     }
   });
 
+  for (const name of await failedBackgroundTargets(accepted, {
+    baseUrl,
+    secret,
+  })) {
+    accepted.splice(accepted.indexOf(name), 1);
+    failed.push({ name, status: 202 });
+    failedForAlert.push({
+      name,
+      status: 202,
+      errorBody: "last background run failed",
+    });
+  }
+
   const durationMs = Date.now() - started;
   const body: TickBody = {
     event: "cron-tick",
@@ -623,13 +817,16 @@ export default async function cronTick(_req: Request): Promise<Response> {
     lockHeld,
     lockUnavailable,
     failed,
+    skippedIdle,
     durationMs,
+    ...(claim.pendingAges ? { oldestPendingAgeS: claim.pendingAges } : {}),
   };
   console.log(JSON.stringify(body));
   // Check-in and alert waiting share the remaining ticker budget; aborts do not cancel target work.
   await Promise.all([
     sendCheckIn(failed.length > 0 ? "error" : "ok", durationMs),
     emitTickSummary(body),
+    pingHeartbeat(),
     boundedAlert(
       failedForAlert.filter((f) => reportableToSentry(f.name)),
       tickDate,
@@ -642,56 +839,29 @@ export default async function cronTick(_req: Request): Promise<Response> {
   return jsonResponse(body, statusFor(failed));
 }
 
-/**
- * One Better Stack Telemetry line per tick, independent of Sentry. Inline
- * because `lib/observability/betterstack-telemetry` pulls `@sentry/nextjs`
- * into the function bundle; same env contract, never throws.
- */
+/** One Better Stack summary per tick, the event the freshness alert keys on; never throws. */
 async function emitTickSummary(body: TickBody, error?: string): Promise<void> {
-  const token = process.env.BETTERSTACK_SOURCE_TOKEN;
-  const url = process.env.BETTERSTACK_INGEST_URL;
-  if (process.env.ENABLE_BETTERSTACK_TELEMETRY !== "true" || !token || !url) {
-    return;
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 2_000);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        dt: new Date().toISOString(),
-        level: error || body.failed.length > 0 ? "error" : "info",
-        message: "cron-tick summary",
-        category: "CRON",
-        tickId: body.tickId,
-        durationMs: body.durationMs,
-        okCount: body.ok.length,
-        acceptedCount: body.accepted.length,
-        lockHeld: body.lockHeld,
-        lockUnavailableCount: body.lockUnavailable.length,
-        lockUnavailable: body.lockUnavailable,
-        failed: body.failed,
-        ...(error ? { error } : {}),
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      console.error(
-        JSON.stringify({
-          event: "betterstack-summary-rejected",
-          status: res.status,
-        }),
-      );
-    }
-  } catch {
-    // Telemetry is best effort.
-  } finally {
-    clearTimeout(timer);
-  }
+  await emitTelemetryLog(
+    {
+      level: error || body.failed.length > 0 ? "error" : "info",
+      message: "cron-tick summary",
+      category: "CRON",
+      tickId: body.tickId,
+      durationMs: body.durationMs,
+      okCount: body.ok.length,
+      acceptedCount: body.accepted.length,
+      lockHeld: body.lockHeld,
+      lockUnavailableCount: body.lockUnavailable.length,
+      lockUnavailable: body.lockUnavailable,
+      failed: body.failed,
+      skippedIdleCount: body.skippedIdle.length,
+      ...(body.oldestPendingAgeS
+        ? { oldestPendingAgeS: body.oldestPendingAgeS }
+        : {}),
+      ...(error ? { error } : {}),
+    },
+    fetch,
+  );
 }
 
 async function boundedAlert(

@@ -10,7 +10,11 @@
 
 import Link from "next/link";
 import { useId, useState, type ReactNode } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { ChevronDown, FolderOpen } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -262,6 +266,13 @@ function DateField({
   );
 }
 
+/** True when `key` is `base` plus a query string, i.e. the same list. */
+function sameList(key: QueryKey, base: QueryKey) {
+  return (
+    key.length === base.length + 1 && base.every((part, i) => key[i] === part)
+  );
+}
+
 export function LibraryBrowser({
   artifact,
   endpoint,
@@ -292,7 +303,12 @@ export function LibraryBrowser({
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
       return res.json();
     },
-    placeholderData: keepPreviousData,
+    // Keep the last page only across this list's own page and filter changes;
+    // another list's rows have a different shape.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery && sameList(previousQuery.queryKey, queryKey)
+        ? keepPreviousData(previous)
+        : undefined,
   });
 
   const filtered =

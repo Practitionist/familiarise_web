@@ -330,7 +330,7 @@ export function useSupportThread(
         toast({
           title: "Support",
           description:
-            "Support has closed this conversation, so your message wasn't sent. Start a new request from Support.",
+            "Support has closed this conversation, so your message wasn't sent. Start a new support case from Support.",
           variant: "destructive",
         });
         return;

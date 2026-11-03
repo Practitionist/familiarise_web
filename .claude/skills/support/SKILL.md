@@ -49,6 +49,7 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - Never write a channel's `config_overrides` outside `syncSupportBoundary()` (`lib/stream/support-boundary.ts`). It revokes member changes and owner truncation for `user` and `channel_moderator` while an INTERVENE grant is live and clears them when the last one ends; call it after commit wherever a grant starts or ends. A READ must change nothing in Stream.
 - Never mint a Stream token for another user, give operators Stream `admin`, or read a chat with a client `watch()`. Staff reach chats only through the case chat routes, which audit every page.
 - Never let an organization tag grant access to a personal case, and never return message bodies from organization feeds.
+- Recheck presenter grants after case selection. Revoked presenters get no detail; requester-only access gets a summary. Payment and CSAT require a current correspondence grant.
 - Never write a JS reconciler for a rule the sidecar already enforces (AGENTS.md §1.3); never add a second scheduler, Redis cron lock or `jobs/` wrapper for the sweep (AGENTS.md §1.1, §1.4).
 - Never capture to Sentry per row in a sweep arm; collect into `errors` and report once.
 - Never run `prisma db push`, `npm run db:*` or the DB race tier against the shared database.

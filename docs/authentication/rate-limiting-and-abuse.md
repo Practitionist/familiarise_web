@@ -32,8 +32,9 @@ normalisation.
 - **Fails open.** A Redis error or a reply slower than 500 ms lets the request
   through and sends a throttled Sentry event (`auth:rate-limit-store`). A Redis
   outage must not lock everyone out of signing in.
-- **Client IP** comes from `x-nf-client-connection-ip`, which Netlify sets and
-  clients cannot forge. IPv6 is keyed on the /64.
+- **Client IP** comes from `x-familiarise-client-ip`, which edge middleware
+  overwrites on every request with the address it resolved, so clients cannot
+  forge it. IPv6 is keyed on the /64.
 - **Loopback** (`127.0.0.1`, `::1`) is skipped outside production so local and
   e2e runs are not throttled.
 - **`Retry-After`.** BetterAuth sends only `X-Retry-After`; `withRetryAfter`
@@ -81,7 +82,7 @@ paths are disabled.
 | re-authentication             | `POST /api/user/reauthenticate`                  | 5 / 15 min per user  | Handler |
 | referral check                | `GET /api/referrals/code/check/[code]`           | 10 / min per IP      | Handler |
 
-The referral check keys on `getClientIp` (`x-nf-client-connection-ip`) and
+The referral check keys on `getClientIp` (the middleware-stamped IP) and
 answers only `valid` and the referrer's first name, so it cannot be used to
 harvest full names.
 
@@ -203,8 +204,9 @@ per submitted address, each in a fixed 15-minute window:
   address-wide wait to 2 minutes, which keeps credential stuffing to roughly
   25 guesses per 15 minutes per account. The 15-minute wait lands only on the
   prefix doing the guessing, so 40 wrong passwords from a stranger's network
-  never lock out the owner signing in from home. The prefix is the trusted
-  client IP from `lib/request-ip.ts`, cut to /24 for IPv4 and /48 for IPv6.
+  never lock out the owner signing in from home. The prefix is the
+  middleware-stamped client IP from `lib/request-ip.ts`, cut to /24 for IPv4
+  and /48 for IPv6.
 - **Example.** An attacker on `203.0.113.0/24` sends 40 wrong passwords for
   `asha@example.com`. Their next try waits 15 minutes. Asha, on
   `198.51.100.0/24`, waits at most 2 minutes, and a password reset clears
@@ -303,6 +305,11 @@ attacker's account. Mitigations:
   whole office behind one NAT address could exhaust; raised to 300 and 1000.
 - **First-hop `x-forwarded-for` keys** on the referral check: client-controlled
   on Netlify, so the limit was bypassable. Use `getClientIp`.
+- **Node-side `x-nf-client-connection-ip` or `x-forwarded-for` keys:** every
+  API call passes through the edge middleware first, so inside the function
+  both name the edge function's egress address, one per deploy. Every auth
+  limit and the per-prefix lock were shared by all visitors. Node code now
+  reads only the stamp middleware sets.
 - **Per-IP-only auth limits:** every auth budget was keyed on the client IP, so
   a proxy pool got a fresh budget per address. Turnstile, the per-account
   throttle and the per-recipient cap now key on something else.

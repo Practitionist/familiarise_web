@@ -14,6 +14,7 @@ import type { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { intervalStartsOf } from "@/lib/appointments/occurrences";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
 import { stageAppointmentRescheduledEmail } from "@/lib/email/senders/booking";
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
@@ -53,6 +54,7 @@ const REMEDY_SELECT = {
   dueAt: true,
   doneAt: true,
   rebookedOccurrenceId: true,
+  payment: { select: { paymentIntent: true } },
   occurrence: {
     select: {
       appointmentId: true,
@@ -591,6 +593,7 @@ export async function readOpenIncidentRemedies(
         dueAt: row.dueAt.toISOString(),
         title: booking.title,
         expertName: booking.expert.name,
+        fundingRail: fundingRailForIntent(row.payment?.paymentIntent),
       },
     ];
   });

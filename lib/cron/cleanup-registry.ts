@@ -10,9 +10,11 @@ import {
   type CleanupRouteHandlers,
 } from "@/lib/cron/cleanup-route";
 import { adminActorId } from "@/lib/cron/run-context";
+import { reportConfigSkip, type ConfigSkip } from "@/lib/cron/config-skip";
 import type { JobCategory } from "@/lib/cron/job-categories";
 import { reportSentryError } from "@/lib/observability/report";
 import type { FrozenWallet } from "@/lib/payments/wallet-freeze";
+import type { Tx } from "@/lib/prisma";
 import type {
   Finding,
   ReconcileReport,
@@ -27,9 +29,25 @@ export interface CleanupJobMeta {
   manualRun: "inline" | "after";
 }
 
+/**
+ * The ticker's idle probe: `hasWork` reuses the job's own claim predicate, and
+ * a false answer skips the due tick. It answers true without querying once
+ * `outOfTime()`, checked before every statement. `alwaysRun` says why the job has no probe.
+ */
+export type IdleProbe =
+  | {
+      hasWork: (
+        db: Tx,
+        now: Date,
+        outOfTime: () => boolean,
+      ) => Promise<boolean>;
+    }
+  | { alwaysRun: string };
+
 export interface CleanupJobEntry {
   meta: CleanupJobMeta;
   build: () => CleanupRouteHandlers;
+  idle: IdleProbe;
 }
 
 // Per-run defaults for the per-row booking sweeps the ticker drives. `?limit=`
@@ -74,6 +92,10 @@ const MAX_GST_HEALER_MINTS = 25;
 const MAX_CONSUMER_INVOICE_HEALS = 25;
 /** Document rows a single purge run may process; each costs one storage delete. */
 const MAX_DOCUMENT_PURGE_ROWS = 200;
+/** Pending standalone purchases per rail per run; up to two Razorpay calls each. */
+const MAX_STANDALONE_PURCHASE_CHECKS = 5;
+/** Digital product rows per storage arm per run; one R2 delete each. */
+const MAX_DIGITAL_PRODUCT_STORAGE_ROWS = 25;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins and the console's job list.
@@ -93,6 +115,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Examine one expired-retention slice; deletion requires the existing delete gate",
       category: "Compliance",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Due once a week; a probe would save at most 4 calls a month.",
     },
     build: () =>
       cleanupRoute({
@@ -119,6 +144,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Compliance",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasDataBreachDeadlineWork } =
+          await import("@/lib/compliance/databreach-deadline-alerts");
+        return hasDataBreachDeadlineWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "databreach-deadline-alerts",
@@ -139,9 +171,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Prune system events",
       description:
-        "Remove one oldest-first slice of system events past the 400-day retention",
+        "Remove one oldest-first slice of system events past 400 days, keeping each state-bearing key's newest event",
       category: "Cleanup",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "Due four times a day in its retention window; a probe would save at most 120 calls a month.",
     },
     build: () =>
       cleanupRoute({
@@ -166,6 +202,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Reap unpaid organisation wallet top-up orders and confirm late captures",
       category: "Billing",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasAbandonedOrgTopUpWork } =
+          await import("@/scripts/cleanup/cleanup-abandoned-org-top-ups");
+        return hasAbandonedOrgTopUpWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -201,6 +244,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Expire abandoned checkouts and lapsed approval pay-links, and remind payers who owe one",
       category: "Payments",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasAbandonedPaymentWork } =
+          await import("@/scripts/payments/cleanup-abandoned-payments");
+        return hasAbandonedPaymentWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -295,6 +345,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Alerts",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasOrphanedPaymentAlertWork } =
+          await import("@/scripts/alerts/alert-orphaned-payments");
+        return hasOrphanedPaymentAlertWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "alert-orphaned-payments",
@@ -324,6 +381,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Billing",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasAdvanceProgramCyclesWork } =
+          await import("@/jobs/billing/advance-program-cycles");
+        return hasAdvanceProgramCyclesWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "advance-program-cycles",
@@ -347,6 +411,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Send the 24-hour and 1-hour session reminders",
       category: "Messaging",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasAppointmentReminderWork } =
+          await import("@/scripts/appointments/send-appointment-reminders");
+        return hasAppointmentReminderWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -374,26 +445,26 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
   "archive-webhook-events": {
     meta: {
       title: "Archive webhook events",
-      description: "Delete processed webhook events past retention",
+      description:
+        "Delete webhook events past one calendar year and terminal outbound deliveries past 30 days",
       category: "Cleanup",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Due once a week; a probe would save at most 4 calls a month.",
     },
     build: () =>
       cleanupRoute({
         job: "archive-webhook-events",
-        run: async (req, { startedAt }) => {
+        run: async (_req, { startedAt }) => {
           const { archiveWebhookEvents } =
             await import("@/scripts/cleanup/archive-webhook-events");
-          return archiveWebhookEvents({
-            limit: parseLimitParam(req),
-            startedAt,
-          });
+          return archiveWebhookEvents({ startedAt });
         },
+        items: (r) => ({ processed: r.totalDeleted }),
         summarize: (r) => ({
           hasMore: r.hasMore,
-          processedEventsDeleted: r.processedEventsDeleted,
-          terminalUnprocessedDeleted: r.terminalUnprocessedDeleted,
-          failedEventsDeleted: r.failedEventsDeleted,
+          webhookEventsDeleted: r.webhookEventsDeleted,
           outboundDeliveriesDeleted: r.outboundDeliveriesDeleted,
           totalDeleted: r.totalDeleted,
         }),
@@ -406,9 +477,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Auth token cleanup",
       description:
-        "Delete expired sessions, verification tokens and stale invitations",
+        "Delete expired verification tokens and sessions (logged to the access log first), access-log rows 180 days after their session ended, and stale invitations",
       category: "Cleanup",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Due once a day; a probe would save at most 30 calls a month.",
     },
     build: () =>
       cleanupRoute({
@@ -422,6 +496,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           hasMore: r.hasMore,
           verificationTokensDeleted: r.verificationTokensDeleted,
           sessionsDeleted: r.sessionsDeleted,
+          accessLogsDeleted: r.accessLogsDeleted,
           idempotencyRecordsDeleted: r.idempotencyRecordsDeleted,
           staleInvitationsExpired: r.staleInvitationsExpired,
           totalCleaned: r.totalCleaned,
@@ -437,6 +512,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Renew organisation contracts due for automatic renewal",
       category: "Billing",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasAutoRenewContractsWork } =
+          await import("@/jobs/contracts/auto-renew-contracts");
+        return hasAutoRenewContractsWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -461,6 +543,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Move finished sessions to completed after they end",
       category: "Appointments",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasAutoCompleteWork } =
+          await import("@/scripts/appointments/auto-complete-appointments");
+        return hasAutoCompleteWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -495,6 +584,38 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       }),
   },
 
+  // @cleanup-twin drain-admin-run-requests
+  "drain-admin-run-requests": {
+    meta: {
+      title: "Drain admin run requests",
+      description:
+        "Retry admin Run-now requests whose dispatch was lost or whose run crashed",
+      category: "Reconciliation",
+      manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasAdminRunRequestWork } =
+          await import("@/lib/cron/admin-run-requests");
+        return hasAdminRunRequestWork(db, now, outOfTime);
+      },
+    },
+    build: () =>
+      cleanupRoute({
+        job: "drain-admin-run-requests",
+        run: async (req, { startedAt }) => {
+          const { drainAdminRunRequests } =
+            await import("@/lib/cron/admin-run-requests");
+          return drainAdminRunRequests({
+            limit: parseLimitParam(req),
+            startedAt,
+          });
+        },
+        items: (r) => ({ processed: r.picked }),
+        failureMessage: "Admin run request drain failed",
+      }),
+  },
+
   // @cleanup-twin create-payout-batch
   "create-payout-batch": {
     meta: {
@@ -502,6 +623,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Mint the weekly consultant and organisation payout batch",
       category: "Payouts",
       manualRun: "after",
+    },
+    idle: {
+      alwaysRun:
+        "Due only in the Monday window; a probe would save at most 48 calls a month.",
     },
     build: () =>
       cleanupRoute({
@@ -539,6 +664,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Appointments",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasConsultantNoShowWork } =
+          await import("@/scripts/appointments/detect-consultant-no-shows");
+        return hasConsultantNoShowWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "detect-consultant-no-shows",
@@ -571,6 +703,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Messaging",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasOutboundWebhookWork } =
+          await import("@/scripts/cleanup/dispatch-outbound-webhooks");
+        return hasOutboundWebhookWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "dispatch-outbound-webhooks",
@@ -597,6 +736,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Relay queued notifications to Novu",
       category: "Messaging",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasNotificationOutboxWork } =
+          await import("@/jobs/notifications/drain-notification-outbox");
+        return hasNotificationOutboxWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -627,6 +773,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Billing",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Due three times a day in its window; a probe would save at most 90 calls a month.",
+    },
     build: () =>
       cleanupRoute({
         job: "dunning",
@@ -651,6 +801,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Billing",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasExpireContractsWork } =
+          await import("@/jobs/contracts/expire-contracts");
+        return hasExpireContractsWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "expire-contracts",
@@ -674,6 +831,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Messaging",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Due three times a day in its window; a probe would save at most 90 calls a month.",
+    },
     build: () =>
       cleanupRoute({
         job: "expire-event-channels",
@@ -695,6 +856,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Recordings",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Due three times a day in its window; a probe would save at most 90 calls a month.",
+    },
     build: () =>
       cleanupRoute({
         job: "expire-recordings",
@@ -715,6 +880,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Delete abandoned onboarding drafts",
       category: "Cleanup",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Due once a week; a probe would save at most 4 calls a month.",
     },
     build: () =>
       cleanupRoute({
@@ -740,6 +908,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Post breakage for expired referral credits",
       category: "Earnings",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "Due only on the 1st of the month; a probe would save at most 3 calls a month.",
     },
     build: () =>
       cleanupRoute({
@@ -769,6 +941,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Expire unanswered requests and refund approved requests that were never scheduled",
       category: "Appointments",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasStaleRequestWork } =
+          await import("@/scripts/appointments/expire-stale-requests");
+        return hasStaleRequestWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -813,6 +992,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Appointments",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasUnpaidTrialWork } =
+          await import("@/scripts/trials/expire-unpaid-trials");
+        return hasUnpaidTrialWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "expire-unpaid-trials",
@@ -837,6 +1023,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Cleanup",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun: "Due once a day; a probe would save at most 30 calls a month.",
+    },
     build: () =>
       cleanupRoute({
         job: "expire-stale-collaborator-invites",
@@ -860,6 +1049,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Heal missing tax invoices and export the monthly GST outward register",
       category: "Compliance",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "A monthly statutory export in its calendar window; the period is the work.",
     },
     build: () =>
       cleanupRoute({
@@ -893,6 +1086,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Billing",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Surfaces a bad supplier GSTIN on every slot of its daily window.",
+    },
     build: () =>
       cleanupRoute({
         job: "generate-subscription-invoices",
@@ -918,6 +1115,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Query the gateway for payouts stuck in processing and settle or retry them",
       category: "Payouts",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasStuckPayoutWork } =
+          await import("@/scripts/payouts/handle-stuck-payouts");
+        return hasStuckPayoutWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -949,6 +1153,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Billing",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Due four times a day; a probe would save at most 120 calls a month.",
+    },
     build: () =>
       cleanupRoute({
         job: "heal-consumer-invoices",
@@ -957,7 +1165,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             await import("@/lib/payments/billing/consumer-invoice-healer");
           return healConsumerInvoices({
             limit: parseLimitParamOrDefault(req, MAX_CONSUMER_INVOICE_HEALS),
-            windowStart: parseWindowStartParam(req),
             startedAt,
           });
         },
@@ -973,6 +1180,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Register pending e-invoices with the government portal",
       category: "Compliance",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "An unconfigured GSP records a config skip on every run; an idle skip would hide it.",
     },
     build: () =>
       cleanupRoute({
@@ -999,6 +1210,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Compliance",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun: "Due once a day; a probe would save at most 30 calls a month.",
+    },
     build: () =>
       cleanupRoute({
         job: "msme-payment-alerts",
@@ -1012,6 +1226,36 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       }),
   },
 
+  // @cleanup-twin ops-digest
+  "ops-digest": {
+    meta: {
+      title: "Daily ops digest",
+      description:
+        "Email the daily operations digest to the observability inbox, then ping its Better Stack heartbeat",
+      category: "Alerts",
+      manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Sent every day: its arrival is the signal.",
+    },
+    build: () =>
+      cleanupRoute({
+        job: "ops-digest",
+        run: async () => {
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
+          const { runOpsDigest } =
+            await import("@/lib/observability/ops-digest");
+          // Fail-open: read-only, and a repeat costs one extra email.
+          return withCronLock("ops-digest", { failMode: "open" }, () =>
+            runOpsDigest(),
+          );
+        },
+        status: (r) => (r.success ? 200 : 500),
+        items: () => ({ processed: 1 }),
+        failureMessage: "Failed to build the daily ops digest",
+      }),
+  },
+
   // @cleanup-twin process-data-exports
   "process-data-exports": {
     meta: {
@@ -1019,6 +1263,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Build queued data export files",
       category: "Compliance",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasDataExportWork } =
+          await import("@/scripts/cleanup/process-data-exports");
+        return hasDataExportWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -1046,6 +1297,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Disburse approved consultant and organisation payouts through RazorpayX",
       category: "Payouts",
       manualRun: "after",
+    },
+    idle: {
+      alwaysRun:
+        "Surfaces a broken payout lock (Redis) or payout config within the hour.",
     },
     build: () =>
       cleanupRoute({
@@ -1076,9 +1331,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
   "prune-audit-logs": {
     meta: {
       title: "Prune audit logs",
-      description: "Remove audit log rows past retention",
+      description:
+        "Remove organisation and console audit rows (8 years money, 2 years other), booking history 3 years after a terminal booking and ledger reports past 2 years",
       category: "Cleanup",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Due once a day; a probe would save at most 30 calls a month.",
     },
     build: () =>
       cleanupRoute({
@@ -1088,6 +1347,17 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
             await import("@/scripts/cleanup/prune-audit-logs");
           return pruneAuditLogs({ limit: parseLimitParam(req), startedAt });
         },
+        items: (r) => ({
+          processed:
+            r.deleted8y +
+            r.deleted2y +
+            r.opsActionsDeleted8y +
+            r.opsActionsDeleted2y +
+            r.opsProposalsDeleted +
+            r.bookingHistoryDeleted +
+            r.ledgerReportsDeleted,
+          errors: r.errors.length,
+        }),
         failureMessage: "Audit prune failed",
       }),
   },
@@ -1097,9 +1367,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Prune job history",
       description:
-        "Remove job runs past 90 days, close stranded runs and prune messaging retention tables",
+        "Remove no-op job runs past 14 days and other runs past 180, close stranded runs, and prune admin run requests, messaging, export, cookie and meeting presence rows",
       category: "Cleanup",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "Due seven times a day in its retention window; a probe would save at most 210 calls a month.",
     },
     build: () =>
       cleanupRoute({
@@ -1114,22 +1388,33 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         },
         summarize: (r) => ({
           pruned: r.pruned,
+          noOpRunsPruned: r.noOpRunsPruned,
           stranded: r.stranded,
+          adminRunRequestsPruned: r.adminRunRequestsPruned,
           failedEmailsBodyScrubbed: r.failedEmailsBodyScrubbed,
           failedEmailBatchesScrubbed: r.failedEmailBatchesScrubbed,
           failedEmailsPruned: r.failedEmailsPruned,
           failedEmailBatchesPruned: r.failedEmailBatchesPruned,
           notificationOutboxPruned: r.notificationOutboxPruned,
           emailEventsPruned: r.emailEventsPruned,
+          dataExportJobsPruned: r.dataExportJobsPruned,
+          cookiePreferencesPruned: r.cookiePreferencesPruned,
+          meetingPresencePruned: r.meetingPresencePruned,
+          meetingAttendancePruned: r.meetingAttendancePruned,
           hasMore: r.hasMore,
         }),
         items: (r) => ({
           processed:
             r.pruned +
+            r.adminRunRequestsPruned +
             r.failedEmailsPruned +
             r.failedEmailBatchesPruned +
             r.notificationOutboxPruned +
-            r.emailEventsPruned,
+            r.emailEventsPruned +
+            r.dataExportJobsPruned +
+            r.cookiePreferencesPruned +
+            r.meetingPresencePruned +
+            r.meetingAttendancePruned,
         }),
         failureMessage: "System job execution prune failed",
       }),
@@ -1142,6 +1427,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Delete accounts that never verified their email",
       category: "Cleanup",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Due once a day; a probe would save at most 30 calls a month.",
     },
     build: () =>
       cleanupRoute({
@@ -1170,6 +1458,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Sync dispute status with Razorpay and track urgent deadlines",
       category: "Disputes",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasDisputeReconcileWork } =
+          await import("@/scripts/disputes/reconcile-disputes");
+        return hasDisputeReconcileWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -1205,6 +1500,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Tombstone session documents past retention, then purge tombstones past the grace window",
       category: "Cleanup",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasDocumentPurgeWork } =
+          await import("@/lib/documents/document-purge");
+        return hasDocumentPurgeWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -1242,6 +1544,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Reconciliation",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Compares Supabase Storage objects with document rows; vendor state.",
+    },
     build: () =>
       cleanupRoute({
         job: "reconcile-document-storage",
@@ -1272,6 +1578,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Reconciliation",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Reads Razorpay's settlement report; vendor state, no row marks the work.",
+    },
     build: () =>
       cleanupRoute({
         job: "reconcile-gateway-settlements",
@@ -1298,6 +1608,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Compare ledger balances with cached balances and freeze drifted wallets",
       category: "Reconciliation",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "Re-totals ledger aggregates against cached balances; no row marks the work.",
     },
     build: () =>
       cleanupRoute({
@@ -1381,6 +1695,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Reconciliation",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Its double-booking and drift findings are computed in code over every future booking.",
+    },
     build: () =>
       cleanupRoute({
         job: "reconcile-occurrence-availability",
@@ -1413,6 +1731,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Re-drive captured payments whose confirmation never landed",
       category: "Payments",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasOrphanedConfirmationWork } =
+          await import("@/scripts/payments/reconcile-orphaned-confirmations");
+        return hasOrphanedConfirmationWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -1448,6 +1773,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Payments",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasOrphanedPaymentWork } =
+          await import("@/scripts/payments/reconcile-orphaned-confirmations");
+        return hasOrphanedPaymentWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "reconcile-orphaned-payments",
@@ -1481,6 +1813,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Recordings",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Lists recordings at Stream to recover missed webhooks; vendor state.",
+    },
     build: () =>
       cleanupRoute({
         job: "reconcile-orphaned-recordings",
@@ -1501,6 +1837,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Recover captured invoice orders after missed webhooks",
       category: "Billing",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "Due six times a day; a probe would save at most 180 calls a month.",
     },
     build: () =>
       cleanupRoute({
@@ -1526,6 +1866,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Query Razorpay for the actual status of stale pending payments",
       category: "Payments",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasPaymentStatusReconcileWork } =
+          await import("@/scripts/payments/reconcile-payment-status");
+        return hasPaymentStatusReconcileWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -1559,6 +1906,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Payouts",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasPayoutStatusReconcileWork } =
+          await import("@/scripts/payouts/reconcile-payout-status");
+        return hasPayoutStatusReconcileWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "reconcile-payout-status",
@@ -1589,6 +1943,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Sync pending refund status with Razorpay",
       category: "Refunds",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasPendingRefundWork } =
+          await import("@/scripts/refunds/reconcile-pending-refunds");
+        return hasPendingRefundWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -1621,6 +1982,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Appointments",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasOrphanedSessionWork } =
+          await import("@/lib/meetings/reconcile-orphaned-sessions");
+        return hasOrphanedSessionWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "reconcile-orphaned-sessions",
@@ -1642,6 +2010,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Move held earnings to ready after the hold period",
       category: "Earnings",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasReleasableEarningsWork } =
+          await import("@/scripts/earnings/release-earnings");
+        return hasReleasableEarningsWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -1672,6 +2047,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Appointments",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasRescheduleProposalWork } =
+          await import("@/scripts/appointments/expire-reschedule-proposals");
+        return hasRescheduleProposalWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "expire-reschedule-proposals",
@@ -1685,6 +2067,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         summarize: (r) => ({
           proposalsExpired: r.proposalsExpired,
           proposalsExpiredUnrestored: r.proposalsExpiredUnrestored,
+          hasMore: r.hasMore,
         }),
         items: (r) => ({ processed: r.proposalsExpired }),
         failureMessage: "Failed to expire reschedule proposals",
@@ -1699,6 +2082,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Re-drive auto-refunds the capture webhook could not complete",
       category: "Refunds",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasAutoRefundRetryWork } =
+          await import("@/scripts/payments/retry-auto-refunds");
+        return hasAutoRefundRetryWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -1717,11 +2107,88 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
           stuck: r.stuck,
           errors: r.errors,
           owed: r.owed,
+          hasMore: r.hasMore,
         }),
         // A failed owed attempt answers 207 too; the summary's `failed` keeps it partial, not attention.
         needsAttention: (r) =>
           r.stuck.length > 0 || r.owed.stuck.length > 0 || r.owed.failed > 0,
         failureMessage: "Failed to retry auto-refunds",
+      }),
+  },
+
+  // @cleanup-twin reconcile-standalone-purchases
+  "reconcile-standalone-purchases": {
+    meta: {
+      title: "Recover standalone purchases",
+      description:
+        "Settle digital product and replay purchases whose capture never arrived; fail empty orders after 24 hours",
+      category: "Payments",
+      manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasStandalonePurchaseWork } =
+          await import("@/scripts/payments/reconcile-standalone-purchases");
+        return hasStandalonePurchaseWork(db, now, outOfTime);
+      },
+    },
+    build: () =>
+      cleanupRoute({
+        job: "reconcile-standalone-purchases",
+        run: async (req) => {
+          const { reconcileStandalonePurchases } =
+            await import("@/scripts/payments/reconcile-standalone-purchases");
+          return reconcileStandalonePurchases({
+            limit: parseLimitParamOrDefault(
+              req,
+              MAX_STANDALONE_PURCHASE_CHECKS,
+            ),
+          });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          recovered: r.recovered,
+          expired: r.expired,
+          receipts: r.receipts,
+          errors: r.errors,
+        }),
+        items: (r) => ({ processed: r.scanned, errors: r.errors }),
+        failureMessage: "Failed to reconcile standalone purchases",
+      }),
+  },
+
+  // @cleanup-twin reconcile-digital-product-storage
+  "reconcile-digital-product-storage": {
+    meta: {
+      title: "Digital product storage",
+      description:
+        "Delete superseded, rejected and abandoned product files and bucket objects no row names",
+      category: "Cleanup",
+      manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "Compares Supabase Storage objects with product file rows; vendor state.",
+    },
+    build: () =>
+      cleanupRoute({
+        job: "reconcile-digital-product-storage",
+        run: async (req) => {
+          const { reconcileDigitalProductStorage } =
+            await import("@/lib/digital-products/storage-sweep");
+          return reconcileDigitalProductStorage({
+            limit: parseLimitParamOrDefault(
+              req,
+              MAX_DIGITAL_PRODUCT_STORAGE_ROWS,
+            ),
+          });
+        },
+        status: (r) => statusFor(r),
+        items: (r) => ({
+          processed: r.supersededPurged + r.uploadsCleared + r.orphansDeleted,
+          errors: r.failed,
+        }),
+        failureMessage: "Failed to reconcile digital product storage",
       }),
   },
 
@@ -1732,6 +2199,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Resend emails whose delivery failed",
       category: "Messaging",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasEmailRetryWork } =
+          await import("@/jobs/email/retry-failed-emails");
+        return hasEmailRetryWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -1766,6 +2240,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Messaging",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasModerationRetryWork } =
+          await import("@/scripts/cleanup/retry-moderation-enforcement");
+        return hasModerationRetryWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "retry-moderation-enforcement",
@@ -1795,6 +2276,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Align Stream channel members with database access",
       category: "Messaging",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "Compares Stream channel members with database access; vendor state.",
     },
     build: () =>
       cleanupRoute({
@@ -1829,68 +2314,60 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
     meta: {
       title: "Sentry ingest canary",
       description:
-        "Probe Sentry ingest and quota and email an alert when either fails",
+        "Read Sentry's error outcomes for the last day and alert by email and Better Stack on rejections",
       category: "Alerts",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "A time-based check of Sentry's ingest outcomes; no queue to probe.",
     },
     build: () =>
       cleanupRoute({
         job: "sentry-ingest-canary",
         run: async () => {
-          const { describeIngest, isIngestHealthy, probeSentryIngest } =
+          const token = process.env.SENTRY_STATS_TOKEN;
+          if (!token) {
+            const skipped: ConfigSkip = "SENTRY_STATS_TOKEN not configured";
+            reportConfigSkip("sentry-ingest-canary", skipped);
+            return { healthy: true, skipped };
+          }
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
+          const { checkSentryIngest, describeIngest, isIngestHealthy } =
             await import("@/lib/observability/ingest-canary");
-          const {
-            sendSentryIngestAlert,
-            canaryAlertNeeded,
-            recordCanaryAlertSent,
-          } = await import("@/lib/observability/ingest-alert");
+          const { sendSentryIngestAlert } =
+            await import("@/lib/observability/ingest-alert");
           const { checkSentryQuota } =
             await import("@/lib/observability/quota-alert");
-          const probe = await probeSentryIngest();
-          const healthy = isIngestHealthy(probe);
-
-          if (!healthy) {
-            const needed = await canaryAlertNeeded(probe.verdict);
-            const alerted = needed
-              ? await sendSentryIngestAlert(probe).catch((err: unknown) => {
-                  console.error(
-                    "[sentry-ingest-canary] alert could not be sent:",
-                    err instanceof Error ? err.message : String(err),
-                  );
-                  return false;
-                })
-              : false;
-            if (alerted) await recordCanaryAlertSent(probe.verdict);
-            // After the ingest alert: the stats fetch and its email
-            // must not spend the function ceiling ahead of the page.
-            const quota = await checkSentryQuota();
-            return {
-              healthy,
-              verdict: probe.verdict,
-              status: probe.status,
-              eventId: probe.eventId,
-              alerted,
-              alertSuppressed: !needed,
-              detail: describeIngest(probe),
-              quota,
-            };
-          }
-
-          // 70% quota warning rides the canary; never throws.
-          const quota = await checkSentryQuota();
-          return {
-            healthy: true,
-            verdict: probe.verdict,
-            status: probe.status,
-            eventId: probe.eventId,
-            alerted: false,
-            quota,
-          };
+          // Fail-open: a read-only vendor probe whose repeat costs one stats read.
+          return withCronLock(
+            "sentry-ingest-canary",
+            { failMode: "open" },
+            async () => {
+              const check = await checkSentryIngest(token);
+              const healthy = isIngestHealthy(check);
+              const alerted = healthy
+                ? false
+                : await sendSentryIngestAlert(check);
+              // After the page: the 70% warning must not spend the ceiling ahead of it.
+              const quota = await checkSentryQuota();
+              return {
+                healthy,
+                verdict: check.verdict,
+                accepted: check.accepted,
+                rejections: check.rejections,
+                alerted,
+                detail: describeIngest(check),
+                quota,
+              };
+            },
+          );
         },
-        status: (result) => (result.healthy ? 200 : 503),
-        items: (r) => ({ processed: 1, errors: r.healthy ? 0 : 1 }),
+        // An unhealthy verdict is a finding with its own email; the run still counts as ran.
+        needsAttention: (result) => !result.healthy,
+        items: () => ({ processed: 1 }),
         failureMessage:
-          "The Sentry ingest canary route failed to run. This is a fault in the canary, not a verdict about Sentry — check the log line above.",
+          "The Sentry ingest canary route failed to run. This is a fault in the canary, not a verdict about Sentry.",
       }),
   },
 
@@ -1902,6 +2379,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Refunds",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasSettleCancelledSessionsWork } =
+          await import("@/scripts/appointments/settle-cancelled-sessions");
+        return hasSettleCancelledSessionsWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "settle-cancelled-sessions",
@@ -1912,9 +2396,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         },
         summarize: (r) => ({
           scanned: r.scanned,
+          plansScanned: r.plansScanned,
+          plansWaiting: r.plansWaiting,
           stamped: r.stamped,
           refunded: r.refunded,
           errors: r.errors,
+          hasMore: r.hasMore,
+          checkpoint: r.checkpoint,
         }),
         failureMessage: "Failed to settle cancelled class sessions",
       }),
@@ -1928,6 +2416,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Process one explicitly confirmed booking cancellation; held until maintenance ends",
       category: "Appointments",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasMaintenanceRemediationWork } =
+          await import("@/lib/maintenance-remediation");
+        return hasMaintenanceRemediationWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -1950,6 +2445,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Void and refund the sessions of a declared platform incident",
       category: "Refunds",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasPlatformIncidentWork } =
+          await import("@/scripts/appointments/settle-platform-incidents");
+        return hasPlatformIncidentWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -1985,6 +2487,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Billing",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Due only on the 1st of the month; a probe would save at most 16 calls a month.",
+    },
     build: () =>
       cleanupRoute({
         job: "settle-invoice-accruals",
@@ -2017,13 +2523,23 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Alerts",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Compares Stream app settings with the expected configuration; vendor state.",
+    },
     build: () =>
       cleanupRoute({
         job: "stream-control-plane-drift",
         run: async () => {
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
           const { detectStreamControlPlaneDrift } =
             await import("@/lib/stream/control-plane-drift");
-          return detectStreamControlPlaneDrift();
+          // Fail-open: the detector only reads Stream settings.
+          return withCronLock(
+            "stream-control-plane-drift",
+            { failMode: "open" },
+            () => detectStreamControlPlaneDrift(),
+          );
         },
         summarize: (r) => ({
           drifted: r.drifted,
@@ -2045,6 +2561,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Queue a comparison of Stream principals against database ownership",
       category: "Messaging",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "Compares Stream principals with database ownership; vendor state.",
     },
     build: () =>
       cleanupRoute({
@@ -2068,6 +2588,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Stage support SLA and dispute deadline notices",
       category: "Support",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasSupportSlaSweepWork } =
+          await import("@/lib/support/sla-sweep");
+        return hasSupportSlaSweepWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -2110,6 +2637,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Billing",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasAbandonedOverageWork } =
+          await import("@/scripts/cleanup/sweep-abandoned-overage-charges");
+        return hasAbandonedOverageWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "sweep-abandoned-overage-charges",
@@ -2131,6 +2665,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Credit wallet top-ups whose capture never reached the wallet",
       category: "Billing",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasOrphanedTopupCaptureWork } =
+          await import("@/scripts/cleanup/sweep-orphaned-topup-captures");
+        return hasOrphanedTopupCaptureWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -2159,6 +2700,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Payments",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasStuckWebhookEventWork } =
+          await import("@/scripts/cleanup/sweep-stuck-webhook-events");
+        return hasStuckWebhookEventWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "sweep-stuck-webhook-events",
@@ -2185,6 +2733,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Remove unlinked verification uploads and expire stale verification state",
       category: "Cleanup",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun: "Due once a day; a probe would save at most 30 calls a month.",
     },
     build: () =>
       cleanupRoute({
@@ -2216,6 +2767,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Earnings",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasPaymentEarningsSyncWork } =
+          await import("@/scripts/earnings/sync-payment-earnings");
+        return hasPaymentEarningsSyncWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "sync-payment-earnings",
@@ -2242,6 +2800,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Billing",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Due three times a day in its window; a probe would save at most 90 calls a month.",
+    },
     build: () =>
       cleanupRoute({
         job: "timeout-member-overages",
@@ -2264,6 +2826,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Export the quarterly 26Q TDS return draft",
       category: "Compliance",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "A quarterly statutory export in its calendar window; the period is the work.",
     },
     build: () =>
       cleanupRoute({
@@ -2295,6 +2861,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Appointments",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasTentativeOccurrenceWork } =
+          await import("@/scripts/appointments/cleanup-tentative-occurrences");
+        return hasTentativeOccurrenceWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "cleanup-tentative-occurrences",
@@ -2322,6 +2895,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Recordings",
       manualRun: "inline",
     },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasRecordingTransferWork } =
+          await import("@/lib/stream/recording-transfer-service");
+        return hasRecordingTransferWork(db, now, outOfTime);
+      },
+    },
     build: () =>
       cleanupRoute({
         job: "transfer-recordings",
@@ -2343,6 +2923,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       description: "Vest qualifying referral credits",
       category: "Earnings",
       manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        const { hasVestReferralWork } = await import("@/lib/referrals/vesting");
+        return hasVestReferralWork(db, now, outOfTime);
+      },
     },
     build: () =>
       cleanupRoute({
@@ -2375,6 +2961,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       category: "Billing",
       manualRun: "inline",
     },
+    idle: {
+      alwaysRun:
+        "Due three times a day in its window; a probe would save at most 90 calls a month.",
+    },
     build: () =>
       cleanupRoute({
         job: "wallet-low-balance",
@@ -2397,6 +2987,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
         "Queue Stream access and recording cleanup for deactivated organisations",
       category: "Cleanup",
       manualRun: "inline",
+    },
+    idle: {
+      alwaysRun:
+        "Due three times a day in its window; a probe would save at most 90 calls a month.",
     },
     build: () =>
       cleanupRoute({

@@ -147,6 +147,10 @@ import { POST as endPOST } from "../../app/api/meetings/[meetingId]/end/route";
 import { POST as livePOST } from "../../app/api/meetings/[meetingId]/live/route";
 import { POST as extendPOST } from "../../app/api/meetings/[meetingId]/extend/route";
 import prisma from "../../lib/prisma";
+import { getMockRedis } from "../../lib/redis-mock";
+
+// A granted extension keeps its host atoms held; each case starts unheld.
+afterEach(() => getMockRedis().clear());
 import { reportSentryError } from "../../lib/observability/report";
 
 const MINUTE = 60 * 1000;

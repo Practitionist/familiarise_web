@@ -10,6 +10,8 @@ let mockPhase: string | null = "NORMAL";
 let mockOverrides: Record<string, React.ComponentType> | undefined;
 let mockMessages: { id: string; user?: { id: string } }[] = [];
 let mockListed: unknown;
+let mockStateChannel:
+  { type: string; id?: string; data?: { frozen?: boolean } } | undefined;
 
 const mockChannel = {
   type: "messaging",
@@ -48,7 +50,10 @@ jest.mock("stream-chat-react", () => {
       return react.createElement("div", null, children);
     },
     useChatContext: () => ({ channel: mockChannel }),
-    useChannelStateContext: () => ({ messages: mockMessages }),
+    useChannelStateContext: () => ({
+      messages: mockMessages,
+      channel: mockStateChannel,
+    }),
   };
 });
 
@@ -99,6 +104,10 @@ jest.mock("../../components/stream/StreamErrorBoundary", () => {
 });
 jest.mock("../../lib/stream-channel-ids", () => ({
   isEventChannel: () => false,
+  parseEventChannelId: (id: string) =>
+    id.startsWith("class-")
+      ? { eventType: "class", eventId: id.slice("class-".length) }
+      : null,
 }));
 jest.mock("../../components/dashboard/DataCard", () => ({
   EmptyState: () => null,
@@ -111,6 +120,7 @@ beforeEach(() => {
   mockOverrides = undefined;
   mockMessages = [];
   mockListed = undefined;
+  mockStateChannel = undefined;
 });
 
 describe("ChatContainer", () => {
@@ -170,5 +180,64 @@ describe("ChatContainer", () => {
     expect(
       screen.getByText("Chat is temporarily read-only during maintenance."),
     ).toBeInTheDocument();
+  });
+
+  it("replaces the composer with the reason when the conversation is frozen", () => {
+    mockStateChannel = { type: "messaging", data: { frozen: true } };
+    render(<ChatContainer />);
+
+    expect(screen.queryByTestId("message-composer")).toBeNull();
+    expect(screen.queryByTestId("appointment-documents-hint")).toBeNull();
+    expect(screen.queryByTestId("composer-draft")).toBeNull();
+    expect(screen.getByRole("status").textContent).toMatch(
+      /read-only\. It reopens when you book a session together again/,
+    );
+  });
+
+  it("words a frozen event channel differently from a frozen DM", () => {
+    mockStateChannel = { type: "team", data: { frozen: true } };
+    render(<ChatContainer />);
+
+    expect(screen.getByRole("status").textContent).toMatch(
+      /This channel is read-only\. Its session has ended/,
+    );
+  });
+
+  it("keeps the composer for a channel that is not frozen", () => {
+    mockStateChannel = { type: "messaging", data: { frozen: false } };
+    render(<ChatContainer />);
+
+    expect(screen.getByTestId("message-composer")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  describe("the empty state of an event channel", () => {
+    const EmptyState = () => {
+      render(<ChatContainer />);
+      const Component =
+        mockOverrides?.EmptyStateIndicator as React.ComponentType<{
+          listType: string;
+        }>;
+      return render(<Component listType="message" />);
+    };
+
+    it("invites the first message in a live class channel", () => {
+      mockStateChannel = { type: "team", id: "class-1", data: {} };
+      EmptyState();
+      expect(screen.getByText("Say hello to your class")).toBeTruthy();
+    });
+
+    it("does not invite one in a frozen class channel", () => {
+      mockStateChannel = {
+        type: "team",
+        id: "class-1",
+        data: { frozen: true },
+      };
+      EmptyState();
+      expect(screen.queryByText("Say hello to your class")).toBeNull();
+      expect(
+        screen.getByText("No messages were sent in this channel."),
+      ).toBeTruthy();
+    });
   });
 });

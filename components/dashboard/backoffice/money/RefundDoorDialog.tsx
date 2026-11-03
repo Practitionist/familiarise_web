@@ -2,6 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { z } from "zod";
 
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -14,8 +15,14 @@ import type { PaymentDetail } from "@/types/payments";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useToast } from "@/hooks/use-toast";
 import { callOpsDoor, isProposed, PROPOSED_TOAST } from "./ops-door";
+import { DownloadEvidence } from "./DownloadEvidence";
 
 export type RefundDoor = "issue" | "override" | "credits";
+
+/** What this hand refund did to the payment's owed refund: fully settled, or reduced and still retrying. */
+const settledOwedAnswer = z.object({
+  result: z.object({ settledOwed: z.object({ note: z.string() }) }),
+});
 
 const COPY: Record<
   RefundDoor,
@@ -193,10 +200,14 @@ export function RefundDoorDialog({
             : "/api/admin/refunds/issue",
           { ...body(), idempotencyKey, reason },
         );
+        const settled = settledOwedAnswer.safeParse(result);
         toast({
           title: isProposed(result)
             ? PROPOSED_TOAST
             : "Done — the refund is on its way",
+          ...(settled.success && {
+            description: settled.data.result.settledOwed.note,
+          }),
         });
         for (const key of INVALIDATE)
           void queryClient.invalidateQueries({ queryKey: key });
@@ -223,6 +234,9 @@ export function RefundDoorDialog({
           <span className="font-medium tabular-nums">{money(remainder)}</span>{" "}
           of {money(Number(p?.amount ?? 0))}
         </p>
+      )}
+      {door !== "credits" && p?.digitalProductPurchase && (
+        <DownloadEvidence purchase={p.digitalProductPurchase} />
       )}
       {door !== "credits" && payment.isError && (
         <p className="text-sm text-destructive">

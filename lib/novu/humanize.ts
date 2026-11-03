@@ -268,8 +268,7 @@ function rawRefundReasonLabel(raw: string): string | undefined {
   const sweep: Record<string, string> = {
     SESSION_VOIDED_NOT_MADE_UP: "a voided session was never made up",
     HOST_SESSION_NOT_MADE_UP: "a cancelled session was never made up",
-    SESSION_VOIDED_UNUSED_AT_PLAN_END:
-      "an unused voided session at the end of the plan",
+    PLAN_ENDED_UNUSED_SESSIONS: "sessions not used by the end of the plan",
   };
   // Own-key: `sweep["toString"]` would otherwise resolve the inherited
   // function and hand a non-string to the template.

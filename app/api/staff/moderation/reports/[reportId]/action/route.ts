@@ -335,7 +335,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         { tags: { subsystem: "moderation" } },
       );
     }
-    const { stagedBells, stagedEmails, ...persistedSideEffects } = sideEffects;
+    // Session ends carry IPs and phase 2 has stamped them; never persist them.
+    const {
+      stagedBells,
+      stagedEmails,
+      stagedSessionEnds,
+      ...persistedSideEffects
+    } = sideEffects;
     await persistActionSideEffects(action.id, persistedSideEffects);
     await flushNotificationsAfter(
       { bells: stagedBells, emails: stagedEmails },

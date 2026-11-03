@@ -90,7 +90,6 @@ export const APPOINTMENT_LIST_SELECT = {
         id: true,
         status: true,
         reason: true,
-        round: true,
         expiresAt: true,
         initiatorRole: true,
         // #1065 — only auto-allocate reads these; a consultant placing times by
@@ -101,11 +100,7 @@ export const APPOINTMENT_LIST_SELECT = {
         preferredDays: true,
         proposedTimes: {
           orderBy: { startsAt: "asc" },
-          // `round` is selected so the consultant sees the CURRENT offer only.
-          // A countered request carries both the consultee's round-1 times and
-          // the consultant's round-2 counter; rendering them together under one
-          // heading would read as a single, contradictory list of times.
-          select: { startsAt: true, endsAt: true, round: true },
+          select: { startsAt: true, endsAt: true },
         },
       },
       // take:1 without an order is whichever row Postgres hands back first.

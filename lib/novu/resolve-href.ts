@@ -31,6 +31,13 @@ import { getAppUrl } from "@/lib/url";
 type Surface =
   "appointments" | "requests" | "recordings" | "earnings" | "documents";
 
+/** Recordings and documents are Library tabs for learners and org members. */
+function libraryAwarePath(surface: Surface): string {
+  return surface === "recordings" || surface === "documents"
+    ? `library?tab=${surface}`
+    : surface;
+}
+
 /**
  * Multi-recipient safe. `organizationId` null means B2C.
  */
@@ -42,9 +49,22 @@ export function notificationHref(
   if (!organizationId) {
     // The go resolver picks the viewer's own dashboard. One payload, N
     // recipients, possibly on different sides.
-    return `${base}/dashboard/go/auto/${surface}`;
+    return `${base}/dashboard/go/auto/${libraryAwarePath(surface)}`;
   }
-  return `${base}/dashboard/organization/${organizationId}/${surface}`;
+  return `${base}/dashboard/organization/${organizationId}/${libraryAwarePath(surface)}`;
+}
+
+/**
+ * One booking's recordings, multi-recipient safe. B2C goes through the go
+ * resolver's participation read, so a host lands on their hosted side and an
+ * attendee on theirs; org-hosted stays on the org Library.
+ */
+export function appointmentRecordingsHref(
+  organizationId: string | null | undefined,
+  appointmentId: string,
+): string {
+  if (organizationId) return notificationHref(organizationId, "recordings");
+  return `${getAppUrl()}/dashboard/go/auto/appointments/${appointmentId}/recordings`;
 }
 
 /**
@@ -56,7 +76,8 @@ export function personalHref(
   profileId: string,
   surface: Surface,
 ): string {
-  return `${getAppUrl()}/dashboard/${kind}/${profileId}/${surface}`;
+  const path = kind === "consultee" ? libraryAwarePath(surface) : surface;
+  return `${getAppUrl()}/dashboard/${kind}/${profileId}/${path}`;
 }
 
 /**

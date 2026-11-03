@@ -4,13 +4,9 @@ import { requireApiSession } from "@/lib/auth-helpers";
 /**
  * GET /api/user/sessions/current — "is my session still alive, and whose?"
  *
- * The client's revocation check (`providers/AuthSyncProvider.tsx`) must be
- * able to tell three answers apart, and BetterAuth's `/get-session` cannot:
- * the customSession plugin catches every lookup failure and answers
- * `200 null`, which is indistinguishable from "revoked". Treating that as a
- * revocation turned a database blip into a fleet-wide sign-out.
- *
- * `requireApiSession` already separates them, so this route only relays it.
+ * The client's revocation check (`providers/AuthSyncProvider.tsx`) must tell
+ * the four answers below apart; `requireApiSession` already separates them, so
+ * this route only relays it.
  * Not `requireApiAuth`: an operator who has not enrolled 2FA yet still holds a
  * live session, and a 428 here would read as "unknown" on every focus.
  *   200 → active, with the user id (AuthSyncProvider reloads on a switch)

@@ -140,6 +140,84 @@ export async function lastLiveOccurrenceEnd(
   return last?.endsAt ?? null;
 }
 
+/**
+ * Pull a reschedule's hold push back once its proposal ended with the original
+ * sessions restored (withdraw, expiry, decline): every PENDING hold later than
+ * what the restored sessions imply (plus the new-expert days) returns to it.
+ * Never earlier than that; a NULL hold (an undelivered tranche) and a settled
+ * subscription cycle's tranche are left alone.
+ */
+export async function restoreEarningsHold(
+  db: PrismaLike,
+  appointmentId: string,
+): Promise<number> {
+  const appointment = await db.appointment.findUnique({
+    where: { id: appointmentId },
+    select: {
+      appointmentType: true,
+      payment: {
+        where: { paymentStatus: "SUCCEEDED", deletedAt: null },
+        select: { id: true },
+      },
+    },
+  });
+  if (!appointment || appointment.payment.length === 0) return 0;
+  const lastEnd = await lastLiveOccurrenceEnd(db, appointmentId);
+  const holdHours = holdHoursFor(
+    appointment.appointmentType as AppointmentType,
+  );
+  // A settled subscription cycle keeps its own hold (cycle settle + hold).
+  const where = {
+    paymentId: { in: appointment.payment.map((p) => p.id) },
+    status: "PENDING" as const,
+    holdUntil: { not: null },
+    cycleOrdinal: null,
+  };
+  const select = {
+    id: true,
+    createdAt: true,
+    holdUntil: true,
+    consultantProfileId: true,
+  } as const;
+  const [consultantRows, orgRows] = await Promise.all([
+    db.consultantEarnings.findMany({ where, select }),
+    db.organizationEarnings.findMany({
+      where,
+      select: { id: true, createdAt: true, holdUntil: true },
+    }),
+  ]);
+  const implied = (createdAt: Date) =>
+    computeHoldUntil({
+      capturedAt: createdAt,
+      lastOccurrenceEndsAt: lastEnd,
+      holdHours,
+    });
+  let moved = 0;
+  for (const row of consultantRows) {
+    const target = await withNewExpertHold(
+      db,
+      row.consultantProfileId,
+      implied(row.createdAt),
+    );
+    if (!row.holdUntil || !target || row.holdUntil <= target) continue;
+    const res = await db.consultantEarnings.updateMany({
+      where: { id: row.id, status: "PENDING", holdUntil: row.holdUntil },
+      data: { holdUntil: target },
+    });
+    moved += res.count;
+  }
+  for (const row of orgRows) {
+    const target = implied(row.createdAt);
+    if (!row.holdUntil || row.holdUntil <= target) continue;
+    const res = await db.organizationEarnings.updateMany({
+      where: { id: row.id, status: "PENDING", holdUntil: row.holdUntil },
+      data: { holdUntil: target },
+    });
+    moved += res.count;
+  }
+  return moved;
+}
+
 /** Types whose fee buys ONE call; a subscription or class fee buys the purchase. */
 const PER_CALL_TYPES: readonly AppointmentType[] = ["CONSULTATION", "WEBINAR"];
 

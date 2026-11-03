@@ -204,12 +204,14 @@ function ApproveOrDecline({
       }
       if (!result.success)
         throw new Error(result.error || "Failed to allocate slots");
-      // #1775 B-9 — an unpaid request is approved, not confirmed: the pay
-      // order was minted and the client has the 24 h window to pay.
+      // An unpaid request is approved, not confirmed: the pay order was
+      // minted and the client has until the window's end to pay.
       toast(
         result.awaitingPayment
           ? {
-              title: "Approved — the client has 24 h to pay",
+              title: result.payExpiresAt
+                ? `Approved — the client has until ${format(result.payExpiresAt, "EEE d MMM HH:mm")} to pay`
+                : "Approved — waiting for the client to pay",
               description: `${names.payer} was sent the payment link; the times are held until it is paid.`,
             }
           : timesConfirmed(),

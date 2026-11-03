@@ -146,7 +146,7 @@ export function SessionRatingRow({
         }}
         className="self-start text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
       >
-        Support request in progress · Rate anyway
+        Support case in progress · Rate anyway
       </button>
     );
   }

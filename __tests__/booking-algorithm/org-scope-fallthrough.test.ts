@@ -151,8 +151,12 @@ describe("fall-through 3 — the trial list", () => {
     );
 
     expect(res.status).toBe(200);
+    // The learner's own trials are pinned to the org's tag.
     const where = trialFindMany.mock.calls[0][0].where;
-    expect(where.organizationId).toBe(ORG);
+    expect(JSON.stringify(where)).toContain(`"organizationId":"${ORG}"`);
+    expect(JSON.stringify(where)).toContain(
+      '"consulteeProfileId":"consultee-1"',
+    );
   });
 });
 
@@ -202,7 +206,10 @@ describe("fall-through 4 — the consultation request list", () => {
 describe("fall-through 5 — the consultant appointments list", () => {
   it("hands the resolved Scope down whole rather than a hand-rolled filter", async () => {
     jest.resetModules();
-    const getConsultantAppointments: jest.Mock = jest.fn(async () => []);
+    const readConsultantAppointmentsPage: jest.Mock = jest.fn(async () => ({
+      rows: [],
+      nextCursor: null,
+    }));
     jest.doMock("../../lib/prisma", () => ({
       __esModule: true,
       default: {
@@ -224,7 +231,7 @@ describe("fall-through 5 — the consultant appointments list", () => {
     }));
     jest.doMock("../../lib/data/consultant-appointments", () => ({
       __esModule: true,
-      getConsultantAppointments,
+      readConsultantAppointmentsPage,
     }));
     const { GET } = await import("../../app/api/scheduling/appointments/route");
 
@@ -235,7 +242,7 @@ describe("fall-through 5 — the consultant appointments list", () => {
     );
 
     expect(res.status).toBe(200);
-    const args = getConsultantAppointments.mock.calls[0][0];
+    const args = readConsultantAppointmentsPage.mock.calls[0][0];
     expect(args.scope).toEqual({
       kind: "orgMember",
       orgId: ORG,

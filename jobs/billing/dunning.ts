@@ -1,9 +1,10 @@
 /**
  * Bounded invoice dunning claims and notices, with gateway read-back before
- * config-enabled suspension. Every claim repeats its expected prior state.
+ * config-enabled suspension. Every claim repeats its expected prior state and
+ * stages its bell and email outbox rows in the same transaction.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
@@ -11,7 +12,14 @@ import {
   rosterForOrg,
   VISIBILITY_ROLES,
 } from "@/lib/novu/org-workflows";
-import { sendOrgInvoiceOverdueEmail } from "@/lib/email";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
+import {
+  attemptStaged,
+  EMAIL_BUDGET_MS,
+  MONEY_EMAIL_TYPES,
+  stageOrgInvoiceOverdueEmail,
+  type StagedRecipientEmail,
+} from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
@@ -21,10 +29,11 @@ import {
   applyOrgInvoiceCapture,
   invoiceOutstandingPaise,
 } from "@/lib/payments/billing/org-invoice-settlement";
-
-// #779 — 7-day cadence between escalations, capped at 3 reminders.
-const REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
-const MAX_REMINDERS = 3;
+import {
+  DUNNABLE_ORG_STATUSES,
+  MAX_REMINDERS,
+  REMINDER_INTERVAL_MS,
+} from "@/lib/payments/billing/dunning-policy";
 
 // #812 — Stage 3 (config-gated). After the 3rd reminder, if the invoice is
 // still OVERDUE this long past being marked overdue, suspend the org's
@@ -37,14 +46,6 @@ const SUSPEND_GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7d past the final reminder
 // Turning suspension on must not suspend the whole OVERDUE backlog in one window.
 const MAX_SUSPENSIONS_PER_RUN = 20;
 
-// #779 — only dun orgs that are still reachable. DEACTIVATED orgs are torn
-// down; their invoices don't get chased.
-const DUNNABLE_ORG_STATUSES = [
-  "ACTIVE",
-  "PENDING_VERIFICATION",
-  "SUSPENDED",
-] as const;
-
 interface DunningStats {
   scannedStage1: number;
   markedOverdue: number;
@@ -54,44 +55,79 @@ interface DunningStats {
   failed: number;
 }
 
+interface OverdueInvoice {
+  id: string;
+  organizationId: string;
+  invoiceNumber: string;
+  totalPaise: number;
+  displayCurrency: string;
+  dueDate: Date;
+  organization: { name: string };
+}
+
+interface OverdueNotices {
+  bells: StagedTrigger[];
+  emails: StagedRecipientEmail[];
+}
+
 /**
- * #1653 — the email twin of `notifyOrgInvoiceOverdue`, to the same visibility
- * roster the bell resolves. The roster lookup is the one thing here that can
- * throw, and a job loop must outlive it, so it is caught and logged like the
- * bell's own failure.
+ * Stages the bell and email in the claim's `tx`, keyed per invoice and stage so
+ * a replay cannot stage twice; a roster, read or render failure rolls the claim back.
  */
-async function emailInvoiceOverdue(
-  inv: {
-    id: string;
-    organizationId: string;
-    invoiceNumber: string;
-    totalPaise: number | bigint;
-    displayCurrency: string;
-    dueDate: Date;
-    organization: { name: string };
-  },
+async function stageOverdueNotices(
+  tx: Tx,
+  inv: OverdueInvoice,
   reminderStage: number,
   now: Date,
-): Promise<void> {
-  let roster: string[];
-  try {
-    roster = await rosterForOrg(inv.organizationId, VISIBILITY_ROLES);
-  } catch (err) {
-    console.error("[dunning] roster lookup failed:", err);
-    return;
-  }
-  await sendOrgInvoiceOverdueEmail({
-    recipientUserIds: roster,
-    invoiceId: inv.id,
-    invoiceNumber: inv.invoiceNumber,
-    orgName: inv.organization.name,
-    totalPaise: inv.totalPaise,
-    currency: inv.displayCurrency,
-    dueDate: inv.dueDate,
-    daysLate: daysBetween(inv.dueDate, now),
-    reminderStage,
-    payUrl: `${getAppUrl()}/dashboard/organization/${inv.organizationId}/billing`,
-  });
+): Promise<OverdueNotices> {
+  const daysLate = daysBetween(inv.dueDate, now);
+  const payUrl = `${getAppUrl()}/dashboard/organization/${inv.organizationId}/billing`;
+  const bells = await notifyOrgInvoiceOverdue(
+    inv.organizationId,
+    {
+      invoiceNumber: inv.invoiceNumber,
+      orgName: inv.organization.name,
+      totalPaise: inv.totalPaise,
+      currency: inv.displayCurrency,
+      daysLate,
+      reminderStage,
+      payUrl,
+    },
+    {
+      tx,
+      dedupeKey: `orgInvoice:${inv.id}:overdue:${reminderStage}`,
+      entityRef: `orgInvoice:${inv.id}`,
+    },
+  );
+  const roster = await rosterForOrg(inv.organizationId, VISIBILITY_ROLES, tx);
+  const emails =
+    roster.length === 0
+      ? []
+      : await stageOrgInvoiceOverdueEmail(tx, {
+          recipientUserIds: roster,
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          orgName: inv.organization.name,
+          totalPaise: inv.totalPaise,
+          currency: inv.displayCurrency,
+          dueDate: inv.dueDate,
+          daysLate,
+          reminderStage,
+          payUrl,
+        });
+  return { bells, emails };
+}
+
+/** After commit; a failed send leaves its outbox row for the relays. */
+async function attemptOverdueNotices(notices: OverdueNotices): Promise<void> {
+  await Promise.allSettled([
+    ...notices.bells.map((bell) => attemptTrigger(bell)),
+    attemptStaged(
+      notices.emails,
+      MONEY_EMAIL_TYPES.ORG_INVOICE_OVERDUE,
+      EMAIL_BUDGET_MS.JOB,
+    ),
+  ]);
 }
 
 function daysBetween(from: Date, to: Date): number {
@@ -104,10 +140,10 @@ function daysBetween(from: Date, to: Date): number {
 async function claimInvoiceGuarded(
   inv: { id: string },
   label: string,
-  run: () => Promise<boolean>,
-): Promise<"claimed" | "lost" | "failed"> {
+  run: () => Promise<OverdueNotices | null>,
+): Promise<OverdueNotices | "lost" | "failed"> {
   try {
-    return (await withSerializableRetry(run)) ? "claimed" : "lost";
+    return (await withSerializableRetry(run)) ?? "lost";
   } catch (err) {
     console.error(
       `[dunning] ${label} claim failed for invoice ${inv.id}:`,
@@ -202,12 +238,12 @@ async function dunning(opts: {
   const claim = async (
     inv: { id: string },
     label: string,
-    run: () => Promise<boolean>,
-  ): Promise<boolean> => {
+    run: () => Promise<OverdueNotices | null>,
+  ): Promise<OverdueNotices | null> => {
     attempted += 1;
     const outcome = await claimInvoiceGuarded(inv, label, run);
     if (outcome === "failed") stats.failed += 1;
-    return outcome === "claimed";
+    return typeof outcome === "string" ? null : outcome;
   };
 
   // ── Stage 1: ISSUED past due → OVERDUE first notice ────────────────────
@@ -236,7 +272,7 @@ async function dunning(opts: {
     // #1132 follow-up — transient P2034 aborts are retried by the house
     // helper; persistent failures skip this invoice so one bad row can't
     // kill the day's run.
-    const claimed = await claim(inv, "stage", () =>
+    const notices = await claim(inv, "stage", () =>
       prisma.$transaction(
         async (tx) => {
           // Claim the row only if still ISSUED + un-stamped so two replicas
@@ -245,7 +281,7 @@ async function dunning(opts: {
             where: { id: inv.id, status: "ISSUED", markedOverdueAt: null },
             data: { status: "OVERDUE", markedOverdueAt: now },
           });
-          if (claim.count === 0) return false;
+          if (claim.count === 0) return null;
 
           await tx.orgAuditLog.create({
             data: {
@@ -263,26 +299,14 @@ async function dunning(opts: {
               },
             },
           });
-          return true;
+          return stageOverdueNotices(tx, inv, 0, now);
         },
         { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
       ),
     );
-    if (!claimed) continue;
+    if (!notices) continue;
     stats.markedOverdue += 1;
-
-    // Fire-and-forget notify outside the tx — committed state, no DB writes.
-    await notifyOrgInvoiceOverdue(inv.organizationId, {
-      invoiceNumber: inv.invoiceNumber,
-      orgName: inv.organization.name,
-      totalPaise: inv.totalPaise,
-      currency: inv.displayCurrency,
-      daysLate: daysBetween(inv.dueDate, now),
-      reminderStage: 0,
-      payUrl: `${getAppUrl()}/dashboard/organization/${inv.organizationId}/billing`,
-    }).catch((err) => console.error("[dunning] stage-1 notify failed:", err));
-    // #1653 — the email twin, after the bell; never throws.
-    await emailInvoiceOverdue(inv, 0, now);
+    await attemptOverdueNotices(notices);
   }
 
   // ── Stage 2: OVERDUE escalation reminders (7-day cadence, cap 3) ────────
@@ -328,7 +352,7 @@ async function dunning(opts: {
     // #1132 follow-up — transient P2034 aborts are retried by the house
     // helper; persistent failures skip this invoice so one bad row can't
     // kill the day's run.
-    const claimed = await claim(inv, "stage", () =>
+    const notices = await claim(inv, "stage", () =>
       prisma.$transaction(
         async (tx) => {
           const claim = await tx.organizationInvoice.updateMany({
@@ -343,25 +367,15 @@ async function dunning(opts: {
               dunningReminderCount: { increment: 1 },
             },
           });
-          return claim.count > 0;
+          if (claim.count === 0) return null;
+          return stageOverdueNotices(tx, inv, nextStage, now);
         },
         { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
       ),
     );
-    if (!claimed) continue;
+    if (!notices) continue;
     stats.remindersSent += 1;
-
-    await notifyOrgInvoiceOverdue(inv.organizationId, {
-      invoiceNumber: inv.invoiceNumber,
-      orgName: inv.organization.name,
-      totalPaise: inv.totalPaise,
-      currency: inv.displayCurrency,
-      daysLate: daysBetween(inv.dueDate, now),
-      reminderStage: nextStage,
-      payUrl: `${getAppUrl()}/dashboard/organization/${inv.organizationId}/billing`,
-    }).catch((err) => console.error("[dunning] stage-2 notify failed:", err));
-    // #1653 — the email twin, after the bell; never throws.
-    await emailInvoiceOverdue(inv, nextStage, now);
+    await attemptOverdueNotices(notices);
   }
 
   // ── Stage 3 (#812, config-gated): suspend sponsored bookings ────────────
@@ -438,10 +452,10 @@ async function dunning(opts: {
       // #1132 follow-up — transient P2034 aborts are retried by the house
       // helper; persistent failures skip this invoice so one bad row can't
       // kill the day's run.
-      const claimed = await claim(inv, "stage-3 suspend", () =>
+      const notices = await claim(inv, "stage-3 suspend", () =>
         prisma.$transaction(
           async (tx) => {
-            if ((await invoiceOutstandingPaise(tx, inv.id)) <= 0) return false;
+            if ((await invoiceOutstandingPaise(tx, inv.id)) <= 0) return null;
             const claim = await tx.organizationInvoice.updateMany({
               where: {
                 id: inv.id,
@@ -451,7 +465,7 @@ async function dunning(opts: {
               },
               data: { dunningSuspendedAt: now },
             });
-            if (claim.count === 0) return false;
+            if (claim.count === 0) return null;
 
             await tx.orgAuditLog.create({
               data: {
@@ -468,32 +482,15 @@ async function dunning(opts: {
                 },
               },
             });
-            return true;
+            return stageOverdueNotices(tx, inv, MAX_REMINDERS + 1, now);
           },
           { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
         ),
       );
 
-      if (!claimed) continue;
+      if (!notices) continue;
       stats.suspended += 1;
-
-      const dueDate = inv.dueDate ?? now;
-      const orgName = inv.organization?.name ?? "Organization";
-      const suspensionStage = MAX_REMINDERS + 1;
-      await notifyOrgInvoiceOverdue(inv.organizationId, {
-        invoiceNumber: inv.invoiceNumber,
-        orgName,
-        totalPaise: inv.totalPaise,
-        currency: inv.displayCurrency,
-        daysLate: daysBetween(dueDate, now),
-        reminderStage: suspensionStage,
-        payUrl: `${getAppUrl()}/dashboard/organization/${inv.organizationId}/billing`,
-      }).catch((err) => console.error("[dunning] stage-3 notify failed:", err));
-      await emailInvoiceOverdue(
-        { ...inv, dueDate, organization: { name: orgName } },
-        suspensionStage,
-        now,
-      );
+      await attemptOverdueNotices(notices);
     }
   }
 

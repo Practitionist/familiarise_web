@@ -9,7 +9,7 @@ import { passkey } from "@better-auth/passkey";
 import bcrypt from "bcrypt";
 import prisma from "@/lib/prisma";
 import { scheduleAfter } from "@/lib/api/after-safe";
-import { trustedClientIpHeaders } from "@/lib/request-ip";
+import { CLIENT_IP_HEADER } from "@/lib/request-ip";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { assertSsoSessionAllowed } from "@/lib/sso/enforce-session";
 import {
@@ -46,6 +46,7 @@ import {
   isQaOperatorExemptFrom2fa,
 } from "@/lib/auth/qa-accounts";
 import {
+  SESSION_EXPIRES_IN_SECONDS,
   authenticationStart,
   cappedSessionFields,
   refreshSessionLifetime,
@@ -67,6 +68,13 @@ import {
   revokeAllUserSessions,
   revokeSessionById,
 } from "@/lib/auth/session-revoke";
+import {
+  endReasonForPath,
+  recordSessionEnds,
+  recordSessionStart,
+  sessionSnapshot,
+  stampSessionEnds,
+} from "@/lib/auth/session-access-log";
 import { socialProviderConfig } from "@/lib/auth/social-providers";
 import {
   assertOperatorMayEnableTwoFactor,
@@ -177,7 +185,7 @@ export const auth = betterAuth({
     "/sso/callback",
   ],
 
-  // SSO is OIDC-only, but @better-auth/sso 1.7.7 has no switch to leave the
+  // SSO is OIDC-only, but @better-auth/sso 1.7.14 has no switch to leave the
   // SAML endpoints unmounted, and `disabledPaths` matches concrete paths so
   // it cannot cover the `:providerId` ones. `ctx.path` here is the route
   // template, so one prefix check 404s the whole SAML surface.
@@ -316,10 +324,9 @@ export const auth = betterAuth({
       httpOnly: true,
     },
     ipAddress: {
-      // The rate-limit key and the session's recorded IP, read only from the
-      // header this runtime's edge sets. BetterAuth ignores a multi-hop
-      // `x-forwarded-for` (no trustedProxies), so a client cannot pick its key.
-      ipAddressHeaders: trustedClientIpHeaders(),
+      // The rate-limit key and the session's recorded IP: only the single IP
+      // middleware stamps, which overwrites anything the client sent.
+      ipAddressHeaders: [CLIENT_IP_HEADER],
       // Key IPv6 on the /64. One host usually owns a whole /64, so per-address
       // keys would let it rotate through 2^64 buckets.
       ipv6Subnet: 64,
@@ -332,7 +339,7 @@ export const auth = betterAuth({
   },
 
   session: {
-    expiresIn: 30 * 24 * 60 * 60, // 30 days
+    expiresIn: SESSION_EXPIRES_IN_SECONDS,
     updateAge: 24 * 60 * 60, // 24 hours
     // Off: every session read hits the database, so a revoke, ban or role
     // change applies on the very next request. Lifetime caps for operators
@@ -436,7 +443,8 @@ export const auth = betterAuth({
         // device's new one.
         after: async (user, ctx) => {
           if (isTwoFactorEnrolment(user, ctx?.path)) {
-            await revokeAllUserSessions(prisma, user.id);
+            const { ended } = await revokeAllUserSessions(prisma, user.id);
+            await stampSessionEnds(ended);
             await sendSecurityEventEmail(user, { kind: "authenticator-added" });
           }
         },
@@ -504,6 +512,23 @@ export const auth = betterAuth({
             data: cappedSessionFields(session.expiresAt, authStart, maxAgeMs),
           };
         },
+        after: async (session, ctx) => {
+          await recordSessionStart(
+            sessionSnapshot(session),
+            ctx?.headers ?? ctx?.request?.headers,
+          );
+        },
+      },
+      // Every Better Auth delete (sign-out, an expired cookie, its revoke
+      // routes) lands here; the app's own revokes stamp via stampSessionEnds.
+      delete: {
+        after: async (session, ctx) => {
+          await recordSessionEnds(
+            prisma,
+            [sessionSnapshot(session)],
+            endReasonForPath(ctx?.path),
+          );
+        },
       },
       update: {
         // Only get-session's sliding refresh writes `expiresAt`, and it has
@@ -520,11 +545,13 @@ export const auth = betterAuth({
             new Date(),
           );
           if (decision.kind === "end") {
-            await revokeSessionById(
+            const { ended } = await revokeSessionById(
               prisma,
               current.session.userId,
               current.session.id,
+              "EXPIRED",
             );
+            await stampSessionEnds(ended);
             return false;
           }
           if (decision.expiresAt) {

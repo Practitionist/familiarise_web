@@ -26,6 +26,7 @@ import {
   planPositioningShape,
 } from "@/schemas/plans";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import { planTotalSessions } from "@/lib/booking/entitlement";
 
 const PlanKindSchema = z.enum(["WEBINAR", "CLASS"]);
 
@@ -201,15 +202,9 @@ export async function POST(
                 durationInMonths: body.durationInMonths,
                 sessionsPerWeek: body.sessionsPerWeek,
                 sessionDurationInHours: body.sessionDurationInHours,
-                // Kept consistent with the schema's own derivation note
-                // (sessionsPerWeek × durationInMonths × 4) so the stored
-                // totals never disagree with the grid that produced them.
-                totalSessions: body.sessionsPerWeek * body.durationInMonths * 4,
+                totalSessions: planTotalSessions(body),
                 totalHours:
-                  body.sessionsPerWeek *
-                  body.durationInMonths *
-                  4 *
-                  body.sessionDurationInHours,
+                  planTotalSessions(body) * body.sessionDurationInHours,
                 maxParticipants: body.maxParticipants ?? 30,
               },
             });

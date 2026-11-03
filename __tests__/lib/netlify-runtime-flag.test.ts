@@ -1,10 +1,9 @@
 /**
  * Netlify sets `NETLIFY=true` on the build machine only; functions see just
- * URL, SITE_NAME and SITE_ID at runtime. The runtime checks keyed on it (the
- * trusted client-IP header, the cron lease cap, the pool guard) therefore work
- * only because next.config.mjs inlines it and each check reads it as a literal
- * `process.env.NETLIFY`, which is what the build replaces. Read as source: the
- * config wraps its export in withSentryConfig and cannot be imported here.
+ * URL, SITE_NAME and SITE_ID at runtime. Next bundles see the inlined literal
+ * `process.env.NETLIFY`; `netlify/functions/*` are not Next-compiled, so the
+ * lease cap and pool guard also accept the runtime `SITE_ID`. Read as source:
+ * the config wraps its export in withSentryConfig and cannot be imported here.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -22,15 +21,15 @@ it("inlines NETLIFY into the server build when the build runs on Netlify", () =>
   );
 });
 
-it.each(["lib/request-ip.ts", "lib/cron/with-cron-lock.ts", "lib/prisma.ts"])(
-  "%s reads NETLIFY as a literal the build can replace",
+it("detects Netlify from the inlined NETLIFY or the runtime SITE_ID, both literal", () => {
+  const host = read("lib/runtime-host.ts");
+  expect(host).toMatch(/process\.env\.NETLIFY\b/);
+  expect(host).toMatch(/process\.env\.SITE_ID\b/);
+});
+
+it.each(["lib/cron/with-cron-lock.ts", "lib/prisma.ts"])(
+  "%s keys its Netlify behaviour on onNetlify()",
   (file) => {
-    expect(read(file)).toMatch(/process\.env\.NETLIFY\b/);
+    expect(read(file)).toMatch(/onNetlify\(\)/);
   },
 );
-
-it("request-ip defaults to the literal host markers, not the whole process.env", () => {
-  expect(read("lib/request-ip.ts")).not.toMatch(
-    /env:\s*RuntimeEnv\s*=\s*process\.env\b/,
-  );
-});

@@ -4,7 +4,7 @@ import {
   dehydrate,
 } from "@tanstack/react-query";
 import { redirect } from "next/navigation";
-import type { MemberRole } from "@prisma/client";
+import { z } from "zod";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { getOrgMembers } from "@/lib/data/org-members";
@@ -15,13 +15,7 @@ import {
 
 import { MembersTabs } from "./MembersTabs";
 
-// #1527 — All/Learners/Experts folded into one filterable Members list; old
-// bookmarks land on it with the matching role filter.
-const LEGACY_TAB_ROLE = new Map<string, MemberRole | null>([
-  ["all", null],
-  ["learners", "LEARNER"],
-  ["experts", "EXPERT"],
-]);
+const tabSchema = z.enum(["members", "invitations"]).catch("members");
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -50,15 +44,7 @@ export default async function OrgMembersPage({
     redirect(`/dashboard/organization/${orgId}/home`);
   }
 
-  const tab = first("tab");
-  const legacyRole = tab === undefined ? undefined : LEGACY_TAB_ROLE.get(tab);
-  if (legacyRole !== undefined) {
-    const next = new URLSearchParams();
-    if (legacyRole) next.set("role", legacyRole);
-    const qs = next.toString();
-    const qsSuffix = qs ? `?${qs}` : "";
-    redirect(`/dashboard/organization/${orgId}/members${qsSuffix}`);
-  }
+  const tab = tabSchema.parse(first("tab"));
 
   if (
     tab === "invitations" ||

@@ -199,13 +199,13 @@ export const PLATFORM_FEATURES = [
     icon: MessageSquare,
     title: "In-app Messaging",
     description:
-      "Direct communication with experts. Create support tickets and track issue resolution.",
+      "Direct communication with experts. Open support cases and track issue resolution.",
   },
   {
     icon: HeadphonesIcon,
     title: "Support System",
     description:
-      "Priority-based ticket system with issue tracking for sessions, payments, and more.",
+      "Priority-based support cases with issue tracking for sessions, payments, and more.",
   },
   {
     icon: FileCheck,

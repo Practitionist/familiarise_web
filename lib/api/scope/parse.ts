@@ -230,40 +230,55 @@ export function assertNeverScope(scope: never): never {
 
 /**
  * The organization a scope is pinned to, or `null` when it spans every org
- * (`all`) or none (`personal`).
- *
- * `org` and `orgMember` BOTH pin an organization — narrowing to the caller's
- * own rows is the only difference between them, and that half is applied by
- * the route's existing self-scoping. Six consumers hand-rolled
- * `kind === "org" ? { organizationId } : <unfiltered>` and so silently stopped
- * filtering the moment the `operations.read` downgrade made `orgMember`
- * reachable: a learner picking one org got their rows from every org plus
- * their personal ones. Route the question through here instead of repeating
- * the two-kind test, so a future `Scope` variant is a compile error in one
- * place rather than a quiet fall-through in seven.
+ * (`all`) or none (`personal`). `org` and `orgMember` both pin; the
+ * caller's own-rows narrowing for `orgMember` is applied by the route.
  */
 export function scopeOrgId(scope: Scope): string | null {
-  return scope.kind === "org" || scope.kind === "orgMember"
-    ? scope.orgId
-    : null;
+  switch (scope.kind) {
+    case "personal":
+    case "all":
+      return null;
+    case "org":
+    case "orgMember":
+      return scope.orgId;
+    default:
+      return assertNeverScope(scope);
+  }
 }
 
 /**
- * Project a `Scope` into a partial Prisma `where` clause keyed on the
- * model's `organizationId` column. Caller composes this with their
- * other filters.
- *
- * Personal scope → `{ organizationId: null }` (rows NOT tagged to any
- *   org). Plus the caller's userId filter is applied separately by the
- *   route — this helper only contributes the scope dimension.
- * Org scope → `{ organizationId: orgId }`.
- * All scope → `{}` (no org filter; caller is admin/staff).
+ * Project a `Scope` onto a row's `organizationId` column: personal pins
+ * `null`, `org`/`orgMember` pin the org, and `all` (admin/staff) returns
+ * `undefined`, which Prisma reads as no filter. An unknown kind throws.
  */
 export function scopeToWhereOrgId(
   scope: Scope,
-): { organizationId: string | null } | { organizationId: string } | {} {
-  if (scope.kind === "personal") return { organizationId: null };
-  if (scope.kind === "org" || scope.kind === "orgMember")
-    return { organizationId: scope.orgId };
-  return {};
+): { organizationId: string | null } | undefined {
+  switch (scope.kind) {
+    case "personal":
+      return { ...PERSONAL_PLAN_HOST };
+    case "org":
+    case "orgMember":
+      return { organizationId: scope.orgId };
+    case "all":
+      return undefined;
+    default:
+      return assertNeverScope(scope);
+  }
 }
+
+/**
+ * The same projection onto a catalog plan's HOST org. A consultant's
+ * personal work is every booking on a plan no org hosts, whatever org the
+ * buyer's booking is tagged to (a sponsor tag is a funding rail, not a host).
+ */
+export const scopeToPlanHostWhere = scopeToWhereOrgId;
+
+/** A consultant's personal side of the plan-host split: plans no org hosts. */
+export const PERSONAL_PLAN_HOST = { organizationId: null } as const;
+
+/** The org side of the plan-host split: plans hosted by any org still readable. */
+export const READABLE_ORG_PLAN_HOST = {
+  organizationId: { not: null },
+  organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
+} as const;

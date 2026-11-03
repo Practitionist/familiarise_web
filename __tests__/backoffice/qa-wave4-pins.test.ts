@@ -40,8 +40,8 @@ describe("QA wave 4 (backoffice)", () => {
     expect(core).toContain("name={profileOwnerName(profileData) ?? null}");
     expect(core).toContain("Actions run as");
     for (const layout of [
-      "app/dashboard/consultee/[consulteeId]/layout.tsx",
-      "app/dashboard/consultant/[consultantId]/layout.tsx",
+      "app/dashboard/consultee/[consulteeId]/ConsulteeDashboardLayout.tsx",
+      "app/dashboard/consultant/[consultantId]/ConsultantDashboardLayout.tsx",
     ]) {
       expect(read(layout)).toContain(
         "profileOwnerName={(profile) => profile?.user?.name}",

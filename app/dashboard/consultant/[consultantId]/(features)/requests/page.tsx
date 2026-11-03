@@ -69,6 +69,8 @@ export default async function RequestsPage({
           chip: inbox.chip ?? undefined,
           sort: inbox.sort,
           page: inbox.page,
+          after: inbox.after,
+          focusId: inbox.focus,
         }),
     })
     .catch(() => undefined);
@@ -84,8 +86,9 @@ export default async function RequestsPage({
         <Alert className="mt-6">
           <PauseCircle className="h-4 w-4" />
           <AlertDescription>
-            You&apos;re not accepting new requests. Turn &quot;Accepting
-            requests&quot; back on above, or review your{" "}
+            You&apos;ve paused new 1:1 bookings and trials. Webinars and classes
+            keep selling. Turn &quot;Taking new 1:1 bookings and trials&quot;
+            back on above, or review your{" "}
             <Link
               href={`/dashboard/consultant/${consultantId}/settings/booking`}
               className="underline underline-offset-4"

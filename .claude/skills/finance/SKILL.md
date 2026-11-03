@@ -23,10 +23,21 @@ This is the index for the finance domain: how money truth is written and proven 
 - Treat the immutable double-entry journal as authoritative. Wallet balances are reconciled caches; account balances are journal aggregates.
 - Advance both scheduled and authenticated manual ledger audits through the same bounded `runReconcileLedgers` core and fail-closed lease. Continue idle checkpoints; authenticated manual calls can refresh a completed verdict on the same day. Never re-freeze historical findings on resume or label an incomplete report as drift. Evaluate exception expiry at save time, not the audit start. Each comparison uses one read-only Repeatable Read snapshot. Partial reports remain RUNNING; missing BOOKING findings and baselines pin paymentId. Freeze each wallet page immediately, release a frozen wallet the page finds back in sync, and deduplicate the fatal page by billing account. See `docs/finance/20-ledger/06-integrity-and-reconciliation.md` for operation and resumption.
 - Reserve refunds before any gateway call. Booking refunds use `refundBookingPayment`, `refundWholeEventPayments` or `refundRemovedAttendeeSeat`; wallet top-up refunds use `refundRemainingWalletBalance` or `bookTopUpRefund`. Support and incident paths enter through the booking refund door.
+- An operator refund passes `settlesOwedByHand`. In the refund's own transaction it clears the payment's owed-refund marker when it covers the owed amount, and otherwise lowers `refundOwedPaise` by its amount and leaves the marker retrying. Every marker drive passes `owedMarker` (key and amount). First writer wins: a door whose stamp loses to an existing marker adds nothing, records an `owed-already-held:` WARN event (`stampOwedOrHeld`), and says so in its response so an operator can top up by hand. A failed drive backs off 1 h, then 4 h (`refundOwedNextAt`) before the third failure pages. See `references/doctrine.md` and ADR 37.
 - Bill GST as principal supplier: 18% on the full price, platform invoices and credit notes, no Section 52 TCS. Book each supply's GST once; invoice journals cover only supplies without booking journals, and overages tax only their surcharge.
 - Pass the transaction client through every helper inside `$transaction`; global-client reads can deadlock at `PG_POOL_MAX=1`.
 
 Detailed invariants and regime facts live in `references/doctrine.md`; verification procedures live in `references/verification.md`.
+
+## Standalone sales (replays and digital products)
+
+- Settle each rail only in its handler: `handleRecordingPurchaseSuccess` (`lib/payments/webhooks/recording-purchase.ts`) and `handleDigitalProductPurchaseSuccess` (`lib/payments/webhooks/digital-product-purchase.ts`), routed by `routeCapturedPayment` on the order notes' `type`. Stage a capture that fulfils nothing with `stageCaptureRefund` in `lib/payments/webhooks/standalone-sale-capture.ts`; never grant it.
+- Revoke on full refund or lost chargeback through `revokeStandaloneSaleEntitlement` (`lib/payments/digital-product-entitlement.ts`), which looks the sale up by `paymentId`. Never infer what a payment bought from `appointmentId === null`.
+- A free digital product claim is a `SUCCEEDED` purchase of 0 paise with no order, Payment, invoice or earnings.
+- Never delete a purchase row that holds a gateway order: the reconcile sweep finds a lost capture only through that row. A product with any purchase row answers `409 HAS_PURCHASES` or `409 HAS_ORDERS` on DELETE and is archived instead.
+- Digital product earnings use `DIGITAL_PRODUCT` (168 h hold); the invoice SAC comes from `DIGITAL_PRODUCT_SAC_CODES` in `lib/payments/payouts/constants.ts` (998431 or 998439, pending CA sign-off).
+- Refund a digital product through the existing support and admin doors; the operator checks `firstDownloadedAt`, which no door enforces.
+- Recover a lost capture with `reconcile-standalone-purchases` or the buyer's `purchases/[purchaseId]/verify` route, both through `recoverStandaloneOrder`. Both read `FAILED` purchases under 7 days old, since a declined attempt's order can still capture; neither ever reads `REFUNDED`.
 
 ## Settlement, wallet and operator surfaces
 
@@ -66,4 +77,7 @@ calls outside transactions. An SDK timeout does not cancel a provider effect.
 Before dunning suspension, inspect the retained order and hold live, uncertain or
 parked evidence, then recheck debt/order identity inside the claim transaction.
 The suspension budget starts at stage entry, independently of earlier reminders.
+Every dunning stage stages its bell and email inside the winning claim
+transaction (`stageOverdueNotices`, dedupe key `orgInvoice:<id>:overdue:<stage>`);
+a roster, read or render failure rolls the claim back and counts in `failed`.
 Read `docs/maintenance/12-worker-recovery.md` for cadence, rotation and limits.

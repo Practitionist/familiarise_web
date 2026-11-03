@@ -8,6 +8,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 import {
+  ORG_FILED_CASE_TITLE,
   ORG_SENSITIVE_PERSONAL_CATEGORIES,
   ORG_SENSITIVE_PERSONAL_ISSUE_TYPES,
   canCorrespondOnCase,
@@ -274,7 +275,7 @@ it("redacts a self-filed case for a viewer without a current thread grant", () =
   };
   expect(projectCaseForViewer(row, "revoked-presenter", false)).toMatchObject({
     summaryOnly: true,
-    summary: { title: "Organization support request" },
+    summary: { title: ORG_FILED_CASE_TITLE },
   });
   expect(projectCaseForViewer(row, "filer", true).summaryOnly).toBe(false);
   expect(

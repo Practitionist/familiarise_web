@@ -13,7 +13,7 @@
  * (ADR 27), as for FailedEmail and OutboundWebhookDelivery.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
@@ -42,6 +42,38 @@ export interface NotificationOutboxStore {
     ): Promise<StagedTrigger[]>;
     count?(args?: Prisma.NotificationOutboxCountArgs): Promise<number>;
   };
+}
+
+/** Rows due a trigger at `now`; shared by the relay and the ticker's idle probe. */
+function outboxDueWhere(now: Date): Prisma.NotificationOutboxWhereInput {
+  return {
+    AND: [
+      {
+        OR: [
+          {
+            status: "PENDING",
+            OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+          },
+          { status: "RETRY", nextRetryAt: { lte: now } },
+        ],
+      },
+      { OR: [{ notBefore: null }, { notBefore: { lte: now } }] },
+    ],
+  };
+}
+
+/** Ticker idle probe; a skipped tick leaves the outbox gauges at their last value. */
+export async function hasNotificationOutboxWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const row = await db.notificationOutbox.findFirst({
+    where: outboxDueWhere(now),
+    select: { id: true },
+  });
+  return row !== null;
 }
 
 /** Single-tick worker; `now` and the store are injectable for the unit pins. */
@@ -73,20 +105,7 @@ export async function runNotificationDrainTick(params: {
     }> = [];
 
     const dueRows = await params.prisma.notificationOutbox.findMany({
-      where: {
-        AND: [
-          {
-            OR: [
-              {
-                status: "PENDING",
-                OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: nowDate } }],
-              },
-              { status: "RETRY", nextRetryAt: { lte: nowDate } },
-            ],
-          },
-          { OR: [{ notBefore: null }, { notBefore: { lte: nowDate } }] },
-        ],
-      },
+      where: outboxDueWhere(nowDate),
       orderBy: [{ nextRetryAt: { sort: "asc", nulls: "first" } }],
       take: params.maxBatch ?? MAX_BATCH,
       select: {

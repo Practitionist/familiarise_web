@@ -14,7 +14,7 @@ This repo is not deployed on Vercel today; production is Netlify and the evaluat
 
 ## 3. Exposure in this repo
 
-The dual-boot rules (`docs/deployment/README.md`) keep the code runnable on Vercel: `x-vercel-forwarded-for` is trusted only when `process.env.VERCEL === "1"`, and `sharp` is excluded only on Netlify or Vercel in `next.config.mjs`. The 4.5 MB request body cap is why uploads over 4 MB use Supabase presigned URLs. `next.config.mjs` `images.formats` enables AVIF and WebP, which doubles transformation variants if image optimization is billed per transformation.
+The dual-boot rules (`docs/deployment/README.md`) keep the code runnable on Vercel: edge middleware reads `x-vercel-forwarded-for` only when `process.env.VERCEL === "1"` and stamps the result for Node code, and `sharp` is excluded only on Netlify or Vercel in `next.config.mjs`. The 4.5 MB request body cap is why uploads over 4 MB use Supabase presigned URLs. `next.config.mjs` `images.formats` enables AVIF and WebP, which doubles transformation variants if image optimization is billed per transformation.
 
 ## 4. Guardrails to set
 

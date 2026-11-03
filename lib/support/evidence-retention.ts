@@ -8,7 +8,7 @@ const DAY_MS = 24 * 3_600_000;
 const SUPPORT_EVIDENCE_RETENTION_MS = 180 * DAY_MS;
 const PURGED_SUPPORT_TEXT = "[deleted after the retention period]";
 // Titles are requester free text (a grievance title embeds its subject), so they go too.
-const PURGED_SUPPORT_TITLE = "Support request";
+const PURGED_SUPPORT_TITLE = "Support case";
 const PURGED_ATTACHMENT_NAME = "Deleted after the retention period";
 // Notes on these events are the decision, money, retention and staff-access record; every other event note is purged.
 const RECORD_EVENT_KINDS: SupportCaseEventKind[] = [
@@ -39,6 +39,13 @@ interface EvidencePurgeResult {
   filesDeleted: number;
 }
 
+/** A dispute that holds evidence; at LIVE_DISPUTE_CAP of them the purge refuses and reports. */
+export const LIVE_DISPUTE_WHERE: Prisma.DisputeWhereInput = {
+  status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
+};
+
+const NO_DISPUTE_LINKS = { paymentIds: [], appointmentIds: [], refundIds: [] };
+
 /** Ids a live chargeback reaches: its payment, that payment's booking and its refunds. */
 async function liveDisputeLinks(): Promise<{
   paymentIds: string[];
@@ -46,7 +53,7 @@ async function liveDisputeLinks(): Promise<{
   refundIds: string[];
 } | null> {
   const disputes = await prisma.dispute.findMany({
-    where: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+    where: LIVE_DISPUTE_WHERE,
     select: {
       paymentId: true,
       payment: {
@@ -74,16 +81,18 @@ async function liveDisputeLinks(): Promise<{
 /**
  * Cases whose evidence is past retention: closed 180 days ago, as is every
  * appeal on their decisions (and, for an appeal, the original case); no legal
- * hold, no live dispute on a linked payment, not purged yet.
+ * hold, no live dispute on a linked payment, not purged yet. Without `links`
+ * it drops the dispute exclusions, a superset the idle probe reads.
  */
-function purgeEligibleWhere(
-  cutoff: Date,
+export function purgeEligibleWhere(
+  now: Date,
   links: {
     paymentIds: string[];
     appointmentIds: string[];
     refundIds: string[];
-  },
+  } = NO_DISPUTE_LINKS,
 ): Prisma.SupportCaseWhereInput {
+  const cutoff = new Date(now.getTime() - SUPPORT_EVIDENCE_RETENTION_MS);
   const disputedSubjects: Prisma.SupportCaseSubjectWhereInput[] = [
     ...(links.paymentIds.length
       ? [
@@ -180,10 +189,7 @@ async function scanPurgeCandidates(
       );
       return null;
     }
-    const eligible = purgeEligibleWhere(
-      new Date(now.getTime() - SUPPORT_EVIDENCE_RETENTION_MS),
-      links,
-    );
+    const eligible = purgeEligibleWhere(now, links);
     const cases = await prisma.supportCase.findMany({
       where: eligible,
       orderBy: [{ closedAt: "asc" }, { id: "asc" }],

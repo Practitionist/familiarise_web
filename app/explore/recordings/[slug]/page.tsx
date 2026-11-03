@@ -6,6 +6,10 @@ import { getSession } from "@/lib/auth-server";
 import { getPublicRecordingBySlug } from "@/lib/data/recordings-explore";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import { viewerPlaybackAccess } from "@/lib/stream/recording-slots";
+import {
+  PublicBreadcrumb,
+  publicBreadcrumbItems,
+} from "@/components/explore/PublicBreadcrumb";
 import { Badge } from "@/components/ui/badge";
 import { buildCaptionTrackDataUri } from "@/components/recordings/caption-track";
 
@@ -121,6 +125,14 @@ export default async function RecordingDetailPage({
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">
+      <div className="lg:col-span-2">
+        <PublicBreadcrumb
+          items={publicBreadcrumbItems(
+            { id: listing.consultant.profileId, name: listing.consultant.name },
+            listing.listingTitle,
+          )}
+        />
+      </div>
       <div className="space-y-6">
         <div className="relative aspect-video rounded-xl bg-muted flex items-center justify-center overflow-hidden">
           {renderMedia(listing, fullPlaybackUrl)}

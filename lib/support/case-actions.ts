@@ -1606,6 +1606,7 @@ async function executeApprovedRefund(
     dedupeKey,
     supportRecommendationId: recommendation.id,
     keepSeat: !recommendation.releaseSeat,
+    settlesOwedByHand: true,
   }).catch((error: unknown) => refundInFlightOr(error, dedupeKey));
   return {
     refund,

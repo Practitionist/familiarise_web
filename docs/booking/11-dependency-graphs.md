@@ -292,7 +292,7 @@ flowchart LR
   O --> V["Provider confirmation or retry"]
 ```
 
-The catalog runs appointment completion and consultant no-show detection every 30 minutes; request expiry, tentative cleanup, reschedule expiry and unpaid-trial expiry have their own configured slots. Exact offsets and request bounds belong to the [generated job inventory](../maintenance/04-cron-jobs-reference.md), not a duplicate list of former Actions workflows. `reconcile-occurrence-availability` remains a configured non-money Actions job, currently budget-blocked; it is not a second ticker owner. Legacy cleanup functions are not automatically scheduled just because their files remain.
+The catalog runs appointment completion and consultant no-show detection every 30 minutes; request expiry, tentative cleanup, reschedule expiry and unpaid-trial expiry have their own configured slots. Exact offsets and request bounds belong to the [generated job inventory](../maintenance/04-cron-jobs-reference.md), not a duplicate list of former Actions workflows. `reconcile-occurrence-availability` is a ticker target like the rest; no Actions workflow schedules it. Legacy cleanup functions are not automatically scheduled just because their files remain.
 
 The completion worker shares the session-outcome verdict with no-show handling. Retention and expiry writers recheck current eligibility; a timeout does not establish process cancellation or completed business effects. Use the [SRE orientation](../start-here/10-infra-and-maintenance-sre-orientation.md) for cross-job races and recovery evidence.
 

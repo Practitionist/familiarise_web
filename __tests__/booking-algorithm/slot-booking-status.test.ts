@@ -114,9 +114,9 @@ describe("getSlotBookingStatus", () => {
   });
 
   it("falls back to available on malformed input rather than blocking a slot", () => {
-    expect(
-      getSlotBookingStatus(at("invalid"), SLOT_END, []),
-    ).toBe(BOOKING_STATUS.AVAILABLE);
+    expect(getSlotBookingStatus(at("invalid"), SLOT_END, [])).toBe(
+      BOOKING_STATUS.AVAILABLE,
+    );
     expect(getSlotBookingStatus(SLOT_END, SLOT_START, [])).toBe(
       BOOKING_STATUS.AVAILABLE,
     );

@@ -12,7 +12,7 @@
 
 import { AppointmentsType, BackupInterestStatus, Prisma } from "@prisma/client";
 
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, { type Tx, type PrismaLike } from "@/lib/prisma";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -255,10 +255,29 @@ export function markBackupInterestBooked(
   });
 }
 
+// Shared by the expiry write and the stale-request sweep's idle probe.
+function lapsedBackupInterestWhere(now: Date) {
+  return {
+    windowEnd: { lt: now },
+    status: { in: OPEN },
+  } satisfies Prisma.WindowBackupInterestWhereInput;
+}
+
+export async function hasLapsedBackupInterest(
+  db: PrismaLike,
+  now: Date,
+): Promise<boolean> {
+  const row = await db.windowBackupInterest.findFirst({
+    where: lapsedBackupInterestWhere(now),
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 /** F-4 — rows whose window has passed are EXPIRED (the stale-request sweep). */
 export async function expireBackupInterest(now = new Date()) {
   return prisma.windowBackupInterest.updateMany({
-    where: { windowEnd: { lt: now }, status: { in: OPEN } },
+    where: lapsedBackupInterestWhere(now),
     data: { status: BackupInterestStatus.EXPIRED },
   });
 }
@@ -301,6 +320,42 @@ export async function stageNoticesForAppointmentHolds(
     );
     bells.push(...(staged?.bells ?? []));
     emails.push(...(staged?.emails ?? []));
+  }
+  return { bells, emails };
+}
+
+/**
+ * A move freed these windows of a host (a reschedule replaced, a session went
+ * back to the plan, a hold lapsed): tell the learners waiting on any window
+ * the move did not take straight back. Staged in the releasing transaction;
+ * the outbox relay delivers what the caller does not flush.
+ */
+export async function stageNoticesForFreedWindows(
+  tx: Tx,
+  consultantProfileId: string,
+  freed: readonly { startsAt: Date; endsAt: Date }[],
+  retaken: readonly { startsAt: Date; endsAt: Date }[] = [],
+  now = new Date(),
+): Promise<StagedBackupInterestNotices> {
+  const bells: StagedTrigger[] = [];
+  const emails: StagedRecipientEmail[] = [];
+  for (const window of freed) {
+    if (window.endsAt <= now) continue;
+    const stillHeld = retaken.some(
+      (row) => row.startsAt < window.endsAt && row.endsAt > window.startsAt,
+    );
+    if (stillHeld) continue;
+    const staged = await stageBackupInterestNotices(
+      tx,
+      {
+        consultantProfileId,
+        windowStart: window.startsAt,
+        windowEnd: window.endsAt,
+      },
+      now,
+    );
+    bells.push(...staged.bells);
+    emails.push(...staged.emails);
   }
   return { bells, emails };
 }

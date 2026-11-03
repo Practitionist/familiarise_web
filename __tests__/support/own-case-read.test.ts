@@ -106,7 +106,7 @@ it("returns a summary without fetching transcript for the subject of a personal 
   cases.mockResolvedValue({ ...fixture, submitterUserId: "org-operator" });
   const view = await readOwnSupportCase("case-1", "user-1");
   expect(view).toMatchObject({
-    subject: "Organization support request",
+    subject: "Organization support case",
     timeline: [],
     payment: null,
     csatRating: null,

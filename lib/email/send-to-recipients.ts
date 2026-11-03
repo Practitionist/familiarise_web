@@ -63,6 +63,7 @@ type PrepareArgs = Omit<SendToRecipientsArgs, "budgetMs">;
 async function prepare(
   recipient: EmailRecipient,
   args: PrepareArgs,
+  reportToSentry: boolean,
 ): Promise<Outcome> {
   if (!recipient.allowed) {
     return { kind: "skipped" };
@@ -84,26 +85,32 @@ async function prepare(
       },
     };
   } catch (renderError) {
-    Sentry.captureException(
-      renderError instanceof Error
-        ? renderError
-        : new Error(String(renderError)),
-      { tags: { subsystem: "email", emailType: args.emailType } },
-    );
+    if (reportToSentry) {
+      Sentry.captureException(
+        renderError instanceof Error
+          ? renderError
+          : new Error(String(renderError)),
+        { tags: { subsystem: "email", emailType: args.emailType } },
+      );
+    }
     console.error(`[email] ${args.emailType} render failed:`, renderError);
     return { kind: "failed" };
   }
 }
 
-/** Pre-renders HTML, plain text, and unsubscribe headers in memory outside any DB transaction. */
+/**
+ * Pre-renders HTML, plain text, and unsubscribe headers in memory outside any DB transaction.
+ * A caller that reports `failed` once per run passes `reportToSentry: false`.
+ */
 export async function prepareRecipientEmails(
   args: PrepareArgs,
+  { reportToSentry = true }: { reportToSentry?: boolean } = {},
 ): Promise<PreparedRecipientEmails> {
   const messages: RenderedEmail[] = [];
   let skipped = 0;
   let failed = 0;
   for (const recipient of args.recipients) {
-    const outcome = await prepare(recipient, args);
+    const outcome = await prepare(recipient, args, reportToSentry);
     if (outcome.kind === "skipped") {
       skipped += 1;
     } else if (outcome.kind === "failed") {
@@ -148,7 +155,7 @@ export async function sendToRecipients(
   const result: SendToRecipientsResult = { sent: 0, skipped: 0, failed: 0 };
   const stagedEmails: StagedRecipientEmail[] = [];
   for (const recipient of args.recipients) {
-    const outcome = await prepare(recipient, args);
+    const outcome = await prepare(recipient, args, true);
     if (outcome.kind !== "message") {
       result[outcome.kind] += 1;
       continue;

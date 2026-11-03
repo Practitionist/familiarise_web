@@ -3,8 +3,8 @@
  * session-outcome verdict; multi-session partial refunds are excluded.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 import { reportStandingFinding } from "../../lib/observability/standing-finding";
 import {
   getCallPresenceEvidence,
@@ -32,7 +32,8 @@ import {
 } from "../../lib/email";
 import {
   driveRefundOwed,
-  stampRefundOwed,
+  stampOwedOrHeld,
+  type OwedRefundAlreadyHeld,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -54,6 +55,7 @@ import {
 } from "@/lib/booking/session-outcome";
 import { readOutageWindows } from "@/lib/booking/session-outcome-sweep";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { LIVE_SLOT_WHERE } from "@/lib/booking/cancellation-scope";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
 
@@ -69,6 +71,8 @@ export interface NoShowResult {
    * is a refund that would have been issued wrongly before this check existed.
    */
   contradicted: number;
+  /** No-shows whose payment already owed another door's refund, so this added nothing; top up by hand. */
+  refundsAlreadyOwed: OwedRefundAlreadyHeld[];
   errors: string[];
   timestamp: string;
 }
@@ -111,11 +115,58 @@ export async function detectConsultantNoShows(opts?: {
 // longer this job's to cancel and refund; cohort and CAS both exclude it.
 const DECIDED_OR_PARKED = {
   deletedAt: null,
+  // An incident-voided original is history, not a decision on its rebook.
+  completionStatus: { not: OccurrenceCompletionStatus.VOIDED },
   OR: [
     { outcome: { not: null } },
     { completionStatus: OccurrenceCompletionStatus.UNVERIFIED },
   ],
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+// Shared by the candidate read and the ticker's idle probe.
+function noShowCandidateWhere(graceCutoff: Date) {
+  return {
+    status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
+    appointment: {
+      payment: {
+        some: {
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          // E2E-audit P1 fix — amount > 0 used to exclude fully
+          // credit-funded (free_) bookings, so a consultant no-showing a
+          // credits-paid session silently skipped BOTH the cancellation
+          // and the credit restoration. The front door routes those to the
+          // credits rail on its own.
+          deletedAt: null,
+        },
+      },
+      occurrences: {
+        every: { endsAt: { lt: graceCutoff } },
+        some: {
+          ...LIVE_SLOT_WHERE,
+          endsAt: { lt: graceCutoff },
+          meeting: { isNot: null },
+        },
+        none: DECIDED_OR_PARKED,
+      },
+    },
+  } satisfies Prisma.ConsultationWhereInput;
+}
+
+const noShowGraceCutoff = (nowMs: number) =>
+  new Date(nowMs - NO_SHOW_GRACE_MINUTES * 60 * 1000);
+
+export async function hasConsultantNoShowWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const row = await db.consultation.findFirst({
+    where: noShowCandidateWhere(noShowGraceCutoff(now.getTime())),
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 function findNoShowCandidates(
   graceCutoff: Date,
@@ -127,28 +178,7 @@ function findNoShowCandidates(
     take: maxCandidates,
     where: {
       ...(seen.length > 0 ? { id: { notIn: seen } } : {}),
-      status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      appointment: {
-        payment: {
-          some: {
-            paymentStatus: PaymentStatus.SUCCEEDED,
-            // E2E-audit P1 fix — amount > 0 used to exclude fully
-            // credit-funded (free_) bookings, so a consultant no-showing a
-            // credits-paid session silently skipped BOTH the cancellation
-            // and the credit restoration. The front door routes those to the
-            // credits rail on its own.
-            deletedAt: null,
-          },
-        },
-        occurrences: {
-          every: { endsAt: { lt: graceCutoff } },
-          some: {
-            endsAt: { lt: graceCutoff },
-            meeting: { isNot: null },
-          },
-          none: DECIDED_OR_PARKED,
-        },
-      },
+      ...noShowCandidateWhere(graceCutoff),
     },
     include: {
       consultationPlan: {
@@ -191,6 +221,15 @@ function findNoShowCandidates(
 }
 
 type NoShowCandidate = Awaited<ReturnType<typeof findNoShowCandidates>>[number];
+
+/** The sessions the verdict is about: live ones, never an incident-voided original. */
+function judgedSessions(consultation: NoShowCandidate) {
+  return (consultation.appointment?.occurrences ?? []).filter(
+    (o) =>
+      !isDeadOccurrence(o) &&
+      o.completionStatus !== OccurrenceCompletionStatus.VOIDED,
+  );
+}
 type NoShowParty = {
   consultantUserId: string;
   consulteeUserId: string;
@@ -221,21 +260,19 @@ function evaluateConsultantNoShow(
     return null;
   }
 
-  const outcomes = (consultation.appointment?.occurrences ?? [])
-    .filter((o) => !isDeadOccurrence(o))
-    .map(
-      (o) =>
-        classifySessionOutcome({
-          startsAt: o.startsAt,
-          endsAt: o.endsAt,
-          hostUserIds: [consultantUserId],
-          intervals: o.presences,
-          meeting: o.meeting,
-          // Stream corroboration is its own refusal below.
-          report: null,
-          maintenanceWindows: outages,
-        }).outcome,
-    );
+  const outcomes = judgedSessions(consultation).map(
+    (o) =>
+      classifySessionOutcome({
+        startsAt: o.startsAt,
+        endsAt: o.endsAt,
+        hostUserIds: [consultantUserId],
+        intervals: o.presences,
+        meeting: o.meeting,
+        // Stream corroboration is its own refusal below.
+        report: null,
+        maintenanceWindows: outages,
+      }).outcome,
+  );
   const hostNeverPresent = outcomes.every((o) => HOST_NEVER_PRESENT.has(o));
   if (!outcomes.includes("HOST_ABSENT") || !hostNeverPresent) return null;
 
@@ -271,7 +308,7 @@ export async function refusalFromStreamEvidence(
   consultation: NoShowCandidate,
   lookup: PresenceLookup = makePresenceLookup(),
 ): Promise<string | null> {
-  const callIds = (consultation.appointment?.occurrences ?? [])
+  const callIds = judgedSessions(consultation)
     .map((slot) => slot.meeting?.streamCallId)
     .filter((id): id is string => !!id);
 
@@ -287,33 +324,17 @@ export async function refusalFromStreamEvidence(
   return null;
 }
 
-const REPORTED_SAMPLE_SIZE = 10;
-
-/**
- * One Sentry message per run however many rows hit it, and only when the set of
- * affected consultations has a member not already reported inside the window.
- */
+/** One console finding per run, recorded only when the set has a consultation not already recorded in the window. */
 async function reportOncePerRun(
   message: string,
   entries: Array<{ consultationId: string; refusal?: string }>,
 ): Promise<void> {
   if (entries.length === 0) return;
-  await reportStandingFinding(
-    {
-      key: `detect-consultant-no-shows:${message}`,
-      ids: entries.map((e) => e.consultationId),
-      message,
-    },
-    () =>
-      Sentry.captureMessage(message, {
-        level: "warning",
-        tags: { subsystem: "jobs", job: "detect-consultant-no-shows" },
-        extra: {
-          count: entries.length,
-          sample: entries.slice(0, REPORTED_SAMPLE_SIZE),
-        },
-      }),
-  );
+  await reportStandingFinding({
+    key: `detect-consultant-no-shows:${message}`,
+    ids: entries.map((e) => e.consultationId),
+    message,
+  });
 }
 
 /** A per-run cache over `getCallPresenceEvidence`, so one call id is fetched once inside the held lock. */
@@ -342,9 +363,9 @@ async function claimConsultantNoShow(
   owed: RefundOwedMarker | null,
   strike: { consultantProfileId: string; organizationId: string | null },
   failures: RunFailureReporter,
-): Promise<boolean> {
+): Promise<{ held: OwedRefundAlreadyHeld | null } | false> {
   try {
-    await prisma.$transaction(async (tx) => {
+    return await prisma.$transaction(async (tx) => {
       // #1493 — route through the CAS helper so this cancel writes a
       // BookingStatusHistory row like every other status change; the bare
       // updateMany left no timeline entry for the no-show path.
@@ -365,6 +386,15 @@ async function claimConsultantNoShow(
         },
       });
 
+      const claimedSessions = await tx.appointmentOccurrence.findMany({
+        where: {
+          appointmentId,
+          deletedAt: null,
+          outcome: null,
+          completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+        },
+        select: { id: true },
+      });
       // #1583 A-P0-05 — through the helper, tombstoned, with a history row;
       // the from-set is the one the raw updateMany carried.
       await transitionOccurrenceCompletion(tx, {
@@ -379,13 +409,16 @@ async function claimConsultantNoShow(
         actorUserId: null,
         reason: "consultant no-show",
       });
-      // The full refund the no-show owes commits with the claim.
-      if (owed) await stampRefundOwed(tx, owed);
+      // The full refund the no-show owes commits with the claim; one another
+      // door already owes is reported instead (first writer wins).
+      const held = owed ? await stampOwedOrHeld(tx, owed) : null;
       await recordExpertStrike(tx, {
         ...strike,
         cause: "CONSULTANT_NO_SHOW",
         appointmentId,
+        occurrenceIds: claimedSessions.map((o) => o.id),
       });
+      return { held };
     });
   } catch (error) {
     // Zero rows matched (parent or occurrences) means someone else moved it
@@ -401,7 +434,6 @@ async function claimConsultantNoShow(
     }
     throw error;
   }
-  return true;
 }
 
 /** The full refund a consultant no-show owes, under the arm's own key. */
@@ -563,6 +595,7 @@ interface NoShowTally {
   refunded: number;
   contradicted: number;
   refusals: Array<{ consultationId: string; refusal: string }>;
+  refundsAlreadyOwed: OwedRefundAlreadyHeld[];
   errors: string[];
   failures: RunFailureReporter;
 }
@@ -614,6 +647,17 @@ async function handleNoShowCandidate(
       tally.detected--;
       return;
     }
+    if (claimed.held) {
+      // Another door's refund is the one owed; the no-show added nothing to it.
+      tally.refundsAlreadyOwed.push(claimed.held);
+      await notifyNoShowParties(
+        consultation,
+        party,
+        0,
+        paidPaymentOf(consultation),
+      );
+      return;
+    }
 
     const { refundedPaise, succeeded, paidPayment } =
       await refundNoShowConsultation(
@@ -640,13 +684,14 @@ async function detectConsultantNoShowsUnlocked(
     refunded: 0,
     contradicted: 0,
     refusals: [],
+    refundsAlreadyOwed: [],
     errors: [],
     failures: createRunFailureReporter("bookings"),
   };
   const { errors } = tally;
   const presence = makePresenceLookup();
 
-  const graceCutoff = new Date(Date.now() - NO_SHOW_GRACE_MINUTES * 60 * 1000);
+  const graceCutoff = noShowGraceCutoff(Date.now());
 
   console.log("🔍 Scanning for consultant no-shows...");
   console.log(
@@ -708,6 +753,7 @@ async function detectConsultantNoShowsUnlocked(
     detected: tally.detected,
     refunded: tally.refunded,
     contradicted: tally.contradicted,
+    refundsAlreadyOwed: tally.refundsAlreadyOwed,
     errors,
     timestamp: new Date().toISOString(),
   };

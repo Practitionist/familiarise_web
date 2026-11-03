@@ -31,6 +31,7 @@ import { RecordingService } from "@/lib/stream/recording-service";
 import { mapBounded } from "@/lib/stream/batch";
 import { streamCopyExpiresAt } from "@/lib/stream/recording-utils";
 import { RECORDING_RETENTION_SCHEDULE } from "@/lib/stream/recording-retention-schedule";
+import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STREAM_REFRESH_WINDOW_DAYS = 15;
@@ -114,7 +115,10 @@ export function recordingRetentionDeadline(input: RetentionInput): Date | null {
 
 const subscriptionEndSelect = {
   id: true,
-  schedulingPeriodEndsAt: true,
+  planEndsAt: true,
+  schedulingPeriodStartsAt: true,
+  schedulingTimezone: true,
+  subscriptionPlan: { select: { durationInMonths: true } },
   cancelledAt: true,
 } satisfies Prisma.SubscriptionSelect;
 
@@ -122,10 +126,12 @@ type SubscriptionEnd = Prisma.SubscriptionGetPayload<{
   select: typeof subscriptionEndSelect;
 }>;
 
-const endOf = (sub: SubscriptionEnd): Date =>
-  sub.cancelledAt && sub.cancelledAt < sub.schedulingPeriodEndsAt
+const endOf = (sub: SubscriptionEnd): Date => {
+  const planEnd = subscriptionPlanEnd(sub);
+  return sub.cancelledAt && sub.cancelledAt < planEnd
     ? sub.cancelledAt
-    : sub.schedulingPeriodEndsAt;
+    : planEnd;
+};
 
 /** A renewal continues the subscription, so its end is the last renewal's end. */
 async function subscriptionChainEnd(

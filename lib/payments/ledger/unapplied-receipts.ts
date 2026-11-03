@@ -1,4 +1,4 @@
-import type { Tx } from "@/lib/prisma";
+import type { PrismaLike, Tx } from "@/lib/prisma";
 import { gatewayCashAccount } from "@/lib/payments/ledger/gateway-account";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -92,6 +92,32 @@ export async function hasUnappliedReceipt(
 }
 
 /**
+ * The captured paise still parked for this payment (the capture less what its
+ * refunds already returned), or null when nothing was ever parked.
+ */
+export async function parkedReceiptPaise(
+  db: Pick<PrismaLike, "ledgerEntry">,
+  paymentId: string,
+): Promise<number | null> {
+  const entries = await db.ledgerEntry.findMany({
+    where: {
+      account: { kind: "UNAPPLIED_RECEIPTS" },
+      transaction: { paymentId },
+    },
+    select: { direction: true, amountPaise: true },
+  });
+  if (entries.length === 0) return null;
+  return entries.reduce(
+    (sum, e) =>
+      sum +
+      (e.direction === "CREDIT"
+        ? sumPaise(e.amountPaise)
+        : -sumPaise(e.amountPaise)),
+    0,
+  );
+}
+
+/**
  * Dr UNAPPLIED_RECEIPTS / Cr GATEWAY_CLEARING for the parked paise, so the
  * booking journal that follows debits the clearing once. A no-op when nothing was parked.
  */
@@ -100,21 +126,7 @@ export async function releaseUnappliedReceipt(
   paymentId: string,
 ): Promise<void> {
   // Only what is still parked: refunds of the parked capture already returned part of it.
-  const entries = await tx.ledgerEntry.findMany({
-    where: {
-      account: { kind: "UNAPPLIED_RECEIPTS" },
-      transaction: { paymentId },
-    },
-    select: { direction: true, amountPaise: true },
-  });
-  const remainingPaise = entries.reduce(
-    (sum, e) =>
-      sum +
-      (e.direction === "CREDIT"
-        ? sumPaise(e.amountPaise)
-        : -sumPaise(e.amountPaise)),
-    0,
-  );
+  const remainingPaise = (await parkedReceiptPaise(tx, paymentId)) ?? 0;
   if (remainingPaise <= 0) return;
   await postLedgerTxn(tx, {
     idempotencyKey: releasedReceiptKey(paymentId),

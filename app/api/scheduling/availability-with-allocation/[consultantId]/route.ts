@@ -1,13 +1,12 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
 import {
   AppointmentSlot,
   CustomSlot,
-  dayMap,
   isValidOvernightSlot,
   makeLocalizer,
   processAvailabilitySlots,
+  synthesizeOrphanCells,
   WeeklySlot,
 } from "@/utils/scheduling-engine/intervals";
 import { NextRequest, NextResponse } from "next/server";
@@ -15,6 +14,7 @@ import {
   buildConsultantOccupancyWhere,
   OCCUPYING_OCCURRENCE_WHERE,
   buildOccupiedAppointmentFilter,
+  timeHoldingParticipant,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { isOccupiedByLiveAppointment } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { getSession } from "@/lib/auth-server";
@@ -31,8 +31,21 @@ import { Refusal } from "@/lib/errors/refusal";
 import {
   availabilityGridEtag,
   ifNoneMatchSatisfied,
+  leadTimeBucket,
   readAvailabilityGridMarker,
+  subscriptionQuotaFold,
 } from "@/lib/scheduling/availabilityGridMarker";
+import {
+  cellLimitReached,
+  computeGridQuota,
+  quotaDayKey,
+  type GridQuota,
+} from "@/lib/scheduling/grid-quota";
+import {
+  sessionsTotalOf,
+  subscriptionEntitlement,
+} from "@/lib/booking/entitlement";
+import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import {
   createWeeklyCoverage,
   partitionWeeklyRows,
@@ -40,6 +53,11 @@ import {
   type NullableWeeklyRowLocalColumns,
 } from "@/utils/schedule/weekly-projection";
 import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-rows";
+import {
+  anomalyCollector,
+  occupiedIntervalsIn,
+} from "@/lib/appointments/normalize";
+import { scheduleAnomalyReport } from "@/lib/appointments/report-anomalies";
 import type { TIntervalTiming } from "@/types/slots";
 import type { BookingStatus } from "@/utils/scheduling-engine/intervals";
 
@@ -72,6 +90,40 @@ const GRID_CACHE_CONTROL = "private, max-age=30";
 const MAX_AVAILABILITY_WINDOW_DAYS = 32;
 const MAX_AVAILABILITY_WINDOW_MS =
   MAX_AVAILABILITY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+/** A missing or soft-deleted consultant publishes nothing. */
+function consultantGone() {
+  return NextResponse.json(
+    {
+      error: "This expert is no longer taking bookings.",
+      code: "CONSULTANT_NOT_FOUND",
+    },
+    { status: 404 },
+  );
+}
+
+/** Same answer whether the plan is missing, someone else's, or not theirs to read. */
+function quotaRefused() {
+  return NextResponse.json(
+    {
+      error: "You can't see the booking limits for this plan.",
+      code: "QUOTA_FORBIDDEN",
+    },
+    { status: 403 },
+  );
+}
+
+/** An occurrence that still belongs to the booking: painted "this booking", never "Limit reached". */
+function isOwnLiveSession(o: {
+  deletedAt: Date | null;
+  completionStatus: string | null;
+}): boolean {
+  return (
+    !o.deletedAt &&
+    o.completionStatus !== "CANCELLED" &&
+    o.completionStatus !== "RESCHEDULED"
+  );
+}
 
 // An org operator acting for a member consultant (RequestSchedulingTab
 // mounts mode="allocate" for org admins allocating on a consultant's behalf)
@@ -149,11 +201,14 @@ export async function GET(
     const requestedConsulteeUserId = searchParams.get("consulteeUserId");
     const webinarId = searchParams.get("webinarId");
     const classId = searchParams.get("classId");
+    const requestedSubscriptionId = searchParams.get("subscriptionId");
 
-    // Both gates below need the caller's identity, so resolve it once. Skipped
-    // on the public path, where neither parameter is present.
+    // The gates below need the caller's identity, so resolve it once. Skipped
+    // on the public path, where none of these parameters is present.
     const session =
-      includeAppointmentDetailsRequested || requestedConsulteeUserId
+      includeAppointmentDetailsRequested ||
+      requestedConsulteeUserId ||
+      requestedSubscriptionId
         ? await getSession()
         : null;
     // Ownership is a fact about the database, not about the session.
@@ -313,6 +368,94 @@ export async function GET(
       );
     }
 
+    const now = new Date();
+
+    // The quota overlay. Authorized and folded before the conditional GET so
+    // a 304 never serves it to a caller who has lost access; the fold reads
+    // an aggregate, and the full occurrence list loads only on a 200.
+    // `releasing` names the sessions a reschedule is moving: they count as
+    // released, so their cycle place and their day are free to re-pick.
+    const releasingIds = new Set(
+      (searchParams.get("releasing") ?? "")
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean)
+        .slice(0, 200),
+    );
+    let quotaSubject: {
+      id: string;
+      sessionsTotal: number;
+      sessionsPerWeek: number;
+      durationInMonths: number;
+      schedulingPeriodStartsAt: Date;
+      schedulingTimezone: string;
+      planEndsAt: Date | null;
+      fold: string;
+    } | null = null;
+    if (requestedSubscriptionId) {
+      const subscription = await prisma.subscription.findFirst({
+        where: {
+          id: requestedSubscriptionId,
+          deletedAt: null,
+          subscriptionPlan: { consultantProfileId: consultantId },
+        },
+        select: {
+          id: true,
+          updatedAt: true,
+          sessionsTotal: true,
+          schedulingPeriodStartsAt: true,
+          schedulingTimezone: true,
+          planEndsAt: true,
+          requestedBy: { select: { userId: true } },
+          subscriptionPlan: {
+            select: {
+              sessionsPerWeek: true,
+              durationInMonths: true,
+              totalSessions: true,
+            },
+          },
+        },
+      });
+      if (!subscription || !session?.user?.id) return quotaRefused();
+      const callerId = session.user.id;
+      const subscriptionConsulteeId = subscription.requestedBy.userId;
+      const isSubscriptionConsultee = callerId === subscriptionConsulteeId;
+      // Fresh role, as in the consultee gate: the cached session can lag a demotion.
+      const mayReadQuota =
+        isSubscriptionConsultee ||
+        isOwningConsultant ||
+        isPrivileged((await getSession())?.user?.role) ||
+        (await isOrgAdminOfConsultant(
+          callerId,
+          consultantId,
+          subscriptionConsulteeId,
+        ));
+      if (!mayReadQuota) return quotaRefused();
+
+      const occurrenceStats = await prisma.appointmentOccurrence.aggregate({
+        where: { appointment: { subscriptionId: subscription.id } },
+        _count: { _all: true },
+        _max: { updatedAt: true },
+      });
+      quotaSubject = {
+        id: subscription.id,
+        sessionsTotal: sessionsTotalOf(subscription),
+        sessionsPerWeek: subscription.subscriptionPlan.sessionsPerWeek,
+        durationInMonths: subscription.subscriptionPlan.durationInMonths,
+        schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
+        schedulingTimezone: subscription.schedulingTimezone,
+        planEndsAt: subscription.planEndsAt,
+        fold: subscriptionQuotaFold({
+          subscriptionId: subscription.id,
+          subscriptionUpdatedAt: subscription.updatedAt,
+          occurrenceCount: occurrenceStats._count._all,
+          occurrencesUpdatedAt: occurrenceStats._max.updatedAt,
+          todayKey: quotaDayKey(now, subscription.schedulingTimezone),
+          releasingIds: [...releasingIds],
+        }),
+      };
+    }
+
     // #1319 PR 9 — conditional GET, computed BEFORE the heavy reads.
     //
     // Every open calendar re-asks this endpoint once a minute (ADR 16: polling,
@@ -333,6 +476,9 @@ export async function GET(
       { startsAt: startDate, endsAt: endDate },
       { webinarId, classId },
     );
+    // A soft-deleted consultant is refused before the 304, so no poller keeps
+    // a stale green grid for them.
+    if (marker?.consultantDeletedAt) return consultantGone();
     // No marker = no such consultant; fall through so the 404 below still answers.
     const etag = marker
       ? availabilityGridEtag(marker, {
@@ -344,6 +490,8 @@ export async function GET(
           consulteeUserId,
           webinarId,
           classId,
+          leadBucket: leadTimeBucket(now.getTime()),
+          quotaFold: quotaSubject?.fold ?? null,
         })
       : null;
     const ifNoneMatchHeader =
@@ -394,12 +542,7 @@ export async function GET(
       },
     });
 
-    if (!consultant) {
-      return NextResponse.json(
-        { error: "Consultant not found" },
-        { status: 404 },
-      );
-    }
+    if (!consultant || consultant.deletedAt) return consultantGone();
 
     if (
       marker?.scheduleType &&
@@ -555,7 +698,7 @@ export async function GET(
 
     const occupiedAppointmentWhere = {
       AND: [
-        buildConsultantOccupancyWhere(consultantId, consultant.userId),
+        buildConsultantOccupancyWhere(consultantId, consultant.userId, now),
         slotsInWindow,
       ],
     };
@@ -575,7 +718,7 @@ export async function GET(
     let rawSlotsOfAppointment: { id: string; startsAt: Date; endsAt: Date }[];
     let overlapMetaIndex: Map<number, OverlapAppointmentMeta[]> = new Map();
     let detailAppointments: AppointmentForOverlapMeta[] = [];
-    const occupancyNow = new Date();
+    const occupancyNow = now;
 
     // The consultee's own bookings — with ANY consultant — folded in below so
     // the grid and the allocator agree on what is free for BOTH parties.
@@ -592,7 +735,11 @@ export async function GET(
           where: {
             AND: [
               { OR: buildOccupiedAppointmentFilter() },
-              { participants: { some: liveParticipant(consulteeUserId) } },
+              {
+                participants: {
+                  some: timeHoldingParticipant(now, consulteeUserId),
+                },
+              },
               slotsInWindow,
             ],
           },
@@ -614,6 +761,7 @@ export async function GET(
                     buildConsultantOccupancyWhere(
                       ch.consultantProfileId,
                       ch.userId,
+                      now,
                     ),
                   ),
                 },
@@ -703,74 +851,19 @@ export async function GET(
       }
     }
 
-    // Extract appointment slots using flatMap with defensive filtering
-    // Defensive Programming: Filter out corrupt appointment slots
-    const appointmentSlots: AppointmentSlot[] = rawSlotsOfAppointment
-      .filter((slot) => {
-        // Validate slot has required fields
-        if (!slot.startsAt || !slot.endsAt) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: missing start or end time`,
-          );
-          return false;
-        }
-
-        // Validate slot times are valid dates
-        const start = new Date(slot.startsAt);
-        const end = new Date(slot.endsAt);
-        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: invalid date format`,
-          );
-          return false;
-        }
-
-        // Filter out invalid appointment slots (allow legitimate overnight slots)
-        if (!isValidOvernightSlot(start, end)) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: end time ${end.toISOString()} <= start time ${start.toISOString()} (not a valid overnight slot)`,
-          );
-          return false;
-        }
-
-        // Defensive: Filter out slots that are unreasonably far in the past (>10 years)
-        // This likely indicates data corruption
-        const tenYearsAgo = new Date();
-        tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
-        if (end < tenYearsAgo) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: end time is more than 10 years in the past (${end.toISOString()}) - possible data corruption`,
-          );
-          return false;
-        }
-
-        // Defensive: Filter out slots that are unreasonably far in the future (>10 years)
-        // This likely indicates data corruption
-        const tenYearsFromNow = new Date();
-        tenYearsFromNow.setFullYear(tenYearsFromNow.getFullYear() + 10);
-        if (start > tenYearsFromNow) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: start time is more than 10 years in the future (${start.toISOString()}) - possible data corruption`,
-          );
-          return false;
-        }
-
-        // Defensive: Filter out slots with duration > 24 hours (likely data corruption)
-        const durationHours =
-          (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-        if (durationHours > 24) {
-          console.warn(
-            `⚠️ Skipping appointment slot ${slot.id}: duration is > 24 hours (${durationHours.toFixed(1)}h) - possible data corruption`,
-          );
-          return false;
-        }
-
-        return true;
-      })
-      .map((slot) => ({
-        startsAt: slot.startsAt,
-        endsAt: slot.endsAt,
-      }));
+    // Occupied time clipped to the window; an impossible row is dropped and
+    // reported once per row per day, never once per poll.
+    const occupiedFindings = anomalyCollector();
+    const occupiedSlots = occupiedIntervalsIn(
+      rawSlotsOfAppointment,
+      { start: startDate, end: endDate },
+      occupiedFindings.sink,
+    );
+    scheduleAnomalyReport(occupiedFindings.anomalies(), "availability-grid");
+    const appointmentSlots: AppointmentSlot[] = occupiedSlots.map((slot) => ({
+      startsAt: slot.startsAt,
+      endsAt: slot.endsAt,
+    }));
 
     // Rows without valid local columns are a data error: refused, reported once.
     const weeklyPartition = partitionWeeklyRows(
@@ -936,61 +1029,21 @@ export async function GET(
     // still show as `isAllocated: true, bookingStatus: "fully-booked"`. Per-slot
     // `overlappingAppointments` tooltip metadata stays gated on
     // `includeAppointmentDetails` (ADR 20).
-    const coveredStartsMs = new Set<number>();
-    for (const dateKey of Object.keys(slotsByDate)) {
-      for (const slot of slotsByDate[dateKey]) {
-        const startMs = new Date(slot.startsAt).getTime();
-        coveredStartsMs.add(startMs);
-        if (includeAppointmentDetails) {
-          const endMs = new Date(slot.endsAt).getTime();
-          slot.overlappingAppointments = overlapMetaCandidatesFor(
-            overlapMetaIndex,
-            startMs,
-            endMs,
-          );
-        }
-      }
-    }
-
-    if (rawSlotsOfAppointment.length > 0) {
+    const orphanCells = synthesizeOrphanCells({
+      existing: Object.values(slotsByDate).flat(),
+      occupied: occupiedSlots,
+      rangeStart: startDate,
+      rangeEnd: endDate,
+      timezone,
+      type: consultant.scheduleType === "WEEKLY" ? "WEEKLY" : "CUSTOM",
+    });
+    if (orphanCells.length > 0) {
       const loc = makeLocalizer(timezone);
-      for (const apptSlot of rawSlotsOfAppointment) {
-        const start = new Date(apptSlot.startsAt);
-        const end = new Date(apptSlot.endsAt);
-        if (isNaN(start.getTime()) || isNaN(end.getTime())) continue;
-        if (start < startDate || start >= endDate) continue;
-        const startMs = start.getTime();
-        if (coveredStartsMs.has(startMs)) continue;
-        coveredStartsMs.add(startMs); // de-dupe overlapping appointment rows onto one cell
-
-        const dateKey = loc.dateKey(start);
-        const synthetic: SlotTimingWithOverlap = {
-          slotId: `orphan-${startMs}`,
-          dateInISO: start.toISOString(),
-          dayOfWeek: dayMap[loc.dayIndex(start)],
-          startsAt: start.toISOString(),
-          endsAt: end.toISOString(),
-          availabilityWindowId: "",
-          appointmentOccurrenceId: "",
-          localStartTime: loc.timeP(start),
-          localEndTime: loc.timeP(end),
-          type: consultant.scheduleType === "WEEKLY" ? "WEEKLY" : "CUSTOM",
-          isAllocated: true,
-          bookingStatus: "fully-booked",
-          ...(includeAppointmentDetails
-            ? {
-                overlappingAppointments: overlapMetaCandidatesFor(
-                  overlapMetaIndex,
-                  startMs,
-                  end.getTime(),
-                ),
-              }
-            : {}),
-        };
-        (slotsByDate[dateKey] ||= []).push(synthetic);
+      for (const cell of orphanCells) {
+        const dateKey = loc.dateKey(new Date(cell.startsAt));
+        slotsByDate[dateKey] ??= [];
+        slotsByDate[dateKey].push(cell);
       }
-
-      // Re-sort days that received synthetic entries.
       for (const dateKey of Object.keys(slotsByDate)) {
         slotsByDate[dateKey].sort(
           (a, b) =>
@@ -999,8 +1052,80 @@ export async function GET(
       }
     }
 
+    let quotaSource: {
+      quota: GridQuota;
+      ownSessions: { startsAt: Date; endsAt: Date }[];
+    } | null = null;
+    if (quotaSubject) {
+      const stored = await prisma.appointmentOccurrence.findMany({
+        where: { appointment: { subscriptionId: quotaSubject.id } },
+        select: {
+          id: true,
+          startsAt: true,
+          endsAt: true,
+          completionStatus: true,
+          isTentative: true,
+          deletedAt: true,
+        },
+      });
+      const occurrences = stored.map((o) =>
+        releasingIds.has(o.id) && isOwnLiveSession(o)
+          ? { ...o, isTentative: true, completionStatus: "RESCHEDULED" }
+          : o,
+      );
+      const entitlement = subscriptionEntitlement({
+        sessionsTotal: quotaSubject.sessionsTotal,
+        sessionsPerWeek: quotaSubject.sessionsPerWeek,
+        durationInMonths: quotaSubject.durationInMonths,
+        occurrences,
+        schedulingPeriodStartsAt: quotaSubject.schedulingPeriodStartsAt,
+        schedulingTimezone: quotaSubject.schedulingTimezone,
+        planEndsAt: quotaSubject.planEndsAt,
+        now,
+      });
+      quotaSource = {
+        quota: computeGridQuota({
+          entitlement,
+          occurrences,
+          schedulingTimezone: quotaSubject.schedulingTimezone,
+        }),
+        ownSessions: stored.filter(isOwnLiveSession),
+      };
+    }
+
+    // Per-cell flags the client paints as their own non-selectable states.
+    const nowMs = now.getTime();
+    const leadCutoffMs = nowMs + MINIMUM_BOOKING_LEAD_TIME_MS;
+    const ownSessionRanges = (quotaSource?.ownSessions ?? []).map((o) => [
+      o.startsAt.getTime(),
+      o.endsAt.getTime(),
+    ]);
+    for (const dateKey of Object.keys(slotsByDate)) {
+      for (const slot of slotsByDate[dateKey]) {
+        const startMs = new Date(slot.startsAt).getTime();
+        const endMs = new Date(slot.endsAt).getTime();
+        if (includeAppointmentDetails) {
+          slot.overlappingAppointments = overlapMetaCandidatesFor(
+            overlapMetaIndex,
+            startMs,
+            endMs,
+          );
+        }
+        if (endMs > nowMs && startMs < leadCutoffMs) slot.tooSoon = true;
+        if (
+          quotaSource &&
+          cellLimitReached(quotaSource.quota, startMs, endMs) &&
+          !ownSessionRanges.some(([s, e]) => s < endMs && e > startMs)
+        ) {
+          slot.limitReached = true;
+        }
+      }
+    }
+
     return NextResponse.json(
-      { data: slotsByDate },
+      quotaSource
+        ? { data: slotsByDate, quota: quotaSource.quota }
+        : { data: slotsByDate },
       {
         status: 200,
         headers: {

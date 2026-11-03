@@ -85,6 +85,23 @@ describe("handleAllocate (#1775 B-9)", () => {
     expect(recordSystemError).not.toHaveBeenCalled();
   });
 
+  it("an idempotent replay of an approval awaiting payment re-attempts the mint once", async () => {
+    // The replay carries the stored outcome (no appointments re-written).
+    allocate.mockResolvedValue({
+      success: true,
+      outcome: "awaiting_payment",
+      appointments: [{ id: "apt-1", occurrences: [] }],
+    });
+    mintAfterCommit.mockResolvedValue({
+      status: "already_live",
+      paymentUrl: "https://rzp.io/l/live",
+    });
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ awaitingPayment: true });
+    expect(mintAfterCommit).toHaveBeenCalledTimes(1);
+  });
+
   it("approved (paid) → no mint, awaitingPayment: false", async () => {
     allocate.mockResolvedValue({
       success: true,

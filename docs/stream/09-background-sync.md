@@ -26,16 +26,16 @@ flowchart LR
 
 Background responses acknowledge admission before authentication and execution.
 The ticker accepts only 202 for background targets, records `accepted` separately
-from `ok`, and never treats that admission as completed work. The adapters validate
-the bearer and maintenance state before invoking a core, and throw on server
-failures because Netlify discards background response bodies. The cleanup route
+from `ok`, and never treats that admission as completed work. The adapters run only on
+the production deploy and validate the method and bearer before any work, then
+the maintenance state before invoking a core. They never throw: a failed run is
+logged and recorded, because a throw would buy Netlify's two automatic retries. The cleanup route
 and staff dispatch use configured HTTPS origins, refuse embedded credentials and
 redirects, and keep the bearer server-side.
 
 The adapters have no independent schedules. All Stream jobs in this document
 have one automatic owner; their former Actions steps, dispatch allowlists and
-failure-summary entries are removed. Other non-money Actions maintenance remains
-budget-blocked. CI/CD build and review workflows are a separate responsibility.
+failure-summary entries are removed. No Actions workflow schedules a registry job. CI/CD build and review workflows are a separate responsibility.
 
 Current background targets are `/.netlify/functions/recording-transfer-background`
 and `/.netlify/functions/stream-maintenance-background?job=<slug>`. Automatic
@@ -50,7 +50,7 @@ for wind-down, and 08:00–11:00 for principal/channel lifecycle. Each daily job
 three bounded slices. These are dispatch cadences, not a guarantee that a backlog
 has drained. The catalog is shared with documentation and tested over every tick
 of a week and 400 days, including monthly/quarterly collisions; no tick exceeds
-ten targets. Existing Stream membership and control-plane checks remain scheduled.
+eleven targets (the cap is twelve). Existing Stream membership and control-plane checks remain scheduled.
 
 | Core / entry                                      | UTC slots           | Work bound and continuation                                                                                                                                                                                                                                     |
 | ------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -131,8 +131,8 @@ remain owned by the existing erasure/revocation retry flow.
 ## Completion, alarms and operations
 
 `/api/health/jobs` requires successful owned COMPLETED executions scoped to the
-server environment: 45 minutes for transfer, 90 minutes for orphaned sessions,
-27 hours for each daily lifecycle capability. A 202 or another job's heartbeat
+server environment: 60 minutes for transfer, 90 minutes for orphaned sessions,
+28.5 hours for each daily lifecycle capability, each derived from the schedule. A 202 or another job's heartbeat
 cannot satisfy one capability's requirement. A successful bounded slice is still
 not evidence of complete vendor cleanup or acceptable backlog age.
 

@@ -15,18 +15,16 @@ import {
 
 export interface AccountSettingsProps {
   /**
-   * The Account section's own URL. Social account linking returns here
-   * (#1527 §17b — it used to return to the retired `/profile`).
+   * The Account section's own URL. Social account linking returns here.
    */
   returnHref: string;
 }
 
 /**
- * Settings › Account, the same component in both personal trees (#1527 §14):
- * everything `/profile`, `/settings/change-password` and the consultant's
- * Security section held, plus timezone, the member's own org consent
- * (#1527 3c) and the DPDP grievance form. Each
- * block saves on its own, so the save bar only ever speaks for one form.
+ * Settings › Account, the same component in both personal trees: profile,
+ * password and sessions, timezone, the member's own org consent and the DPDP
+ * grievance form. Each block saves on its own, so the save bar only ever
+ * speaks for one form.
  */
 export function AccountSettings({
   returnHref,

@@ -4,16 +4,18 @@ import { DayOfWeek } from "@prisma/client";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
 import { SlotStatusLegend } from "@/components/scheduling/SlotStatusLegend";
+import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
 import { BUYER_LEGEND_KEYS } from "@/lib/scheduling/interval-status-tokens";
-import { addDays, startOfDay } from "date-fns";
-import { toZonedTime, formatInTimeZone } from "date-fns-tz";
+import { calendarDateKey, calendarDayOf } from "@/lib/time/grid-zone";
+import type { DisplayZone } from "@/lib/time/use-display-zone";
 import type { ConsultantDetailData, PickerInterval } from "../types";
-import { useAvailabilityWindow } from "../hooks/useAvailabilityWindow";
+import { useAvailabilityWindow } from "@/lib/scheduling/use-availability-window";
 import { zonedWeekWindow } from "../utils/time";
 
 interface ConsultantAvailabilityProps {
   consultantDetails: ConsultantDetailData;
-  timezone: string;
+  /** The zone the week is fetched, keyed and labelled in, with its switch. */
+  displayZone: DisplayZone;
   consulteeUserId?: string;
   /**
    * Shared with the pricing panel's reader: both observers carry the same
@@ -33,10 +35,11 @@ type DayWithSlots = {
 
 export function ConsultantAvailability({
   consultantDetails,
-  timezone,
+  displayZone,
   consulteeUserId,
   bypassRef,
 }: ConsultantAvailabilityProps) {
+  const timezone = displayZone.zone;
   const [weekOffset, setWeekOffset] = useState(0);
 
   const handlePrevWeek = useCallback(() => {
@@ -119,7 +122,9 @@ export function ConsultantAvailability({
                 startsAt: slot.startsAt,
                 endsAt: slot.endsAt,
                 type: "WEEKLY",
-              } as PickerInterval);
+                tooSoon: slot.tooSoon,
+                limitReached: slot.limitReached,
+              });
             });
         });
     }
@@ -130,11 +135,17 @@ export function ConsultantAvailability({
   // Process data for CustomAvailability component (group by date)
   // Note: Allow custom slots for all schedule types to support one-off availability
   const processedCustomSlots = useMemo((): DayWithSlots[] => {
-    const today = new Date();
-    const windowStart = addDays(today, weekOffset * 7);
+    // Calendar dates from today in the display zone; the grid keys its days
+    // `yyyy-MM-dd` in that same zone.
+    const today = calendarDayOf(new Date(), timezone);
     const days: DayWithSlots[] = Array.from({ length: 7 }, (_, i) => {
-      const date = addDays(startOfDay(toZonedTime(windowStart, timezone)), i);
-      const dateKey = formatInTimeZone(date, timezone, "yyyy-MM-dd");
+      const date = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate() + weekOffset * 7 + i,
+        12,
+      );
+      const dateKey = calendarDateKey(date);
 
       const slots: PickerInterval[] = (availabilityData[dateKey] || [])
         .filter((slot) => slot.type === "CUSTOM")
@@ -152,6 +163,8 @@ export function ConsultantAvailability({
           startsAt: slot.startsAt,
           endsAt: slot.endsAt,
           type: "CUSTOM",
+          tooSoon: slot.tooSoon,
+          limitReached: slot.limitReached,
         }));
 
       return { date, slots };
@@ -168,7 +181,8 @@ export function ConsultantAvailability({
             Consultant Availability
           </h3>
           <p className="text-sm text-muted-foreground mb-4">
-            Couldn&apos;t load availability. Please try again.
+            We couldn&apos;t load this expert&apos;s times. Check your
+            connection and try again.
           </p>
           <button
             type="button"
@@ -220,13 +234,21 @@ export function ConsultantAvailability({
             ? "Weekly schedule. Use the 'Book Now' button to schedule a meeting."
             : "Custom schedule. Use the arrows to navigate weeks. Use the 'Book Now' button to schedule a meeting."}
         </p>
+        <ZoneSwitch
+          zone={displayZone.zone}
+          usingDeviceZone={displayZone.usingDeviceZone}
+          canSwitch={displayZone.canSwitch}
+          onToggle={displayZone.toggle}
+          className="mt-3 justify-center"
+        />
       </div>
 
       {consultantDetails.scheduleType === "WEEKLY" ? (
-        <WeeklyAvailability slotsByDay={processedWeeklySlots} />
+        <WeeklyAvailability slotsByDay={processedWeeklySlots} zone={timezone} />
       ) : (
         <CustomAvailability
           days={processedCustomSlots}
+          zone={timezone}
           onPrevWeek={weekOffset > 0 ? handlePrevWeek : undefined}
           onNextWeek={handleNextWeek}
         />

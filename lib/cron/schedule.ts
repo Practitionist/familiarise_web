@@ -33,6 +33,8 @@ export const TARGETS = [
   "settle-platform-incidents",
   "maintenance-booking-remediation",
   "retry-auto-refunds",
+  "reconcile-standalone-purchases",
+  "reconcile-digital-product-storage",
   "alert-orphaned-payments",
   "reconcile-orphaned-payments",
   "sentry-ingest-canary",
@@ -70,16 +72,29 @@ export const TARGETS = [
   "reconcile-sessions",
   "prune-system-job-executions",
   "prune-system-events",
+  "databreach-deadline-alerts",
+  "reconcile-occurrence-availability",
+  "auth-tokens",
+  "reconcile-document-storage",
+  "prune-audit-logs",
+  "sweep-verification",
+  "expire-stale-collaborator-invites",
+  "purge-unverified-users",
+  "archive-webhook-events",
+  "consent-retention-sweeper",
+  "expire-onboarding-drafts",
+  "drain-admin-run-requests",
+  "ops-digest",
   ...STREAM_LIFECYCLE_JOBS,
 ] as const;
 
 export type Target = (typeof TARGETS)[number];
 
-/**
- * The `SystemJobExecution.jobName` a target's core writes when it differs from the
- * target name; `null` means the core writes no execution row.
- */
-const JOB_NAME_OVERRIDES: Partial<Record<Target, string | null>> = {
+/** The ticker's per-slot claim rows; bookkeeping, not a job run, so job views exclude it. */
+export const TICK_CLAIM_JOB = "cron-tick";
+
+/** The `SystemJobExecution.jobName` a target's core writes when it differs from the target name. */
+const JOB_NAME_OVERRIDES: Partial<Record<Target, string>> = {
   "reconcile-refunds": "reconcile-pending-refunds",
   "abandoned-payments": "cleanup-abandoned-payments",
   "reschedule-proposals": "expire-reschedule-proposals",
@@ -88,14 +103,11 @@ const JOB_NAME_OVERRIDES: Partial<Record<Target, string | null>> = {
   "abandoned-org-top-ups": "cleanup-abandoned-org-top-ups",
   "tds-return-draft": "tds-26q-draft-export",
   "reconcile-sessions": "reconcile-orphaned-sessions",
-  "sentry-ingest-canary": null,
-  "stream-control-plane-drift": null,
+  "auth-tokens": "cleanup-auth-tokens",
 };
 
-export function jobNameFor(target: Target): string | null {
-  return target in JOB_NAME_OVERRIDES
-    ? (JOB_NAME_OVERRIDES[target] ?? null)
-    : target;
+export function jobNameFor(target: Target): string {
+  return JOB_NAME_OVERRIDES[target] ?? target;
 }
 
 /** Background targets acknowledge admission; their cores record eventual completion. */
@@ -123,6 +135,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "settle-platform-incidents": 10,
   "maintenance-booking-remediation": 1,
   "retry-auto-refunds": 10,
+  "reconcile-standalone-purchases": 5,
+  "reconcile-digital-product-storage": 25,
   "appointment-reminders": 25,
   "expire-stale-requests": 20,
   "reschedule-proposals": 25,
@@ -165,6 +179,21 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "reconcile-sessions": 5,
   "prune-system-job-executions": 500,
   "prune-system-events": 500,
+  "databreach-deadline-alerts": 50,
+  "reconcile-occurrence-availability": null,
+  "auth-tokens": null,
+  "reconcile-document-storage": null,
+  "prune-audit-logs": 500,
+  "sweep-verification": null,
+  "expire-stale-collaborator-invites": null,
+  "purge-unverified-users": null,
+  "archive-webhook-events": null,
+  // Count-only: deletion stays behind the route's explicit delete flag.
+  "consent-retention-sweeper": 500,
+  "expire-onboarding-drafts": null,
+  // One open request per after-mode job.
+  "drain-admin-run-requests": 2,
+  "ops-digest": null,
   "expire-recordings": null,
   "reconcile-orphaned-recordings": null,
   "wind-down-deactivated-orgs": null,
@@ -184,7 +213,7 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "dispatch-outbound-webhooks": 15,
   "drain-notification-outbox": 10,
   "retry-failed-emails": 15,
-  "sentry-ingest-canary": 360,
+  "sentry-ingest-canary": 1440,
   "sync-payment-earnings": 15,
   "release-earnings": 15,
   "reconcile-refunds": 15,
@@ -201,6 +230,9 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "settle-platform-incidents": 60,
   "maintenance-booking-remediation": 15,
   "retry-auto-refunds": 15,
+  // Hourly: any 15-minute phase would push the busiest tick past the free slot.
+  "reconcile-standalone-purchases": 60,
+  "reconcile-digital-product-storage": 360,
   "auto-complete-appointments": 30,
   "detect-consultant-no-shows": 30,
   "alert-orphaned-payments": 15,
@@ -239,6 +271,21 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-sessions": 30,
   "prune-system-job-executions": 30,
   "prune-system-events": 60,
+  "databreach-deadline-alerts": 60,
+  "reconcile-occurrence-availability": 60,
+  "auth-tokens": 1440,
+  "reconcile-document-storage": 1440,
+  "prune-audit-logs": 1440,
+  "sweep-verification": 1440,
+  "expire-stale-collaborator-invites": 1440,
+  "purge-unverified-users": 1440,
+  "archive-webhook-events": 1440,
+  "consent-retention-sweeper": 1440,
+  "expire-onboarding-drafts": 1440,
+  // Backstop only: the admin route dispatches at once; every shorter cadence breaks the tick cap.
+  "drain-admin-run-requests": 60,
+  // Daily at 03:50 UTC (09:20 IST): the 03:30 tick has no free slot on a month start.
+  "ops-digest": 1440,
   "expire-recordings": 60,
   "reconcile-orphaned-recordings": 60,
   "wind-down-deactivated-orgs": 60,
@@ -276,6 +323,8 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "settle-platform-incidents": 30,
   "maintenance-booking-remediation": 0,
   "retry-auto-refunds": 10,
+  "reconcile-standalone-purchases": 45,
+  "reconcile-digital-product-storage": 125,
   "auto-complete-appointments": 15,
   "detect-consultant-no-shows": 20,
   "reconcile-orphaned-payments": 10,
@@ -313,6 +362,19 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "reconcile-sessions": 10,
   "prune-system-job-executions": 25,
   "prune-system-events": 10,
+  "databreach-deadline-alerts": 15,
+  "reconcile-occurrence-availability": 30,
+  "auth-tokens": 180,
+  "reconcile-document-storage": 185,
+  "prune-audit-logs": 190,
+  "sweep-verification": 200,
+  "expire-stale-collaborator-invites": 205,
+  "purge-unverified-users": 215,
+  "archive-webhook-events": 20,
+  "consent-retention-sweeper": 25,
+  "expire-onboarding-drafts": 35,
+  "drain-admin-run-requests": 40,
+  "ops-digest": 230,
   "expire-recordings": 5,
   "reconcile-orphaned-recordings": 25,
   "wind-down-deactivated-orgs": 55,
@@ -321,7 +383,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
 };
 
 /** Regression ceiling for due work, enforced by the calendar test. */
-export const MAX_TARGETS_PER_TICK = 10;
+export const MAX_TARGETS_PER_TICK = 12;
 
 /**
  * A UTC calendar window. Inside it the target fires on its every/offset slots;
@@ -338,6 +400,12 @@ export interface CalendarWindow {
 }
 const DAILY_0300: CalendarWindow = { startMinuteUtc: 180, windowMinutes: 1020 };
 const DAILY_2330: CalendarWindow = { startMinuteUtc: 1410, windowMinutes: 180 };
+/** Sunday 00:00–01:00 UTC; each weekly target fires once on its own offset inside it. */
+const WEEKLY_SUNDAY: CalendarWindow = {
+  weekdayUtc: 0,
+  startMinuteUtc: 0,
+  windowMinutes: 60,
+};
 /** Retention band between the daytime money window and the 23:30 one. */
 const DAILY_RETENTION: CalendarWindow = {
   startMinuteUtc: 1200,
@@ -376,7 +444,7 @@ export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   "advance-program-cycles": DAILY_0300,
   "auto-renew-contracts": DAILY_0300,
   "irp-uploader": DAILY_0300,
-  // All day; the window starts on the first slot so a missing GSTIN warns once a day.
+  // All day, from its first slot.
   "heal-consumer-invoices": { startMinuteUtc: 110, windowMinutes: 1440 },
   "sweep-abandoned-overage-charges": DAILY_0300,
   "expire-contracts": DAILY_0300,
@@ -395,6 +463,9 @@ export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   "stream-control-plane-drift": { startMinuteUtc: 75, windowMinutes: 60 },
   "prune-system-job-executions": DAILY_RETENTION,
   "prune-system-events": DAILY_RETENTION,
+  "archive-webhook-events": WEEKLY_SUNDAY,
+  "consent-retention-sweeper": WEEKLY_SUNDAY,
+  "expire-onboarding-drafts": WEEKLY_SUNDAY,
 };
 
 /**
@@ -454,10 +525,40 @@ export function latestWindowStart(name: Target, at: Date): Date | null {
   return null;
 }
 
-/** The targets due on this tick; exported so a test can pin the cadence. */
-export function dueTargets(now: Date): Target[] {
+/** A fixed span holding at least two of every calendar window, quarterly ones included. */
+const GAP_SPAN_DAYS = 800;
+const GAP_EPOCH_MINUTE = Date.UTC(2027, 0, 1) / 60_000;
+
+/**
+ * The longest gap in minutes between two consecutive due slots of a target.
+ * Every interval divides the day and every offset sits on a five-minute tick.
+ */
+export function maxSlotGapMinutes(name: Target): number {
+  const every = TARGET_EVERY_MINUTES[name] ?? 5;
+  const w = TARGET_WINDOWS[name];
+  if (!w) return every;
+  const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
+  let gap = 0;
+  let previousLast: number | null = null;
+  for (let d = 0; d < GAP_SPAN_DAYS; d++) {
+    const opens = GAP_EPOCH_MINUTE + d * 1440 + w.startMinuteUtc;
+    const at = new Date(opens * 60_000);
+    if (windowStartFor(name, at)?.getTime() !== at.getTime()) continue;
+    const first = opens + ((((offset - opens) % every) + every) % every);
+    const closes = opens + w.windowMinutes;
+    if (first >= closes) continue;
+    const last = first + Math.floor((closes - 1 - first) / every) * every;
+    if (last > first) gap = Math.max(gap, every);
+    if (previousLast !== null) gap = Math.max(gap, first - previousLast);
+    previousLast = last;
+  }
+  return gap;
+}
+
+/** Every target whose slot falls on this tick, before idle skips and the cap. */
+export function scheduledTargets(now: Date): Target[] {
   const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
-  const due = TARGETS.filter((name) => {
+  return TARGETS.filter((name) => {
     if (name in TARGET_WINDOWS && windowStartFor(name, now) === null) {
       return false;
     }
@@ -466,10 +567,18 @@ export function dueTargets(now: Date): Target[] {
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
     return (((minuteOfDay - offset) % every) + every) % every < 5;
   });
-  // The ledger report persists its cursor and yields past the cap; other jobs keep their slots.
-  return due.length > MAX_TARGETS_PER_TICK
-    ? due.filter((name) => name !== "reconcile-ledgers")
-    : due;
+}
+
+/** The cap on dispatched targets: the ledger report persists its cursor and yields past it. */
+export function capToTick(targets: readonly Target[]): Target[] {
+  return targets.length > MAX_TARGETS_PER_TICK
+    ? targets.filter((name) => name !== "reconcile-ledgers")
+    : [...targets];
+}
+
+/** The targets due on this tick with no idle skips; exported so a test can pin the cadence. */
+export function dueTargets(now: Date): Target[] {
+  return capToTick(scheduledTargets(now));
 }
 
 /** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */
@@ -487,6 +596,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "settle-cancelled-sessions": 20_000,
   "settle-platform-incidents": 20_000,
   "retry-auto-refunds": 20_000,
+  "reconcile-standalone-purchases": 20_000,
+  "reconcile-digital-product-storage": 20_000,
   "vest-referral-credits": 20_000,
   "reconcile-refunds": 20_000,
   "reconcile-org-invoice-payments": 24_000,
@@ -523,6 +634,18 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reconcile-sessions": 24_000,
   "prune-system-job-executions": 24_000,
   "prune-system-events": 20_000,
+  "databreach-deadline-alerts": 20_000,
+  "reconcile-occurrence-availability": 24_000,
+  "auth-tokens": 20_000,
+  "reconcile-document-storage": 24_000,
+  "prune-audit-logs": 20_000,
+  "sweep-verification": 24_000,
+  "purge-unverified-users": 20_000,
+  "archive-webhook-events": 20_000,
+  "consent-retention-sweeper": 20_000,
+  "expire-onboarding-drafts": 20_000,
+  "drain-admin-run-requests": 24_000,
+  "ops-digest": 24_000,
 };
 
 /**

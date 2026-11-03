@@ -2,7 +2,11 @@
 // stamped, and refuses a key reused with a different payload.
 
 import prisma, { type PrismaLike } from "@/lib/prisma";
-import { Prisma, AppointmentOccurrence } from "@prisma/client";
+import {
+  AppointmentStatus,
+  Prisma,
+  AppointmentOccurrence,
+} from "@prisma/client";
 import {
   AllocationResult,
   EventType,
@@ -17,15 +21,6 @@ import { AllocationIdempotencyMismatchError } from "@/utils/scheduling-engine/er
 import { getEventRelationField } from "@/lib/booking/allocation/identity";
 import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
 
-/**
- * AUTO ALLOCATION: Find and allocate first available consecutive slots
- *
- * FIX Issue #1 from Architecture Review (#446):
- * Wrapped in a consultant-level distributed lock to prevent concurrent
- * auto-allocations from reading the same slots as "available" and
- * double-booking. The lock is acquired BEFORE the Prisma transaction
- * and released in a finally block to guarantee cleanup.
- */
 /**
  * #837 — idempotent-replay guard for double-submitted allocations. If this
  * batch's key already stamped an appointment, return that batch instead of
@@ -76,11 +71,42 @@ export async function findIdempotentAllocation(
     );
   }
 
+  const outcome = await replayOutcome(eventType, eventId, db);
   return {
     success: true,
     appointments,
+    ...(outcome ? { outcome } : {}),
     ...(await replayPartialCounts(eventType, eventId, appointments, db)),
   };
+}
+
+/**
+ * Where the replayed approval landed, read from the request row: a replay of
+ * an approval still awaiting payment must say so, so the caller re-attempts
+ * the pay-link mint (idempotent) instead of reporting the times confirmed.
+ */
+export async function replayOutcome(
+  eventType: EventType,
+  eventId: string,
+  db: PrismaLike = prisma,
+): Promise<AllocationResult["outcome"]> {
+  const row =
+    eventType === "consultation"
+      ? await db.consultation.findUnique({
+          where: { id: eventId },
+          select: { status: true },
+        })
+      : eventType === "subscription"
+        ? await db.subscription.findUnique({
+            where: { id: eventId },
+            select: { status: true },
+          })
+        : null;
+  if (row?.status === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
+    return "awaiting_payment";
+  }
+  if (row?.status === AppointmentStatus.APPROVED) return "approved";
+  return undefined;
 }
 
 export async function loadIdempotentBatchAppointments(

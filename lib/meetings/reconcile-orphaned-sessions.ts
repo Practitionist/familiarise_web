@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import {
   getStreamVideoClient,
   isStreamConfigured,
@@ -171,6 +172,24 @@ async function reconcileSingleOrphanedSession(
   }
 }
 
+// Shared by the run's slice read and the ticker's idle probe.
+function overdueOpenMeetingWhere(oneHourAgo: Date) {
+  return { endedAt: null, occurrence: { endsAt: { lt: oneHourAgo } } };
+}
+
+export async function hasOrphanedSessionWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const row = await db.meeting.findFirst({
+    where: overdueOpenMeetingWhere(new Date(now.getTime() - 60 * 60 * 1000)),
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 export const BATCH_SIZE = 5;
 // Reserve the video client's 15-second request timeout and transactional close under the HTTP ceiling.
 const START_BUDGET_MS = 6_000;
@@ -195,8 +214,7 @@ async function reconcileOrphanedSessionsUnlocked(
   const load = (after: string | null) =>
     prisma.meeting.findMany({
       where: {
-        endedAt: null,
-        occurrence: { endsAt: { lt: oneHourAgo } },
+        ...overdueOpenMeetingWhere(oneHourAgo),
         ...(after ? { id: { gt: after } } : {}),
       },
       select: {

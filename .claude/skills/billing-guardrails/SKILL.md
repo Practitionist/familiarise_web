@@ -13,25 +13,25 @@ Owner context: the owner is India-based, so cards are INR-billed and a vendor ch
 
 ## Vendor references
 
-| Vendor                                      | Read                                           | Hard-stop behaviour when the meter runs out                                    |
-| ------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------ |
-| GitHub Actions                              | [github-actions](references/github-actions.md) | Jobs are blocked, CI cannot run, merges stall.                                 |
-| Netlify (Pro, legacy plan)                  | [netlify](references/netlify.md)               | Overage is billed; builds and functions keep running.                          |
-| Vercel (standby only, not deployed)         | [vercel](references/vercel.md)                 | Not applicable today; read before a cutover.                                   |
-| Cloudflare (R2 recordings, DNS)             | [cloudflare](references/cloudflare.md)         | R2 bills per operation; no hard stop.                                          |
-| Supabase                                    | [supabase](references/supabase.md)             | With the spend cap on, the item is blocked; compute and PITR are not capped.   |
-| Upstash Redis                               | [upstash](references/upstash.md)               | Rate limited at the budget; interactive guards vary; cron leases use Postgres. |
-| Sentry                                      | [sentry](references/sentry.md)                 | Errors are silently dropped (HTTP 429 on the error item only).                 |
-| Novu                                        | [novu](references/novu.md)                     | Workflow runs beyond the plan are refused or billed.                           |
-| Resend                                      | [resend](references/resend.md)                 | Free plan blocks at 100 per day and 3,000 per month.                           |
-| Stream (chat and video)                     | [stream](references/stream.md)                 | Paid cliff at the MAU and minute caps.                                         |
-| Razorpay (fees as a cost line, not a quota) | [razorpay](references/razorpay.md)             | No quota; every transaction and refund has a fee.                              |
+| Vendor                                      | Read                                           | Hard-stop behaviour when the meter runs out                                                                                          |
+| ------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| GitHub Actions                              | [github-actions](references/github-actions.md) | Jobs are blocked, CI cannot run, merges stall.                                                                                       |
+| Netlify (Pro, legacy plan)                  | [netlify](references/netlify.md)               | No hard cap; a flat $25 add-on covers 125,000–2,000,000 invocations a site a month, then billed per 500,000; functions keep running. |
+| Vercel (standby only, not deployed)         | [vercel](references/vercel.md)                 | Not applicable today; read before a cutover.                                                                                         |
+| Cloudflare (R2 recordings, DNS)             | [cloudflare](references/cloudflare.md)         | R2 bills per operation; no hard stop.                                                                                                |
+| Supabase                                    | [supabase](references/supabase.md)             | With the spend cap on, the item is blocked; compute and PITR are not capped.                                                         |
+| Upstash Redis                               | [upstash](references/upstash.md)               | Rate limited at the budget; interactive guards vary; cron leases use Postgres. The daily ops digest flags usage from 70 %.           |
+| Sentry                                      | [sentry](references/sentry.md)                 | Errors are silently dropped (HTTP 429 on the error item only).                                                                       |
+| Novu                                        | [novu](references/novu.md)                     | Workflow runs beyond the plan are refused or billed.                                                                                 |
+| Resend                                      | [resend](references/resend.md)                 | Free plan blocks at 100 per day and 3,000 per month.                                                                                 |
+| Stream (chat and video)                     | [stream](references/stream.md)                 | Paid cliff at the MAU and minute caps.                                                                                               |
+| Razorpay (fees as a cost line, not a quota) | [razorpay](references/razorpay.md)             | No quota; every transaction and refund has a fee.                                                                                    |
 
 ## Cross-vendor rules
 
 1. A meter you cannot see is a meter that will surprise you. Every vendor above has a monitoring command in its reference; run it before a launch, a load test and the first day of each month.
 2. Prefer a hard cap over an alert where the vendor offers one, except where the cap would take down production. Money paths (checkout, webhooks, payouts) must never sit behind a cap that fails closed without an alert.
-3. A scheduled job costs money on every vendor it touches. The ticker (`netlify/functions/cron-tick.mts`) has a tested planned-wave ceiling of `MAX_TARGETS_PER_TICK=10` in the shared schedule catalog (cadence and offsets). When a due wave exceeds that ceiling, `dueTargets` omits `reconcile-ledgers` for that tick while retaining the other jobs; this is a specific ledger deferral, not a general concurrency queue. Adding a target means choosing its cadence and offset deliberately.
+3. A scheduled job costs money on every vendor it touches. The ticker (`netlify/functions/cron-tick.mts`) has a tested planned-wave ceiling of `MAX_TARGETS_PER_TICK=12` in the shared schedule catalog (cadence and offsets). When a due wave exceeds that ceiling, `dueTargets` omits `reconcile-ledgers` for that tick while retaining the other jobs; this is a specific ledger deferral, not a general concurrency queue. Adding a target means choosing its cadence and offset deliberately.
 4. Report to Sentry at most once per run and once per standing finding. Grouping inside Sentry does not reduce quota; only sending fewer events does. Enforcer: `applyErrorBudget` in `sentry.shared.config.ts` (per process only) `lib/observability/throttled-capture.ts`, `lib/observability/run-failures.ts` (per run) and `lib/observability/standing-finding.ts` (across runs).
 5. Never let preview or branch deploys share production's Upstash, Novu or Stream credentials (see `docs/deployment/netlify.md`). A preview QA run otherwise spends production quota.
 6. Fail-open versus fail-closed is a billing decision: when a metered dependency is capped, say which way the caller fails and make the failure report once, not once per request.

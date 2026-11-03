@@ -42,7 +42,8 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import { createHandleApiError, paymentGateways } from "../../utils";
+import { paymentGateways } from "../../utils";
+import { useHandleApiError } from "../../use-handle-api-error";
 import { isSlotStillOffered } from "@/app/explore/experts/[consultantId]/hooks/useAvailabilityWindow";
 import { useSlotJustTaken } from "@/app/explore/experts/[consultantId]/hooks/useSlotJustTaken";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
@@ -52,7 +53,7 @@ import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import { useReferralPricing } from "../../useReferralPricing";
 import {
   createRazorpayCheckoutHandlers,
-  mintClientIdempotencyKey,
+  useCheckoutAttemptKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
   reportPaymentsError,
@@ -147,8 +148,7 @@ export default function ConsultationCheckoutPage({
     );
   const [slotPassedError, setSlotPassedError] = useState<string | null>(null);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
-  // #828 — useState's lazy initializer runs once per mount.
-  const [idempotencyKey] = useState(mintClientIdempotencyKey);
+  const attemptKey = useCheckoutAttemptKey();
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
     null,
@@ -371,7 +371,7 @@ export default function ConsultationCheckoutPage({
   // Shared error map covers slot-conflict types (AVAILABILITY, LOCK_CONTENTION)
   // so a slot taken mid-checkout shows a clear "pick another time" toast.
   // Matches subscription/class/webinar pages (de-dupes the old inline map).
-  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const handleApiError = useHandleApiError(toast);
 
   const consultantProfileId = eventData?.data?.consultantProfile?.id;
   const slotJustTaken = useSlotJustTaken(consultantProfileId);
@@ -432,12 +432,11 @@ export default function ConsultationCheckoutPage({
         body: JSON.stringify({
           ...checkoutData,
           isMockPayment,
-          // #828 — stable per-mount; the server dedupes retries on this key.
-          clientIdempotencyKey: idempotencyKey,
+          clientIdempotencyKey: attemptKey(checkoutData),
         }),
       });
     },
-    [idempotencyKey],
+    [attemptKey],
   );
 
   const handleCheckout = useCallback(

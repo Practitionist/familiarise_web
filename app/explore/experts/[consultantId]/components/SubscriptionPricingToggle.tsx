@@ -13,12 +13,13 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { CalendarIcon, CheckCircle2, Gift, BookOpen } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
+import { zoneDisplayLabel } from "@/lib/time/viewer-zone";
 import Link from "next/link";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
-import { firstCycleWindow } from "@/lib/booking/entitlement";
+import { firstCycleWindow, lastInstantBefore } from "@/lib/booking/entitlement";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { TrialBookingModal } from "./TrialBookingModal";
 
@@ -511,7 +512,7 @@ export default function SubscriptionPricingToggle({
                 <p className="text-sm text-zinc-500 mb-1">First cycle:</p>
                 <p className="text-white font-semibold text-lg">
                   {format(firstCycle.start, "MMM dd, yyyy")} →{" "}
-                  {format(firstCycle.end, "MMM dd, yyyy")}
+                  {format(lastInstantBefore(firstCycle.end), "MMM dd, yyyy")}
                 </p>
                 <p className="text-sm text-zinc-500 mt-1">
                   {selectedOption.sessionsPerWeek ?? 1} session
@@ -531,7 +532,7 @@ export default function SubscriptionPricingToggle({
             {/* Timezone Info */}
             <div className="p-4 bg-zinc-800/40 border border-zinc-700/50 rounded-xl">
               <p className="text-sm text-zinc-400">
-                💡 Timezone: {timezone} (Your local time)
+                Times shown in {zoneDisplayLabel(new Date(), timezone)}
               </p>
             </div>
           </div>

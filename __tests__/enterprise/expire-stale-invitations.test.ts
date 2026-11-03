@@ -41,16 +41,24 @@ jest.mock("../../lib/prisma", () => {
         deleteMany: jest.fn().mockResolvedValue({ count: 2 }),
       },
       session: {
-        findMany: jest
-          .fn()
-          .mockResolvedValue([
-            { id: "session-0" },
-            { id: "session-1" },
-            { id: "session-2" },
-          ]),
-        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue(
+          ["session-0", "session-1", "session-2"].map((id) => ({
+            id,
+            userId: "u1",
+            ipAddress: null,
+            userAgent: null,
+            createdAt: new Date("2026-04-01T00:00:00Z"),
+            expiresAt: new Date("2026-05-01T00:00:00Z"),
+          })),
+        ),
         deleteMany: jest.fn().mockResolvedValue({ count: 3 }),
       },
+      sessionAccessLog: {
+        findMany: jest.fn().mockResolvedValue([]),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      $queryRaw: jest.fn().mockResolvedValue([{ ready: true }]),
+      $executeRaw: jest.fn().mockResolvedValue(3),
       idempotencyRecord: {
         findMany: jest.fn().mockResolvedValue([{ id: "idempotencyRecord-0" }]),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -76,6 +84,9 @@ const mockedPrisma = prisma as unknown as {
     updateMany: jest.Mock;
   };
   orgAuditLog: { create: jest.Mock };
+  session: { findMany: jest.Mock; deleteMany: jest.Mock };
+  $queryRaw: jest.Mock;
+  $executeRaw: jest.Mock;
   $transaction: jest.Mock;
 };
 
@@ -84,6 +95,9 @@ function wireTxShim() {
     const tx = {
       invitation: mockedPrisma.invitation,
       orgAuditLog: mockedPrisma.orgAuditLog,
+      session: mockedPrisma.session,
+      $queryRaw: mockedPrisma.$queryRaw,
+      $executeRaw: mockedPrisma.$executeRaw,
     };
     return (fn as (tx: unknown) => unknown)(tx);
   });

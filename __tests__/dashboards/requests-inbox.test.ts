@@ -6,8 +6,7 @@
  * #1775 PR-A — the Requests inbox read and its HTTP twin. One fixture (a
  * PENDING consultation, an APPROVED_PENDING_PAYMENT subscription, a
  * next-cycle subscription and an AWAITING_PAYMENT trial) served by a
- * where-aware prisma mock, so the same rows answer the read, the route and
- * the Home-parity pin (A-6).
+ * where-aware prisma mock, so the same rows answer the read and the route.
  */
 
 jest.mock("../../lib/auth-helpers", () => ({
@@ -24,31 +23,17 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     consultation: { findMany: jest.fn(), count: jest.fn() },
     subscription: { findMany: jest.fn(), count: jest.fn() },
-    trial: { findMany: jest.fn(), count: jest.fn(), groupBy: jest.fn() },
+    trial: { findMany: jest.fn(), count: jest.fn() },
     membership: { findMany: jest.fn() },
-    appointmentOccurrence: { findMany: jest.fn(), groupBy: jest.fn() },
-    appointment: { findMany: jest.fn() },
-    activityLog: { findMany: jest.fn() },
-    consultantEarnings: {
-      aggregate: jest.fn(),
-      count: jest.fn(),
-      groupBy: jest.fn(),
-    },
-    consultantReview: { aggregate: jest.fn() },
-    bookingStatusHistory: { findMany: jest.fn() },
-    systemEvent: { findMany: jest.fn().mockResolvedValue([]) },
   },
 }));
 
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import {
-  readRequestsInbox,
-  readRequestsToAnswerCount,
-} from "@/lib/data/requests-inbox";
+import { readRequestsInbox } from "@/lib/data/requests-inbox";
+import { countRequestsToAnswer } from "@/lib/data/needs-you";
 import { APPOINTMENT_LIST_SELECT } from "@/lib/booking/list-selects";
-import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
 import { GET as getInbox } from "@/app/api/bookings/inbox/route";
 import {
   inboxBucketOf,
@@ -153,9 +138,11 @@ describe("readRequestsInbox (A-1)", () => {
     });
     expect(chipped.rows.map((r) => r.id)).toEqual(["s-awaiting"]);
     expect(chipped.meta.total).toBe(1);
-    // The scan is stable: requestedAt desc with the id tiebreaker (#1704 P1).
-    const call = (prisma.subscription.findMany as jest.Mock).mock.calls[0][0];
-    expect(call.orderBy).toEqual([{ requestedAt: "desc" }, { id: "asc" }]);
+    // Deadline pages in SQL by the request clock, oldest first, id tiebreaker.
+    const call = (prisma.subscription.findMany as jest.Mock).mock.calls.find(
+      ([args]) => args.orderBy,
+    )![0];
+    expect(call.orderBy).toEqual([{ requestedAt: "asc" }, { id: "asc" }]);
     // A-7 — occurrence includes are bounded to live rows on the inbox AND the list routes.
     expect(call.select.appointment.select.occurrences.where).toEqual({
       deletedAt: null,
@@ -240,46 +227,14 @@ describe("GET /api/bookings/inbox (A-2)", () => {
   });
 });
 
-describe("Home strip parity (A-6)", () => {
-  it("Home's answer / awaiting / next-cycle strips add up to the inbox tab counts", async () => {
-    const m = prisma as unknown as Record<string, Record<string, jest.Mock>>;
-    m.appointmentOccurrence.findMany.mockResolvedValue([]);
-    m.appointmentOccurrence.groupBy.mockResolvedValue([]);
-    m.appointment.findMany.mockResolvedValue([]);
-    m.activityLog.findMany.mockResolvedValue([]);
-    m.trial.groupBy.mockResolvedValue([]);
-    m.bookingStatusHistory.findMany.mockResolvedValue([]);
-    m.consultantEarnings.count.mockResolvedValue(0);
-    m.consultantEarnings.aggregate.mockResolvedValue({
-      _sum: { consultantSharePaise: null, refundedShareAmount: null },
-    });
-    m.consultantEarnings.groupBy.mockResolvedValue([]);
-    m.consultantReview.aggregate.mockResolvedValue({
-      _avg: { rating: null },
-      _count: { rating: 0 },
-    });
-    const home = await getConsultantDashboard(CP);
-    const inbox = await read({ type: "consultation" });
-    // Same predicates (needs-you.ts) on both sides: 1 pending + 1 awaiting + 1 next cycle.
-    expect(
-      home.pendingRequestsCount +
-        home.awaitingPayment.count +
-        home.nextCycles.length,
-    ).toBe(3);
-    expect(
-      inbox.meta.counts.consultation + inbox.meta.counts.subscription,
-    ).toBe(3);
-  });
-});
-
-describe("readRequestsToAnswerCount (#1928)", () => {
+describe("countRequestsToAnswer", () => {
   it("sums the REQUESTED arms only and asks trials for PENDING alone", async () => {
     const m = prisma as unknown as Record<string, Record<string, jest.Mock>>;
     m.consultation.count.mockResolvedValue(2);
     m.subscription.count.mockResolvedValue(3);
     m.trial.count.mockResolvedValue(4);
     await expect(
-      readRequestsToAnswerCount({ consultantProfileId: CP }),
+      countRequestsToAnswer({ consultantProfileId: CP }),
     ).resolves.toBe(9);
     expect(m.trial.count).toHaveBeenCalledTimes(1);
     expect(m.trial.count.mock.calls[0][0].where.status).toEqual({

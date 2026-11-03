@@ -54,8 +54,7 @@ The list below is the active route set under
                                                   feed under ?scope=everyone.
                                                   See "Appointments scopes" below.
 /dashboard/organization/[orgId]/members        → unified Membership list, with
-                                                  ?tab=learners | experts |
-                                                  invitations. See "Members tabs".
+                                                  ?tab=invitations. See "Members tabs".
 /dashboard/organization/[orgId]/collaborations → collaborators on THIS org's
                                                   hosted webinar/class plans.
                                                   Split by the PLAN's
@@ -84,12 +83,11 @@ The list below is the active route set under
                                                   earnings, wallet burn-down,
                                                   k=5 privacy-safe Session Quality,
                                                   and Utilization CSV export)
-/dashboard/organization/[orgId]/documents      → documents uploaded against
-                                                  this org's appointments, with
-                                                  flat or "Group by session" view
-/dashboard/organization/[orgId]/recordings     → session recordings for events
-                                                  run under this org, with flat or
-                                                  "Group by session" view
+/dashboard/organization/[orgId]/library        → Library: Session documents and
+                                                  Session recordings tabs for this
+                                                  org's appointments (Mine ·
+                                                  Everyone); the old /documents
+                                                  and /recordings URLs redirect
 /dashboard/organization/[orgId]/audit          → per-org OrgAuditLog (rich filters)
 /dashboard/organization/[orgId]/consent        → ConsentArtifact roster + DPDP
                                                   withdraw/grant (DPDP §6(4))
@@ -106,14 +104,14 @@ The list below is the active route set under
 The sidebar carried 28 entries at its peak, several of which were a filter or
 a single read-only table rather than a destination. Those became tabs on the
 page that already owned the object. Every tab is addressable as
-`?tab=<value>`, and legacy standalone routes (`purchase-orders`, `reimbursements`,
-`disputes`) redirect through `ORG_TAB_REDIRECTS` in `lib/dashboard/org-tab-redirect.ts`.
+`?tab=<value>`; the retired standalone routes (`purchase-orders`, `reimbursements`,
+`disputes`) were deleted and answer 404.
 
-| Page        | Tabs / Sections                                                     | Why they merged                                                                                                         |
-| ----------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `/members`  | `all`, `learners`, `experts`, `invitations`                         | `learners` and `experts` are role filters against `/api/organizations/[orgId]/members`.                                 |
-| `/settings` | `general`, `sso`, `webhooks`, `data-exports`                        | Rendered via `SettingsLayout` with one canonical URL per section.                                                       |
-| `/billing`  | `invoices`, `wallet`, `purchase-orders`, `member-spend`, `disputes` | Consolidates all sponsor-side billing, POs, member spend limits, reimbursements, and disputes onto one finance surface. |
+| Page        | Tabs / Sections                                                     | Why they merged                                                                                                          |
+| ----------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `/members`  | `members`, `invitations`                                            | Learners and Experts are role filter chips on the `members` list against `/api/organizations/[orgId]/members`, not tabs. |
+| `/settings` | `general`, `sso`, `webhooks`, `data-exports`                        | Rendered via `SettingsLayout` with one canonical URL per section.                                                        |
+| `/billing`  | `invoices`, `wallet`, `purchase-orders`, `member-spend`, `disputes` | Consolidates all sponsor-side billing, POs, member spend limits, reimbursements, and disputes onto one finance surface.  |
 
 Tabs are gated individually on the same `OrgSurface` keys the sidebar uses, so
 a role that cannot reach a surface does not get a trigger for it.
@@ -266,8 +264,6 @@ readable projection of it.
 | `/my-program`              | ✅      | —    | ✅     | `myProgram.read` (LEARNER; page filters server-side to caller's assignments)                                                | yes (LEARNER + canSponsor only)           | Per-cycle ProgramAssignment progress, coverage rules, utilization history. 404 on canSponsor=false.                                                                                                                                                                                                                                                    |
 | `/compensation`            | —       | ✅   | ✅     | `myArrangement.read` (EXPERT; page filters to caller's earnings)                                                            | yes (EXPERT + canHost only)               | Membership.payoutRecipient, default RateCard split, recent earnings on org-tagged payments. 404 on canHost=false.                                                                                                                                                                                                                                      |
 | `/members`                 | ✅      | ✅   | ✅     | `members.read` (OWNER, MAINTAINER, MANAGER, SUPPORT)                                                                        | yes                                       | BILLING_ADMIN is operator-blind and excluded at sidebar, page, and API.                                                                                                                                                                                                                                                                                |
-| `/members?tab=experts`     | —       | ✅   | ✅     | `members.read`, as `/members`                                                                                               | legacy link                               | Since #1527 the Learners and Experts tabs are folded into one filterable Members list, and this old link redirects to `/members?role=EXPERT`.                                                                                                                                                                                                          |
-| `/members?tab=learners`    | ✅      | —    | ✅     | `members.read`, as `/members`                                                                                               | legacy link                               | This old link redirects to `/members?role=LEARNER` on the same filterable Members list.                                                                                                                                                                                                                                                                |
 | `/members?tab=invitations` | ✅      | ✅   | ✅     | `invitations.manage` (OWNER, MAINTAINER)                                                                                    | tab                                       | Tab on Members. Send-invite button disabled pre-verification; uses `humanizeOrgError` for `ORG_NOT_VERIFIED`.                                                                                                                                                                                                                                          |
 | `/catalog`                 | —       | ✅   | ✅     | `catalog.manage` (OWNER, MAINTAINER, MANAGER)                                                                               | yes (if `canHost`)                        | The offerings the org OWNS, distinct from the sponsorship entitlements on `/programs`. Webinar and Class only — `ConsultationPlan` and `SubscriptionPlan` require a `consultantProfileId`, so an org can never solely own one. The named deliverer is re-checked server-side against an ACTIVE EXPERT membership.                                      |
 | `/programs`                | ✅      | —    | ✅     | `programs.manage` (OWNER, MAINTAINER)                                                                                       | yes (if `canSponsor`)                     | The learner-facing catalog GETs stay open to any active member by design.                                                                                                                                                                                                                                                                              |

@@ -51,9 +51,36 @@ jest.mock("../../lib/prisma", () => ({
         },
       }),
     appointment: {
+      // The refund context reads the trial's wrapper; the fixtures describe
+      // only its policy and sessions.
+      findFirst: async (...a: unknown[]) => {
+        const row = (await mockAppointmentFindUnique(...a)) as {
+          occurrences?: { startsAt: Date; completionStatus?: string }[];
+        } | null;
+        return (
+          row && {
+            id: "appt-trial",
+            payment: [],
+            subscription: null,
+            consultation: null,
+            trial: null,
+            ...row,
+            occurrences: (row.occurrences ?? []).map((o) => ({
+              completionStatus: "SCHEDULED",
+              isTentative: false,
+              ordinal: 1,
+              endsAt: new Date(o.startsAt.getTime() + 3_600_000),
+              ...o,
+            })),
+          }
+        );
+      },
       findUnique: (...a: unknown[]) => mockAppointmentFindUnique(...a),
       delete: (...a: unknown[]) => mockAppointmentDelete(...a),
     },
+    // No session of the trial was ever released by a reschedule.
+    appointmentOccurrence: { findMany: async () => [] },
+    rescheduleRequest: { findMany: async () => [] },
     payment: {
       findFirst: (...a: unknown[]) => mockPaymentFindFirst(...a),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),

@@ -44,12 +44,12 @@ export function supportTicketResponseSubject({
   }
   if (kind === "STATUS_UPDATED") {
     return reference
-      ? `Your ticket ${reference} is now ${statusLabel ?? "updated"}`
-      : `Your support ticket is now ${statusLabel ?? "updated"}`;
+      ? `Your support case ${reference} is now ${statusLabel ?? "updated"}`
+      : `Your support case is now ${statusLabel ?? "updated"}`;
   }
   return reference
-    ? `${respondedBy} replied to your ticket ${reference}`
-    : `${respondedBy} replied to your ticket`;
+    ? `${respondedBy} replied to your support case ${reference}`
+    : `${respondedBy} replied to your support case`;
 }
 
 function renderFollowUpParagraph(
@@ -59,8 +59,8 @@ function renderFollowUpParagraph(
   if (kind === "RESPONSE") {
     return (
       <Text style={paragraph}>
-        To reply, open the ticket and write in the conversation. The support
-        team sees your message as soon as it is sent.
+        To reply, open the support case and write in the conversation. The
+        support team sees your message as soon as it is sent.
       </Text>
     );
   }
@@ -101,7 +101,7 @@ export default function SupportTicketResponseEmail({
 
       {kind === "RESPONSE" ? (
         <Text style={paragraph}>
-          {respondedBy} replied on your ticket{" "}
+          {respondedBy} replied on your support case{" "}
           {reference && (
             <>
               <strong>{reference}</strong>{" "}
@@ -113,7 +113,7 @@ export default function SupportTicketResponseEmail({
 
       {kind === "STATUS_UPDATED" ? (
         <Text style={paragraph}>
-          Your support ticket{" "}
+          Your support case{" "}
           {reference && (
             <>
               <strong>{reference}</strong>{" "}
@@ -147,7 +147,7 @@ export default function SupportTicketResponseEmail({
 
       <Section style={buttonContainer}>
         <Button style={button} href={ticketUrl}>
-          {kind === "FEEDBACK_UPDATED" ? "Open dashboard" : "View ticket"}
+          {kind === "FEEDBACK_UPDATED" ? "Open dashboard" : "View case"}
         </Button>
       </Section>
     </EmailLayout>

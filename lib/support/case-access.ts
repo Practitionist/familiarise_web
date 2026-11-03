@@ -300,7 +300,7 @@ export async function visibleCaseWhere(viewer: {
   return (await visibleCaseAccess(viewer)).where;
 }
 
-export const ORG_FILED_CASE_TITLE = "Organization support request";
+export const ORG_FILED_CASE_TITLE = "Organization support case";
 
 export interface OrgFiledCaseSummary {
   id: string;

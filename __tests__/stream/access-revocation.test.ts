@@ -50,6 +50,10 @@ jest.mock("../../lib/observability/report", () => ({
 jest.mock("../../lib/auth-helpers", () => ({
   isPrivileged: (role?: string | null) => role === "ADMIN" || role === "STAFF",
 }));
+const mockRecordSystemEvent = jest.fn();
+jest.mock("../../lib/enterprise/system-events", () => ({
+  recordSystemEvent: (...args: unknown[]) => mockRecordSystemEvent(...args),
+}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_name: string, _opts: unknown, fn: () => unknown) => fn(),
   readJobCheckpoint: jest.fn(async () => null),
@@ -255,7 +259,9 @@ describe("daily membership reconciler", () => {
     expect(mockRevocationQueryChannels.mock.calls[0][0]).not.toHaveProperty(
       "created_at",
     );
-    expect(mockReport).toHaveBeenCalledTimes(1);
+    // Removals and brakes are a console finding, not a Sentry event.
+    expect(mockReport).not.toHaveBeenCalled();
+    expect(mockRecordSystemEvent).toHaveBeenCalledTimes(1);
   });
 
   it("leaves a cancelled or expired event's channel to the lifecycle jobs", async () => {

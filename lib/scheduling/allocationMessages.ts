@@ -8,6 +8,7 @@
  * the scheduling bucket and translate its span onto the viewer's clock.
  */
 
+import { formatClockTime, formatDayLabel } from "@/lib/time/display";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { REQUEST_INDETERMINATE_ERROR } from "./allocationService";
 
@@ -420,6 +421,57 @@ export const requestChangedElsewhere = (): AllocationToast => ({
     "This request was updated in another tab or by a teammate and can no longer be allocated. Refreshing the list.",
 });
 
+/** A 409 named the times someone else took; the rest of the picks stand. */
+export const timesJustTaken = (
+  starts: readonly Date[],
+  zone?: string,
+): AllocationToast => ({
+  variant: "destructive",
+  title:
+    starts.length === 1
+      ? "This time was just taken"
+      : "These times were just taken",
+  description: `${starts
+    .map(
+      (start) =>
+        `${formatDayLabel(start, { zone })} ${formatClockTime(start, { zone })}`,
+    )
+    .join(", ")}. Your other picks are still selected — choose replacements.`,
+});
+
+/** The taken starts a 409 TIMES_TAKEN names, as valid dates. */
+export function takenStartsFrom(starts: readonly string[] | undefined): Date[] {
+  return (starts ?? [])
+    .map((iso) => new Date(iso))
+    .filter((date) => Number.isFinite(date.getTime()));
+}
+
+/** A reschedule's picked times were taken first; the booking kept its time. */
+export const rescheduleTimesTaken = (
+  starts: readonly Date[],
+  zone?: string,
+): AllocationToast => ({
+  variant: "destructive",
+  title:
+    starts.length === 1
+      ? "This time was just taken"
+      : "These times were just taken",
+  description: `${starts
+    .map(
+      (start) =>
+        `${formatDayLabel(start, { zone })} ${formatClockTime(start, { zone })}`,
+    )
+    .join(", ")}. Your booking keeps its original time — pick another time.`,
+});
+
+/** The request's tentative times moved in another tab; the page reloaded them. */
+export const requestRefreshedInPlace = (): AllocationToast => ({
+  variant: "destructive",
+  title: "This request just changed",
+  description:
+    "Its times were updated in another tab or by a teammate. The calendar has been refreshed — check the times and save again.",
+});
+
 /** Plan data anomaly: no totalSessions and no scheduling period. */
 export const planConfigIncomplete = (): AllocationToast => ({
   variant: "destructive",
@@ -439,11 +491,7 @@ export function signInHref(currentPath: string): string {
 }
 
 export type ValidationFailureKind =
-  | "session-ended"
-  | "forbidden"
-  | "indeterminate"
-  | "retry-later"
-  | "refused";
+  "session-ended" | "forbidden" | "indeterminate" | "retry-later" | "refused";
 
 /**
  * What a failed validate call means for the dialog. A 401 is now reserved

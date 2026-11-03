@@ -17,11 +17,10 @@ import {
   INBOX_DEFAULT_TYPE,
   INBOX_SORTS,
   INBOX_TYPES,
+  decodeInboxCursor,
 } from "@/lib/dashboard/requests-inbox-state";
-import {
-  readRequestsInbox,
-  readRequestsToAnswerCount,
-} from "@/lib/data/requests-inbox";
+import { countRequestsToAnswer } from "@/lib/data/needs-you";
+import { readRequestsInbox } from "@/lib/data/requests-inbox";
 
 /**
  * GET /api/bookings/inbox — the Requests inbox's HTTP twin (#1775). The RSC
@@ -30,8 +29,8 @@ import {
  * org-scope resolution mirror `/api/bookings/consultations`: a consultant
  * reads only their own profile, ADMIN/STAFF may read any.
  *
- * `?countsOnly=1` answers the nav badge with the to-answer count
- * alone — same predicates as the REQUESTED rows, no row scan.
+ * `?countsOnly=1` answers the nav badge with `countRequestsToAnswer`, the
+ * one number Home, NeedsYou and the request cap also read.
  */
 
 /** The inbox's own keys; page/limit ride the shared list-query contract. */
@@ -40,6 +39,14 @@ const InboxQuerySchema = z.object({
   type: z.enum(INBOX_TYPES).default(INBOX_DEFAULT_TYPE),
   chip: z.enum(INBOX_CHIPS).optional(),
   sort: z.enum(INBOX_SORTS).default(INBOX_DEFAULT_SORT),
+  after: z
+    .string()
+    .refine((raw) => decodeInboxCursor(raw) !== null, "not a cursor")
+    .optional(),
+  focus: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,64}$/)
+    .optional(),
 });
 
 type InboxQuery = z.infer<typeof InboxQuerySchema>;
@@ -55,7 +62,14 @@ function parseInboxQuery(
   | { data: InboxQuery; response: null }
   | { data: null; response: NextResponse } {
   const raw: Record<string, string> = {};
-  for (const key of ["consultantProfileId", "type", "chip", "sort"] as const) {
+  for (const key of [
+    "consultantProfileId",
+    "type",
+    "chip",
+    "sort",
+    "after",
+    "focus",
+  ] as const) {
     const value = searchParams.get(key);
     if (value !== null) raw[key] = value;
   }
@@ -128,7 +142,8 @@ export async function GET(request: NextRequest) {
     if (listQuery.response) return listQuery.response;
     const inboxQuery = parseInboxQuery(searchParams);
     if (inboxQuery.response) return inboxQuery.response;
-    const { consultantProfileId, type, chip, sort } = inboxQuery.data;
+    const { consultantProfileId, type, chip, sort, after, focus } =
+      inboxQuery.data;
 
     if (
       !isPrivileged(session.user.role) &&
@@ -145,7 +160,7 @@ export async function GET(request: NextRequest) {
     const orgScope = scoped.scope;
 
     if (searchParams.get("countsOnly") === "1") {
-      const toAnswer = await readRequestsToAnswerCount({
+      const toAnswer = await countRequestsToAnswer({
         consultantProfileId,
         orgScope,
       });
@@ -162,6 +177,8 @@ export async function GET(request: NextRequest) {
       chip,
       sort,
       page: listQuery.query.page,
+      after: after ?? null,
+      focusId: focus ?? null,
       limit:
         searchParams.get("limit") === null
           ? INBOX_DEFAULT_LIMIT

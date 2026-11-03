@@ -38,18 +38,22 @@ jest.mock("../../lib/backoffice/money-limit", () => ({
 const create = jest.fn(async (_a: unknown) => ({ id: "row" }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { opsActionLog: { create: (a: unknown) => create(a) } },
+  default: {
+    opsActionLog: { create: (a: unknown) => create(a) },
+    // No stuck owed marker on the payment for a hand refund to settle.
+    payment: { findUnique: async () => null },
+  },
 }));
 // Rest-typed so the `jest.mock` facades below can forward a `unknown[]`
 // spread into them (TS2556 otherwise: a spread argument must have a tuple
 // type or be passed to a rest parameter).
 const refundBookingPayment = jest.fn(async (..._args: unknown[]) => ({}));
-const restoreClassSeatCredits = jest.fn(async (..._args: unknown[]) => ({
+const restoreSessionCredits = jest.fn(async (..._args: unknown[]) => ({
   restoredPaise: 0,
 }));
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
-  restoreClassSeatCredits: (...a: unknown[]) => restoreClassSeatCredits(...a),
+  restoreSessionCredits: (...a: unknown[]) => restoreSessionCredits(...a),
 }));
 jest.mock("../../lib/payments/operations/refund", () => ({
   RefundGatewayError: class extends Error {},
@@ -101,7 +105,7 @@ const dedupeOf = (mock: jest.Mock, call = 0) =>
 
 beforeEach(() => {
   refundBookingPayment.mockClear();
-  restoreClassSeatCredits.mockClear();
+  restoreSessionCredits.mockClear();
   create.mockClear();
 });
 
@@ -126,7 +130,7 @@ describe("a missing idempotency key is refused, never defaulted", () => {
     expect(json.code).toBe("INVALID_BODY");
     expect(json.error).toContain("idempotencyKey");
     expect(json.error).toContain("UUID");
-    expect(restoreClassSeatCredits).not.toHaveBeenCalled();
+    expect(restoreSessionCredits).not.toHaveBeenCalled();
   });
 
   it("the issue door also refuses a non-UUID key", async () => {
@@ -146,7 +150,7 @@ describe("a missing idempotency key is refused, never defaulted", () => {
     expect(((await res.json()) as { error: string }).error).toContain(
       "idempotencyKey",
     );
-    expect(restoreClassSeatCredits).not.toHaveBeenCalled();
+    expect(restoreSessionCredits).not.toHaveBeenCalled();
   });
 });
 
@@ -172,10 +176,10 @@ describe("a repeated key yields a stable dedupeKey (the second click collapses)"
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
-    expect(restoreClassSeatCredits).toHaveBeenCalledTimes(2);
-    expect(dedupeOf(restoreClassSeatCredits, 0)).toBe(`ops:credits:${KEY}`);
-    expect(dedupeOf(restoreClassSeatCredits, 1)).toBe(
-      dedupeOf(restoreClassSeatCredits, 0),
+    expect(restoreSessionCredits).toHaveBeenCalledTimes(2);
+    expect(dedupeOf(restoreSessionCredits, 0)).toBe(`ops:credits:${KEY}`);
+    expect(dedupeOf(restoreSessionCredits, 1)).toBe(
+      dedupeOf(restoreSessionCredits, 0),
     );
   });
 
@@ -195,7 +199,7 @@ describe("the two doors namespace their keys", () => {
     await credits({ idempotencyKey: KEY });
 
     const issueKey = dedupeOf(refundBookingPayment, 0);
-    const creditsKey = dedupeOf(restoreClassSeatCredits, 0);
+    const creditsKey = dedupeOf(restoreSessionCredits, 0);
 
     expect(issueKey).not.toBe(creditsKey);
     // Safe because a validated UUID contains no colon, so the bare `ops:` slot

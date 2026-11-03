@@ -31,6 +31,11 @@ import {
   type RunOutcome,
 } from "@/lib/cron/run-outcome";
 import { recordRouteRun, type RouteRunRecord } from "@/lib/cron/run-record";
+import {
+  JobRunRefusedError,
+  jobsMayRunHere,
+  ProductionOnlyRefusal,
+} from "@/lib/cron/dispatch-refusal";
 
 /**
  * The one result→status mapping the whole cohort shares. Failure is tested
@@ -255,6 +260,9 @@ function verdictOfError(error: unknown): RunVerdict | null {
   if (error instanceof MaintenanceUnavailableError) {
     return { outcome: "refused", reason: "maintenance-state-unreadable" };
   }
+  if (error instanceof ProductionOnlyRefusal) {
+    return { outcome: "refused", reason: error.reason };
+  }
   return {
     outcome: "failed",
     reason: error instanceof Error ? error.name : "thrown",
@@ -343,6 +351,14 @@ function cleanupFailure(
       outcome: "held",
     };
   }
+  if (error instanceof ProductionOnlyRefusal) {
+    return {
+      body: { error: error.message, code: error.code },
+      status: error.httpStatus,
+      ok: true,
+      outcome: "held",
+    };
+  }
   // Keep exception details in telemetry; the HTTP body exposes only a stable message.
   captureThrottled(
     `cron:${job}`,
@@ -401,7 +417,8 @@ function isFindingsOnly(
 
 /**
  * Every job under `app/api/cleanup/*` needs the same HTTP twin: a
- * CRON_SECRET bearer check, a maintenance-phase guard, structured start/finish
+ * CRON_SECRET bearer check, an off-production refusal (`jobsMayRunHere`), a
+ * maintenance-phase guard, structured start/finish
  * logging, and a three-way error mapping (lock held → 409, maintenance active
  * → its own status, anything else → captured + 500). Before this factory that
  * ~75-line shape was hand-copied into 40+ route files, which is what SonarCloud
@@ -458,6 +475,7 @@ export function cleanupRoute<T extends object>(
         const refused = refuseUnauthorized(req, job, unauthorizedMessage);
         if (refused) return refused;
       }
+      if (!jobsMayRunHere()) throw new JobRunRefusedError(job);
       // The cron core is shared with the jobs/** entrypoint, which exits on
       // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
       await assertNotInMaintenance(job);

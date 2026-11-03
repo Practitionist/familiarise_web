@@ -40,6 +40,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     membership: { findFirst: jest.fn() },
+    appointment: { count: jest.fn() },
     appointmentParticipant: { findUnique: jest.fn() },
   },
 }));
@@ -65,12 +66,14 @@ import {
   canAccessAppointment,
 } from "../../lib/data/appointment-detail";
 import { authorizeAppointment } from "../../lib/api/appointment-access";
+import { orgOwnedAppointmentWhere } from "../../lib/api/scope/list-appointments";
 import type { TAppointmentDetail } from "../../lib/data/appointment-detail";
 
 const mockedGetSession = getSession as jest.Mock;
 const mockedIsPrivileged = isPrivileged as jest.Mock;
 const mockedHasOrgPermission = hasOrgPermission as jest.Mock;
 const mockedMembershipFind = prisma.membership.findFirst as jest.Mock;
+const mockedOwnedCount = prisma.appointment.count as jest.Mock;
 const mockedReadDetail = readAppointmentDetail as jest.Mock;
 const mockedCanAccess = canAccessAppointment as jest.Mock;
 
@@ -88,6 +91,7 @@ beforeEach(() => {
   mockedIsPrivileged.mockReturnValue(false);
   mockedHasOrgPermission.mockReturnValue(false);
   mockedMembershipFind.mockResolvedValue(null);
+  mockedOwnedCount.mockResolvedValue(1);
 });
 
 describe("authorizeAppointment — coded failures", () => {
@@ -201,6 +205,22 @@ describe("authorizeAppointment — the org-party grant is opt-in", () => {
         }),
       }),
     );
+  });
+
+  it("with orgParty, an operator of an org that does not own the booking stays FORBIDDEN", async () => {
+    // The tag alone (a card-paid booking on another org's plan, or a
+    // DEACTIVATED org) earns nothing: the owned-booking count is the gate.
+    mockedGetSession.mockResolvedValue(operatorSession);
+    mockedMembershipFind.mockResolvedValue(activeMembership);
+    mockedHasOrgPermission.mockReturnValue(true);
+    mockedOwnedCount.mockResolvedValue(0);
+    expect(await authorizeAppointment("a1", true)).toEqual({
+      code: "FORBIDDEN",
+      status: 403,
+    });
+    expect(mockedOwnedCount).toHaveBeenCalledWith({
+      where: { id: "a1", ...orgOwnedAppointmentWhere("org-1") },
+    });
   });
 
   it("with orgParty, a member WITHOUT operations.read stays FORBIDDEN", async () => {

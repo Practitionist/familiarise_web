@@ -12,16 +12,19 @@ import { BUCKET_LABEL } from "./labels";
 
 /**
  * Rows grouped under their deadline bucket, in bucket order, keeping the
- * read's sort inside each. A bucket with no rows does not render. A
- * flat list (`flat`) is for the Declined chip, where no clock applies.
+ * read's sort inside each. A bucket with no rows does not render. A flat
+ * list (`flat`) is for the Declined chip and the time sorts. Header counts
+ * are the bucket's total across every page when the read supplies them.
  */
 export function InboxBuckets({
   rows,
   flat,
+  totals,
   renderRow,
 }: Readonly<{
   rows: InboxRowInput[];
   flat: boolean;
+  totals: Record<InboxBucket, number> | null;
   renderRow: (row: InboxRowInput) => ReactNode;
 }>) {
   if (flat) {
@@ -45,7 +48,7 @@ export function InboxBuckets({
               >
                 {title}
                 <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                  {bucketRows.length}
+                  {totals?.[bucket] ?? bucketRows.length}
                 </span>
               </h3>
               <p className="hidden text-xs text-muted-foreground sm:block">

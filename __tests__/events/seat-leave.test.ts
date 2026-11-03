@@ -18,6 +18,13 @@ jest.mock("../../lib/payments/operations/event-refunds", () => ({
   refundRemovedAttendeeSeat: (...a: unknown[]) => refundSeat(...(a as [])),
 }));
 
+const stampRefundOwed = jest.fn(async () => true);
+const driveRefundOwed = jest.fn(async () => ({ kind: "settled" }));
+jest.mock("../../lib/payments/operations/refund-owed", () => ({
+  stampRefundOwed: (...a: unknown[]) => stampRefundOwed(...(a as [])),
+  driveRefundOwed: (...a: unknown[]) => driveRefundOwed(...(a as [])),
+}));
+
 const joinedAt = new Date("2026-09-01T00:00:00Z");
 const slot = { startsAt: new Date(), movedAt: null as Date | null };
 const release = jest.fn(async () => ({ count: 1 }));
@@ -38,10 +45,22 @@ jest.mock("../../lib/prisma", () => {
       })),
     },
     appointmentOccurrence: { findFirst: jest.fn(async () => slot) },
+    payment: {
+      findFirst: jest.fn(async () => ({
+        id: "pay-1",
+        amount: 100_000,
+        currency: "INR",
+        createdAt: joinedAt,
+        refunds: [],
+        disputes: [],
+        appointment: { cancellationPolicy: null },
+      })),
+    },
   };
   return {
     __esModule: true,
     default: {
+      appointment: { findFirst: jest.fn(async () => ({ id: "apt-1" })) },
       $transaction: jest.fn(async (fn: (t: unknown) => unknown) => fn(tx)),
     },
   };
@@ -82,6 +101,34 @@ it("releases and refunds in full 30 h before, keyed on the seat", async () => {
   expect(release).toHaveBeenCalledTimes(1);
   expect(refundSeat).toHaveBeenCalledWith(
     expect.objectContaining({ mode: "full", dedupeKey: "seat-leave:part-1" }),
+  );
+});
+
+it("stamps the refund owed in the release commit, so a crash after it is re-driven", async () => {
+  slot.startsAt = inHours(30);
+  refundSeat.mockRejectedValueOnce(new Error("function died mid-refund"));
+  await expect(leave()).rejects.toThrow("function died mid-refund");
+  expect(release).toHaveBeenCalledTimes(1);
+  expect(stampRefundOwed).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      paymentId: "pay-1",
+      amountPaise: null,
+      key: "seat-leave:part-1:pay:pay-1",
+    }),
+  );
+  expect(driveRefundOwed).not.toHaveBeenCalled();
+});
+
+it("settles the marker after the refund under the same key", async () => {
+  slot.startsAt = inHours(30);
+  await leave();
+  expect(refundSeat).toHaveBeenCalledWith(
+    expect.objectContaining({ paymentId: "pay-1" }),
+  );
+  expect(driveRefundOwed).toHaveBeenCalledWith(
+    expect.objectContaining({ key: "seat-leave:part-1:pay:pay-1" }),
+    expect.anything(),
   );
 });
 

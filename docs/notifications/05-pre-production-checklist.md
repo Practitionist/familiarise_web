@@ -81,7 +81,7 @@ Inbound (practitionist.com):
 **Development vs. Production Tenants:**
 
 - Novu's Development and Production environments are fully isolated tenants with distinct workflows, subscribers, and secret keys.
-- `lib/novu/secret-key.ts` selects `NOVU_PRODUCTION_KEY` when `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production` (Netlify production deploys and GitHub Actions crons) and `NOVU_DEVELOPMENT_KEY` everywhere else.
+- `lib/novu/secret-key.ts` selects `NOVU_PRODUCTION_KEY` when `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production` (Netlify production deploys, including the ticker-run crons) and `NOVU_DEVELOPMENT_KEY` everywhere else.
 - `/api/novu/subscriber` authenticates subscribers via deterministic HMAC-SHA256 hashes (`computeSubscriberHash(subscriberId)` in `lib/novu/subscriber.ts`).
 
 ---
@@ -116,7 +116,7 @@ Inbound (practitionist.com):
 ### Step 5: Environment Variables & Pre-Launch Delivery Guard Cutover
 
 - [ ] Confirm all required environment variables are configured in Netlify Dashboard and GitHub Actions secrets
-- [ ] **Launch Cutover Gate**: Flip `EMAIL_DELIVERY_MODE=live` in both Netlify production env vars and GitHub Actions repository variables (`cron-intra-day.yml`, `cron-daily.yml`) when opening public traffic (while unset or `allowlist`, external recipients are held safely as `DEAD_LETTER` `held:pre-launch` in `FailedEmail`)
+- [ ] **Launch Cutover Gate**: Flip `EMAIL_DELIVERY_MODE=live` in the production env vars of the active application host and of the standby Netlify site (every scheduled job that sends mail runs on the Netlify ticker, so no Actions variable is read by a cron job) when opening public traffic (while unset or `allowlist`, external recipients are held safely as `DEAD_LETTER` `held:pre-launch` in `FailedEmail`)
 
 ### Step 6: Smoke Test Verification
 
@@ -158,7 +158,7 @@ The apex carries SPF `v=spf1 -all`, a null MX `0 .`, and `_dmarc` is `v=DMARC1; 
 
 ## Scheduled Outbox Drains & Sweep Cadences
 
-Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), while the remaining batch maintenance jobs run in GitHub Actions (the two retention prunes now run on the ticker) (`.github/workflows/cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`):
+Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), and so do the daily and weekly batch maintenance jobs: no GitHub Actions workflow schedules a registry job:
 
 | Job Target                    | Driver          | Cadence & Offset                                      | Batch / Timeout        | Purpose                                                           |
 | ----------------------------- | --------------- | ----------------------------------------------------- | ---------------------- | ----------------------------------------------------------------- |

@@ -67,7 +67,7 @@ import {
 } from "@/lib/payments/billing/org-invoice-settlement";
 import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
 import { cancelOpenPayoutsForPayment } from "@/lib/payments/payouts/cancel-open-payouts";
-import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
+import { revokeStandaloneSaleEntitlement } from "@/lib/payments/digital-product-entitlement";
 import {
   applyReversal,
   consultantClawbackKey,
@@ -77,6 +77,10 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
+import {
+  restoreOwedOnFailedRefund,
+  resettleOwedOnLateSuccess,
+} from "@/lib/payments/operations/refund-owed";
 import {
   EMAIL_BUDGET_MS,
   MONEY_EMAIL_TYPES,
@@ -850,6 +854,13 @@ export async function handleRefundCreated(
             });
             if (claimed.count === 0) return;
             console.log(`✅ Refund ${refundId} status updated to ${newStatus}`);
+            // A failed hand refund gives back the owed refund it settled; a late success takes it off again.
+            if (newStatus === "FAILED") {
+              await restoreOwedOnFailedRefund(tx, existingRefund.id);
+            }
+            if (lateSuccess) {
+              await resettleOwedOnLateSuccess(tx, existingRefund.id);
+            }
 
             // Run side effects when transitioning TO SUCCEEDED
             if (newStatus === "SUCCEEDED") {
@@ -915,6 +926,9 @@ export async function handleRefundCreated(
               },
             });
             if (claimed.count > 0) {
+              if (mappedNewStatus === "FAILED") {
+                await restoreOwedOnFailedRefund(tx, reservation.id);
+              }
               if (mappedNewStatus === "SUCCEEDED") {
                 await runRefundSideEffects(
                   payment.id,
@@ -1592,9 +1606,9 @@ export async function settleLostDispute(
     reason: `chargeback lost (dispute ${disputeId})`,
   });
 
-  // Replay sales are the only appointment-less payments that grant playback.
+  // A lost chargeback on a standalone sale revokes the entitlement it granted.
   if (disputedPayment?.appointmentId === null) {
-    await revokeReplayEntitlement(tx, disputedPayment.paymentIntent);
+    await revokeStandaloneSaleEntitlement(tx, disputedPayment);
   }
 
   // The consumer invoice's own s.34 credit note; idempotent on

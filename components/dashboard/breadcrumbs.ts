@@ -19,7 +19,8 @@ export interface Crumb {
 
 export interface OfferingsCrumbConfig {
   typeSegments: ReadonlySet<string>;
-  listingHref: string;
+  /** The list for an editor's type segment, relative to `basePath`. */
+  listingPath: (typeSegment: string | undefined) => string;
 }
 
 export interface DashboardBreadcrumbsInput {
@@ -28,7 +29,7 @@ export interface DashboardBreadcrumbsInput {
   pageLabels: Record<string, string>;
   /** Segments that group routes without a page of their own (never linked). */
   pathlessSegments?: ReadonlySet<string>;
-  /** Consultant only: where `offerings/<type>` crumbs point (#1527 b). */
+  /** Consultant only: where an editor's `offerings/<type>` crumbs point. */
   offeringsConfig?: OfferingsCrumbConfig;
 }
 
@@ -64,7 +65,7 @@ function resolveSegmentCrumb(ctx: Readonly<SegmentCrumbCtx>): Crumb | null {
   const { seg, acc, overrideLabel, pageLabels } = ctx;
   if (acc.endsWith("/support/requests")) {
     return {
-      label: "Support requests",
+      label: "Support cases",
       href: acc.slice(0, -"/requests".length),
     };
   }
@@ -110,7 +111,7 @@ export function useDashboardBreadcrumbs(
       : [];
     const onOfferings = !!offeringsConfig && parts[0] === "offerings";
     const offeringsListingHref = offeringsConfig
-      ? `${basePath}/${offeringsConfig.listingHref}`
+      ? `${basePath}/${offeringsConfig.listingPath(parts[1])}`
       : basePath;
 
     const crumbs: Crumb[] = [];
