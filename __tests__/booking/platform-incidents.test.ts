@@ -260,7 +260,7 @@ type StrikeFixture = {
 function strikeReader(opts: {
   strikes: StrikeFixture[];
   appointmentsInIncident?: string[];
-  occurrencesInIncident?: string[];
+  occurrencesInIncident?: Array<{ id: string; appointmentId: string }>;
 }) {
   return {
     systemEvent: {
@@ -281,20 +281,29 @@ function strikeReader(opts: {
           where,
         }: {
           where: {
-            AND?: Array<{ OR?: Array<Record<string, unknown>> }>;
+            AND?: Array<{
+              OR?: Array<{
+                id?: { in: string[] };
+                appointmentId?: { in: string[] };
+              }>;
+            }>;
           };
         }) => {
           const scope = where.AND?.[0]?.OR ?? [];
-          const byOccurrence = scope.some((clause) => "id" in clause);
-          return byOccurrence
-            ? (opts.occurrencesInIncident ?? []).map((id) => ({
-                id,
-                appointmentId: "a",
-              }))
-            : (opts.appointmentsInIncident ?? []).map((appointmentId) => ({
-                id: `${appointmentId}-occ`,
-                appointmentId,
-              }));
+          const rows = [
+            ...(opts.occurrencesInIncident ?? []),
+            ...(opts.appointmentsInIncident ?? []).map((appointmentId) => ({
+              id: `${appointmentId}-occ`,
+              appointmentId,
+            })),
+          ];
+          return rows.filter((row) =>
+            scope.some(
+              (clause) =>
+                clause.id?.in.includes(row.id) ||
+                clause.appointmentId?.in.includes(row.appointmentId),
+            ),
+          );
         },
       ),
     },
@@ -527,7 +536,7 @@ describe("readers that must count incident refunds and skip incident strikes", (
   it("counts a rebooked-session strike when only the appointment's other occurrence overlapped", async () => {
     const reader = strikeReader({
       strikes: [{ appointmentId: "a", occurrenceIds: ["occ-new"] }],
-      appointmentsInIncident: ["a"],
+      occurrencesInIncident: [{ id: "occ-old", appointmentId: "a" }],
     });
     await expect(strikeCount(reader)).resolves.toBe(1);
   });
@@ -536,7 +545,7 @@ describe("readers that must count incident refunds and skip incident strikes", (
     const reader = strikeReader({
       strikes: [{ appointmentId: "a", occurrenceIds: ["occ-new"] }],
       appointmentsInIncident: ["a"],
-      occurrencesInIncident: ["occ-new"],
+      occurrencesInIncident: [{ id: "occ-new", appointmentId: "a" }],
     });
     await expect(strikeCount(reader)).resolves.toBe(0);
   });
