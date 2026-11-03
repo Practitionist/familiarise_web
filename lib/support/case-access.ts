@@ -340,11 +340,7 @@ export function projectCaseForViewer<
       summaryOnly: false;
       row: T;
     } {
-  if (
-    canCorrespond ||
-    row.requesterUserId === row.submitterUserId ||
-    viewerUserId === row.submitterUserId
-  )
+  if (canCorrespond || viewerUserId === row.submitterUserId)
     return { summaryOnly: false, row };
   return {
     summaryOnly: true,

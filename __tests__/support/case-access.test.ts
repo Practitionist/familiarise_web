@@ -11,6 +11,7 @@ import {
   ORG_SENSITIVE_PERSONAL_CATEGORIES,
   ORG_SENSITIVE_PERSONAL_ISSUE_TYPES,
   canCorrespondOnCase,
+  projectCaseForViewer,
   caseCorrespondentIds,
   casePresenterIds,
   visibleCaseAccess,
@@ -258,4 +259,25 @@ it("resolves presenters from the booking's accepted collaborators only", async (
     await casePresenterIds({ ...supportCase, category: "SAFETY_CONCERN" }),
   ).toEqual([]);
   expect(appointment.findMany).not.toHaveBeenCalled();
+});
+
+it("redacts a self-filed case for a viewer without a current thread grant", () => {
+  const row = {
+    ...personal,
+    id: "case-1",
+    requesterUserId: "filer",
+    referenceNumber: "FAM-2026-000001",
+    status: "OPEN" as const,
+    category: "PAYMENT_STATUS",
+    createdAt: new Date("2026-10-19T10:00:00Z"),
+    title: "Private payment details",
+  };
+  expect(projectCaseForViewer(row, "revoked-presenter", false)).toMatchObject({
+    summaryOnly: true,
+    summary: { title: "Organization support request" },
+  });
+  expect(projectCaseForViewer(row, "filer", true).summaryOnly).toBe(false);
+  expect(
+    projectCaseForViewer(row, "accepted-presenter", true).summaryOnly,
+  ).toBe(false);
 });

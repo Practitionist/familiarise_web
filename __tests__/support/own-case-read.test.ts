@@ -167,3 +167,39 @@ it("gives an accepted presenter the public thread without payment, CSAT or reope
   expect(view?.timeline[0].actorKind).toBeUndefined();
   expect(payment).not.toHaveBeenCalled();
 });
+
+it("refuses a selected case when its presenter grant has disappeared", async () => {
+  access.mockResolvedValue(false);
+  presenter.mockResolvedValue(false);
+  cases.mockResolvedValue({
+    ...fixture,
+    appointmentId: "appt-1",
+    subjects: [{ subjectType: "PAYMENT", subjectId: "payment-private" }],
+  });
+
+  await expect(
+    readOwnSupportCase("case-1", "removed-presenter"),
+  ).resolves.toBeNull();
+  expect(payment).not.toHaveBeenCalled();
+  expect(messages).not.toHaveBeenCalled();
+});
+
+it("keeps requester summary access after an organization grant is lost", async () => {
+  access.mockResolvedValue(false);
+  presenter.mockResolvedValue(false);
+  cases.mockResolvedValue({
+    ...fixture,
+    ownershipScope: "ORG_OPERATIONS",
+    subjects: [{ subjectType: "PAYMENT", subjectId: "payment-private" }],
+  });
+
+  await expect(readOwnSupportCase("case-1", "user-1")).resolves.toMatchObject({
+    filedByOrganizationNotice: true,
+    canReply: false,
+    payment: null,
+    csatRating: null,
+    timeline: [],
+  });
+  expect(payment).not.toHaveBeenCalled();
+  expect(messages).not.toHaveBeenCalled();
+});

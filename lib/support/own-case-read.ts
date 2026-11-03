@@ -2,7 +2,6 @@ import {
   ORG_FILED_CASE_TITLE,
   canCorrespondOnCase,
   isPresenterOnCase,
-  projectCaseForViewer,
   visibleCaseWhere,
 } from "./case-access";
 import prisma from "@/lib/prisma";
@@ -28,9 +27,10 @@ export async function readOwnSupportCase(
   const canReply = await canCorrespondOnCase(c, { userId, role: "CONSULTEE" });
   const isPresenter = !canReply && (await isPresenterOnCase(c, userId));
   const canRead = canReply || isPresenter;
-  const redact = projectCaseForViewer(c, userId, canRead).summaryOnly;
+  if (!canRead && c.requesterUserId !== userId) return null;
+  const redact = !canRead;
   const [payment, rows] = await Promise.all([
-    redact || isPresenter
+    redact || !canReply
       ? null
       : readPayment(
           c.subjects.find((s) => s.subjectType === "PAYMENT")?.subjectId ??
@@ -56,7 +56,7 @@ export async function readOwnSupportCase(
     status: c.status,
     ackDueAt: c.ackDueAt?.toISOString() ?? null,
     resolvedAt: c.resolvedAt?.toISOString() ?? null,
-    csatRating: redact || isPresenter ? null : c.csatRating,
+    csatRating: redact || !canReply ? null : c.csatRating,
     filedByOrganizationNotice: redact,
     canReply: !redact && canRead,
     viewerIsPresenter: isPresenter,

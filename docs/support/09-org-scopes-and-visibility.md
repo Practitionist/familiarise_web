@@ -116,6 +116,10 @@ Three sibling rails hang off a booking, and each answers a different question. A
 
 A moderation action on a review or a rating can be appealed through a support case (`MODERATION_APPEAL`), reviewed by a different operator; see [decisions and appeals](03-decisions-appeals-and-supersede.md#appeals).
 
+Presenter read grants are rechecked after case selection. A revoked presenter
+receives no case detail; a requester who loses organization correspondence keeps
+only the summary. Payment and CSAT fields require a current correspondent grant.
+
 ## Where in code
 
 - `lib/support/case-access.ts`: `canCorrespondOnCase()`, `caseCorrespondentIds()`, `casePresenterIds()`, `isPresenterOnCase()`, `caseThreadPartyIds()`, `visibleCaseAccess()`, `projectCaseForViewer()`, `caseOwnershipPermission()`, `ORG_SENSITIVE_PERSONAL_CATEGORIES`, `ORG_SENSITIVE_PERSONAL_ISSUE_TYPES`, `isSensitivePresenterCase()`.
