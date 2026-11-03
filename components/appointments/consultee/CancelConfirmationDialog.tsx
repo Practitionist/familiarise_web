@@ -74,6 +74,12 @@ interface CancelConfirmationDialogProps {
    * trial cancel passes `/api/trials/[trialId]/cancel/preview`.
    */
   previewUrl?: string | null;
+  /**
+   * Who is cancelling. The consultant cancels someone else's booking: the
+   * client is refunded in full and it counts against the consultant's
+   * reliability, so the buyer's "you paid" copy never reaches them.
+   */
+  viewerRole?: "consultee" | "consultant";
 }
 
 export function CancelConfirmationDialog({
@@ -88,8 +94,10 @@ export function CancelConfirmationDialog({
   mode = "cancel",
   appointmentId,
   previewUrl,
+  viewerRole = "consultee",
 }: Readonly<CancelConfirmationDialogProps>) {
   const isLeave = mode === "leave";
+  const asConsultant = viewerRole === "consultant";
 
   // Only the cancel path: an unpaid request has nothing to quote, and leaving a
   // group event refunds through the roster route rather than this one.
@@ -267,6 +275,23 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
+    if (asConsultant) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          {consultant} gets a full refund
+          {preview.grossPaise !== undefined ? (
+            <>
+              {" "}
+              of{" "}
+              <strong className="text-foreground">
+                {formatCurrencyAmount(preview.grossPaise, preview.currency)}
+              </strong>
+            </>
+          ) : null}
+          . Cancelling a paid booking counts against your reliability.
+        </p>
+      );
+    }
     // One sentence per rail, shared with the payments surfaces (#1675 X6).
     // #1846 — a quote that knows the paid amount shows the breakdown too.
     return (
@@ -350,7 +375,7 @@ export function CancelConfirmationDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onCancel} disabled={isLoading}>
-            {isLeave ? "Stay enrolled" : "Keep Appointment"}
+            {isLeave ? "Stay enrolled" : "Keep booking"}
           </AlertDialogCancel>
           <AlertDialogAction
             onClick={() => onConfirm(shownQuote())}
@@ -370,8 +395,10 @@ export function CancelConfirmationDialog({
               </>
             ) : isLeave ? (
               "Yes, Leave"
+            ) : asConsultant ? (
+              "Cancel and refund"
             ) : (
-              "Yes, Cancel"
+              "Cancel booking"
             )}
           </AlertDialogAction>
         </AlertDialogFooter>

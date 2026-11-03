@@ -437,7 +437,12 @@ function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
       ? "waiting-on-them"
       : isStrandedReschedule
         ? "answer-today"
-        : inboxBucketOf(timed, bookingState.state, now);
+        : inboxBucketOf(
+            timed,
+            bookingState.state,
+            now,
+            nextAction.kind === "ALLOCATE",
+          );
   return { ...timed, bucket };
 }
 

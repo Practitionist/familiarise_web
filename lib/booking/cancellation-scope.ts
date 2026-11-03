@@ -143,6 +143,9 @@ export function bookingAppointmentFilter(
   throw new Error("bookingAppointmentFilter: no booking identifier given");
 }
 
+/** The notice a never-replaced released session counts as: past every policy tier. */
+const NEVER_REPLACED_NOTICE_HOURS = 24 * 365;
+
 export async function resolveBookingRefundContext(
   ref: BookingRef,
   /**
@@ -272,7 +275,15 @@ export async function resolveBookingRefundContext(
   // refuses through cancelWindowState before it ever quotes.
   let hoursUntilNextSession: number | null = null;
   if (nextLive) {
-    const raw = (nextLive.startsAt.getTime() - nowMs) / 3_600_000;
+    // A released session whose time has passed was never given a new one:
+    // cancelling it is full notice, unless the client released it themselves
+    // (the floor below then caps it at the notice they gave).
+    const neverReplaced =
+      nextLive.completionStatus === "RESCHEDULED" &&
+      nextLive.startsAt.getTime() <= nowMs;
+    const raw = neverReplaced
+      ? NEVER_REPLACED_NOTICE_HOURS
+      : (nextLive.startsAt.getTime() - nowMs) / 3_600_000;
     const floor = row
       ? await consulteeRescheduleNoticeFloorHours(db, {
           appointmentId: row.id,

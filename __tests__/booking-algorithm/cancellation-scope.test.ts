@@ -199,6 +199,29 @@ describe("resolveBookingRefundContext", () => {
     expect(ctx.hoursUntilNextSession).toBeGreaterThan(29);
   });
 
+  it("quotes a released session that was never given a new time at full notice", async () => {
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [
+        {
+          startsAt: hoursFromNow(-5),
+          endsAt: hoursFromNow(-4),
+          ordinal: 1,
+          completionStatus: "RESCHEDULED",
+        },
+      ],
+    });
+
+    const ctx = await resolveBookingRefundContext({
+      consultationId: "c-stranded",
+    });
+
+    // Not the lowest tier for a time that already passed.
+    expect(ctx.hoursUntilNextSession).toBeGreaterThan(24 * 30);
+  });
+
   it("reports no live session for a paid but unallocated subscription", async () => {
     mockAppointmentFindFirst.mockResolvedValue({
       id: WRAPPER,

@@ -51,13 +51,13 @@ export const BUCKET_LABEL: Record<
 > = {
   "answer-today": {
     title: "Answer today",
-    hint: "Under a day left on the hold, or already past it.",
+    hint: "Under a day left to reply or schedule, or already past it.",
   },
   "this-week": { title: "This week", hint: "Under seven days left." },
-  later: { title: "Later", hint: "More than a week left on the hold." },
+  later: { title: "Later", hint: "More than a week left to reply." },
   "waiting-on-them": {
-    title: "Waiting on them",
-    hint: "The next step is the other side's — a payment or a new cycle.",
+    title: "Waiting on the client",
+    hint: "They need to pay, answer your new time, or finish checkout.",
   },
 };
 
