@@ -50,13 +50,17 @@ export function leadLabel(leadMs: number): string {
   return hours === 1 ? "1 hour" : `${hours} hours`;
 }
 
-/** The first instant a session for this purpose may start. */
-export function earliestStartFor(
+/**
+ * The one boundary: a start at or before now + the purpose's lead is too
+ * soon. Every writer and every grid compares through this.
+ */
+export function isTooSoonFor(
   purpose: LeadPurpose,
   ctx: { settled: boolean },
-  now: Date = new Date(),
-): Date {
-  return new Date(now.getTime() + leadMsFor(purpose, ctx));
+  startMs: number,
+  nowMs: number,
+): boolean {
+  return startMs <= nowMs + leadMsFor(purpose, ctx);
 }
 
 /** The refusal for approving an unpaid request whose session starts too soon to pay for. */
@@ -78,8 +82,12 @@ export function assertUnpaidApprovalFits(
 ): void {
   if (!firstSessionStart) return;
   if (
-    firstSessionStart.getTime() - now.getTime() <
-    leadMsFor("allocate", { settled: false })
+    isTooSoonFor(
+      "allocate",
+      { settled: false },
+      firstSessionStart.getTime(),
+      now.getTime(),
+    )
   ) {
     throw tooCloseToStartError();
   }
@@ -95,12 +103,10 @@ export function assertRequestLeadFits(
   now: Date = new Date(),
 ): void {
   const settled = Number(pricePaise) <= 0;
-  if (
-    startsAt.getTime() < earliestStartFor("request", { settled }, now).getTime()
-  ) {
+  if (isTooSoonFor("request", { settled }, startsAt.getTime(), now.getTime())) {
     throw new BookingRuleError(
       "REQUEST_TOO_SOON",
-      "Your expert needs time to accept and you need time to pay — pick a time at least 2 hours away.",
+      `Your expert needs time to accept and you need time to pay — pick a time at least ${leadLabel(leadMsFor("request", { settled }))} away.`,
     );
   }
 }

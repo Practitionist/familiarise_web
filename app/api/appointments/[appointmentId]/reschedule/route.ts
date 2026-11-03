@@ -1,5 +1,5 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
-import { earliestStartFor } from "@/lib/booking/lead-time";
+import { isTooSoonFor } from "@/lib/booking/lead-time";
 import * as Sentry from "@sentry/nextjs";
 import {
   applyRateLimit,
@@ -455,14 +455,14 @@ export async function POST(
               );
             }
           }
-          const earliestAllowedProposal = earliestStartFor(
-            "reschedule",
-            { settled: true },
-            now,
-          ).getTime();
           if (
-            proposedSlots?.some(
-              (s) => s.startsAt.getTime() < earliestAllowedProposal,
+            proposedSlots?.some((s) =>
+              isTooSoonFor(
+                "reschedule",
+                { settled: true },
+                s.startsAt.getTime(),
+                now.getTime(),
+              ),
             )
           ) {
             throw Object.assign(

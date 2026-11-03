@@ -286,8 +286,9 @@ Every session start obeys one lead-time contract, `leadMsFor(purpose, { settled 
 in `lib/booking/lead-time.ts`: `book` (an instant checkout) is 15 minutes;
 `request` and `allocate` are 15 minutes once the booking is settled (paid or
 free) and 2 hours while the client still has to pay; `reschedule` is 24 hours,
-whoever moves it. `earliestStartFor` turns it into an instant for checkout's
-`slotStartRefusal` and the reschedule route; request-for-approval refuses a
+whoever moves it. `isTooSoonFor(purpose, ctx, startMs, nowMs)` is the one
+boundary (a start at or before now plus the lead is too soon), used by checkout's
+`slotStartRefusal`, the reschedule route and both asserts below; request-for-approval refuses a
 priced request inside 2 hours with 409 `REQUEST_TOO_SOON` (`assertRequestLeadFits`);
 an unpaid approval is refused by `assertUnpaidApprovalFits`. All three allocator
 modes pass `leadMsFor("allocate", { settled })` into the search and the

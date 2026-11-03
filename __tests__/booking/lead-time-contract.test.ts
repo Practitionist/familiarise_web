@@ -8,7 +8,7 @@ import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import {
   assertRequestLeadFits,
   assertUnpaidApprovalFits,
-  earliestStartFor,
+  isTooSoonFor,
   leadMsFor,
 } from "@/lib/booking/lead-time";
 import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/reschedule-proposals";
@@ -39,9 +39,32 @@ describe("leadMsFor is the one table", () => {
   });
 });
 
+describe("one boundary", () => {
+  it("a start exactly at now + lead is too soon; one ms later is not", () => {
+    const now = NOW.getTime();
+    const lead = leadMsFor("reschedule");
+    expect(isTooSoonFor("reschedule", { settled: true }, now + lead, now)).toBe(
+      true,
+    );
+    expect(
+      isTooSoonFor("reschedule", { settled: true }, now + lead + 1, now),
+    ).toBe(false);
+  });
+
+  it("an unpaid approval and a priced request share it", () => {
+    const edge = new Date(NOW.getTime() + 2 * HOUR);
+    expect(() => assertUnpaidApprovalFits(edge, NOW)).toThrow(
+      expect.objectContaining({ code: "TOO_CLOSE_TO_START" }),
+    );
+    expect(() => assertRequestLeadFits(150_000, edge, NOW)).toThrow(
+      expect.objectContaining({ code: "REQUEST_TOO_SOON" }),
+    );
+  });
+});
+
 describe("every writer honours its row", () => {
   it("checkout refuses at the book lead and accepts just past it", () => {
-    const edge = earliestStartFor("book", { settled: true }, NOW);
+    const edge = new Date(NOW.getTime() + leadMsFor("book"));
     // Starts land on the half hour; 06:15 is the edge, 06:30 is the first legal one.
     expect(slotStartRefusal(edge, NOW)).not.toBeNull();
     expect(
@@ -55,7 +78,10 @@ describe("every writer honours its row", () => {
       assertUnpaidApprovalFits(new Date(NOW.getTime() + 90 * MIN), NOW),
     ).toThrow(expect.objectContaining({ code: "TOO_CLOSE_TO_START" }));
     expect(() =>
-      assertUnpaidApprovalFits(new Date(NOW.getTime() + 2 * HOUR), NOW),
+      assertUnpaidApprovalFits(
+        new Date(NOW.getTime() + 2 * HOUR + 30 * MIN),
+        NOW,
+      ),
     ).not.toThrow();
   });
 

@@ -1,4 +1,4 @@
-import { earliestStartFor } from "@/lib/booking/lead-time";
+import { isTooSoonFor } from "@/lib/booking/lead-time";
 import {
   MINIMUM_BOOKING_LEAD_TIME_MS,
   MINIMUM_BOOKING_LEAD_TIME_MINUTES,
@@ -49,8 +49,7 @@ export function slotStartRefusal(
     return { code: "SLOT_NOT_ON_GRID", message: SLOT_NOT_ON_GRID_MESSAGE };
   }
   if (
-    slotStart.getTime() <=
-    earliestStartFor("book", { settled: true }, now).getTime()
+    isTooSoonFor("book", { settled: true }, slotStart.getTime(), now.getTime())
   ) {
     return {
       code: "SLOT_TOO_SOON",
