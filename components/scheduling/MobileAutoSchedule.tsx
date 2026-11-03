@@ -41,36 +41,47 @@ export function MobileAutoSchedule({
     setBusy(true);
     setRefusal(null);
     attemptKeyRef.current ??= globalThis.crypto.randomUUID();
-    const response = await AllocationService.allocateSlots(
-      eventType,
-      eventId,
-      [],
-      {
-        isAuto: true,
-        idempotencyKey: attemptKeyRef.current,
-        initialAllocation,
-        topUp,
-        allowPartial: topUp,
-      },
-    );
-    attemptKeyRef.current = null;
-    setBusy(false);
-    if (!response.success) {
-      setRefusal(
-        response.error ??
-          "We couldn't place the times just now. Try again, or pick them on a computer.",
+    try {
+      const response = await AllocationService.allocateSlots(
+        eventType,
+        eventId,
+        [],
+        {
+          isAuto: true,
+          idempotencyKey: attemptKeyRef.current,
+          initialAllocation,
+          topUp,
+          allowPartial: topUp,
+        },
       );
-      return;
+      // A definite answer spends the key; an ambiguous 5xx may have committed,
+      // so a retry replays it under the same key.
+      if (response.success || (response.httpStatus ?? 500) < 500) {
+        attemptKeyRef.current = null;
+      }
+      if (!response.success) {
+        setRefusal(
+          response.error ??
+            "We couldn't place the times just now. Try again, or pick them on a computer.",
+        );
+        return;
+      }
+      toast(
+        response.partial
+          ? partiallyScheduled(
+              response.placedSessions ?? 0,
+              response.requiredSessions ?? 0,
+            )
+          : autoScheduled(),
+      );
+      onDone();
+    } catch {
+      setRefusal(
+        "We couldn't reach the server. Check your connection and try again.",
+      );
+    } finally {
+      setBusy(false);
     }
-    toast(
-      response.partial
-        ? partiallyScheduled(
-            response.placedSessions ?? 0,
-            response.requiredSessions ?? 0,
-          )
-        : autoScheduled(),
-    );
-    onDone();
   };
 
   return (
