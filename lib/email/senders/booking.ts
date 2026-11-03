@@ -3,6 +3,7 @@
  * new request, unscheduled nudge, trial scheduled, and window opened.
  */
 
+import UnplacedWeeksEmail from "@/emails/booking/UnplacedWeeksEmail";
 import * as React from "react";
 import { Button, Section, Text } from "react-email";
 import type { Tx } from "@/lib/prisma";
@@ -498,24 +499,28 @@ export const sendUnscheduledSubscriptionNudgeEmail =
   }));
 
 export interface UnplacedWeekNudgeEmailArgs {
-  subscriptionId: string;
+  consultantProfileId: string;
   consultantUserId: string;
-  consulteeName: string;
-  planTitle: string;
-  week: { number: number; count: number; sessions: number; range: string };
-  /** 0, 24 or 72: hours since the week opened. */
-  stage: number;
-  timingsUrl: string;
+  /** The consultant's local day: one reminder per consultant per day. */
+  localDay: string;
+  weeks: {
+    consulteeName: string;
+    planTitle: string;
+    number: number;
+    count: number;
+    sessions: number;
+    range: string;
+    url: string;
+  }[];
 }
 
 export const SUBSCRIPTION_WEEK_NUDGE_EMAIL_TYPE = "SUBSCRIPTION_WEEK_NUDGE";
 
 export function unplacedWeekNudgeEntityRef(
-  subscriptionId: string,
-  weekNumber: number,
-  stage: number,
+  consultantProfileId: string,
+  localDay: string,
 ): string {
-  return `subscription:${subscriptionId}:w${weekNumber}:h${stage}`;
+  return `consultant:${consultantProfileId}:weeks:${localDay}`;
 }
 
 export const sendUnplacedWeekNudgeEmail =
@@ -525,21 +530,18 @@ export const sendUnplacedWeekNudgeEmail =
       emailType: SUBSCRIPTION_WEEK_NUDGE_EMAIL_TYPE,
       category: "appointments",
       entityRef: unplacedWeekNudgeEntityRef(
-        args.subscriptionId,
-        args.week.number,
-        args.stage,
+        args.consultantProfileId,
+        args.localDay,
       ),
       subject: () =>
-        `${args.consulteeName}'s week ${args.week.number} needs session times`,
+        args.weeks.length === 1
+          ? `${args.weeks[0].consulteeName}'s week ${args.weeks[0].number} needs session times`
+          : `${args.weeks.length} plans need session times this week`,
       render: (r) =>
-        React.createElement(NewBookingRequestEmail, {
+        React.createElement(UnplacedWeeksEmail, {
           consultantName: greet(r),
-          consulteeName: args.consulteeName,
-          planTitle: args.planTitle,
-          appointmentType: "subscription",
-          reviewUrl: absolute(args.timingsUrl),
+          weeks: args.weeks.map((w) => ({ ...w, url: absolute(w.url) })),
           unsubscribeUrl: r.unsubscribeUrl,
-          week: args.week,
         }),
     },
   }));

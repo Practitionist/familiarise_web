@@ -23,6 +23,8 @@ jest.mock("../../lib/prisma", () => {
       count: jest.fn(),
     },
     subscription: {
+      // The week-reminder scan sizes its rotation first.
+      count: jest.fn().mockResolvedValue(0),
       findMany: jest.fn(),
       findUnique: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn(),

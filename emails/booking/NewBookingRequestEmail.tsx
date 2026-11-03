@@ -20,8 +20,6 @@ export interface NewBookingRequestEmailProps {
   unsubscribeUrl?: string | null;
   /** #1775 C-4 — set on the unscheduled-plan nudge (12, 24 or 36 hours). */
   nudgeHours?: number;
-  /** A plan week with sessions still to place. */
-  week?: { number: number; count: number; sessions: number; range: string };
 }
 
 export default function NewBookingRequestEmail({
@@ -34,29 +32,7 @@ export default function NewBookingRequestEmail({
   reviewUrl,
   unsubscribeUrl,
   nudgeHours,
-  week,
 }: NewBookingRequestEmailProps) {
-  if (week) {
-    const title = `${consulteeName}'s week ${week.number} needs session times`;
-    const sessions =
-      week.sessions === 1 ? "1 session" : `${week.sessions} sessions`;
-    return (
-      <EmailLayout preview={title} unsubscribeUrl={unsubscribeUrl}>
-        <Text style={heading}>{title}</Text>
-        <Text style={paragraph}>Hi {consultantName},</Text>
-        <Text style={paragraph}>
-          Week {week.number} of {week.count} of <strong>{planTitle}</strong> (
-          {week.range}) still needs {sessions} scheduled. One tap places them in
-          your open hours, or pick the times yourself.
-        </Text>
-        <Section style={buttonContainer}>
-          <Button style={button} href={reviewUrl}>
-            Auto-schedule this week
-          </Button>
-        </Section>
-      </EmailLayout>
-    );
-  }
   if (nudgeHours) {
     const title = `${consulteeName}'s ${appointmentType} is waiting for session times`;
     return (
