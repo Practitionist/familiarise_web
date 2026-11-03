@@ -153,19 +153,15 @@ export async function countRequestsToAnswer(
     () =>
       db.consultation.count({
         where: {
-          AND: [
-            pendingConsultationWhere(cp, scope),
-            { NOT: AWAITING_CLIENT_ANSWER },
-          ],
+          ...pendingConsultationWhere(cp, scope),
+          NOT: AWAITING_CLIENT_ANSWER,
         },
       }),
     () =>
       db.subscription.count({
         where: {
-          AND: [
-            pendingSubscriptionWhere(cp, scope),
-            { NOT: AWAITING_CLIENT_ANSWER },
-          ],
+          ...pendingSubscriptionWhere(cp, scope),
+          NOT: AWAITING_CLIENT_ANSWER,
         },
       }),
     () => db.trial.count({ where: trialRequestWhere(cp, scope, ["PENDING"]) }),

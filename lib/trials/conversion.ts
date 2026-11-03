@@ -20,7 +20,7 @@ export async function convertCompletedTrial(
       subscriptionPlan: { select: { consultantProfileId: true } },
     },
   });
-  if (!subscription) return null;
+  if (!subscription?.subscriptionPlan) return null;
   const trial = await tx.trial.findFirst({
     where: {
       consulteeProfileId: subscription.requestedById,

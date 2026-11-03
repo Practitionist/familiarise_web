@@ -31,6 +31,7 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { GET as getInbox } from "@/app/api/bookings/inbox/route";
 import { readConsultantNeedsYou } from "@/lib/data/consultant-needs-you";
 import {
+  BEING_MOVED,
   countOpenRequestsForCap,
   countRequestsToAnswer,
   getNeedsYouSummary,
@@ -111,6 +112,7 @@ describe("countOpenRequestsForCap", () => {
       bookingSource: "REQUEST_SUBMITTED",
       consultationPlan: { consultantProfileId: "cp-1" },
       requestedAt: { gte: new Date("2026-10-25T12:00:00Z") },
+      NOT: { appointment: BEING_MOVED },
     });
     const [{ where: subscription }] = tx.subscription.count.mock.calls[0];
     expect(subscription).toMatchObject({
@@ -119,9 +121,12 @@ describe("countOpenRequestsForCap", () => {
       deletedAt: null,
       requestedAt: { gte: new Date("2026-09-27T12:00:00Z") },
     });
-    // No appointment arm: an unallocated request counts in every tenant.
+    // The only appointment arm EXCLUDES a booking being moved (a NOT over a
+    // to-one relation is true when there is no appointment), so an
+    // unallocated request still counts in every tenant.
+    expect(subscription.NOT).toEqual({ appointment: BEING_MOVED });
     expect(JSON.stringify([consultation, subscription])).not.toContain(
-      "appointment",
+      "payment",
     );
     expect(tx.trial.count).toHaveBeenCalledWith({
       where: { consultantProfileId: "cp-1", status: "PENDING" },

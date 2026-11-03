@@ -11,6 +11,7 @@
  * constant, the count query shape, and the expiry's slot release.
  */
 
+import { BEING_MOVED } from "@/lib/data/needs-you";
 import "./setup";
 
 jest.mock("../../lib/prisma", () => {
@@ -151,6 +152,8 @@ describe("RFA active-request cap", () => {
         status: "PENDING",
         bookingSource: "REQUEST_SUBMITTED",
         requestedAt: { gte: expect.any(Date) },
+        // A booking a reschedule put back to PENDING is not a new request.
+        NOT: { appointment: BEING_MOVED },
       },
     });
   });
