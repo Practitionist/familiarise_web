@@ -79,6 +79,20 @@ import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
  * sees SLOT_SHORTAGE with a real placeable count — or, with `allowPartial`,
  * the sessions that did fit.
  */
+/**
+ * The scheduling-zone calendar days either side of `start`'s day, as day
+ * keys. Calendar arithmetic on the key, so a daylight-saving change (a 23 or
+ * 25 hour day) never skips or repeats a neighbour.
+ */
+export function adjacentDayKeys(start: Date, timeZone?: string): string[] {
+  const dayMs = Date.parse(
+    `${ScheduleCalculationService.dayKey(start, timeZone)}T00:00:00Z`,
+  );
+  return [dayMs - DAY_MS, dayMs + DAY_MS].map((ms) =>
+    new Date(ms).toISOString().slice(0, 10),
+  );
+}
+
 export async function findAvailableSlots(
   // #908 — accepts the base client so slot discovery can run OUTSIDE the write
   // transaction (under the locks). Reads only — no writes happen here.
@@ -512,14 +526,8 @@ export async function findAvailableSlots(
    * before or after another one (placed now or already held).
    */
   const isSpacedFrom = (candidateStart: Date): boolean =>
-    [-DAY_MS, DAY_MS].every(
-      (offset) =>
-        !placedPerDay.has(
-          ScheduleCalculationService.dayKey(
-            new Date(candidateStart.getTime() + offset),
-            config.schedulingTimezone,
-          ),
-        ),
+    adjacentDayKeys(candidateStart, config.schedulingTimezone).every(
+      (key) => !placedPerDay.has(key),
     );
 
   const tryPlaceOnDay = (

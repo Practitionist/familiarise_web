@@ -25,7 +25,10 @@ jest.mock("../../utils/appointmentlock", () => ({
 
 import type { DayOfWeek } from "@prisma/client";
 import type { PrismaLike } from "../../lib/prisma";
-import { findAvailableSlots } from "../../lib/booking/allocation/search/find-available-slots";
+import {
+  adjacentDayKeys,
+  findAvailableSlots,
+} from "../../lib/booking/allocation/search/find-available-slots";
 import { ScheduleCalculationService } from "../../utils/scheduling-engine/ScheduleCalculationService";
 import type {
   ConsultantAllocationData,
@@ -134,4 +137,14 @@ it("keeps the free day between sessions when a preference is set too", async () 
   );
   expect(slots).toHaveLength(6);
   expect(weekdaysOf(slots)).toEqual([1, 3, 5]);
+});
+
+it("finds the neighbouring local days across a daylight-saving change", () => {
+  // Sat 7 Mar 2026 23:30 in New York; clocks spring forward that night, so
+  // 24 hours later is already Monday 00:30.
+  const saturdayLate = new Date("2026-03-08T04:30:00.000Z");
+  expect(adjacentDayKeys(saturdayLate, "America/New_York")).toEqual([
+    "2026-03-06",
+    "2026-03-08",
+  ]);
 });
