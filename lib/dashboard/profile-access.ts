@@ -1,36 +1,42 @@
 import { cache } from "react";
-import type { UserRole } from "@prisma/client";
+import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import prisma from "@/lib/prisma";
 
-const consultantProfileOwner = cache(async (id: string) => {
+const consultantProfileExists = cache(async (id: string) => {
   const row = await prisma.consultantProfile.findUnique({
     where: { id },
-    select: { userId: true },
+    select: { id: true },
   });
-  return row?.userId ?? null;
+  return row !== null;
 });
 
-const consulteeProfileOwner = cache(async (id: string) => {
+const consulteeProfileExists = cache(async (id: string) => {
   const row = await prisma.consulteeProfile.findUnique({
     where: { id },
-    select: { userId: true },
+    select: { id: true },
   });
-  return row?.userId ?? null;
+  return row !== null;
 });
 
-type Viewer = { id: string; role: UserRole };
+type Viewer = {
+  role: string;
+  consultantProfileId?: string | null;
+  consulteeProfileId?: string | null;
+};
 
-/** False when the profile is missing, or belongs to someone else and the viewer is not an operator. */
+/** False for a missing profile, or for someone else's unless the viewer is an operator. Owners and strangers cost no query. */
 export async function viewerMayOpenProfile(
   kind: "consultant" | "consultee",
   profileId: string,
   viewer: Viewer,
 ): Promise<boolean> {
-  const ownerId = await (kind === "consultant"
-    ? consultantProfileOwner(profileId)
-    : consulteeProfileOwner(profileId));
-  if (!ownerId) return false;
-  return (
-    ownerId === viewer.id || viewer.role === "ADMIN" || viewer.role === "STAFF"
-  );
+  const owned =
+    kind === "consultant"
+      ? viewer.consultantProfileId
+      : viewer.consulteeProfileId;
+  if (owned === profileId) return true;
+  if (!isOperatorRole(viewer.role)) return false;
+  return kind === "consultant"
+    ? consultantProfileExists(profileId)
+    : consulteeProfileExists(profileId);
 }

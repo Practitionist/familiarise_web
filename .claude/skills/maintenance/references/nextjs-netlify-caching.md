@@ -100,7 +100,7 @@ For invalidation, `revalidatePath` and `revalidateTag` both work and propagate t
 
 Documented adapter limitations worth remembering: pages set to the `edge` runtime actually run in the functions region, `beforeFiles` rewrites cannot point at static files in `public/`, and headers and redirects are evaluated after middleware.
 
-## A missing public or dashboard page must answer 404, so no `loading.tsx` may sit at or above a dynamic page
+## A page whose existence or visibility is checked must answer 404, so no `loading.tsx` may sit above the layout that checks it
 
 Next.js commits the HTTP status as soon as the first byte streams, and a `loading.tsx` streams its fallback first, so a `notFound()` called inside the page after that point can only add a noindex meta tag to a response that is already `200`. Search engines then index soft 404s, so visibility gates belong in the layout too, not only plain existence checks. The `loading.tsx` file convention is described at https://nextjs.org/docs/app/api-reference/file-conventions/loading.
 

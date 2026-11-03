@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 
-/** Any missing dashboard page, id or segment lands here with a real 404 status. */
+/** Unknown segments and ids rejected by a role-root layout land here with a real 404; deep pages below a loading.tsx still soft-404. */
 export default function DashboardNotFound() {
   return (
     <main className="mx-auto flex min-h-[50vh] max-w-md flex-col items-center justify-center gap-4 px-4 text-center">

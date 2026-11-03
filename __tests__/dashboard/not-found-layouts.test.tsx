@@ -74,29 +74,29 @@ const SEGMENTS = [
   {
     dir: "app/dashboard/consultant/[consultantId]",
     param: "consultantId",
-    arrange: (found: boolean, viewerRole = "CONSULTANT") => {
+    arrange: () => {
       mockRequireOnboarded.mockResolvedValue({
-        user: { ...OWNER, role: viewerRole },
+        user: { ...OWNER, role: "CONSULTANT", consultantProfileId: "real" },
       });
-      mockConsultantProfile.mockResolvedValue(found ? { userId: "u1" } : null);
     },
     arrangeForeign: () => {
-      mockRequireOnboarded.mockResolvedValue({ user: OWNER });
-      mockConsultantProfile.mockResolvedValue({ userId: "someone-else" });
+      mockRequireOnboarded.mockResolvedValue({
+        user: { ...OWNER, consultantProfileId: "mine" },
+      });
     },
   },
   {
     dir: "app/dashboard/consultee/[consulteeId]",
     param: "consulteeId",
-    arrange: (found: boolean, viewerRole = "CONSULTEE") => {
+    arrange: () => {
       mockRequireOnboarded.mockResolvedValue({
-        user: { ...OWNER, role: viewerRole },
+        user: { ...OWNER, consulteeProfileId: "real" },
       });
-      mockConsulteeProfile.mockResolvedValue(found ? { userId: "u1" } : null);
     },
     arrangeForeign: () => {
-      mockRequireOnboarded.mockResolvedValue({ user: OWNER });
-      mockConsulteeProfile.mockResolvedValue({ userId: "someone-else" });
+      mockRequireOnboarded.mockResolvedValue({
+        user: { ...OWNER, consulteeProfileId: "mine" },
+      });
     },
   },
   {
@@ -174,7 +174,7 @@ describe("dashboard role roots 404 from their layout", () => {
     mockRequireOnboarded.mockResolvedValue({
       user: { id: "admin", role: "ADMIN" },
     });
-    mockConsultantProfile.mockResolvedValue({ userId: "someone-else" });
+    mockConsultantProfile.mockResolvedValue({ id: "c1" });
     const Layout = await load("app/dashboard/consultant/[consultantId]");
     await expect(
       Layout({
@@ -196,6 +196,26 @@ describe("dashboard role roots 404 from their layout", () => {
         params: Promise.resolve({ consulteeId: "nope" }),
       }),
     ).rejects.toThrow("NEXT_NOT_FOUND");
+  });
+
+  it.each([
+    ["app/dashboard/consultant/[consultantId]", "consultantId"],
+    ["app/dashboard/consultee/[consulteeId]", "consulteeId"],
+  ])("%s answers an owner from the session alone", async (dir, param) => {
+    mockRequireOnboarded.mockResolvedValue({
+      user: { ...OWNER, consultantProfileId: "c1", consulteeProfileId: "e1" },
+    });
+    const Layout = await load(dir);
+    await expect(
+      Layout({
+        children: "kids",
+        params: Promise.resolve({
+          [param]: param === "consultantId" ? "c1" : "e1",
+        }),
+      }),
+    ).resolves.toBeTruthy();
+    expect(mockConsultantProfile).not.toHaveBeenCalled();
+    expect(mockConsulteeProfile).not.toHaveBeenCalled();
   });
 });
 
