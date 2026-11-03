@@ -139,11 +139,19 @@ The floor is read from `RescheduleRequest.releasedSessions` through
 `countedReleases` (`lib/booking/released-sessions.ts`), counting only
 consultee-initiated requests that really moved sessions (not withdrawn, not
 restored), and timed from the request's `createdAt`. An expert's reschedule never
-lowers the buyer's refund. A booking with no live session left gets no notice
+lowers the buyer's refund. A released session whose original time passed with no
+replacement counts as full notice (past every tier), unless the consultee
+released it, in which case the recorded floor still applies. A booking with no live session left gets no notice
 figure at all, so it never falls back to the floor; the window refuses it first
 (`resolveBookingRefundContext` in `lib/booking/cancellation-scope.ts`). Preview
 and POST resolve the actor through one function, `resolveCancelActor`
 (`lib/booking/cancel-actor.ts`), so their tiers agree.
+
+The dialog speaks to who is cancelling (`CancelConfirmationDialog`,
+`viewerRole`). The consultant's copy is "{client} gets a full refund of ₹X.
+Cancelling a paid booking counts against your reliability.", with the buttons
+"Keep booking" and "Cancel and refund"; the consultee's confirm button is
+"Cancel booking".
 
 **The tiers are typed rows, not a Json snapshot (#1499).** `CancellationPolicy` +
 `CancellationPolicyTier` hold one published, immutable version of a ladder;
@@ -214,6 +222,15 @@ every surface. `CANCELLED` means a party with standing ended a live booking.
 Picking the wrong one is a user-facing lie even when the row state is otherwise
 correct, and it changes which refund path runs.
 
+A decline is only for a request that was never confirmed. Every REJECTED door
+(the consultation and subscription list and `[id]` PATCH routes) calls
+`assertDeclinable` (`lib/booking/request-route-guards.ts`) inside its
+transaction: a booking with an open `PENDING_REVIEW` reschedule answers 409
+`USE_RESCHEDULE_RESPOND` (respond or withdraw instead), and one with live
+released sessions (tentative `RESCHEDULED`) and no proposal answers 409
+`USE_CANCEL_ENDPOINT` (place a new time, or cancel, which quotes the refund and
+records the strike).
+
 ## 7. The earnings healer has no age window
 
 `scripts/earnings/sync-payment-earnings.ts` repairs payments that are
@@ -273,6 +290,14 @@ A capture that arrives after the first session started never confirms: the
 capture commit closes the request as EXPIRED, releases its holds, and the payment
 takes the late-capture path and is refunded in full
 (`closeStartedBeforePayment` in `lib/payments/webhooks/handlers.ts`).
+
+**A trial converts only when the plan is paid.** `convertCompletedTrial`
+(`lib/trials/conversion.ts`) moves the consultee's COMPLETED trial with the same
+expert (any plan) to CONVERTED and stamps `convertedToSubscriptionId`, by CAS.
+It runs in `confirmApprovalStatus` at capture (`lib/payments/webhooks/handlers.ts`)
+and at a no-gateway subscription checkout that settles at once (`skipPayment` in
+`lib/payments/checkout/handlers/subscription.ts`), never at checkout start, so an
+abandoned checkout leaves the trial COMPLETED. A lost CAS never fails the capture.
 
 **The row exists before the order does.** `createApprovalPaymentIntent`
 (`lib/payments/operations/approval-payment.ts`) writes a PENDING `Payment` whose
@@ -528,3 +553,11 @@ back while the session can still be re-booked; it waits for the plan end.
   order, which the gateway rejects. It takes the no-gateway rail now.
 - **"Unschedule" for webinars and classes.** The host once pulled an event's date
   and left attendees with no time; re-time and the free leave replaced it.
+- **`linkCompletedTrialToSubscription` at checkout start.** It stamped CONVERTED
+  before any payment, so abandoned checkouts counted as conversions. Replaced by
+  `convertCompletedTrial` at capture or no-gateway settle.
+- **Decline as an implicit cancel.** A REJECTED PATCH on a booking being moved
+  once cancelled every session, refunded in full and recorded no strike;
+  `assertDeclinable` refuses it now.
+- **A passed, never-replaced released session quoted from its old start.** Its
+  notice once came out negative, the lowest tier; it now counts as full notice.

@@ -136,10 +136,12 @@ and `__tests__/scheduling/weekly-dst-projection.test.ts`. The auto-allocator may
 place a session in the post-midnight tail of an overnight row, provided that
 day's and week's caps still have room.
 
-Segmentation and merging carry two more boundary rules. `splitSlotsByDay` cuts a
-window at the next local day's midnight rather than at 23:59:59.999, because a
-23:30–23:59:59.999 remainder is not a thirty-minute atom and a block published
-up to local midnight otherwise lost its last slot (#1415). Both merge functions
+Segmentation and merging carry two more boundary rules. `processAvailabilitySlots`
+does not cut a block at the viewer's midnight: `breakDownSlotsByDuration` snaps
+each window start up to the absolute UTC half-hour lattice and keys the window by
+the viewer day its own start falls on (`dateInISO`, `dayOfWeek`), so a block that
+crosses midnight keeps every atom and a viewer in a :45 zone (Kathmandu, Eucla)
+sees on-lattice cells. Both merge functions
 — `mergeConsecutiveSlots` for booking and `mergeConsecutiveSlotsForDisplay`
 (`app/explore/experts/[consultantId]/utils/mergeSlots.ts`) for the expert page —
 require exact adjacency, and differ only in which atoms are eligible; a
@@ -149,7 +151,8 @@ The grid is `GET /api/scheduling/availability-with-allocation/[consultantId]` wi
 `startDateInUtc`, `endDateInUtc` and `timezone`, public in `middleware.ts`. The
 expert page asks for `zonedWeekWindow` bounds — viewer-zone local midnight to the
 local midnight seven days later, end exclusive — so the week's last 23:30 atom is
-inside the window.
+inside the window; the dashboard grid's `dayRangeBounds` (`lib/time/grid-zone.ts`)
+is end-exclusive the same way.
 Both grids poll it, so a stale tab self-corrects. The consultee's expert-page
 queries (`useAvailabilityWindow`, `useAvailabilityMonth`) poll every 60 s plus
 jitter while the tab is visible, refetch on focus, back off to 5 minutes after
@@ -166,23 +169,31 @@ refetched grid with "That time was just taken — pick another."
 The ETag (`lib/scheduling/availabilityGridMarker.ts`) folds in more than the
 rows, because three things change a cell without any row changing: the earliest
 live hold's `expiresAt` (`nextHoldExpiry`), so a hold that lapses by the clock
-changes the tag; the lead-time bucket (`leadTimeBucket`), so a cell that enters
-the lead time changes it; and, when the overlay is asked for, the subscription
-quota fold.
+changes the tag; the lead time and its bucket (`leadMs`, `leadTimeBucket`), so a
+cell that enters the lead time, or a grid drawn for another purpose, changes it;
+and, when the overlay is asked for, the subscription quota fold.
 
 The route also returns per-cell flags the client paints as their own
-non-selectable states. A cell that starts inside the buyer lead time
-(`MINIMUM_BOOKING_LEAD_TIME_MS`, 15 minutes) is "Too soon". With `subscriptionId`
+non-selectable states. The caller names the writer it draws for with
+`?purpose=book|request|allocate|reschedule` (default `book`) and `&unpaid=1`,
+and the route applies that writer's lead time from `leadMsFor`
+(`lib/booking/lead-time.ts`, §6): a cell whose start is at or before
+`now + leadMs` is "Too soon", the same boundary the writers refuse. The body
+carries a top-level `leadMs`, and the client re-applies it between polls
+(`isTooSoonAt` in `lib/scheduling/week-grid-model.ts`), so a cell flips to
+"Too soon" on the clock without waiting for the next poll. With `subscriptionId`
 (and optionally `releasing`, the occurrence ids a reschedule is moving, which
 count as released) it adds the **quota overlay**: a `GridQuota`
-(`lib/scheduling/grid-quota.ts`) with the cycle `unit`, `capacity`, `filled`,
-`remainingThisCycle`, `allBooked`, the exclusive `windowStart`/`windowEnd`, the
-fixed `planEndsAt`, the per-day cap and the `fullDays` already at it. Cells in a
-full cycle, on a full day, or at or after the plan end paint "Limit reached",
-and the footer reads the cycle count ("2 of 3 this week"). The overlay is
-authorized and folded before the conditional GET, so a 304 never serves it to a
-caller who has lost access. The rolling cycle is the only weekly counter; there
-is no Sunday-week cap on a subscription.
+(`lib/scheduling/grid-quota.ts`) with the cycle `unit`, `capacity`, the open plan
+week as `weekNumber` of `weekCount`, `filled`, `remainingThisCycle`, `allBooked`,
+the exclusive `windowStart`/`windowEnd`, the fixed `planEndsAt`, the per-day cap
+and the `fullDays` already at it. Cells before the open plan week, in a full open
+week, on a full day, or at or after the plan end paint "Limit reached", and the
+footer reads "Week 3 of 26 · 2 of 3 booked" (or "Week 4 of 26 is set · next
+opens Mon 16 Mar"). The overlay is authorized and folded before the conditional
+GET, so a 304 never serves it to a caller who has lost access. The fixed plan week
+(§6) is the only
+weekly counter; there is no Sunday-week cap on a subscription.
 
 Host-cancelled class sessions keep their row (no `deletedAt`) for make-up and
 refund accounting, so every occupancy reader filters occurrences through
@@ -262,18 +273,52 @@ and the other picks are kept), `ALLOCATION_RACE` (auto found no free set after
 its re-searches; retryable), `SEARCH_TIMEOUT` (503, the auto search ran out of
 time), `TOO_CLOSE_TO_START` (an unpaid approval whose first session starts too
 soon to pay for), `CHECKOUT_IN_PROGRESS` (the buyer's own checkout is still
-being paid) and `SESSION_HAS_REMEDY`. The full union is `AllocationErrorCode` in
+being paid), `PROPOSAL_AWAITING_CLIENT` (placing times over the consultant's own
+open proposal that names times; withdraw it first, `resolveConsumedPreferenceRequests`
+in `lib/booking/allocation/preference.ts`) and `SESSION_HAS_REMEDY`. The full union is `AllocationErrorCode` in
 `utils/scheduling-engine/types.ts`. Conflict text names a time, never another
 party. A client must branch on `errorCode`, never on the message wording: only
 `ALREADY_ALLOCATED` closes the dialog and drops the row; every other code keeps
 the dialog open and refetches the grid, because the underlying request is still
 live and retriable.
 
-Every server-placed session respects the lead time: 15 minutes once the booking
-is settled and 2 hours while the client still has to pay (`leadTimeFor` in
-`lib/booking/lead-time.ts`), passed into the search and the validator by all
-three modes. The pre-lock overlap probe checks each chosen interval on its own,
-so an unrelated session between two picks is not a conflict.
+Every session start obeys one lead-time contract, `leadMsFor(purpose, { settled })`
+in `lib/booking/lead-time.ts`: `book` (an instant checkout) is 15 minutes;
+`request` and `allocate` are 15 minutes once the booking is settled (paid or
+free) and 2 hours while the client still has to pay; `reschedule` is 24 hours,
+whoever moves it. `earliestStartFor` turns it into an instant for checkout's
+`slotStartRefusal` and the reschedule route; request-for-approval refuses a
+priced request inside 2 hours with 409 `REQUEST_TOO_SOON` (`assertRequestLeadFits`);
+an unpaid approval is refused by `assertUnpaidApprovalFits`. All three allocator
+modes pass `leadMsFor("allocate", { settled })` into the search and the
+validator, and the grid paints "Too soon" from the same function (§4). The
+pre-lock overlap probe checks each chosen interval on its own, so an unrelated
+session between two picks is not a conflict.
+
+For a subscription the auto search first sweeps with spacing: it keeps a free
+day between sessions (placed now or already held), so a week of 3 lands
+Mon/Wed/Fri rather than Mon/Tue/Wed. The unconditional earliest-fit sweep after
+it reconsiders everything the spaced sweep declined, so spacing never costs a
+placement (`isSpacedFrom` in `find-available-slots.ts`).
+
+A subscription is paced in fixed plan weeks (`subscriptionEntitlement` in
+`lib/booking/entitlement.ts`). Week k is `[day0 + 7k, day0 + 7k + 7)`, where
+`day0` is the plan start's zone-day in `schedulingTimezone`. The open week is the
+current plan week, or the next one as soon as the current one is full, never
+further; `nextBatch` is `sessionsPerWeek` minus the sessions held in that week,
+bounded by what remains. Delivery does not gate the next week. `cycle.count` is
+the number of plan weeks to the plan end and `cycle.ordinal` the zero-based open
+week; `planWeekNumber`, `planWeekStartsAt` and `rescheduleWindow` are exported
+for copy, reminders and the reschedule picker. Copy reads "Week N of W"
+(`subscriptionCycleHeading`, the grid footer).
+
+The top-up sweep (`topUpIncompleteEvents` in
+`scripts/appointments/reconcile-occurrence-availability.ts`) retries a short
+recurring event when its consultant changed availability since the last attempt
+or when that attempt is at least 6 hours old (`TOP_UP_RETRY_MS`), so a plan week
+that opens on the calendar is filled without an availability edit. Changed
+calendars go first (newest change first), then rested ones oldest attempt first,
+still capped at 25 events and 60 seconds a run.
 
 Also as of wave 5 (#1329), the co-host guard runs in **every** allocation mode:
 `assertCollaboratorsFree` (`lib/booking/allocation/collaborators.ts`) calls
@@ -345,8 +390,26 @@ and a list of times, built by `lib/scheduling/day-list.ts` from the same grid
 endpoint, the same status tokens and the same quota overlay. It starts at the
 plan's allowed window and pages through it, refuses a pick that overlaps another
 pick or lands on a full day (`pickConflict`), and drops stale picks the same
-"Just taken" way. The consultant's allocate and availability grids stay
-desktop-only behind `DesktopOnlyNotice`.
+"Just taken" way. It receives the picker policy's lead as `minLeadHours`
+(`leadMsFor(policy.lead.purpose, …)`), so it offers no time the grid would paint
+"Too soon". Each `TimePickerPolicy` (`components/scheduling/time-picker-policy.ts`)
+carries a `lead`: allocate is `allocate`, unpaid from `AllocationRequest.settled`;
+both reschedule policies are `reschedule` (24 h); rebook is `book`. A
+subscription reschedule clamps the picker to `rescheduleWindow`
+(`lib/booking/entitlement.ts`), the allocator's own window computed with the
+moved sessions released, so a pick the auto-confirm would drop is never offered.
+
+The expert page's slot list (`windowsForDay` in `lib/scheduling/booking-windows.ts`)
+takes the same lead: a priced plan in REQUEST mode uses the 2-hour request lead.
+`isBookableWindow` offers a window only when its `bookingStatus` is `available`;
+a partly booked window is never offered to a buyer, because every writer refuses
+a half-taken half-hour.
+
+The consultant's allocate and availability grids stay desktop-only behind
+`DesktopOnlyNotice`. On a phone the allocate page shows "Auto-schedule in my open
+hours" under the notice (`components/scheduling/MobileAutoSchedule.tsx`): one
+auto-mode allocation of a consultation or subscription, with `topUp` (and
+`allowPartial`) for a plan that already holds confirmed sessions.
 
 ## Deprecated & Superseded Approaches
 
@@ -359,6 +422,18 @@ desktop-only behind `DesktopOnlyNotice`.
   :30/:45 offsets. Use `dayRows` and `cellInstant`.
 - **The Sunday-week subscription cap.** The client counted subscription sessions
   per calendar week beside the rolling cycle, so the two caps disagreed at cycle
-  edges. The rolling cycle is the only weekly counter.
+  edges. The fixed plan week is the only weekly counter.
+- **The delivery-gated rolling cycle.** A subscription's next 7-day window once
+  opened only after the previous batch was delivered, anchored on the last
+  session's end. Plan weeks are now fixed from the plan start (§4).
+- **`splitSlotsByDay`.** Blocks were cut at the viewer's midnight, which pushed
+  :45-zone viewers off the half-hour lattice. Deleted; windows snap to the UTC
+  lattice and are keyed by their own start's viewer day.
+- **One 15-minute "Too soon" on every grid, and an inclusive `dayRangeBounds`
+  end.** The grid now honours the caller's purpose (`leadMsFor`), and the range
+  end is the next day's first instant.
+- **Partly booked windows offered as "Request".** `isBookableWindow` now requires
+  `available`.
+- **`leadTimeFor`.** Replaced by `leadMsFor(purpose, { settled })`.
 - **A single-instant overlap probe.** The allocator once probed one span from
   the earliest to the latest pick, so a session between two picks read as taken.

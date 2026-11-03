@@ -1,0 +1,68 @@
+# ADR: Booking v2 direction: multi-week redesign, retention phase 1 and attendance policy
+
+- **Status**: Accepted on 2026-11-03 by the owner. The correctness fixes and multi-week Phase 0 ship in the booking v2 correctness pull request that adds this record. Multi-week phases 1 to 3, retention P1 and the attendance policy are **(planned)** and tracked in the issues below.
+- **Date**: 2026-11-03
+- **Author**: Platform engineering
+- **Related**: [V2A booking product and system review](../booking/research/01-v2a-booking-product-and-system-review.md) with appendices [A](../booking/research/02-v2a-appendix-a-requests-reschedule-cancel.md), [B](../booking/research/03-v2a-appendix-b-heatmap.md), [C](../booking/research/04-v2a-appendix-c-allocation-multiweek-naming.md) and [D](../booking/research/05-v2a-appendix-d-competitors.md), [V2B retention, conversion and lifecycle review](../booking/research/06-v2b-retention-conversion-lifecycle.md), [Allocator objective is earliest-fit](../booking/23-allocator-objective-earliest-fit.md), [Resend billing guardrails](../../.claude/skills/billing-guardrails/references/resend.md), issues [#2561](https://github.com/Practitionist/familiarise_web/issues/2561), [#2562](https://github.com/Practitionist/familiarise_web/issues/2562), [#2563](https://github.com/Practitionist/familiarise_web/issues/2563)
+
+## Context
+
+Two read-only reviews of `dev` at 39f98669f (2026-11-03) looked at booking after the megafix and the dashboard IA rework. V2A found two P0 bugs on the Requests tab: Decline on a booking being rescheduled cancelled the whole paid booking (A-01), and a consultant's own reschedule showed in their inbox as an incoming request (A-02). It also found that the multi-week subscription engine works as built but does not serve the product. A plan of "3 a week for 6 months" opens one floating 7-day cycle at a time, only after the previous cycle is delivered, so the consultant comes back about 24 times, on desktop only, and earliest-fit packs sessions onto consecutive days. Months × 4 sells 72 sessions, not 78. V2B found that almost nothing turns a finished booking into the next one, and that a trial is marked `CONVERTED` when checkout starts rather than when money is captured (R-01).
+
+## What this pull request ships
+
+1. **Decline versus reschedule (A-01, A-02).** Every REJECTED door (the consultation and subscription list and `[id]` PATCH routes) calls `assertDeclinable` (`lib/booking/request-route-guards.ts`): an open `PENDING_REVIEW` reschedule answers 409 `USE_RESCHEDULE_RESPOND`, and live released sessions (tentative `RESCHEDULED`) with no proposal answer 409 `USE_CANCEL_ENDPOINT`. Inbox rows for a booking being moved offer:
+   - a client proposal with times: "Accept new times" (respond accept) and "Keep the original time" (respond decline);
+   - a client "any time works": "Pick a new time" (the allocator) and "Keep the original time";
+   - the consultant's own proposal with times: only "Withdraw my request" (reschedule withdraw), in the "Waiting on the client" bucket;
+   - a consultant preference-only release: "Pick a new time" and "Withdraw my request";
+   - stranded released sessions: "Pick a new time".
+
+   The row clock is the proposal's `expiresAt`. `countRequestsToAnswer` leaves out the consultant's own open proposals with times, and `countOpenRequestsForCap` and `countActiveConsultationRequests` leave out bookings being moved (`BEING_MOVED`, `lib/data/needs-you.ts`). The allocator refuses 409 `PROPOSAL_AWAITING_CLIENT` over the consultant's own open proposal with times (`lib/booking/allocation/preference.ts`). Inbox buckets go by who acts: sessions to schedule (cycle 1 or an open plan week) are the consultant's, banded by deadline ("This week" with no clock), and the old "Waiting on them" bucket is now "Waiting on the client".
+
+2. **Trial conversion at payment (R-01).** `convertCompletedTrial` (`lib/trials/conversion.ts`) writes `COMPLETED` → `CONVERTED` and `convertedToSubscriptionId` only when the subscription is paid: in `confirmApprovalStatus` at capture (`lib/payments/webhooks/handlers.ts`) or at a no-gateway checkout that settles at once (`skipPayment`). An abandoned checkout leaves the trial `COMPLETED`. Any plan of the same expert still matches.
+3. **One lead-time contract.** `leadMsFor(purpose, { settled })` in `lib/booking/lead-time.ts`: book 15 minutes; request and allocate 15 minutes settled and 2 hours unpaid; reschedule 24 hours. `earliestStartFor`, `assertRequestLeadFits` (request-for-approval refuses a priced request inside 2 hours with 409 `REQUEST_TOO_SOON`) and `assertUnpaidApprovalFits` build on it. The grid route takes `?purpose=book|request|allocate|reschedule&unpaid=1`, marks a cell `tooSoon` when its start is at or before now plus the lead (the writers' boundary), returns a top-level `leadMs` and folds it into the ETag; clients re-apply it between polls (`isTooSoonAt`). `TimePickerPolicy.lead` drives it (allocate unpaid from `AllocationRequest.settled`; both reschedule policies 24 hours), `MobileDayListPicker` gets the same lead as `minLeadHours`, and the expert page's `windowsForDay` takes it (a priced REQUEST-mode plan uses 2 hours). `isBookableWindow` requires `bookingStatus` `available`, so a partly booked window is never offered to a buyer.
+4. **Grid cells on the UTC lattice (B-01).** `processAvailabilitySlots` no longer splits blocks at the viewer's midnight; `breakDownSlotsByDuration` snaps window starts to the absolute UTC half-hour and keys each window by the viewer day of its own start, so :45 zones such as Kathmandu and Eucla keep every atom. `splitSlotsByDay` is deleted. `dayRangeBounds` returns an exclusive end (the next day's first instant), so the last half-hour of a window is painted.
+5. **Subscription pacing, multi-week Phase 0 (C-01).** `subscriptionEntitlement` uses fixed plan weeks from the plan start's zone-day in `schedulingTimezone` (week k is `[day0 + 7k, day0 + 7k + 7)`). The open week is the current plan week, or the next one once the current one is full, never further; `nextBatch` is `sessionsPerWeek` minus the sessions held in that week, bounded by what remains; delivery no longer gates the next week. `cycle.count` is the plan weeks to plan end and `cycle.ordinal` the zero-based plan week; `planWeekNumber`, `planWeekStartsAt` and `rescheduleWindow` are exported. Copy reads "Week N of W" in `subscriptionCycleHeading` and the grid footer (`GridQuota.weekNumber`/`weekCount`), and cells before the open week paint "Limit reached". The subscription auto search first tries to keep a free day between sessions, then packs, so spacing never costs a placement. The consultee's cycle-done notice names the week of the last delivered session, and the booking card reads "Week done · {consultant} schedules the next N", never "the next 0".
+6. **Consultant reminders (C-02).** `nudgeUnplacedPlanWeeks` (`lib/booking/week-nudge.ts`) runs inside the `expire-stale-requests` job. For `APPROVED` plans with a confirmed session and no move in flight, when the current plan week has sessions to place, it sends a consultant bell (`NEW_BOOKING_REQUEST` workflow with a `weekNumber` payload) and email (`SUBSCRIPTION_WEEK_NUDGE`) at +0, +24 and +72 hours after the week opens, deduped by the outbox `transactionId` and the `FailedEmail` `entityRef`. A next week opened early is never nagged.
+7. **Top-up retry (C-03).** The `reconcile-occurrence-availability` top-up is due when availability changed since the last attempt or the last attempt is at least 6 hours old (`TOP_UP_RETRY_MS`); changed calendars go first, then the oldest attempt first, still capped at 25 events and 60 seconds a run.
+8. **Mobile allocate (C-12).** On a phone the allocate page shows "Auto-schedule in my open hours" (`MobileAutoSchedule`: auto mode, `topUp` for a plan that already holds sessions) under the desktop notice.
+9. **Subscription reschedule picker (B-03).** It clamps to `rescheduleWindow`, the allocator's window with the moved sessions released, so picks the auto-confirm would drop are not offered.
+10. **Cancel (A-08).** A released session whose original time passed with no replacement quotes at full notice, unless the consultee released it (the recorded notice floor then applies). The consultant's cancel dialog (`viewerRole="consultant"`) says "{client} gets a full refund of ₹X. Cancelling a paid booking counts against your reliability.", with "Keep booking" and "Cancel and refund"; the consultee's confirm button is "Cancel booking".
+
+## Decision 1: multi-week allocation is fixed plan weeks plus a Regular time ([#2561](https://github.com/Practitionist/familiarise_web/issues/2561))
+
+- **Model.** A plan has fixed plan weeks and a consultant-set **Regular time** (for example Mon, Wed and Fri at 18:00). The system keeps the next **4 weeks** of real sessions booked and rolls the horizon forward weekly. Each week shows a **conflict list** for the consultant to fix.
+- **Catch-up.** Missed or unplaced weeks are caught up from plan slack. Anything that cannot fit is refunded per session at plan end. A consultant-caused miss counts toward reliability after 2 in 90 days.
+- **Partial placement is always allowed**, with at most 12 live rows per plan, and it is refund-neutral because refunds use the per-session tiers.
+- **Who places.** The host places by default. The consultee proposes times (requested mode); self-pick inside the expert's Regular time comes later and only if the expert opts in.
+- **Plan length.** A new nullable `durationInWeeks` column, so 26 × 3 = 78 sessions. Months stay as a label; existing plans keep months, with no backfill.
+- **No soft reserve.** Beyond the 4-week horizon other buyers can book the Regular time. A clash met by the roll-forward goes on that week's conflict list.
+- **Naming.** `schedulingPeriodStartsAt` becomes `planStartsAt` through `@map` (no database change). `schedulingPeriodEndsAt` is deprecated and dropped at the reset window. The allocator's window becomes `selectableFrom` and `selectableUntil`. Copy reads "Week 3 of 26".
+- **Phases.** Phase 0 is in this pull request. Phase 1 adds the schema (`durationInWeeks`, a Regular-time pattern, the `planStartsAt` map, horizon bookkeeping). Phase 2 adds the roll-forward job in `lib/cron/cleanup-registry.ts` with a Postgres lease and fair rotation, the conflict list and catch-up. Phase 3 adds expert opt-in self-pick. Phases 1 to 3 are **(planned)**.
+
+## Decision 2: retention phase 1 is same-expert first, cross-expert on-site only ([#2562](https://github.com/Practitionist/familiarise_web/issues/2562))
+
+- **"More from {expert}"** (the same expert) appears everywhere: rebook, renew, and the upsell to a subscription or class.
+- **Cross-expert "Similar plans"** appears on-site only (plan and profile pages, Home), and only after the learner's appointment with their expert has ended.
+- A learner who arrived through an expert's own link (`OWN_LINK`) never gets another expert's plans by email. Org-sponsored learners see only their org's catalog.
+- **Phase 2**, cross-expert email to marketplace-sourced learners with marketing consent, is decided after phase-1 data shows the effect on expert link sharing and churn.
+- **Email provider.** Stay on Resend Free until launch. Move to Pro before the first marketing batch or when real volume needs it, because Free stops at 100 emails a day. The reminder is in the Resend guardrails and in Step 5 of the [pre-production checklist](../notifications/05-pre-production-checklist.md).
+
+## Decision 3: attendance keeps today's evidence-based outcomes ([#2563](https://github.com/Practitionist/familiarise_web/issues/2563))
+
+Outcomes stay as `lib/booking/session-outcome.ts` derives them from Stream presence: `HOST_ABSENT` and `CUT_SHORT` are voided and strike the expert, `LEARNER_ABSENT` is a forfeit, and `NOBODY_JOINED` and `INCONCLUSIVE` are parked for ops with no money moved. Lateness marks, consecutive-miss pauses and a both-absent auto-reschedule are a P2 policy for later **(planned)**.
+
+## Consequences
+
+- An inbox Decline can no longer end a confirmed booking that is being rescheduled; ending it goes through the cancel route.
+- Trial-conversion counts include only paid conversions.
+- Until Phase 1 lands, plans still sell months × 4 sessions and the consultant still places each week, but weeks open on the calendar and the consultant is reminded.
+- Cross-expert recommendations by email stay off until the owner decides phase 2.
+
+## Deprecated & Superseded Approaches
+
+- **Floating 7-day cycles gated on delivery.** Replaced by calendar plan weeks in Phase 0 and by the rolling 4-week horizon in later phases.
+- **Decline as an implicit cancel.** A decline during a reschedule is refused; the cancel route owns ending a booking.
+- **Conversion stamped at checkout start.** Moved to capture.
+- **The #2456 rename of the scheduling-period columns.** Superseded by the `planStartsAt` map and the deprecation of `schedulingPeriodEndsAt`.
