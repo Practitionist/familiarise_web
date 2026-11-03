@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { AppointmentStatus, PaymentStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { forbiddenResponse } from "@/lib/auth-helpers";
+import { BookingRuleError } from "./booking-rule-error";
 import {
   stageNoticesForAppointmentHolds,
   type StagedBackupInterestNotices,
@@ -182,6 +183,50 @@ export function validateDetailRequestStatusPatch(
   }
 
   return null;
+}
+
+/**
+ * Decline ends a request that was never confirmed. A booking being moved (an
+ * open reschedule, or released sessions not yet re-placed) is answered through
+ * respond / withdraw, or ended through Cancel, never declined. Every decline
+ * door calls this before its transition.
+ */
+export async function assertDeclinable(
+  tx: Tx,
+  where: { consultationId: string } | { subscriptionId: string },
+): Promise<void> {
+  const held = await tx.appointment.findFirst({
+    where: { ...where, deletedAt: null },
+    select: {
+      rescheduleRequests: {
+        where: { status: "PENDING_REVIEW" },
+        select: { id: true },
+        take: 1,
+      },
+      occurrences: {
+        where: {
+          isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
+        },
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
+  if (!held) return;
+  if (held.rescheduleRequests.length > 0) {
+    throw new BookingRuleError(
+      "USE_RESCHEDULE_RESPOND",
+      "This booking is being moved, not requested. Keep the original time or answer the new one instead.",
+    );
+  }
+  if (held.occurrences.length > 0) {
+    throw new BookingRuleError(
+      "USE_CANCEL_ENDPOINT",
+      "This booking was already confirmed. Place a new time, or cancel it to refund the client.",
+    );
+  }
 }
 
 /**

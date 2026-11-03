@@ -417,9 +417,13 @@ function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
     "CONSULTANT",
     { now },
   );
-  // A paid plan's clock is capture + 48 h, not the request hold.
-  const timed =
-    nextAction.kind === "ALLOCATE" && nextAction.deadline
+  // A paid plan's clock is capture + 48 h, not the request hold; an open
+  // proposal's clock is its own expiry, after which the original time stays.
+  const openProposal =
+    row.proposal?.status === "PENDING_REVIEW" ? row.proposal : null;
+  const timed = openProposal
+    ? { ...row, deadline: openProposal.expiresAt, requestedStartPassed: false }
+    : nextAction.kind === "ALLOCATE" && nextAction.deadline
       ? { ...row, deadline: nextAction.deadline }
       : row;
   const isStrandedReschedule =
@@ -427,12 +431,14 @@ function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
     bookingState.state !== "REQUESTED" &&
     row.rescheduledSlotCount > 0 &&
     row.proposal === null;
-  return {
-    ...timed,
-    bucket: isStrandedReschedule
-      ? "answer-today"
-      : inboxBucketOf(timed, bookingState.state, now),
-  };
+  const bucket: InboxBucket =
+    openProposal?.initiatorRole === "CONSULTANT" &&
+    openProposal.proposedTimes.length > 0
+      ? "waiting-on-them"
+      : isStrandedReschedule
+        ? "answer-today"
+        : inboxBucketOf(timed, bookingState.state, now);
+  return { ...timed, bucket };
 }
 
 function consultationRow(

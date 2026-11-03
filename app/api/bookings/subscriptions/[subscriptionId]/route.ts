@@ -21,6 +21,7 @@ import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
   refuseMalformedEventId,
+  assertDeclinable,
   releaseDeclinedRequestHold,
   validateDetailRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
@@ -346,6 +347,7 @@ export async function PATCH(
                 "subscription",
                 subscriptionId,
               );
+              await assertDeclinable(tx, { subscriptionId });
             }
             // #836 — allowed-from guard rides the WHERE; the idempotency
             // pre-checks above are only friendly error text. updateMany

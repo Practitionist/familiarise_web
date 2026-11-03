@@ -116,6 +116,8 @@ export const TOAST = {
   declined: "Declined",
   reminderSent: "Reminder sent",
   approvalWithdrawn: "Approval withdrawn",
+  keptOriginal: "Kept the original time",
+  proposalWithdrawn: "Request withdrawn",
   changedElsewhere: "This request changed elsewhere — refreshed",
 } as const;
 

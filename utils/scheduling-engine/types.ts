@@ -231,6 +231,7 @@ export type AllocationErrorCode =
   | "CHECKOUT_IN_PROGRESS" // the buyer's own direct checkout is still being paid — 409
   | "TOO_CLOSE_TO_START" // an unpaid approval whose first session starts too soon to pay — 409
   | "RESCHEDULE_NO_LONGER_OPEN" // the confirmed proposal was answered or expired mid-move — 409
+  | "PROPOSAL_AWAITING_CLIENT" // the consultant's own proposal with times is still open — 409
   | "SESSION_HAS_REMEDY" // a session to be re-planned carries an incident remedy — 409
   | "BOOKING_LOCK_UNAVAILABLE" // the locking service is down; retry shortly — 503
   | "SEARCH_TIMEOUT" // the auto search ran out of time before placing every session — 503

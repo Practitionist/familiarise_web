@@ -9,6 +9,7 @@ import {
   transitionRescheduleRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { AllocationConflictError } from "@/utils/scheduling-engine/errors";
 
 /** Open, preference-bearing reschedules that released any of these slots. */
 export function openPreferenceRequestWhere(
@@ -133,8 +134,24 @@ export async function resolveConsumedPreferenceRequests(
         ? { id: { not: excludeRescheduleRequestId } }
         : {}),
     },
-    select: { id: true },
+    select: {
+      id: true,
+      initiatorRole: true,
+      _count: { select: { proposedTimes: true } },
+    },
   });
+  // The consultant's own proposal waits on the client's consent; placing other
+  // times over it would move the booking without asking.
+  if (
+    superseded.some(
+      (r) => r.initiatorRole === "CONSULTANT" && r._count.proposedTimes > 0,
+    )
+  ) {
+    throw new AllocationConflictError(
+      "You've asked your client to move to other times. Withdraw that request first, or wait for their answer.",
+      "PROPOSAL_AWAITING_CLIENT",
+    );
+  }
   for (const request of superseded) {
     try {
       await transitionRescheduleRequest(tx, {
