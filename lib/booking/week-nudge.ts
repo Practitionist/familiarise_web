@@ -146,141 +146,140 @@ export function rotationOffset(
   return (Math.floor(now.getTime() / 3_600_000) * budget) % total;
 }
 
-/**
- * Remind consultants whose plans have an open week with sessions left to
- * place. Plans never scheduled are the 48 h cohort's; a plan with a move in
- * flight (a tentative row) waits for it. Reads at most a budget of plans by
- * keyset on id from a rotating start (see `rotationOffset`); writes only the
- * outbox.
- */
-export async function nudgeUnplacedPlanWeeks(limits: {
-  maxRequests: number;
-}): Promise<{ nudged: number; errors: string[] }> {
-  const errors: string[] = [];
-  const now = new Date();
-  const byConsultant = new Map<
-    string,
-    { userId: string; zone: string; plans: DuePlan[] }
-  >();
-  try {
-    const where = nudgeablePlans(now);
-    const budget =
-      Math.min(
-        NUDGE_PAGES,
-        Math.max(1, Math.ceil(limits.maxRequests / NUDGE_PAGE)),
-      ) * NUDGE_PAGE;
-    const total = await prisma.subscription.count({ where });
-    const offset = rotationOffset(total, budget, now);
-    const pivot =
-      offset > 0
-        ? (
-            await prisma.subscription.findFirst({
-              where,
-              orderBy: { id: "asc" },
-              skip: offset,
-              select: { id: true },
-            })
-          )?.id
-        : undefined;
-    // From the pivot to the end, then from the start up to the pivot.
-    const segments: Prisma.SubscriptionWhereInput[] = pivot
-      ? [{ id: { gte: pivot } }, { id: { lt: pivot } }]
-      : [{}];
-    let read = 0;
-    for (const segment of segments) {
-      let cursor: string | undefined;
-      while (read < budget) {
-        const take = Math.min(NUDGE_PAGE, budget - read);
-        const plans = await prisma.subscription.findMany({
-          where: {
-            AND: [where, segment, ...(cursor ? [{ id: { gt: cursor } }] : [])],
-          },
-          select: {
-            id: true,
-            sessionsTotal: true,
-            schedulingPeriodStartsAt: true,
-            schedulingTimezone: true,
-            planEndsAt: true,
-            requestedBy: { select: { user: { select: { name: true } } } },
-            subscriptionPlan: {
-              select: {
-                title: true,
-                totalSessions: true,
-                sessionsPerWeek: true,
-                durationInMonths: true,
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    user: { select: { id: true, timezone: true } },
-                  },
-                },
-              },
-            },
-            appointment: {
-              select: {
-                occurrences: {
-                  select: {
-                    startsAt: true,
-                    endsAt: true,
-                    completionStatus: true,
-                    isTentative: true,
-                    deletedAt: true,
-                  },
-                },
-              },
-            },
-          },
-          orderBy: { id: "asc" },
-          take,
-        });
-        read += plans.length;
-        for (const sub of plans) {
-          const plan = sub.subscriptionPlan;
-          const consultant = plan.consultantProfile;
-          const zone = consultant.user.timezone ?? sub.schedulingTimezone;
-          if (!inWakingHours(now, zone)) continue;
-          const nudge = weekNudgeFor(
-            {
-              sessionsTotal: sessionsTotalOf(sub),
-              sessionsPerWeek: plan.sessionsPerWeek,
-              durationInMonths: plan.durationInMonths,
-              occurrences: sub.appointment?.occurrences ?? [],
-              schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
-              schedulingTimezone: sub.schedulingTimezone,
-              planEndsAt: sub.planEndsAt,
-            },
-            now,
-            zone,
-          );
-          if (!nudge) continue;
-          const entry = byConsultant.get(consultant.id) ?? {
-            userId: consultant.user.id,
-            zone,
-            plans: [],
-          };
-          entry.plans.push({
-            consulteeName: sub.requestedBy.user.name ?? "Your client",
-            planTitle: plan.title,
-            // The allocate page, where "Auto-schedule this week" is one tap.
-            url: `${getAppUrl()}/dashboard/consultant/${consultant.id}/requests/${encodeURIComponent(sub.id)}/allocate?type=subscription`,
-            nudge,
-            zone: sub.schedulingTimezone,
-          });
-          byConsultant.set(consultant.id, entry);
-        }
-        if (plans.length < take) break;
-        cursor = plans[plans.length - 1].id;
-      }
-    }
-  } catch (error) {
-    errors.push(`Failed to read plan weeks: ${error}`);
-    return { nudged: 0, errors };
-  }
-  if (byConsultant.size === 0) return { nudged: 0, errors };
+const NUDGE_PLAN_SELECT = {
+  id: true,
+  sessionsTotal: true,
+  schedulingPeriodStartsAt: true,
+  schedulingTimezone: true,
+  planEndsAt: true,
+  requestedBy: { select: { user: { select: { name: true } } } },
+  subscriptionPlan: {
+    select: {
+      title: true,
+      totalSessions: true,
+      sessionsPerWeek: true,
+      durationInMonths: true,
+      consultantProfile: {
+        select: { id: true, user: { select: { id: true, timezone: true } } },
+      },
+    },
+  },
+  appointment: {
+    select: {
+      occurrences: {
+        select: {
+          startsAt: true,
+          endsAt: true,
+          completionStatus: true,
+          isTentative: true,
+          deletedAt: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.SubscriptionSelect;
 
-  // Quiet hours on top of the waking window, for the email as for the bell.
+type NudgePlan = Prisma.SubscriptionGetPayload<{
+  select: typeof NUDGE_PLAN_SELECT;
+}>;
+
+/**
+ * At most `budget` nudgeable plans, read by keyset on id from the rotating
+ * start (see `rotationOffset`): from the pivot to the end, then from the
+ * start up to the pivot.
+ */
+async function readNudgeablePlans(
+  now: Date,
+  budget: number,
+): Promise<NudgePlan[]> {
+  const where = nudgeablePlans(now);
+  const total = await prisma.subscription.count({ where });
+  const offset = rotationOffset(total, budget, now);
+  const pivot =
+    offset > 0
+      ? (
+          await prisma.subscription.findFirst({
+            where,
+            orderBy: { id: "asc" },
+            skip: offset,
+            select: { id: true },
+          })
+        )?.id
+      : undefined;
+  const segments: Prisma.SubscriptionWhereInput[] = pivot
+    ? [{ id: { gte: pivot } }, { id: { lt: pivot } }]
+    : [{}];
+  const read: NudgePlan[] = [];
+  for (const segment of segments) {
+    let cursor: string | undefined;
+    while (read.length < budget) {
+      const take = Math.min(NUDGE_PAGE, budget - read.length);
+      const page = await prisma.subscription.findMany({
+        where: {
+          AND: [where, segment, ...(cursor ? [{ id: { gt: cursor } }] : [])],
+        },
+        select: NUDGE_PLAN_SELECT,
+        orderBy: { id: "asc" },
+        take,
+      });
+      read.push(...page);
+      if (page.length < take) break;
+      cursor = page[page.length - 1].id;
+    }
+  }
+  return read;
+}
+
+/** The reminder one plan is owed now, with its consultant, or null. */
+function dueNudgeFor(
+  sub: NudgePlan,
+  now: Date,
+): {
+  consultantProfileId: string;
+  userId: string;
+  zone: string;
+  plan: DuePlan;
+} | null {
+  const plan = sub.subscriptionPlan;
+  const consultant = plan.consultantProfile;
+  const zone = consultant.user.timezone ?? sub.schedulingTimezone;
+  if (!inWakingHours(now, zone)) return null;
+  const nudge = weekNudgeFor(
+    {
+      sessionsTotal: sessionsTotalOf(sub),
+      sessionsPerWeek: plan.sessionsPerWeek,
+      durationInMonths: plan.durationInMonths,
+      occurrences: sub.appointment?.occurrences ?? [],
+      schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
+      schedulingTimezone: sub.schedulingTimezone,
+      planEndsAt: sub.planEndsAt,
+    },
+    now,
+    zone,
+  );
+  if (!nudge) return null;
+  return {
+    consultantProfileId: consultant.id,
+    userId: consultant.user.id,
+    zone,
+    plan: {
+      consulteeName: sub.requestedBy.user.name ?? "Your client",
+      planTitle: plan.title,
+      // The allocate page, where "Auto-schedule this week" is one tap.
+      url: `${getAppUrl()}/dashboard/consultant/${consultant.id}/requests/${encodeURIComponent(sub.id)}/allocate?type=subscription`,
+      nudge,
+      zone: sub.schedulingTimezone,
+    },
+  };
+}
+
+/** When each user's quiet hours end, if they are inside them now. */
+async function quietUntilByUser(
+  userIds: string[],
+  now: Date,
+): Promise<Map<string, Date | null>> {
   const prefs = await prisma.notificationPreference.findMany({
-    where: { userId: { in: [...byConsultant.values()].map((c) => c.userId) } },
+    where: { userId: { in: userIds } },
     select: {
       userId: true,
       quietHoursEnabled: true,
@@ -289,7 +288,7 @@ export async function nudgeUnplacedPlanWeeks(limits: {
       quietHoursTimezone: true,
     },
   });
-  const quietUntil = new Map(
+  return new Map(
     prefs.map((p) => [
       p.userId,
       computeQuietHoursNotBefore(
@@ -303,27 +302,135 @@ export async function nudgeUnplacedPlanWeeks(limits: {
       ),
     ]),
   );
+}
 
-  const due = [...byConsultant].flatMap(([consultantProfileId, c]) => {
-    const notBefore = quietUntil.get(c.userId);
-    if (notBefore && notBefore > now) return [];
-    const localDay = formatInTimeZone(now, c.zone, "yyyy-MM-dd");
-    const dedupeKey = weekNudgeDedupeKey(consultantProfileId, localDay);
-    return [
+interface DueConsultant {
+  consultantProfileId: string;
+  userId: string;
+  zone: string;
+  plans: DuePlan[];
+  dedupeKey: string;
+  transactionId: string;
+  entityRef: string;
+}
+
+/** One consultant's bell and email; each arm skipped when already staged. */
+async function sendConsultantNudge(
+  d: DueConsultant,
+  now: Date,
+  staged: { bell: boolean; email: boolean },
+): Promise<void> {
+  const weeks = d.plans.map((p) => ({
+    consulteeName: p.consulteeName,
+    planTitle: p.planTitle,
+    number: p.nudge.weekNumber,
+    count: p.nudge.weekCount,
+    sessions: p.nudge.sessionsToPlace,
+    range: formatDateRangeLabel(
+      p.nudge.weekStartsAt,
+      lastInstantBefore(p.nudge.weekEndsAt),
+      { zone: p.zone },
+    ),
+    url: p.url,
+  }));
+  if (!staged.bell) {
+    await notifyUnplacedWeekNudge(
+      d.userId,
       {
-        ...c,
-        consultantProfileId,
-        dedupeKey,
-        transactionId: deriveTransactionId(
-          NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
-          [c.userId],
-          {},
-          dedupeKey,
-        ),
-        entityRef: unplacedWeekNudgeEntityRef(consultantProfileId, localDay),
+        ...notificationScope(null),
+        consulteeName: weeks[0].consulteeName,
+        planTitle: weeks[0].planTitle,
+        appointmentType: "SUBSCRIPTION",
+        dashboardUrl:
+          weeks.length === 1
+            ? weeks[0].url
+            : `${getAppUrl()}/dashboard/consultant/${d.consultantProfileId}/requests?type=subscription`,
+        weekSummary: weekSummary(weeks),
       },
-    ];
-  });
+      d.dedupeKey,
+    );
+  }
+  if (!staged.email) {
+    const mailed = await sendUnplacedWeekNudgeEmail(
+      {
+        consultantProfileId: d.consultantProfileId,
+        consultantUserId: d.userId,
+        localDay: formatInTimeZone(now, d.zone, "yyyy-MM-dd"),
+        weeks,
+      },
+      EMAIL_BUDGET_MS.JOB,
+    );
+    if (mailed.failed > 0 && mailed.sent === 0) {
+      throw new Error("week nudge email neither sent nor staged");
+    }
+  }
+}
+
+/**
+ * Remind consultants whose plans have an open week with sessions left to
+ * place. Plans never scheduled are the 48 h cohort's; a plan with a move in
+ * flight (a tentative row) waits for it. Reads at most a budget of plans
+ * (see `readNudgeablePlans`); writes only the outbox.
+ */
+export async function nudgeUnplacedPlanWeeks(limits: {
+  maxRequests: number;
+}): Promise<{ nudged: number; errors: string[] }> {
+  const errors: string[] = [];
+  const now = new Date();
+  const budget =
+    Math.min(
+      NUDGE_PAGES,
+      Math.max(1, Math.ceil(limits.maxRequests / NUDGE_PAGE)),
+    ) * NUDGE_PAGE;
+  const byConsultant = new Map<
+    string,
+    { userId: string; zone: string; plans: DuePlan[] }
+  >();
+  try {
+    for (const sub of await readNudgeablePlans(now, budget)) {
+      const due = dueNudgeFor(sub, now);
+      if (!due) continue;
+      const entry = byConsultant.get(due.consultantProfileId) ?? {
+        userId: due.userId,
+        zone: due.zone,
+        plans: [],
+      };
+      entry.plans.push(due.plan);
+      byConsultant.set(due.consultantProfileId, entry);
+    }
+  } catch (error) {
+    errors.push(`Failed to read plan weeks: ${error}`);
+    return { nudged: 0, errors };
+  }
+  if (byConsultant.size === 0) return { nudged: 0, errors };
+
+  // Quiet hours on top of the waking window, for the email as for the bell.
+  const quietUntil = await quietUntilByUser(
+    [...byConsultant.values()].map((c) => c.userId),
+    now,
+  );
+  const due: DueConsultant[] = [...byConsultant].flatMap(
+    ([consultantProfileId, c]) => {
+      const notBefore = quietUntil.get(c.userId);
+      if (notBefore && notBefore > now) return [];
+      const localDay = formatInTimeZone(now, c.zone, "yyyy-MM-dd");
+      const dedupeKey = weekNudgeDedupeKey(consultantProfileId, localDay);
+      return [
+        {
+          ...c,
+          consultantProfileId,
+          dedupeKey,
+          transactionId: deriveTransactionId(
+            NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+            [c.userId],
+            {},
+            dedupeKey,
+          ),
+          entityRef: unplacedWeekNudgeEntityRef(consultantProfileId, localDay),
+        },
+      ];
+    },
+  );
   if (due.length === 0) return { nudged: 0, errors };
 
   // Two outboxes, two guards, so one arm's lapse never silences the other.
@@ -347,54 +454,14 @@ export async function nudgeUnplacedPlanWeeks(limits: {
 
   let nudged = 0;
   for (const d of due) {
-    const bellDone = bellStaged.has(d.transactionId);
-    const emailDone = emailStaged.has(d.entityRef);
-    if (bellDone && emailDone) continue;
-    const weeks = d.plans.map((p) => ({
-      consulteeName: p.consulteeName,
-      planTitle: p.planTitle,
-      number: p.nudge.weekNumber,
-      count: p.nudge.weekCount,
-      sessions: p.nudge.sessionsToPlace,
-      range: formatDateRangeLabel(
-        p.nudge.weekStartsAt,
-        lastInstantBefore(p.nudge.weekEndsAt),
-        { zone: p.zone },
-      ),
-      url: p.url,
-    }));
+    const staged = {
+      bell: bellStaged.has(d.transactionId),
+      email: emailStaged.has(d.entityRef),
+    };
+    if (staged.bell && staged.email) continue;
     try {
-      if (!bellDone) {
-        await notifyUnplacedWeekNudge(
-          d.userId,
-          {
-            ...notificationScope(null),
-            consulteeName: weeks[0].consulteeName,
-            planTitle: weeks[0].planTitle,
-            appointmentType: "SUBSCRIPTION",
-            dashboardUrl:
-              weeks.length === 1
-                ? weeks[0].url
-                : `${getAppUrl()}/dashboard/consultant/${d.consultantProfileId}/requests?type=subscription`,
-            weekSummary: weekSummary(weeks),
-          },
-          d.dedupeKey,
-        );
-      }
-      if (!emailDone) {
-        const mailed = await sendUnplacedWeekNudgeEmail(
-          {
-            consultantProfileId: d.consultantProfileId,
-            consultantUserId: d.userId,
-            localDay: formatInTimeZone(now, d.zone, "yyyy-MM-dd"),
-            weeks,
-          },
-          EMAIL_BUDGET_MS.JOB,
-        );
-        if (mailed.failed > 0 && mailed.sent === 0) {
-          throw new Error("week nudge email neither sent nor staged");
-        }
-      }
+      // Sequential, so the sends stay within the job's email budget.
+      await sendConsultantNudge(d, now, staged);
       nudged += 1;
     } catch (error) {
       errors.push(
