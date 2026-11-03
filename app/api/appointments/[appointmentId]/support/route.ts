@@ -33,6 +33,19 @@ const SUPPORT_ROUTE = "appointments.support";
 
 const CATEGORY = SupportThreadCategoryEnum;
 
+const FlowMessageMetadataSchema = z.object({
+  nodeId: z.string().optional(),
+  options: z
+    .array(
+      z.object({
+        id: z.string(),
+        label: z.string(),
+        escalates: z.boolean().optional(),
+      }),
+    )
+    .optional(),
+});
+
 const turnSchema = z
   .object({
     clientTurnId: z.string().min(1).max(128).optional(),
@@ -162,12 +175,16 @@ export async function GET(
       data: thread
         ? {
             ...thread,
-            messages: page.map(({ metadata, ...message }) => ({
-              ...message,
-              actorKind: isPresenterAuthoredMessage(metadata)
-                ? ("PRESENTER" as const)
-                : undefined,
-            })),
+            messages: page.map(({ metadata, ...message }) => {
+              const flow = FlowMessageMetadataSchema.safeParse(metadata);
+              return {
+                ...message,
+                metadata: flow.success ? flow.data : undefined,
+                actorKind: isPresenterAuthoredMessage(metadata)
+                  ? ("PRESENTER" as const)
+                  : undefined,
+              };
+            }),
             hasMore: thread.messages.length > 200,
             nextBeforeSeq: page[0]?.seq ?? null,
             userId: thread.requesterUserId,
