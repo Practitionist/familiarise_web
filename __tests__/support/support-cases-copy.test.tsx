@@ -72,7 +72,7 @@ it("the personal support page says support cases, not requests", async () => {
 
 it("the learner Library labels attended recordings Session recordings", () => {
   const src = readFileSync(
-    join(process.cwd(), "components/dashboard/library/LibraryPage.tsx"),
+    join(process.cwd(), "components/dashboard/library/LibraryTabNav.tsx"),
     "utf8",
   );
   expect(src).toContain('recordings: "Session recordings"');
