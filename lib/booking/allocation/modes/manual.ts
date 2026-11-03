@@ -37,7 +37,7 @@ import {
   SlotShortageError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
-import { leadTimeFor } from "@/lib/booking/lead-time";
+import { leadMsFor } from "@/lib/booking/lead-time";
 import { checkoutInProgressError } from "@/lib/booking/request-cohort";
 import {
   slotTakenRefusal,
@@ -222,7 +222,7 @@ export async function manualAllocate(
       settled,
     } = eventData;
     if (eventData.checkoutInProgress) throw checkoutInProgressError();
-    const leadTimeMs = leadTimeFor({ settled });
+    const leadTimeMs = leadMsFor("allocate", { settled });
 
     // Convert to Date objects with validation
     const slots = slotStrings.map((s, i) => {

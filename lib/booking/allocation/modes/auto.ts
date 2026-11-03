@@ -42,7 +42,7 @@ import {
   SlotShortageError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
-import { leadTimeFor } from "@/lib/booking/lead-time";
+import { leadMsFor } from "@/lib/booking/lead-time";
 import { checkoutInProgressError } from "@/lib/booking/request-cohort";
 import {
   slotTakenRefusal,
@@ -187,7 +187,7 @@ export async function autoAllocate(
       settled,
     } = eventData;
     if (eventData.checkoutInProgress) throw checkoutInProgressError();
-    const leadTimeMs = leadTimeFor({ settled });
+    const leadTimeMs = leadMsFor("allocate", { settled });
 
     // CRITICAL FIX: Check for existing appointments to detect reschedule scenario
     // If tentative slots exist, this is a reschedule and we should preserve the original slot count

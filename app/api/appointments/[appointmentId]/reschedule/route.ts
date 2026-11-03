@@ -1,4 +1,5 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
+import { earliestStartFor } from "@/lib/booking/lead-time";
 import * as Sentry from "@sentry/nextjs";
 import {
   applyRateLimit,
@@ -454,8 +455,11 @@ export async function POST(
               );
             }
           }
-          const earliestAllowedProposal =
-            now.getTime() + RESCHEDULE_MIN_LEAD_HOURS * 3_600_000;
+          const earliestAllowedProposal = earliestStartFor(
+            "reschedule",
+            { settled: true },
+            now,
+          ).getTime();
           if (
             proposedSlots?.some(
               (s) => s.startsAt.getTime() < earliestAllowedProposal,

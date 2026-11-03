@@ -269,7 +269,7 @@ export async function fetchEventData(
   planId?: string | null;
   /**
    * Whether the booking is paid (or free): it decides the lead time a placed
-   * session needs (`leadTimeFor`). Only an unpaid consultation request is not.
+   * session needs (`leadMsFor`). Only an unpaid consultation request is not.
    */
   settled: boolean;
   /** The buyer's own direct checkout is still being paid: nobody may answer it yet. */

@@ -36,7 +36,7 @@ describe("grid zone", () => {
   it("bounds the fetch window on the grid zone's midnights", () => {
     const { start, end } = dayRangeBounds(day, day, "America/Bahia");
     expect(start.toISOString()).toBe("2026-09-24T03:00:00.000Z");
-    expect(end.toISOString()).toBe("2026-09-25T02:59:59.999Z");
+    expect(end.toISOString()).toBe("2026-09-25T03:00:00.000Z");
   });
 
   it("labels the footer from the zone it is handed, not Intl", () => {

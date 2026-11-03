@@ -11,7 +11,7 @@
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    consultation: { findUnique: jest.fn() },
+    consultation: { findUnique: jest.fn(), count: jest.fn(async () => 0) },
     subscription: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },

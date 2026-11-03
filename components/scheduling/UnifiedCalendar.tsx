@@ -1,5 +1,7 @@
 "use client";
 
+import { leadLabel } from "@/lib/booking/lead-time";
+import type { GridLead } from "@/lib/scheduling/allocationService";
 import * as Sentry from "@sentry/nextjs";
 import {
   AlertDialog,
@@ -458,6 +460,8 @@ export interface UnifiedCalendarProps {
   aboveActionsSlot?: React.ReactNode;
   /** Occurrences a reschedule would release; the plan-limit overlay counts them free. */
   releasingOccurrenceIds?: readonly string[];
+  /** The writer this grid is drawn for; its lead time decides "too soon". */
+  lead?: GridLead;
   /** The client's requested times, outlined on the allocate grid. */
   requestedSlots?: { startsAt: Date | string; endsAt?: Date | string | null }[];
   className?: string;
@@ -567,6 +571,7 @@ export function UnifiedCalendar({
   showAllocationButtons = false,
   aboveActionsSlot,
   releasingOccurrenceIds,
+  lead,
   requestedSlots,
   className = "",
   allowedStart,
@@ -625,6 +630,7 @@ export function UnifiedCalendar({
     eventOccurrences,
     subscriptionMeta,
     quota,
+    leadMs,
     loading,
     refreshing,
     error,
@@ -647,6 +653,7 @@ export function UnifiedCalendar({
     gridZone,
     weekStartsOn,
     releasingOccurrenceIds,
+    lead,
     // Only the consultant's own allocate surface may ask for overlap detail.
     includeAppointmentDetails: mode === "allocate",
   });
@@ -860,6 +867,7 @@ export function UnifiedCalendar({
       nowMs: matrixNowMs,
       allowedStartMs,
       allowedEndMs,
+      leadMs,
     }),
     [
       serverCells,
@@ -870,6 +878,7 @@ export function UnifiedCalendar({
       matrixNowMs,
       allowedStartMs,
       allowedEndMs,
+      leadMs,
     ],
   );
 
@@ -1254,7 +1263,7 @@ export function UnifiedCalendar({
       if (!cell.isThisEvent && cell.statusKey === "tooSoon") {
         toast({
           title: "Too soon",
-          description: `That time starts in less than ${Math.round(MINIMUM_BOOKING_LEAD_TIME_MS / 60_000)} minutes — pick a later one.`,
+          description: `That time starts in less than ${leadLabel(leadMs ?? MINIMUM_BOOKING_LEAD_TIME_MS)} — pick a later one.`,
         });
         return;
       }
@@ -1295,6 +1304,7 @@ export function UnifiedCalendar({
       mode,
       selectedStarts,
       toast,
+      leadMs,
       gridZone,
       allowedStart,
       allowedEnd,

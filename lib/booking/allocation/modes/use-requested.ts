@@ -35,7 +35,7 @@ import {
   AllocationConflictError,
 } from "@/utils/scheduling-engine/errors";
 import { stageAllocationNotices } from "@/lib/booking/allocation/notify";
-import { leadTimeFor } from "@/lib/booking/lead-time";
+import { leadMsFor } from "@/lib/booking/lead-time";
 import { checkoutInProgressError } from "@/lib/booking/request-cohort";
 import {
   slotTakenRefusal,
@@ -172,7 +172,7 @@ export async function useRequestedSlots(
       settled,
     } = eventData;
     if (eventData.checkoutInProgress) throw checkoutInProgressError();
-    const leadTimeMs = leadTimeFor({ settled });
+    const leadTimeMs = leadMsFor("allocate", { settled });
 
     if (!requestedSlots || requestedSlots.length === 0) {
       throw new AllocationValidationError("No requested slots found");

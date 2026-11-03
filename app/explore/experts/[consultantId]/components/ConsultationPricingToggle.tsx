@@ -1,5 +1,6 @@
 "use client";
 
+import { leadMsFor } from "@/lib/booking/lead-time";
 import {
   HELD_BY_SOMEONE_ELSE,
   NotifyWhenFreeButton,
@@ -136,6 +137,13 @@ export default function ConsultationPricingToggle({
   );
 
   const selectedDuration = activePlanOption?.durationInHours ?? 1;
+  // A REQUEST-mode plan is paid only after approval, so a priced one needs the
+  // request lead time; the list never offers a time request-for-approval refuses.
+  const requestMode =
+    (consultantDetails.bookingMode ?? "INSTANT") === "REQUEST";
+  const leadMs = leadMsFor(requestMode ? "request" : "book", {
+    settled: Number(activePlanOption?.price ?? 0) <= 0,
+  });
 
   useEffect(() => {
     onDurationChange?.(selectedDuration);
@@ -150,8 +158,9 @@ export default function ConsultationPricingToggle({
       selectedDuration,
       timezone,
       now.getTime(),
+      leadMs,
     );
-  }, [slotTimings, selectedDuration, timezone, selectedDate, now]);
+  }, [slotTimings, selectedDuration, timezone, selectedDate, now, leadMs]);
 
   // The pick is re-read from the latest windows every render; the CTA only
   // ever acts on this live copy, never on the object the buyer clicked.
@@ -215,6 +224,7 @@ export default function ConsultationPricingToggle({
       intentPlan?.durationInHours ?? selectedDuration,
       timezone,
       Date.now(),
+      leadMs,
     ).find((slot) => sameWindow(slot, intent.slot) && isBookableWindow(slot));
     if (match) {
       setSelectedSlot(match);
@@ -228,6 +238,7 @@ export default function ConsultationPricingToggle({
     slotTimings,
     selectedDuration,
     timezone,
+    leadMs,
     consultationOptions,
     consultantDetails.id,
     session?.user?.id,

@@ -1,15 +1,62 @@
-// How far ahead a server-placed session must start: the buyer's lead time once
-// the booking is paid, more while the client still has to pay for it.
+// The one lead-time contract: how far ahead a session must start, per purpose.
+// The grid, checkout, request-for-approval, the allocator and reschedule all
+// read it, so a cell the grid paints free is never refused for being too soon.
 
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/reschedule-proposals";
 
 /** An unpaid approval leaves the client time to pay before the session starts. */
 export const UNPAID_APPROVAL_LEAD_TIME_MS = 2 * 60 * 60_000;
 
-/** 15 minutes for a settled booking, 2 hours for one still awaiting payment. */
-export function leadTimeFor({ settled }: { settled: boolean }): number {
-  return settled ? MINIMUM_BOOKING_LEAD_TIME_MS : UNPAID_APPROVAL_LEAD_TIME_MS;
+/** A moved session's new time is at least this far away. */
+export const RESCHEDULE_LEAD_TIME_MS = RESCHEDULE_MIN_LEAD_HOURS * 60 * 60_000;
+
+export const LEAD_PURPOSES = [
+  "book",
+  "request",
+  "allocate",
+  "reschedule",
+] as const;
+export type LeadPurpose = (typeof LEAD_PURPOSES)[number];
+
+/**
+ * book: an instant checkout (15 min). request / allocate: 15 min once the
+ * booking is settled (paid or free), 2 h while the client still has to pay.
+ * reschedule: 24 h, whoever moves it.
+ */
+export function leadMsFor(
+  purpose: LeadPurpose,
+  { settled }: { settled: boolean } = { settled: true },
+): number {
+  switch (purpose) {
+    case "book":
+      return MINIMUM_BOOKING_LEAD_TIME_MS;
+    case "request":
+    case "allocate":
+      return settled
+        ? MINIMUM_BOOKING_LEAD_TIME_MS
+        : UNPAID_APPROVAL_LEAD_TIME_MS;
+    case "reschedule":
+      return RESCHEDULE_LEAD_TIME_MS;
+  }
+}
+
+/** "15 minutes" / "2 hours" / "24 hours": a lead time in words. */
+export function leadLabel(leadMs: number): string {
+  const minutes = Math.round(leadMs / 60_000);
+  if (minutes < 60) return `${minutes} minutes`;
+  const hours = Math.round(minutes / 60);
+  return hours === 1 ? "1 hour" : `${hours} hours`;
+}
+
+/** The first instant a session for this purpose may start. */
+export function earliestStartFor(
+  purpose: LeadPurpose,
+  ctx: { settled: boolean },
+  now: Date = new Date(),
+): Date {
+  return new Date(now.getTime() + leadMsFor(purpose, ctx));
 }
 
 /** The refusal for approving an unpaid request whose session starts too soon to pay for. */
@@ -32,8 +79,28 @@ export function assertUnpaidApprovalFits(
   if (!firstSessionStart) return;
   if (
     firstSessionStart.getTime() - now.getTime() <
-    leadTimeFor({ settled: false })
+    leadMsFor("allocate", { settled: false })
   ) {
     throw tooCloseToStartError();
+  }
+}
+
+/**
+ * A priced request is paid only after the expert approves it, so its time must
+ * leave room for both; refused up front rather than held until it lapses.
+ */
+export function assertRequestLeadFits(
+  pricePaise: number | bigint,
+  startsAt: Date,
+  now: Date = new Date(),
+): void {
+  const settled = Number(pricePaise) <= 0;
+  if (
+    startsAt.getTime() < earliestStartFor("request", { settled }, now).getTime()
+  ) {
+    throw new BookingRuleError(
+      "REQUEST_TOO_SOON",
+      "Your expert needs time to accept and you need time to pay — pick a time at least 2 hours away.",
+    );
   }
 }
