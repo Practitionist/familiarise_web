@@ -267,23 +267,29 @@ export async function resolveBookingRefundContext(
     .sort((a, b) => a - b);
 
   const nowMs = Date.now();
-  // A session that already ended but is not swept yet is not "next".
-  const nextLive = liveSlots.find(
-    (s) => s.completionStatus === "RESCHEDULED" || s.endsAt.getTime() > nowMs,
-  );
+  // A released session whose time has passed was never given a new one: it
+  // counts as full notice, unless the client released it themselves (the
+  // floor below then caps it at the notice they gave).
+  const noticeHoursOf = (s: (typeof liveSlots)[number]) =>
+    s.completionStatus === "RESCHEDULED" && s.startsAt.getTime() <= nowMs
+      ? NEVER_REPLACED_NOTICE_HOURS
+      : (s.startsAt.getTime() - nowMs) / 3_600_000;
+  // The booking's notice is the shortest among its outstanding sessions (a
+  // session that already ended but is not swept yet is not outstanding).
+  const nextLive = liveSlots
+    .filter(
+      (s) => s.completionStatus === "RESCHEDULED" || s.endsAt.getTime() > nowMs,
+    )
+    .reduce<(typeof liveSlots)[number] | undefined>(
+      (soonest, s) =>
+        !soonest || noticeHoursOf(s) < noticeHoursOf(soonest) ? s : soonest,
+      undefined,
+    );
   // No live session left: nothing to give notice for, and the cancel door
   // refuses through cancelWindowState before it ever quotes.
   let hoursUntilNextSession: number | null = null;
   if (nextLive) {
-    // A released session whose time has passed was never given a new one:
-    // cancelling it is full notice, unless the client released it themselves
-    // (the floor below then caps it at the notice they gave).
-    const neverReplaced =
-      nextLive.completionStatus === "RESCHEDULED" &&
-      nextLive.startsAt.getTime() <= nowMs;
-    const raw = neverReplaced
-      ? NEVER_REPLACED_NOTICE_HOURS
-      : (nextLive.startsAt.getTime() - nowMs) / 3_600_000;
+    const raw = noticeHoursOf(nextLive);
     const floor = row
       ? await consulteeRescheduleNoticeFloorHours(db, {
           appointmentId: row.id,

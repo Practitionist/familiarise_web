@@ -222,6 +222,33 @@ describe("resolveBookingRefundContext", () => {
     expect(ctx.hoursUntilNextSession).toBeGreaterThan(24 * 30);
   });
 
+  it("never lets a never-replaced session outrank an imminent one", async () => {
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [
+        {
+          startsAt: hoursFromNow(-5),
+          endsAt: hoursFromNow(-4),
+          ordinal: 1,
+          completionStatus: "RESCHEDULED",
+        },
+        {
+          startsAt: hoursFromNow(2),
+          endsAt: hoursFromNow(3),
+          ordinal: 2,
+          completionStatus: "SCHEDULED",
+        },
+      ],
+    });
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    expect(ctx.hoursUntilNextSession).toBeGreaterThan(1.9);
+    expect(ctx.hoursUntilNextSession).toBeLessThan(2.1);
+  });
+
   it("reports no live session for a paid but unallocated subscription", async () => {
     mockAppointmentFindFirst.mockResolvedValue({
       id: WRAPPER,
