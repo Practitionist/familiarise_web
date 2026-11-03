@@ -24,7 +24,7 @@ interface CookiePrefs {
   marketing: boolean;
 }
 
-/** Cookie consent, from the retired `/profile` page. Essential is always on. */
+/** Cookie consent. Essential is always on. */
 export function CookiePreferencesSection() {
   const { toast } = useToast();
   const [baseline, setBaseline] = useState<CookiePrefs>({

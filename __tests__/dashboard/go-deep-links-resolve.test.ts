@@ -11,7 +11,7 @@ import { resolveGoHref, type GoViewer } from "@/lib/dashboard/go";
 
 const ROOT = process.cwd();
 const APP = join(ROOT, "app");
-const SCAN = ["app", "lib", "components"];
+const SCAN = ["app", "lib", "components", "emails"];
 const GO_LITERAL = /goHref\(\s*"(expert|client|auto)",\s*"([^"]+)"\s*\)/g;
 
 function sourceFiles(dir: string): string[] {
@@ -78,5 +78,17 @@ describe("literal go deep links resolve to real pages", () => {
         : [`${file}: ${facet}/${path} → ${href}`];
     });
     expect(dead).toEqual([]);
+  });
+});
+
+describe("the email preferences link", () => {
+  it.each([
+    ["expertOnly", "/dashboard/consultant/c1/settings/notifications"],
+    ["clientOnly", "/dashboard/consultee/e1/settings/notifications"],
+    ["workspace", "/dashboard/org-workspace/w1/settings/notifications"],
+  ])("opens a %s viewer's own Notifications settings", (name, expected) => {
+    expect(
+      resolveGoHref("auto", ["settings", "notifications"], VIEWERS[name]),
+    ).toBe(expected);
   });
 });

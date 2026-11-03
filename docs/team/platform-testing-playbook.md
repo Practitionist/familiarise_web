@@ -1113,7 +1113,7 @@ Admins have everything staff has, plus:
 
 ### Approval Payments
 
-**Where:** `/dashboard/admin/approval-payments`
+**Where:** `/dashboard/admin/appointments?tab=awaiting-payment`
 
 - Manual payment approvals for special cases
 - Override payment flows when needed

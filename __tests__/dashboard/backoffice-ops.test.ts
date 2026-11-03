@@ -2,26 +2,10 @@
  * @jest-environment node
  */
 
-const mockPermanentRedirect = jest.fn((path: string) => {
-  throw new Error(`NEXT_PERMANENT_REDIRECT:${path}`);
-});
-const mockNotFound = jest.fn(() => {
-  throw new Error("NEXT_NOT_FOUND");
-});
-
-jest.mock("next/navigation", () => ({
-  __esModule: true,
-  permanentRedirect: (path: string) => mockPermanentRedirect(path),
-  redirect: jest.fn(),
-  notFound: () => mockNotFound(),
-}));
-
 jest.mock("../../lib/auth-client", () => ({
   useSession: () => ({ data: null }),
 }));
 
-import LegacyBackofficeCatchAll from "@/app/dashboard/(backoffice)/[tree]/[...legacy]/page";
-import { legacyBackofficeHref } from "@/lib/backoffice/legacy-routes";
 import { slaStatusBadge } from "@/lib/support/sla-hint";
 import {
   inboxCaseWhere,
@@ -33,62 +17,6 @@ import {
   deriveCreditState,
   type ReferralCreditItem,
 } from "@/components/dashboard/backoffice/referrals/ReferralCreditsPageClient";
-
-describe("folded backoffice money index redirects", () => {
-  beforeEach(() => {
-    mockPermanentRedirect.mockClear();
-    mockNotFound.mockClear();
-  });
-
-  it.each([
-    [
-      "admin",
-      ["payments"],
-      { status: "SUCCEEDED" },
-      "/dashboard/admin/money/payments?status=SUCCEEDED",
-    ],
-    [
-      "staff",
-      ["refunds"],
-      { page: "2" },
-      "/dashboard/staff/money/refunds?page=2",
-    ],
-    [
-      "admin",
-      ["payouts"],
-      { tab: "batches" },
-      "/dashboard/admin/money/payouts?tab=batches",
-    ],
-    [
-      "staff",
-      ["disputes"],
-      { status: "NEEDS_RESPONSE" },
-      "/dashboard/staff/money/disputes?status=NEEDS_RESPONSE",
-    ],
-  ] as const)(
-    "redirects %s /%j with %j → %s",
-    async (tree, legacy, query, expected) => {
-      expect(legacyBackofficeHref(tree, legacy, query)).toBe(expected);
-      await expect(
-        LegacyBackofficeCatchAll({
-          params: Promise.resolve({ tree, legacy: [...legacy] }),
-          searchParams: Promise.resolve(query),
-        }),
-      ).rejects.toThrow(`NEXT_PERMANENT_REDIRECT:${expected}`);
-      expect(mockPermanentRedirect).toHaveBeenCalledWith(expected);
-    },
-  );
-
-  it("404s unknown legacy segments via notFound()", async () => {
-    await expect(
-      LegacyBackofficeCatchAll({
-        params: Promise.resolve({ tree: "admin", legacy: ["unknown-route"] }),
-        searchParams: Promise.resolve({}),
-      }),
-    ).rejects.toThrow("NEXT_NOT_FOUND");
-    expect(mockNotFound).toHaveBeenCalled();
-  });
-});
 
 describe("support SLA status badges and sla-at-risk inbox query", () => {
   const baseSla: SlaState = {

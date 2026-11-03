@@ -73,7 +73,7 @@ export function accountBaseLinks(user: AccountHrefUser): AccountMenuLink[] {
     {
       key: "settings",
       label: "Settings",
-      href: accountSettingsHref(user) ?? "/profile",
+      href: accountSettingsHref(user) ?? "/dashboard",
     },
   ];
 }
