@@ -53,6 +53,16 @@ Two read-only reviews of `dev` at 39f98669f (2026-11-03) looked at booking after
 
 Outcomes stay as `lib/booking/session-outcome.ts` derives them from Stream presence: `HOST_ABSENT` and `CUT_SHORT` are voided and strike the expert, `LEARNER_ABSENT` is a forfeit, and `NOBODY_JOINED` and `INCONCLUSIVE` are parked for ops with no money moved. Lateness marks, consecutive-miss pauses and a both-absent auto-reschedule are a P2 policy for later **(planned)**.
 
+## Compensation and misses (owner, 2026-11-03)
+
+Decided, not built in this pull request.
+
+- **A 1:1 subscription ends with unused sessions.** The client chooses "Add up to 4 extra weeks" (offered only when the expert has open hours; the expert may decline) or "Refund the unused sessions". No answer within 7 days means a refund. Client no-shows and late cancels are not compensated. Alternatives considered: refund only; extra weeks only (the payout is held longer); both parties must agree. To be built in [#2561](https://github.com/Practitionist/familiarise_web/issues/2561) / [#2568](https://github.com/Practitionist/familiarise_web/issues/2568) (C-04).
+- **A class session is missed.** Keep today's rule: a make-up within `MAKEUP_WINDOW_DAYS` (14, `lib/booking/misses.ts`), otherwise one session refunded. Alternatives considered: an immediate refund; each attendee chooses.
+- **A class with many misses.** Each learner keeps their own exit right. When half the class has been missed, a support case opens automatically, and support may cancel the class for everyone with a refund of the sessions not yet held; nothing is force-cancelled automatically. Host and learners both see warning banners as misses build up (an appointment-detail banner plus the Requests and Home cards). Alternatives rejected: a majority vote (it outvotes the minority), automatic 25/50/75% tiers, nothing beyond today's rule.
+  - **Open:** long classes. `exitRightFor` today grants the exit at 3 misses or at 25% of N, so a 100-session class trips at 3. Recommended, pending the owner: the exit right at 3 misses in any rolling 30 days, or at max(3, 15% of N) in total; the support case at twice that threshold or 3 misses in a row. Tracked in [#2563](https://github.com/Practitionist/familiarise_web/issues/2563).
+- **The week reminder for plans scheduled with Auto** is decided in item 6 above.
+
 ## Consequences
 
 - An inbox Decline can no longer end a confirmed booking that is being rescheduled; ending it goes through the cancel route.
