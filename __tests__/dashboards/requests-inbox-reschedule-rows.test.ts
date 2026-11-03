@@ -22,6 +22,7 @@ import {
   proposalLine,
   rowActions,
 } from "@/components/dashboard/shared/requests/InboxRow";
+import { proposalAnswerToast } from "@/components/dashboard/shared/requests/labels";
 import {
   CP,
   NOW,
@@ -108,5 +109,19 @@ describe("Requests inbox rows for a booking being moved", () => {
       const kinds = [actions.primary, ...actions.secondary].map((a) => a?.kind);
       expect(kinds).not.toContain("decline");
     }
+  });
+});
+
+describe("answering a reschedule from the inbox", () => {
+  it("never claims the original time was kept when it was taken meanwhile", () => {
+    expect(proposalAnswerToast("keep-original", "DECLINED")).toBe(
+      "Kept the original time",
+    );
+    expect(proposalAnswerToast("keep-original", "RELEASED")).toBe(
+      "That time was taken meanwhile — pick a new one",
+    );
+    expect(proposalAnswerToast("withdraw-proposal", undefined)).toBe(
+      "Request withdrawn",
+    );
   });
 });

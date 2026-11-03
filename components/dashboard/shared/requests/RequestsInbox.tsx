@@ -78,6 +78,7 @@ import {
   approvedToast,
   errorSentence,
   nextReminderLine,
+  proposalAnswerToast,
 } from "./labels";
 import { fetchWithIdentity } from "@/lib/auth/identity-header";
 import {
@@ -688,8 +689,11 @@ export function RequestsInbox({
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
         code?: string;
+        outcome?: string;
       };
-      if (response.ok) return { kind: "done" as const, answer };
+      if (response.ok) {
+        return { kind: "done" as const, answer, outcome: body.outcome };
+      }
       if (classifyProposalConflict(response.status, body.code) === "stale") {
         return { kind: "stale" as const, answer };
       }
@@ -703,12 +707,7 @@ export function RequestsInbox({
         changedElsewhere();
         return;
       }
-      toast({
-        title:
-          outcome.answer === "keep-original"
-            ? TOAST.keptOriginal
-            : TOAST.proposalWithdrawn,
-      });
+      toast({ title: proposalAnswerToast(outcome.answer, outcome.outcome) });
       invalidate();
     },
     onError: (error) => {
