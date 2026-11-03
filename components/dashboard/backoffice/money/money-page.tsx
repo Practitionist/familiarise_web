@@ -1,4 +1,4 @@
-import { notFound, permanentRedirect, redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { requireUserRole } from "@/lib/auth-guard";
 import {
@@ -7,11 +7,7 @@ import {
   isBackofficeTree,
   resolveBackofficeCapability,
 } from "@/lib/backoffice/capability";
-import {
-  findMoneyTab,
-  moneyTabsFor,
-  retiredMoneyTabHref,
-} from "@/lib/backoffice/money-tabs";
+import { findMoneyTab, moneyTabsFor } from "@/lib/backoffice/money-tabs";
 import { MoneyTabBody } from "./MoneyTabBody";
 
 /**
@@ -27,8 +23,6 @@ export async function renderMoneyTab(args: {
 }) {
   if (!isBackofficeTree(args.tree)) notFound();
   const treePath = `/dashboard/${args.tree}`;
-  const retired = retiredMoneyTabHref(treePath, args.tab);
-  if (retired) permanentRedirect(retired);
   const session = await requireUserRole(["ADMIN", "STAFF"]);
   const cap = resolveBackofficeCapability(session.user.role, args.tree);
   if (!cap) redirect("/dashboard");

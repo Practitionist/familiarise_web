@@ -1,6 +1,8 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useSession } from "@/lib/auth-client";
+import { dataConsentHref } from "@/lib/dashboard/account-href";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -145,6 +147,7 @@ export default function ClassCheckoutPage({
   const { validate: validateBillingState } = billingState;
 
   const { toast } = useToast();
+  const { data: session } = useSession();
   const {
     isBlocked: isMaintenanceBlocked,
     blockReason: maintenanceBlockReason,
@@ -303,7 +306,11 @@ export default function ClassCheckoutPage({
     }
   };
 
-  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const consentHref = session?.user ? dataConsentHref(session.user) : null;
+  const handleApiError = useMemo(
+    () => createHandleApiError(toast, consentHref),
+    [toast, consentHref],
+  );
   const handleCheckoutSuccess = useMemo(
     () => createHandleCheckoutSuccess(toast, "CLASS"),
     [toast],

@@ -98,10 +98,10 @@ export default async function EmailUnsubscribePage({
                 </p>
               )}
               <p className="text-sm">
-                {/* #1527 — /profile routes each viewer to their own
-                    Settings › Notifications (after sign-in if needed). */}
+                {/* /dashboard lands each viewer on their own dashboard, after
+                    sign-in if needed. */}
                 <Link
-                  href="/profile?section=notifications"
+                  href="/dashboard"
                   className="underline underline-offset-4"
                 >
                   Manage notification preferences in Settings

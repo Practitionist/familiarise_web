@@ -1,11 +1,9 @@
 "use client";
 
 /**
- * Members — one filterable roster plus the outstanding invitations (#1527).
+ * Members — one filterable roster plus the outstanding invitations.
  *
- * Learners and Experts used to be tabs of their own; they were only role
- * filters on the same endpoint, so they are role chips on the Members list
- * now and page.tsx redirects the old `?tab=` values onto them. The page floors
+ * Learners and Experts are role chips on the Members list, not tabs. The page floors
  * at `members.directory` (every member, #1527 decision 3): without
  * `members.read` the Members tab is the names-only directory instead of the
  * operators' table. Invitations keeps its `invitations.manage` gate.

@@ -299,9 +299,8 @@ export async function saveBookingRequestSettings(
  * one URL under `/settings/<slug>`; `group` is the titled block the left nav
  * shows it under. Settings stays ONE sidebar entry with these inside it —
  * Material's settings pattern says to group with specific titles and never to
- * split into synonyms such as "Preferences". #1527 §14 — Account leads (it
- * absorbed Security, `/profile` and change-password); "Public profile" has room
- * for Experience & education.
+ * split into synonyms such as "Preferences". Account leads (security, password
+ * and sessions); "Public profile" has room for Experience & education.
  */
 export interface SettingsSection {
   group: string;

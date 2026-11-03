@@ -35,7 +35,7 @@ export const EmailLayout = ({
         <EmailFooter
           unsubscribeLink={unsubscribeUrl ?? undefined}
           preferencesLink={
-            requiredNotice ? undefined : `${getAppUrl()}/profile`
+            requiredNotice ? undefined : `${getAppUrl()}/dashboard`
           }
           requiredNotice={requiredNotice}
           showSupport={showSupport}

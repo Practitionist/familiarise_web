@@ -31,7 +31,7 @@ Every back-office action that moves money, holds money or runs a money job goes 
 
 Every payment row in the Payments and Refunds sections, the payment detail page and the Payments and Bookings sections of User 360 carry a **Trace** action. It opens `/dashboard/<tree>/trace`, a read-only timeline of one payment's or booking's life across payments, legs, refunds, disputes, the ledger, earnings and holds, payouts, invoices and credit notes, booking history, support cases and console actions, gated by `payments.read`. The System Jobs page (`systemJobs.manage`, admin) shows seven-day run metrics per job above the job list. Both are described in [the three observability layers](../../observability/three-layers.md).
 
-The four pages the console replaced (`/dashboard/admin/payments`, `refunds`, `disputes`, `payouts`) answer a 308 to their section with the query string carried over (`moneyHubHref`). The old `/money/class-series` URL answers a 308 to Appointments filtered to classes (`retiredMoneyTabHref`).
+The four index pages the console replaced (`/dashboard/admin/payments`, `refunds`, `disputes`, `payouts`) and the old `/money/class-series` URL no longer exist; use `/dashboard/<tree>/money/<section>` and Appointments filtered to classes. `moneyHubHref` builds the section URL with a query.
 
 ## What every door checks
 

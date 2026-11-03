@@ -1,6 +1,7 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { dataConsentHref } from "@/lib/dashboard/account-href";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -370,7 +371,11 @@ export default function ConsultationCheckoutPage({
   // Shared error map covers slot-conflict types (AVAILABILITY, LOCK_CONTENTION)
   // so a slot taken mid-checkout shows a clear "pick another time" toast.
   // Matches subscription/class/webinar pages (de-dupes the old inline map).
-  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const consentHref = session?.user ? dataConsentHref(session.user) : null;
+  const handleApiError = useMemo(
+    () => createHandleApiError(toast, consentHref),
+    [toast, consentHref],
+  );
 
   const consultantProfileId = eventData?.data?.consultantProfile?.id;
   const slotJustTaken = useSlotJustTaken(consultantProfileId);

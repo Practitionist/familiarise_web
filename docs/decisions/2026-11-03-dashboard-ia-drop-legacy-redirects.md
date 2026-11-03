@@ -31,6 +31,14 @@ AGENTS.md section 1.2 says to delete dead code outright and keep no back-compat 
 - Recording and document notifications now link to the Library tab (`library?tab=recordings` or `library?tab=documents`) through `lib/novu/resolve-href.ts`.
 - `/dashboard/go/…` no longer lists `planner` or `resources`; `payments` stays because that page exists, and `offerings` stays for the editors under `offerings/[type]/…`.
 
-## Follow-up
+## Follow-up (2026-11-03)
 
-The back office (`[tree]/[...legacy]`, `lib/backoffice/legacy-routes.ts`) and the global `/profile`, `/dashboard/support/[caseKey]` and `/dashboard/evidence/[id]` redirects are untouched and go in a separate pull request. The consultant `/settings/payouts` redirect in `middleware.ts` also remains for that pull request.
+A second pull request removed the remaining legacy redirects on the same reasoning:
+
+- The back-office catch-all `[tree]/[...legacy]/page.tsx` and `lib/backoffice/legacy-routes.ts`, with their tests. The retired URLs `payments`, `refunds`, `payouts`, `disputes`, `approval-payments`, `documents`, `feedbacks`, `data-breaches` and the old `staff/<StaffProfile id>/…` prefix now answer 404. The payment and dispute detail pages stay. `staffTwinHref` is not a legacy redirect (it sends STAFF who open an admin URL to the same page in their tree), so it moved to `lib/backoffice/capability.ts`.
+- The four orphaned index `loading.tsx` files under `[tree]/payments`, `disputes`, `payouts` and `refunds`, and `retiredMoneyTabHref` (the `/money/class-series` 308).
+- The global `/profile` page and layout. Links that pointed at it now use `accountSettingsHref` or `dataConsentHref` where the viewer is known, and `/dashboard` (which lands each viewer on their own dashboard) where it is not: the email footer, the unsubscribe page and the account-menu fallback. The checkout consent toast now links straight to Settings › Account.
+- The consultant `/settings/payouts` 308 in `middleware.ts`; the section lives at `/settings/get-paid`.
+- The org Members `?tab=all|learners|experts` aliases. The page reads `tab` through a `z.enum(["members", "invitations"])` with a `members` fallback.
+
+Kept, because they do real work: `/dashboard/support/[caseKey]` (authorizes the case, then resolves the viewer's own case page) and `/dashboard/evidence/[requestId]` (looks up the evidence request, checks attachment access, then resolves the viewer's inbox). Notifications and emails link to these two role-neutral URLs. `/settings/change-password` is also a redirect-only page that was not in this pull request's list and remains.

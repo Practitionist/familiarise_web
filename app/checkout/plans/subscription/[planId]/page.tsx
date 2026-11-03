@@ -1,6 +1,8 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useSession } from "@/lib/auth-client";
+import { dataConsentHref } from "@/lib/dashboard/account-href";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -133,6 +135,7 @@ export default function SubscriptionCheckoutPage({
       : { kind: "gateway" };
 
   const { toast } = useToast();
+  const { data: session } = useSession();
   const {
     isBlocked: isMaintenanceBlocked,
     blockReason: maintenanceBlockReason,
@@ -280,7 +283,11 @@ export default function SubscriptionCheckoutPage({
   };
 
   // Create utility functions using the toast instance
-  const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const consentHref = session?.user ? dataConsentHref(session.user) : null;
+  const handleApiError = useMemo(
+    () => createHandleApiError(toast, consentHref),
+    [toast, consentHref],
+  );
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic

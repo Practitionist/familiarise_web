@@ -15,7 +15,6 @@ export default function robots(): MetadataRoute.Robots {
         "/auth/",
         "/checkout/",
         "/settings/",
-        "/profile",
         "/meetings/",
         "/files/",
         "/organizations/invite/",

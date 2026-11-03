@@ -1,6 +1,6 @@
 /**
- * #1527 Q3 — one back-office route tree. Pins the capability matrix (tree =
- * audience, role caps it) and every retired URL's new home.
+ * One back-office route tree. Pins the capability matrix (tree = audience,
+ * role caps it) and the staff twin of an admin URL.
  */
 
 import {
@@ -8,13 +8,8 @@ import {
   can,
   isBackofficeTree,
   resolveBackofficeCapability,
-} from "@/lib/backoffice/capability";
-import {
-  legacyBackofficeHref,
   staffTwinHref,
-} from "@/lib/backoffice/legacy-routes";
-
-const UUID = "3f2b8c1e-9a4d-4e6b-8f0a-1c2d3e4f5a6b";
+} from "@/lib/backoffice/capability";
 
 describe("resolveBackofficeCapability / can", () => {
   it("admits only operators, and never STAFF into the admin tree", () => {
@@ -56,54 +51,7 @@ describe("resolveBackofficeCapability / can", () => {
   });
 });
 
-describe("legacyBackofficeHref", () => {
-  it.each([
-    ["staff", [UUID], {}, "/dashboard/staff/support"],
-    [
-      "staff",
-      [UUID, "money", "payouts"],
-      { tab: "x" },
-      "/dashboard/staff/money/payouts?tab=x",
-    ],
-    [
-      "staff",
-      [UUID, "approval-payments"],
-      {},
-      "/dashboard/staff/appointments?tab=awaiting-payment",
-    ],
-    [
-      "admin",
-      ["approval-payments"],
-      { page: "2" },
-      "/dashboard/admin/appointments?page=2&tab=awaiting-payment",
-    ],
-    ["staff", ["documents"], {}, "/dashboard/staff/verification?tab=documents"],
-    ["admin", ["feedbacks"], {}, "/dashboard/admin/feedback"],
-    [
-      "admin",
-      ["data-breaches"],
-      {},
-      "/dashboard/admin/compliance?tab=breaches",
-    ],
-    [
-      "admin",
-      ["data-breaches", "b1"],
-      {},
-      "/dashboard/admin/compliance?tab=breaches&id=b1",
-    ],
-    ["admin", [], {}, "/dashboard/admin/home"],
-  ] as const)("%s %j %j → %s", (tree, segments, query, expected) => {
-    expect(legacyBackofficeHref(tree, segments, query)).toBe(expected);
-  });
-
-  it("404s anything unknown, including a UUID outside the staff tree", () => {
-    expect(legacyBackofficeHref("admin", ["nope"])).toBeNull();
-    expect(legacyBackofficeHref("admin", [UUID])).toBeNull();
-    expect(legacyBackofficeHref("staff", [UUID, "nope", "deeper"])).toBe(
-      "/dashboard/staff/nope/deeper",
-    );
-  });
-
+describe("staffTwinHref", () => {
   it("sends STAFF opening the admin tree to the same page in theirs", () => {
     expect(staffTwinHref("/dashboard/admin/money/payments?x=1")).toBe(
       "/dashboard/staff/money/payments?x=1",
