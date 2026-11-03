@@ -149,6 +149,18 @@ export default function PendingPayoutsSection() {
       ),
     },
     {
+      key: "payoutId",
+      header: "Payout ID",
+      cell: (payout) => (
+        <span
+          className="font-mono text-xs text-muted-foreground"
+          title={payout.id}
+        >
+          {payout.id.slice(-8).toUpperCase()}
+        </span>
+      ),
+    },
+    {
       key: "amount",
       header: "Amount",
       cell: (payout) => (

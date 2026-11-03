@@ -97,11 +97,15 @@ const columns: ResponsiveColumn<OrgPayoutRow>[] = [
     key: "org",
     header: "Organisation",
     primary: true,
+    cell: (r) => <p className="text-sm font-medium">{r.organization.name}</p>,
+  },
+  {
+    key: "payoutId",
+    header: "Payout ID",
     cell: (r) => (
-      <div>
-        <p className="text-sm font-medium">{r.organization.name}</p>
-        <p className="text-xs text-muted-foreground">{r.id}</p>
-      </div>
+      <span className="font-mono text-xs text-muted-foreground" title={r.id}>
+        {r.id.slice(-8).toUpperCase()}
+      </span>
     ),
   },
   {

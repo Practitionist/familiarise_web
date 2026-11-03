@@ -240,7 +240,11 @@ export function ResponsiveTable<T>({
     }
     if (onRowClick) {
       return {
-        onClick: () => onRowClick(row),
+        onClick: () => {
+          // Selecting text to copy must not also activate the row.
+          if (window.getSelection()?.toString()) return;
+          onRowClick(row);
+        },
         onKeyDown: (e: React.KeyboardEvent<HTMLElement>) =>
           onRowKey(e, () => onRowClick(row)),
         tabIndex: 0,

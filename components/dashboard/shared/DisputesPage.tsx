@@ -165,6 +165,12 @@ const DISPUTE_COLUMNS: ResponsiveColumn<Dispute>[] = [
         <p className="font-mono text-sm">
           {dispute.disputeId?.slice(-12) || dispute.id.slice(-8).toUpperCase()}
         </p>
+        <p className="text-xs text-muted-foreground/70">
+          Internal:{" "}
+          <span className="font-mono" title={dispute.id}>
+            {dispute.id.slice(-8).toUpperCase()}
+          </span>
+        </p>
         {dispute.payment && (
           <p className="text-xs text-muted-foreground/70">
             Payment: {dispute.payment.paymentIntent.slice(-12)}
