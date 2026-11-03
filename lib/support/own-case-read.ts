@@ -1,12 +1,14 @@
 import {
   ORG_FILED_CASE_TITLE,
   canCorrespondOnCase,
+  isPresenterOnCase,
   projectCaseForViewer,
   visibleCaseWhere,
 } from "./case-access";
 import prisma from "@/lib/prisma";
 import type { OwnTicketCase } from "@/types/support-case";
 import { caseKeyOf } from "./case-key";
+import { isPresenterAuthoredMessage } from "./case-message-actor";
 import { ticketTopic } from "./case-topic";
 import { TIMELINE_LIMIT, readPayment } from "./case-workspace";
 
@@ -24,9 +26,13 @@ export async function readOwnSupportCase(
   });
   if (!c) return null;
   const canReply = await canCorrespondOnCase(c, { userId, role: "CONSULTEE" });
-  const redact = projectCaseForViewer(c, userId, canReply).summaryOnly;
+  const isPresenter = !canReply && (await isPresenterOnCase(c, userId));
+  const canRead = canReply || isPresenter;
+  if (!canRead && c.requesterUserId !== userId) return null;
+  const redact =
+    !canRead || projectCaseForViewer(c, userId, canRead).summaryOnly;
   const [payment, rows] = await Promise.all([
-    redact
+    redact || !canReply
       ? null
       : readPayment(
           c.subjects.find((s) => s.subjectType === "PAYMENT")?.subjectId ??
@@ -52,9 +58,10 @@ export async function readOwnSupportCase(
     status: c.status,
     ackDueAt: c.ackDueAt?.toISOString() ?? null,
     resolvedAt: c.resolvedAt?.toISOString() ?? null,
-    csatRating: redact ? null : c.csatRating,
+    csatRating: redact || !canReply ? null : c.csatRating,
     filedByOrganizationNotice: redact,
-    canReply: !redact && canReply,
+    canReply: !redact && canRead,
+    viewerIsPresenter: isPresenter,
     createdAt: c.createdAt.toISOString(),
     payment,
     organization: c.organization,
@@ -65,6 +72,9 @@ export async function readOwnSupportCase(
       authorName: m.authorUser?.name ?? null,
       body: m.body,
       internal: false,
+      actorKind: isPresenterAuthoredMessage(m.metadata)
+        ? ("PRESENTER" as const)
+        : undefined,
       at: m.createdAt.toISOString(),
     })),
     hasMore: rows.length > TIMELINE_LIMIT,

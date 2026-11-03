@@ -14,7 +14,7 @@ export function canaryAlertRecipient(): string {
   return process.env.OBSERVABILITY_ALERT_EMAIL || supportEmail();
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

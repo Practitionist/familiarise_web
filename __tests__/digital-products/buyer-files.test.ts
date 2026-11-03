@@ -28,6 +28,7 @@ const row = (
   version,
   status: supersededDay === null ? "VERIFIED" : "SUPERSEDED",
   originalName: `${id}.pdf`,
+  mimeType: "application/pdf",
   sizeBytes: 10,
   order: 0,
   createdAt: at(liveDay),
@@ -49,11 +50,12 @@ it("badges new and updated files until downloaded, keeps first names and lists r
     ["extra", "extra.pdf"],
     ["gone", "gone.pdf"],
   ]);
+  const nameOf = (r: BuyerAssetRow) => names.get(r.lineageId) ?? r.originalName;
   const before = buyerFileView({
     purchasedAt,
     rows,
     lastDownloadByLineage: new Map(),
-    names,
+    nameOf,
   });
   expect(before.files.map((f) => [f.name, f.badge])).toEqual([
     ["doc.pdf", "updated"],
@@ -72,7 +74,7 @@ it("badges new and updated files until downloaded, keeps first names and lists r
       ["doc", at(10)],
       ["extra", at(10)],
     ]),
-    names,
+    nameOf,
   });
   expect(after.files.map((f) => f.badge)).toEqual([null, null]);
 
@@ -81,7 +83,7 @@ it("badges new and updated files until downloaded, keeps first names and lists r
     purchasedAt,
     rows: [row("extra", "extra", 1, 8, 12), row("extra-v2", "extra", 2, 12)],
     lastDownloadByLineage: new Map([["extra", at(10)]]),
-    names,
+    nameOf,
   });
   expect(replaced.files.map((f) => [f.name, f.badge])).toEqual([
     ["extra.pdf", "updated"],

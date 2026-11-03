@@ -90,7 +90,7 @@ export function SupportHome({ orgId }: Readonly<{ orgId: string }>) {
           </Link>
         </Button>
         <Button asChild size="sm" variant="outline">
-          <Link href={`${base}/documents`}>Documents</Link>
+          <Link href={`${base}/library?tab=documents`}>Documents</Link>
         </Button>
       </div>
     </>

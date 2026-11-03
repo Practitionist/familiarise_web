@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { revalidatePath } from "next/cache";
+import { purgeRecordingSurfaces } from "@/lib/data/public-cache";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { guardOwnedListingRecording } from "@/lib/stream/recording-listing-access";
@@ -33,8 +33,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     });
 
     // Take the replay off the public library immediately.
-    revalidatePath("/explore/recordings");
-    if (updated.slug) revalidatePath(`/explore/recordings/${updated.slug}`);
+    purgeRecordingSurfaces([updated.slug]);
 
     return NextResponse.json({ data: updated });
   }, "stream");

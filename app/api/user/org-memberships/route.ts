@@ -14,7 +14,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import prisma from "@/lib/prisma";
+import { findSwitcherMemberships } from "@/lib/dashboard/switcher-memberships";
 import { getSession } from "@/lib/auth-server";
 import { supportError } from "@/lib/api/support-http";
 
@@ -28,28 +28,7 @@ export async function GET(request: NextRequest) {
     }
 
     const all = request.nextUrl.searchParams.get("all") === "1";
-    const memberships = await prisma.membership.findMany({
-      where: all
-        ? {
-            userId: session.user.id,
-            status: { in: ["ACTIVE", "PENDING", "SUSPENDED"] },
-            organization: { status: { not: "DEACTIVATED" } },
-          }
-        : { userId: session.user.id, status: "ACTIVE" },
-      orderBy: { createdAt: "asc" },
-      select: {
-        organizationId: true,
-        role: true,
-        status: true,
-        organization: {
-          select: {
-            name: true,
-            status: true,
-            brandingProfile: { select: { logo: true } },
-          },
-        },
-      },
-    });
+    const memberships = await findSwitcherMemberships(session.user.id, all);
 
     return NextResponse.json(
       {

@@ -11,6 +11,8 @@
  * combination instead of regex-scanning layout source.
  */
 
+jest.mock("@/lib/auth-client", () => ({ useSession: jest.fn() }));
+
 import { existsSync } from "fs";
 import { join } from "path";
 import type { MemberRole } from "@prisma/client";
@@ -27,7 +29,12 @@ import { buildConsulteeNav } from "@/lib/dashboard/nav/consultee";
 import { buildOrganizationNav } from "@/lib/dashboard/nav/organization";
 import { buildWorkspaceNav } from "@/lib/dashboard/nav/workspace";
 import { flattenNav, type DashboardNav } from "@/lib/dashboard/nav/types";
-import { canOpenOrgSettings } from "@/lib/dashboard/org-settings-sections";
+import { accountSettingsLinks } from "@/components/dashboard/DashboardShellParts";
+import {
+  canOpenOrgSettings,
+  orgSettingsHref,
+  orgSettingsLabel,
+} from "@/lib/dashboard/org-settings-sections";
 
 const APP = join(process.cwd(), "app/dashboard");
 
@@ -100,6 +107,36 @@ describe("personal + workspace nav targets resolve", () => {
     expectTabsAreItems(nav);
   });
 
+  it("the Library is a phone tab for learners and a top-level item for experts", () => {
+    const learner = buildConsulteeNav("ce-1");
+    expect(learner.mobileTabs).toEqual([
+      "home",
+      "appointments",
+      "library",
+      "messages",
+    ]);
+    // Billing stays reachable from the Menu sheet, which lists every item.
+    expect(flattenNav(learner).map((i) => i.path)).toContain("payments");
+    const expert = flattenNav(buildConsultantNav("cp-1"));
+    expect(expert.find((i) => i.path === "library")?.name).toBe("My library");
+    expect(expert.map((i) => i.path)).not.toContain("purchases");
+  });
+
+  it("the expert tree splits Sell from Studio and keeps no Offerings item", () => {
+    const nav = buildConsultantNav("cp-1");
+    const group = (label: string) =>
+      nav.groups.find((g) => g.label === label)?.items.map((i) => i.path);
+    expect(group("Sell")).toEqual([
+      "sell/sessions",
+      "sell/programs",
+      "sell/products",
+      "collaborations",
+    ]);
+    expect(group("Studio")).toEqual(["recordings", "documents"]);
+    expect(flattenNav(nav).map((i) => i.path)).not.toContain("offerings");
+    expect(nav.groups.every((g) => g.items.length <= 4)).toBe(true);
+  });
+
   it("header CTAs and Help targets point at real pages", () => {
     expect(buildConsultantNav("cp-1").pinnedCta?.href).toBe(
       "/explore/experts/cp-1",
@@ -169,6 +206,8 @@ describe("org nav targets resolve for every role × capability", () => {
     "disputes",
     "reimbursements",
     "materials",
+    "documents",
+    "recordings",
   ];
 
   const cases = ROLES.flatMap((role) =>
@@ -202,6 +241,17 @@ describe("org nav targets resolve for every role × capability", () => {
       consultantProfileId: "cp-1",
     });
     expect(flattenNav(nav).length).toBeLessThanOrEqual(18);
+    expect(nav.groups.map((g) => g.label ?? g.items[0].name)).toEqual([
+      "Overview",
+      "My work",
+      "Messages",
+      "Library",
+      "People",
+      "Sponsor",
+      "Host",
+      "Insights",
+      "Help & support",
+    ]);
     expect(nav.mobileTabs).toEqual([
       "home",
       "appointments",
@@ -217,14 +267,13 @@ describe("org nav targets resolve for every role × capability", () => {
  */
 describe("org nav role walk (#1527 matrix)", () => {
   const OPS = ["analytics"];
-  // #1527 — Library (Documents · Recordings) is every member's.
+  // The Library (Session documents · Session recordings) is every member's.
   const BASE = [
     "home",
     "appointments",
     "messages",
     "members",
-    "documents",
-    "recordings",
+    "library",
     "support",
   ];
   const EXPECTED: Record<MemberRole, string[]> = {
@@ -233,9 +282,9 @@ describe("org nav role walk (#1527 matrix)", () => {
       "programs",
       "contracts",
       "catalog",
+      "collaborators",
       "billing",
       "payouts",
-      "settings",
       ...OPS,
       "audit",
       "consent",
@@ -245,9 +294,9 @@ describe("org nav role walk (#1527 matrix)", () => {
       "programs",
       "contracts",
       "catalog",
+      "collaborators",
       "billing",
       "payouts",
-      "settings",
       ...OPS,
       "audit",
       "consent",
@@ -260,7 +309,6 @@ describe("org nav role walk (#1527 matrix)", () => {
       "contracts",
       "billing",
       "payouts",
-      "settings",
       "audit",
     ],
     // Decision 1 (no Payouts) and no Contracts; programs for seat assignment.
@@ -268,6 +316,7 @@ describe("org nav role walk (#1527 matrix)", () => {
       ...BASE,
       "programs",
       "catalog",
+      "collaborators",
       "billing",
       ...OPS,
       "audit",
@@ -344,15 +393,23 @@ describe("no redundant group nesting", () => {
 
 describe("where Settings lives", () => {
   it.each([
-    ["consultant", buildConsultantNav("cp-1")],
-    ["consultee", buildConsulteeNav("ce-1")],
-    ["workspace", buildWorkspaceNav("ow-1")],
-    ["admin", buildBackofficeDashboardNav(backofficeCap("admin"))],
-    ["staff", buildBackofficeDashboardNav(backofficeCap("staff"))],
-  ] as const)("%s exposes Settings once under Operations", (_name, nav) => {
+    ["consultant", buildConsultantNav("cp-1"), "Settings & help"],
+    ["consultee", buildConsulteeNav("ce-1"), "Operations"],
+    ["workspace", buildWorkspaceNav("ow-1"), "Operations"],
+    [
+      "admin",
+      buildBackofficeDashboardNav(backofficeCap("admin")),
+      "Operations",
+    ],
+    [
+      "staff",
+      buildBackofficeDashboardNav(backofficeCap("staff")),
+      "Operations",
+    ],
+  ] as const)("%s exposes Settings once under %s", (_name, nav, label) => {
     expect(
       nav.groups
-        .find((group) => group.label === "Operations")
+        .find((group) => group.label === label)
         ?.items.some((item) => item.path === "settings"),
     ).toBe(true);
     expect(
@@ -368,18 +425,36 @@ describe("where Settings lives", () => {
     "SUPPORT",
     "EXPERT",
     "LEARNER",
-  ] as const)("%s sees only permitted organization settings", (role) => {
-    const nav = buildOrganizationNav({
-      orgId: "org-1",
-      role,
-      canSponsor: true,
-      canHost: true,
-      consultantProfileId: null,
-    });
-    expect(flattenNav(nav).some((item) => item.path === "settings")).toBe(
-      canOpenOrgSettings(role),
-    );
-  });
+  ] as const)(
+    "%s has no org settings rail item; the account links carry it",
+    (role) => {
+      const nav = buildOrganizationNav({
+        orgId: "org-1",
+        role,
+        canSponsor: true,
+        canHost: true,
+        consultantProfileId: null,
+      });
+      expect(flattenNav(nav).some((item) => item.path === "settings")).toBe(
+        false,
+      );
+      const links = accountSettingsLinks({
+        name: null,
+        image: null,
+        roleLabel: "",
+        settingsHref: null,
+        orgSettings: canOpenOrgSettings(role)
+          ? {
+              label: orgSettingsLabel("Acme"),
+              href: orgSettingsHref("org-1"),
+            }
+          : null,
+      });
+      expect(links.some((link) => link.key === "org")).toBe(
+        canOpenOrgSettings(role),
+      );
+    },
+  );
 
   it("the avatar menu's org entry follows the settings sections", () => {
     const roles: MemberRole[] = [

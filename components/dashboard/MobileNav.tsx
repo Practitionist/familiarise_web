@@ -199,7 +199,7 @@ export function MobileNav({
                 className={SHEET_ROW_CLASS}
               >
                 <Inbox className="h-5 w-5" />
-                Support requests
+                {support.label}
               </Link>
             )}
             {support?.feedbackHref && (
@@ -212,19 +212,16 @@ export function MobileNav({
                 Send feedback
               </Link>
             )}
-            {orgSettings &&
-              !items.some(
-                (item) => `${basePath}/${item.path}` === orgSettings.href,
-              ) && (
-                <Link
-                  href={orgSettings.href}
-                  onClick={close}
-                  className={SHEET_ROW_CLASS}
-                >
-                  <Building2 className="h-5 w-5 shrink-0" />
-                  <span className="truncate">{orgSettings.label}</span>
-                </Link>
-              )}
+            {orgSettings && (
+              <Link
+                href={orgSettings.href}
+                onClick={close}
+                className={SHEET_ROW_CLASS}
+              >
+                <Building2 className="h-5 w-5 shrink-0" />
+                <span className="truncate">{orgSettings.label}</span>
+              </Link>
+            )}
             <button
               type="button"
               onClick={onSignOut}

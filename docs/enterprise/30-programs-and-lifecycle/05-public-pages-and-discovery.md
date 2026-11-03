@@ -112,10 +112,10 @@ Separate from marketplace discovery: public marketing routes that explain the
 sponsor product and route buyers to sales. These do **not** list private
 sponsor orgs.
 
-| Route | Role |
-|---|---|
-| `/enterprise` | B2B landing — Familiarise Enterprise overview |
-| `/enterprise/team-training` | Licensed-seat / cohort training narrative |
+| Route                              | Role                                             |
+| ---------------------------------- | ------------------------------------------------ |
+| `/enterprise`                      | B2B landing — Familiarise Enterprise overview    |
+| `/enterprise/team-training`        | Licensed-seat / cohort training narrative        |
 | `/enterprise/corporate-mentorship` | Credit-pool / sponsored 1:1 mentorship narrative |
 
 Navbar: **Enterprise** list dropdown (overview, program pages, Talk to sales).
@@ -128,7 +128,7 @@ primary CTA → `/enterprise`. Chrome: dark-hero routes registered in
 
 A HOST or HYBRID org that sets `Organization.isPublic = true` becomes discoverable through two surfaces.
 
-The list surface is `app/explore/enterprise/organisations/page.tsx`, backed by the unauthenticated `GET /api/organizations/public`. Its query filters to `isPublic = true AND status = "ACTIVE"` (deletedAt is null). Capability (`canHost`) is deliberately **not** a listing precondition: while `ENABLE_HOST_ORGS` is off, no org can set `canHost`, so a capability filter would make the directory structurally empty. It accepts optional `industry` (a case-insensitive contains match) and `search` filters, and uses cursor-style pagination with a page size of 24 capped at 50. Both surfaces revalidate on a 300-second ISR window.
+The list surface is `app/explore/enterprise/organisations/(index)/page.tsx`, backed by the unauthenticated `GET /api/organizations/public`. Its query filters to `isPublic = true AND status = "ACTIVE"` (deletedAt is null). Capability (`canHost`) is deliberately **not** a listing precondition: while `ENABLE_HOST_ORGS` is off, no org can set `canHost`, so a capability filter would make the directory structurally empty. It accepts optional `industry` (a case-insensitive contains match) and `search` filters, and uses cursor-style pagination with a page size of 24 capped at 50. Both surfaces revalidate on a 300-second ISR window.
 
 The detail surface is `app/explore/enterprise/organisations/[orgSlug]/page.tsx` (also `revalidate = 300`). It resolves the org by its `slug` under the same `isPublic + ACTIVE` guard, then renders the org's branding plus up to six of each per-type plan, each filtered to `visibility ∈ {PUBLIC, ORG_AND_PUBLIC}`. SPONSOR-only orgs may appear when their owner opts in via `isPublic`; confidentiality for B2B clients is governed by that opt-in switch, not by hosting capability.
 

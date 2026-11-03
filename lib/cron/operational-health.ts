@@ -45,20 +45,14 @@ export function freshnessBudgetMinutes(target: Target): number {
   return gap + Math.min(gap, MISSED_SLOT_CAP_MINUTES) + FRESHNESS_FLOOR_MINUTES;
 }
 
-/** One requirement per ticker target; a target whose core writes no run row has nothing to judge. */
+/** One requirement per ticker target, under the run-row name its core writes. */
 export const OPERATIONAL_COMPLETION_REQUIREMENTS: readonly CompletionRequirement[] =
-  TARGETS.flatMap((target) => {
-    const jobName = jobNameFor(target);
-    if (jobName === null) return [];
-    return [
-      {
-        target,
-        jobName,
-        maxAgeMinutes: freshnessBudgetMinutes(target),
-        tier: WATCHED_TARGETS.has(target) ? "watched" : "paging",
-      },
-    ];
-  });
+  TARGETS.map((target) => ({
+    target,
+    jobName: jobNameFor(target),
+    maxAgeMinutes: freshnessBudgetMinutes(target),
+    tier: WATCHED_TARGETS.has(target) ? "watched" : "paging",
+  }));
 
 export interface JobCompletion {
   jobName: string;

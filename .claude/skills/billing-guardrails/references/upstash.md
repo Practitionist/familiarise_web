@@ -18,6 +18,7 @@ One database, `Familiarise`, region `ap-south-1`, on pay-as-you-go since 2026-09
 - `lib/rate-limit.ts` `makeLimiter` builds sliding-window limiters with a `LIMITER_TIMEOUT_MS` constant of 500 ms (fail-open on timeout) and does not enable `analytics`, saving one command per request. Keep it that way.
 - Do not run rate-limit Redis calls on static assets (`/_next/static/*`, `/_next/image/*`, `/favicon.ico`) or CDN-cached health and announcements endpoints.
 - `lib/maintenance-edge.ts` reads `maintenance:phase` with a 200 ms timeout; failed reads cache OFF for 30 s, so slowness multiplies reads.
+- The usage alarm is a section of the daily `ops-digest` (`upstashSection` in `lib/observability/ops-digest.ts`), not an Actions step. It reads the Upstash management API with `UPSTASH_MANAGEMENT_API_KEY`, `UPSTASH_EMAIL` and `UPSTASH_DATABASE_ID`, compares against `UPSTASH_MONTHLY_COMMAND_CAP`, and lists a standing item from 70 %. All four settings must be in the Netlify production environment, or the section reads "unknown".
 - The cron platform switch `ops:active_cron_platform` lives here; the standby design reads it on every tick.
 - Production, deploy previews and branch deploys still share this database (issue #2145, item A4: a separate preview database is decided but not created).
 

@@ -1,88 +1,23 @@
-"use client";
+import { notFound } from "next/navigation";
 
-import { use, useMemo } from "react";
-import type { User } from "@prisma/client";
+import { requireOnboarded } from "@/lib/auth-guard";
+import { viewerMayOpenProfile } from "@/lib/dashboard/profile-access";
+import ConsulteeDashboardLayout from "./ConsulteeDashboardLayout";
 
-import { BreadcrumbOverrideProvider } from "@/components/dashboard/breadcrumb-override";
-import {
-  PersonalDashboardLayoutCore,
-  type PersonalDashboardUser,
-} from "@/components/dashboard/PersonalDashboardLayoutCore";
-import {
-  buildConsulteeNav,
-  CONSULTEE_PAGE_LABELS,
-} from "@/lib/dashboard/nav/consultee";
-import { usePersonalNavBadges } from "@/hooks/usePersonalNavBadges";
-import { fetchConsulteeDetails } from "@/lib/user";
-import { PERSONAL_SIDE_LABEL } from "@/lib/labels/personal-dashboard";
-import { UserProvider } from "./UserContext";
-import { consulteeSettingsGroups } from "./(features)/settings/settings";
-
-const PREFETCH_SUFFIXES = ["home"];
-
-// Module-level so it is not a nested component definition: the shell must
-// not remount the provider subtree on every layout render.
-// Boundary cast: the core's structural user carries the Prisma User payload
-// at runtime; UserProvider types it as Prisma User.
-function wrapConsulteeShell(
-  shell: React.ReactNode,
-  user: PersonalDashboardUser,
-) {
-  return <UserProvider userDetails={user as User}>{shell}</UserProvider>;
-}
-
-interface PageProps {
+/** A missing or not-owned profile id 404s here, above this segment's loading.tsx, so the status is real. */
+export default async function ConsulteeLayout({
+  children,
+  params,
+}: Readonly<{
   children: React.ReactNode;
   params: Promise<{ consulteeId: string }>;
-}
-
-export default function ConsulteeLayout(props: Readonly<PageProps>) {
+}>) {
+  const { consulteeId } = await params;
+  const { user } = await requireOnboarded();
+  if (!(await viewerMayOpenProfile("consultee", consulteeId, user))) notFound();
   return (
-    <BreadcrumbOverrideProvider>
-      <ConsulteeLayoutInner {...props} />
-    </BreadcrumbOverrideProvider>
-  );
-}
-
-function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
-  const { consulteeId } = use(params);
-  const nav = useMemo(() => buildConsulteeNav(consulteeId), [consulteeId]);
-  const settingsGroups = useMemo(
-    () => consulteeSettingsGroups(consulteeId),
-    [consulteeId],
-  );
-  const badges = usePersonalNavBadges({});
-
-  return (
-    <PersonalDashboardLayoutCore
-      routeParam={consulteeId}
-      nav={nav}
-      settingsGroups={settingsGroups}
-      badges={badges}
-      chipRole={PERSONAL_SIDE_LABEL.consultee}
-      identityFallbackName={PERSONAL_SIDE_LABEL.consultee}
-      pageLabels={CONSULTEE_PAGE_LABELS}
-      profileQueryKey={["consultee-profile", consulteeId]}
-      fetchProfile={() => fetchConsulteeDetails(consulteeId)}
-      profileGatesOnUser={false}
-      profileOwnerName={(profile) => profile?.user?.name}
-      hasAccess={(user) =>
-        !!user &&
-        (user.role === "ADMIN" ||
-          user.role === "STAFF" ||
-          user.consulteeProfileId === consulteeId)
-      }
-      resolveRedirectTarget={(user) =>
-        user.consulteeProfileId && user.consulteeProfileId !== consulteeId
-          ? `/dashboard/consultee/${user.consulteeProfileId}/home`
-          : "/dashboard"
-      }
-      prefetchSuffixes={PREFETCH_SUFFIXES}
-      requireUserDetails
-      includeUserError
-      wrapShell={wrapConsulteeShell}
-    >
+    <ConsulteeDashboardLayout params={params}>
       {children}
-    </PersonalDashboardLayoutCore>
+    </ConsulteeDashboardLayout>
   );
 }

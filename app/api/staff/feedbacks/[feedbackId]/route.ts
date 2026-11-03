@@ -97,7 +97,7 @@ export async function PATCH(
       }
 
       const statusChanged = existing.status !== nextStatus;
-      const dashboardUrl = goHref("auto", "feedbacks");
+      const dashboardUrl = goHref("auto", "support/feedback");
       const stagedBell = statusChanged
         ? await stageBell(tx, {
             workflowId: NOVU_WORKFLOWS.PLATFORM_FEEDBACK_UPDATE,

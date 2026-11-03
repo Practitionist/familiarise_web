@@ -1,9 +1,11 @@
 import "server-only";
 
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import type { DigitalProductCategory, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { digitalProductDiscoverableWhere } from "@/lib/api/plans/visibility";
+import { PUBLIC_PRODUCTS_TAG } from "@/lib/digital-products/constants";
 import { lineageDisplayNames } from "@/lib/digital-products/lineage";
 
 /**
@@ -68,6 +70,47 @@ export const getConsultantDigitalProducts = cache(
   },
 );
 
+export interface PublicProductListItem extends PublicProductCard {
+  creator: { consultantProfileId: string; name: string | null };
+}
+
+/** The marketplace listing: products on sale, newest first. Purged by `purgeDigitalProductSurfaces`. */
+export const listPublicDigitalProducts = unstable_cache(
+  async (perPage: number): Promise<PublicProductListItem[]> => {
+    const rows = await prisma.digitalProduct.findMany({
+      where: {
+        ...digitalProductDiscoverableWhere(),
+        consultantProfile: { deletedAt: null },
+      },
+      orderBy: [{ publishedAt: "desc" }, { id: "asc" }],
+      take: perPage,
+      select: {
+        id: true,
+        slug: true,
+        title: true,
+        subtitle: true,
+        category: true,
+        pricePaise: true,
+        coverImagePath: true,
+        _count: { select: { assets: { where: VERIFIED } } },
+        consultantProfile: {
+          select: { id: true, user: { select: { name: true } } },
+        },
+      },
+    });
+    return rows.map(({ _count, consultantProfile, ...row }) => ({
+      ...row,
+      fileCount: _count.assets,
+      creator: {
+        consultantProfileId: consultantProfile.id,
+        name: consultantProfile.user.name,
+      },
+    }));
+  },
+  ["public-digital-products"],
+  { revalidate: 300, tags: [PUBLIC_PRODUCTS_TAG] },
+);
+
 const PRODUCT_PAGE_SELECT = {
   id: true,
   slug: true,
@@ -106,23 +149,21 @@ function findProductPage(where: Prisma.DigitalProductWhereInput) {
   });
 }
 
-/** File names are each lineage's first name, so a replacement never renames a file. */
+/** File names keep each lineage's first stem, so a replacement changes at most the extension. */
 async function toPublicProduct(
   row: NonNullable<Awaited<ReturnType<typeof findProductPage>>>,
 ): Promise<PublicProduct> {
   const { consultantProfile, assets, ...product } = row;
-  const names = await lineageDisplayNames(prisma, assets);
+  const nameOf = await lineageDisplayNames(prisma, assets);
   return {
     ...product,
     fileCount: assets.length,
-    files: assets.map(
-      ({ id, lineageId, originalName, mimeType, sizeBytes }) => ({
-        id,
-        originalName: names.get(lineageId) ?? originalName,
-        mimeType,
-        sizeBytes,
-      }),
-    ),
+    files: assets.map((a) => ({
+      id: a.id,
+      originalName: nameOf(a),
+      mimeType: a.mimeType,
+      sizeBytes: a.sizeBytes,
+    })),
     creator: {
       consultantProfileId: consultantProfile.id,
       name: consultantProfile.user.name,

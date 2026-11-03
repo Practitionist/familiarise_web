@@ -21,6 +21,10 @@
  * transitions an anonymous visitor can actually observe. (#932)
  */
 import { revalidatePath, revalidateTag } from "next/cache";
+import { PUBLIC_PRODUCTS_TAG } from "@/lib/digital-products/constants";
+
+/** Next data-cache tag of the public Replays list. */
+export const PUBLIC_RECORDINGS_TAG = "recordings";
 
 const EXPERTS_DIRECTORY = "/explore/experts";
 const ORGANISATIONS_DIRECTORY = "/explore/enterprise/organisations";
@@ -37,6 +41,9 @@ export function purgeExpertSurfaces(consultantProfileId?: string | null): void {
   // Landing page reads getHomeExperts (tags: experts, home); the directory reads
   // getExpertsMetadata + getCuratedExperts (tag: experts).
   revalidateTag("experts");
+  // Product and replay cards carry the creator's name and avatar.
+  revalidateTag(PUBLIC_PRODUCTS_TAG);
+  revalidateTag(PUBLIC_RECORDINGS_TAG);
   revalidatePath("/");
   revalidatePath(EXPERTS_DIRECTORY);
   if (consultantProfileId) {
@@ -78,4 +85,17 @@ export function purgeDigitalProductSurfaces(product: {
 }): void {
   revalidatePath(`${EXPERTS_DIRECTORY}/${product.consultantProfileId}`);
   revalidatePath(`/explore/products/${product.slug}`);
+  revalidateTag(PUBLIC_PRODUCTS_TAG);
+  revalidatePath("/explore/products");
+}
+
+/** Replays left the public listing or their listing changed: the Replays tab, its list cache and each detail page. */
+export function purgeRecordingSurfaces(
+  slugs: (string | null | undefined)[] = [],
+): void {
+  revalidateTag(PUBLIC_RECORDINGS_TAG);
+  revalidatePath("/explore/products");
+  for (const slug of new Set(slugs.filter(Boolean))) {
+    revalidatePath(`/explore/recordings/${slug}`);
+  }
 }

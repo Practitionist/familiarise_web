@@ -122,6 +122,10 @@ What if the bot had answered and she had not needed a person? The case would sta
 - `lib/support/case-service.ts` (`createOrReuseSupportCase()`, `appendOpenScopeTurn()`), `lib/support/create-ticket.ts`, `lib/support/reference.ts`, `lib/support/sla.ts`, `lib/support/deadline-policy.ts`, `lib/support/external-requester.ts`, `lib/support/deflection.ts`.
 - `app/api/appointments/[appointmentId]/support/route.ts`, `app/api/support/platform/route.ts`, `app/api/support/cases/route.ts`, `app/api/contact/route.ts`, `app/api/support/external-verify/route.ts`, `app/api/support/flow-outcomes/[id]/rating/route.ts`.
 
+The appointment thread GET retains the guided prompt metadata (`nodeId` and
+`options`) when restoring a conversation. It returns presenter attribution
+separately and strips other message metadata from this projection.
+
 ## Deprecated & Superseded Approaches
 
 - **Separate tickets and appointment threads.** Platform requests were `SupportTicket` rows and booking help was an `AppointmentSupportThread`, each with its own reference series and status. Both now create or reuse one `SupportCase`. The old words survive in identifiers (`createSupportTicket()`, `supportTicketId` in responses, `SupportThreadCategory`).

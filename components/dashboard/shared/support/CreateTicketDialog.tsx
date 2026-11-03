@@ -89,7 +89,7 @@ export function CreateTicketDialog({
   defaults,
   requestHref,
 }: {
-  /** Custom trigger node; defaults to a "New request" button. */
+  /** Custom trigger node; defaults to a "New support case" button. */
   trigger?: React.ReactNode;
   /** Pre-fill, e.g. org Billing's "Request an invoice". */
   defaults?: CreateTicketDefaults;
@@ -160,8 +160,8 @@ export function CreateTicketDialog({
     onSuccess: (ticket) => {
       toast({
         title: ticket.referenceNumber
-          ? `Request ${ticket.referenceNumber} created`
-          : "Request created",
+          ? `Support case ${ticket.referenceNumber} created`
+          : "Support case created",
         description: describeWait(ticket.ackDueAt),
       });
       void qc.invalidateQueries({ queryKey: supportKeys.requests() });
@@ -187,7 +187,7 @@ export function CreateTicketDialog({
         ? Object.values(fieldErrors)[0]
         : undefined;
       toast({
-        title: "Couldn't create request",
+        title: "Couldn't create support case",
         description:
           fieldMessage ?? (e instanceof Error ? e.message : undefined),
         variant: "destructive",
@@ -204,13 +204,13 @@ export function CreateTicketDialog({
         {trigger ?? (
           <Button size="sm">
             <Plus className="mr-1.5 h-4 w-4" />
-            New request
+            New support case
           </Button>
         )}
       </DialogTrigger>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>New support request</DialogTitle>
+          <DialogTitle>New support case</DialogTitle>
           <DialogDescription>
             Platform issues only — payments, account, sign-in, site trouble.
             Something wrong with a specific session? Open that appointment and
@@ -409,7 +409,7 @@ export function CreateTicketDialog({
               }
               onClick={() => create.mutate()}
             >
-              {create.isPending ? "Creating…" : "Create request"}
+              {create.isPending ? "Creating…" : "Create support case"}
             </Button>
           </div>
         </div>

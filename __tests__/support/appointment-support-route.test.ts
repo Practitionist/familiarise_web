@@ -269,3 +269,39 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
     expect(json.code).toBe("NOT_FOUND");
   });
 });
+
+it("restores guided choices on GET while keeping presenter attribution separate", async () => {
+  const options = [{ id: "human", label: "Talk to a person", escalates: true }];
+  mockedFindThread.mockResolvedValue({
+    id: "case-1",
+    activeChannel: "SELF_SERVE",
+    currentNodeId: "prompt-1",
+    requesterUserId: "u1",
+    messages: [
+      {
+        id: "bot-1",
+        seq: 1,
+        sender: "BOT",
+        body: "Pick an option",
+        metadata: { nodeId: "prompt-1", options, privateField: "hidden" },
+      },
+      {
+        id: "presenter-1",
+        seq: 2,
+        sender: "AGENT",
+        body: "Presenter here",
+        metadata: { actorKind: "PRESENTER", privateField: "hidden" },
+      },
+    ],
+  });
+  const res = await GET(req("GET"), {
+    params: Promise.resolve({ appointmentId: SLUG }),
+  });
+  const json = await res.json();
+  expect(json.data.messages[0].metadata).toEqual({
+    nodeId: "prompt-1",
+    options,
+  });
+  expect(json.data.messages[1].actorKind).toBe("PRESENTER");
+  expect(json.data.messages[1].metadata).not.toHaveProperty("privateField");
+});

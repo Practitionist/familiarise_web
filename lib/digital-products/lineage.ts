@@ -1,4 +1,8 @@
 import type { PrismaLike } from "@/lib/prisma";
+import {
+  DIGITAL_PRODUCT_MIME_TYPES,
+  isDigitalProductMime,
+} from "@/lib/digital-products/constants";
 
 interface LineageRow {
   lineageId: string;
@@ -6,20 +10,37 @@ interface LineageRow {
   originalName: string;
 }
 
-/** The name buyers see for each lineage: its first version's, stable across replacements. */
+interface NamedRow {
+  lineageId: string;
+  originalName: string;
+  mimeType: string;
+}
+
+/** `name`'s stem with the extension `mimeType` is stored under; an unknown MIME keeps `name`'s own. */
+function withMimeExtension(name: string, mimeType: string): string {
+  if (!isDigitalProductMime(mimeType)) return name;
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  return `${stem}.${DIGITAL_PRODUCT_MIME_TYPES[mimeType].extension}`;
+}
+
+/**
+ * Resolves the name buyers see for a row: its lineage's first-version stem,
+ * stable across replacements, with the row's own format extension.
+ */
 export async function lineageDisplayNames(
   db: Pick<PrismaLike, "digitalProductAsset">,
   rows: readonly LineageRow[],
-): Promise<Map<string, string>> {
-  const names = new Map<string, string>();
+): Promise<(row: NamedRow) => string> {
+  const firsts = new Map<string, string>();
   for (const row of rows) {
-    if (row.version === 1) names.set(row.lineageId, row.originalName);
+    if (row.version === 1) firsts.set(row.lineageId, row.originalName);
   }
   const unknown = [
-    ...new Set(rows.map((r) => r.lineageId).filter((id) => !names.has(id))),
+    ...new Set(rows.map((r) => r.lineageId).filter((id) => !firsts.has(id))),
   ];
   if (unknown.length > 0) {
-    const firsts = await db.digitalProductAsset.findMany({
+    const found = await db.digitalProductAsset.findMany({
       where: {
         lineageId: { in: unknown },
         status: { in: ["VERIFIED", "SUPERSEDED"] },
@@ -28,10 +49,11 @@ export async function lineageDisplayNames(
       distinct: ["lineageId"],
       select: { lineageId: true, originalName: true },
     });
-    for (const first of firsts) names.set(first.lineageId, first.originalName);
+    for (const first of found) firsts.set(first.lineageId, first.originalName);
   }
-  for (const row of rows) {
-    if (!names.has(row.lineageId)) names.set(row.lineageId, row.originalName);
-  }
-  return names;
+  return (row) =>
+    withMimeExtension(
+      firsts.get(row.lineageId) ?? row.originalName,
+      row.mimeType,
+    );
 }

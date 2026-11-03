@@ -71,7 +71,7 @@ it("stages one receipt per purchase, linking the library and no file", async () 
     productTitle: "Interview workbook",
     creatorName: "Ravi",
     amountPaise: 49_900,
-    libraryHref: "/dashboard/go/client/products",
+    libraryHref: "/dashboard/go/library?tab=purchases",
   };
 
   const receipt = await prepareDigitalProductPurchaseEmail(args);
@@ -84,7 +84,7 @@ it("stages one receipt per purchase, linking the library and no file", async () 
     tx: prisma,
   });
   expect(message.subject).toBe("Your purchase: Interview workbook");
-  expect(message.html).toContain("/dashboard/go/client/products");
+  expect(message.html).toContain("/dashboard/go/library?tab=purchases");
   expect(message.html).toContain("₹499.00");
   expect(message.html).not.toContain("/download");
 
@@ -106,7 +106,7 @@ it("stages the receipt even when the buyer turned payment emails off", async () 
     productTitle: "Interview workbook",
     creatorName: null,
     amountPaise: 0,
-    libraryHref: "/dashboard/go/client/products",
+    libraryHref: "/dashboard/go/library?tab=purchases",
   });
   expect(await stageDigitalProductPurchaseEmail(prisma, receipt)).toHaveLength(
     1,

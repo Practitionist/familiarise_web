@@ -7,9 +7,9 @@ import { PayoutsPageClient } from "./PayoutsPageClient";
 // promise the client `use()`s.
 export default function OrgPayoutsPage({
   params,
-}: {
+}: Readonly<{
   params: Promise<{ orgId: string }>;
-}) {
+}>) {
   return (
     <PayoutsPageClient
       params={params}

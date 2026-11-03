@@ -2,6 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 
+import { useScrollToHashOnReady } from "@/hooks/useScrollToHashOnReady";
+
 import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
 import { Section } from "@/components/dashboard/Section";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -102,7 +104,10 @@ const sumShare = (aggs: OrgEarningAggregate[], statuses: string[]) =>
  * read from GET …/earnings. Each row is immutable once written, so the split
  * shown is the one settlement used.
  */
-export function OrgEarningsPanel({ orgId }: Readonly<{ orgId: string }>) {
+export function OrgEarningsPanel({
+  orgId,
+  anchorId,
+}: Readonly<{ orgId: string; anchorId?: string }>) {
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ["org-earnings", orgId],
     queryFn: async (): Promise<OrgEarningsResponse> => {
@@ -113,6 +118,8 @@ export function OrgEarningsPanel({ orgId }: Readonly<{ orgId: string }>) {
       return res.json();
     },
   });
+
+  useScrollToHashOnReady(anchorId, !isPending);
 
   if (isPending) {
     return (

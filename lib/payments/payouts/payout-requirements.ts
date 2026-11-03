@@ -113,7 +113,7 @@ export interface PayoutRequirements {
 }
 
 export function payoutSettingsHref(consultantProfileId: string): string {
-  // #1527 — the hub section itself, not the old /settings/payouts 308 hop.
+  // The hub section itself.
   return `/dashboard/consultant/${encodeURIComponent(consultantProfileId)}/settings/get-paid`;
 }
 

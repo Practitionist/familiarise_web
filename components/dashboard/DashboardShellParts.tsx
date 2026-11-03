@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Copy,
   Inbox,
+  Library,
   LifeBuoy,
   LogOut,
   MessageSquareText,
@@ -27,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useSession } from "@/lib/auth-client";
+import { goLibraryHref } from "@/lib/dashboard/go";
 import type { PinnedCta, SupportLinks } from "@/lib/dashboard/nav/types";
 
 /**
@@ -49,7 +51,10 @@ export interface DashboardAccount {
 
 /** The account rows the avatar menu and the mobile Menu sheet both offer. */
 export function accountSettingsLinks(account: DashboardAccount) {
-  const links: { key: string; label: string; href: string }[] = [];
+  // Every surface reaches the viewer's own buyer Library through the resolver.
+  const links: { key: string; label: string; href: string }[] = [
+    { key: "library", label: "My library", href: goLibraryHref() },
+  ];
   const org = account.orgSettings ?? null;
   // A workspace operator's personal Settings IS the workspace's; list it once.
   if (account.settingsHref && account.settingsHref !== org?.href) {
@@ -63,7 +68,12 @@ export function accountSettingsLinks(account: DashboardAccount) {
   return links;
 }
 
-/** Header avatar menu: identity, Settings, Sign out (#1527). */
+const ACCOUNT_LINK_ICONS: Partial<Record<string, typeof Settings>> = {
+  library: Library,
+  org: Building2,
+};
+
+/** Header avatar menu: identity, My library, Settings, Sign out (#1527). */
 export function AccountMenu({
   account,
   onSignOut,
@@ -105,7 +115,7 @@ export function AccountMenu({
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {links.map((link) => {
-          const Icon = link.key === "org" ? Building2 : Settings;
+          const Icon = ACCOUNT_LINK_ICONS[link.key] ?? Settings;
           return (
             <DropdownMenuItem
               key={link.key}
@@ -119,7 +129,7 @@ export function AccountMenu({
             </DropdownMenuItem>
           );
         })}
-        {links.length > 0 && <DropdownMenuSeparator />}
+        <DropdownMenuSeparator />
         <DropdownMenuItem onClick={onSignOut} className="cursor-pointer gap-2">
           <LogOut className="h-4 w-4 text-zinc-500" />
           Sign out
@@ -134,7 +144,7 @@ export const HELP_CENTER_HREF = "/support";
 
 /**
  * Header "Help" menu (#1527): the public Help Center in a new tab, then the
- * viewer's own Support requests and Send feedback when they have them. Icon +
+ * viewer's own Support cases and Send feedback when they have them. Icon +
  * label at md+, icon-only below.
  */
 export function HelpMenu({
@@ -177,7 +187,7 @@ export function HelpMenu({
               className="flex w-full items-center gap-2"
             >
               <Inbox className="h-4 w-4 text-zinc-500" />
-              Support requests
+              {support.label}
             </Link>
           </DropdownMenuItem>
         )}

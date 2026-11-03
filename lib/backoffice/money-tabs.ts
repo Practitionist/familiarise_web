@@ -121,18 +121,6 @@ export function findMoneyTab(key: string): MoneyTab | undefined {
   return [...MONEY_TABS, AUDIT_TAB].find((t) => t.key === key);
 }
 
-/**
- * A retired section's new home, answered with a 308: the class-series doors
- * moved onto each class booking's Ops actions panel under Appointments.
- */
-export function retiredMoneyTabHref(
-  treePath: string,
-  key: string,
-): string | null {
-  if (key === "class-series") return `${treePath}/appointments?type=class`;
-  return null;
-}
-
 type SearchParams = Record<string, string | string[] | undefined>;
 
 /** The hub URL a retired money page answers with, its query carried over. */

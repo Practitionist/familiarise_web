@@ -122,7 +122,7 @@ The Netlify deploy preview for a pull request serves that branch's code from the
 shared Postgres, so a branch's schema is not a proposal for the database — it is
 a claim about what the database already contains. A column the branch declares
 and the database lacks is a 500 on every read of that model, and the preview
-BUILD still passes, because the build only runs `prisma generate`.
+BUILD still passes, because the build only runs `prisma generate` and the file-only `npm run cron:coverage` (`checkJobCoverage`), which reads no database.
 
 This has now happened three times: the #1997 columns (#2027), the
 `RescheduleRequestStatus.COUNTERED` enum value (2026-10-02), and

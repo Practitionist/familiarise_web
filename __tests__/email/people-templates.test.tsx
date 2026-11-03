@@ -41,7 +41,7 @@ it("support reply: names the responder, quotes the reply, previews 140 chars", (
       unsubscribeUrl={unsubscribeUrl}
     />,
   );
-  expect(out).toContain("Priya replied to your ticket ST-2026-0142");
+  expect(out).toContain("Priya replied to your support case ST-2026-0142");
   expect(out).toContain("Refund not received");
   expect(out).toContain("second line");
   expect(out).toContain(`${"a".repeat(140)}…`);
@@ -60,7 +60,7 @@ it("support update: subject carries the status and the next step is printed", ()
       ticketUrl={ticketUrl}
     />,
   );
-  expect(out).toContain("Your ticket ST-2026-0142 is now resolved");
+  expect(out).toContain("Your support case ST-2026-0142 is now resolved");
   expect(out).toContain("If this fixed the problem, nothing more is needed.");
   expect(out).toContain(`href="${ticketUrl}"`);
 });

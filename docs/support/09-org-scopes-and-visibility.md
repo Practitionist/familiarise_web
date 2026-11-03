@@ -21,6 +21,8 @@ Every case has an **ownership scope** that decides who may read and write it. A 
 
 The mapping is `caseOwnershipPermission()` in `lib/support/case-access.ts`, and the role grants are in `ORG_PERMISSIONS` (`lib/auth/org-permissions.ts`). The database requires an organization on every non-personal case (`support_case_ownership_and_appeal_shape` in `prisma/sql/check-constraints.sql`).
 
+Separate from correspondence, an **accepted PRESENTER collaborator** on the appointment linked to a case (`Collaborator.status = ACCEPTED`, `tier = PRESENTER`) may read and reply to that case's thread. This is thread access only: it never grants CSAT, receipts, attachments, appeals, refund previews or refund actions, and it is not evidence access. CREW collaborators never gain it. A presenter sees the public transcript with `PAYMENT`, `REFUND` and `INVOICE` subjects, the payment card, CSAT, the callback window and internal notes all withheld. Presenter access is refused entirely for anonymous grievances (`externalRequesterEmail`) and for sensitive complaints: every category in `ORG_SENSITIVE_PERSONAL_CATEGORIES` and every issue type in `ORG_SENSITIVE_PERSONAL_ISSUE_TYPES` (`isSensitivePresenterCase()`). Those cases stay invisible to the presenter in lists, direct reads and notification fanout, so a safety concern or quality complaint about a presenter never reaches that presenter.
+
 Platform operators (STAFF and ADMIN, via `tickets.manage`) correspond on every case. A case filed by an anonymous public grievance (`externalRequesterEmail` set) is staff-only: it has no in-app correspondents and appears in no customer or organization list.
 
 ```mermaid
@@ -29,11 +31,15 @@ flowchart TD
     S -- yes --> Full["Full staff view (contact and payment fields need users.read and payments.read)"]
     S -- no --> X{"Anonymous grievance case?"}
     X -- yes --> NF["404"]
-    X -- no --> P{"Scope"}
+    X -- no --> Sens{"Sensitive category or issue type?"}
+    Sens -- yes --> P{"Scope"}
+    Sens -- no --> Pr{"Accepted PRESENTER on the linked appointment?"}
+    Pr -- yes --> Cust["Presenter thread view (financial, CSAT and callback fields redacted)"]
+    Pr -- no --> P{"Scope"}
     P -- PERSONAL --> Sub{"Viewer is the submitter?"}
-    Sub -- yes --> Cust["Customer view"]
+    Sub -- yes --> Cust2["Customer view"]
     P -- "ORG_OPERATIONS or ORG_BILLING" --> G{"ACTIVE membership whose role holds the scope's permission?"}
-    G -- yes --> Cust
+    G -- yes --> Cust2
     Sub -- no --> Req{"Viewer is the requester someone else filed for?"}
     G -- no --> Req
     Req -- yes --> Sum["Summary only: 'Organization support request', no messages"]
@@ -42,18 +48,22 @@ flowchart TD
 
 ## The rules and who enforces them
 
-| Rule                                                                                                                        | Enforcer                                                                                           | Test                                                                               |
-| --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Tagging a personal case with an organization grants no member access.                                                       | App: `canCorrespondOnCase()`.                                                                      | `__tests__/support/case-access.test.ts`                                            |
-| An organization case follows current membership: a departed filer loses access; any current permission holder continues it. | App: `canCorrespondOnCase()` re-reads the ACTIVE membership on every call.                         | `__tests__/support/case-access.test.ts`, `__tests__/support/own-case-read.test.ts` |
-| Notifications go only to current correspondents.                                                                            | App: `caseCorrespondentIds()`.                                                                     | `__tests__/support/case-access.test.ts`                                            |
-| The member a case was filed about sees a summary, never the transcript.                                                     | App: `projectCaseForViewer()` (`ORG_FILED_CASE_TITLE`, `filedByOrganizationNotice`).               | `__tests__/support/org-filed-subject-and-evidence-parties.test.ts`                 |
-| Only an ACTIVE OWNER or MAINTAINER may file about another member, who must be an ACTIVE member of the same organization.    | App: `resolveOrgMembershipAccess()` in `app/api/support/cases/route.ts`.                           | `__tests__/support/route-authz-matrix.test.ts`                                     |
-| An on-behalf filing never stays PERSONAL.                                                                                   | App: `withOnBehalfOwnership()` coerces it to ORG_OPERATIONS.                                       | `__tests__/support/case-intake-scope.test.ts`                                      |
-| Organization views count sensitive personal complaints but never show who raised them.                                      | App: `ORG_SENSITIVE_PERSONAL_CATEGORIES` and the triage feed's `withheld.sensitivePersonal` count. | `__tests__/security/org-support-threads-sensitive.test.ts`                         |
-| Organization feeds return metadata only, never message bodies.                                                              | App: `THREAD_METADATA_SELECT` in `app/api/organizations/[orgId]/support-threads/route.ts`.         | `__tests__/security/org-scope-payload-allowlist.test.ts`                           |
-| Evidence recipients see their own prompt and answer, never the case transcript.                                             | App: `GET /api/support/evidence/[requestId]`.                                                      | `__tests__/support/evidence-route-authz.test.ts`                                   |
-| Organization admins never read booking chats.                                                                               | App: chat routes need `supportChat.read`, a platform-operator surface.                             | `__tests__/support/route-authz-matrix.test.ts`                                     |
+| Rule                                                                                                                        | Enforcer                                                                                                             | Test                                                                                            |
+| --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Tagging a personal case with an organization grants no member access.                                                       | App: `canCorrespondOnCase()`.                                                                                        | `__tests__/support/case-access.test.ts`                                                         |
+| An accepted PRESENTER on the linked appointment reads and replies to an ordinary thread; CREW never does.                   | App: `casePresenterIds()`, `isPresenterOnCase()`, `caseThreadPartyIds()`.                                            | `__tests__/support/case-access.test.ts`, `__tests__/support/evidence-parties.test.ts`           |
+| Sensitive complaints and anonymous grievances never reach a presenter.                                                      | App: `isSensitivePresenterCase()`, `presenterSeesCaseThread()`, the presenter list predicate.                        | `__tests__/support/case-access.test.ts`, `__tests__/support/case-service-and-sla-sweep.test.ts` |
+| Presenter thread access never grants CSAT, receipts, attachments, appeals or refunds.                                       | App: `canCorrespondOnCase()` stays owner/staff-only.                                                                 | `__tests__/support/route-authz-matrix.test.ts`                                                  |
+| A presenter read withholds financial subjects, payment, CSAT and the callback window.                                       | App: `readSupportCaseForViewer()`, `readOwnSupportCase()`.                                                           | `__tests__/support/own-case-read.test.ts`                                                       |
+| An organization case follows current membership: a departed filer loses access; any current permission holder continues it. | App: `canCorrespondOnCase()` re-reads the ACTIVE membership on every call.                                           | `__tests__/support/case-access.test.ts`, `__tests__/support/own-case-read.test.ts`              |
+| Notifications go only to current thread parties.                                                                            | App: `caseCorrespondentIds()` for decisions and CSAT; `caseThreadPartyIds()` for intake, status and message notices. | `__tests__/support/case-access.test.ts`                                                         |
+| The member a case was filed about sees a summary, never the transcript.                                                     | App: `projectCaseForViewer()` (`ORG_FILED_CASE_TITLE`, `filedByOrganizationNotice`).                                 | `__tests__/support/org-filed-subject-and-evidence-parties.test.ts`                              |
+| Only an ACTIVE OWNER or MAINTAINER may file about another member, who must be an ACTIVE member of the same organization.    | App: `resolveOrgMembershipAccess()` in `app/api/support/cases/route.ts`.                                             | `__tests__/support/route-authz-matrix.test.ts`                                                  |
+| An on-behalf filing never stays PERSONAL.                                                                                   | App: `withOnBehalfOwnership()` coerces it to ORG_OPERATIONS.                                                         | `__tests__/support/case-intake-scope.test.ts`                                                   |
+| Organization views count sensitive personal complaints but never show who raised them.                                      | App: `ORG_SENSITIVE_PERSONAL_CATEGORIES` and the triage feed's `withheld.sensitivePersonal` count.                   | `__tests__/security/org-support-threads-sensitive.test.ts`                                      |
+| Organization feeds return metadata only, never message bodies.                                                              | App: `THREAD_METADATA_SELECT` in `app/api/organizations/[orgId]/support-threads/route.ts`.                           | `__tests__/security/org-scope-payload-allowlist.test.ts`                                        |
+| Evidence recipients see their own prompt and answer, never the case transcript.                                             | App: `GET /api/support/evidence/[requestId]`.                                                                        | `__tests__/support/evidence-route-authz.test.ts`                                                |
+| Organization admins never read booking chats.                                                                               | App: chat routes need `supportChat.read`, a platform-operator surface.                                               | `__tests__/support/route-authz-matrix.test.ts`                                                  |
 
 ## Filing for an organization
 
@@ -68,20 +78,20 @@ Staff file a PERSONAL case for a customer with the customer as submitter, so it 
 
 ## What each surface shows
 
-| Surface                                                                 | Gate                  | Shows                                                                                                                                                                      |
-| ----------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Customer "Requests" (`GET /api/support/requests`)                       | Signed in             | Personal cases the viewer filed or requested, and organization cases where they hold the permission (`visibleCaseAccess()`). Operators see only their own requests here.   |
-| Organization Support page (`/dashboard/organization/[orgId]/support`)   | `supportRequests.org` | ORG_OPERATIONS and ORG_BILLING cases the viewer may work on, with subject and metadata (`GET /api/organizations/[orgId]/support-tickets`).                                 |
-| Organization Activity page (`.../support/activity`, `OrgSupportTriage`) | `operations.read`     | Appointment-linked cases of any scope as metadata only, with sensitive personal categories withheld as a count; a row links to the case only if the viewer may correspond. |
-| Organization evidence inbox                                             | Recipient only        | Evidence requests addressed to the viewer for bookings the organization sponsors or hosts (`evidenceAppointmentScope()` in `lib/support/evidence-scope.ts`).               |
-| Org-workspace Support pages                                             | Workspace member      | The viewer's personal and workspace requests only; organization-owned cases stay in the organization dashboard.                                                            |
-| Back-office inbox and workspace                                         | `tickets.manage`      | Every case; contact details need `users.read`, payment subjects need `payments.read`, recommendations and holds need `payments.read`.                                      |
+| Surface                                                                 | Gate                  | Shows                                                                                                                                                                                                        |
+| ----------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Customer "Requests" (`GET /api/support/requests`)                       | Signed in             | Personal cases the viewer filed or requested, organization cases where they hold the permission, and cases on appointments they present (`visibleCaseAccess()`). Operators see only their own requests here. |
+| Organization Support page (`/dashboard/organization/[orgId]/support`)   | `supportRequests.org` | ORG_OPERATIONS and ORG_BILLING cases the viewer may work on, with subject and metadata (`GET /api/organizations/[orgId]/support-tickets`).                                                                   |
+| Organization Activity page (`.../support/activity`, `OrgSupportTriage`) | `operations.read`     | Appointment-linked cases of any scope as metadata only, with sensitive personal categories withheld as a count; a row links to the case only if the viewer may correspond.                                   |
+| Organization evidence inbox                                             | Recipient only        | Evidence requests addressed to the viewer for bookings the organization sponsors or hosts (`evidenceAppointmentScope()` in `lib/support/evidence-scope.ts`).                                                 |
+| Org-workspace Support pages                                             | Workspace member      | The viewer's personal and workspace requests only; organization-owned cases stay in the organization dashboard.                                                                                              |
+| Back-office inbox and workspace                                         | `tickets.manage`      | Every case; contact details need `users.read`, payment subjects need `payments.read`, recommendations and holds need `payments.read`.                                                                        |
 
 `ORG_SENSITIVE_PERSONAL_CATEGORIES` lists the personal categories an organization may count but not see: ORG_ADMIN_DISPUTE, QUALITY_COMPLAINT, GRIEVANCE, CONSULTANT_NO_SHOW, CONSULTANT_LATE, SESSION_ENDED_EARLY, SESSION_QUALITY_POOR and WRONG_CONSULTANT and SAFETY_CONCERN. Non-sensitive personal cases on the organization's bookings do appear in the activity feed as metadata, including the requester's name.
 
 ## Evidence parties
 
-Staff can ask the other side for evidence. The eligible recipients for a booking (`evidenceRecipientsByAppointment()` in `lib/support/case-actions.ts`) are: confirmed or attended consultant participants, the plan's consultant, ACCEPTED PRESENTER collaborators (crew never), and ACTIVE OWNER, MAINTAINER, MANAGER and SUPPORT members of the host organization of a captured payment on the booking. Banned users are excluded. A recipient who stops being eligible loses the request (404 on read, 403 "Your delivery or organization access has changed" on answer). Details are in [evidence and attachments](04-evidence-and-attachments.md).
+Staff can ask the other side for evidence. The eligible recipients for a booking (`evidenceRecipientsByAppointment()` in `lib/support/case-actions.ts`) are: confirmed or attended consultant participants, the plan's consultant, ACCEPTED PRESENTER collaborators (crew never), and ACTIVE OWNER, MAINTAINER, MANAGER and SUPPORT members of the host organization of a captured payment on the booking. Banned users are excluded. A recipient who stops being eligible loses the request (404 on read, 403 "Your delivery or organization access has changed" on answer). An evidence request shows only the recipient's prompt and answer; it never opens the case thread. Presenter thread access is a separate party role and comes from the linked appointment, not from being asked for evidence. Details are in [evidence and attachments](04-evidence-and-attachments.md).
 
 ## Worked example
 
@@ -106,9 +116,15 @@ Three sibling rails hang off a booking, and each answers a different question. A
 
 A moderation action on a review or a rating can be appealed through a support case (`MODERATION_APPEAL`), reviewed by a different operator; see [decisions and appeals](03-decisions-appeals-and-supersede.md#appeals).
 
+Presenter read grants are rechecked after case selection. A revoked presenter
+receives no case detail; a requester who loses organization correspondence keeps
+only the summary. Payment and CSAT fields require a current correspondent grant.
+
 ## Where in code
 
-- `lib/support/case-access.ts`: `canCorrespondOnCase()`, `caseCorrespondentIds()`, `visibleCaseAccess()`, `projectCaseForViewer()`, `caseOwnershipPermission()`, `ORG_SENSITIVE_PERSONAL_CATEGORIES`.
+- `lib/support/case-access.ts`: `canCorrespondOnCase()`, `caseCorrespondentIds()`, `casePresenterIds()`, `isPresenterOnCase()`, `caseThreadPartyIds()`, `visibleCaseAccess()`, `projectCaseForViewer()`, `caseOwnershipPermission()`, `ORG_SENSITIVE_PERSONAL_CATEGORIES`, `ORG_SENSITIVE_PERSONAL_ISSUE_TYPES`, `isSensitivePresenterCase()`.
+- `lib/support/evidence-parties.ts`: `deliveringPartiesByAppointment()`, `presenterCollaboratorWhere()`, `presenterAppointmentWhere()`, `presenterAppointmentIdsIn()`.
+- `lib/support/case-message-actor.ts`: the persisted presenter marker and `isPresenterAuthoredMessage()`.
 - `lib/support/about-org.ts`, `lib/support/evidence-scope.ts`, `lib/auth/org-permissions.ts`, `lib/auth/backoffice-permissions.ts`.
 - `app/api/support/cases/route.ts`, `app/api/support/requests/route.ts`, `app/api/organizations/[orgId]/support-threads/route.ts`, `app/api/organizations/[orgId]/support-tickets/route.ts`.
 - `app/dashboard/organization/[orgId]/support/OrgSupportRequests.tsx`, `app/dashboard/organization/[orgId]/support/OrgSupportTriage.tsx`.

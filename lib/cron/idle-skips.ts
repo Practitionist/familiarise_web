@@ -59,12 +59,17 @@ export async function readIdleCompletions(
         AND s."result"->>'environment' = ${environment}
       GROUP BY 1`),
   );
-  return rows.flatMap((row) => {
-    const jobName = isTarget(row.target) ? jobNameFor(row.target) : null;
-    return jobName === null
-      ? []
-      : [{ jobName, endedAt: row.endedAt, skips: row.skips }];
-  });
+  return rows.flatMap((row) =>
+    isTarget(row.target)
+      ? [
+          {
+            jobName: jobNameFor(row.target),
+            endedAt: row.endedAt,
+            skips: row.skips,
+          },
+        ]
+      : [],
+  );
 }
 
 /** The fresher of a job's last finished run and its last idle skip. */

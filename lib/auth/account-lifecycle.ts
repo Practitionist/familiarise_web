@@ -17,6 +17,7 @@ import {
 import { syncSubscriber } from "@/lib/novu/subscriber";
 import { notifyAccountSecurityNotice } from "@/lib/novu/service";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { goHref } from "@/lib/dashboard/go";
 import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
 
@@ -246,7 +247,7 @@ export async function onPasswordChanged(
             user.id,
             {
               kind: "PASSWORD_CHANGED",
-              dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
+              dashboardUrl: `${getAppUrl()}${goHref("auto", "settings/account")}`,
             },
             `password-changed:${user.id}:${Date.now()}`,
             { deferAttempt: true },
@@ -320,7 +321,7 @@ export async function notifyAccountLinked(account: {
             {
               kind: "ACCOUNT_LINKED",
               provider,
-              dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
+              dashboardUrl: `${getAppUrl()}${goHref("auto", "settings/account")}`,
             },
             `account-linked:${account.id}`,
             { deferAttempt: true },

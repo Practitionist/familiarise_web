@@ -299,9 +299,8 @@ export async function saveBookingRequestSettings(
  * one URL under `/settings/<slug>`; `group` is the titled block the left nav
  * shows it under. Settings stays ONE sidebar entry with these inside it —
  * Material's settings pattern says to group with specific titles and never to
- * split into synonyms such as "Preferences". #1527 §14 — Account leads (it
- * absorbed Security, `/profile` and change-password); "Public profile" has room
- * for Experience & education.
+ * split into synonyms such as "Preferences". Account leads (security, password
+ * and sessions); "Public profile" has room for Experience & education.
  */
 export interface SettingsSection {
   group: string;
@@ -376,15 +375,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   },
 ];
 
-/**
- * Retired section keys and where they live now. `security` folded into
- * Account (#1527 §14); its old `?tab=security` links and `/settings/security`
- * URL both land there.
- */
-export const SETTINGS_SECTION_ALIASES: Readonly<
-  Record<string, SettingsSectionKey>
-> = { security: "account" };
-
 /** The sections in nav order, grouped under their titles. */
 export function settingsSectionGroups(): {
   title: string;
@@ -408,20 +398,4 @@ export function settingsSectionHref(
   section: Pick<SettingsSection, "slug">,
 ): string {
   return `${basePath}/settings/${section.slug}`;
-}
-
-/**
- * Where a legacy `settings?tab=<key>` deep link lands now that the tabs are
- * gone (#1785). Availability left Settings for the sidebar; every other key
- * is a hub section. Unknown keys and no key land on the first section.
- */
-export function settingsTabRedirect(
-  basePath: string,
-  tab: string | null | undefined,
-): string {
-  if (tab === "availability") return `${basePath}/availability`;
-  const key = (tab && SETTINGS_SECTION_ALIASES[tab]) ?? tab;
-  const section =
-    SETTINGS_SECTIONS.find((s) => s.key === key) ?? SETTINGS_SECTIONS[0];
-  return settingsSectionHref(basePath, section);
 }

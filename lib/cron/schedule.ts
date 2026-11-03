@@ -84,6 +84,7 @@ export const TARGETS = [
   "consent-retention-sweeper",
   "expire-onboarding-drafts",
   "drain-admin-run-requests",
+  "ops-digest",
   ...STREAM_LIFECYCLE_JOBS,
 ] as const;
 
@@ -92,11 +93,8 @@ export type Target = (typeof TARGETS)[number];
 /** The ticker's per-slot claim rows; bookkeeping, not a job run, so job views exclude it. */
 export const TICK_CLAIM_JOB = "cron-tick";
 
-/**
- * The `SystemJobExecution.jobName` a target's core writes when it differs from the
- * target name; `null` means the core writes no execution row.
- */
-const JOB_NAME_OVERRIDES: Partial<Record<Target, string | null>> = {
+/** The `SystemJobExecution.jobName` a target's core writes when it differs from the target name. */
+const JOB_NAME_OVERRIDES: Partial<Record<Target, string>> = {
   "reconcile-refunds": "reconcile-pending-refunds",
   "abandoned-payments": "cleanup-abandoned-payments",
   "reschedule-proposals": "expire-reschedule-proposals",
@@ -106,14 +104,10 @@ const JOB_NAME_OVERRIDES: Partial<Record<Target, string | null>> = {
   "tds-return-draft": "tds-26q-draft-export",
   "reconcile-sessions": "reconcile-orphaned-sessions",
   "auth-tokens": "cleanup-auth-tokens",
-  "sentry-ingest-canary": null,
-  "stream-control-plane-drift": null,
 };
 
-export function jobNameFor(target: Target): string | null {
-  return target in JOB_NAME_OVERRIDES
-    ? (JOB_NAME_OVERRIDES[target] ?? null)
-    : target;
+export function jobNameFor(target: Target): string {
+  return JOB_NAME_OVERRIDES[target] ?? target;
 }
 
 /** Background targets acknowledge admission; their cores record eventual completion. */
@@ -199,6 +193,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "expire-onboarding-drafts": null,
   // One open request per after-mode job.
   "drain-admin-run-requests": 2,
+  "ops-digest": null,
   "expire-recordings": null,
   "reconcile-orphaned-recordings": null,
   "wind-down-deactivated-orgs": null,
@@ -289,6 +284,8 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "expire-onboarding-drafts": 1440,
   // Backstop only: the admin route dispatches at once; every shorter cadence breaks the tick cap.
   "drain-admin-run-requests": 60,
+  // Daily at 03:50 UTC (09:20 IST): the 03:30 tick has no free slot on a month start.
+  "ops-digest": 1440,
   "expire-recordings": 60,
   "reconcile-orphaned-recordings": 60,
   "wind-down-deactivated-orgs": 60,
@@ -377,6 +374,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "consent-retention-sweeper": 25,
   "expire-onboarding-drafts": 35,
   "drain-admin-run-requests": 40,
+  "ops-digest": 230,
   "expire-recordings": 5,
   "reconcile-orphaned-recordings": 25,
   "wind-down-deactivated-orgs": 55,
@@ -647,6 +645,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "consent-retention-sweeper": 20_000,
   "expire-onboarding-drafts": 20_000,
   "drain-admin-run-requests": 24_000,
+  "ops-digest": 24_000,
 };
 
 /**

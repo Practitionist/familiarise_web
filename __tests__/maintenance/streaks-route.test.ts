@@ -136,7 +136,7 @@ describe("GET /api/health/jobs/streaks", () => {
     );
     const body = await res.json();
     expect(groupBy.mock.calls[0][0].where.jobName).toEqual({
-      in: ["cleanup-abandoned-payments"],
+      in: ["cleanup-abandoned-payments", "sentry-ingest-canary"],
     });
     expect(groupBy.mock.calls[0][0].where.result).toEqual({
       path: ["environment"],
@@ -147,6 +147,11 @@ describe("GET /api/health/jobs/streaks", () => {
         lastCompletedAt: started.toISOString(),
         lastFailedAt: expect.any(String),
         seenRecently: true,
+      },
+      "sentry-ingest-canary": {
+        lastCompletedAt: null,
+        lastFailedAt: null,
+        seenRecently: false,
       },
     });
   });
