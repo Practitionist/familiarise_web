@@ -285,10 +285,12 @@ function allocationWait(
   const status = normalizeStatus(input.request?.status);
   if (status === "PENDING" && paid && live.length === 0) return "CYCLE_1";
   const upcoming = live.some((o) => occurrenceEnd(o) >= now.getTime());
+  // Only while a plan week is open to place into: never "schedule the next 0".
   if (
     status === "APPROVED" &&
     !upcoming &&
-    (input.entitlement?.remaining ?? 0) > 0
+    (input.entitlement?.remaining ?? 0) > 0 &&
+    (input.entitlement?.nextBatch ?? 0) > 0
   )
     return "NEXT_CYCLE";
   return null;
@@ -465,7 +467,7 @@ function deriveBooking(
   if (wait === "NEXT_CYCLE") {
     return {
       state: "AWAITING_ALLOCATION",
-      why: `Cycle done · schedule the next ${input.entitlement?.nextBatch ?? 0}.`,
+      why: `Week done · ${c} schedules the next ${input.entitlement?.nextBatch ?? 0}.`,
     };
   }
   if (status === "DRAFT")

@@ -761,6 +761,14 @@ export const notifyNewBookingRequest = defineZonedSingleNotifier(
 export const notifyUnscheduledSubscriptionNudge = defineZonedSingleNotifier<
   BookingRequestInput & { nudgeHours: number }
 >(W.NEW_BOOKING_REQUEST, bookingRequestWire);
+export const notifyUnplacedWeekNudge = defineZonedSingleNotifier<
+  BookingRequestInput & {
+    weekNumber: number;
+    weekCount: number;
+    sessionsToPlace: number;
+    weekRange: string;
+  }
+>(W.NEW_BOOKING_REQUEST, bookingRequestWire);
 export const notifyVerificationStatusChanged =
   defineSingleNotifier<VerificationPayload>(W.VERIFICATION_STATUS_CHANGED);
 export const notifyModerationWarning =

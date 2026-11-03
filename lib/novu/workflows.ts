@@ -425,6 +425,11 @@ export type BookingRequestPayload = NotificationScope & {
   requestedDateTimeIso?: string;
   dashboardUrl: string;
   nudgeHours?: number;
+  /** A plan week with sessions still to place: "Week 5 of 26", 3 sessions, 16–22 Mar. */
+  weekNumber?: number;
+  weekCount?: number;
+  sessionsToPlace?: number;
+  weekRange?: string;
 };
 
 export type BookingRequestInput = Omit<

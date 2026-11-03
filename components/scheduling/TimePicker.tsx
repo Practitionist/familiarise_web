@@ -1,5 +1,8 @@
 "use client";
 
+import { MobileAutoSchedule } from "./MobileAutoSchedule";
+import { rescheduleWindow } from "@/lib/booking/entitlement";
+import { leadMsFor } from "@/lib/booking/lead-time";
 import React from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -300,6 +303,16 @@ export function TimePicker({
         : undefined,
     [isRecurring, subject.eventType, subject.schedulingTimezone, listZone],
   );
+
+  // A subscription move may only target the plan week the server would place
+  // into once these sessions are released; outside it the pick is dropped.
+  const allowed = React.useMemo((): { start?: Date; end?: Date } => {
+    const input = subject.rescheduleEntitlement;
+    if (!input || !releasingIds) {
+      return { start: subject.allowedStart, end: subject.allowedEnd };
+    }
+    return rescheduleWindow(input, releasingIds);
+  }, [subject, releasingIds]);
   const showConsultantLegend =
     policy.kind === "RESCHEDULE_CONSULTANT" ||
     policy.kind === "MANAGE_TIMINGS" ||
@@ -336,14 +349,15 @@ export function TimePicker({
       durationInMonths={subject.durationInMonths}
       totalSessions={isSelectMode ? sessionsBeingMoved : subject.totalSessions}
       schedulingTimezone={subject.schedulingTimezone}
-      allowedStart={subject.allowedStart}
-      allowedEnd={subject.allowedEnd}
+      allowedStart={allowed.start}
+      allowedEnd={allowed.end}
       // A starting position only; re-aiming while someone reads is worse.
       focus={focus}
       viewerZone={listZone}
       showZoneSwitch={false}
       requestedSlots={requestedSlots}
       releasingOccurrenceIds={releasingIds}
+      lead={policy.lead}
       // Fresh allocations only: a partial reschedule keeps confirmed slots.
       initialAllocation={
         policy.appliesInitialAllocationGuard
@@ -373,7 +387,27 @@ export function TimePicker({
     }
     if (!isSelectMode) {
       return (
-        <DesktopOnlyNotice className="min-h-0 flex-1 gap-4">
+        <DesktopOnlyNotice
+          className="min-h-0 flex-1 gap-4"
+          mobileAction={
+            policy.kind === "ALLOCATE" &&
+            subject.eventId &&
+            (subject.eventType === "subscription" ||
+              subject.eventType === "consultation") ? (
+              <MobileAutoSchedule
+                eventType={subject.eventType}
+                eventId={subject.eventId}
+                initialAllocation={!subject.hasReleasedSlots}
+                topUp={
+                  subject.eventType === "subscription" &&
+                  !subject.hasReleasedSlots &&
+                  (subject.slots ?? []).some((slot) => !slot.isTentative)
+                }
+                onDone={handleAllocationComplete}
+              />
+            ) : undefined
+          }
+        >
           {grid}
         </DesktopOnlyNotice>
       );
@@ -392,8 +426,13 @@ export function TimePicker({
           zone={listZone}
           sessionMinutes={slotsPerSession * 30}
           timesNeeded={sessionsBeingMoved}
-          allowedStart={subject.allowedStart}
-          allowedEnd={subject.allowedEnd}
+          allowedStart={allowed.start}
+          allowedEnd={allowed.end}
+          minLeadHours={
+            leadMsFor(policy.lead.purpose, {
+              settled: policy.lead.unpaid !== true,
+            }) / 3_600_000
+          }
           focusAt={focus.precision === "session" ? focus.at : undefined}
           value={mobilePicks}
           onChange={setMobilePicks}

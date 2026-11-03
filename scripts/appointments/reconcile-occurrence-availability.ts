@@ -569,6 +569,11 @@ async function detectDoubleBookings(): Promise<{
  * than a new, unbounded one; whatever is skipped is picked up next hour.
  */
 const TOP_UP_MAX_EVENTS_PER_RUN = 25;
+/**
+ * A plan week opens on the calendar, not on an availability edit, so an event
+ * last attempted this long ago is retried even when no hours changed.
+ */
+const TOP_UP_RETRY_MS = 6 * 60 * 60_000;
 const TOP_UP_TIME_BUDGET_MS = 60_000;
 /** Ceiling on the candidate READ, which is cheap per row but not free. */
 const TOP_UP_SCAN_LIMIT = 200;
@@ -883,9 +888,10 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
 
   console.log("🔍 Finding recurring events short of sessions...");
 
-  let due: (TopUpCandidate & { availabilityChangedAt: Date })[];
+  let due: (TopUpCandidate & { availabilityChangedAt: Date | null })[];
+  const now = new Date();
   try {
-    const candidates = await collectTopUpCandidates(new Date());
+    const candidates = await collectTopUpCandidates(now);
     if (candidates.length === 0) {
       console.log("✅ No incomplete recurring events");
       return summary;
@@ -898,25 +904,36 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
     due = candidates
       .flatMap((candidate) => {
         const changedAt = lastChange.get(candidate.consultantProfileId);
-        // Nothing has been published since this event was last attempted, so
-        // the search would walk the same calendar to the same answer.
-        if (!changedAt || changedAt <= candidate.updatedAt) return [];
-        return [{ ...candidate, availabilityChangedAt: changedAt }];
+        const changed = !!changedAt && changedAt > candidate.updatedAt;
+        // With no new hours, only a rested attempt is retried: the week in
+        // play may have opened since, but the calendar is otherwise the same.
+        const rested =
+          now.getTime() - candidate.updatedAt.getTime() >= TOP_UP_RETRY_MS;
+        if (!changed && !rested) return [];
+        return [
+          { ...candidate, availabilityChangedAt: changed ? changedAt : null },
+        ];
       })
-      // Most recently opened-up calendars first, so the cap below spends the
-      // budget on the consultants who just made room rather than on the tail
-      // of events that have had none for weeks.
-      .sort(
-        (a, b) =>
-          b.availabilityChangedAt.getTime() - a.availabilityChangedAt.getTime(),
-      );
+      // Calendars that just opened up first (newest change first), then the
+      // rested ones oldest-attempt first: a fair rotation under the cap.
+      .sort((a, b) => {
+        if (a.availabilityChangedAt && b.availabilityChangedAt) {
+          return (
+            b.availabilityChangedAt.getTime() -
+            a.availabilityChangedAt.getTime()
+          );
+        }
+        if (a.availabilityChangedAt) return -1;
+        if (b.availabilityChangedAt) return 1;
+        return a.updatedAt.getTime() - b.updatedAt.getTime();
+      });
   } catch (error) {
     console.error(`❌ Failed to collect top-up candidates: ${error}`);
     return summary;
   }
 
   console.log(
-    `Found ${due.length} event(s) whose consultant published availability since the last attempt`,
+    `Found ${due.length} event(s) due: new availability since the last attempt, or a rested attempt`,
   );
 
   const startedAt = Date.now();
@@ -933,7 +950,7 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
         mode: "auto",
         topUp: true,
         allowPartial: true,
-        idempotencyKey: `topup:${candidate.eventType}:${candidate.eventId}:${candidate.confirmedSessions}->${candidate.requiredSessions}:${candidate.availabilityChangedAt?.toISOString() ?? "none"}`,
+        idempotencyKey: `topup:${candidate.eventType}:${candidate.eventId}:${candidate.confirmedSessions}->${candidate.requiredSessions}:${candidate.availabilityChangedAt?.toISOString() ?? `rested-${Math.floor(now.getTime() / TOP_UP_RETRY_MS)}`}`,
       });
 
       // Every outcome advances the event's `updatedAt`, the attempt marker: a
@@ -943,7 +960,8 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
       // change) for one retry; a second timeout on the same change rests it.
       if (
         result.errorCode === "SEARCH_TIMEOUT" &&
-        !retriedAfterTimeout(candidate)
+        candidate.availabilityChangedAt &&
+        !retriedAfterTimeout(candidate, candidate.availabilityChangedAt)
       ) {
         await touchTopUpMarker(
           candidate,
@@ -1017,12 +1035,10 @@ async function touchTopUpMarker(
 
 /** The event already had its one retry after timing out on this availability change. */
 function retriedAfterTimeout(
-  candidate: TopUpCandidate & { availabilityChangedAt: Date },
+  candidate: TopUpCandidate,
+  availabilityChangedAt: Date,
 ): boolean {
-  return (
-    candidate.updatedAt.getTime() ===
-    candidate.availabilityChangedAt.getTime() - 1
-  );
+  return candidate.updatedAt.getTime() === availabilityChangedAt.getTime() - 1;
 }
 
 export async function reconcileOccurrenceAvailability(): Promise<SlotReconciliationResult> {

@@ -173,7 +173,7 @@ function renderTrialAndSubscriptionBody(args: {
       return (
         <Text style={paragraph}>
           {typeof cycleOrdinal === "number"
-            ? `Cycle ${cycleOrdinal} of `
+            ? `Week ${cycleOrdinal} of `
             : "Your current cycle of "}
           <strong>{planTitle}</strong> is complete
           {typeof nextBatch === "number"

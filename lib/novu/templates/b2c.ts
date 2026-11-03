@@ -185,12 +185,12 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.NEW_BOOKING_REQUEST,
     name: "New booking request",
     description:
-      "The consultant, when a request needs their approval; with `nudgeHours`, a paid plan still waiting for session times (#1775 C-4).",
+      "The consultant, when a request needs their approval; with `nudgeHours`, a paid plan still waiting for session times (#1775 C-4); with `weekNumber`, a plan week with sessions still to place.",
     category: "appointments",
     inApp: {
       subject:
-        "{% if payload.nudgeHours %}Waiting for session times{% else %}New booking request{% endif %}",
-      body: "{% if payload.nudgeHours %}{{payload.consulteeName}}'s {{payload.appointmentType}} for {{payload.planTitle}} is waiting for session times — {{payload.nudgeHours}}h since payment. Schedule cycle 1 within 48h or the buyer is refunded in full.{% else %}{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.{% endif %}",
+        "{% if payload.weekNumber %}Week {{payload.weekNumber}} needs session times{% elsif payload.nudgeHours %}Waiting for session times{% else %}New booking request{% endif %}",
+      body: "{% if payload.weekNumber %}{{payload.consulteeName}}'s week {{payload.weekNumber}} of {{payload.weekCount}} for {{payload.planTitle}} ({{payload.weekRange}}) still needs {% if payload.sessionsToPlace == 1 %}1 session{% else %}{{payload.sessionsToPlace}} sessions{% endif %} scheduled.{% elsif payload.nudgeHours %}{{payload.consulteeName}}'s {{payload.appointmentType}} for {{payload.planTitle}} is waiting for session times — {{payload.nudgeHours}}h since payment. Schedule cycle 1 within 48h or the buyer is refunded in full.{% else %}{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -388,7 +388,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "subscriptions",
     inApp: {
       subject: "Next sessions coming",
-      body: "Cycle {{payload.cycleOrdinal}} of {{payload.planTitle}} is done — {{payload.consultantName}} will schedule your next {% if payload.nextBatch == 1 %}session{% else %}{{payload.nextBatch}} sessions{% endif %} ({{payload.remainingSessions}} left).",
+      body: "Week {{payload.cycleOrdinal}} of {{payload.planTitle}} is done — {{payload.consultantName}} will schedule your next {% if payload.nextBatch == 1 %}session{% else %}{{payload.nextBatch}} sessions{% endif %} ({{payload.remainingSessions}} left).",
       redirect: "dashboardUrl",
     },
   },

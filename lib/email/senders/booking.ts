@@ -497,6 +497,53 @@ export const sendUnscheduledSubscriptionNudgeEmail =
     },
   }));
 
+export interface UnplacedWeekNudgeEmailArgs {
+  subscriptionId: string;
+  consultantUserId: string;
+  consulteeName: string;
+  planTitle: string;
+  week: { number: number; count: number; sessions: number; range: string };
+  /** 0, 24 or 72: hours since the week opened. */
+  stage: number;
+  timingsUrl: string;
+}
+
+export const SUBSCRIPTION_WEEK_NUDGE_EMAIL_TYPE = "SUBSCRIPTION_WEEK_NUDGE";
+
+export function unplacedWeekNudgeEntityRef(
+  subscriptionId: string,
+  weekNumber: number,
+  stage: number,
+): string {
+  return `subscription:${subscriptionId}:w${weekNumber}:h${stage}`;
+}
+
+export const sendUnplacedWeekNudgeEmail =
+  defineBudgetedEmailSender<UnplacedWeekNudgeEmailArgs>((args) => ({
+    userIds: [args.consultantUserId],
+    spec: {
+      emailType: SUBSCRIPTION_WEEK_NUDGE_EMAIL_TYPE,
+      category: "appointments",
+      entityRef: unplacedWeekNudgeEntityRef(
+        args.subscriptionId,
+        args.week.number,
+        args.stage,
+      ),
+      subject: () =>
+        `${args.consulteeName}'s week ${args.week.number} needs session times`,
+      render: (r) =>
+        React.createElement(NewBookingRequestEmail, {
+          consultantName: greet(r),
+          consulteeName: args.consulteeName,
+          planTitle: args.planTitle,
+          appointmentType: "subscription",
+          reviewUrl: absolute(args.timingsUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+          week: args.week,
+        }),
+    },
+  }));
+
 // ── Trial scheduled ─────────────────────────────────────────────────────────
 
 export interface TrialScheduledEmailArgs {

@@ -22,6 +22,7 @@ import type { Tx } from "@/lib/prisma";
 
 import {
   isCompletedOccurrence,
+  planWeekNumber,
   maturedTrancheOrdinal,
   sessionsTotalOf,
   subscriptionEntitlement,
@@ -195,12 +196,25 @@ export async function settleSubscriptionCycleWithNotice(
 
   const consulteeUserId = sub.requestedBy?.userId;
   if (!consulteeUserId) return { bells: [], emailArgs: null };
-  // 1-based number of the cycle the delivered sessions belong to: at a
-  // boundary the zero-based ordinal has already advanced, so it IS that
-  // number; mid-cycle (a cancelled row) the current cycle is ordinal + 1.
-  // The same key across a second pass over the same state dedupes.
-  const { ordinal, filled } = entitlement.cycle;
-  const cycleOrdinal = Math.max(1, ordinal + (filled > 0 ? 1 : 0));
+  // The 1-based plan week the last delivered session sits in: the same key
+  // across a second pass over the same state dedupes.
+  const lastDelivered = wrapper.occurrences
+    .filter((o) => !o.deletedAt && isCompletedOccurrence(o))
+    .reduce<Date | null>((latest, o) => {
+      const at = new Date(o.startsAt);
+      return !latest || at > latest ? at : latest;
+    }, null);
+  const cycleOrdinal = lastDelivered
+    ? planWeekNumber(
+        {
+          sessionsPerWeek: sub.subscriptionPlan.sessionsPerWeek,
+          durationInMonths: sub.subscriptionPlan.durationInMonths,
+          schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
+          schedulingTimezone: sub.schedulingTimezone,
+        },
+        lastDelivered,
+      )
+    : 1;
   const dashboardUrl = notificationHref(wrapper.organizationId, "appointments");
   const consultantName =
     sub.subscriptionPlan.consultantProfile?.user?.name ?? "Your consultant";

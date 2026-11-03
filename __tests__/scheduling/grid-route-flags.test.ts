@@ -323,9 +323,13 @@ describe("quota overlay", () => {
 
   it("returns the quota and paints Limit reached except on the booking's own session", async () => {
     mockedSession.mockResolvedValue({ user: { id: "user-consultee" } });
-    // One session a week, already held on 9 Sep: the cycle is full.
+    // One session a week, held on 9 Sep and in the next plan week too: this
+    // week and the next (the one opened early) are both full.
     mockedSubscription.mockResolvedValue(
-      subscription([occurrence("2026-09-09T10:00:00.000Z")]),
+      subscription([
+        occurrence("2026-09-09T10:00:00.000Z"),
+        occurrence("2026-09-16T10:00:00.000Z"),
+      ]),
     );
     const res = await GET(request(SUB_QUERY), { params });
     expect(res.status).toBe(200);
@@ -339,7 +343,7 @@ describe("quota overlay", () => {
       filled: 1,
       remainingThisCycle: 0,
       perDayCap: 1,
-      fullDays: ["2026-09-09"],
+      fullDays: ["2026-09-09", "2026-09-16"],
       schedulingTimezone: "UTC",
     });
     const cells = Object.values(body.data).flat();
@@ -354,7 +358,7 @@ describe("quota overlay", () => {
       (c) => c.startsAt === "2026-09-09T08:00:00.000Z",
     );
     expect(sameDay?.limitReached).toBe(true);
-    // 10 Sep is inside the full cycle's window.
+    // 10 Sep is in this full week, before the open (next) week.
     const nextDay = cells.filter((c) => c.startsAt.startsWith("2026-09-10"));
     expect(nextDay.length).toBeGreaterThan(0);
     expect(nextDay.every((c) => c.limitReached)).toBe(true);

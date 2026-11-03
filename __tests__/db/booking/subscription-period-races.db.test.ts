@@ -273,11 +273,13 @@ describe("subscription period allocation × 3 consultee checkouts", () => {
       }),
     ]);
 
+    // The allocator spreads a week's sessions (a free day between them), so
+    // it holds the 3rd and 5th mornings; the 4th stays free for a buyer.
     const outcomes = await Promise.all(
       [
         [b1, futureAt(3, 9)],
-        [b2, futureAt(4, 9)],
-        [b3, futureAt(5, 9)],
+        [b2, futureAt(5, 9)],
+        [b3, futureAt(4, 9)],
       ].map(([buyer, at]) =>
         handleCheckout(
           checkoutAt(plan.id, at as Date),
@@ -294,7 +296,7 @@ describe("subscription period allocation × 3 consultee checkouts", () => {
     expect(allocation).toMatchObject({ success: true });
     expect(await placedStarts(sub.subscriptionId)).toEqual([
       futureAt(3, 9).getTime(),
-      futureAt(4, 9).getTime(),
+      futureAt(5, 9).getTime(),
     ]);
     expect(refusedBeforePayment(outcomes[0])).toBe(true);
     expect(refusedBeforePayment(outcomes[1])).toBe(true);
