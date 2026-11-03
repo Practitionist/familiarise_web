@@ -123,6 +123,7 @@ const isDestructive = (action: RowAction) =>
 export function rowActions(
   row: InboxRowInput,
   presentation: Pick<BookingPresentation, "bookingState" | "nextAction">,
+  now: Date = new Date(),
 ): RowActions {
   const { bookingState, nextAction } = presentation;
   // The buyer is paying right now; nothing here may race them.
@@ -168,7 +169,13 @@ export function rowActions(
     kind === "REMIND_OR_WITHDRAW" ||
     bookingState.state === "AWAITING_PAYMENT"
   ) {
-    return { primary: { kind: "remind" }, secondary: [{ kind: "withdraw" }] };
+    return {
+      primary:
+        row.reminderExpiresAt && toStampDate(row.reminderExpiresAt) > now
+          ? { kind: "remind" }
+          : null,
+      secondary: [{ kind: "withdraw" }],
+    };
   }
   return { primary: null, secondary: [] };
 }
@@ -309,7 +316,7 @@ export function InboxRow({
     { now },
   );
   const { bookingState, moneyState } = presentation;
-  const actions = rowActions(row, presentation);
+  const actions = rowActions(row, presentation, now);
   const badge = row.checkoutHold
     ? CHECKOUT_HOLD_BADGE
     : row.kind === "next-cycle"

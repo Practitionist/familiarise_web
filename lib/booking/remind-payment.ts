@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentStatus, PaymentStatus } from "@prisma/client";
+import { PaymentStatus } from "@prisma/client";
 import { PaymentLinkEmail } from "@/emails/payments/PaymentLinkEmail";
 import { deliver, EMAIL_BUDGET_MS, emailPayUrl, SENDERS } from "@/lib/email";
 import { renderEmail } from "@/lib/email/render";
@@ -11,6 +11,7 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { remindLimiter } from "@/lib/rate-limit";
 import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
+import { liveReminderPayment } from "@/lib/booking/payment-reminder-eligibility";
 
 /**
  * #1775 — the consultant nudges a consultee who has an unpaid approval. The
@@ -45,7 +46,14 @@ const REMIND_SELECT = {
         where: { paymentStatus: PaymentStatus.PENDING },
         orderBy: { createdAt: "desc" as const },
         take: 1,
-        select: { id: true, amount: true, currency: true, expiresAt: true },
+        select: {
+          id: true,
+          amount: true,
+          currency: true,
+          expiresAt: true,
+          createdAt: true,
+          paymentStatus: true,
+        },
       },
     },
   },
@@ -115,15 +123,9 @@ export async function remindApprovedPayment(args: {
       userMessage: "Only the consultant who approved this request can remind.",
     });
 
-  const payment = row.appointment?.payment[0];
   const now = new Date();
-  if (
-    row.status !== AppointmentStatus.APPROVED_PENDING_PAYMENT ||
-    !row.pendingPaymentUrl ||
-    !row.appointment ||
-    !payment?.expiresAt ||
-    payment.expiresAt <= now
-  ) {
+  const payment = liveReminderPayment(row, now);
+  if (!payment || !row.appointment || !row.pendingPaymentUrl) {
     throw notAwaitingPayment(args.kind, args.id);
   }
   const consultee = row.requestedBy?.user;

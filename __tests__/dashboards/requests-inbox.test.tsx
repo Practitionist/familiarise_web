@@ -112,6 +112,7 @@ describe("Requests inbox anatomy (A-4)", () => {
       return rowActions(
         row,
         deriveBookingPresentation(row.presentation, "CONSULTANT", { now: NOW }),
+        NOW,
       );
     };
     expect(actionsOf("s-awaiting")).toEqual({
