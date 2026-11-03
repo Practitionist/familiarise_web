@@ -411,7 +411,6 @@ export type SubscriptionPayload = {
   consultantName: string;
   consulteeName?: string;
   dashboardUrl: string;
-  cycleOrdinal?: number;
   remainingSessions?: number;
   nextBatch?: number;
 };

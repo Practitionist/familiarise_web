@@ -24,7 +24,6 @@ export interface TrialAndSubscriptionEmailProps {
   consultantName?: string;
   consulteeName?: string;
   startsAtText?: string;
-  cycleOrdinal?: number;
   nextBatch?: number;
   remainingSessions?: number;
   dashboardUrl: string;
@@ -74,7 +73,6 @@ function renderTrialAndSubscriptionBody(args: {
   consultantName?: string;
   consulteeName?: string;
   startsAtText?: string;
-  cycleOrdinal?: number;
   nextBatch?: number;
   remainingSessions?: number;
 }): React.ReactNode {
@@ -86,7 +84,6 @@ function renderTrialAndSubscriptionBody(args: {
     consultantName,
     consulteeName,
     startsAtText,
-    cycleOrdinal,
     nextBatch,
     remainingSessions,
   } = args;
@@ -172,10 +169,7 @@ function renderTrialAndSubscriptionBody(args: {
     case "SUBSCRIPTION_RENEWED":
       return (
         <Text style={paragraph}>
-          {typeof cycleOrdinal === "number"
-            ? `Week ${cycleOrdinal} of `
-            : "Your current cycle of "}
-          <strong>{planTitle}</strong> is complete
+          Your latest sessions of <strong>{planTitle}</strong> are complete
           {typeof nextBatch === "number"
             ? renderNextCycleSummary(
                 consultantName,
@@ -197,7 +191,6 @@ export function TrialAndSubscriptionEmail({
   consultantName,
   consulteeName,
   startsAtText,
-  cycleOrdinal,
   nextBatch,
   remainingSessions,
   dashboardUrl,
@@ -226,7 +219,6 @@ export function TrialAndSubscriptionEmail({
         consultantName,
         consulteeName,
         startsAtText,
-        cycleOrdinal,
         nextBatch,
         remainingSessions,
       })}

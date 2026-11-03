@@ -388,7 +388,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "subscriptions",
     inApp: {
       subject: "Next sessions coming",
-      body: "Week {{payload.cycleOrdinal}} of {{payload.planTitle}} is done — {{payload.consultantName}} will schedule your next {% if payload.nextBatch == 1 %}session{% else %}{{payload.nextBatch}} sessions{% endif %} ({{payload.remainingSessions}} left).",
+      body: "Your latest {{payload.planTitle}} sessions are done — {{payload.consultantName}} will schedule your next {% if payload.nextBatch == 1 %}session{% else %}{{payload.nextBatch}} sessions{% endif %} ({{payload.remainingSessions}} left).",
       redirect: "dashboardUrl",
     },
   },

@@ -867,7 +867,6 @@ export interface SubscriptionLifecycleEmailArgs {
   >;
   planTitle: string;
   consultantName?: string;
-  cycleOrdinal?: number;
   nextBatch?: number;
   remainingSessions?: number;
   dashboardUrl: string;
@@ -897,7 +896,6 @@ function buildSubscriptionLifecycleEmail(
           recipientName: greet(r),
           planTitle: args.planTitle,
           consultantName: args.consultantName,
-          cycleOrdinal: args.cycleOrdinal,
           nextBatch: args.nextBatch,
           remainingSessions: args.remainingSessions,
           dashboardUrl: absolute(args.dashboardUrl),
