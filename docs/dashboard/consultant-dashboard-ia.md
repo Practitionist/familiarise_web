@@ -1,6 +1,6 @@
 # Consultant dashboard information architecture: the sidebar groups and the Settings hub
 
-**Date:** 2026-09-27 (supersedes the 2026-09-21 version) · **Issue:** #1527 · **PR:** #1842 · **Scope:** `app/dashboard/consultant/[consultantId]/layout.tsx`, `lib/dashboard/nav/consultant.ts`, the `(features)/settings` hub, and the shared `DashboardShell`.
+**Date:** 2026-09-27 (supersedes the 2026-09-21 version) · **Issue:** #1527 · **PR:** #1842 · **Scope:** `app/dashboard/consultant/[consultantId]/ConsultantDashboardLayout.tsx`, `lib/dashboard/nav/consultant.ts`, the `(features)/settings` hub, and the shared `DashboardShell`.
 
 This page records how the consultant (Expert) dashboard is organised after the 2026-09-26/27 dashboard overhaul (PR #1842, part of #1527), and why. It replaces the 2026-09-21 version of this document, which described the sidebar and Settings hub as they stood before that PR. The owner locked "Expert" and "Learner" as the platform's end-user terms during this PR's review rounds; "Consultant" and "Client" no longer appear in the product surface, though the underlying routes, database enums and `consultant`/`consultee` code identifiers are unchanged.
 
@@ -66,7 +66,7 @@ The consultee (Learner) Settings hub also uses `SettingsLayout`: its sections ar
 
 | Concern                                   | File                                                                                                                |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Sidebar groups, mobile tabs, crumb labels | `lib/dashboard/nav/consultant.ts`, `app/dashboard/consultant/[consultantId]/layout.tsx`                             |
+| Sidebar groups, mobile tabs, crumb labels | `lib/dashboard/nav/consultant.ts`, `app/dashboard/consultant/[consultantId]/ConsultantDashboardLayout.tsx`          |
 | Shared shell, switcher, header menus      | `components/dashboard/DashboardShell.tsx`, `components/dashboard/ContextSwitcher.tsx`                               |
 | Availability page                         | `app/dashboard/consultant/[consultantId]/(features)/availability/page.tsx`                                          |
 | Sell pages, share attribution & editor    | `components/offerings/list/SellPageShell.tsx`, `lib/dashboard/sell-pages.ts`, `components/offerings/**`             |

@@ -88,7 +88,7 @@ copy. Only providers with configured credentials render, from the
 
 ### Rule 5: dashboard entry points redirect server-side
 
-`app/dashboard/page.tsx` resolves the role or capability home and calls
+`app/dashboard/(index)/page.tsx` resolves the role or capability home and calls
 `redirect()` from the server component, as do the admin and consultee/consultant
 `[id]` entry pages. A client stub paints a skeleton, hydrates, then replaces: a
 three-frame flash, stretched to seconds by cold starts. Do not reintroduce
