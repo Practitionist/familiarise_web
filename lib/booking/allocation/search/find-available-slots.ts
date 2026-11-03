@@ -668,7 +668,10 @@ export async function findAvailableSlots(
 
   // Skipped entirely when nothing was asked for, so the single sweep below is
   // the only one that runs and today's placements are reproduced exactly.
-  if (maxScore > 0) sweepPeriod(true);
+  if (maxScore > 0) {
+    if (eventType === "subscription") sweepPeriod(true, true);
+    sweepPeriod(true);
+  }
   // A subscription first tries to keep a free day between sessions, so a
   // week of 3 lands Mon/Wed/Fri rather than Mon/Tue/Wed; like the preference
   // pass, it never costs a placement, because the sweep below reconsiders.

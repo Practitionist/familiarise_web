@@ -115,3 +115,23 @@ it("still places every session when only consecutive days are open", async () =>
   expect(slots).toHaveLength(6);
   expect(weekdaysOf(slots)).toEqual([1, 2, 3]);
 });
+
+it("keeps the free day between sessions when a preference is set too", async () => {
+  const slots = await findAvailableSlots(
+    {
+      appointment: { findMany: jest.fn().mockResolvedValue([]) },
+    } as unknown as PrismaLike,
+    consultantOn(DAYS),
+    6,
+    2,
+    "subscription",
+    weekConfig,
+    [],
+    [],
+    undefined,
+    undefined,
+    { preferredDays: "WEEKDAYS" },
+  );
+  expect(slots).toHaveLength(6);
+  expect(weekdaysOf(slots)).toEqual([1, 3, 5]);
+});
