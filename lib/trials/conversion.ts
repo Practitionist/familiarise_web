@@ -16,16 +16,28 @@ export const TRIAL_CONVERSION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 export async function convertCompletedTrial(
   tx: Tx,
   subscriptionId: string,
-  paidAt: Date = new Date(),
+  now: Date = new Date(),
 ): Promise<string | null> {
   const subscription = await tx.subscription.findUnique({
     where: { id: subscriptionId },
     select: {
       requestedById: true,
       subscriptionPlan: { select: { consultantProfileId: true } },
+      appointment: {
+        select: {
+          payment: {
+            where: { paymentStatus: "SUCCEEDED", deletedAt: null },
+            orderBy: { createdAt: "asc" },
+            take: 1,
+            select: { capturedAt: true },
+          },
+        },
+      },
     },
   });
   if (!subscription?.subscriptionPlan) return null;
+  // Judged at the capture, not when a reconcile sweep got round to it.
+  const paidAt = subscription.appointment?.payment[0]?.capturedAt ?? now;
   const trial = await tx.trial.findFirst({
     where: {
       consulteeProfileId: subscription.requestedById,

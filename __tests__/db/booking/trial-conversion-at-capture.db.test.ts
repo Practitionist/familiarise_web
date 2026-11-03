@@ -132,3 +132,36 @@ it("a plan paid more than 30 days after the trial ended is not its conversion", 
     convertedToSubscriptionId: null,
   });
 });
+
+it("is judged at the capture, not when a late reconcile confirms it", async () => {
+  // Captured 29 days after the trial ended, confirmed by a sweep on day 31.
+  const { buyer, plan, trial } = await seedTrialledPlan(31);
+  await handleCheckout(
+    {
+      appointmentType: "SUBSCRIPTION",
+      planId: plan.id,
+      schedulingPeriodStartsAt: futureAt(2, 0).toISOString(),
+      paymentGateway: "RAZORPAY",
+      clientIdempotencyKey: `trial-conv-reconciled-${randomUUID()}`,
+      consumerStateCode: "29",
+    },
+    buyer.userId,
+  );
+  const payment = await prisma.payment.findFirstOrThrow({
+    where: { userId: buyer.userId },
+    select: { id: true, appointmentId: true },
+  });
+  await prisma.payment.update({
+    where: { id: payment.id },
+    data: {
+      paymentStatus: "SUCCEEDED",
+      capturedAt: new Date(Date.now() - 2 * 24 * 3_600_000),
+    },
+  });
+  await prisma.$transaction(
+    (tx) =>
+      confirmExistingAppointment(tx, payment.appointmentId!, buyer.userId),
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
+  expect((await trialOf(trial.id)).status).toBe("CONVERTED");
+});
