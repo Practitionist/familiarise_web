@@ -4,10 +4,12 @@
 
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
-import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/reschedule-proposals";
 
 /** An unpaid approval leaves the client time to pay before the session starts. */
 export const UNPAID_APPROVAL_LEAD_TIME_MS = 2 * 60 * 60_000;
+
+/** No session moves, from or to, closer than this to its start. */
+export const RESCHEDULE_MIN_LEAD_HOURS = 24;
 
 /** A moved session's new time is at least this far away. */
 export const RESCHEDULE_LEAD_TIME_MS = RESCHEDULE_MIN_LEAD_HOURS * 60 * 60_000;

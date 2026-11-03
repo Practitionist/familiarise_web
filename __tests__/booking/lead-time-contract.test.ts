@@ -5,13 +5,15 @@
  * writer refuses, fails here.
  */
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   assertRequestLeadFits,
   assertUnpaidApprovalFits,
   isTooSoonFor,
   leadMsFor,
+  RESCHEDULE_MIN_LEAD_HOURS,
 } from "@/lib/booking/lead-time";
-import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/reschedule-proposals";
 import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
 import {
   windowsForDay,
@@ -64,11 +66,12 @@ describe("one boundary", () => {
 
 describe("every writer honours its row", () => {
   it("checkout refuses at the book lead and accepts just past it", () => {
-    const edge = new Date(NOW.getTime() + leadMsFor("book"));
-    // Starts land on the half hour; 06:15 is the edge, 06:30 is the first legal one.
-    expect(slotStartRefusal(edge, NOW)).not.toBeNull();
+    // now = 06:15, so the lead edge is the on-grid start 06:30.
+    const quarter = new Date(NOW.getTime() + 15 * MIN);
+    const edge = new Date(quarter.getTime() + leadMsFor("book"));
+    expect(slotStartRefusal(edge, quarter)?.code).toBe("SLOT_TOO_SOON");
     expect(
-      slotStartRefusal(new Date(NOW.getTime() + 30 * MIN), NOW),
+      slotStartRefusal(new Date(edge.getTime() + 30 * MIN), quarter),
     ).toBeNull();
     expect(leadMsFor("book")).toBe(MINIMUM_BOOKING_LEAD_TIME_MS);
   });
@@ -162,4 +165,17 @@ describe("the grids paint by the same table", () => {
       }).isTooSoon,
     ).toBe(false);
   });
+});
+
+// Client components read the contract, so it never reaches server-only code.
+it("keeps lead-time.ts free of server-side booking modules", () => {
+  const src = readFileSync(
+    join(process.cwd(), "lib/booking/lead-time.ts"),
+    "utf8",
+  );
+  const imports = [...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
+  expect(imports.sort()).toEqual([
+    "@/lib/booking/booking-rule-error",
+    "@/lib/payments/constants",
+  ]);
 });

@@ -1,5 +1,8 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
-import { isTooSoonFor } from "@/lib/booking/lead-time";
+import {
+  isTooSoonFor,
+  RESCHEDULE_MIN_LEAD_HOURS,
+} from "@/lib/booking/lead-time";
 import * as Sentry from "@sentry/nextjs";
 import {
   applyRateLimit,
@@ -23,7 +26,6 @@ import type {
 } from "@prisma/client";
 import { RescheduleProposalSchema } from "@/schemas/appointments";
 import {
-  RESCHEDULE_MIN_LEAD_HOURS,
   autoConfirmRefusalIsFinal,
   autoConfirmTimesTaken,
   computeProposalExpiry,

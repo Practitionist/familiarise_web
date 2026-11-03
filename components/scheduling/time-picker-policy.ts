@@ -2,10 +2,8 @@ import type { AppointmentsType } from "@prisma/client";
 import type { SubscriptionEntitlementInput } from "@/lib/booking/entitlement";
 import type { GridLead } from "@/lib/scheduling/allocationService";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
-import {
-  RESCHEDULE_MIN_LEAD_HOURS,
-  supportsProposals,
-} from "@/lib/booking/reschedule-proposals";
+import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
+import { supportsProposals } from "@/lib/booking/reschedule-proposals";
 
 /**
  * The four surfaces that place slots on a consultant's calendar, expressed as
