@@ -87,8 +87,8 @@ describe("the consultant cancels someone else's booking", () => {
 
   it("names the client's full refund and the reliability cost, never 'You paid'", () => {
     const consultantArm = dialog.slice(
-      dialog.indexOf("if (asConsultant) {"),
-      dialog.indexOf("// One sentence per rail"),
+      dialog.indexOf("const consultantRefundLine"),
+      dialog.indexOf("const renderRefundLine"),
     );
     expect(consultantArm).toContain("gets a full refund");
     expect(consultantArm).toContain("counts against your reliability");

@@ -203,6 +203,27 @@ export function CancelConfirmationDialog({
     dialogTitle = `Cancel ${appointmentType}?`;
   }
 
+  // The consultant's line names the client's full refund and the reliability
+  // cost; the cost stands even when the quote could not be loaded.
+  const consultantRefundLine = (quoted?: {
+    paise: number;
+    currency: string;
+  }) => (
+    <p className="text-muted-foreground text-sm">
+      {quoted ? (
+        <>
+          {consultant} gets a full refund of{" "}
+          <strong className="text-foreground">
+            {formatCurrencyAmount(quoted.paise, quoted.currency)}
+          </strong>
+        </>
+      ) : (
+        <>If they paid, {consultant} gets a full refund</>
+      )}
+      . Cancelling a paid booking counts against your reliability.
+    </p>
+  );
+
   /**
    * The refund line. A quote only replaces the policy sentence when the server
    * actually produced one — a 403, a network failure or a booking the preview
@@ -224,6 +245,7 @@ export function CancelConfirmationDialog({
       );
     }
     if (!preview) {
+      if (asConsultant) return consultantRefundLine();
       // A quote that timed out or 500'd is a different fact from a booking that
       // was never priced, and the difference matters to someone deciding: one
       // says "we can't tell you right now", the other "there is nothing to
@@ -276,21 +298,10 @@ export function CancelConfirmationDialog({
       );
     }
     if (asConsultant) {
-      return (
-        <p className="text-muted-foreground text-sm">
-          {consultant} gets a full refund
-          {preview.grossPaise !== undefined ? (
-            <>
-              {" "}
-              of{" "}
-              <strong className="text-foreground">
-                {formatCurrencyAmount(preview.grossPaise, preview.currency)}
-              </strong>
-            </>
-          ) : null}
-          . Cancelling a paid booking counts against your reliability.
-        </p>
-      );
+      return consultantRefundLine({
+        paise: preview.estimatedRefundPaise,
+        currency: preview.currency,
+      });
     }
     // One sentence per rail, shared with the payments surfaces (#1675 X6).
     // #1846 — a quote that knows the paid amount shows the breakdown too.
