@@ -32,6 +32,7 @@ export interface BuyerAssetRow {
   version: number;
   status: "VERIFIED" | "SUPERSEDED";
   originalName: string;
+  mimeType: string;
   sizeBytes: number;
   order: number;
   createdAt: Date;
@@ -50,9 +51,9 @@ export function buyerFileView(input: {
   purchasedAt: Date;
   rows: readonly BuyerAssetRow[];
   lastDownloadByLineage: ReadonlyMap<string, Date>;
-  names: ReadonlyMap<string, string>;
+  nameOf: (row: BuyerAssetRow) => string;
 }): BuyerFiles {
-  const { purchasedAt, lastDownloadByLineage, names } = input;
+  const { purchasedAt, lastDownloadByLineage, nameOf } = input;
   const rows = input.rows.filter(
     (r) =>
       r.status === "VERIFIED" ||
@@ -80,7 +81,7 @@ export function buyerFileView(input: {
       );
       return {
         id: current.id,
-        name: names.get(current.lineageId) ?? current.originalName,
+        name: nameOf(current),
         sizeBytes: current.sizeBytes,
         badge: !fresh
           ? null
@@ -93,13 +94,17 @@ export function buyerFileView(input: {
   const removed: RemovedBuyerFile[] = [];
   for (const [lineageId, versions] of byLineage) {
     if (versions.some((r) => r.status === "VERIFIED")) continue;
-    const removedAt = Math.max(
-      ...versions.map((r) => r.supersededAt?.getTime() ?? 0),
+    const last = versions.reduce(
+      (a, b) =>
+        (b.supersededAt?.getTime() ?? 0) > (a.supersededAt?.getTime() ?? 0)
+          ? b
+          : a,
+      versions[0],
     );
     removed.push({
       lineageId,
-      name: names.get(lineageId) ?? versions[0].originalName,
-      removedAt: new Date(removedAt),
+      name: nameOf(last),
+      removedAt: new Date(last.supersededAt?.getTime() ?? 0),
     });
   }
   removed.sort((a, b) => b.removedAt.getTime() - a.removedAt.getTime());
@@ -131,6 +136,7 @@ export async function readBuyerFiles(
         version: true,
         status: true,
         originalName: true,
+        mimeType: true,
         sizeBytes: true,
         order: true,
         createdAt: true,
@@ -149,7 +155,7 @@ export async function readBuyerFiles(
       ? [{ ...a, status: a.status }]
       : [],
   );
-  const names = await lineageDisplayNames(prisma, rows);
+  const nameOf = await lineageDisplayNames(prisma, rows);
   const lineageOf = new Map(rows.map((r) => [r.id, r.lineageId]));
   for (const purchase of purchases) {
     const lastDownloadByLineage = new Map<string, Date>();
@@ -166,7 +172,7 @@ export async function readBuyerFiles(
         purchasedAt: purchase.createdAt,
         rows: rows.filter((r) => r.productId === purchase.productId),
         lastDownloadByLineage,
-        names,
+        nameOf,
       }),
     );
   }

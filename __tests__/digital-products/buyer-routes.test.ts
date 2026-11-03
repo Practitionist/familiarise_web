@@ -111,6 +111,7 @@ const asset = (version: number, status: string) => ({
   status,
   storageKey: `products/dp_1/lin_1/as_${version}.pdf`,
   originalName: version === 1 ? "Guide.pdf" : `Guide v${version}.pdf`,
+  mimeType: "application/pdf",
   product: { consultantProfileId: "cp_owner", takenDownAt: null },
 });
 const assetFindFirst = jest.fn();
@@ -336,6 +337,17 @@ it("serves a stale link the current version under the first name, and sends a br
     key: "products/dp_1/lin_1/as_3.pdf",
     responseContentDisposition: expect.stringContaining('filename="Guide.pdf"'),
   });
+  // A replacement in another format keeps the first stem under its own extension.
+  assetFindFirst.mockResolvedValueOnce({
+    ...asset(4, "VERIFIED"),
+    originalName: "Guide final.docx",
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+  await downloadOnce();
+  expect(presign.mock.calls[1][0].responseContentDisposition).toContain(
+    'filename="Guide.docx"',
+  );
 
   // The lineage has no current version: removed.
   assetFindFirst
