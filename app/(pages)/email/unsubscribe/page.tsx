@@ -3,6 +3,7 @@ import Link from "next/link";
 import { MailX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { goHref } from "@/lib/dashboard/go";
 import { verifyEmailUnsubscribeToken } from "@/lib/email/unsubscribe";
 
 export const metadata: Metadata = {
@@ -98,10 +99,10 @@ export default async function EmailUnsubscribePage({
                 </p>
               )}
               <p className="text-sm">
-                {/* /dashboard lands each viewer on their own dashboard, after
-                    sign-in if needed. */}
+                {/* The go resolver opens the viewer's own Settings ›
+                    Notifications, after sign-in if needed. */}
                 <Link
-                  href="/dashboard"
+                  href={goHref("auto", "settings/notifications")}
                   className="underline underline-offset-4"
                 >
                   Manage notification preferences in Settings

@@ -1,8 +1,6 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { useSession } from "@/lib/auth-client";
-import { dataConsentHref } from "@/lib/dashboard/account-href";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,13 +25,13 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import {
-  createHandleApiError,
   createHandleCheckoutSuccess,
   createRazorpayCheckoutHandlers,
   handleUnifiedCheckout,
   paymentGateways,
   reportPaymentsError,
 } from "../../utils";
+import { useHandleApiError } from "../../use-handle-api-error";
 import { calculatePricing, formatPercentage } from "../../math";
 import { getWebinarCapacity } from "@/lib/events/capacity";
 import { useCurrency } from "@/hooks/useCurrency";
@@ -162,7 +160,6 @@ export default function WebinarCheckoutPage({
       : { kind: "gateway" };
 
   const { toast } = useToast();
-  const { data: session } = useSession();
   const {
     isBlocked: isMaintenanceBlocked,
     blockReason: maintenanceBlockReason,
@@ -284,11 +281,7 @@ export default function WebinarCheckoutPage({
   };
 
   // Create utility functions using the toast instance
-  const consentHref = session?.user ? dataConsentHref(session.user) : null;
-  const handleApiError = useMemo(
-    () => createHandleApiError(toast, consentHref),
-    [toast, consentHref],
-  );
+  const handleApiError = useHandleApiError(toast);
   const handleCheckoutSuccess = useMemo(
     () => createHandleCheckoutSuccess(toast, "WEBINAR"),
     [toast],

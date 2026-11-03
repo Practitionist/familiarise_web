@@ -9,7 +9,7 @@ last-reviewed: 2026-10-23
 
 # Admin money doors and the Money console
 
-Every back-office action that moves money, holds money or runs a money job goes through one shell, `withOpsAction` in `lib/backoffice/ops-action-log.ts`, and is surfaced in one place: the Money console at `/dashboard/admin/money/<section>` for admins and `/dashboard/staff/[staffId]/money/<section>` for staff. This page lists the sections, the checks every door applies, the exact thresholds, which doors need a second admin, and the on-demand jobs the console can start. The rule behind all of it is simple: staff see every money surface and own support; only an admin executes money, and staff executes only bounded support refunds and holds.
+Every back-office action that moves money, holds money or runs a money job goes through one shell, `withOpsAction` in `lib/backoffice/ops-action-log.ts`, and is surfaced in one place: the Money console at `/dashboard/admin/money/<section>` for admins and `/dashboard/staff/money/<section>` for staff. This page lists the sections, the checks every door applies, the exact thresholds, which doors need a second admin, and the on-demand jobs the console can start. The rule behind all of it is simple: staff see every money surface and own support; only an admin executes money, and staff executes only bounded support refunds and holds.
 
 ## The sections and who sees them
 

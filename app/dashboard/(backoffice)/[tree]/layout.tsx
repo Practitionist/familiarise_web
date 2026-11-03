@@ -8,8 +8,8 @@ import { requireOperator } from "@/lib/auth-guard";
 import {
   isBackofficeTree,
   resolveBackofficeCapability,
+  staffTwinHref,
 } from "@/lib/backoffice/capability";
-import { staffTwinHref } from "@/lib/backoffice/capability";
 import { operatorHasBeenAskedForConsent } from "@/lib/compliance/operator-consent";
 import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
 

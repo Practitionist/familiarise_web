@@ -107,11 +107,11 @@ page that already owned the object. Every tab is addressable as
 `?tab=<value>`; the retired standalone routes (`purchase-orders`, `reimbursements`,
 `disputes`) were deleted and answer 404.
 
-| Page        | Tabs / Sections                                                     | Why they merged                                                                                                         |
-| ----------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `/members`  | `all`, `learners`, `experts`, `invitations`                         | `learners` and `experts` are role filters against `/api/organizations/[orgId]/members`.                                 |
-| `/settings` | `general`, `sso`, `webhooks`, `data-exports`                        | Rendered via `SettingsLayout` with one canonical URL per section.                                                       |
-| `/billing`  | `invoices`, `wallet`, `purchase-orders`, `member-spend`, `disputes` | Consolidates all sponsor-side billing, POs, member spend limits, reimbursements, and disputes onto one finance surface. |
+| Page        | Tabs / Sections                                                     | Why they merged                                                                                                          |
+| ----------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `/members`  | `members`, `invitations`                                            | Learners and Experts are role filter chips on the `members` list against `/api/organizations/[orgId]/members`, not tabs. |
+| `/settings` | `general`, `sso`, `webhooks`, `data-exports`                        | Rendered via `SettingsLayout` with one canonical URL per section.                                                        |
+| `/billing`  | `invoices`, `wallet`, `purchase-orders`, `member-spend`, `disputes` | Consolidates all sponsor-side billing, POs, member spend limits, reimbursements, and disputes onto one finance surface.  |
 
 Tabs are gated individually on the same `OrgSurface` keys the sidebar uses, so
 a role that cannot reach a surface does not get a trigger for it.
