@@ -9,9 +9,6 @@ jest.mock("../../lib/novu/stage-bell", () => ({
 jest.mock("../../lib/email/deliver", () => ({
   stage: jest.fn(async () => null),
 }));
-jest.mock("../../lib/novu/resolve-href", () => ({
-  supportRequestHref: (key: string) => `/dashboard/support/${key}`,
-}));
 jest.mock("../../lib/prisma", () => {
   const db = {
     supportCase: {
@@ -56,11 +53,13 @@ import {
   readSupportCaseForViewer,
   submitSupportCaseCsat,
   supportMonthlyComplianceReport,
+  stageSupportCaseIntakeTx,
 } from "../../lib/support/case-service";
 import { supportDeadline } from "../../lib/support/deadline-policy";
 import { slaStateOf } from "../../lib/support/sla";
 import { stageBell } from "../../lib/novu/stage-bell";
 import { stage as stageEmail } from "../../lib/email/deliver";
+import { supportRequestHref } from "../../lib/novu/resolve-href";
 const cases = prisma.supportCase;
 const now = new Date("2026-10-20T00:00:00Z");
 const record = (overrides: Record<string, unknown> = {}) => ({
@@ -425,6 +424,7 @@ describe("case turn notification routing", () => {
     expect(emailed()).toEqual(["customer@example.com"]);
     const [email] = (stageEmail as jest.Mock).mock.calls[0];
     expect(email.subject).toBe("New presenter reply — FAM-2026-000001");
+    expect(email.text.split("\n").at(-1)).toBe(supportRequestHref("c_case"));
     expect(email.text).toContain("Reply");
   });
 
@@ -686,4 +686,32 @@ it("formal intake promotes an existing guided conversation into the human queue 
     }),
   );
   expect(cases.create).not.toHaveBeenCalled();
+});
+
+it("uses the canonical absolute case link in intake emails", async () => {
+  (prisma.user.findMany as jest.Mock).mockResolvedValue([
+    { id: "customer", email: "customer@example.com" },
+  ]);
+  await prisma.$transaction((tx) =>
+    stageSupportCaseIntakeTx(
+      tx,
+      {
+        id: "case",
+        referenceNumber: "FAM-2026-000001",
+        title: "Help",
+        description: "Complaint",
+        activeChannel: "HUMAN",
+        submitterUserId: "customer",
+        organizationId: null,
+        ownershipScope: "PERSONAL",
+        externalRequesterEmail: null,
+        appointmentId: null,
+        category: "GENERAL",
+        issueType: null,
+      },
+      "USER",
+    ),
+  );
+  const [email] = (stageEmail as jest.Mock).mock.calls[0];
+  expect(email.text.split("\n").at(-1)).toBe(supportRequestHref("c_case"));
 });

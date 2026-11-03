@@ -17,7 +17,6 @@ import prisma, {
 } from "@/lib/prisma";
 import { caseKeyOf } from "./case-key";
 import { stage as stageEmail } from "@/lib/email/deliver";
-import { getAppUrl } from "@/lib/url";
 import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
 import {
   canCorrespondOnCase,
@@ -701,7 +700,7 @@ export async function stageSupportCaseIntakeTx(
       });
       // Keep outbox writes sequential on the transaction’s single connection.
       for (const recipient of recipients) {
-        const text = `Reference: ${created.referenceNumber}\n\n${created.ownershipScope === "PERSONAL" ? created.description : "An organization support case was received."}\n\n${getAppUrl()}${href}`;
+        const text = `Reference: ${created.referenceNumber}\n\n${created.ownershipScope === "PERSONAL" ? created.description : "An organization support case was received."}\n\n${href}`;
         const html = text
           .replace(
             /[&<>"']/g,
@@ -1020,7 +1019,10 @@ async function stageCaseResponseEmailsTx(
     where: { id: { in: recipients } },
     select: { email: true },
   });
-  const href = `${getAppUrl()}${supportRequestHref(caseKeyOf({ kind: "case", id: existingCase.id }), existingCase.organizationId)}`;
+  const href = supportRequestHref(
+    caseKeyOf({ kind: "case", id: existingCase.id }),
+    existingCase.organizationId,
+  );
   const text = `Reference: ${existingCase.referenceNumber}\n\n${existingCase.ownershipScope === "PERSONAL" ? body : "A new response is available in your organization support workspace."}\n\n${href}`;
   const html = text
     .replace(
