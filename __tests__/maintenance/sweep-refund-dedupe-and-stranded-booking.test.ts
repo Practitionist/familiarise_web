@@ -258,8 +258,13 @@ function noShowCandidate(paymentId: string) {
       ],
       occurrences: [
         {
+          id: "occ-1",
           startsAt: hoursAgo(4),
           endsAt: hoursAgo(3),
+          completionStatus: "SCHEDULED",
+          outcome: null,
+          deletedAt: null,
+          isTentative: false,
           presences: [
             {
               userId: "user-consultee",
