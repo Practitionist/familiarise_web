@@ -1,50 +1,95 @@
 /**
  * The top-up places a plan's open weeks on its own only when the consultant
- * scheduled the plan with Auto. One later week placed with the one-tap Auto,
- * the sweep's own runs and confirmed reschedules never change that choice.
+ * chose Auto when first scheduling the plan. The choice is a stable token,
+ * derived from server facts (what the plan held before the run); one later
+ * week, the sweep's own runs and re-placed or confirmed reschedules never
+ * change it, and a plan with no token recorded is by hand.
  */
 import {
-  SCHEDULED_AUTO,
-  SCHEDULED_BY_HAND,
-  SCHEDULED_BY_RESCHEDULE,
-  SCHEDULED_BY_TOP_UP,
-  SCHEDULED_WEEK_AUTO,
-  SCHEDULED_WEEK_BY_HAND,
+  PLAN_CHOICES,
+  SCHEDULE_REASON,
+  SCHEDULE_REASON_COPY,
   lastChoiceWasAuto,
+  parseScheduleReason,
   scheduleReason,
 } from "@/lib/booking/allocation/schedule-choice";
 
-describe("scheduleReason", () => {
+it("pins the stored tokens: changing one silently changes every plan's mode", () => {
+  expect(SCHEDULE_REASON).toEqual({
+    planAuto: "schedule:auto",
+    planByHand: "schedule:by-hand",
+    weekAuto: "schedule:week-auto",
+    weekByHand: "schedule:week-by-hand",
+    topUp: "schedule:top-up",
+    reschedule: "schedule:reschedule",
+  });
+  expect(PLAN_CHOICES).toEqual(["schedule:auto", "schedule:by-hand"]);
+  for (const token of Object.values(SCHEDULE_REASON)) {
+    expect(SCHEDULE_REASON_COPY[token]).toMatch(/^[A-Z][a-z ]+$/);
+  }
+});
+
+it("parses strictly: human copy is never a token", () => {
+  expect(parseScheduleReason("schedule:auto")).toBe("schedule:auto");
+  expect(parseScheduleReason("Scheduled automatically")).toBeNull();
+  expect(parseScheduleReason("schedule:AUTO")).toBeNull();
+  expect(parseScheduleReason(null)).toBeNull();
+});
+
+describe("scheduleReason from server facts", () => {
+  const empty = { heldBefore: 0, releasedBefore: 0 };
   it.each([
-    [{ mode: "auto" as const }, SCHEDULED_AUTO],
-    [{ mode: "manual" as const }, SCHEDULED_BY_HAND],
-    [{ mode: "requested" as const }, SCHEDULED_BY_HAND],
-    [{ mode: "auto" as const, topUp: true }, SCHEDULED_WEEK_AUTO],
-    [{ mode: "manual" as const, topUp: true }, SCHEDULED_WEEK_BY_HAND],
+    [{ mode: "auto" as const, ...empty }, SCHEDULE_REASON.planAuto],
+    [{ mode: "manual" as const, ...empty }, SCHEDULE_REASON.planByHand],
+    [{ mode: "requested" as const, ...empty }, SCHEDULE_REASON.planByHand],
     [
-      { mode: "auto" as const, topUp: true, bySweep: true },
-      SCHEDULED_BY_TOP_UP,
+      { mode: "auto" as const, heldBefore: 3, releasedBefore: 0 },
+      SCHEDULE_REASON.weekAuto,
     ],
     [
-      { mode: "manual" as const, confirmsReschedule: true },
-      SCHEDULED_BY_RESCHEDULE,
+      { mode: "manual" as const, heldBefore: 3, releasedBefore: 0 },
+      SCHEDULE_REASON.weekByHand,
     ],
-  ])("%j → %s", (args, reason) => {
-    expect(scheduleReason(args)).toBe(reason);
+    // Re-placing a released session is never a plan-level choice.
+    [
+      { mode: "auto" as const, heldBefore: 0, releasedBefore: 1 },
+      SCHEDULE_REASON.reschedule,
+    ],
+    [
+      { mode: "manual" as const, ...empty, confirmsReschedule: true },
+      SCHEDULE_REASON.reschedule,
+    ],
+    [
+      {
+        mode: "auto" as const,
+        heldBefore: 3,
+        releasedBefore: 0,
+        bySweep: true,
+      },
+      SCHEDULE_REASON.topUp,
+    ],
+  ])("%j → %s", (args, token) => {
+    expect(scheduleReason(args)).toBe(token);
   });
 });
 
 describe("lastChoiceWasAuto", () => {
-  it("is the plan's own scheduling choice, newest first", () => {
-    expect(lastChoiceWasAuto([SCHEDULED_BY_TOP_UP, SCHEDULED_AUTO])).toBe(true);
+  it("reads the newest plan-level choice, newest first", () => {
+    expect(
+      lastChoiceWasAuto([SCHEDULE_REASON.topUp, SCHEDULE_REASON.planAuto]),
+    ).toBe(true);
     expect(
       lastChoiceWasAuto([
-        SCHEDULED_WEEK_AUTO,
-        SCHEDULED_BY_RESCHEDULE,
-        SCHEDULED_BY_HAND,
+        SCHEDULE_REASON.weekAuto,
+        SCHEDULE_REASON.reschedule,
+        SCHEDULE_REASON.planByHand,
       ]),
     ).toBe(false);
-    expect(lastChoiceWasAuto([SCHEDULED_BY_HAND, SCHEDULED_AUTO])).toBe(false);
-    expect(lastChoiceWasAuto([null, "payment captured"])).toBe(false);
+  });
+
+  it("treats a plan with no token (scheduled before tokens) as by hand", () => {
+    expect(
+      lastChoiceWasAuto([null, "payment captured", "Scheduled automatically"]),
+    ).toBe(false);
   });
 });

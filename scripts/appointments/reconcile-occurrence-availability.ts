@@ -19,7 +19,7 @@
  */
 
 import {
-  SCHEDULING_CHOICES,
+  PLAN_CHOICES,
   lastChoiceWasAuto,
 } from "@/lib/booking/allocation/schedule-choice";
 import prisma from "../../lib/prisma";
@@ -657,7 +657,7 @@ async function plansOnAuto(subscriptionIds: string[]): Promise<Set<string>> {
     where: {
       entity: "SUBSCRIPTION",
       entityId: { in: subscriptionIds },
-      reason: { in: [...SCHEDULING_CHOICES] },
+      reason: { in: [...PLAN_CHOICES] },
     },
     orderBy: { createdAt: "desc" },
     select: { entityId: true, reason: true },

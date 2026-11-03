@@ -1,47 +1,87 @@
-// How a plan's sessions were placed, recorded as the `reason` on the
-// BookingStatusHistory row every allocation writes. The consultant's choice
-// when scheduling the plan (not one later week) decides whether the hourly
-// top-up may place the plan's open weeks on its own.
+// How a plan's sessions were placed, recorded as a stable machine token in
+// the `reason` of the BookingStatusHistory row every allocation writes. The
+// plan-level choice (made when the plan is first scheduled) decides whether
+// the hourly top-up may place the plan's open weeks on its own. Tokens are
+// parsed strictly; the words people read come from SCHEDULE_REASON_COPY.
 
-/** The consultant (or an operator) scheduled the plan with Auto. */
-export const SCHEDULED_AUTO = "Scheduled automatically";
-/** The consultant scheduled the plan by picking times, or confirmed the client's. */
-export const SCHEDULED_BY_HAND = "Scheduled by hand";
-/** One later week placed with the one-tap Auto: not a choice for the plan. */
-export const SCHEDULED_WEEK_AUTO = "This week scheduled automatically";
-/** One later week placed by hand: not a choice for the plan. */
-export const SCHEDULED_WEEK_BY_HAND = "This week scheduled by hand";
-/** The hourly top-up placed an open week for a plan its consultant runs on Auto. */
-export const SCHEDULED_BY_TOP_UP = "Open week scheduled automatically";
-/** A reschedule's new times were confirmed; not a scheduling choice. */
-export const SCHEDULED_BY_RESCHEDULE = "New times confirmed";
+export const SCHEDULE_REASON = {
+  /** The plan's first scheduling, with Auto. */
+  planAuto: "schedule:auto",
+  /** The plan's first scheduling, by picking times (or confirming the client's). */
+  planByHand: "schedule:by-hand",
+  /** One later week placed with Auto (the one-tap): not a plan-level choice. */
+  weekAuto: "schedule:week-auto",
+  /** One later week placed by hand: not a plan-level choice. */
+  weekByHand: "schedule:week-by-hand",
+  /** The hourly top-up placed an open week. */
+  topUp: "schedule:top-up",
+  /** Released sessions re-placed, or a reschedule's times confirmed. */
+  reschedule: "schedule:reschedule",
+} as const;
 
-/** The consultant's choices, never the sweep's or a reschedule's. */
-export const SCHEDULING_CHOICES = [SCHEDULED_AUTO, SCHEDULED_BY_HAND] as const;
+export type ScheduleReason =
+  (typeof SCHEDULE_REASON)[keyof typeof SCHEDULE_REASON];
 
-/** Whether the newest choice (rows newest first) was Auto. */
+const TOKENS = new Set<string>(Object.values(SCHEDULE_REASON));
+
+/** The token a history `reason` holds, or null for any other reason. */
+export function parseScheduleReason(
+  reason: string | null,
+): ScheduleReason | null {
+  return reason !== null && TOKENS.has(reason)
+    ? (reason as ScheduleReason)
+    : null;
+}
+
+/** What the booking timeline shows for each token. */
+export const SCHEDULE_REASON_COPY: Record<ScheduleReason, string> = {
+  "schedule:auto": "Scheduled automatically",
+  "schedule:by-hand": "Scheduled by hand",
+  "schedule:week-auto": "This week scheduled automatically",
+  "schedule:week-by-hand": "This week scheduled by hand",
+  "schedule:top-up": "Open week scheduled automatically",
+  "schedule:reschedule": "New times confirmed",
+};
+
+/** The plan-level choices, never a week's, the sweep's or a reschedule's. */
+export const PLAN_CHOICES: readonly ScheduleReason[] = [
+  SCHEDULE_REASON.planAuto,
+  SCHEDULE_REASON.planByHand,
+];
+
+/**
+ * Whether the plan's newest plan-level choice (rows newest first) was Auto.
+ * A plan with no choice recorded (scheduled before tokens existed) is by hand.
+ */
 export function lastChoiceWasAuto(
   reasonsNewestFirst: ReadonlyArray<string | null>,
 ): boolean {
-  const choice = reasonsNewestFirst.find(
-    (reason): reason is string =>
-      reason !== null &&
-      (SCHEDULING_CHOICES as readonly string[]).includes(reason),
-  );
-  return choice === SCHEDULED_AUTO;
+  const choice = reasonsNewestFirst
+    .map(parseScheduleReason)
+    .find((token) => token !== null && PLAN_CHOICES.includes(token));
+  return choice === SCHEDULE_REASON.planAuto;
 }
 
-/** The history reason one allocation run records. */
+/**
+ * The token one allocation run records, from server-side facts only: what the
+ * plan held before the run (never a client flag), the mode, and who ran it.
+ */
 export function scheduleReason(args: {
   mode: "auto" | "manual" | "requested";
-  /** A later week appended to a plan that already holds sessions. */
-  topUp?: boolean;
+  /** Sessions the plan already held (scheduled or delivered) before this run. */
+  heldBefore: number;
+  /** Released sessions awaiting a new time before this run. */
+  releasedBefore: number;
   bySweep?: boolean;
   confirmsReschedule?: boolean;
-}): string {
-  if (args.confirmsReschedule) return SCHEDULED_BY_RESCHEDULE;
-  if (args.bySweep) return SCHEDULED_BY_TOP_UP;
+}): ScheduleReason {
+  if (args.bySweep) return SCHEDULE_REASON.topUp;
+  if (args.confirmsReschedule || args.releasedBefore > 0) {
+    return SCHEDULE_REASON.reschedule;
+  }
   const auto = args.mode === "auto";
-  if (args.topUp) return auto ? SCHEDULED_WEEK_AUTO : SCHEDULED_WEEK_BY_HAND;
-  return auto ? SCHEDULED_AUTO : SCHEDULED_BY_HAND;
+  if (args.heldBefore > 0) {
+    return auto ? SCHEDULE_REASON.weekAuto : SCHEDULE_REASON.weekByHand;
+  }
+  return auto ? SCHEDULE_REASON.planAuto : SCHEDULE_REASON.planByHand;
 }

@@ -320,12 +320,15 @@ that opens on the calendar is filled without an availability edit. Changed
 calendars go first (newest change first), then rested ones oldest attempt first,
 still capped at 25 events and 60 seconds a run. A subscription is a candidate
 only when its consultant scheduled the plan with Auto: every allocation writes
-its placement on the approval's `BookingStatusHistory.reason`
-(`scheduleReason` in `lib/booking/allocation/schedule-choice.ts`: "Scheduled
-automatically" / "Scheduled by hand" for the plan's own scheduling, "This week
-scheduled automatically/by hand" for a one-tap later week, "Open week scheduled
-automatically" for the sweep (`bySweep`), "New times confirmed" for a
-reschedule), and `plansOnAuto` reads the newest plan-level choice. Other plans
+its placement on the approval's `BookingStatusHistory.reason` as a stable token
+(`SCHEDULE_REASON` / `scheduleReason` in `lib/booking/allocation/schedule-choice.ts`,
+parsed strictly, shown through `SCHEDULE_REASON_COPY`): `schedule:auto` /
+`schedule:by-hand` only for the plan's first scheduling (derived on the server
+from what the plan held before the run, never a client flag), `schedule:week-*`
+for a later week, `schedule:top-up` for the sweep (`bySweep`) and
+`schedule:reschedule` when released sessions are re-placed or a reschedule is
+confirmed. `plansOnAuto` reads the newest plan-level token; a plan with none
+(scheduled before tokens existed) counts as by hand. Other plans
 get the week reminder, which links to the allocate page's one-tap "Auto-schedule
 this week".
 

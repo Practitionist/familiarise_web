@@ -224,12 +224,46 @@ async function underAppointmentLock<T>(
 }
 
 /**
+ * What the event held before this run, read on the server so the recorded
+ * scheduling choice never trusts a client flag: sessions scheduled or
+ * delivered, and released sessions awaiting a new time.
+ */
+async function placementBefore(
+  request: AllocationRequest,
+): Promise<{ held: number; released: number }> {
+  const appointment = {
+    [`${getEventRelationField(request.eventType)}Id`]: request.eventId,
+    deletedAt: null,
+  } as Prisma.AppointmentWhereInput;
+  const [held, released] = await Promise.all([
+    prisma.appointmentOccurrence.count({
+      where: {
+        appointment,
+        deletedAt: null,
+        isTentative: false,
+        completionStatus: { in: ["SCHEDULED", "COMPLETED", "UNVERIFIED"] },
+      },
+    }),
+    prisma.appointmentOccurrence.count({
+      where: {
+        appointment,
+        deletedAt: null,
+        isTentative: true,
+        completionStatus: "RESCHEDULED",
+      },
+    }),
+  ]);
+  return { held, released };
+}
+
+/**
  * Mode router extracted so allocate() can post-process success uniformly
  * (PR 2c notification) without each mode knowing about it.
  */
 export async function dispatch(
   request: AllocationRequest,
 ): Promise<AllocationResult> {
+  const before = await placementBefore(request);
   const txOptions: AllocationTxOptions = {
     approvableFrom: request.approvableFrom,
     inTx: request.inTx,
@@ -238,7 +272,8 @@ export async function dispatch(
         request.mode === "auto" || request.mode === "manual"
           ? request.mode
           : "requested",
-      topUp: request.topUp,
+      heldBefore: before.held,
+      releasedBefore: before.released,
       bySweep: request.bySweep,
       confirmsReschedule: !!request.excludeRescheduleRequestId,
     }),

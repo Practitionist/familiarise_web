@@ -23,11 +23,7 @@ jest.mock("../../../lib/novu", () => {
 });
 
 import { allocate } from "../../../lib/booking/allocation";
-import {
-  SCHEDULED_AUTO,
-  SCHEDULED_BY_HAND,
-  SCHEDULED_BY_TOP_UP,
-} from "../../../lib/booking/allocation/schedule-choice";
+import { SCHEDULE_REASON } from "../../../lib/booking/allocation/schedule-choice";
 import { reconcileOccurrenceAvailability } from "../../../scripts/appointments/reconcile-occurrence-availability";
 
 /** A paid 1-a-week plan starting at `start`, awaiting its first week. */
@@ -161,20 +157,46 @@ async function scheduledPlan(mode: "auto" | "manual") {
 
 it("a plan scheduled with Auto gets its open week placed by the sweep", async () => {
   const subscriptionId = await scheduledPlan("auto");
-  expect(await reasons(subscriptionId)).toContain(SCHEDULED_AUTO);
+  expect(await reasons(subscriptionId)).toContain(SCHEDULE_REASON.planAuto);
   expect(await liveSessions(subscriptionId)).toBe(1);
 
   await reconcileOccurrenceAvailability();
 
   expect(await liveSessions(subscriptionId)).toBe(2);
-  expect(await reasons(subscriptionId)).toContain(SCHEDULED_BY_TOP_UP);
+  expect(await reasons(subscriptionId)).toContain(SCHEDULE_REASON.topUp);
 }, 60_000);
 
 it("a plan scheduled by hand is left to its consultant", async () => {
   const subscriptionId = await scheduledPlan("manual");
-  expect(await reasons(subscriptionId)).toContain(SCHEDULED_BY_HAND);
+  expect(await reasons(subscriptionId)).toContain(SCHEDULE_REASON.planByHand);
 
   await reconcileOccurrenceAvailability();
 
   expect(await liveSessions(subscriptionId)).toBe(1);
+}, 60_000);
+
+it("re-placing a released session with Auto never switches a by-hand plan to the sweep", async () => {
+  const subscriptionId = await scheduledPlan("manual");
+  // The client released their session ("any time works"): it awaits a new time.
+  await prisma.appointmentOccurrence.updateMany({
+    where: { appointment: { subscriptionId }, deletedAt: null },
+    data: { completionStatus: "RESCHEDULED", isTentative: true },
+  });
+  const replaced = await allocate({
+    eventType: "subscription",
+    eventId: subscriptionId,
+    mode: "auto",
+  });
+  expect(replaced).toMatchObject({ success: true });
+  expect(await reasons(subscriptionId)).toContain(SCHEDULE_REASON.reschedule);
+  expect(await reasons(subscriptionId)).not.toContain(SCHEDULE_REASON.planAuto);
+  await prisma.subscription.update({
+    where: { id: subscriptionId },
+    data: { updatedAt: new Date(Date.now() - 7 * HOUR_MS) },
+  });
+  const before = await liveSessions(subscriptionId);
+
+  await reconcileOccurrenceAvailability();
+
+  expect(await liveSessions(subscriptionId)).toBe(before);
 }, 60_000);

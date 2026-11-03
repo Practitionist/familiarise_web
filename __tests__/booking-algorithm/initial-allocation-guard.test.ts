@@ -177,7 +177,12 @@ describe("manual allocation with initialAllocation", () => {
       slots: FUTURE_SLOTS,
     });
 
-    expect(mockPrisma.appointmentOccurrence.count).not.toHaveBeenCalled();
+    // The allocator still counts what the plan holds (to record how it was
+    // scheduled), but never runs the confirmed-slots guard (`notIn` dead).
+    const guardReads = mockPrisma.appointmentOccurrence.count.mock.calls.filter(
+      ([args]) => JSON.stringify(args).includes('"notIn"'),
+    );
+    expect(guardReads).toEqual([]);
     expect(result.error).not.toContain("already allocated in another session");
   });
 });
@@ -186,7 +191,7 @@ describe("manual allocation: transaction race window", () => {
   it("409s when the pre-lock count sees zero but the in-txn count sees confirmed slots", async () => {
     // Tab B commits between tab A's out-of-txn guard and its write txn: the
     // first count returns 0, the advisory-locked in-txn count returns 2.
-    mockPrisma.appointmentOccurrence.count.mockResolvedValueOnce(0);
+    mockPrisma.appointmentOccurrence.count.mockResolvedValue(0);
     mockValidateFn.mockResolvedValue({
       isValid: true,
       errors: [],
