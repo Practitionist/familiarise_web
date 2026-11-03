@@ -11,7 +11,7 @@ Two read-only reviews of `dev` at 39f98669f (2026-11-03) looked at booking after
 
 ## What this pull request ships
 
-1. **Decline versus reschedule (A-01, A-02).** Every REJECTED door (the consultation and subscription list and `[id]` PATCH routes) calls `assertDeclinable` (`lib/booking/request-route-guards.ts`): an open `PENDING_REVIEW` reschedule answers 409 `USE_RESCHEDULE_RESPOND`, and live released sessions (tentative `RESCHEDULED`) with no proposal answer 409 `USE_CANCEL_ENDPOINT`. Inbox rows for a booking being moved offer:
+1. **Decline versus reschedule (A-01, A-02).** Every REJECTED door (the consultation and subscription list and `[id]` PATCH routes) calls `assertNotBeingMoved` (`lib/booking/request-route-guards.ts`): an open `PENDING_REVIEW` reschedule answers 409 `USE_RESCHEDULE_RESPOND`, and live released sessions (tentative `RESCHEDULED`) with no proposal answer 409 `USE_CANCEL_ENDPOINT`. Inbox rows for a booking being moved offer:
    - a client proposal with times: "Accept new times" (respond accept) and "Keep the original time" (respond decline);
    - a client "any time works": "Pick a new time" (the allocator) and "Keep the original time";
    - the consultant's own proposal with times: only "Withdraw my request" (reschedule withdraw), in the "Waiting on the client" bucket;

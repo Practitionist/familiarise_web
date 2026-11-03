@@ -224,7 +224,7 @@ correct, and it changes which refund path runs.
 
 A decline is only for a request that was never confirmed. Every REJECTED door
 (the consultation and subscription list and `[id]` PATCH routes) calls
-`assertDeclinable` (`lib/booking/request-route-guards.ts`) inside its
+`assertNotBeingMoved` (`lib/booking/request-route-guards.ts`) inside its
 transaction: a booking with an open `PENDING_REVIEW` reschedule answers 409
 `USE_RESCHEDULE_RESPOND` (respond or withdraw instead), and one with live
 released sessions (tentative `RESCHEDULED`) and no proposal answers 409
@@ -560,6 +560,6 @@ back while the session can still be re-booked; it waits for the plan end.
   `convertCompletedTrial` at capture or no-gateway settle.
 - **Decline as an implicit cancel.** A REJECTED PATCH on a booking being moved
   once cancelled every session, refunded in full and recorded no strike;
-  `assertDeclinable` refuses it now.
+  `assertNotBeingMoved` refuses it now.
 - **A passed, never-replaced released session quoted from its old start.** Its
   notice once came out negative, the lowest tier; it now counts as full notice.

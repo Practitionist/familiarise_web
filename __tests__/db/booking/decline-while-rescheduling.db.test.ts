@@ -170,6 +170,35 @@ describe.each([
   });
 });
 
+describe.each(["consultation", "subscription"] as const)(
+  "approving a %s being moved through the status PATCH",
+  (kind) => {
+    it("answers 409 USE_RESCHEDULE_RESPOND and leaves the booking intact", async () => {
+      const booking = await movingBooking(kind);
+      const id = (booking.consultationId ?? booking.subscriptionId)!;
+      const base = `http://localhost/api/bookings/${kind}s/${id}`;
+      const req = json(base, "PATCH", { status: "APPROVED" });
+      const res =
+        kind === "consultation"
+          ? await patchConsultation(req, {
+              params: Promise.resolve({ consultationId: id }),
+            })
+          : await patchSubscription(req, {
+              params: Promise.resolve({ subscriptionId: id }),
+            });
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("USE_RESCHEDULE_RESPOND");
+      const occurrences = await prisma.appointmentOccurrence.findMany({
+        where: { appointmentId: booking.appointmentId },
+        select: { completionStatus: true, isTentative: true },
+      });
+      expect(occurrences).toEqual([
+        { completionStatus: "RESCHEDULED", isTentative: true },
+      ]);
+    });
+  },
+);
+
 describe("a stranded booking (released, no open proposal)", () => {
   it("answers 409 USE_CANCEL_ENDPOINT instead of declining", async () => {
     const booking = await movingBooking("consultation");
@@ -189,6 +218,27 @@ describe("a stranded booking (released, no open proposal)", () => {
     );
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("USE_CANCEL_ENDPOINT");
+  });
+
+  it("refuses an approval with PLACE_RELEASED_SESSIONS", async () => {
+    const booking = await movingBooking("consultation");
+    await prisma.rescheduleRequest.updateMany({
+      where: { appointmentId: booking.appointmentId },
+      data: {
+        status: "EXPIRED",
+        openForAppointmentId: null,
+        resolvedAt: new Date(),
+      },
+    });
+    const id = booking.consultationId!;
+    const res = await patchConsultation(
+      json(`http://localhost/api/bookings/consultations/${id}`, "PATCH", {
+        status: "APPROVED",
+      }),
+      { params: Promise.resolve({ consultationId: id }) },
+    );
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("PLACE_RELEASED_SESSIONS");
   });
 });
 

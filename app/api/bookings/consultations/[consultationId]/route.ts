@@ -31,7 +31,8 @@ import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
   refuseMalformedEventId,
-  assertDeclinable,
+  NOT_BEING_MOVED,
+  assertNotBeingMoved,
   releaseDeclinedRequestHold,
   validateDetailRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
@@ -367,6 +368,7 @@ export async function PATCH(
                 "consultation",
                 consultationId,
               );
+              await assertNotBeingMoved(tx, { consultationId }, "approve");
               const hasPayment = await checkConsultationPayment(
                 tx,
                 consultationId,
@@ -374,7 +376,7 @@ export async function PATCH(
 
               if (hasPayment) {
                 await transitionConsultationRequest(tx, {
-                  where: { id: consultationId },
+                  where: { id: consultationId, ...NOT_BEING_MOVED },
                   to: AppointmentStatus.APPROVED,
                 });
                 const consultation = await tx.consultation.findUniqueOrThrow({
@@ -442,7 +444,7 @@ export async function PATCH(
                 });
                 assertUnpaidApprovalFits(firstSession?.startsAt);
                 await transitionConsultationRequest(tx, {
-                  where: { id: consultationId },
+                  where: { id: consultationId, ...NOT_BEING_MOVED },
                   to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
                 });
                 const updatedConsultation =
@@ -485,13 +487,13 @@ export async function PATCH(
                 "consultation",
                 consultationId,
               );
-              await assertDeclinable(tx, { consultationId });
+              await assertNotBeingMoved(tx, { consultationId }, "decline");
             }
             // #836 — allowed-from guard rides the WHERE; the idempotency
             // pre-checks above are only friendly error text. updateMany
             // returns no row, so re-read for the heavy include.
             await transitionConsultationRequest(tx, {
-              where: { id: consultationId },
+              where: { id: consultationId, ...NOT_BEING_MOVED },
               to: status,
               data:
                 status === AppointmentStatus.REJECTED
