@@ -82,7 +82,7 @@ No caller passes SYSTEM today. The two system writers, the sweep's 28-day auto-c
 3. runs the reopen checks if the customer asked to reopen;
 4. updates the case with a compare-and-set that increments `messageSeq`, sets `lastMessageAt`, and banks customer-wait time;
 5. reads the new `messageSeq` and inserts the message at that sequence number;
-6. stages a bell (`case-message:<messageId>`) and, for a staff reply, response emails, in the same transaction.
+6. stages a bell (`case-message:<messageId>`) and, for a staff or presenter reply, response emails, in the same transaction; a presenter's emails go to the case correspondents only, never the staff assignee.
 
 A unique violation on a `clientTurnId` (two tabs sending the same draft) is retried as a replay. The guided path uses its own allocator (`allocateMessageSeq()` in `lib/support/service.ts`) that reserves several sequence numbers at once for a bot turn.
 
@@ -90,9 +90,11 @@ A unique violation on a `clientTurnId` (two tabs sending the same draft) is retr
 
 **Staff public reply.** The compare-and-set also matches `updatedAt` and `lastMessageAt <= expectedLastMessageAt`, the newest message the agent saw. If the customer wrote since, the reply fails with 409 `NEW_CUSTOMER_MESSAGE` ("Customer replied since you opened this case."). On success it sets `acknowledgedAt` and `firstAgentReplyAt` if empty, starts a customer wait (`awaitingUserSince = now`), moves OPEN to IN_PROGRESS, and assigns the author if the case is unassigned.
 
+**Presenter reply.** An ACCEPTED PRESENTER on the linked booking replies through the same route and is stored as `sender: AGENT` with `metadata: { actorKind: "PRESENTER" }`; the database has no presenter sender value. Reads expose that marker as `actorKind`, so the UI labels the bubble Presenter rather than Familiarise support, and the external-requester digest skips it. Its state update only increments `messageSeq` and sets `lastMessageAt`. It does not reopen a resolved case, assign the presenter, set `firstAgentReplyAt` or `acknowledgedAt`, start a customer wait, or count as the first staff response. A presenter cannot write an internal note and cannot reply on a CLOSED case, an anonymous grievance, or a sensitive complaint about delivery or safety (`isSensitivePresenterCase()`).
+
 **Internal notes, bot and system turns** only increment the sequence. Notes never change `lastMessageAt`.
 
-**Who sends as whom.** The messages route (`app/api/support/cases/[caseId]/messages/route.ts`) maps a caller with `tickets.manage` to AGENT and everyone else to USER. A non-staff caller asking for an internal note gets 403. Only non-staff may pass `reopen`; operators reopen through PATCH. Non-staff posts are rate-limited to 5 per hour (`spamLimiter`, key `ticket-response:<userId>`).
+**Who sends as whom.** The messages route (`app/api/support/cases/[caseId]/messages/route.ts`) maps a caller with `tickets.manage` to AGENT, an accepted presenter to AGENT with `actorKind: PRESENTER`, and everyone else to USER. A non-staff caller asking for an internal note gets 403. Only non-staff may pass `reopen`; operators and presenters reply without it, and operators reopen through PATCH. Non-staff posts are rate-limited to 5 per hour (`spamLimiter`, key `ticket-response:<userId>`).
 
 **Reading.** Case reads include the newest 200 messages in ascending order. `GET .../messages` pages older messages with `beforeSeq` and `limit` (1–200), returning `hasMore` and `nextBeforeSeq` with `Cache-Control: private, no-store`. Customers never see internal notes, the assignee, or staff-only events; their timeline keeps only CREATED, STATUS_CHANGED, REOPENED and AUTO_CLOSED, with actor and note removed (`readSupportCaseForViewer()`).
 
@@ -131,9 +133,9 @@ Status notifications for a PATCH are staged after the transaction commits, unlik
 
 ## Resolve, reopen and close
 
-**Resolving** (by PATCH or by a DECIDE action) sets `resolvedAt`, releases every payout hold on the case with one `support.case.release-holds` ops-log row, ends every live chat-access grant as `CASE_RESOLVED`, and stages a CSAT bell keyed `csat:<caseId>:<resolvedAt>` that is delivered no earlier than 24 hours later. Anonymous grievance cases get no CSAT prompt.
+**Resolving** (by PATCH or by a DECIDE action) sets `resolvedAt`, releases every payout hold on the case with one `support.case.release-holds` ops-log row, ends every live chat-access grant as `CASE_RESOLVED`, and stages a CSAT bell keyed `csat:<caseId>:<resolvedAt>` that is delivered no earlier than 24 hours later. Anonymous grievance cases get no CSAT prompt, and the prompt goes only to case correspondents, never to presenters.
 
-**A customer reply on a RESOLVED case** is a follow-up: it is stored and the status does not change. To reopen, the customer must ask explicitly ("This didn't fix it" in the UI, `reopen: true` on the API). The reopen is refused, in order:
+**A customer reply on a RESOLVED case** is a follow-up: it is stored and the status does not change. A presenter reply is also a follow-up: it is stored as a provider turn and neither reopens nor moves the status. To reopen, the customer must ask explicitly ("This didn't fix it" in the UI, `reopen: true` on the API). The reopen is refused, in order:
 
 1. 403 `REOPEN_NOT_ALLOWED` when the author is neither the requester nor the submitter;
 2. 409 `CASE_DECIDED` (with `appealUntil` and `decisionId`) when the case has a decision; the only path is an appeal;
@@ -147,7 +149,7 @@ A successful reopen moves the case to IN_PROGRESS if it has an assignee and OPEN
 
 ## CSAT
 
-`POST /api/support/cases/[caseId]/csat` accepts one integer from 1 to 5 from anyone who can correspond on the case, rate-limited to 5 per hour. The case must be RESOLVED or CLOSED and resolved no more than 28 days ago. The write is a compare-and-set on `csatRating IS NULL`, so a second rating gets 409, and it writes CSAT_RATED. The database CHECK `support_case_scope_and_shape_chk` also limits the score to 1–5. Self-service helpfulness ratings are separate; see [intake and flows](01-intake-and-flows.md#deflection-and-helpfulness).
+`POST /api/support/cases/[caseId]/csat` accepts one integer from 1 to 5 from anyone who can correspond on the case, rate-limited to 5 per hour. Presenters are thread parties, not correspondents, so they cannot rate. The case must be RESOLVED or CLOSED and resolved no more than 28 days ago. The write is a compare-and-set on `csatRating IS NULL`, so a second rating gets 409, and it writes CSAT_RATED. The database CHECK `support_case_scope_and_shape_chk` also limits the score to 1–5. Self-service helpfulness ratings are separate; see [intake and flows](01-intake-and-flows.md#deflection-and-helpfulness).
 
 ## Errors and Sentry
 

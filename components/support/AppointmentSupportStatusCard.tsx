@@ -10,11 +10,14 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Bot, Headset, UserRound } from "lucide-react";
+import { Bot, Headset, Presentation, UserRound } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { fetchSupportThread } from "@/components/support/useSupportThread";
+import {
+  fetchSupportThread,
+  type ThreadMessage,
+} from "@/components/support/useSupportThread";
 import { supportKeys } from "@/lib/support/support-keys";
 
 function statusVariant(
@@ -33,6 +36,22 @@ const STATUS_LABELS: Record<string, string> = {
   RESOLVED: "Resolved",
   CLOSED: "Closed",
 };
+
+function LastMessageIcon({
+  sender,
+  actorKind,
+}: Readonly<Pick<ThreadMessage, "sender" | "actorKind">>) {
+  if (sender === "USER") {
+    return <UserRound className="h-3.5 w-3.5 shrink-0" />;
+  }
+  if (actorKind === "PRESENTER") {
+    return <Presentation className="h-3.5 w-3.5 shrink-0" />;
+  }
+  if (sender === "AGENT") {
+    return <Headset className="h-3.5 w-3.5 shrink-0" />;
+  }
+  return <Bot className="h-3.5 w-3.5 shrink-0" />;
+}
 
 export function AppointmentSupportStatusCard({
   appointmentId,
@@ -70,13 +89,10 @@ export function AppointmentSupportStatusCard({
           </div>
           {last && (
             <p className="mt-1 flex items-center gap-1.5 truncate text-sm text-muted-foreground">
-              {last.sender === "USER" ? (
-                <UserRound className="h-3.5 w-3.5 shrink-0" />
-              ) : last.sender === "AGENT" ? (
-                <Headset className="h-3.5 w-3.5 shrink-0" />
-              ) : (
-                <Bot className="h-3.5 w-3.5 shrink-0" />
-              )}
+              <LastMessageIcon
+                sender={last.sender}
+                actorKind={last.actorKind}
+              />
               <span className="truncate">{last.body}</span>
             </p>
           )}
