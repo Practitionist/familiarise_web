@@ -51,7 +51,12 @@ it("prunes a terminal booking's history after three years but never a live one's
     status: "PENDING",
     isTentative: false,
   });
-  const done = await seedOneToOne("consultation", host, consultee, window, {
+  // The overlap constraint covers COMPLETED rows too, so the terminal booking gets its own hour.
+  const doneWindow = {
+    startsAt: new Date(window.startsAt.getTime() + DAY),
+    endsAt: new Date(window.endsAt.getTime() + DAY),
+  };
+  const done = await seedOneToOne("consultation", host, consultee, doneWindow, {
     status: "COMPLETED",
     isTentative: false,
     completionStatus: "COMPLETED",
