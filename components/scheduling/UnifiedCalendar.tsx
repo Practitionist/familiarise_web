@@ -1835,7 +1835,9 @@ export function UnifiedCalendar({
             }
           >
             <Zap className="mr-2 h-4 w-4" />
-            Auto Allocate
+            {eventType === "subscription"
+              ? "Auto-schedule this week"
+              : "Auto-schedule"}
           </Button>
           <Button
             variant="default"

@@ -18,6 +18,10 @@
  * Schedule: Hourly
  */
 
+import {
+  SCHEDULING_CHOICES,
+  lastChoiceWasAuto,
+} from "@/lib/booking/allocation/schedule-choice";
 import prisma from "../../lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
@@ -646,6 +650,29 @@ function requiredSessionsFor(
   }
 }
 
+/** The plans whose consultant's last scheduling choice (history reason) was Auto. */
+async function plansOnAuto(subscriptionIds: string[]): Promise<Set<string>> {
+  if (subscriptionIds.length === 0) return new Set();
+  const rows = await prisma.bookingStatusHistory.findMany({
+    where: {
+      entity: "SUBSCRIPTION",
+      entityId: { in: subscriptionIds },
+      reason: { in: [...SCHEDULING_CHOICES] },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { entityId: true, reason: true },
+  });
+  const byPlan = new Map<string, (string | null)[]>();
+  for (const row of rows) {
+    byPlan.set(row.entityId, [...(byPlan.get(row.entityId) ?? []), row.reason]);
+  }
+  return new Set(
+    [...byPlan]
+      .filter(([, reasons]) => lastChoiceWasAuto(reasons))
+      .map(([id]) => id),
+  );
+}
+
 /**
  * Recurring events whose confirmed sessions are fewer than their plan requires.
  *
@@ -710,7 +737,11 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
       ...pageArgs(cursor),
     });
 
+    // Only plans whose consultant last scheduled with Auto are placed by the
+    // sweep; every other plan waits for its consultant (the week reminder).
+    const onAuto = await plansOnAuto(subscriptions.map((sub) => sub.id));
     for (const subscription of subscriptions) {
+      if (!onAuto.has(subscription.id)) continue;
       const plan = subscription.subscriptionPlan;
       const entitlement = subscriptionEntitlement({
         sessionsTotal: sessionsTotalOf(subscription),
@@ -950,6 +981,7 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
         mode: "auto",
         topUp: true,
         allowPartial: true,
+        bySweep: true,
         idempotencyKey: `topup:${candidate.eventType}:${candidate.eventId}:${candidate.confirmedSessions}->${candidate.requiredSessions}:${candidate.availabilityChangedAt?.toISOString() ?? `rested-${Math.floor(now.getTime() / TOP_UP_RETRY_MS)}`}`,
       });
 

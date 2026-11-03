@@ -650,6 +650,7 @@ export async function autoAllocate(
           selectedSlots[0],
           config,
           txOptions.approvableFrom,
+          txOptions.historyReason,
         );
         await holdUntilPaid(tx, appointments, outcome);
 

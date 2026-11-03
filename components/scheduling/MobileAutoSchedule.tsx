@@ -31,6 +31,8 @@ export function MobileAutoSchedule({
   onDone: () => void;
 }>) {
   const [busy, setBusy] = useState(false);
+  const autoLabel =
+    eventType === "subscription" ? "Auto-schedule this week" : "Auto-schedule";
   const [refusal, setRefusal] = useState<string | null>(null);
   // One key per attempt: a double tap replays the first batch.
   const attemptKeyRef = useRef<string | null>(null);
@@ -80,7 +82,7 @@ export function MobileAutoSchedule({
             Scheduling…
           </>
         ) : (
-          "Auto-schedule in my open hours"
+          autoLabel
         )}
       </Button>
       <p className="text-xs text-muted-foreground">

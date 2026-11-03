@@ -1,6 +1,7 @@
 // The allocator's one entry point: routes by mode, attempts the staged notices
 // after commit, and turns any failure into a classified AllocationResult.
 
+import { scheduleReason } from "@/lib/booking/allocation/schedule-choice";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   AllocationRequest,
@@ -232,6 +233,15 @@ export async function dispatch(
   const txOptions: AllocationTxOptions = {
     approvableFrom: request.approvableFrom,
     inTx: request.inTx,
+    historyReason: scheduleReason({
+      mode:
+        request.mode === "auto" || request.mode === "manual"
+          ? request.mode
+          : "requested",
+      topUp: request.topUp,
+      bySweep: request.bySweep,
+      confirmsReschedule: !!request.excludeRescheduleRequestId,
+    }),
   };
   switch (request.mode) {
     case "auto":

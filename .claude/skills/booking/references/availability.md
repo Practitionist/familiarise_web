@@ -318,7 +318,16 @@ recurring event when its consultant changed availability since the last attempt
 or when that attempt is at least 6 hours old (`TOP_UP_RETRY_MS`), so a plan week
 that opens on the calendar is filled without an availability edit. Changed
 calendars go first (newest change first), then rested ones oldest attempt first,
-still capped at 25 events and 60 seconds a run.
+still capped at 25 events and 60 seconds a run. A subscription is a candidate
+only when its consultant scheduled the plan with Auto: every allocation writes
+its placement on the approval's `BookingStatusHistory.reason`
+(`scheduleReason` in `lib/booking/allocation/schedule-choice.ts`: "Scheduled
+automatically" / "Scheduled by hand" for the plan's own scheduling, "This week
+scheduled automatically/by hand" for a one-tap later week, "Open week scheduled
+automatically" for the sweep (`bySweep`), "New times confirmed" for a
+reschedule), and `plansOnAuto` reads the newest plan-level choice. Other plans
+get the week reminder, which links to the allocate page's one-tap "Auto-schedule
+this week".
 
 Also as of wave 5 (#1329), the co-host guard runs in **every** allocation mode:
 `assertCollaboratorsFree` (`lib/booking/allocation/collaborators.ts`) calls

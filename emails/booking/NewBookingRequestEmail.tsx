@@ -46,12 +46,12 @@ export default function NewBookingRequestEmail({
         <Text style={paragraph}>Hi {consultantName},</Text>
         <Text style={paragraph}>
           Week {week.number} of {week.count} of <strong>{planTitle}</strong> (
-          {week.range}) still needs {sessions} scheduled. Pick the times, or let
-          us place them in your open hours.
+          {week.range}) still needs {sessions} scheduled. One tap places them in
+          your open hours, or pick the times yourself.
         </Text>
         <Section style={buttonContainer}>
           <Button style={button} href={reviewUrl}>
-            Schedule week {week.number}
+            Auto-schedule this week
           </Button>
         </Section>
       </EmailLayout>

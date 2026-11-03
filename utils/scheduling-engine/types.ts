@@ -146,13 +146,18 @@ export interface AllocationRequest {
    * accept and auto-confirm): the allocator renews it instead of acquiring it.
    */
   heldAppointmentLock?: ApprovalLock;
+  /** The hourly top-up placing a plan's open week as the system, not a person. */
+  bySweep?: boolean;
 }
 
 /** The per-call extras every allocation mode threads into its transaction. */
 export type AllocationTxOptions = Pick<
   AllocationRequest,
   "approvableFrom" | "inTx"
->;
+> & {
+  /** The `reason` the approval's history row records (`scheduleReason`). */
+  historyReason?: string;
+};
 
 /**
  * Result of validation check

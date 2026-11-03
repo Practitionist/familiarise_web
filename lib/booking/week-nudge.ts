@@ -219,7 +219,8 @@ export async function nudgeUnplacedPlanWeeks(limits: {
           lastInstantBefore(d.nudge.weekEndsAt),
           { zone },
         );
-        const timingsUrl = `${getAppUrl()}/dashboard/consultant/${d.sub.subscriptionPlan.consultantProfile.id}/appointments/${d.appointment.id}/timings`;
+        // The allocate page, where "Auto-schedule this week" is one tap.
+        const timingsUrl = `${getAppUrl()}/dashboard/consultant/${d.sub.subscriptionPlan.consultantProfile.id}/requests/${encodeURIComponent(d.sub.id)}/allocate?type=subscription`;
         if (!bellDone) {
           await notifyUnplacedWeekNudge(
             d.consultantUserId,
