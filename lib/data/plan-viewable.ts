@@ -1,8 +1,18 @@
+import { renderMemo } from "@/lib/render-memo";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { isPlanViewable } from "@/lib/api/plans/visibility";
 import type { OfferingPlanStatus, OrgPlanVisibility } from "@prisma/client";
+
+// Per-request memo so a layout and its page share one membership query.
+const hasActiveMembership = renderMemo(
+  async (userId: string, organizationId: string): Promise<boolean> =>
+    (await prisma.membership.findFirst({
+      where: { userId, organizationId, status: "ACTIVE" },
+      select: { id: true },
+    })) !== null,
+);
 
 /**
  * Server-side wiring for {@link isPlanViewable}.
@@ -37,17 +47,7 @@ export async function canViewPlanDetail(
   return isPlanViewable(
     plan,
     resolvedSession?.user?.id ?? null,
-    async (args) => {
-      const membership = await prisma.membership.findFirst({
-        where: {
-          userId: args.userId,
-          organizationId: args.organizationId,
-          status: "ACTIVE",
-        },
-        select: { id: true },
-      });
-      return membership !== null;
-    },
+    (args) => hasActiveMembership(args.userId, args.organizationId),
     // Owner preview: an author sees their own DRAFT / archived offering at the
     // real detail URL. Nobody else's access changes.
     resolvedSession?.user?.consultantProfileId ?? null,

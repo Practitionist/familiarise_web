@@ -42,6 +42,7 @@ import {
 } from "./load-offering";
 import { ProductFilesManager } from "./ProductFilesManager";
 import { MY_DIGITAL_PRODUCTS_QUERY_KEY } from "@/components/offerings/list/DigitalProductList";
+import { sellHomeHref } from "@/lib/dashboard/sell-pages";
 
 function formValuesOf(product: OwnedDigitalProduct): DigitalProductFormValues {
   return {
@@ -115,7 +116,7 @@ export function DigitalProductEditorContainer({
     mode: "onBlur",
   });
 
-  const listHref = `/dashboard/consultant/${consultantId}/offerings/products`;
+  const listHref = sellHomeHref(consultantId, "digital-product");
   const status = product?.status ?? null;
   const refresh = React.useCallback(
     () =>

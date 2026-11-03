@@ -63,7 +63,7 @@ export function dataConsentHref(user: AccountHrefUser): string | null {
 }
 
 /**
- * The viewer's own Support requests page (#1527) — never an org's operator
+ * The viewer's own Support cases page (#1527) — never an org's operator
  * triage page. Null for the back office (staff answer requests, they don't
  * file them) and for viewers with no dashboard yet.
  */
@@ -82,5 +82,5 @@ export function supportRequestsHref(user: AccountHrefUser): string | null {
 export function supportLinksFor(user: AccountHrefUser): SupportLinks | null {
   const requestsHref = supportRequestsHref(user);
   if (!requestsHref) return null;
-  return personalSupportLinks(requestsHref);
+  return personalSupportLinks(requestsHref, "My support cases");
 }

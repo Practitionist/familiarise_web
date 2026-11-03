@@ -15,6 +15,7 @@ import {
   CONSULTANT_PAGE_LABELS,
   CONSULTANT_PATHLESS_SEGMENTS,
 } from "@/lib/dashboard/nav/consultant";
+import { sellHomePath } from "@/lib/dashboard/sell-pages";
 import { usePersonalNavBadges } from "@/hooks/usePersonalNavBadges";
 import { useExpertShareHref } from "@/hooks/useExpertShareHref";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
@@ -32,10 +33,10 @@ import {
 
 const PREFETCH_SUFFIXES = ["home", "appointments", "requests"];
 
-// A type segment (`offerings/webinar/new`) has no page; its crumb opens the list.
+// An editor's `offerings/<type>` crumbs have no page; they open the type's Sell list.
 const OFFERINGS_CRUMBS = {
   typeSegments: CONSULTANT_OFFERING_TYPE_SEGMENTS,
-  listingHref: "offerings",
+  listingPath: sellHomePath,
 };
 
 interface PageProps {

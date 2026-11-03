@@ -51,6 +51,7 @@ import {
   WebinarEventList,
   WebinarScheduleSummary,
 } from "./ScheduleSummaries";
+import { sellPageHref } from "@/lib/dashboard/sell-pages";
 
 export function ActiveCollaborationCard({
   collab,
@@ -152,7 +153,7 @@ export function ActiveCollaborationCard({
             </div>
             {owner?.id ? (
               <Link
-                href={`/dashboard/consultant/${owner.id}/offerings`}
+                href={sellPageHref(owner.id, "programs")}
                 className="block truncate text-[15px] font-semibold tracking-tight text-zinc-900 hover:underline"
               >
                 {collab.planTitle}
@@ -223,7 +224,7 @@ export function ActiveCollaborationCard({
               </span>
             </div>
             <Link
-              href={goHref("expert", "settings?tab=payouts")}
+              href={goHref("expert", "settings/get-paid")}
               className="shrink-0 font-semibold underline hover:text-amber-700"
             >
               Set up payouts

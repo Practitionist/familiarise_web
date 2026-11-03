@@ -189,7 +189,7 @@ async function stageReporterDispositionBell(
         input.report.id,
         input.report.reason,
       ),
-      dashboardUrl: goHref("auto", "feedbacks"),
+      dashboardUrl: goHref("auto", "support/reports"),
     },
     dedupeKey: `report-disposition:${input.report.id}:${dedupeSuffix}`,
   });
@@ -277,7 +277,7 @@ export async function applyTransactionalEffects(
           input.report.id,
           input.report.reason,
         ),
-        dashboardUrl: goHref("auto", "feedbacks"),
+        dashboardUrl: goHref("auto", "support/reports"),
       });
       stagedEmails.push({
         rows: outcomeRows,

@@ -10,16 +10,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import type { SellableKind } from "@/lib/dashboard/sell-pages";
 
-const NEW_OFFERINGS = [
-  { type: "consultation", label: "1:1 session" },
+const NEW_OFFERINGS: readonly { type: SellableKind; label: string }[] = [
+  { type: "consultation", label: "1:1 consultation" },
   { type: "subscription", label: "Subscription" },
   { type: "webinar", label: "Webinar" },
   { type: "class", label: "Class" },
   { type: "digital-product", label: "Digital product" },
-] as const;
+];
 
-/** #1527 §7.2 — one "+ New offering" entry instead of four section buttons. */
+/** Every Sell page's "+ New": pick a kind, then its editor opens. */
 export function NewOfferingMenu({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
@@ -28,7 +29,7 @@ export function NewOfferingMenu({
       <DropdownMenuTrigger asChild>
         <Button size="sm">
           <Plus className="mr-1.5 h-4 w-4" />
-          New offering
+          New
           <ChevronDown className="ml-1.5 h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>

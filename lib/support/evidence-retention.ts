@@ -8,7 +8,7 @@ const DAY_MS = 24 * 3_600_000;
 const SUPPORT_EVIDENCE_RETENTION_MS = 180 * DAY_MS;
 const PURGED_SUPPORT_TEXT = "[deleted after the retention period]";
 // Titles are requester free text (a grievance title embeds its subject), so they go too.
-const PURGED_SUPPORT_TITLE = "Support request";
+const PURGED_SUPPORT_TITLE = "Support case";
 const PURGED_ATTACHMENT_NAME = "Deleted after the retention period";
 // Notes on these events are the decision, money, retention and staff-access record; every other event note is purged.
 const RECORD_EVENT_KINDS: SupportCaseEventKind[] = [

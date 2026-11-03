@@ -28,17 +28,6 @@ export const OFFERING_TYPE_LABEL: Record<OfferingPlanType, string> = {
   class: "Class",
 };
 
-/** The pill labels, in the spec's order (All is the unset filter). */
-export const OFFERING_TYPE_FILTERS: {
-  value: OfferingPlanType;
-  label: string;
-}[] = [
-  { value: "consultation", label: "1:1" },
-  { value: "subscription", label: "Subscriptions" },
-  { value: "webinar", label: "Webinars" },
-  { value: "class", label: "Classes" },
-];
-
 const PUBLIC_SEGMENT: Record<OfferingPlanType, string> = {
   consultation: "consultations",
   subscription: "subscriptions",
@@ -337,7 +326,7 @@ export function buildOfferingRows(sources: Readonly<OfferingSources>) {
   ];
 }
 
-/** Type pill + search, the two URL-held filters. */
+/** The tab's plan kind plus the URL-held search. */
 export function filterOfferingRows(
   rows: readonly OfferingRow[],
   type: string | null,

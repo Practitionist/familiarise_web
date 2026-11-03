@@ -67,7 +67,7 @@ describe("sitemap", () => {
       "/explore/experts",
       "/explore/programs",
       "/explore/enterprise/organisations",
-      "/explore/recordings",
+      "/explore/products",
       "/become-an-expert",
       "/enterprise",
       "/enterprise/team-training",

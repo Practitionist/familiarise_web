@@ -292,7 +292,7 @@ graph TD
 
 **What:** Consultants create the services they want to offer. This is the core feature.
 
-**Where:** `/dashboard/consultant/[id]/planner`
+**Where:** `/dashboard/consultant/[id]/sell/sessions` and `sell/programs`
 
 **Who:** Consultant
 
@@ -351,7 +351,7 @@ graph TD
 
 **What:** Consultants set when they're available for bookings. Two modes: weekly recurring slots and custom one-off slots.
 
-**Where:** `/dashboard/consultant/[id]/planner` (schedule tab)
+**Where:** `/dashboard/consultant/[id]/availability`
 
 **Who:** Consultant
 
@@ -743,12 +743,12 @@ graph TD
 
 ### Resources & Materials
 
-**Where:** `/dashboard/consultee/[id]/resources`
+**Where:** `/dashboard/consultee/[id]/library?tab=documents`
 
 **How to test:**
 
 1. Book a session with a consultant who has uploaded materials
-2. After booking, check Resources
+2. After booking, open Library › Documents (the plan materials table)
 3. You should see downloadable files (PDFs, documents, etc.)
 4. Try downloading a resource
 

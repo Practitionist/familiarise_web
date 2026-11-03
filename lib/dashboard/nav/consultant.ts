@@ -1,26 +1,30 @@
 import {
   CalendarCheck,
   CalendarClock,
-  CalendarRange,
   ExternalLink,
-  FileDown,
   FileText,
   Gift,
+  Handshake,
   Home,
   Inbox,
+  Library,
   LifeBuoy,
   MessageSquare,
+  Package,
   Settings,
   Star,
+  UserRound,
+  UsersRound,
   Video,
   Wallet,
 } from "lucide-react";
 
+import { SellableKindSchema } from "../sell-pages";
 import { personalSupportLinks, type DashboardNav } from "./types";
 
 /**
- * Expert (consultant) IA from #1527 §7.2. Collaborations is a tab of
- * Offerings, and Reviews (Q5) closes the Business group.
+ * Expert IA: Sell is what the expert offers, Studio what they made in
+ * sessions, and My library what they bought.
  */
 export function buildConsultantNav(consultantId: string): DashboardNav {
   const publicHref = `/explore/experts/${consultantId}`;
@@ -28,17 +32,16 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
   return {
     basePath,
     groups: [
+      { items: [{ name: "Today", icon: Home, path: "home" }] },
       {
-        label: "Work",
+        label: "Inbox",
         items: [
-          { name: "Home", icon: Home, path: "home" },
           {
             name: "Booking requests",
             icon: Inbox,
             path: "requests",
             badgeKey: "requests",
           },
-          { name: "Appointments", icon: CalendarCheck, path: "appointments" },
           {
             name: "Messages",
             icon: MessageSquare,
@@ -48,12 +51,30 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
         ],
       },
       {
-        label: "Business",
+        label: "Calendar",
         items: [
-          { name: "Offerings", icon: CalendarRange, path: "offerings" },
-          // #1785 — a daily work surface, not a preference.
+          { name: "Appointments", icon: CalendarCheck, path: "appointments" },
           { name: "Availability", icon: CalendarClock, path: "availability" },
-          { name: "Reviews", icon: Star, path: "reviews" },
+        ],
+      },
+      {
+        label: "Sell",
+        items: [
+          {
+            name: "1:1 & subscriptions",
+            icon: UserRound,
+            path: "sell/sessions",
+          },
+          { name: "Group programs", icon: UsersRound, path: "sell/programs" },
+          { name: "Products", icon: Package, path: "sell/products" },
+          { name: "Collaborations", icon: Handshake, path: "collaborations" },
+        ],
+      },
+      {
+        label: "Studio",
+        items: [
+          { name: "Recordings", icon: Video, path: "recordings" },
+          { name: "Session documents", icon: FileText, path: "documents" },
         ],
       },
       {
@@ -61,19 +82,17 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
         items: [{ name: "Earnings & payouts", icon: Wallet, path: "earnings" }],
       },
       {
-        label: "Library",
+        label: "Reputation & growth",
         items: [
-          { name: "Session documents", icon: FileText, path: "documents" },
-          { name: "Recordings", icon: Video, path: "recordings" },
-          { name: "My purchases", icon: FileDown, path: "purchases" },
+          { name: "Reviews", icon: Star, path: "reviews" },
+          { name: "Invite & earn", icon: Gift, path: "referrals" },
         ],
       },
+      // The expert as a buyer: purchases, plus attended sessions when they
+      // also hold a learner profile.
+      { items: [{ name: "My library", icon: Library, path: "library" }] },
       {
-        label: "Grow",
-        items: [{ name: "Invite & earn", icon: Gift, path: "referrals" }],
-      },
-      {
-        label: "Operations",
+        label: "Settings & help",
         items: [
           { name: "Help & support", icon: LifeBuoy, path: "support" },
           { name: "Settings", icon: Settings, path: "settings" },
@@ -93,7 +112,7 @@ export function buildConsultantNav(consultantId: string): DashboardNav {
 }
 
 export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
-  home: "Home",
+  home: "Today",
   messages: "Messages",
   appointments: "Appointments",
   participants: "Participants",
@@ -105,7 +124,12 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   subscription: "Subscription",
   webinars: "Webinar",
   webinar: "Webinar",
-  offerings: "Offerings",
+  offerings: "Sell",
+  "digital-product": "Digital product",
+  sell: "Sell",
+  sessions: "1:1 & subscriptions",
+  programs: "Group programs",
+  products: "Products",
   availability: "Availability",
   requests: "Booking requests",
   timings: "Timings",
@@ -115,7 +139,7 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   reviews: "Reviews",
   recordings: "Recordings",
   documents: "Session documents",
-  purchases: "My purchases",
+  library: "My library",
   earnings: "Earnings & payouts",
   referrals: "Invite & earn",
   settings: "Settings",
@@ -137,15 +161,13 @@ export const CONSULTANT_PAGE_LABELS: Record<string, string> = {
   new: "New",
 };
 
-// `participants` has only `[eventType]/…` children — linking its crumb would
+// `participants` and `sell` have only child pages; linking their crumb would
 // prefetch a 404.
 export const CONSULTANT_PATHLESS_SEGMENTS: ReadonlySet<string> = new Set([
   "participants",
+  "sell",
 ]);
 
-export const CONSULTANT_OFFERING_TYPE_SEGMENTS: ReadonlySet<string> = new Set([
-  "consultation",
-  "subscription",
-  "webinar",
-  "class",
-]);
+export const CONSULTANT_OFFERING_TYPE_SEGMENTS: ReadonlySet<string> = new Set(
+  SellableKindSchema.options,
+);

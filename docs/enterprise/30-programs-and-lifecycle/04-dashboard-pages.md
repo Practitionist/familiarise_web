@@ -84,12 +84,11 @@ The list below is the active route set under
                                                   earnings, wallet burn-down,
                                                   k=5 privacy-safe Session Quality,
                                                   and Utilization CSV export)
-/dashboard/organization/[orgId]/documents      → documents uploaded against
-                                                  this org's appointments, with
-                                                  flat or "Group by session" view
-/dashboard/organization/[orgId]/recordings     → session recordings for events
-                                                  run under this org, with flat or
-                                                  "Group by session" view
+/dashboard/organization/[orgId]/library        → Library: Session documents and
+                                                  Session recordings tabs for this
+                                                  org's appointments (Mine ·
+                                                  Everyone); the old /documents
+                                                  and /recordings URLs redirect
 /dashboard/organization/[orgId]/audit          → per-org OrgAuditLog (rich filters)
 /dashboard/organization/[orgId]/consent        → ConsentArtifact roster + DPDP
                                                   withdraw/grant (DPDP §6(4))
@@ -106,8 +105,8 @@ The list below is the active route set under
 The sidebar carried 28 entries at its peak, several of which were a filter or
 a single read-only table rather than a destination. Those became tabs on the
 page that already owned the object. Every tab is addressable as
-`?tab=<value>`, and legacy standalone routes (`purchase-orders`, `reimbursements`,
-`disputes`) redirect through `ORG_TAB_REDIRECTS` in `lib/dashboard/org-tab-redirect.ts`.
+`?tab=<value>`; the retired standalone routes (`purchase-orders`, `reimbursements`,
+`disputes`) were deleted and answer 404.
 
 | Page        | Tabs / Sections                                                     | Why they merged                                                                                                         |
 | ----------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |

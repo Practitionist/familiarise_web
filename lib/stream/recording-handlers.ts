@@ -22,7 +22,7 @@ import {
   notifyRecordingFailed,
 } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
-import { notificationHref } from "@/lib/novu/resolve-href";
+import { appointmentRecordingsHref } from "@/lib/novu/resolve-href";
 import {
   generateRecordingTitle,
   getEventAttendeeIds,
@@ -465,14 +465,15 @@ export async function stageAndSendRecordingReadyNotifications(
   if (!row || row.removedAt || !NOTIFIABLE_STATUSES.includes(row.status)) {
     return;
   }
+  if (!appointment) return;
   const userIds = await getEventAttendeeIds(appointment);
   if (userIds.length === 0) return;
 
   const { appointmentType, consultantName } =
     resolveRecordingNotificationMeta(appointment);
-  const dashboardUrl = notificationHref(
-    appointment?.organizationId,
-    "recordings",
+  const dashboardUrl = appointmentRecordingsHref(
+    appointment.organizationId,
+    appointment.id,
   );
 
   // Sequential: the email claim runs in a transaction, which holds the only
@@ -481,7 +482,7 @@ export async function stageAndSendRecordingReadyNotifications(
     notifyRecordingAvailable(
       userIds,
       {
-        ...notificationScope(appointment?.organizationId),
+        ...notificationScope(appointment.organizationId),
         appointmentType,
         consultantName,
         dashboardUrl,
@@ -834,10 +835,13 @@ async function notifyRecordingFailedChunked(
   userIds: string[],
   streamCallId: string,
   recordingId: string,
-  organizationId: string | null | undefined,
+  appointment: { id: string; organizationId?: string | null },
 ): Promise<void> {
   if (userIds.length === 0) return;
-  const dashboardUrl = notificationHref(organizationId, "recordings");
+  const dashboardUrl = appointmentRecordingsHref(
+    appointment.organizationId,
+    appointment.id,
+  );
   const stagedBells: Array<StagedTrigger | undefined> = [];
   let failureCount = 0;
 
@@ -976,14 +980,16 @@ export async function handleRecordingFailed(
       }));
 
     const appointment = meeting.occurrence.appointment;
-    const userIds = await getEventAttendeeIds(appointment);
+    const userIds = appointment ? await getEventAttendeeIds(appointment) : [];
 
-    await notifyRecordingFailedChunked(
-      userIds,
-      streamCallId,
-      failedRow.id,
-      appointment?.organizationId,
-    );
+    if (appointment) {
+      await notifyRecordingFailedChunked(
+        userIds,
+        streamCallId,
+        failedRow.id,
+        appointment,
+      );
+    }
 
     streamLogger.info("Meeting session updated - recording failed", {
       sessionId: meeting.id,

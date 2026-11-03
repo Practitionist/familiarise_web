@@ -160,8 +160,8 @@ Each section also lists:
 ### A.3 Documents-for-review — ✅ Wired
 
 - **Schema:** Inherited via `AppointmentDocument.appointmentId → Appointment.organizationId`. No direct FK on the document row.
-- **Code paths:** [`lib/api/scope/list-documents.ts`](../../../lib/api/scope/list-documents.ts); [`app/dashboard/organization/[orgId]/documents/page.tsx`](../../../app/dashboard/organization/[orgId]/documents/page.tsx).
-- **Org dashboard surface:** `/documents`
+- **Code paths:** [`lib/api/scope/list-documents.ts`](../../../lib/api/scope/list-documents.ts); [`app/dashboard/organization/[orgId]/library/page.tsx`](../../../app/dashboard/organization/[orgId]/library/page.tsx).
+- **Org dashboard surface:** `/library?tab=documents`
 - **Why:** Documents are 1:1 (or 1:N) with appointments. Inheritance avoids drift between document and parent-appointment tenancy. Bulk-review queries must filter on `Appointment.organizationId`, never application-side.
 - **Future work:** none open.
 

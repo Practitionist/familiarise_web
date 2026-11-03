@@ -838,7 +838,7 @@ export default function HomeTab({
       <WaitingTimesStrip />
 
       {/* #1527 — answers live in the public Help Center; your private
-          conversations with us live in Support requests. */}
+          conversations with us live in Support cases. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <HelpCard
           href="/support"
@@ -849,7 +849,7 @@ export default function HomeTab({
         <HelpCard
           href={`${basePath}/support`}
           icon={MessageSquareText}
-          title="Open a support request"
+          title="Open a support case"
           body="Ask our team about a booking or a payment."
         />
       </div>

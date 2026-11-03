@@ -24,6 +24,10 @@ import { ConsultantAvailability } from "./components/ConsultantAvailability";
 import { ExperienceSection } from "./components/ExperienceSection";
 import { ExpertPricing } from "./components/ExpertPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
+import {
+  ProfileAnchorTabs,
+  PROFILE_SECTION_SCROLL_MARGIN,
+} from "./components/ProfileAnchorTabs";
 import { ReviewsSection } from "./components/ReviewsSection";
 import { ProfileReviewComposer } from "@/components/reviews/ProfileReviewComposer";
 import { useNowTick } from "@/hooks/use-now-tick";
@@ -435,6 +439,20 @@ export function ExpertProfileClient({
         </div>
       </div>
 
+      <ProfileAnchorTabs
+        present={{
+          about: true,
+          sessions:
+            consultantDetails.consultationPlans.length > 0 ||
+            consultantDetails.subscriptionPlans.length > 0,
+          programs:
+            consultantDetails.classPlans.length > 0 ||
+            consultantDetails.webinarPlans.length > 0,
+          products: digitalProducts.length > 0,
+          reviews: consultantDetails._count.reviews > 0,
+        }}
+      />
+
       {/* Main Content Area - Profile, About, Availability + Pricing */}
       <div className="w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
@@ -453,10 +471,12 @@ export function ExpertProfileClient({
                 reliabilityStrikes={reliabilityStrikes}
               />
 
-              <AboutSection
-                userDetails={userDetails}
-                consultantDetails={consultantDetails}
-              />
+              <div id="about" className={PROFILE_SECTION_SCROLL_MARGIN}>
+                <AboutSection
+                  userDetails={userDetails}
+                  consultantDetails={consultantDetails}
+                />
+              </div>
 
               <ExperienceSection
                 workExperiences={userDetails.workExperiences || []}
@@ -481,7 +501,11 @@ export function ExpertProfileClient({
           {/* Sidebar - Pricing */}
           <motion.div
             ref={pricingRef}
-            className="w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0"
+            id="sessions"
+            className={cn(
+              PROFILE_SECTION_SCROLL_MARGIN,
+              "w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0",
+            )}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
@@ -519,11 +543,20 @@ export function ExpertProfileClient({
             transition={{ duration: 0.5, delay: 0.2 }}
           >
             <div className="space-y-8">
-              <ClassesAndWebinars
-                classPlans={consultantDetails.classPlans}
-                webinarPlans={consultantDetails.webinarPlans}
-              />
-              <DigitalProductsSection products={digitalProducts} />
+              {(consultantDetails.classPlans.length > 0 ||
+                consultantDetails.webinarPlans.length > 0) && (
+                <div id="programs" className={PROFILE_SECTION_SCROLL_MARGIN}>
+                  <ClassesAndWebinars
+                    classPlans={consultantDetails.classPlans}
+                    webinarPlans={consultantDetails.webinarPlans}
+                  />
+                </div>
+              )}
+              {digitalProducts.length > 0 && (
+                <div id="products" className={PROFILE_SECTION_SCROLL_MARGIN}>
+                  <DigitalProductsSection products={digitalProducts} />
+                </div>
+              )}
             </div>
           </motion.div>
           {/* Spacer to match pricing sidebar width */}

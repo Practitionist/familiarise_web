@@ -1,5 +1,5 @@
 import type { DigitalProductCategory } from "@prisma/client";
-import { goHref } from "@/lib/dashboard/go";
+import { goLibraryHref } from "@/lib/dashboard/go";
 
 /** 250 MB; prisma/sql/check-constraints.sql pins the same cap on the column. */
 export const DIGITAL_PRODUCT_MAX_FILE_BYTES = 250 * 1024 * 1024;
@@ -180,12 +180,15 @@ export function ownProductNotice(free: boolean): string {
   return `This is your own product — buyers will see ${free ? "a Get for free" : "a Buy"} button here.`;
 }
 
-/** Where a buyer's purchases live: the learner library, else the expert's purchases page. */
+/** The buyer's Library › Purchases; null when they have no personal dashboard yet. */
 export function digitalProductLibraryHref(user: {
   consulteeProfileId?: string | null;
   consultantProfileId?: string | null;
 }): string | null {
-  if (user.consulteeProfileId) return goHref("client", "products");
-  if (user.consultantProfileId) return goHref("expert", "purchases");
-  return null;
+  return user.consulteeProfileId || user.consultantProfileId
+    ? goLibraryHref("purchases")
+    : null;
 }
+
+/** Next data-cache tag of the public products listing. */
+export const PUBLIC_PRODUCTS_TAG = "digital-products";
