@@ -1,19 +1,20 @@
 "use client";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { formatDistanceToNow } from "date-fns";
 import { RefreshCwIcon } from "lucide-react";
 import {
   useEffect,
+  useMemo,
   useState,
   useCallback,
   useRef,
-  memo,
   startTransition,
 } from "react";
-import type { Channel, Event } from "stream-chat";
+import type { Channel, ChannelSort, Event } from "stream-chat";
 import { useChatContext } from "stream-chat-react";
+import { getChannelTypeFromId } from "@/lib/stream-channel-ids";
+import { ChannelItem } from "./ChannelItem";
 import { ChannelSearch } from "./ChannelSearch";
+import { NewMessageDialog } from "./NewMessageDialog";
 import { CreateChannelDialog } from "./CreateChannelDialog";
 import { InitializeUserChannelsButton } from "./InitializeUserChannelsButton";
 import { DebugDialog } from "./DebugDialog";
@@ -27,9 +28,13 @@ import {
 } from "../ui/tooltip";
 import {
   buildOrgChannelFilter,
-  getChannelDisplayInfo,
+  filterChannelsByTerm,
   isUsableDmChannel,
+  MIN_SEARCH_LENGTH,
+  pinnedFirst,
+  channelPinnedAt,
 } from "./utils/channelUtils";
+import { appendUniqueChannels, insertChannelAtTop } from "./utils/channelList";
 import { useChatPane } from "./ChatPaneContext";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { scopeOrgId } from "@/lib/api/scope/parse";
@@ -37,137 +42,6 @@ import { useSession } from "@/lib/auth-client";
 import { useServerSessionFacts } from "@/components/dashboard/ServerUserId";
 import { useSearchParams } from "next/navigation";
 import { useToast } from "@/components/ui/use-toast";
-
-// Custom channel item component for the sidebar - memoized for performance
-const ChannelItem = memo(
-  ({
-    channel,
-    isActive,
-    onClick,
-  }: {
-    channel: Channel;
-    isActive: boolean;
-    onClick: () => void;
-  }) => {
-    const { client } = useChatContext();
-    const isTeamChannel = channel.type === "team";
-
-    // Get display info using shared utility
-    const displayInfo = !isTeamChannel
-      ? getChannelDisplayInfo(channel, client?.userID)
-      : {
-          displayName: channel.data?.name || channel.id || "",
-          displayImage: undefined,
-          isGroupDM: false,
-          memberCount: Object.keys(channel.state.members || {}).length,
-          statusText: "",
-          fullGroupName: undefined,
-        };
-
-    const displayName = displayInfo.displayName;
-    const displayImage = displayInfo.displayImage;
-    const isGroupDM = displayInfo.isGroupDM;
-    const memberCount = displayInfo.memberCount;
-
-    // Get unread count directly from the channel
-    const unreadCount = channel.countUnread();
-    const hasUnread = unreadCount > 0;
-
-    // Last message preview and timestamp
-    const messages = channel.state.messages;
-    const lastMessage =
-      messages.length > 0 ? messages[messages.length - 1] : null;
-    const lastMessageText = lastMessage?.text
-      ? lastMessage.text.length > 30
-        ? lastMessage.text.substring(0, 30) + "..."
-        : lastMessage.text
-      : lastMessage
-        ? "Sent an attachment"
-        : null;
-    const lastMessageTime = lastMessage?.created_at
-      ? formatDistanceToNow(new Date(lastMessage.created_at), {
-          addSuffix: false,
-        })
-      : null;
-
-    return (
-      <button
-        onClick={onClick}
-        // Hover used to be the same blue-700 as the active row, so pointing at
-        // any conversation made it look selected.
-        className={`w-full text-left px-4 py-2 transition-colors ${isActive ? "bg-accent text-accent-foreground" : "hover:bg-muted"}`}
-        title={displayName}
-        aria-current={isActive ? "true" : undefined}
-      >
-        <div className="flex items-center min-w-0">
-          {/* Avatar / channel icon */}
-          {isTeamChannel ? (
-            <span className="text-muted-foreground mr-2 flex-shrink-0">#</span>
-          ) : (
-            <div className="relative mr-2 flex-shrink-0">
-              <Avatar className="w-6 h-6">
-                {/* No placeholder fallback src — it always loaded, so the
-                    initials below were unreachable. */}
-                <AvatarImage src={displayImage} />
-                <AvatarFallback>{displayName.charAt(0)}</AvatarFallback>
-              </Avatar>
-              {isGroupDM && (
-                <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border border-card flex items-center justify-center">
-                  <span className="text-[8px] text-primary-foreground font-bold">
-                    G
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Two-row content area */}
-          <div className="flex-1 min-w-0">
-            {/* Row 1: channel name + timestamp */}
-            <div className="flex items-center justify-between">
-              <span
-                className={`font-medium truncate ${hasUnread ? "font-bold" : ""}`}
-                title={
-                  isGroupDM
-                    ? displayInfo.fullGroupName ||
-                      `Group chat with ${memberCount} members`
-                    : displayName
-                }
-              >
-                {displayName}
-              </span>
-              {lastMessageTime && (
-                <span className="text-[10px] text-muted-foreground ml-2 flex-shrink-0">
-                  {lastMessageTime}
-                </span>
-              )}
-            </div>
-
-            {/* Row 2: last message preview + unread badge */}
-            <div className="flex items-center justify-between">
-              {lastMessageText ? (
-                <span className="text-xs text-muted-foreground truncate">
-                  {lastMessageText}
-                </span>
-              ) : (
-                <span className="text-xs text-muted-foreground italic truncate">
-                  No messages yet
-                </span>
-              )}
-              {hasUnread && (
-                <div className="bg-destructive text-destructive-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center ml-2 flex-shrink-0">
-                  {unreadCount > 9 ? "9+" : unreadCount}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </button>
-    );
-  },
-);
-
-ChannelItem.displayName = "ChannelItem";
 
 // One loading language across chat: the same Skeleton primitive the rest of
 // the dashboard uses, shaped like the rows it stands in for.
@@ -185,6 +59,46 @@ const ChannelListSkeleton = () => (
   </div>
 );
 
+type ListType = "team" | "messaging";
+
+const PAGE_SIZE = 20;
+// Pinned first, then latest activity; offset paging relies on every page using it.
+const CHANNEL_SORT: ChannelSort = [{ pinned_at: -1 }, { last_message_at: -1 }];
+
+const listTypeOf = (channel: Channel): ListType =>
+  channel.type === "team" ? "team" : "messaging";
+
+/** Pin, unpin or hide one conversation for the signed-in user; throws when it did not take. */
+async function updateConversationPreference(
+  channel: Channel,
+  action: "pin" | "unpin" | "hide",
+): Promise<void> {
+  const response = await fetch("/api/stream/channels/preference", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      channelType: channel.type,
+      channelId: channel.id,
+      action,
+    }),
+  });
+  if (!response.ok) throw new Error("Preference update failed");
+}
+
+/** What an empty Conversations list says, by who is looking and where. */
+function noConversationsMessage(
+  inOrganization: boolean,
+  isConsultant: boolean,
+) {
+  if (inOrganization) {
+    return "No conversations yet. Threads appear here once you're part of a session in this organization.";
+  }
+  if (isConsultant) {
+    return "No conversations yet. Conversations will appear here once clients book sessions.";
+  }
+  return "No conversations yet. Book a consultation to start chatting.";
+}
+
 type OrgScope = ReturnType<typeof useOrgScope>["scope"];
 
 function doesChannelMatchScope(ch: unknown, currentScope: OrgScope): boolean {
@@ -201,19 +115,21 @@ function doesChannelMatchScope(ch: unknown, currentScope: OrgScope): boolean {
   return pinnedOrgId ? rawOrgId === pinnedOrgId : true;
 }
 
+/** The fetched rows, with any `keepCids` row the fetch left out kept on top. */
 function mergeFetchedChannels(
   prev: Channel[],
   fetched: Channel[],
   currentScope: OrgScope,
-  deepLinkedCid: string | null,
+  keepCids: ReadonlyArray<string | null>,
 ): Channel[] {
-  if (!deepLinkedCid) return fetched;
   const fetchedCids = new Set(fetched.map((ch) => ch.cid));
-  if (fetchedCids.has(deepLinkedCid)) return fetched;
-  const preserved = prev.find(
-    (ch) => ch.cid === deepLinkedCid && doesChannelMatchScope(ch, currentScope),
+  const preserved = prev.filter(
+    (ch) =>
+      keepCids.includes(ch.cid) &&
+      !fetchedCids.has(ch.cid) &&
+      doesChannelMatchScope(ch, currentScope),
   );
-  return preserved ? [preserved, ...fetched] : fetched;
+  return preserved.length > 0 ? [...preserved, ...fetched] : fetched;
 }
 
 function pickInitialChannel(
@@ -242,10 +158,8 @@ function parseDeepLinkChannelTarget(rawChannelId: string): {
     const channelType = prefix === "messaging" ? "messaging" : "team";
     return { channelType, channelId: rawChannelId.slice(colonIdx + 1) };
   }
-  const isDmPrefix =
-    rawChannelId.startsWith("dm-") || rawChannelId.startsWith("dmo-");
   return {
-    channelType: isDmPrefix ? "messaging" : "team",
+    channelType: getChannelTypeFromId(rawChannelId),
     channelId: rawChannelId,
   };
 }
@@ -311,10 +225,6 @@ export const ChatSidebar = () => {
     scopeRef.current = scope;
   }, [scope]);
   const searchParams = useSearchParams();
-  const contextAppointmentId =
-    searchParams?.get("contextAppointmentId") ??
-    searchParams?.get("appointmentId") ??
-    null;
   const counterpartyUserId =
     searchParams?.get("counterpartyUserId") ??
     searchParams?.get("peerUserId") ??
@@ -331,6 +241,51 @@ export const ChatSidebar = () => {
   const deepLinkedChannelCidRef = useRef<string | null>(null);
   const [teamChannels, setTeamChannels] = useState<Channel[]>([]);
   const [directMessages, setDirectMessages] = useState<Channel[]>([]);
+  // What the search box holds; both lists below narrow to it instantly.
+  const [searchTerm, setSearchTerm] = useState("");
+  const isFiltering = searchTerm.trim().length >= MIN_SEARCH_LENGTH;
+  // Pins changed since the lists loaded, shown at once while the rebase that
+  // follows a successful change re-reads the loaded rows in the server's order.
+  const [pinOverrides, setPinOverrides] = useState<
+    Record<string, string | null>
+  >({});
+  const visibleTeamChannels = useMemo(
+    () =>
+      pinnedFirst(
+        filterChannelsByTerm(teamChannels, client?.userID, searchTerm),
+        pinOverrides,
+      ),
+    [teamChannels, client?.userID, searchTerm, pinOverrides],
+  );
+  const visibleDirectMessages = useMemo(
+    () =>
+      pinnedFirst(
+        filterChannelsByTerm(directMessages, client?.userID, searchTerm),
+        pinOverrides,
+      ),
+    [directMessages, client?.userID, searchTerm, pinOverrides],
+  );
+  // Handed to the search dropdown so it leaves out rows this list already shows.
+  const listedChannelIds = useMemo(
+    () =>
+      new Set(
+        isFiltering
+          ? [...visibleTeamChannels, ...visibleDirectMessages].flatMap((ch) =>
+              ch.id ? [ch.id] : [],
+            )
+          : [],
+      ),
+    [isFiltering, visibleTeamChannels, visibleDirectMessages],
+  );
+  // The listener below reads the lists through refs so it can tell a message
+  // for a channel outside the loaded page without re-attaching per update.
+  const listedCidsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    listedCidsRef.current = new Set(
+      [...teamChannels, ...directMessages].map((ch) => ch.cid),
+    );
+  }, [teamChannels, directMessages]);
+  const pendingCidsRef = useRef<Set<string>>(new Set());
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   // #248: mirror activeChannelId into a ref so handleChannelDeleted can read the
   // current selection WITHOUT depending on the state. Without this, every
@@ -363,10 +318,28 @@ export const ChatSidebar = () => {
    * page two re-fetched rows already on screen and the tail of the list became
    * unreachable — the filter silently ate the pagination.
    */
-  const fetchedCountRef = useRef<{ team: number; messaging: number }>({
+  const fetchedCountRef = useRef<Record<ListType, number>>({
     team: 0,
     messaging: 0,
   });
+  // Bumped whenever a list is replaced; a page requested under an older value is dropped.
+  const listGenerationRef = useRef<Record<ListType, number>>({
+    team: 0,
+    messaging: 0,
+  });
+  // The generation each list was last replaced at; behind the live one while a newer read is in flight.
+  const appliedGenerationRef = useRef<Record<ListType, number>>({
+    team: 0,
+    messaging: 0,
+  });
+  // Set once a preference change has moved rows across the offset and cleared when a
+  // re-read lands; while set, Load more re-reads the list instead of paging from it.
+  const staleListRef = useRef<Record<ListType, boolean>>({
+    team: false,
+    messaging: false,
+  });
+  // Pin requests in flight per cid; their override outlives any re-read until they settle.
+  const pendingPinsRef = useRef<Map<string, number>>(new Map());
 
   // Pagination state
   const [hasMoreTeamChannels, setHasMoreTeamChannels] = useState(true);
@@ -385,158 +358,277 @@ export const ChatSidebar = () => {
     return `${client.userID}::${scopeKey}`;
   }, [client, scope]);
 
+  // Rows a re-read returned carry the server's pin, so drop their settled overrides.
+  const settlePinOverrides = useCallback((fetched: Channel[]) => {
+    const settled = new Set(
+      fetched
+        .map((ch) => ch.cid)
+        .filter((cid) => !pendingPinsRef.current.has(cid)),
+    );
+    setPinOverrides((prev) => {
+      const kept = Object.entries(prev).filter(([cid]) => !settled.has(cid));
+      return kept.length === Object.keys(prev).length
+        ? prev
+        : Object.fromEntries(kept);
+    });
+  }, []);
+
+  // Makes `fetched` (server order, first row onward) the list and its offset;
+  // a page cut from the replaced list is dropped by the generation bump.
+  const replaceList = useCallback(
+    (
+      type: ListType,
+      fetched: Channel[],
+      hasMore: boolean,
+      keepCids: ReadonlyArray<string | null>,
+    ) => {
+      appliedGenerationRef.current[type] = ++listGenerationRef.current[type];
+      fetchedCountRef.current[type] = fetched.length;
+      staleListRef.current[type] = false;
+      settlePinOverrides(fetched);
+      const listed = appendUniqueChannels(
+        [],
+        type === "team" ? fetched : fetched.filter(isUsableDmChannel),
+      );
+      const setList = type === "team" ? setTeamChannels : setDirectMessages;
+      setList((prev) => mergeFetchedChannels(prev, listed, scope, keepCids));
+      if (type === "team") setHasMoreTeamChannels(hasMore);
+      else setHasMoreDMChannels(hasMore);
+    },
+    [scope, settlePinOverrides],
+  );
+
+  // One page of a list in the server's order, scoped like the first page.
+  const queryPage = useCallback(
+    (userId: string, type: ListType, offset: number) =>
+      client.queryChannels(
+        { members: { $in: [userId] }, type, ...buildOrgChannelFilter(scope) },
+        CHANNEL_SORT,
+        {
+          watch: true,
+          state: true,
+          limit: PAGE_SIZE,
+          message_limit: 10,
+          presence: false,
+          offset,
+        },
+      ),
+    [client, scope],
+  );
+
+  // A page cut for `pageKey` must not land once another scope has loaded or is
+  // loading: it would cross-tenant the inbox and corrupt the next offset.
+  const isScopeSuperseded = useCallback(
+    (pageKey: string | null) =>
+      fetchedKeyRef.current !== pageKey ||
+      (inFlightFetchKeyRef.current !== null &&
+        inFlightFetchKeyRef.current !== pageKey),
+    [],
+  );
+
+  // A dropped read has already written its older membership into Stream's shared
+  // Channel objects, so once the newest read has landed the list is read again.
+  const isNewestReadApplied = useCallback(
+    (type: ListType) =>
+      appliedGenerationRef.current[type] === listGenerationRef.current[type],
+    [],
+  );
+
+  // A pin, unpin or hide moves rows across the offset, so re-read the loaded rows
+  // (plus `extraPages`) and reset the offset with them; a page paged meanwhile is dropped.
+  const rebaseList = useCallback(
+    async function rebase(type: ListType, extraPages = 0): Promise<void> {
+      const userId = client?.userID;
+      if (!userId) return;
+      staleListRef.current[type] = true;
+      const pageKey = computeFetchKey();
+      const generation = ++listGenerationRef.current[type];
+      const pageCount =
+        Math.max(1, Math.ceil(fetchedCountRef.current[type] / PAGE_SIZE)) +
+        extraPages;
+      const readPages = () =>
+        Promise.all(
+          Array.from({ length: pageCount }, (_, i) =>
+            queryPage(userId, type, i * PAGE_SIZE),
+          ),
+        );
+      try {
+        // One retry; if both reads fail the list stays stale for Load more to repair.
+        const pages = await readPages().catch(readPages);
+        if (isScopeSuperseded(pageKey)) return;
+        if (listGenerationRef.current[type] !== generation) {
+          if (isNewestReadApplied(type)) void rebase(type);
+          return;
+        }
+        // The open and deep-linked conversations stay listed even when the
+        // new order puts them past the loaded rows.
+        replaceList(
+          type,
+          pages.flat(),
+          pages[pages.length - 1].length === PAGE_SIZE,
+          [deepLinkedChannelCidRef.current, activeChannelIdRef.current],
+        );
+      } catch (error) {
+        console.error(`Error rebasing ${type} channels:`, error);
+      }
+    },
+    [
+      client,
+      computeFetchKey,
+      queryPage,
+      isScopeSuperseded,
+      isNewestReadApplied,
+      replaceList,
+    ],
+  );
+
   // Function to fetch channels initially and on significant changes
-  const fetchChannels = useCallback(async () => {
-    if (!client?.userID) {
-      return;
-    }
-
-    const fetchKey = computeFetchKey();
-    if (inFlightFetchKeyRef.current === fetchKey) {
-      return;
-    }
-    inFlightFetchKeyRef.current = fetchKey;
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const orgFilter: Record<string, unknown> = buildOrgChannelFilter(scope);
-      const filter = {
-        members: { $in: [client.userID] },
-        ...orgFilter,
-      };
-      const sort: { last_message_at: -1 } = { last_message_at: -1 };
-      const options = {
-        watch: true,
-        state: true,
-        limit: 20,
-        message_limit: 10,
-        presence: false,
-      };
-
-      const [teamResponse, dmResponse] = await Promise.all([
-        client.queryChannels({ ...filter, type: "team" }, sort, options),
-        client.queryChannels({ ...filter, type: "messaging" }, sort, options),
-      ]);
-
-      if (inFlightFetchKeyRef.current !== fetchKey) {
+  const fetchChannels = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!client?.userID) {
         return;
       }
 
-      const usableDms = dmResponse.filter(isUsableDmChannel);
-
-      setTeamChannels((prev) =>
-        mergeFetchedChannels(
-          prev,
-          teamResponse,
-          scope,
-          deepLinkedChannelCidRef.current,
-        ),
-      );
-      setDirectMessages((prev) =>
-        mergeFetchedChannels(
-          prev,
-          usableDms,
-          scope,
-          deepLinkedChannelCidRef.current,
-        ),
-      );
-
-      fetchedCountRef.current = {
-        team: teamResponse.length,
-        messaging: dmResponse.length,
+      const fetchKey = computeFetchKey();
+      if (inFlightFetchKeyRef.current === fetchKey) {
+        return;
+      }
+      inFlightFetchKeyRef.current = fetchKey;
+      // Ordered with rebases: a list re-read after this refresh started keeps its result.
+      const generation = {
+        team: ++listGenerationRef.current.team,
+        messaging: ++listGenerationRef.current.messaging,
       };
 
-      setHasMoreTeamChannels(teamResponse.length === options.limit);
-      setHasMoreDMChannels(dmResponse.length === options.limit);
-      fetchedKeyRef.current = fetchKey;
+      // A silent refetch keeps the list on screen instead of flashing the skeleton.
+      if (!silent) setIsLoading(true);
+      setError(null);
 
-      if (!initialSelectionDoneRef.current && !hasDeepLink) {
-        initialSelectionDoneRef.current = true;
-        const channelToSelect = pickInitialChannel(
-          teamResponse[0],
-          usableDms[0],
-        );
-        if (channelToSelect) {
-          setActiveChannel(channelToSelect);
-          setActiveChannelId(channelToSelect.cid || null);
+      try {
+        const orgFilter: Record<string, unknown> = buildOrgChannelFilter(scope);
+        const filter = {
+          members: { $in: [client.userID] },
+          ...orgFilter,
+        };
+        const options = {
+          watch: true,
+          state: true,
+          limit: PAGE_SIZE,
+          message_limit: 10,
+          presence: false,
+        };
+
+        const [teamResponse, dmResponse] = await Promise.all([
+          client.queryChannels(
+            { ...filter, type: "team" },
+            CHANNEL_SORT,
+            options,
+          ),
+          client.queryChannels(
+            { ...filter, type: "messaging" },
+            CHANNEL_SORT,
+            options,
+          ),
+        ]);
+
+        if (inFlightFetchKeyRef.current !== fetchKey) {
+          return;
+        }
+        const keepCids = [deepLinkedChannelCidRef.current];
+        for (const [type, fetched] of [
+          ["team", teamResponse],
+          ["messaging", dmResponse],
+        ] as const) {
+          if (listGenerationRef.current[type] === generation[type]) {
+            replaceList(type, fetched, fetched.length === PAGE_SIZE, keepCids);
+          } else if (isNewestReadApplied(type)) {
+            void rebaseList(type);
+          }
+        }
+        fetchedKeyRef.current = fetchKey;
+
+        const usableDms = dmResponse.filter(isUsableDmChannel);
+
+        if (!initialSelectionDoneRef.current && !hasDeepLink) {
+          initialSelectionDoneRef.current = true;
+          const channelToSelect = pickInitialChannel(
+            teamResponse[0],
+            usableDms[0],
+          );
+          if (channelToSelect) {
+            setActiveChannel(channelToSelect);
+            setActiveChannelId(channelToSelect.cid || null);
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching channels:", err);
+        setError("Failed to load channels. Please try refreshing.");
+      } finally {
+        setIsLoading(false);
+        if (inFlightFetchKeyRef.current === fetchKey) {
+          inFlightFetchKeyRef.current = null;
         }
       }
-    } catch (err) {
-      console.error("Error fetching channels:", err);
-      setError("Failed to load channels. Please try refreshing.");
-    } finally {
-      setIsLoading(false);
-      if (inFlightFetchKeyRef.current === fetchKey) {
-        inFlightFetchKeyRef.current = null;
-      }
-    }
-  }, [client, setActiveChannel, scope, computeFetchKey, hasDeepLink]);
+    },
+    [
+      client,
+      setActiveChannel,
+      scope,
+      computeFetchKey,
+      hasDeepLink,
+      replaceList,
+      isNewestReadApplied,
+      rebaseList,
+    ],
+  );
 
   // Function to load more channels (pagination)
   const loadMoreChannels = useCallback(
-    async (type: "team" | "messaging") => {
-      if (!client?.userID || isLoadingMore) return;
+    async (type: ListType) => {
+      const userId = client?.userID;
+      if (!userId || isLoadingMore) return;
 
       const hasMore = type === "team" ? hasMoreTeamChannels : hasMoreDMChannels;
 
       if (!hasMore) return;
 
-      // The scope this page belongs to, captured before the request goes out.
+      // The scope and list generation this page belongs to, captured before the request.
       const pageKey = computeFetchKey();
+      const generation = listGenerationRef.current[type];
 
       setIsLoadingMore(true);
 
       try {
-        // Mirror the org-scope filter from `fetchChannels` so the
-        // load-more page stays in the same tenant context.
-        const orgFilter: Record<string, unknown> = buildOrgChannelFilter(scope);
-        const filter = {
-          members: { $in: [client.userID] },
+        // A stale offset would skip rows, so re-read the loaded rows plus one page.
+        if (staleListRef.current[type]) {
+          await rebaseList(type, 1);
+          return;
+        }
+
+        // Raw fetched count, never the list length — see fetchedCountRef.
+        const response = await queryPage(
+          userId,
           type,
-          ...orgFilter,
-        };
-        const sort: { last_message_at: -1 } = { last_message_at: -1 };
+          fetchedCountRef.current[type],
+        );
 
-        // Raw fetched count, never `currentChannels.length` — see
-        // fetchedCountRef.
-        const offset = fetchedCountRef.current[type];
-
-        const options = {
-          watch: true,
-          state: true,
-          limit: 20,
-          message_limit: 10, // Match the initial-load trim above
-          presence: false,
-          offset,
-        };
-
-        const response = await client.queryChannels(filter, sort, options);
-
-        // Staleness guard, the same one `fetchChannels` applies to its own late
-        // response: switching org mid-pagination let Acme's page two land on
-        // Zeta's list, cross-tenanting the inbox the scope filter exists to
-        // keep apart — and corrupting the offset the next page reads. Stale
-        // when a newer scope has already loaded, or when one is in flight.
-        const supersededByLoaded = fetchedKeyRef.current !== pageKey;
-        const supersededByInFlight =
-          inFlightFetchKeyRef.current !== null &&
-          inFlightFetchKeyRef.current !== pageKey;
-        if (supersededByLoaded || supersededByInFlight) return;
+        if (isScopeSuperseded(pageKey)) return;
+        if (listGenerationRef.current[type] !== generation) {
+          if (isNewestReadApplied(type)) void rebaseList(type);
+          return;
+        }
 
         fetchedCountRef.current[type] += response.length;
 
         if (type === "team") {
-          setTeamChannels((prev) => [...prev, ...response]);
-          setHasMoreTeamChannels(response.length === options.limit);
+          setTeamChannels((prev) => appendUniqueChannels(prev, response));
+          setHasMoreTeamChannels(response.length === PAGE_SIZE);
         } else {
-          setDirectMessages((prev) => [
-            ...prev,
-            ...response.filter(isUsableDmChannel),
-          ]);
+          setDirectMessages((prev) =>
+            appendUniqueChannels(prev, response.filter(isUsableDmChannel)),
+          );
           // Raw length again — see fetchChannels.
-          setHasMoreDMChannels(response.length === options.limit);
+          setHasMoreDMChannels(response.length === PAGE_SIZE);
         }
       } catch (error) {
         console.error(`Error loading more ${type} channels:`, error);
@@ -546,14 +638,15 @@ export const ChatSidebar = () => {
     },
     [
       client,
-      // `teamChannels` / `directMessages` are deliberately absent: the offset
-      // now comes from `fetchedCountRef`, so this callback no longer reads
-      // either list. Keeping them would rebuild it on every incoming message.
+      // The offset comes from `fetchedCountRef`, so the lists are not read here.
       hasMoreTeamChannels,
       hasMoreDMChannels,
       isLoadingMore,
-      scope,
       computeFetchKey,
+      queryPage,
+      isScopeSuperseded,
+      isNewestReadApplied,
+      rebaseList,
     ],
   );
 
@@ -679,43 +772,74 @@ export const ChatSidebar = () => {
   // down/re-attaches the listener or refires queryChannels.
   useEffect(() => {
     if (!client) return;
+    let disposed = false;
 
-    const handleAddedToChannel = async (event: Event) => {
-      if (!event.channel) return;
-      const channelType = event.channel.type;
-      const channelId = event.channel.id;
-      const currentScope = scopeRef.current;
-      if (!doesChannelMatchScope(event.channel, currentScope)) {
+    // Watches a channel the sidebar does not hold yet and puts it first.
+    const addChannelToLists = async (
+      eventChannel: NonNullable<Event["channel"]>,
+    ) => {
+      const channelType = eventChannel.type;
+      const channelId = eventChannel.id;
+      if (!doesChannelMatchScope(eventChannel, scopeRef.current)) {
         return;
       }
       const newChannel = client.channel(channelType, channelId);
-      await newChannel.watch().catch(() => undefined);
-      if (channelType === "team") {
-        setTeamChannels((prev) =>
-          prev.some((ch) => ch.cid === newChannel.cid)
-            ? prev
-            : [newChannel, ...prev],
-        );
-      } else if (channelType === "messaging" && isUsableDmChannel(newChannel)) {
-        setDirectMessages((prev) =>
-          prev.some((ch) => ch.cid === newChannel.cid)
-            ? prev
-            : [newChannel, ...prev],
-        );
+      if (pendingCidsRef.current.has(newChannel.cid)) return;
+      pendingCidsRef.current.add(newChannel.cid);
+      try {
+        await newChannel.watch();
+        // The client or org scope may have changed while watch() was pending.
+        if (
+          disposed ||
+          !doesChannelMatchScope(eventChannel, scopeRef.current)
+        ) {
+          return;
+        }
+        if (channelType === "team") {
+          setTeamChannels((prev) => insertChannelAtTop(prev, newChannel));
+        } else if (
+          channelType === "messaging" &&
+          isUsableDmChannel(newChannel)
+        ) {
+          setDirectMessages((prev) => insertChannelAtTop(prev, newChannel));
+        }
+      } catch {
+        // A failed watch leaves the channel unlisted so the next event retries it.
+      } finally {
+        pendingCidsRef.current.delete(newChannel.cid);
       }
     };
 
+    const handleAddedToChannel = (event: Event) => {
+      if (event.channel) void addChannelToLists(event.channel);
+    };
+
     const handleChannelActivity = (event: Event) => {
-      if (!event.channel) return;
-      const targetCid =
-        event.channel.cid || `${event.channel.type}:${event.channel.id}`;
-      const updatedChannel = client.channel(
-        event.channel.type,
-        event.channel.id,
-      );
+      // `notification.*` events carry a `channel`; `message.new` for a channel the
+      // client is watching, which every open thread is, carries only its ids.
+      const target =
+        event.channel ??
+        (event.channel_type && event.channel_id
+          ? { type: event.channel_type, id: event.channel_id, cid: event.cid }
+          : null);
+      if (!target) return;
+      const targetCid = target.cid || `${target.type}:${target.id}`;
       const isNewMessage =
         event.type === "message.new" ||
         event.type === "notification.message_new";
+      // A message in a channel outside the loaded page: fetch and list it,
+      // but only once the first page has landed (it replaces the lists).
+      if (
+        isNewMessage &&
+        fetchedKeyRef.current !== null &&
+        !listedCidsRef.current.has(targetCid)
+      ) {
+        // Listing needs the channel's data to check its scope, which only the
+        // `channel` form of the event carries.
+        if (event.channel) void addChannelToLists(event.channel);
+        return;
+      }
+      const updatedChannel = client.channel(target.type, target.id);
       const updateList = (prev: Channel[]) =>
         sortUpdatedChannels(
           prev.map((ch) => (ch.cid === targetCid ? updatedChannel : ch)),
@@ -724,9 +848,9 @@ export const ChatSidebar = () => {
           event.message?.created_at,
         );
 
-      if (event.channel.type === "team") {
+      if (target.type === "team") {
         setTeamChannels(updateList);
-      } else if (event.channel.type === "messaging") {
+      } else if (target.type === "messaging") {
         setDirectMessages(updateList);
       }
     };
@@ -737,7 +861,15 @@ export const ChatSidebar = () => {
         event.channel &&
         event.user?.id === client.userID
       ) {
-        void handleAddedToChannel(event);
+        handleAddedToChannel(event);
+        return;
+      }
+      if (
+        event.type === "channel.visible" &&
+        event.channel &&
+        event.user?.id === client.userID
+      ) {
+        handleAddedToChannel(event);
         return;
       }
       if (
@@ -753,7 +885,7 @@ export const ChatSidebar = () => {
         return;
       }
       if (
-        event.channel &&
+        (event.channel || event.channel_id) &&
         (event.type === "message.new" ||
           event.type === "notification.message_new" ||
           event.type === "message.read" ||
@@ -767,6 +899,7 @@ export const ChatSidebar = () => {
     client.on(handleEvent);
 
     return () => {
+      disposed = true;
       client.off(handleEvent);
     };
   }, [client, handleChannelDeleted, handleUserRemovedFromChannel]);
@@ -794,6 +927,67 @@ export const ChatSidebar = () => {
     [setActiveChannel, openConversation],
   );
 
+  const handleTogglePin = useCallback(
+    async (channel: Channel, pin: boolean) => {
+      setPinOverrides((prev) => ({
+        ...prev,
+        [channel.cid]: pin ? new Date().toISOString() : null,
+      }));
+      const pending = pendingPinsRef.current;
+      pending.set(channel.cid, (pending.get(channel.cid) ?? 0) + 1);
+      try {
+        await updateConversationPreference(channel, pin ? "pin" : "unpin");
+      } catch {
+        // Dropping the override puts back the value the list loaded with.
+        setPinOverrides((prev) => {
+          const { [channel.cid]: _undone, ...rest } = prev;
+          return rest;
+        });
+        toast({
+          title: "Could not update this conversation",
+          description: "Please try again.",
+          variant: "destructive",
+        });
+        return;
+      } finally {
+        const left = (pending.get(channel.cid) ?? 1) - 1;
+        if (left > 0) pending.set(channel.cid, left);
+        else pending.delete(channel.cid);
+      }
+      void rebaseList(listTypeOf(channel));
+    },
+    [toast, rebaseList],
+  );
+
+  // Hiding keeps the history; a new message or reopening it brings it back.
+  const handleRemoveFromList = useCallback(
+    async (channel: Channel) => {
+      handleChannelDeleted(channel.cid);
+      try {
+        await updateConversationPreference(channel, "hide");
+      } catch {
+        void fetchChannels({ silent: true });
+        toast({
+          title: "Could not remove this conversation",
+          description: "Please try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+      void rebaseList(listTypeOf(channel));
+    },
+    [handleChannelDeleted, fetchChannels, toast, rebaseList],
+  );
+
+  // A conversation opened from search or the New message picker is listed and
+  // selected, so it is on screen when the person looks back at the list.
+  const handleConversationOpened = useCallback((channel: Channel) => {
+    const setList =
+      channel.type === "team" ? setTeamChannels : setDirectMessages;
+    setList((prev) => insertChannelAtTop(prev, channel));
+    setActiveChannelId(channel.cid || null);
+  }, []);
+
   // #248: keep activeChannelIdRef in lockstep with the state so the stable
   // handleChannelDeleted handler can read the current selection from the ref.
   useEffect(() => {
@@ -804,7 +998,7 @@ export const ChatSidebar = () => {
   useEffect(() => {
     if (!client?.userID || !hasDeepLink) return;
     const pinnedOrgId = scopeOrgId(scope);
-    const deepLinkKey = `${client.userID}::${counterpartyUserId ?? ""}::${contextAppointmentId ?? ""}::${deepLinkEventType ?? ""}::${deepLinkEventId ?? ""}::${deepLinkChannelId ?? ""}::${pinnedOrgId ?? "personal"}`;
+    const deepLinkKey = `${client.userID}::${counterpartyUserId ?? ""}::${deepLinkEventType ?? ""}::${deepLinkEventId ?? ""}::${deepLinkChannelId ?? ""}::${pinnedOrgId ?? "personal"}`;
     if (deepLinkHandledRef.current === deepLinkKey) return;
     deepLinkHandledRef.current = deepLinkKey;
     initialSelectionDoneRef.current = true;
@@ -899,7 +1093,6 @@ export const ChatSidebar = () => {
               kind: "dm",
               counterpartyUserId,
               peerUserId: counterpartyUserId,
-              ...(contextAppointmentId ? { contextAppointmentId } : {}),
               organizationId: pinnedOrgId ?? null,
             },
             "dm",
@@ -943,7 +1136,6 @@ export const ChatSidebar = () => {
     client,
     hasDeepLink,
     counterpartyUserId,
-    contextAppointmentId,
     deepLinkEventType,
     deepLinkEventId,
     deepLinkChannelId,
@@ -992,13 +1184,94 @@ export const ChatSidebar = () => {
 
       {/* Search Bar */}
       <div className="p-4">
-        <ChannelSearch scope={scope} />
+        <ChannelSearch
+          scope={scope}
+          onTermChange={setSearchTerm}
+          listedChannelIds={listedChannelIds}
+          onOpened={handleConversationOpened}
+        />
       </div>
 
       {/* Channel Sections */}
       <div className="flex-1 overflow-y-auto">
+        {/* Conversations come first: a client's message must never sit below a run of
+            empty event channels. Not sticky: two `sticky top-0` headers in one scroll
+            container pin to the same offset and overlap each other. */}
+        <div className="flex items-center justify-between bg-card px-4 py-2">
+          <h2 className="font-semibold">Conversations</h2>
+          <NewMessageDialog scope={scope} onOpened={handleConversationOpened} />
+        </div>
+        {isLoading ? (
+          <ChannelListSkeleton />
+        ) : error ? (
+          // Was an empty div on the theory that the Channels error above says
+          // enough — so on failure this section just vanished.
+          <div className="p-4 text-center text-sm text-destructive">
+            <p>Conversations could not be loaded.</p>
+          </div>
+        ) : (
+          // NOT `directMessages.length > 0 ? list : emptyState`.
+          //
+          // The list is filtered (phantom DMs are dropped, see
+          // isUsableDmChannel) but `hasMoreDMChannels` is measured against the
+          // RAW page length. So a page whose 20 rows are all phantoms leaves the
+          // list empty with more pages still to come — and with the load-more
+          // button living inside the non-empty branch, the empty state rendered
+          // "No conversations yet" over a stranded list the user could not
+          // reach. The button is now tied to `hasMoreDMChannels` alone, and the
+          // empty state only claims there is nothing when there is genuinely
+          // nothing left to fetch.
+          <div>
+            {visibleDirectMessages.map((channel) => (
+              <ChannelItem
+                key={channel.cid}
+                channel={channel}
+                isActive={channel.cid === activeChannelId}
+                isPinned={Boolean(channelPinnedAt(channel, pinOverrides))}
+                onClick={() => handleChannelSelect(channel)}
+                onTogglePin={handleTogglePin}
+                onRemove={handleRemoveFromList}
+              />
+            ))}
+
+            {isFiltering && visibleDirectMessages.length === 0 && (
+              <div className="p-4 text-center text-muted-foreground text-sm">
+                {`No conversations match “${searchTerm.trim()}”.`}
+              </div>
+            )}
+
+            {!isFiltering &&
+              directMessages.length === 0 &&
+              !hasMoreDMChannels && (
+                <div className="p-4 text-center text-muted-foreground text-sm">
+                  {noConversationsMessage(
+                    Boolean(scopeOrgId(scope)),
+                    isConsultant,
+                  )}
+                </div>
+              )}
+
+            {hasMoreDMChannels && !isFiltering && (
+              <div className="p-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => loadMoreChannels("messaging")}
+                  disabled={isLoadingMore}
+                  className="w-full text-muted-foreground hover:bg-muted text-sm"
+                >
+                  {isLoadingMore
+                    ? "Loading..."
+                    : directMessages.length === 0
+                      ? "Load conversations"
+                      : `Showing ${directMessages.length} conversations — Load more`}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
         {/* Team Channels Section */}
-        <div className="px-4 py-2 flex justify-between items-center sticky top-0 bg-card z-10">
+        <div className="mt-4 px-4 py-2 flex justify-between items-center sticky top-0 bg-card z-10">
           <h2 className="font-semibold">Channels</h2>
           {canCreateChannels && (
             <CreateChannelDialog
@@ -1026,17 +1299,20 @@ export const ChatSidebar = () => {
               Try Again
             </Button>
           </div>
-        ) : teamChannels.length > 0 ? (
+        ) : visibleTeamChannels.length > 0 ? (
           <div>
-            {teamChannels.map((channel) => (
+            {visibleTeamChannels.map((channel) => (
               <ChannelItem
                 key={channel.cid}
                 channel={channel}
                 isActive={channel.cid === activeChannelId}
+                isPinned={Boolean(channelPinnedAt(channel, pinOverrides))}
                 onClick={() => handleChannelSelect(channel)}
+                onTogglePin={handleTogglePin}
+                onRemove={handleRemoveFromList}
               />
             ))}
-            {hasMoreTeamChannels && (
+            {hasMoreTeamChannels && !isFiltering && (
               <div className="p-2">
                 <Button
                   variant="ghost"
@@ -1054,73 +1330,9 @@ export const ChatSidebar = () => {
           </div>
         ) : (
           <div className="p-4 text-center text-muted-foreground text-sm">
-            No team channels found.
-          </div>
-        )}
-
-        {/* Conversations Section (Consultations, Subscriptions).
-            Deliberately NOT sticky: two `sticky top-0` headers in one scroll
-            container pin to the same offset and overlap each other. */}
-        <div className="mt-4 bg-card px-4 py-2">
-          <h2 className="font-semibold">Conversations</h2>
-        </div>
-        {isLoading ? (
-          <ChannelListSkeleton />
-        ) : error ? (
-          // Was an empty div on the theory that the Channels error above says
-          // enough — so on failure this section just vanished.
-          <div className="p-4 text-center text-sm text-destructive">
-            <p>Conversations could not be loaded.</p>
-          </div>
-        ) : (
-          // NOT `directMessages.length > 0 ? list : emptyState`.
-          //
-          // The list is filtered (phantom DMs are dropped, see
-          // isUsableDmChannel) but `hasMoreDMChannels` is measured against the
-          // RAW page length. So a page whose 20 rows are all phantoms leaves the
-          // list empty with more pages still to come — and with the load-more
-          // button living inside the non-empty branch, the empty state rendered
-          // "No conversations yet" over a stranded list the user could not
-          // reach. The button is now tied to `hasMoreDMChannels` alone, and the
-          // empty state only claims there is nothing when there is genuinely
-          // nothing left to fetch.
-          <div>
-            {directMessages.map((channel) => (
-              <ChannelItem
-                key={channel.cid}
-                channel={channel}
-                isActive={channel.cid === activeChannelId}
-                onClick={() => handleChannelSelect(channel)}
-              />
-            ))}
-
-            {directMessages.length === 0 && !hasMoreDMChannels && (
-              <div className="p-4 text-center text-muted-foreground text-sm">
-                {scopeOrgId(scope)
-                  ? "No conversations yet. Threads appear here once you're part of a session in this organization."
-                  : isConsultant
-                    ? "No conversations yet. Conversations will appear here once clients book sessions."
-                    : "No conversations yet. Book a consultation to start chatting."}
-              </div>
-            )}
-
-            {hasMoreDMChannels && (
-              <div className="p-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => loadMoreChannels("messaging")}
-                  disabled={isLoadingMore}
-                  className="w-full text-muted-foreground hover:bg-muted text-sm"
-                >
-                  {isLoadingMore
-                    ? "Loading..."
-                    : directMessages.length === 0
-                      ? "Load conversations"
-                      : `Showing ${directMessages.length} conversations — Load more`}
-                </Button>
-              </div>
-            )}
+            {isFiltering
+              ? `No channels match “${searchTerm.trim()}”.`
+              : "No team channels found."}
           </div>
         )}
       </div>

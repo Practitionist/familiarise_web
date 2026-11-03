@@ -1,7 +1,8 @@
+import { isAPIError } from "better-auth/api";
 import { cookies, headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { renderMemo } from "@/lib/render-memo";
-import { isOperatorRole } from "@/lib/auth/operator-session-policy";
+import { needsOperatorTwoFactor } from "@/lib/auth/qa-accounts";
 import {
   classifyMissingSession,
   verifiedSessionToken,
@@ -16,10 +17,9 @@ type ResolvedRead = NonNullable<
 >;
 
 /**
- * One session read, made tri-state. The customSession plugin wraps the core
- * lookup in `.catch(() => null)`, so a null with a validly signed cookie is
- * settled by one row read: a live row means the lookup failed, not that the
- * session is gone. Any failure throws `SessionLookupFailedError`.
+ * One session read, made tri-state. A 401 means the refresh hook ended the
+ * session; any other throw, or a null while the cookie's row is still live,
+ * is a failed lookup and throws `SessionLookupFailedError`.
  */
 async function resolveSession(): Promise<ResolvedRead | null> {
   const requestHeaders = await headers();
@@ -28,6 +28,7 @@ async function resolveSession(): Promise<ResolvedRead | null> {
     session = await auth.api.getSession({ headers: requestHeaders });
   } catch (cause) {
     if (isNextControlFlowError(cause)) throw cause;
+    if (isAPIError(cause) && cause.statusCode === 401) return null;
     throw new SessionLookupFailedError(cause);
   }
   if (session?.user?.id) return session;
@@ -59,15 +60,13 @@ const memoizedResolve = renderMemo(resolveSession);
  * `SessionLookupFailedError` (a 503 refusal) when the lookup itself failed,
  * so an outage never reads as signed out.
  *
- * A STAFF/ADMIN session without an enrolled second factor reads as null
- * unless `allowUnenrolledOperator` is set: only `lookupSession`, behind the
- * page guards and `requireApiAuth`, opts in to answer with the 2FA setup
- * redirect or a 428.
+ * A STAFF/ADMIN session without an enrolled second factor (QA operators off
+ * production aside) reads as null unless `allowUnenrolledOperator` is set:
+ * only `lookupSession`, behind the page guards and `requireApiAuth`, opts in
+ * to answer with the 2FA setup redirect or a 428.
  */
 export async function getSession({ allowUnenrolledOperator = false } = {}) {
   const session = await memoizedResolve();
   if (allowUnenrolledOperator || !session) return session;
-  const unenrolled =
-    isOperatorRole(session.user.role) && session.user.twoFactorEnabled !== true;
-  return unenrolled ? null : session;
+  return needsOperatorTwoFactor(session.user) ? null : session;
 }

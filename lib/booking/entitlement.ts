@@ -1,18 +1,16 @@
 /**
- * Subscription entitlement — the ONE counter every surface reads (#1766).
+ * Subscription entitlement — the ONE counter every surface reads.
  *
- * A subscription plan is an entitlement plus a duration: `sessionsTotal` is
- * snapshotted from the plan at purchase (`Subscription.sessionsTotal`) and
- * everything else is derived here from the wrapper's live occurrences. There
- * is no consumed counter, no per-surface arithmetic and no time bucket: the
- * cycles are fill-order tranches ranked over completed rows, so a reschedule
- * across a calendar boundary changes nothing and the allocator can never
- * place into a future cycle because it only ever accepts `nextBatch`.
+ * A subscription plan is an entitlement plus a fixed end: `sessionsTotal` is
+ * snapshotted at purchase and everything else is derived here from the
+ * wrapper's live occurrences. The rolling cycle is the only weekly counter;
+ * the allocator only ever accepts `nextBatch`, inside a half-open cycle
+ * window that never reaches past the plan end.
  *
  * Prisma-free on purpose — client components import it.
  */
 import { addMonths } from "date-fns";
-import { fromZonedTime, toZonedTime } from "date-fns-tz";
+import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 
 import { formatDateLabel, formatDateRangeLabel } from "@/lib/time/display";
 
@@ -36,6 +34,8 @@ export interface SubscriptionEntitlementInput extends EntitlementPlanShape {
   occurrences: EntitlementOccurrence[];
   schedulingPeriodStartsAt: Date | string;
   schedulingTimezone: string;
+  /** The stored plan end; null falls back to `planEndOf` from the start. */
+  planEndsAt?: Date | string | null;
   now?: Date;
 }
 
@@ -49,9 +49,10 @@ export interface SubscriptionCycle {
   ordinal: number;
   /** Sessions already held against this cycle (completed in it + scheduled). */
   filled: number;
-  /** Sessions the allocator may place now. */
+  /** Sessions the allocator may place now; 0 once the plan has ended. */
   nextBatch: number;
   windowStart: Date;
+  /** Exclusive: a session may end exactly here. */
   windowEnd: Date;
 }
 
@@ -62,6 +63,8 @@ export interface SubscriptionEntitlement {
   rescheduling: number;
   held: number;
   remaining: number;
+  /** Exclusive plan end; nothing is placed at or after it. */
+  planEndsAt: Date;
   cycle: SubscriptionCycle;
 }
 
@@ -118,16 +121,65 @@ function zoneDayOf(instant: Date, tz: string): Date {
   return new Date(wall.getFullYear(), wall.getMonth(), wall.getDate());
 }
 
-/** Last instant of the cycle that starts on `start`'s zone-day: the end of
- * the seventh zone-day for a week, the day before the same date next month
- * for a month. */
+/** Exclusive end of the cycle that starts on `start`'s zone-day: midnight
+ * after the seventh zone-day for a week, the same date next month for a month. */
 function cycleEnd(start: Date, unit: CycleUnit, tz: string): Date {
   const day = zoneDayOf(start, tz);
   const nextCycleDay =
     unit === "week"
       ? new Date(day.getFullYear(), day.getMonth(), day.getDate() + 7)
       : addMonths(day, 1);
-  return new Date(fromZonedTime(nextCycleDay, tz).getTime() - 1);
+  return fromZonedTime(nextCycleDay, tz);
+}
+
+/** The last instant inside a half-open window ending at `end`, for labels. */
+export function lastInstantBefore(end: Date): Date {
+  return new Date(end.getTime() - 1);
+}
+
+/** Fixed plan end: `start` plus `months` on the consultant's wall clock,
+ * clamped to the month's last day (Jan 31 + 1 → Feb 28/29), exclusive. */
+export function planEndOf(start: Date, months: number, tz: string): Date {
+  // An unreadable start has no end; callers treat an invalid Date as "open".
+  if (!Number.isFinite(start.getTime())) return new Date(Number.NaN);
+  const wall = formatInTimeZone(start, tz, "yyyy-MM-dd'T'HH:mm:ss.SSS");
+  const [y, m, d] = wall.slice(0, 10).split("-").map(Number);
+  const monthIndex = m - 1 + Math.max(1, Math.trunc(months));
+  const year = y + Math.floor(monthIndex / 12);
+  const month = (monthIndex % 12) + 1;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const day = Math.min(d, lastDay);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const target = `${year}-${pad(month)}-${pad(day)}${wall.slice(10)}`;
+  const end = fromZonedTime(target, tz);
+  if (!Number.isFinite(end.getTime())) return end;
+  // A wall time inside a spring-forward gap resolves before the gap; move it
+  // past the gap instead so the plan is never shortened.
+  const landed = formatInTimeZone(end, tz, "yyyy-MM-dd'T'HH:mm:ss.SSS");
+  const gapMs = Date.parse(`${target}Z`) - Date.parse(`${landed}Z`);
+  return gapMs > 0 ? new Date(end.getTime() + gapMs) : end;
+}
+
+export interface PlanEndShape {
+  planEndsAt: Date | string | null;
+  schedulingPeriodStartsAt: Date | string;
+  schedulingTimezone: string;
+  subscriptionPlan: { durationInMonths: number };
+}
+
+/** The one plan-end reader for sweeps, admin, documents, incidents and
+ * renewals: the stored end, else start + durationInMonths. */
+export function subscriptionPlanEnd(sub: PlanEndShape): Date {
+  if (sub.planEndsAt) return toDate(sub.planEndsAt);
+  return planEndOf(
+    toDate(sub.schedulingPeriodStartsAt),
+    sub.subscriptionPlan.durationInMonths,
+    sub.schedulingTimezone,
+  );
+}
+
+export function subscriptionIsOver(sub: PlanEndShape, now: Date): boolean {
+  return now.getTime() >= subscriptionPlanEnd(sub).getTime();
 }
 
 /**
@@ -172,6 +224,11 @@ export function maturedTrancheOrdinal(
   );
 }
 
+/** Sessions an N-month plan holds: sessionsPerWeek × months × 4. */
+export function planTotalSessions(plan: EntitlementPlanShape): number {
+  return plan.sessionsPerWeek * plan.durationInMonths * 4;
+}
+
 /** The scheduling window checkout persists: the FIRST cycle only. */
 export function firstCycleWindow(
   plan: EntitlementPlanShape,
@@ -209,7 +266,6 @@ export function subscriptionEntitlement(
   const capThisCycle =
     ordinal === count - 1 ? total - (count - 1) * capacity : capacity;
   const filled = completed - ordinal * capacity + scheduled;
-  const nextBatch = Math.max(0, Math.min(capThisCycle - filled, remaining));
 
   const now = input.now ?? new Date();
   // During a reschedule (rescheduling > 0), remaining SCHEDULED sessions later
@@ -229,7 +285,23 @@ export function subscriptionEntitlement(
       now.getTime(),
     ),
   );
-  const windowEnd = cycleEnd(windowStart, unit, input.schedulingTimezone);
+  const planEndsAt = subscriptionPlanEnd({
+    planEndsAt: input.planEndsAt ?? null,
+    schedulingPeriodStartsAt: input.schedulingPeriodStartsAt,
+    schedulingTimezone: input.schedulingTimezone,
+    subscriptionPlan: { durationInMonths: input.durationInMonths },
+  });
+  const planEndMs = planEndsAt.getTime();
+  const windowEnd = new Date(
+    Math.min(
+      cycleEnd(windowStart, unit, input.schedulingTimezone).getTime(),
+      Number.isFinite(planEndMs) ? planEndMs : Infinity,
+    ),
+  );
+  const nextBatch =
+    windowEnd > windowStart
+      ? Math.max(0, Math.min(capThisCycle - filled, remaining))
+      : 0;
 
   return {
     total,
@@ -238,6 +310,7 @@ export function subscriptionEntitlement(
     rescheduling,
     held,
     remaining,
+    planEndsAt,
     cycle: {
       unit,
       capacity,
@@ -255,7 +328,8 @@ export function subscriptionEntitlement(
  * The allocate-page footer and the Home row read one short sentence:
  * "Pick 4 for 2 – 8 Mar · 1 per week · 0 of 12 booked" while the cycle has
  * room, "This cycle is set · next opens after 8 Mar · 4 of 12 booked" once
- * it is full, "All 12 sessions booked" at the end.
+ * it is full, "All 12 sessions booked" at the end, and "Plan ended on 31 May"
+ * once the plan end has passed with sessions unplaced.
  */
 export function subscriptionCycleHeading(
   entitlement: SubscriptionEntitlement,
@@ -266,10 +340,13 @@ export function subscriptionCycleHeading(
   const { held, total, remaining, rescheduling } = entitlement;
   const booked = `${held} of ${total} booked`;
   const targetBatch = rescheduling > 0 ? rescheduling : nextBatch;
+  const lastDay = lastInstantBefore(windowEnd);
   if (remaining === 0 && targetBatch === 0)
     return `All ${total} sessions booked`;
+  if (windowEnd <= windowStart)
+    return `Plan ended on ${formatDateLabel(lastDay, opts)} · ${booked}`;
   if (targetBatch === 0)
-    return `This cycle is set · next opens after ${formatDateLabel(windowEnd, opts)} · ${booked}`;
-  const window = formatDateRangeLabel(windowStart, windowEnd, opts);
+    return `This cycle is set · next opens after ${formatDateLabel(lastDay, opts)} · ${booked}`;
+  const window = formatDateRangeLabel(windowStart, lastDay, opts);
   return `Pick ${targetBatch} for ${window} · ${capacity} per ${unit} · ${booked}`;
 }

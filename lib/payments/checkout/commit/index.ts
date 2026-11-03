@@ -107,26 +107,31 @@ export async function commitCheckout(input: CheckoutCommitInput) {
         const appointmentOrganizationId =
           fundingSource === "PERSONAL" ? null : organizationId;
 
+        // A direct-slot 1:1 (consultation or subscription) re-checks the
+        // buyer's calendar inside the commit that writes the hold.
+        const assertBuyerSlotFree = async () => {
+          if (!validatedData.startsAt || !validatedData.endsAt) return;
+          await assertConsulteeHasNoOverlappingSession(tx, {
+            userId,
+            startsAt: validatedData.startsAt,
+            endsAt: validatedData.endsAt,
+            selfHoldAppointmentIds: await findSelfHoldAppointmentIds(tx, {
+              buyerUserId: userId,
+              appointmentType: validatedData.appointmentType,
+              planId: validatedData.planId,
+              paymentGateway: validatedData.paymentGateway,
+              organizationId,
+              slotStart: new Date(validatedData.startsAt),
+              slotEnd: new Date(validatedData.endsAt),
+              now: new Date(),
+            }),
+          });
+        };
+
         // Create appointment based on type (with isTentative flag)
         switch (validatedData.appointmentType) {
           case "CONSULTATION": {
-            if (validatedData.startsAt && validatedData.endsAt) {
-              await assertConsulteeHasNoOverlappingSession(tx, {
-                userId,
-                startsAt: validatedData.startsAt!,
-                endsAt: validatedData.endsAt!,
-                selfHoldAppointmentIds: await findSelfHoldAppointmentIds(tx, {
-                  buyerUserId: userId,
-                  appointmentType: validatedData.appointmentType,
-                  planId: validatedData.planId,
-                  paymentGateway: validatedData.paymentGateway,
-                  organizationId,
-                  slotStart: new Date(validatedData.startsAt),
-                  slotEnd: new Date(validatedData.endsAt),
-                  now: new Date(),
-                }),
-              });
-            }
+            await assertBuyerSlotFree();
             const consultationResult = await handleConsultationCheckout(
               tx,
               validatedData,
@@ -144,6 +149,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
           }
 
           case "SUBSCRIPTION": {
+            await assertBuyerSlotFree();
             const subscriptionResult = await handleSubscriptionCheckout(
               tx,
               validatedData,
@@ -251,6 +257,7 @@ export async function commitCheckout(input: CheckoutCommitInput) {
 
         return {
           appointmentId: createdAppointment?.id,
+          paymentId: payment.id,
           holdExpiresAt: payment.expiresAt,
           creditsApplied: actualCreditsApplied,
           creditsRemainingAfter,

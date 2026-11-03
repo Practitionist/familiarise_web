@@ -6,6 +6,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { isExpectedError } from "@/lib/observability/expected";
+import { isTranslateDomMutationNoise } from "@/lib/observability/translate-dom-noise";
 import {
   scrubSentryBreadcrumb,
   scrubSentryEvent,
@@ -20,13 +21,6 @@ import {
 type SentryInitOptions = NonNullable<Parameters<typeof Sentry.init>[0]>;
 
 export function resolveDefaultTracesSampleRate(): number {
-  const rawOverride = process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
-  if (rawOverride !== undefined && rawOverride !== "") {
-    const parsed = Number(rawOverride);
-    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) {
-      return parsed;
-    }
-  }
   if (
     isProductionEnvironment() ||
     process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview"
@@ -38,7 +32,7 @@ export function resolveDefaultTracesSampleRate(): number {
 
 /**
  * Route-aware trace sampling (#1926):
- * - Non-production: 20% (or NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE override)
+ * - Non-production: 20%
  * - Health probes & static assets (`/api/health`, `/_next/`, `/favicon.ico`, `/robots.txt`): 0%
  * - Background cleanup cron endpoints (`/api/cleanup/`): 2%
  * - Critical payment, checkout, and webhook routes (`/api/webhooks/`, `/api/payments/`, `/api/checkout`): 50% (or parent decision)
@@ -244,6 +238,11 @@ function exceedsErrorBudget(
   return false;
 }
 
+/** Preview deploys send no events to the shared production project; previews log only. */
+export function isPreviewDeploy(): boolean {
+  return process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview";
+}
+
 /** The `beforeSend` budget stage, exported so a test can drive it directly. */
 export function applyErrorBudget<E extends Sentry.Event>(event: E): E | null {
   // An expected outcome at info level is an ANSWER, not a fault.
@@ -346,18 +345,8 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     enabled: Boolean(dsn) && isNotDevelopmentEnvironment(),
     environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
 
-    // Previews keep visibility at a tenth of the volume; everything
-    // else reports every error (the throttle above bounds floods). Keyed on
-    // "preview" rather than "not production" so an unset environment (a bare
-    // job runner, a test) fails open instead of silently dropping 90%.
-    sampleRate:
-      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT === "preview" ? 0.1 : 1,
-
-    // #1086 — deploy previews used to report to a SEPARATE Sentry project, so
-    // an error found on a preview was invisible in the one anybody watches and
-    // had to be dug out of Netlify function logs. They now share the production
-    // project; `environment` ("preview" vs "production") keeps them out of
-    // production alerting, and this tag says WHICH branch produced it.
+    // Previews share the production project but `beforeSend` drops their
+    // error events; their traces and logs carry this branch tag.
     initialScope: {
       tags: {
         ...(process.env.NEXT_PUBLIC_SENTRY_BRANCH
@@ -367,8 +356,7 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     },
 
     // Sample 10% of traces in production/preview (with route-aware overrides via
-    // tracesSampler) and 20% in non-production unless overridden via
-    // NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE.
+    // tracesSampler) and 20% in non-production.
     tracesSampleRate: resolveDefaultTracesSampleRate(),
     ...(overrides?.tracesSampleRate !== undefined ? {} : { tracesSampler }),
 
@@ -460,13 +448,15 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
     // re-levels one. (FAMILIARISE_WEB-10)
     beforeSend(event, hint) {
       stripUngatedPII(event);
+      if (isTranslateDomMutationNoise(event)) return null;
       if (isExpectedError(hint?.originalException)) {
         event.level = "warning";
         event.tags = { ...event.tags, expected: "true" };
       }
-      // Drop expected-info, fingerprint the flood families,
-      // throttle per key, cap per process. Returning null drops before
-      // transport, so dropped events never consume quota.
+      // Drop previews, then expected-info, fingerprint the flood families,
+      // throttle per key and cap per process. A null drops before transport, so
+      // it spends no quota. Keyed on "preview", so an unset environment fails open.
+      if (isPreviewDeploy()) return null;
       if (applyErrorBudget(event) === null) return null;
       // #1861 S4 — scrub AFTER the relabel/throttle above: this pass only
       // removes data, it never changes a drop/keep or level decision.

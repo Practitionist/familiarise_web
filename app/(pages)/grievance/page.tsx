@@ -3,9 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ShieldAlert } from "lucide-react";
+import { COMPANY_INFO } from "@/lib/company";
 import {
   ANTI_SCAM_NOTICE,
-  COMPANY_INFO,
   GRIEVANCE_OFFICER,
   POLICY_DATES,
   getMailtoLink,
@@ -49,11 +49,21 @@ export default function GrievanceRedressalPage() {
             </CardHeader>
             <CardContent className="prose prose-slate max-w-none">
               <div className="bg-muted p-4 rounded-lg not-prose space-y-1.5 text-sm">
-                <p>
-                  <strong>Officer:</strong> {GRIEVANCE_OFFICER.name}
-                </p>
+                {GRIEVANCE_OFFICER.name ? (
+                  <p>
+                    <strong>Officer:</strong> {GRIEVANCE_OFFICER.name}
+                  </p>
+                ) : null}
                 <p>
                   <strong>Designation:</strong> {GRIEVANCE_OFFICER.designation}
+                </p>
+                <p>
+                  <strong>Company:</strong> {COMPANY_INFO.name} (CIN{" "}
+                  {COMPANY_INFO.cin})
+                </p>
+                <p>
+                  <strong>Registered Office:</strong>{" "}
+                  {COMPANY_INFO.registeredAddress}
                 </p>
                 <p>
                   <strong>Email:</strong>{" "}
@@ -98,12 +108,12 @@ export default function GrievanceRedressalPage() {
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                1. Statutory Timelines &amp; Ticket Tracking
+                1. Statutory Timelines &amp; Case Tracking
               </h2>
               <p>
-                Every support request and formal complaint opened on{" "}
+                Every support case and formal complaint opened on{" "}
                 {COMPANY_INFO.name} receives a unique tracking reference {"("}
-                <code>FAM-YYYY-NNNNNN</code> for support tickets and{" "}
+                <code>FAM-YYYY-NNNNNN</code> for support cases and{" "}
                 <code>RPT-XXXXXXXX</code> for content/review moderation
                 {" reports)"} so you can monitor progress end to end.
               </p>
@@ -124,7 +134,7 @@ export default function GrievanceRedressalPage() {
                     4(4)–4(5):
                   </strong>{" "}
                   Statutory ceiling is acknowledgement within 48 hours and
-                  redressal within 1 month with a trackable ticket handle;{" "}
+                  redressal within 1 month with a trackable case reference;{" "}
                   {COMPANY_INFO.name} applies our stricter acknowledgement{" "}
                   <strong>({GRIEVANCE_OFFICER.ackPromise})</strong> and
                   resolution{" "}

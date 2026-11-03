@@ -29,6 +29,7 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { revokeEnforcedDomainSessions } from "@/lib/sso/session-sweeps";
+import { stampSessionEnds } from "@/lib/auth/session-access-log";
 
 export async function POST(
   _req: NextRequest,
@@ -157,7 +158,7 @@ export async function POST(
 
   const verifiedAt = new Date();
   try {
-    await prisma.$transaction(async (tx) => {
+    const swept = await prisma.$transaction(async (tx) => {
       const competingVerified = await tx.orgDomainClaim.findFirst({
         where: {
           domain,
@@ -198,11 +199,12 @@ export async function POST(
       });
       // Only bites when the org enforces SSO and an approved provider covers
       // the domain.
-      await revokeEnforcedDomainSessions(tx, orgId, {
+      return revokeEnforcedDomainSessions(tx, orgId, {
         onlyDomains: [domain],
         keepSessionId: access.session.session.id,
       });
     });
+    await stampSessionEnds(swept.ended);
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
       const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;

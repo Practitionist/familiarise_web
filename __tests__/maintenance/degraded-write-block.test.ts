@@ -99,6 +99,30 @@ const BLOCKED = [
   "/api/meetings/mtg_1/extend",
   "/api/appointments/appt_1/occurrences",
   "/api/appointments/appt_1/occurrences/occ_1",
+
+  // Admin money writes: payouts, invoices, earnings, disputes, credits, refunds.
+  "/api/admin/org-payouts/op_1/approve",
+  "/api/admin/org-payouts/op_1/hold",
+  "/api/admin/org-payouts/op_1/release",
+  "/api/admin/organizations/org_1/invoices",
+  "/api/admin/organizations/org_1/invoices/inv_1/issue",
+  "/api/admin/organizations/org_1/invoices/inv_1/void",
+  "/api/admin/organizations/org_1/invoices/inv_1/payments",
+  "/api/admin/organizations/org_1/billing-account",
+  "/api/admin/organizations/org_1/overages/ov_1/settle-to-org",
+  "/api/admin/earnings/earn_1/hold",
+  "/api/admin/earnings/earn_1/release",
+  "/api/admin/disputes/disp_1",
+  "/api/admin/payout-accounts/unfreeze",
+  "/api/admin/reconcile-ledgers",
+  "/api/admin/referrals/credits",
+  "/api/admin/referrals/credits/cred_1/reverse",
+  "/api/admin/class-series/cls_1/cancel-series",
+  "/api/admin/class-series/cls_1/cancel-session",
+  "/api/admin/class-series/cls_1/make-up",
+  "/api/admin/class-series/cls_1/skip-make-up",
+  "/api/admin/class-series/sweeps/settle-session",
+  "/api/admin/class-series/sweeps/unallocated",
 ];
 
 const NOT_BLOCKED = [
@@ -125,6 +149,10 @@ const NOT_BLOCKED = [
   "/api/collaborators",
   // Recording consent is not a money door; only join and end are.
   "/api/meetings/mtg_1/recording-consent",
+  // Admin writes that move no money stay open.
+  "/api/admin/organizations/org_1/verify",
+  "/api/admin/class-series/cls_1/note",
+  "/api/admin/referrals/waivers",
 ];
 
 describe("isWriteBlockedInDegraded", () => {
@@ -193,7 +221,31 @@ describe("unreadable maintenance state", () => {
     }
   });
 
-  it("fails closed for booking and money writes only, never for reads", () => {
+  it("permits a plain checkout status poll while keeping capture synchronization fail closed", () => {
+    expect(
+      isFailClosedWhenUnreadable(
+        "/api/checkout/verify",
+        "GET",
+        new URLSearchParams(),
+      ),
+    ).toBe(false);
+    expect(
+      isFailClosedWhenUnreadable(
+        "/api/checkout/verify",
+        "GET",
+        new URLSearchParams("sync=false"),
+      ),
+    ).toBe(false);
+    expect(
+      isFailClosedWhenUnreadable(
+        "/api/checkout/verify",
+        "GET",
+        new URLSearchParams("sync=true"),
+      ),
+    ).toBe(true);
+  });
+
+  it("fails closed for non-exempt mutations and permits ordinary reads", () => {
     expect(
       isFailClosedWhenUnreadable("/api/bookings/booking_1/abandon", "POST"),
     ).toBe(true);
@@ -205,6 +257,9 @@ describe("unreadable maintenance state", () => {
       ),
     ).toBe(true);
     expect(isFailClosedWhenUnreadable("/api/checkout", "GET")).toBe(false);
-    expect(isFailClosedWhenUnreadable("/api/waitlist", "POST")).toBe(false);
+    expect(isFailClosedWhenUnreadable("/api/waitlist", "POST")).toBe(true);
+    expect(isFailClosedWhenUnreadable("/api/webhooks/razorpay", "POST")).toBe(
+      false,
+    );
   });
 });

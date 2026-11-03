@@ -7,7 +7,8 @@
  */
 
 import prisma from "@/lib/prisma";
-import type { Prisma, RecordingStatus } from "@prisma/client";
+import type { AppointmentsType, Prisma, RecordingStatus } from "@prisma/client";
+import { isFullyRefundedPurchase } from "@/lib/payments/utils/refund-balance";
 import { liveParticipant } from "@/lib/booking/participants";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
@@ -99,6 +100,7 @@ export interface ListRecordingsResult {
 }
 
 import { buildUserAppointmentAccessOr } from "./list-documents";
+import { orgOwnedAppointmentWhere } from "./list-appointments";
 
 /** Own appointments, plus every run of a shared-recordings webinar plan the caller holds a live seat in. */
 function recordingAppointmentAccessOr(
@@ -144,20 +146,13 @@ function buildWhere(params: ListRecordingsParams): Prisma.RecordingWhereInput {
   if (params.scope.kind === "org") {
     return {
       ...base,
-      organizationId: params.scope.orgId,
-      // Read-level twin of the DEACTIVATED refusal in `resolveOrgScope`, for
-      // the reason that one is opt-in: this query has no org row in scope to
-      // test, and the synchronous resolver cannot learn the org's status from
-      // the membership rows the caller pre-fetched. An ACTIVE membership
-      // outlives the org the teardown stamps DEACTIVATED, so without this a
-      // torn-down org's recordings — other people's sessions — keep serving
-      // through the personal `?orgScope=` door. SUSPENDED stays readable: its
-      // OWNER has to be able to find whatever got it suspended.
-      //
-      // Rides the denormalized `organizationId` the org arm already filters on,
-      // so the relation can never be NULL here and `is` cannot drop a matching
-      // row — same trade as `list-appointments.ts`.
-      organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
+      // A recording belongs to the org that owns its booking, on the same
+      // grounds as the org's appointment list (readable org included).
+      meeting: {
+        occurrence: {
+          appointment: orgOwnedAppointmentWhere(params.scope.orgId),
+        },
+      },
     };
   }
   // `orgMember` = ONE member's own rows within an org. It must never fall
@@ -214,5 +209,70 @@ export async function listRecordingsScoped(
     }),
   ]);
 
-  return { items, total, page, perPage };
+  if (!isParticipantScope) return { items, total, page, perPage };
+  const revoked = await refundRevokedAppointmentIds(items, params.userId);
+  return {
+    items:
+      revoked.size === 0
+        ? items
+        : items.map((item) =>
+            revoked.has(item.meeting.occurrence.appointment.id)
+              ? stripMedia(item)
+              : item,
+          ),
+    total,
+    page,
+    perPage,
+  };
+}
+
+const GROUP_TYPES = new Set<AppointmentsType>(["WEBINAR", "CLASS"]);
+
+/**
+ * 1:1 appointments the caller bought and was refunded out of in full: the same
+ * predicate `loadRecordingViews` applies, so the list shows no preview the
+ * player would refuse.
+ */
+async function refundRevokedAppointmentIds(
+  items: ScopedRecording[],
+  userId: string,
+): Promise<Set<string>> {
+  const oneToOneIds = [
+    ...new Set(
+      items
+        .map((item) => item.meeting.occurrence.appointment)
+        .filter((a) => !GROUP_TYPES.has(a.appointmentType))
+        .map((a) => a.id),
+    ),
+  ];
+  if (oneToOneIds.length === 0) return new Set();
+  const payments = await prisma.payment.findMany({
+    where: {
+      appointmentId: { in: oneToOneIds },
+      userId,
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+    },
+    select: {
+      appointmentId: true,
+      amount: true,
+      paymentIntent: true,
+      refunds: { select: { amountPaise: true, status: true } },
+    },
+  });
+  const byAppointment = Map.groupBy(payments, (p) => p.appointmentId);
+  return new Set(
+    oneToOneIds.filter((id) =>
+      isFullyRefundedPurchase(byAppointment.get(id) ?? []),
+    ),
+  );
+}
+
+function stripMedia(item: ScopedRecording): ScopedRecording {
+  return {
+    ...item,
+    thumbnailUrl: null,
+    previewClipUrl: null,
+    previewClipDuration: null,
+  };
 }

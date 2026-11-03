@@ -22,6 +22,7 @@ export const NOVU_WORKFLOWS = {
   APPOINTMENT_RESCHEDULED: "appointment-rescheduled",
   APPOINTMENT_REMINDER: "appointment-reminder",
   APPOINTMENT_COMPLETED: "appointment-completed",
+  CHAT_UNREAD_DIGEST: "chat-unread-digest",
 
   // Payment events
   PAYMENT_LINK: "payment-link",
@@ -192,6 +193,13 @@ export type AppointmentPartiallyScheduledInput = AppointmentPayloadInput & {
   unplacedSessions: number;
 };
 
+/** `summary` names counterparts and sessions only; it never carries message text. */
+export type ChatUnreadDigestPayload = NotificationScope & {
+  summary: string;
+  threadCount: number;
+  dashboardUrl: string;
+};
+
 export type AppointmentCancelledPayload = AppointmentPayload & {
   reason: string;
   cancelledBy: string;
@@ -208,16 +216,24 @@ export type RescheduleOutcomeFields =
       outcome: "MOVED" | "PROPOSED";
       oldDateTime: string;
       newDateTime: string;
+      /** A host move: attendees may leave with a full refund until then (ISO). */
+      leaveBy?: string;
+      /** The attendee already holds another session at the new time. */
+      clash?: boolean;
     }
   | {
       outcome: "RELEASED";
       oldDateTime?: string;
       newDateTime?: never;
+      leaveBy?: never;
+      clash?: never;
     }
   | {
       outcome: "DECLINED" | "WITHDRAWN" | "EXPIRED";
       oldDateTime?: string;
       newDateTime?: never;
+      leaveBy?: never;
+      clash?: never;
     };
 
 export type AppointmentRescheduledInput = AppointmentPayloadInput &
@@ -229,6 +245,9 @@ export type AppointmentRescheduledPayload = AppointmentPayload & {
   oldDateTimeIso?: string;
   newDateTime: string;
   newDateTimeIso?: string;
+  leaveBy?: string;
+  leaveByIso?: string;
+  clash?: boolean;
 };
 
 export type PaymentSuccessPayload = NotificationScope & {

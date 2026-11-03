@@ -11,7 +11,7 @@
  * `/api/cleanup/reconcile-disputes` twin on the Netlify ticker.
  */
 
-import prisma from "../../lib/prisma";
+import prisma, { type PrismaLike } from "../../lib/prisma";
 import { DisputeStatus, PaymentGateway, Prisma } from "@prisma/client";
 import {
   getRazorpayDispute,
@@ -130,6 +130,63 @@ async function flagDisputeForManualReview(
   console.warn(`⚠️ Dispute ${dispute.disputeId}: ${note}`);
 }
 
+/** Open Razorpay disputes; both cohorts below narrow it. */
+const OPEN_RAZORPAY_DISPUTE_WHERE = {
+  paymentGateway: PaymentGateway.RAZORPAY,
+  status: {
+    in: [
+      DisputeStatus.NEEDS_RESPONSE,
+      DisputeStatus.WARNING_NEEDS_RESPONSE,
+      DisputeStatus.UNDER_REVIEW,
+      DisputeStatus.WARNING_UNDER_REVIEW,
+    ],
+  },
+} satisfies Prisma.DisputeWhereInput;
+
+function nearDeadlineDisputeWhere(
+  approachingDeadline: Date,
+): Prisma.DisputeWhereInput {
+  return {
+    ...OPEN_RAZORPAY_DISPUTE_WHERE,
+    dueBy: { lte: approachingDeadline },
+  };
+}
+
+function staleDisputeWhere(
+  staleThreshold: Date,
+  approachingDeadline: Date,
+): Prisma.DisputeWhereInput {
+  return {
+    ...OPEN_RAZORPAY_DISPUTE_WHERE,
+    updatedAt: { lt: staleThreshold },
+    OR: [{ dueBy: null }, { dueBy: { gt: approachingDeadline } }],
+  };
+}
+
+/** True when the near-deadline or the stale cohort holds a dispute. */
+export async function hasDisputeReconcileWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const t = now.getTime();
+  const approachingDeadline = new Date(t + APPROACHING_DEADLINE_MS);
+  if (outOfTime()) return true;
+  const row = await db.dispute.findFirst({
+    where: {
+      OR: [
+        nearDeadlineDisputeWhere(approachingDeadline),
+        staleDisputeWhere(
+          new Date(t - STALE_THRESHOLD_MS),
+          approachingDeadline,
+        ),
+      ],
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 /**
  * Find and reconcile disputes that may have stale status
  */
@@ -159,17 +216,6 @@ async function reconcileDisputesUnlocked(opts: {
 
   // Every pass writes the row (or another writer moved it), so ordering by
   // updatedAt rotates a limited run.
-  const base = {
-    paymentGateway: PaymentGateway.RAZORPAY,
-    status: {
-      in: [
-        DisputeStatus.NEEDS_RESPONSE,
-        DisputeStatus.WARNING_NEEDS_RESPONSE,
-        DisputeStatus.UNDER_REVIEW,
-        DisputeStatus.WARNING_UNDER_REVIEW,
-      ],
-    },
-  } satisfies Prisma.DisputeWhereInput;
   const query = {
     include: { payment: true },
     orderBy: [{ updatedAt: "asc" }, { dueBy: "asc" }],
@@ -181,7 +227,7 @@ async function reconcileDisputesUnlocked(opts: {
     limit !== undefined && limit >= 2 ? Math.ceil(limit / 3) : 0;
   const deadlineRows = await prisma.dispute.findMany({
     ...query,
-    where: { ...base, dueBy: { lte: approachingDeadline } },
+    where: nearDeadlineDisputeWhere(approachingDeadline),
     ...(limit === undefined ? {} : { take: limit }),
   });
   const room =
@@ -193,11 +239,7 @@ async function reconcileDisputesUnlocked(opts: {
       ? []
       : await prisma.dispute.findMany({
           ...query,
-          where: {
-            ...base,
-            updatedAt: { lt: staleThreshold },
-            OR: [{ dueBy: null }, { dueBy: { gt: approachingDeadline } }],
-          },
+          where: staleDisputeWhere(staleThreshold, approachingDeadline),
           ...(room === undefined ? {} : { take: room }),
         });
   const nearDeadline =

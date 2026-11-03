@@ -291,9 +291,11 @@ export function setup() {
 export function browse() {
   const consultantId = rotate(CONSULTANT_IDS, __VU * 7 + __ITER);
   if (!consultantId) return;
-  const date = new Date(atomAt(0).startsAt).toISOString();
+  const start = new Date(atomAt(0).startsAt);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   const res = get(
-    `/api/slots/availability/${consultantId}?date=${encodeURIComponent(date)}&timeZone=UTC`,
+    `/api/scheduling/availability-with-allocation/${consultantId}` +
+      `?startDateInUtc=${start.toISOString()}&endDateInUtc=${end.toISOString()}&timezone=UTC`,
     { tag: "read_availability" },
   );
   readDuration.add(res.timings.duration, { path: "read_availability" });

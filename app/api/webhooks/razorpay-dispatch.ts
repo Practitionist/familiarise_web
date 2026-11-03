@@ -29,6 +29,10 @@ import {
   handleRecordingPurchaseSuccess,
   handleRecordingPurchaseFailure,
 } from "@/lib/payments/webhooks/recording-purchase";
+import {
+  handleDigitalProductPurchaseSuccess,
+  handleDigitalProductPurchaseFailure,
+} from "@/lib/payments/webhooks/digital-product-purchase";
 import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
 import {
   razorpayPaymentCapturedEventSchema,
@@ -129,6 +133,8 @@ export async function routeCapturedPayment(params: {
    * absent, `handleOrgPaymentSuccess` refuses to mark an invoice PAID.
    */
   gatewayPaymentId?: string;
+  /** Razorpay's `method`; the standalone sale rails record it on their Payment. */
+  method?: string;
   /** Gateway fee (GST included) and its GST, from the webhook's payment entity only. */
   fee?: { feePaise: number; taxPaise: number };
 }): Promise<void> {
@@ -147,8 +153,9 @@ async function dispatchCapturedPayment(params: {
   notes: Record<string, string>;
   amountPaise?: number;
   gatewayPaymentId?: string;
+  method?: string;
 }): Promise<void> {
-  const { orderId, notes, amountPaise, gatewayPaymentId } = params;
+  const { orderId, notes, amountPaise, gatewayPaymentId, method } = params;
 
   // #1861 P4b — IDs only. `orderId` is what Payment.paymentIntent stores;
   // an internal Payment.id or appointmentId is not yet resolved at this
@@ -187,6 +194,18 @@ async function dispatchCapturedPayment(params: {
       gatewayPaymentId,
       notes,
       gatewayPaymentId ? amountPaise : undefined,
+      method,
+    );
+    return;
+  }
+  if (notes.type === "digital_product_purchase") {
+    // Settled on its own DigitalProductPurchase row; withhold the order total without a payment entity.
+    await handleDigitalProductPurchaseSuccess(
+      orderId,
+      gatewayPaymentId,
+      notes,
+      gatewayPaymentId ? amountPaise : undefined,
+      method,
     );
     return;
   }
@@ -237,6 +256,7 @@ export async function processRazorpayWebhookEvent(
           notes: capturedEntity.notes,
           amountPaise: capturedEntity.amount,
           gatewayPaymentId: capturedEntity.id,
+          method: capturedEntity.method,
           fee: payloadFee(capturedEntity),
         });
         break;
@@ -250,6 +270,7 @@ export async function processRazorpayWebhookEvent(
           notes: paidEvent.payload.order.entity.notes,
           amountPaise: paidEntity?.amount,
           gatewayPaymentId: paidEntity?.id,
+          method: paidEntity?.method,
           fee: paidEntity ? payloadFee(paidEntity) : undefined,
         });
         break;
@@ -269,6 +290,8 @@ export async function processRazorpayWebhookEvent(
           await handleOverageMemberFailure(failedOrderId);
         } else if (failedNotes.type === "recording_purchase") {
           await handleRecordingPurchaseFailure(failedOrderId);
+        } else if (failedNotes.type === "digital_product_purchase") {
+          await handleDigitalProductPurchaseFailure(failedOrderId);
         } else {
           await handlePaymentFailure(
             failedOrderId,

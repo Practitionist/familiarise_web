@@ -8,7 +8,7 @@
  * Pins the settlement contract the OVERAGE_SETTLEMENT_MISMATCH reconcile
  * invariant asserts: a capture flips the side-Payment → SUCCEEDED, moves the
  * event PENDING/FAILED → CHARGED, and ONLY THEN posts the org-relief journal
- * (`overage:<sidePaymentId>`: Dr GATEWAY_CLEARING / Cr ORG_PAYABLE == marginalPaise).
+ * (`overage:<sidePaymentId>`: Dr GATEWAY_CLEARING / Cr DISCOUNT(base) + PLATFORM_FEE(surcharge) + GST_PAYABLE).
  * If the event can't legally reach CHARGED (REVERSED mid-flight), no org
  * credit is posted: the cash is parked and auto-refunded after commit.
  */
@@ -21,6 +21,9 @@ jest.mock("../../lib/prisma", () => {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     paymentLeg: { updateMany: jest.fn() },
+    overageEvent: {
+      findFirst: jest.fn().mockResolvedValue({ basePaise: 100_000 }),
+    },
   };
   return {
     __esModule: true,
@@ -89,7 +92,7 @@ beforeEach(() => {
 });
 
 describe("handleOverageMemberSuccess", () => {
-  it("capture: SUCCEEDED + CHARGED, then Dr GATEWAY_CLEARING / Cr ORG_PAYABLE + Cr GST_PAYABLE", async () => {
+  it("capture: SUCCEEDED + CHARGED, then Dr GATEWAY_CLEARING / Cr DISCOUNT + PLATFORM_FEE + GST_PAYABLE", async () => {
     tx.payment.findUnique.mockResolvedValue(side);
     mockTransition.mockResolvedValue(1);
 
@@ -125,9 +128,14 @@ describe("handleOverageMemberSuccess", () => {
           amountPaise: 129_500,
         },
         {
-          account: { kind: "ORG_PAYABLE", organizationId: "org1" },
+          account: { kind: "DISCOUNT" },
           direction: "CREDIT",
-          amountPaise: 125_000,
+          amountPaise: 100_000,
+        },
+        {
+          account: { kind: "PLATFORM_FEE" },
+          direction: "CREDIT",
+          amountPaise: 25_000,
         },
         {
           account: { kind: "GST_PAYABLE" },

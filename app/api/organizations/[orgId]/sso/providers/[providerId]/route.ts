@@ -33,6 +33,7 @@ import { updateProviderSchema } from "@/lib/sso/provider-schemas";
 import { providerDomains, serializeProviderDomains } from "@/lib/sso/domains";
 import { assertProviderDomains } from "@/lib/sso/provider-coverage";
 import { revokeEnforcedDomainSessions } from "@/lib/sso/session-sweeps";
+import { stampSessionEnds } from "@/lib/auth/session-access-log";
 
 /**
  * The message an OWNER sees when their provider's config cannot be read.
@@ -274,14 +275,16 @@ export async function PATCH(
         },
       });
       // A newly covered domain of an enforcing org starts enforcing now.
-      if (added.length > 0) {
-        await revokeEnforcedDomainSessions(tx, orgId, {
-          onlyDomains: added,
-          keepSessionId: access.session.session.id,
-        });
-      }
-      return { domain: domain ?? current.domain };
+      const swept =
+        added.length > 0
+          ? await revokeEnforcedDomainSessions(tx, orgId, {
+              onlyDomains: added,
+              keepSessionId: access.session.session.id,
+            })
+          : null;
+      return { domain: domain ?? current.domain, ended: swept?.ended ?? [] };
     });
+    await stampSessionEnds(updated.ended);
 
     return NextResponse.json({
       provider: { providerId, domain: updated.domain },

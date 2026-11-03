@@ -54,6 +54,7 @@
  * ───────────────────────────────────────────────────────────────────────────
  */
 
+import type { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 
@@ -291,6 +292,64 @@ export async function recordTDSDeduction(params: {
   });
 }
 
+const PRIOR_REVERSAL_SELECT = {
+  id: true,
+  financialYear: true,
+  quarter: true,
+  tdsDeducted: true,
+  reportedInForm26Q: true,
+  challanNumber: true,
+} as const;
+
+type PriorReversal = {
+  id: string;
+  financialYear: string;
+  quarter: number;
+  tdsDeducted: number;
+  reportedInForm26Q: boolean;
+  challanNumber: string | null;
+};
+
+/**
+ * The unique key allows one reversal row per (deductee, payout, FY, quarter), so
+ * a later reversal adds to that unfiled row; each one keeps its own TdsAdjustment.
+ */
+async function writeReversalRow(
+  tx: Tx | typeof prisma,
+  prior: PriorReversal[],
+  data: Omit<
+    Prisma.TDSRecordUncheckedCreateInput,
+    "tdsDeducted" | "isReversal"
+  > & { financialYear: string; quarter: number },
+  tdsToReverse: number,
+): Promise<string> {
+  const same = prior.find(
+    (r) => r.financialYear === data.financialYear && r.quarter === data.quarter,
+  );
+  if (!same) {
+    const created = await tx.tDSRecord.create({
+      data: { ...data, tdsDeducted: -tdsToReverse, isReversal: true },
+    });
+    return created.id;
+  }
+  // CAS on the prior amount and the unfiled state: a filed row is never rewritten.
+  const bumped = await tx.tDSRecord.updateMany({
+    where: {
+      id: same.id,
+      tdsDeducted: same.tdsDeducted,
+      reportedInForm26Q: false,
+      challanNumber: null,
+    },
+    data: { tdsDeducted: { decrement: tdsToReverse } },
+  });
+  if (bumped.count !== 1) {
+    throw new Error(
+      `TDS reversal row ${same.id} for ${data.financialYear} Q${data.quarter} is filed or moved; it cannot absorb ${tdsToReverse} paise`,
+    );
+  }
+  return same.id;
+}
+
 /**
  * #813 — record a refund-driven TDS reversal as a negative `isReversal` TDSRecord
  * so the quarterly 26Q nets the withholding back out. Shared by the gateway/cron
@@ -366,7 +425,7 @@ export async function recordTdsReversal(
       consultantProfileId: params.consultantProfileId,
       isReversal: true,
     },
-    select: { tdsDeducted: true },
+    select: PRIOR_REVERSAL_SELECT,
   });
   const alreadyReversed = priorReversals.reduce(
     (sum, r) => sum - r.tdsDeducted,
@@ -386,20 +445,21 @@ export async function recordTdsReversal(
     : original.financialYear;
   const quarter = filed ? getIndianFYQuarter() : original.quarter;
 
-  const reversal = await tx.tDSRecord.create({
-    data: {
+  const tdsRecordId = await writeReversalRow(
+    tx,
+    priorReversals,
+    {
       consultantProfileId: params.consultantProfileId,
       financialYear,
       quarter,
       cumulativeAmountCredited: original.cumulativeAmountCredited,
-      tdsDeducted: -tdsToReverse, // signed: reverses prior withholding
       tdsRateBps: original.tdsRateBps,
       tdsSection: original.tdsSection,
       payoutId: params.payoutId,
       earningsId: params.earningsId,
-      isReversal: true,
     },
-  });
+    tdsToReverse,
+  );
 
   // #778 §D — the filing artifact. The negative TDSRecord above stays the
   // YTD/dedup-cap source of truth; TdsAdjustment is what the Form 26Q/140
@@ -409,7 +469,7 @@ export async function recordTdsReversal(
   await tx.tdsAdjustment.create({
     data: {
       consultantProfileId: params.consultantProfileId,
-      tdsRecordId: reversal.id,
+      tdsRecordId,
       payoutId: params.payoutId,
       refundId: params.refundId ?? null,
       financialYear,
@@ -421,7 +481,7 @@ export async function recordTdsReversal(
     },
   });
 
-  return reversal;
+  return { tdsRecordId, reversedPaise: tdsToReverse };
 }
 
 // ============================================================================
@@ -553,7 +613,7 @@ export async function recordOrgTdsReversal(
       organizationId: params.organizationId,
       isReversal: true,
     },
-    select: { tdsDeducted: true },
+    select: PRIOR_REVERSAL_SELECT,
   });
   const alreadyReversed = priorReversals.reduce(
     (sum, r) => sum - r.tdsDeducted,
@@ -572,27 +632,28 @@ export async function recordOrgTdsReversal(
     : original.financialYear;
   const quarter = filed ? getIndianFYQuarter() : original.quarter;
 
-  const reversal = await tx.tDSRecord.create({
-    data: {
+  const tdsRecordId = await writeReversalRow(
+    tx,
+    priorReversals,
+    {
       consultantProfileId: null,
       organizationId: params.organizationId,
       financialYear,
       quarter,
       cumulativeAmountCredited: original.cumulativeAmountCredited,
-      tdsDeducted: -tdsToReverse, // signed: reverses prior withholding
       tdsRateBps: original.tdsRateBps,
       tdsSection: original.tdsSection,
       payoutId: null,
       orgPayoutId: params.orgPayoutId,
-      isReversal: true,
     },
-  });
+    tdsToReverse,
+  );
 
   await tx.tdsAdjustment.create({
     data: {
       consultantProfileId: null,
       organizationId: params.organizationId,
-      tdsRecordId: reversal.id,
+      tdsRecordId,
       orgPayoutId: params.orgPayoutId,
       refundId: params.refundId ?? null,
       financialYear,
@@ -604,7 +665,7 @@ export async function recordOrgTdsReversal(
     },
   });
 
-  return reversal;
+  return { tdsRecordId, reversedPaise: tdsToReverse };
 }
 
 // ============================================================================

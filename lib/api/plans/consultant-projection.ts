@@ -12,7 +12,7 @@ import { Prisma } from "@prisma/client";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
 /** The card's user fields: a name, a face, and up to three employers. No email. */
-const planConsultantUserSelect = {
+export const planConsultantUserSelect = {
   select: {
     id: true,
     name: true,

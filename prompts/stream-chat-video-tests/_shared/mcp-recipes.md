@@ -3,6 +3,10 @@
 > **Companion to:** [`_shared/shared-setup.md`](./shared-setup.md) and [`_shared/case-template.md`](./case-template.md).
 > Every workflow prompt cites recipes from this file by `§` anchor so subagents execute deterministic, zero-local-server verification steps.
 
+> **Read-only:** the Supabase MCP is configured with `--read-only` and
+> `--project-ref`. Session rows and every other fixture write must be run by an
+> operator in the Supabase SQL editor (or psql); the agent only reads.
+
 ---
 
 ## §1. Zero-Local-Server Check & Netlify Deploy Preview Targeting
@@ -18,12 +22,12 @@ gh pr view <PR_NUMBER> --json number,url
 
 ---
 
-## §2. Better Auth Session Injection on `*.netlify.app` (`Chrome DevTools MCP` + `Supabase MCP`)
+## §2. Better Auth Session Injection on `*.netlify.app` (`Chrome DevTools MCP` + operator-run SQL)
 
 Because Netlify Deploy Previews run over HTTPS (`https://deploy-preview-<PR>--familiarise.netlify.app`), Better Auth checks the `__Secure-better-auth.session_token` cookie (`lib/auth-session-lookup.ts:79-110`), signed as:
 `encodeURIComponent(rawToken + "." + base64(HMAC_SHA256(BETTER_AUTH_SECRET, rawToken)))`
 
-### Step A — Insert Active Session Row in Supabase (`mcp__supabase__execute_sql`)
+### Step A — Insert Active Session Row in Supabase (operator-run SQL)
 ```sql
 -- Project ID: pzmbxqdgibfkhjwzeprf
 INSERT INTO "sessions" (
@@ -54,7 +58,7 @@ RETURNING id, token, "userId", "expiresAt";
 node -e '
 const fs = require("fs");
 const crypto = require("crypto");
-const env = fs.readFileSync("/usr/local/google/home/kaustavg/github/familiarise_web/.env", "utf8");
+const env = fs.readFileSync(path.join(process.cwd(), ".env"), "utf8");
 const secret = env.match(/^BETTER_AUTH_SECRET=["'\'']?([^"'\''\n]+)/m)[1];
 const token = process.argv[1];
 const sig = crypto.createHmac("sha256", secret).update(token).digest("base64");
@@ -86,7 +90,7 @@ mcp__chrome-devtools__take_snapshot()
 
 ---
 
-## §3. Non-Overlapping Live Window Shifting Recipe (`Supabase MCP`)
+## §3. Non-Overlapping Live Window Shifting Recipe (operator-run SQL)
 
 Because `occurrence_no_confirmed_overlap` blocks any two confirmed occurrences for the same `consultantProfileId` from overlapping, shift test occurrences into sequential non-overlapping windows around `NOW()` when testing live video join:
 
@@ -111,7 +115,7 @@ When setting up multiple occurrences for the **same** consultant in one test run
 
 ---
 
-## §4. `BEGIN ... ROLLBACK` Constraint Probe Recipe (`Supabase MCP`)
+## §4. `BEGIN ... ROLLBACK` Constraint Probe Recipe (operator-run SQL)
 
 To verify PostgreSQL exclusion (`23P01`) and check (`23514`) constraints safely on `pzmbxqdgibfkhjwzeprf` without leaving dirty rows:
 

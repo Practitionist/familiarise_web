@@ -36,6 +36,19 @@ jest.mock(
   { virtual: true },
 );
 
+// A batch refusal the accept's host-slot batch answers instead of running.
+const mockBatchRefusal = { current: null as Error | null };
+jest.mock("../../lib/booking/host-slot-batch", () => {
+  const actual = jest.requireActual("../../lib/booking/host-slot-batch");
+  return {
+    ...actual,
+    withHostSlotBatch: (entries: unknown[], fn: () => Promise<unknown>) =>
+      mockBatchRefusal.current
+        ? Promise.reject(mockBatchRefusal.current)
+        : actual.withHostSlotBatch(entries, fn),
+  };
+});
+
 type Invitee = {
   userId: string;
   deletedAt: Date | null;
@@ -264,5 +277,40 @@ describe("invite and accept gates", () => {
     await expect(
       respondToInvitation("webinar", "c-1", "cp-new", "DECLINED"),
     ).resolves.toMatchObject({ status: "DECLINED" });
+  });
+
+  describe("the accept's slot batch", () => {
+    afterEach(() => {
+      mockBatchRefusal.current = null;
+    });
+
+    it("answers a held atom with try-again copy", async () => {
+      const { HostTimeHeldError } = jest.requireActual(
+        "../../lib/booking/host-slot-batch",
+      );
+      mockBatchRefusal.current = new HostTimeHeldError();
+      await expect(
+        respondToInvitation("webinar", "c-1", "cp-new", "ACCEPTED"),
+      ).rejects.toMatchObject({
+        name: "CollaboratorIneligibleError",
+        httpStatus: 409,
+        message: expect.stringMatching(/right now/),
+      });
+    });
+
+    it("never words a standing conflict as a transient one", async () => {
+      const { ConsultantScheduleConflictError } = jest.requireActual(
+        "../../lib/collaborators/availability",
+      );
+      mockBatchRefusal.current = new ConsultantScheduleConflictError();
+      const refusal = await respondToInvitation(
+        "webinar",
+        "c-1",
+        "cp-new",
+        "ACCEPTED",
+      ).catch((error: unknown) => error);
+      expect(refusal).toBeInstanceOf(ConsultantScheduleConflictError);
+      expect((refusal as Error).message).not.toMatch(/right now/);
+    });
   });
 });

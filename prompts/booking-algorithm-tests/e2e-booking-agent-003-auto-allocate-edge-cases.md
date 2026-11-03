@@ -386,7 +386,7 @@ ORDER BY s."startsAt";
 -- Expected: is_consecutive=true for the first 3 rows, NULL for the last
 ```
 
-### Test 2.2 — Idempotency: Re-Auto-Allocate (replace existing)
+### Test 2.2 — Re-Auto-Allocate an Allocated Webinar Is Refused
 
 Call the exact same PATCH again:
 
@@ -404,12 +404,12 @@ async () => {
 };
 ```
 
-**Expected:** HTTP 200. The old appointment is replaced, but only because it
-carries no Payment: the allocator's delete is
-`tx.appointment.deleteMany({ where: { id, payment: { none: {} } } })`, and a
-count of zero means a payment committed between the read and the write, in
-which case it keeps the appointment and strips only its sessionless slots.
-Total appointment count should still be exactly 1 with 4 slots.
+**Expected:** HTTP 409 with `errorCode: "ALREADY_ALLOCATED"`. Test 2.1 left the
+webinar with its full set of confirmed (non-tentative) sessions, and the auto
+allocator never re-plans an event that is already fully allocated
+(`lib/booking/allocation/modes/auto.ts`). Nothing is deleted or written:
+the appointment count is still exactly 1 with 4 slots, and the slot ids are
+the ones Test 2.1 created.
 
 **DB verify:**
 
@@ -658,18 +658,17 @@ async () => {
 };
 ```
 
-**Expected:** HTTP 200 — `isAuto` takes priority. The stale `slots` array is silently
-disregarded. The system finds its own consecutive block and returns valid allocation data.
+**Expected:** HTTP 409 with `errorCode: "ALREADY_ALLOCATED"` — `isAuto` takes priority,
+so the auto path runs and refuses to re-plan the webinar Test 2.1 already allocated
+(see Test 2.2). The stale `slots` array is disregarded: the manual path would have
+refused the 2020 time with a validation error instead. Nothing is written.
 
-**Confirm the returned slots are NOT `2020-01-01T04:00:00.000Z`:**
-Check `data[0].appointmentOccurrences[0].startsAt > "2026-01-01T00:00:00.000Z"` in the response.
-
-**DB verify — still only 1 appointment (re-allocation replaced the previous one):**
+**DB verify — still only 1 appointment, unchanged since Test 2.1:**
 
 ```sql
 SELECT COUNT(DISTINCT a.id) AS apt_count
 FROM "Appointment" a WHERE a."webinarId" = 'test-webinar-003';
--- Expected: 1 (consultant's appointment; consultee's from Phase 2 may have been replaced)
+-- Expected: 1 (the appointment Test 2.1 created)
 ```
 
 ---

@@ -2,13 +2,12 @@
  * Upstash Redis client, per-service circuit breaker, and distributed lock helpers.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import * as Sentry from "@sentry/core";
 import { Redis } from "@upstash/redis";
 import crypto from "crypto";
 import { getMockRedis, MockRedis } from "./redis-mock";
 
-const USE_MOCK_REDIS =
-  process.env.USE_MOCK_REDIS === "true" || process.env.NODE_ENV === "test";
+const USE_MOCK_REDIS = process.env.NODE_ENV === "test";
 
 type RedisClient = Redis | MockRedis;
 
@@ -18,10 +17,7 @@ if (USE_MOCK_REDIS) {
   console.log(
     JSON.stringify({
       event: "redis_mock_enabled",
-      reason:
-        process.env.NODE_ENV === "test"
-          ? "NODE_ENV=test"
-          : "USE_MOCK_REDIS=true",
+      reason: "NODE_ENV=test",
       timestamp: new Date().toISOString(),
     }),
   );
@@ -32,7 +28,7 @@ if (USE_MOCK_REDIS) {
     !process.env.UPSTASH_REDIS_REST_TOKEN
   ) {
     throw new Error(
-      "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set (or use USE_MOCK_REDIS=true for local dev)",
+      "UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN must be set ",
     );
   }
 

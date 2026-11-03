@@ -26,6 +26,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import {
@@ -36,7 +37,7 @@ import {
 import { Prisma } from "@prisma/client";
 import { BILLABLE_ORG_STATUSES, isBillable } from "@/lib/enterprise/org-status";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import * as Sentry from "@sentry/nextjs";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
 import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
@@ -192,6 +193,36 @@ async function dispatchClosedSeatNotifications(
   }
 }
 
+/** Ended periods on live programs of billable orgs; shared by the run and the ticker's idle probe. */
+function dueAssignmentWhere(asOf: Date): Prisma.ProgramAssignmentWhereInput {
+  return {
+    status: "ACTIVE",
+    rolledAt: null,
+    periodEnd: { lte: asOf },
+    program: {
+      status: "ACTIVE",
+      archivedAt: null,
+      contract: {
+        organization: { status: { in: BILLABLE_ORG_STATUSES } },
+      },
+    },
+  };
+}
+
+/** Ticker idle probe: the cohort at `now` covers any window start at or before it. */
+export async function hasAdvanceProgramCyclesWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const row = await db.programAssignment.findFirst({
+    where: dueAssignmentWhere(now),
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 /** With `windowStart`, only periods ended by it are due, so every slice of a window sees one cohort. */
 export async function runAdvanceProgramCycles(opts: {
   limit?: number;
@@ -208,6 +239,7 @@ async function advanceProgramCycles(opts: {
   limit?: number;
   windowStart?: Date;
 }): Promise<AdvanceStats> {
+  const failures = createRunFailureReporter("jobs");
   const stats: AdvanceStats = {
     scanned: 0,
     rolled: 0,
@@ -221,21 +253,7 @@ async function advanceProgramCycles(opts: {
 
   // Candidates: ended periods on live programs, not yet processed.
   const due = await prisma.programAssignment.findMany({
-    where: {
-      status: "ACTIVE",
-      rolledAt: null,
-      periodEnd: { lte: asOf },
-      // E2E-audit P1 fix — never roll assignments for an org that is no
-      // longer billable (SUSPENDED/DEACTIVATED). A suspended org used to get
-      // fresh successor cycles minted every period end.
-      program: {
-        status: "ACTIVE",
-        archivedAt: null,
-        contract: {
-          organization: { status: { in: BILLABLE_ORG_STATUSES } },
-        },
-      },
-    },
+    where: dueAssignmentWhere(asOf),
     orderBy: { periodEnd: "asc" },
     take: BATCH_SIZE,
     select: {
@@ -437,13 +455,12 @@ async function advanceProgramCycles(opts: {
         `[advance-program-cycles] Failed for assignment ${a.id}:`,
         err,
       );
-      Sentry.captureException(err, {
-        tags: { subsystem: "jobs", job: "advance-program-cycles" },
-      });
+      failures.add("advance-program-cycles", err, { assignmentId: a.id });
       stats.failed += 1;
     }
   }
 
+  failures.flush();
   stats.remaining = due.length - visited;
   return stats;
 }

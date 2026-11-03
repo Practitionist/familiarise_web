@@ -543,7 +543,7 @@ const orgAdminDisputeFlow: FlowDefinition = {
       id: "billing",
       kind: "TERMINAL",
       // The thread lands in ORG_BILLING or ORG_OPERATIONS by the filer's grants; both list under org support requests.
-      body: "Our billing team will review the charge or invoice and reply here and in your organization's support requests. Tell us which charge or invoice it is and what looks wrong.",
+      body: "Our billing team will review the charge or invoice and reply here and in your organization's support cases. Tell us which charge or invoice it is and what looks wrong.",
       escalate: true,
       reason: "org_billing_dispute",
     },
@@ -637,6 +637,57 @@ const documentsFlow: FlowDefinition = {
   },
 };
 
+// --- Safety concern or scam (either side, any stage) -------------------------
+const safetyConcernFlow: FlowDefinition = {
+  category: "SAFETY_CONCERN",
+  title: "Safety concern or scam",
+  entryNodeId: "start",
+  // Ungated: a threat or a pay-outside request can come before, during or after
+  // the session, and from either side; every branch reaches a person.
+  nodes: {
+    start: {
+      id: "start",
+      kind: "PROMPT",
+      body: "Thanks for raising this. This covers threats, harassment, fake payment links or requests to pay outside Familiarise. What happened?",
+      options: [
+        {
+          id: "threat",
+          label: "Someone threatened or harassed me",
+          next: "threat",
+        },
+        {
+          id: "scam",
+          label:
+            "A scam, fake payment link or a request to pay outside Familiarise",
+          next: "scam",
+        },
+        { id: "other", label: "Another safety risk", next: "other" },
+      ],
+    },
+    threat: {
+      id: "threat",
+      kind: "TERMINAL",
+      body: "Thanks for telling us. A member of our team will review this booking and reply here. If you are in immediate danger, call 112.",
+      escalate: true,
+      reason: "safety_threat",
+    },
+    scam: {
+      id: "scam",
+      kind: "TERMINAL",
+      body: "Thanks for telling us. Please don't pay through any link, UPI ID or account shared in chat; pay only on Familiarise. A member of our team will review this booking and reply here.",
+      escalate: true,
+      reason: "fraud_scam",
+    },
+    other: {
+      id: "other",
+      kind: "TERMINAL",
+      body: "Thanks for telling us. A member of our team will review this booking and reply here. If you are in immediate danger, call 112.",
+      escalate: true,
+      reason: "safety_other",
+    },
+  },
+};
+
 /** Every per-appointment flow, gates ignored. Exported so a test can assert
  *  the intents the GET may offer are all accepted by the POST. */
 export const ALL_FLOWS: FlowDefinition[] = [
@@ -649,6 +700,7 @@ export const ALL_FLOWS: FlowDefinition[] = [
   qualityComplaintFlow,
   technicalFlow,
   documentsFlow,
+  safetyConcernFlow,
   sponsorshipBillingFlow,
   orgAdminDisputeFlow,
 ];

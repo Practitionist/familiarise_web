@@ -1,10 +1,8 @@
 /**
  * @jest-environment node
  *
- * The outward-supplies register is a statutory working file. Without the
- * platform's own supplier identity the healer cannot mint a consumer invoice,
- * so the register would read as a month with no B2C supplies — a silent
- * understatement. The export must refuse instead.
+ * The register needs the platform's supplier identity: an unset PLATFORM_GSTIN
+ * is a config skip that never reaches Sentry, and a set but unusable one throws.
  */
 
 const order: string[] = [];
@@ -18,19 +16,10 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_name: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
 
-let supplierConfigured = true;
-jest.mock("../../lib/pdf/supplier", () => ({
-  getPlatformSupplier: () =>
-    supplierConfigured
-      ? {
-          name: "Familiarise Technologies Private Limited",
-          gstin: "29AAFCF1234Q1ZN",
-          address: "Koramangala 1st Block, Bangalore, Karnataka 560034, India",
-          email: "billing@familiarise.test",
-        }
-      : null,
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryMessage: jest.fn(),
+  reportSentryError: jest.fn(),
 }));
-
 jest.mock("@sentry/nextjs", () => ({
   logger: { warn: jest.fn(), info: jest.fn(), error: jest.fn() },
 }));
@@ -75,25 +64,47 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 import { runGstOutwardRegisterExport } from "@/jobs/compliance/gst-outward-register-export";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 
+const OLD_GSTIN = process.env.PLATFORM_GSTIN;
 beforeEach(() => {
   order.length = 0;
-  supplierConfigured = true;
   mockUpload.mockClear();
   mockMint.mockClear();
+  process.env.PLATFORM_GSTIN = "06AAFCF1234Q1ZN";
+});
+afterAll(() => {
+  if (OLD_GSTIN === undefined) delete process.env.PLATFORM_GSTIN;
+  else process.env.PLATFORM_GSTIN = OLD_GSTIN;
 });
 
-it("refuses to write a register when the platform supplier is not configured", async () => {
-  supplierConfigured = false;
+it("records a config skip without touching rows or Sentry while PLATFORM_GSTIN is unset", async () => {
+  delete process.env.PLATFORM_GSTIN;
+  jest.spyOn(console, "warn").mockImplementation(() => {});
+
+  const result = await runGstOutwardRegisterExport({ limit: 25 });
+
+  expect(result.skipped).toBe("PLATFORM_GSTIN not configured");
+  expect(mockUpload).not.toHaveBeenCalled();
+  expect(mockMint).not.toHaveBeenCalled();
+  expect(order).toEqual([]);
+  expect(reportSentryMessage).not.toHaveBeenCalled();
+  expect(reportSentryError).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["malformed", "not-a-gstin"],
+  ["from another state", "29AAFCF1234Q1ZN"],
+])("throws before any write when the GSTIN is %s", async (_label, gstin) => {
+  process.env.PLATFORM_GSTIN = gstin;
 
   await expect(runGstOutwardRegisterExport({ limit: 25 })).rejects.toThrow(
     /PLATFORM_GSTIN/,
   );
-
-  // Nothing was uploaded and nothing was stamped: a refused run leaves the
-  // period un-stamped so the next slice tries again.
   expect(mockUpload).not.toHaveBeenCalled();
-  expect(mockMint).not.toHaveBeenCalled();
   expect(order).toEqual([]);
 });
 

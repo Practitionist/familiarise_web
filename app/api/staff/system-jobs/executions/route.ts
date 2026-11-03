@@ -8,6 +8,8 @@ import prisma from "@/lib/prisma";
 import { SystemJobStatus, Prisma } from "@prisma/client";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { TICK_CLAIM_JOB } from "@/lib/cron/schedule";
+import { metricsEnvironmentSchema } from "@/lib/backoffice/job-run-metrics";
 import * as Sentry from "@sentry/nextjs";
 /**
  * GET /api/staff/system-jobs/executions
@@ -29,9 +31,24 @@ export async function GET(req: NextRequest) {
 
     if (jobId) {
       where.jobId = jobId;
+    } else {
+      // The ticker's slot claims are bookkeeping; they are listed only when asked for by name.
+      where.jobName = { not: TICK_CLAIM_JOB };
     }
     if (status) {
       where.status = status;
+    }
+    const environment = metricsEnvironmentSchema
+      .optional()
+      .safeParse(searchParams.get("environment") ?? undefined);
+    if (!environment.success) {
+      return NextResponse.json(
+        { error: "Unknown environment" },
+        { status: 400 },
+      );
+    }
+    if (environment.data) {
+      where.result = { path: ["environment"], equals: environment.data };
     }
 
     const [executions, total] = await Promise.all([
@@ -46,15 +63,16 @@ export async function GET(req: NextRequest) {
 
     const SYSTEM_TRIGGER_LABELS: Record<string, string> = {
       cron: "System (Cron)",
-      "cron-tick": "System (Cron)",
       "github-actions": "GitHub Actions",
-      manual: "Manual",
-      system: "System",
     };
+
+    // An admin run records `admin:<userId>`; older rows hold a bare user id.
+    const userIdOf = (triggeredBy: string) =>
+      /^admin:(.+)$/.exec(triggeredBy)?.[1] ?? triggeredBy;
 
     // Get user info for user-triggered executions (excluding system trigger labels)
     const triggeredByIds = executions
-      .map((e) => e.triggeredBy)
+      .map((e) => (e.triggeredBy ? userIdOf(e.triggeredBy) : null))
       .filter(
         (id): id is string =>
           typeof id === "string" &&
@@ -89,7 +107,7 @@ export async function GET(req: NextRequest) {
               name: SYSTEM_TRIGGER_LABELS[execution.triggeredBy],
               email: null,
             }
-          : userMap.get(execution.triggeredBy) || {
+          : userMap.get(userIdOf(execution.triggeredBy)) || {
               id: execution.triggeredBy,
               name: "Deleted User",
               email: null,
@@ -110,7 +128,10 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     console.error("Error fetching job executions:", error);
     return NextResponse.json(
       { error: "Failed to fetch job executions" },

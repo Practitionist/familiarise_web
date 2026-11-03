@@ -1,12 +1,8 @@
 /**
- * #1706 decision B — the Requests tab polls COUNTS, not rows. A count poll
- * every 45 s (paused while hidden, refetched on a stale return through the
- * shared availability poller) surfaces "N new — Refresh"; the list itself
- * only changes when the consultant asks or after their own write, so a row
- * never moves under a pointer mid-allocation.
+ * The Requests tab refetches when the viewer returns to a stale tab and, when
+ * the total moved, says so ("N new — Refresh") instead of letting rows move
+ * under the pointer mid-allocation.
  */
-
-export const REQUESTS_COUNT_POLL_INTERVAL_MS = 45_000;
 
 /**
  * Badge text for a polled total against the total the rows on screen were

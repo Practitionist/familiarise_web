@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Guards the razorpay skill bundle, subagents, and payment gateway docs against
+# Guards the razorpay skill bundle, subagents, and finance docs against
 # specific wrong claims that were fact-checked against official Razorpay docs.
 #
 #   bash .claude/skills/finance/references/razorpay/scripts/check-doc-drift.sh
 #
 # Exits non-zero on the first violation found. Run it after editing anything in
 # .claude/skills/finance/references/razorpay/, .claude/agents/razorpay-*.md, or
-# docs/payments/.
+# docs/finance/.
 
 set -uo pipefail
 
@@ -16,9 +16,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../../.." && pwd)"
 TARGETS=(
   "$ROOT/.claude/skills/finance/references/razorpay"
   "$ROOT/.claude/agents"
-  "$ROOT/docs/payments/gateways"
-  "$ROOT/docs/payments/webhooks"
-  "$ROOT/docs/payments/payouts/07-razorpay-implementation.md"
+  "$ROOT/docs/finance/10-money-in"
+  "$ROOT/docs/finance/40-payouts/04-razorpayx.md"
 )
 FAILED=0
 

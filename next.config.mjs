@@ -107,6 +107,9 @@ const CSP_REPORT_GROUP = "csp-endpoint";
  *   - `frame-src` allows Razorpay's checkout iframes; Razorpay
  *     serves the live checkout iframe from `api.razorpay.com`, not just
  *     `checkout.razorpay.com` (report-only violation on a real checkout).
+ *   - `challenges.cloudflare.com` in `script-src` and `frame-src` is the
+ *     Turnstile widget on the auth forms; it talks to Cloudflare from inside
+ *     its iframe, so `connect-src` needs nothing.
  *   - `media-src` is the load-bearing entry for Stream call audio /
  *     video / recording playback.
  *
@@ -153,12 +156,12 @@ const CSP_REPORT_GROUP = "csp-endpoint";
  */
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.sentry.io https://*.getstream.io https://*.supabase.co https://challenges.cloudflare.com",
   "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.r2.cloudflarestorage.com https://*.upstash.io https://api.razorpay.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
   "img-src 'self' data: https: blob:",
   "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com https://*.supabase.co https://*.r2.cloudflarestorage.com",
   "style-src 'self' 'unsafe-inline'",
-  "frame-src 'self' blob: https://*.supabase.co https://checkout.razorpay.com https://api.razorpay.com https://app.netlify.com",
+  "frame-src 'self' blob: https://*.supabase.co https://checkout.razorpay.com https://api.razorpay.com https://app.netlify.com https://challenges.cloudflare.com",
   "font-src 'self' data:",
   // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
   // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.
@@ -259,6 +262,16 @@ const nextConfig = {
     // bundle, and Netlify's BRANCH only exists on the build machine.
     ...(process.env.BRANCH
       ? { NEXT_PUBLIC_SENTRY_BRANCH: process.env.BRANCH }
+      : {}),
+    // Netlify sets NETLIFY only on the build machine, so runtime checks
+    // (lease cap, pool guard) need it inlined here.
+    ...(process.env.NETLIFY ? { NETLIFY: process.env.NETLIFY } : {}),
+    // The deployed commit (Netlify COMMIT_REF, else Vercel's), inlined at build for the jobs probe and digest.
+    ...((process.env.COMMIT_REF ?? process.env.VERCEL_GIT_COMMIT_SHA)
+      ? {
+          BUILD_SHA:
+            process.env.COMMIT_REF ?? process.env.VERCEL_GIT_COMMIT_SHA,
+        }
       : {}),
   },
   // Skipped on Netlify by default: with them on, the deploy preview was killed
@@ -581,9 +594,9 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
   // Skip generating hidden-source-map buffers on non-production Netlify previews to stay under the 8 GB container RSS cap.
   sourcemaps: {
-    disable:
-      CI_LEAN_BUILD ||
-      (process.env.NETLIFY === "true" && process.env.CONTEXT !== "production"),
+    // Netlify's 8 GB builder can no longer fit source-map generation for this
+    // bundle (V8 OOM past the 6144 MB heap), so no Netlify build emits them.
+    disable: CI_LEAN_BUILD || process.env.NETLIFY === "true",
   },
   widenClientFileUpload: process.env.NETLIFY !== "true" && !CI_LEAN_BUILD,
   // A CI PR build is never deployed, so it must not create or finalize a

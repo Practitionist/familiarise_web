@@ -85,7 +85,7 @@ The consumer vest, in one transaction, does the following.
 1. It finds the referrer's `PENDING` credit for this referral. If none exists, the referral becomes `VOID` with reason `MISSING_CREDIT`.
 2. It claims a slot on the referrer's code in one conditional update that checks the lifetime cap (25 vests), the yearly reward cap (₹10,000), and the weekly cap (5 vests). A refused slot becomes `VOID` for the lifetime or yearly cap, and a weekly refusal defers the referral to a later run.
 3. It claims the reward from the monthly budget by conditional update on the configuration `version`. If the budget cannot cover the reward, the whole row rolls back and waits for the next month.
-4. It moves the referral to `VESTED`, the credit to `VESTED` with an expiry of `creditExpiryDays` from now, and posts the ledger entry described in [03-credit-system.md](./03-credit-system.md).
+4. It moves the referral to `VESTED`, the credit to `VESTED` with an expiry of `creditExpiryDays` from now, and posts the ledger entry described in [03-credit-system.md](../finance/20-ledger/07-referral-credits.md).
 
 ### Expert referral vest
 
@@ -108,12 +108,12 @@ A waiver is refused when the payment carries promotion, either a welcome discoun
 
 Two jobs are registered in `lib/cron/cleanup-registry.ts`. Each has one implementation and a `CRON_SECRET` HTTP twin under `/api/cleanup/[job]`.
 
-| Job                       | Scheduler                                                                                                                    | Limit per run                               | Action                                                          |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------- |
-| `vest-referral-credits`   | The Netlify ticker, every 30 minutes, with a limit of 10 (`netlify/functions/cron-tick.mts`)                                 | 50 by default, 10 when called by the ticker | Settles `QUALIFYING` referrals, oldest examined first.          |
-| `expire-referral-credits` | GitHub Actions `cron-weekly.yml`, on the 1st of each month at 03:10 UTC, calling `POST /api/cleanup/expire-referral-credits` | 500 by default                              | Moves expired `VESTED` credits to `EXPIRED` and posts breakage. |
+| Job                       | Scheduler                                                                                                                   | Limit per run                               | Action                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------- |
+| `vest-referral-credits`   | The Netlify ticker, every 30 minutes, with a limit of 10 (`netlify/functions/cron-tick.mts`)                                | 50 by default, 10 when called by the ticker | Settles `QUALIFYING` referrals, oldest examined first.          |
+| `expire-referral-credits` | The Netlify ticker, hourly in a window that opens at 03:10 UTC on the 1st of each month (`netlify/functions/cron-tick.mts`) | 50 by default, 50 when called by the ticker | Moves expired `VESTED` credits to `EXPIRED` and posts breakage. |
 
-Both jobs hold a Postgres cron lease through `withCronLock` and fail closed if the lease cannot be taken. Failures are collected and reported to Sentry once per run, never per row. The monthly workflow needs the `CRON_SECRET` repository secret, and without it the curl call receives a 401.
+Both jobs hold a Postgres cron lease through `withCronLock` and fail closed if the lease cannot be taken. Failures are collected and reported to Sentry once per run, never per row.
 
 ## 7. Configuration and the budget
 

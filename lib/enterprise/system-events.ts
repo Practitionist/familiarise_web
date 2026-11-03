@@ -17,6 +17,8 @@ import * as Sentry from "@sentry/nextjs";
 import prisma, { type Tx } from "@/lib/prisma";
 import type { Prisma, SystemEventSeverity } from "@prisma/client";
 import { emitTelemetryLog } from "@/lib/observability/betterstack-telemetry";
+import { entityIdOf } from "@/lib/observability/entity-id";
+import { currentRun } from "@/lib/cron/run-context";
 import {
   reportSentryError,
   SYSTEM_EVENT_WRITE_FAILURE_MARKER,
@@ -29,6 +31,31 @@ function severityToTelemetryLevel(
   if (severity === "ERROR") return "error";
   if (severity === "WARN") return "warn";
   return "info";
+}
+
+function currentJobRunId(): string | undefined {
+  return currentRun()?.runIds.at(-1);
+}
+
+/** Stamps the active job run on the event's context; `correlationId` stays the caller's own key. */
+function withJobRunId(
+  context: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | undefined {
+  const jobRunId = currentJobRunId();
+  if (!jobRunId) return context ?? undefined;
+  return { ...context, jobRunId };
+}
+
+function jobRunField(): { job_run_id?: string } {
+  const jobRunId = currentJobRunId();
+  return jobRunId ? { job_run_id: jobRunId } : {};
+}
+
+function entityField(context: Record<string, unknown> | null | undefined): {
+  entity_id?: string;
+} {
+  const entityId = entityIdOf(context);
+  return entityId ? { entity_id: entityId } : {};
 }
 
 export interface RecordSystemEventParams {
@@ -99,7 +126,7 @@ export async function recordSystemEvent(
         // `Record<string, unknown>` widens to Prisma's
         // `InputJsonValue` at the storage boundary. Cast is local
         // and intentional — the JSON shape is operator-defined.
-        context: (params.context ?? undefined) as Prisma.InputJsonValue,
+        context: withJobRunId(params.context) as Prisma.InputJsonValue,
         correlationId: params.correlationId ?? null,
       },
     });
@@ -110,21 +137,18 @@ export async function recordSystemEvent(
     if (params.strict || params.__reportInsertFailureToCaller) throw err;
   }
 
-  // Fire-and-forget telemetry sink (#776 §K). The DB row above is the source
-  // of truth; this just gets the event somewhere an on-call human sees it.
-  // NOT awaited — `recordSystemEvent` runs on the webhook critical path (HMAC
-  // failure), so awaiting an external HTTP POST would let a stalled Better
-  // Stack block/DoS the handler. No-op unless ENABLE_BETTERSTACK_TELEMETRY is
-  // on; the call is internally best-effort, the `.catch` is belt-and-suspenders.
+  // Not awaited: this runs on the webhook critical path, and the row above is the truth.
+  // Fixed fields only; the context stays in Postgres and only its entity id leaves.
   void emitTelemetryLog({
     level: severityToTelemetryLevel(severity),
     message: params.message,
     category: params.category,
-    organizationId: params.organizationId,
-    correlationId: params.correlationId,
-    context: params.context,
-  }).catch((err) => {
-    console.error("[recordSystemEvent] telemetry sink failed:", err);
+    ...(params.organizationId
+      ? { organization_id: params.organizationId }
+      : {}),
+    ...(params.correlationId ? { correlation_id: params.correlationId } : {}),
+    ...jobRunField(),
+    ...entityField(params.context),
   });
 }
 
@@ -145,6 +169,8 @@ export async function recordSystemError(params: {
   db?: Tx | typeof prisma;
   /** Internal — see RecordSystemEvent's flag of the same name. */
   __reportInsertFailureToCaller?: boolean;
+  /** Per-row sweep callers keep the audit row and report once per run themselves. */
+  skipSentry?: boolean;
 }): Promise<void> {
   const errorMessage =
     params.err instanceof Error ? params.err.message : String(params.err);
@@ -164,6 +190,8 @@ export async function recordSystemError(params: {
     db: params.db,
     __reportInsertFailureToCaller: params.__reportInsertFailureToCaller,
   });
+
+  if (params.skipSentry) return;
 
   // Escalate to Sentry so engineers see it without querying the DB.
   // Best-effort: never throw. Callers of recordSystemError already swallow

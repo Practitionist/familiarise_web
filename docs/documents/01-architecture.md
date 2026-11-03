@@ -56,9 +56,9 @@ sequenceDiagram
     Browser->>API: 3. POST /documents { storagePath, originalName, mimeType, fileSize, description, parentDocumentId }
     API->>SB: verifyDirectUploadedObject (4 KB range magic-byte header check)
     API->>DB: BEGIN + SELECT 1 FROM "Appointment" WHERE id = $1 FOR UPDATE
-    API->>DB: Re-resolve party on tx, repeat the checks, allocate the slot + INSERT AppointmentDocument
+    API->>DB: Replay lookup by storagePath; re-resolve party on tx, repeat the checks, allocate the slot + INSERT
     API->>DB: COMMIT
-    API-->>Browser: 201 Created { document: { id, rootId, versionNo } }
+    API-->>Browser: 201 Created (200 when the replay found the first attempt's row)
 ```
 
 An expert's reply file takes the same first two steps, but its row is written by the review route in the same transaction as the status change, so the commit route refuses an expert `parentDocumentId`.
@@ -67,10 +67,12 @@ An expert's reply file takes the same first two steps, but its row is written by
 
 1. **`PG_POOL_MAX=1` Transaction Discipline**:
    - Every database query inside `commitDocumentUpload` (`lib/documents/upload-pipeline.ts`) and `resolveDocumentThreadSlot` (`lib/documents/document-review.ts`) uses the transaction client `tx` exclusively.
-   - If the transaction throws (`DOCUMENT_LIMIT_REACHED`, `VERSION_LIMIT_REACHED`, `INVALID_THREAD_PARENT`, or unexpected error), the catch handler deletes `storagePath` from Supabase Storage immediately so no unreferenced object lingers in the bucket. A unique-violation on `(thread, versionNo)` is retried up to twice by `withVersionConflictRetry`.
+   - A commit replayed after a lost response finds the first attempt's row by `storagePath` inside the locked transaction and returns it with 200; it never inserts a duplicate. A refused commit or review reply deletes the object only when no row references it (`discardRefusedUpload`), except on `STORAGE_UNAVAILABLE` or a rate-limited commit, where the object is kept for the retry. A retried approve or reject with no reply file replays 200 instead of conflicting, unless a newer learner version supersedes it. When two purged rows share a path, the last one removed deletes the object.
+   - A unique-violation on `(thread, versionNo)` is retried up to twice by `withVersionConflictRetry`. Storage-path conflicts are never retried: they mean another writer already committed that object.
+   - Reads enforce `keptUntil` (`file-access.ts`, `workspace.ts`); a tombstoned-but-not-yet-purged file answers `NOT_FOUND` instead of surfacing, and the Documents library hides threads past `keptUntil` through the shared `isPastRetention` (`document-dates.ts`).
 2. **Compare-and-Swap (`CAS-in-WHERE`) State Transitions**:
    - The review route (`POST .../:docId/review`) and soft deletion (`DELETE`) execute atomic `updateMany` transitions whose `WHERE` carries the expected prior state and the "no newer live learner version" guard.
-   - Soft deletion sets `deletedAt`, `deletedById` and `removalReason = USER_REQUEST` (a learner may withdraw only while `reviewStatus = PENDING` and no newer version exists; an expert may delete only an own shared root). Physical object cleanup occurs after the grace window in `purge-deleted-documents`.
+   - Soft deletion sets `deletedAt`, `deletedById` and `removalReason = USER_REQUEST` (a learner may withdraw only while `reviewStatus = PENDING` and no newer version exists; an expert may delete only an own shared root). Physical object cleanup occurs after the grace window in `purge-deleted-documents`, whose run cap counts attempts rather than successes and which keeps an object while another row references its path.
 3. **Magic-Byte Inspection (`lib/documents/storage-verify.ts`)**:
    - Inspects the first 4,096 bytes of every uploaded object via HTTP `Range: bytes=0-4095`.
    - Unconditionally rejects binary executables (`MZ` PE, `\x7FELF`, shebang) even if renamed to `.pdf` or `.png`.
@@ -92,7 +94,7 @@ All six library routes run inside `timedLibraryRead` (`lib/library/timed-read.ts
 
 ## 4. Error Model
 
-Document, material, recording, explore-recording, organisation-material and admin or staff document routes answer failures with `{ code, message }` from `lib/documents/file-errors.ts` (for example `REMOVAL_NOT_REQUESTED`, `SUPPORT_UNAVAILABLE`, `RECORDING_DECLINED`). The removal-request route returns `removal.supportThreadId`; if the support thread cannot be raised it withdraws the request with a conditional `updateMany` and answers 503 `SUPPORT_UNAVAILABLE`. The middleware answers a signed-out API call with a coded 401 `{ code, message }`, and file routes write one log line per unhandled error because previews sample only 10% of errors to Sentry. `MEDIA_UNPLAYABLE` is raised by the player after one failed retry. The replay purchase route, the meeting recording-consent and recording-info routes and the verification routes keep their older shapes.
+Document, material, recording, explore-recording, organisation-material and admin or staff document routes answer failures with `{ code, message }` from `lib/documents/file-errors.ts` (for example `REMOVAL_NOT_REQUESTED`, `SUPPORT_UNAVAILABLE`, `RECORDING_DECLINED`). The removal-request route returns `removal.supportThreadId`; if the support thread cannot be raised it withdraws the request with a conditional `updateMany` and answers 503 `SUPPORT_UNAVAILABLE`. The middleware answers a signed-out API call with a coded 401 `{ code, message }`, and file routes write one log line per unhandled error because previews send Sentry only 10% of errors other than uncaught Next server errors. `MEDIA_UNPLAYABLE` is raised by the player after one failed retry. The replay purchase route, the meeting recording-consent and recording-info routes and the verification routes keep their older shapes.
 
 ---
 

@@ -10,7 +10,7 @@ assertDisposableDatabase();
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   __esModule: true,
   refundBookingPayment: jest.fn(async () => undefined),
-  restoreClassSeatCredits: jest.fn(async () => undefined),
+  restoreSessionCredits: jest.fn(async () => undefined),
 }));
 
 jest.mock("../../lib/supabase-storage-core", () => ({

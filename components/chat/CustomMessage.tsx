@@ -2,11 +2,7 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { format } from "date-fns";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
-import { goHref } from "@/lib/dashboard/go";
-import { caseKeyOf, parseCaseKey } from "@/lib/support/case-key";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import {
   Attachment,
   useChatContext,
@@ -22,8 +18,7 @@ import {
   CheckIcon,
   XIcon,
   FlagIcon,
-  CalendarIcon,
-  LifeBuoyIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -51,14 +46,23 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  isSupportStreamUser,
+  SUPPORT_STREAM_USER_NAME,
+} from "@/lib/stream/support-user";
+import { SystemMessage } from "./SystemMessage";
+import { LEGACY_BOOKING_CONTEXT_USER_ID } from "@/lib/stream/system-users";
+import { BOOKING_TAG_FIELD } from "@/lib/stream/booking-tag";
+import { MessageBookingTag } from "./BookingTag";
 
 export const CustomMessage = () => {
-  const pathname = usePathname();
-  const { message } = useMessageContext();
+  const { message, handleRetry } = useMessageContext();
   const { client, channel } = useChatContext();
   const messageComposer = useMessageComposerController();
   const { toast } = useToast();
   const isMyMessage = message.user?.id === client.userID;
+  // Keyed on the author id only: a custom message field is user-writable.
+  const isSupportMessage = isSupportStreamUser(message.user?.id);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -78,6 +82,22 @@ export const CustomMessage = () => {
     "(hover: hover) and (pointer: fine)",
     true,
   );
+  // Touch shows a bubble's actions only after a tap on it; a tap elsewhere hides them.
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !rowRef.current?.contains(event.target)
+      ) {
+        setActionsOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [actionsOpen]);
 
   // Map Stream reaction types to actual emoji characters
   const reactionTypeToEmoji: Record<string, string> = {
@@ -125,56 +145,22 @@ export const CustomMessage = () => {
   // Check if this message is a reply to another message
   const hasQuotedMessage = !!message.quoted_message;
 
-  // Inspect message for booking context metadata
-  const msgRecord = message as unknown as Record<string, unknown>;
-  const customRecord =
-    typeof msgRecord.custom === "object" && msgRecord.custom !== null
-      ? (msgRecord.custom as Record<string, unknown>)
-      : undefined;
-  const readMessageString = (key: string): string | null => {
-    const direct = msgRecord[key];
-    if (typeof direct === "string") return direct;
-    const nested = customRecord?.[key];
-    return typeof nested === "string" ? nested : null;
-  };
-  const bookingAppointmentId = readMessageString("booking_appointment_id");
-  const bookingRef = parseCaseKey(`b_${bookingAppointmentId ?? ""}`);
-  const dashboardBase = pathname?.match(
-    /^\/dashboard\/(?:organization|consultant|consultee|org-workspace)\/[A-Za-z0-9-]+(?=\/|$)/,
-  )?.[0];
-  const requestsBase = dashboardBase
-    ? `${dashboardBase}/support/requests`
-    : goHref("auto", "support/requests");
-  const bookingHelpHref = bookingRef
-    ? `${requestsBase}/${caseKeyOf(bookingRef)}`
-    : null;
-  const isBookingContext = Boolean(
-    bookingAppointmentId ||
-    msgRecord.kind === "booking_context" ||
-    customRecord?.kind === "booking_context",
-  );
-  const bookingType = (
-    readMessageString("booking_type") ?? "CONSULTATION"
-  ).toUpperCase();
-  const bookingTitle =
-    readMessageString("booking_title") ?? "Scheduled Session";
-  const bookingStartsAtRaw = readMessageString("booking_starts_at");
-  const bookingStartsAtDate = bookingStartsAtRaw
-    ? new Date(bookingStartsAtRaw)
-    : null;
-  const formattedBookingStartsAt =
-    bookingStartsAtDate && !Number.isNaN(bookingStartsAtDate.getTime())
-      ? format(bookingStartsAtDate, "PPp")
+  // Message fields are user-writable: only the id is read, and the tag renders from the server's answer.
+  const taggedField: unknown = message[BOOKING_TAG_FIELD];
+  const bookingAppointmentId =
+    channel?.type === "messaging" && typeof taggedField === "string"
+      ? taggedField
       : null;
 
+  // The retired server-posted booking cards stay hidden.
+  if (message.user?.id === LEGACY_BOOKING_CONTEXT_USER_ID) return null;
+
+  if (message.type === "system" && !isDeleted) {
+    return <SystemMessage message={message} />;
+  }
+
   // Avoid rendering empty messages
-  if (
-    !hasText &&
-    !hasAttachments &&
-    !isBookingContext &&
-    message.type !== "system" &&
-    !isDeleted
-  ) {
+  if (!hasText && !hasAttachments && !isDeleted) {
     return null;
   }
 
@@ -254,6 +240,20 @@ export const CustomMessage = () => {
   const handleReplyClick = () => {
     // Use Stream Chat's MessageComposer controller API to set quoted message
     messageComposer.setQuotedMessage(message);
+    setActionsOpen(false);
+  };
+
+  const touchActionsVisible =
+    !isFinePointer && (actionsOpen || showEmojiPicker || showMoreOptions);
+  const handleBubbleTap = (event: MouseEvent<HTMLDivElement>) => {
+    if (isFinePointer) return;
+    if (
+      event.target instanceof Element &&
+      event.target.closest("a, button, input, textarea")
+    ) {
+      return;
+    }
+    setActionsOpen((open) => !open);
   };
 
   // Report a message (flags in Stream + persists to DB)
@@ -298,8 +298,8 @@ export const CustomMessage = () => {
     }
   };
 
-  // One toolbar, two placements: floating on hover for a mouse, inline and
-  // permanent for touch. Both are Radix now, which brings Escape, a focus trap
+  // One toolbar, two placements: floating on hover for a mouse, inline after a
+  // tap on the bubble for touch. Both are Radix now, which brings Escape, a focus trap
   // and focus return that the hand-rolled mousedown-only dropdowns never had.
   const actionToolbar = (
     <div className="flex items-center gap-0.5 rounded-lg border border-border bg-popover shadow-lg">
@@ -345,54 +345,61 @@ export const CustomMessage = () => {
         onClick={handleReplyClick}
         aria-label="Reply to message"
         title="Reply"
-        className="p-1.5 transition-colors hover:bg-muted"
+        className={cn(
+          "p-1.5 transition-colors hover:bg-muted",
+          isSupportMessage && "rounded-r-lg",
+        )}
       >
         <ReplyIcon className="h-4 w-4 text-muted-foreground" />
       </button>
 
-      {/* More Options (Edit, Delete for own; Report for others) */}
-      <DropdownMenu open={showMoreOptions} onOpenChange={setShowMoreOptions}>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label="More message options"
-            title="More options"
-            className="rounded-r-lg p-1.5 transition-colors hover:bg-muted"
-          >
-            <MoreHorizontalIcon className="h-4 w-4 text-muted-foreground" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-[140px]">
-          {isMyMessage ? (
-            <>
-              <DropdownMenuItem onSelect={handleEditClick}>
-                <EditIcon className="mr-2 h-4 w-4" />
-                Edit
-              </DropdownMenuItem>
+      {/* More Options (Edit, Delete for own; Report for others). Support
+          messages get none: they are staff posts, not a party's. */}
+      {!isSupportMessage && (
+        <DropdownMenu open={showMoreOptions} onOpenChange={setShowMoreOptions}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="More message options"
+              title="More options"
+              className="rounded-r-lg p-1.5 transition-colors hover:bg-muted"
+            >
+              <MoreHorizontalIcon className="h-4 w-4 text-muted-foreground" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[140px]">
+            {isMyMessage ? (
+              <>
+                <DropdownMenuItem onSelect={handleEditClick}>
+                  <EditIcon className="mr-2 h-4 w-4" />
+                  Edit
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={handleDeleteClick}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2Icon className="mr-2 h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
+              </>
+            ) : (
               <DropdownMenuItem
-                onSelect={handleDeleteClick}
+                onSelect={() => handleReportMessage()}
                 className="text-destructive focus:text-destructive"
               >
-                <Trash2Icon className="mr-2 h-4 w-4" />
-                Delete
+                <FlagIcon className="mr-2 h-4 w-4" />
+                Report Message
               </DropdownMenuItem>
-            </>
-          ) : (
-            <DropdownMenuItem
-              onSelect={() => handleReportMessage()}
-              className="text-destructive focus:text-destructive"
-            >
-              <FlagIcon className="mr-2 h-4 w-4" />
-              Report Message
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 
   return (
     <div
+      ref={rowRef}
       className={`flex items-end ${isMyMessage ? "justify-end" : "justify-start"} mb-4 group relative`}
     >
       {/* Avatar for other users' messages */}
@@ -400,15 +407,22 @@ export const CustomMessage = () => {
         <Avatar className="mr-2 w-8 h-8 flex-shrink-0">
           <AvatarImage src={message.user?.image} />
           <AvatarFallback>
-            {message.user?.name?.charAt(0) ??
+            {isSupportMessage ? (
+              <ShieldCheckIcon
+                className="h-4 w-4 text-info"
+                aria-hidden="true"
+              />
+            ) : (
+              (message.user?.name?.charAt(0) ??
               message.user?.id?.charAt(0) ??
-              "?"}
+              "?")
+            )}
           </AvatarFallback>
         </Avatar>
       )}
 
       {/* Touch placement: outside the bubble, on the side away from the edge. */}
-      {!isFinePointer && isMyMessage && (
+      {touchActionsVisible && isMyMessage && (
         <div className="mr-1 shrink-0">{actionToolbar}</div>
       )}
 
@@ -438,7 +452,15 @@ export const CustomMessage = () => {
 
         {/* Message Bubble */}
         <div
-          className={`${isMyMessage ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"} rounded-lg px-3 py-2`}
+          data-testid="message-bubble"
+          onClick={handleBubbleTap}
+          className={cn(
+            "rounded-lg px-3 py-2",
+            isMyMessage
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-foreground",
+            isSupportMessage && "ring-1 ring-info/30",
+          )}
         >
           {/* Quoted/Replied Message (WhatsApp/Telegram style) */}
           {hasQuotedMessage && message.quoted_message && (
@@ -465,64 +487,28 @@ export const CustomMessage = () => {
           )}
 
           {/* User Name for other users' messages */}
-          {!isMyMessage && !hasQuotedMessage && (
-            <div className="font-semibold text-sm mb-1">
-              {message.user?.name ?? message.user?.id}
+          {isSupportMessage ? (
+            <div className="mb-1">
+              <span className="inline-flex items-center gap-1 rounded bg-info/10 px-1.5 py-0.5 text-xs font-semibold text-info">
+                <ShieldCheckIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                {SUPPORT_STREAM_USER_NAME}
+              </span>
             </div>
+          ) : (
+            !isMyMessage &&
+            !hasQuotedMessage && (
+              <div className="font-semibold text-sm mb-1">
+                {message.user?.name ?? message.user?.id}
+              </div>
+            )
           )}
 
-          {/* Booking Context Card */}
-          {isBookingContext && (
-            <div
-              data-testid="booking-context-card"
-              className={cn(
-                "mb-2 rounded-md border p-2.5 text-left",
-                isMyMessage
-                  ? "border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
-                  : "border-border bg-background/80 text-foreground",
-              )}
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <CalendarIcon className="h-3.5 w-3.5 shrink-0 opacity-80" />
-                <span
-                  className={cn(
-                    "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-                    isMyMessage
-                      ? "bg-primary-foreground/20 text-primary-foreground"
-                      : "bg-secondary text-secondary-foreground",
-                  )}
-                >
-                  {bookingType}
-                </span>
-              </div>
-              <div className="text-xs font-semibold leading-snug">
-                {bookingTitle}
-              </div>
-              {formattedBookingStartsAt && (
-                <div
-                  className={cn(
-                    "mt-0.5 text-[11px]",
-                    isMyMessage
-                      ? "text-primary-foreground/80"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {formattedBookingStartsAt}
-                </div>
-              )}
-              {bookingHelpHref && (
-                <Link
-                  href={bookingHelpHref}
-                  prefetch={false}
-                  className="mt-2 inline-flex min-h-9 items-center gap-1.5 rounded px-1 text-xs font-medium underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-                  aria-label={`Get help with ${bookingTitle}`}
-                  title="Contact the Familiarise team about this appointment"
-                >
-                  <LifeBuoyIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                  Get help
-                </Link>
-              )}
-            </div>
+          {bookingAppointmentId && channel?.cid && (
+            <MessageBookingTag
+              appointmentId={bookingAppointmentId}
+              cid={channel.cid}
+              mine={isMyMessage}
+            />
           )}
 
           {/* Render Attachments if they exist */}
@@ -620,10 +606,33 @@ export const CustomMessage = () => {
           >
             {message.created_at && format(new Date(message.created_at), "p")}
           </div>
+
+          {/* The SDK keeps a failed send in the list with status "failed";
+              without this it reads exactly like a delivered message. */}
+          {isMyMessage && message.status === "sending" && (
+            <div className="mt-0.5 text-right text-xs text-primary-foreground/80">
+              Sending…
+            </div>
+          )}
+          {isMyMessage && message.status === "failed" && (
+            <div
+              role="alert"
+              className="mt-0.5 flex items-center justify-end gap-2 text-xs font-semibold text-primary-foreground"
+            >
+              <span>Not sent</span>
+              <button
+                type="button"
+                className="font-medium underline underline-offset-2"
+                onClick={() => void handleRetry(message)}
+              >
+                Retry
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {!isFinePointer && !isMyMessage && (
+      {touchActionsVisible && !isMyMessage && (
         <div className="ml-1 shrink-0">{actionToolbar}</div>
       )}
 

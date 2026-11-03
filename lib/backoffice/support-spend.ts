@@ -14,10 +14,12 @@ import {
   BOUNDED_REFUND_ACTIONS,
   committedSupportPaiseByPayment,
   movedPaiseOf,
-  STAFF_REFUND_PER_PAYMENT_PAISE,
-  STAFF_REFUND_ROLLING_PAISE,
   STAFF_REFUND_ROLLING_WINDOW_MS,
 } from "@/lib/support/money-policy";
+import {
+  STAFF_REFUND_PER_PAYMENT_PAISE,
+  STAFF_REFUND_ROLLING_PAISE,
+} from "@/lib/support/staff-refund-limits";
 import type {
   SupportSpendOperator,
   SupportSpendPayment,

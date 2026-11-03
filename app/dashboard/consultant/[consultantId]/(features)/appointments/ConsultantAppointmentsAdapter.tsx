@@ -9,12 +9,16 @@ import type {
 } from "@/lib/appointments/adapter";
 import {
   allowsManageTimings,
-  allowsUnschedule,
   CONSULTANT_JOIN_WINDOW_MS,
   getJoinableOccurrence,
   occurrencesAllowReschedule,
   upcomingOccurrences,
 } from "@/lib/appointments/occurrences";
+import {
+  allowsRetime,
+  rescheduleReleasable,
+} from "@/lib/booking/reschedule-proposals";
+import { newTimeDoor } from "@/lib/appointments/new-time-door";
 import {
   isApprovedStatus,
   isConfirmedStatus,
@@ -24,16 +28,23 @@ import type { AppointmentVM } from "@/lib/appointments/view-model";
 import type { ConsultantTrialLike } from "@/lib/appointments/map-consultant";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import { useNowTick } from "@/hooks/use-now-tick";
+import { useSession } from "@/lib/auth-client";
+import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 import {
   getParticipantManagementUrl,
   supportsParticipantManagement,
 } from "./utils/participantHelpers";
 import { useConsultantEventActions } from "./components/useConsultantEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
-import { chatAffordancesForVm } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
-import { UnscheduleConfirmationDialog } from "@/components/appointments/UnscheduleConfirmationDialog";
+import {
+  chatAffordancesForVm,
+  consultantUserIdOf,
+  consulteeUserIdOf,
+} from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
+import { OPS_HINT_LABEL } from "@/components/appointments/OperatorOpsHint";
+import { RetimeDialog } from "@/components/appointments/RetimeDialog";
 
-type DialogKind = "cancel" | "unschedule";
+type DialogKind = "cancel" | "retime";
 
 const TYPE_LABEL: Record<AppointmentVM["kind"], string> = {
   CONSULTATION: "Consultation",
@@ -85,11 +96,12 @@ function canOfferReschedule(
     !inactive &&
     isApprovedStatus(vm.status) &&
     !timingsOk &&
-    occurrencesAllowReschedule(rawOccurrences),
+    occurrencesAllowReschedule(rawOccurrences) &&
+    rescheduleReleasable(rawOccurrences),
   );
 }
 
-function canOfferUnschedule(
+function canOfferRetime(
   vm: AppointmentVM,
   lifecycleOk: boolean,
   inactive: boolean,
@@ -100,7 +112,7 @@ function canOfferUnschedule(
     lifecycleOk &&
     !inactive &&
     isConfirmedStatus(vm.status) &&
-    allowsUnschedule(vm.kind, rawOccurrences),
+    allowsRetime(vm.kind, rawOccurrences),
   );
 }
 
@@ -125,6 +137,15 @@ export function useConsultantAppointmentsAdapter(
   const [dialog, setDialog] = useState<DialogKind | null>(null);
 
   const isDev = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";
+
+  const viewer = useSession().data?.user;
+  const isPartyTo = (vm: AppointmentVM): boolean =>
+    Boolean(
+      viewer &&
+      ((viewer.consultantProfileId &&
+        viewer.consultantProfileId === consultantId) ||
+        [consultantUserIdOf(vm), consulteeUserIdOf(vm)].includes(viewer.id)),
+    );
 
   const typeLabel = activeVm
     ? TYPE_LABEL[activeVm.kind]
@@ -345,9 +366,20 @@ export function useConsultantAppointmentsAdapter(
           router.push(getParticipantManagementUrl(appointment, consultantId)),
       });
     }
-    if (
-      canOfferReschedule(vm, lifecycleOk, inactive, timingsOk, rawOccurrences)
-    ) {
+    const mayReschedule = canOfferReschedule(
+      vm,
+      lifecycleOk,
+      inactive,
+      timingsOk,
+      rawOccurrences,
+    );
+    const mayCancel = Boolean(
+      vm.appointmentId && vm.kind !== "TRIAL" && lifecycleOk && !inactive,
+    );
+    const opsHref = vm.appointmentId
+      ? operatorOpsHref(viewer, isPartyTo(vm), vm.appointmentId)
+      : null;
+    if (mayReschedule && !opsHref) {
       items.push({
         key: "reschedule",
         label: "Reschedule",
@@ -357,14 +389,41 @@ export function useConsultantAppointmentsAdapter(
           ),
       });
     }
-    if (canOfferUnschedule(vm, lifecycleOk, inactive, rawOccurrences)) {
+    if (
+      vm.needsActionReason === "NEEDS_RESCHEDULING" &&
+      vm.appointmentId &&
+      lifecycleOk &&
+      !inactive &&
+      !opsHref
+    ) {
+      const next = newTimeDoor({
+        consultantId,
+        status: vm.status,
+        consultationId: vm.raw.appointment?.consultationId,
+        subscriptionId: vm.raw.appointment?.subscriptionId,
+      });
       items.push({
-        key: "unschedule",
-        label: "Unschedule",
-        onClick: () => openDialog(vm, "unschedule"),
+        key: "new-time",
+        label: next.label,
+        href: next.href,
+        onClick: () => router.push(next.href),
       });
     }
-    if (vm.appointmentId && vm.kind !== "TRIAL" && lifecycleOk && !inactive) {
+    if (canOfferRetime(vm, lifecycleOk, inactive, rawOccurrences)) {
+      items.push({
+        key: "retime",
+        label: "Move to a new date",
+        onClick: () => openDialog(vm, "retime"),
+      });
+    }
+    if (opsHref && (mayReschedule || mayCancel)) {
+      items.push({
+        key: "ops-hint",
+        label: OPS_HINT_LABEL,
+        href: opsHref,
+        onClick: () => router.push(opsHref),
+      });
+    } else if (mayCancel) {
       items.push({
         key: "cancel",
         label: "Cancel booking",
@@ -419,15 +478,15 @@ export function useConsultantAppointmentsAdapter(
             appointmentId={activeVm.appointmentId}
           />
 
-          <UnscheduleConfirmationDialog
-            isOpen={dialog === "unschedule"}
-            onConfirm={async () => {
-              await actions.handleUnschedule();
-              closeDialog();
+          <RetimeDialog
+            isOpen={dialog === "retime"}
+            onConfirm={async (startsAt) => {
+              const moved = await actions.handleRetime(startsAt);
+              if (moved) closeDialog();
+              return moved;
             }}
             onCancel={closeDialog}
             title={activeVm.title}
-            appointmentType={typeLabel}
             isLoading={actions.isLoading}
           />
         </>

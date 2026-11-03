@@ -181,7 +181,7 @@ seven days of expiry.
 > ahead of that date by choice; the runway is the build window, not a
 > reason to defer. (Source: DPDP Rules 2025 Rule 1(4),
 > https://www.dpdpa.com/dpdparules/rule1.html.)
-> Authoritative: [docs/compliance/09-dpdp-and-privacy.md](../../compliance/09-dpdp-and-privacy.md).
+> Authoritative: [docs/compliance/02-dpdp-and-privacy.md](../../compliance/02-dpdp-and-privacy.md).
 
 #### What gets scrubbed (canonical reference)
 
@@ -239,12 +239,19 @@ are not the same thing:
   org-visible projection. Neither deletes a row.
 - **Retention sweeps** are time-based deletes of rows that have aged
   past their statutory window:
-  - `prune-audit-logs` (`jobs/cleanup/`, also `POST /api/cleanup/prune-audit-logs`)
-    deletes `OrgAuditLog` rows older than 7y (INVOICE / PAYOUT / WALLET /
-    CONTRACT / CONSENT) or 2y (everything else).
-  - `consent-retention-sweeper` (`jobs/compliance/`, GH-Actions only —
-    no manual HTTP trigger) purges `ConsentArtifact` rows past
-    `auditRetainedUntil`.
+  - `prune-audit-logs` (`scripts/cleanup/prune-audit-logs.ts`) deletes
+    `OrgAuditLog` rows older than 8y (INVOICE / PAYOUT / WALLET /
+    CONTRACT / CONSENT) or 2y (everything else), plus the other audit
+    tables in the [retention table](../../compliance/02-dpdp-and-privacy.md#retention-windows).
+  - `consent-retention-sweeper` (`lib/compliance/consent-retention.ts`)
+    only counts `ConsentArtifact` rows past `auditRetainedUntil`;
+    deleting them needs its `?delete=1` gate, which stays off until the
+    hash-only consent archive exists.
+
+  Both are registered in `lib/cron/cleanup-registry.ts` and run on the
+  Netlify ticker through `/api/cleanup/<job>` (`prune-audit-logs` daily,
+  the consent sweeper weekly on Sunday); the same `CRON_SECRET`-gated
+  route is the manual trigger.
 
   These are append-only-table hygiene, not erasure — the immutable
   money journal (`LedgerTransaction` / `LedgerEntry`) is never swept.

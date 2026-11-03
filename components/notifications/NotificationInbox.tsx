@@ -8,6 +8,7 @@ import { useSession } from "@/lib/auth-client";
 import { useToast } from "@/hooks/use-toast";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
+import { resolveInboxAuth } from "@/lib/novu/inbox-auth";
 import {
   Popover,
   PopoverContent,
@@ -24,16 +25,15 @@ type OrgMembershipLite = {
 export function NotificationInbox() {
   const router = useRouter();
   const { data: session } = useSession();
-  const { data: subscriberSync } = useNovuSubscriberSync();
+  const { data: subscriberSync, status: syncStatus } = useNovuSubscriberSync();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const hydrated = useHydrated();
 
-  const subscriberHash =
-    typeof (subscriberSync as { subscriberHash?: unknown } | undefined)
-      ?.subscriberHash === "string"
-      ? (subscriberSync as { subscriberHash: string }).subscriberHash
-      : undefined;
+  const { ready: authReady, subscriberHash } = resolveInboxAuth(
+    syncStatus,
+    subscriberSync,
+  );
 
   const memberships = useMemo(() => {
     const raw = (session?.user as Record<string, unknown> | undefined)
@@ -85,7 +85,7 @@ export function NotificationInbox() {
 
   // #1527 QA — the server never renders the bell (no session there), so it
   // waits for hydration; a session resolved first threw #418 on slow pages.
-  if (!hydrated || !session?.user?.id || !NOVU_APP_ID) {
+  if (!hydrated || !session?.user?.id || !NOVU_APP_ID || !authReady) {
     return null;
   }
 

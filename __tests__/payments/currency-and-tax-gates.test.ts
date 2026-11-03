@@ -51,16 +51,21 @@ import {
   deriveConsumerInvoiceTax,
   deriveConsumerCreditNoteAmounts,
   mintConsumerInvoice,
-  resolveSupplierStateCode,
   type ConsumerCreditNoteAmounts,
 } from "../../lib/payments/billing/consumer-invoice";
-import { getPlatformSupplier } from "../../lib/pdf/supplier";
-import { recordSystemError } from "../../lib/enterprise/system-events";
+import {
+  getPlatformSupplier,
+  resolveSupplierStateCode,
+} from "../../lib/pdf/supplier";
+import { REGISTERED_OFFICE } from "../../lib/company";
 
 // The mint's fail-closed branch is the only I/O-bearing path pinned here; the
 // supplier config, the system-event write and Sentry are all stubbed so the
 // assertion is about the decision, not the plumbing.
-jest.mock("../../lib/pdf/supplier", () => ({ getPlatformSupplier: jest.fn() }));
+jest.mock("../../lib/pdf/supplier", () => ({
+  ...jest.requireActual("../../lib/pdf/supplier"),
+  getPlatformSupplier: jest.fn(),
+}));
 jest.mock("../../lib/enterprise/system-events", () => {
   const recordSystemError = jest.fn().mockResolvedValue(undefined);
   return {
@@ -293,108 +298,56 @@ describe("B2C place of supply (s.12(2)(b))", () => {
 });
 
 /**
- * 4. The platform's own state (#1365). The first two digits of a GSTIN are the
- *    state of registration by law, so the GSTIN is authoritative and
- *    `SUPPLIER_STATE_CODE` is only the fallback. Reading the env var alone put
- *    IGST on an intra-state supply whenever it was unset, and picking either
- *    one when they disagree burns a gapless Rule 46 number on a document that
- *    cannot be corrected in place.
+ * 4. The platform's own state. The first two digits of a GSTIN are the state
+ *    of registration by law, so the GSTIN is authoritative and the registered
+ *    office in lib/company.ts is only the fallback; a disagreement refuses.
  */
 describe("the supplier's own state", () => {
+  const HARYANA_GSTIN = "06AABCU9603R1ZM";
   const KARNATAKA_GSTIN = "29AABCU9603R1ZM";
 
-  it("comes from the GSTIN when the env code is unset, and keeps the supply intra-state", () => {
+  it("comes from the GSTIN and keeps a same-state supply intra-state", () => {
     const { stateCode, mismatch } = resolveSupplierStateCode(
-      KARNATAKA_GSTIN,
-      undefined,
+      HARYANA_GSTIN,
+      REGISTERED_OFFICE.stateCode,
     );
     expect(mismatch).toBeNull();
-    expect(stateCode).toBe("29");
+    expect(stateCode).toBe("06");
 
     const tax = deriveConsumerInvoiceTax({
       totalPaise: 118_000,
       taxAmountPaise: 18_000,
-      buyerStateCode: "29",
+      buyerStateCode: "06",
       supplierStateCode: stateCode,
       buyerCountry: "IN",
     });
     expect(tax.igstPaise).toBe(0);
     expect(tax.cgstPaise + tax.sgstPaise).toBe(18_000);
-    expect(tax.placeOfSupply).toBe("29");
+    expect(tax.placeOfSupply).toBe("06");
   });
 
-  it("falls back to the env code only when the GSTIN carries no state", () => {
-    expect(resolveSupplierStateCode(null, "KA").stateCode).toBe("29");
+  it("falls back to the registered office while no GSTIN is set", () => {
+    expect(
+      resolveSupplierStateCode(null, REGISTERED_OFFICE.stateCode).stateCode,
+    ).toBe("06");
   });
 
-  it("refuses to choose when the two disagree", () => {
-    const resolved = resolveSupplierStateCode(KARNATAKA_GSTIN, "MH");
+  it("refuses to choose when the GSTIN contradicts the registered office", () => {
+    const resolved = resolveSupplierStateCode(
+      KARNATAKA_GSTIN,
+      REGISTERED_OFFICE.stateCode,
+    );
     expect(resolved.stateCode).toBeNull();
-    expect(resolved.mismatch).toEqual({ fromGstin: "29", fromEnv: "27" });
-  });
-
-  it("mints nothing and records the fault when the two disagree", async () => {
-    const previousEnv = process.env.SUPPLIER_STATE_CODE;
-    process.env.SUPPLIER_STATE_CODE = "MH";
-    (getPlatformSupplier as jest.Mock).mockReturnValue({
-      name: "Familiarise",
-      gstin: KARNATAKA_GSTIN,
-      address: "Bengaluru, Karnataka",
-    });
-    const create = jest.fn();
-    const tx = {
-      consumerInvoice: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        create,
-      },
-      payment: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: "pay_1",
-          amount: 118_000,
-          taxAmount: 18_000,
-          currency: "INR",
-          paymentStatus: "SUCCEEDED",
-          deletedAt: null,
-          buyerCountry: "IN",
-          consumerStateCode: "29",
-          billableToOrgInvoiceId: null,
-          createdAt: new Date("2026-08-10T06:00:00Z"),
-          userId: "usr_1",
-          legs: [],
-          creditUsages: [],
-          user: {
-            id: "usr_1",
-            name: "A Buyer",
-            email: "buyer@example.com",
-            address: null,
-            city: null,
-            consulteeProfile: { billingStateCode: "29" },
-          },
-        }),
-      },
-    } as unknown as Parameters<typeof mintConsumerInvoice>[0];
-
-    try {
-      const result = await mintConsumerInvoice(tx, { paymentId: "pay_1" });
-      expect(result.consumerInvoiceId).toBeNull();
-      expect(create).not.toHaveBeenCalled();
-      expect(recordSystemError).toHaveBeenCalledWith(
-        expect.objectContaining({
-          summary: expect.stringMatching(/supplier state is ambiguous/i),
-        }),
-      );
-    } finally {
-      process.env.SUPPLIER_STATE_CODE = previousEnv;
-    }
+    expect(resolved.mismatch).toEqual({ fromGstin: "29", registered: "06" });
   });
 });
 
 describe("a payment with no declared state", () => {
   it("is invoiced on the buyer's profile state, recorded as PROFILE_ON_RECORD", async () => {
     (getPlatformSupplier as jest.Mock).mockReturnValue({
-      name: "Familiarise",
-      gstin: "29AABCU9603R1ZM",
-      address: "Bengaluru, Karnataka",
+      name: "Practitionist (OPC) Private Limited",
+      gstin: "06AABCU9603R1ZM",
+      address: "Gurgaon, Haryana",
     });
     const create = jest.fn(async () => ({ id: "inv_1" }));
     const tx = {
@@ -415,6 +368,7 @@ describe("a payment with no declared state", () => {
           userId: "usr_1",
           legs: [{ source: "CARD" }],
           creditUsages: [],
+          refunds: [],
           user: {
             id: "usr_1",
             name: "A Buyer",
@@ -442,14 +396,53 @@ describe("a payment with no declared state", () => {
   });
 });
 
+describe("a capture whose payment was refunded before the invoice", () => {
+  it("mints nothing and takes no number, because the refund could get no credit note", async () => {
+    (getPlatformSupplier as jest.Mock).mockReturnValue({
+      name: "Familiarise",
+      gstin: "29AABCU9603R1ZM",
+      address: "Bengaluru, Karnataka",
+    });
+    const create = jest.fn(async () => ({ id: "inv_1" }));
+    const counter = jest.fn(async () => ({ nextSeq: 2 }));
+    const paymentFind = jest.fn(async () => ({
+      id: "pay_refunded",
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+      billableToOrgInvoiceId: null,
+      legs: [{ source: "CARD" }],
+      creditUsages: [],
+      refunds: [{ id: "rf_1" }],
+    }));
+    const tx = {
+      consumerInvoice: { findUnique: jest.fn(async () => null), create },
+      platformInvoiceCounter: { upsert: counter },
+      payment: { findUnique: paymentFind },
+    } as unknown as Parameters<typeof mintConsumerInvoice>[0];
+
+    const result = await mintConsumerInvoice(tx, { paymentId: "pay_refunded" });
+
+    expect(result.consumerInvoiceId).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+    expect(counter).not.toHaveBeenCalled();
+    expect(paymentFind).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          refunds: expect.objectContaining({
+            where: { status: { in: ["PENDING", "SUCCEEDED"] } },
+          }),
+        }),
+      }),
+    );
+  });
+});
+
 /**
- * #1757 — with PLATFORM_GSTIN unset the mint no-ops with a single console line
- * per process, so on real traffic every capture accrued an un-invoiced supply
- * silently. The no-op stays (fail-open pre-launch); it now also reports ONE
- * expected Sentry warning per process naming the env, not one per capture.
+ * With PLATFORM_GSTIN unset the mint no-ops and logs once per process; the
+ * healer's config-skip run row carries the signal, not Sentry.
  */
-describe("the mint gate is visible (#1757)", () => {
-  it("two mints with no supplier → one CONSUMER_INVOICE_MINT_DISABLED warning", async () => {
+describe("the mint gate stays out of Sentry", () => {
+  it("two mints with no supplier → no invoice and no Sentry message", async () => {
     (getPlatformSupplier as jest.Mock).mockReturnValue(null);
     const create = jest.fn();
     const paymentRow = {
@@ -466,6 +459,7 @@ describe("the mint gate is visible (#1757)", () => {
       userId: "usr_1",
       legs: [],
       creditUsages: [],
+      refunds: [],
       user: {
         id: "usr_1",
         name: "A Buyer",
@@ -493,15 +487,7 @@ describe("the mint gate is visible (#1757)", () => {
     expect(first.consumerInvoiceId).toBeNull();
     expect(second.consumerInvoiceId).toBeNull();
     expect(create).not.toHaveBeenCalled();
-    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
-    expect(reportSentryMessage).toHaveBeenCalledWith(
-      "CONSUMER_INVOICE_MINT_DISABLED",
-      expect.objectContaining({
-        expected: true,
-        level: "warning",
-        extra: expect.objectContaining({ env: "PLATFORM_GSTIN" }),
-      }),
-    );
+    expect(reportSentryMessage).not.toHaveBeenCalled();
   });
 });
 

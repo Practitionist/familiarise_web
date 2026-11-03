@@ -34,10 +34,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
+import { SUPPORT_EMAIL } from "@/lib/company";
 import {
   attempt,
   deliver,
@@ -85,7 +87,7 @@ describe("deliver — missing key (#1298 Fix 3)", () => {
       htmlBody: "<p>token=abc</p>",
       textBody: "token=abc",
       // Every transactional message gets a real Reply-To.
-      replyTo: "support@familiarisenow.com",
+      replyTo: SUPPORT_EMAIL,
     });
     expect(mockUpdate.mock.calls[0][0].data.lastError).toContain(
       "not configured",
@@ -287,5 +289,29 @@ describe("credential emails", () => {
     expect(data.textBody).toBeNull();
     // The inline send still carries the real message.
     expect(mockSend.mock.calls[0][0].html).toContain("123456");
+  });
+});
+
+describe("per-recipient daily cap", () => {
+  it("drops the sixth reset mail to one address before staging, and leaves other types alone", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    mockCreate.mockResolvedValue({ id: "fe-cap" });
+    mockUpdate.mockResolvedValue({});
+    mockSend.mockResolvedValue({ data: { id: "rs-cap" }, error: null });
+    const reset = { ...message, to: "Capped@Example.com " };
+
+    for (let i = 0; i < 5; i++) {
+      expect((await deliver(reset, "PASSWORD_RESET")).success).toBe(true);
+    }
+    const capped = await deliver(
+      { ...reset, to: "capped@example.com" },
+      "PASSWORD_RESET",
+    );
+
+    expect(capped.success).toBe(false);
+    expect(mockCreate).toHaveBeenCalledTimes(5);
+    expect(mockSend).toHaveBeenCalledTimes(5);
+    expect((await deliver(reset, "WELCOME")).success).toBe(true);
+    expect((await deliver(reset, "STAFF_INVITE")).success).toBe(true);
   });
 });

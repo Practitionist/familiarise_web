@@ -29,14 +29,16 @@ jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: jest.fn(async () => null),
 }));
 
-jest.mock("../../lib/activity/log-activity", () => ({
-  __esModule: true,
-  logTrialRequested: jest.fn(async () => undefined),
-}));
-
 jest.mock("../../lib/novu", () => ({
   __esModule: true,
   notifyTrialRequested: jest.fn(async () => undefined),
+}));
+
+jest.mock("../../utils/appointmentlock", () => ({
+  lockRequestCap: jest.fn(async () => ({ key: "request-cap" })),
+  unlockRequestCap: jest.fn(async () => undefined),
+  RequestCapBusyError: class extends Error {},
+  BookingLockUnavailableError: class extends Error {},
 }));
 
 jest.mock("../../lib/prisma", () => {
@@ -109,7 +111,10 @@ beforeEach(() => {
     title: "Career Clarity",
     consultantProfileId: CONSULTANT,
     trialEnabled: true,
-    consultantProfile: { user: { id: "expert-1", name: "Expert" } },
+    consultantProfile: {
+      maxOpenRequests: null,
+      user: { id: "expert-1", name: "Expert" },
+    },
   });
   (prisma.consulteeProfile.findUnique as jest.Mock).mockResolvedValue({
     id: CONSULTEE,

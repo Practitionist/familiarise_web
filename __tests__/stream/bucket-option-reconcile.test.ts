@@ -5,19 +5,22 @@
 /**
  * `ensureBucketExists` used to apply its options only at CREATE time, so a
  * bucket that already existed kept whatever limits it was born with and the
- * options argument was silently ignored. That is how the recordings bucket sat
- * at a 500MB limit while the code around it expected more.
+ * options argument was silently ignored.
  *
  * The MIME arm is the one that actually bites in practice: Stream's external
  * storage probe uploads a `text/plain` file, and a bucket still carrying a
  * video-only allow-list rejects it with a 415 that reads like a credentials
  * failure rather than a config one.
  */
+import {
+  ALLOWED_FILE_MIME_TYPES,
+  MAX_FILE_BYTES,
+} from "@/lib/documents/file-policy";
+
 const getBucket = jest.fn();
 const updateBucket = jest.fn().mockResolvedValue({ error: null });
+const createBucket = jest.fn();
 const list = jest.fn().mockResolvedValue({ data: [], error: null });
-
-jest.mock("@/lib/supabase-config", () => ({}), { virtual: true });
 
 jest.mock("../../lib/supabase-storage-core", () => {
   const actual = jest.requireActual("../../lib/supabase-storage-core");
@@ -25,10 +28,10 @@ jest.mock("../../lib/supabase-storage-core", () => {
 });
 
 describe("ensureBucketExists option reconciliation", () => {
+  const BUCKET = "documents";
   let ensureBucketExists: (
     name: string,
     options?: {
-      public?: boolean;
       allowedMimeTypes?: string[];
       fileSizeLimit?: number;
     },
@@ -42,47 +45,51 @@ describe("ensureBucketExists option reconciliation", () => {
 
     jest.doMock("@supabase/supabase-js", () => ({
       createClient: () => ({
-        storage: { from: () => ({ list }), getBucket, updateBucket },
+        storage: {
+          from: () => ({ list }),
+          getBucket,
+          updateBucket,
+          createBucket,
+        },
       }),
     }));
 
-    ({ ensureBucketExists } = await import(
-      "../../lib/supabase-storage-core"
-    ));
+    ({ ensureBucketExists } = await import("../../lib/supabase-storage-core"));
   });
 
   const bucket = (over: Record<string, unknown> = {}) => ({
     data: {
-      name: "recordings",
+      name: BUCKET,
       public: false,
-      file_size_limit: 524288000,
-      allowed_mime_types: ["video/mp4", "video/webm"],
+      file_size_limit: MAX_FILE_BYTES,
+      allowed_mime_types: [...ALLOWED_FILE_MIME_TYPES],
       ...over,
     },
   });
 
   it("widens a stale file size limit", async () => {
     getBucket.mockResolvedValue(bucket());
-    await ensureBucketExists("recordings", { fileSizeLimit: 5368709120 });
+    await ensureBucketExists(BUCKET, { fileSizeLimit: 5368709120 });
     expect(updateBucket).toHaveBeenCalledWith(
-      "recordings",
+      BUCKET,
       expect.objectContaining({ fileSizeLimit: 5368709120 }),
     );
   });
 
   it("reconciles a MIME-only change, with size and visibility already correct", async () => {
     getBucket.mockResolvedValue(bucket());
-    await ensureBucketExists("recordings", {
-      fileSizeLimit: 524288000,
-      public: false,
-      allowedMimeTypes: ["video/mp4", "video/webm", "application/octet-stream"],
+    await ensureBucketExists(BUCKET, {
+      fileSizeLimit: MAX_FILE_BYTES,
+      allowedMimeTypes: [
+        ...ALLOWED_FILE_MIME_TYPES,
+        "application/octet-stream",
+      ],
     });
     expect(updateBucket).toHaveBeenCalledWith(
-      "recordings",
+      BUCKET,
       expect.objectContaining({
         allowedMimeTypes: [
-          "video/mp4",
-          "video/webm",
+          ...ALLOWED_FILE_MIME_TYPES,
           "application/octet-stream",
         ],
       }),
@@ -91,18 +98,17 @@ describe("ensureBucketExists option reconciliation", () => {
 
   it("treats MIME order as insignificant", async () => {
     getBucket.mockResolvedValue(bucket());
-    await ensureBucketExists("recordings", {
-      allowedMimeTypes: ["video/webm", "video/mp4"],
+    await ensureBucketExists(BUCKET, {
+      allowedMimeTypes: [...ALLOWED_FILE_MIME_TYPES].reverse(),
     });
     expect(updateBucket).not.toHaveBeenCalled();
   });
 
   it("writes nothing when every option already matches", async () => {
     getBucket.mockResolvedValue(bucket());
-    await ensureBucketExists("recordings", {
-      public: false,
-      fileSizeLimit: 524288000,
-      allowedMimeTypes: ["video/mp4", "video/webm"],
+    await ensureBucketExists(BUCKET, {
+      fileSizeLimit: MAX_FILE_BYTES,
+      allowedMimeTypes: [...ALLOWED_FILE_MIME_TYPES],
     });
     expect(updateBucket).not.toHaveBeenCalled();
   });
@@ -110,24 +116,24 @@ describe("ensureBucketExists option reconciliation", () => {
   it("still reconciles when the bucket is already memoized", async () => {
     getBucket.mockResolvedValue(bucket());
     // First caller supplies nothing, which is what puts it in the cache.
-    await ensureBucketExists("recordings");
+    await ensureBucketExists(BUCKET);
     expect(updateBucket).not.toHaveBeenCalled();
 
     // A later caller with real options must not be silently ignored.
-    await ensureBucketExists("recordings", { fileSizeLimit: 5368709120 });
+    await ensureBucketExists(BUCKET, { fileSizeLimit: 5368709120 });
     expect(updateBucket).toHaveBeenCalledWith(
-      "recordings",
+      BUCKET,
       expect.objectContaining({ fileSizeLimit: 5368709120 }),
     );
   });
 
   it("carries the bucket's own visibility through a size-only change", async () => {
-    getBucket.mockResolvedValue(bucket({ public: true }));
-    await ensureBucketExists("recordings", { fileSizeLimit: 5368709120 });
+    getBucket.mockResolvedValue(bucket());
+    await ensureBucketExists(BUCKET, { fileSizeLimit: 5368709120 });
     // A size change must never flip a bucket public or private as a side effect.
     expect(updateBucket).toHaveBeenCalledWith(
-      "recordings",
-      expect.objectContaining({ public: true }),
+      BUCKET,
+      expect.objectContaining({ public: false }),
     );
   });
 
@@ -139,7 +145,33 @@ describe("ensureBucketExists option reconciliation", () => {
     // The Free plan clamps objects to 50MB whatever the bucket says; a bucket
     // that cannot be widened is still a usable bucket.
     await expect(
-      ensureBucketExists("recordings", { fileSizeLimit: 5368709120 }),
+      ensureBucketExists(BUCKET, { fileSizeLimit: 5368709120 }),
     ).resolves.toBe(true);
+  });
+
+  it("fails provisioning when the bucket's visibility cannot be read", async () => {
+    getBucket.mockResolvedValue({
+      data: null,
+      error: { message: "forbidden" },
+    });
+    await expect(ensureBucketExists(BUCKET)).resolves.toBe(false);
+  });
+
+  it("fails provisioning when the registry visibility cannot be applied", async () => {
+    getBucket.mockResolvedValue(bucket({ public: true }));
+    updateBucket.mockResolvedValueOnce({
+      error: { message: "forbidden" },
+    });
+    await expect(ensureBucketExists(BUCKET)).resolves.toBe(false);
+  });
+
+  it("succeeds when a concurrent first create wins the race", async () => {
+    list.mockResolvedValue({
+      data: null,
+      error: { message: "Bucket not found" },
+    });
+    createBucket.mockResolvedValue({ error: { message: "already exists" } });
+    getBucket.mockResolvedValue(bucket());
+    await expect(ensureBucketExists(BUCKET)).resolves.toBe(true);
   });
 });

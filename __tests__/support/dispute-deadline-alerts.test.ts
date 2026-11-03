@@ -2,8 +2,8 @@
 const mockStageBell = jest.fn<Promise<null>, unknown[]>(async () => null);
 const mockReportSentryMessage = jest.fn<void, unknown[]>();
 const mockReportStandingFinding = jest.fn(
-  async (_args: unknown, report: () => void) => {
-    report();
+  async (_args: unknown, report?: () => void) => {
+    report?.();
     return true;
   },
 );
@@ -28,12 +28,14 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryMessage: (...args: unknown[]) => mockReportSentryMessage(...args),
 }));
 jest.mock("../../lib/observability/standing-finding", () => ({
-  reportStandingFinding: (args: unknown, report: () => void) =>
+  reportStandingFinding: (args: unknown, report?: () => void) =>
     mockReportStandingFinding(args, report),
 }));
 jest.mock("../../lib/support/problem-cascade", () => ({
+  HELD_OPEN_SCAN_FACTOR: 2,
   cascadeResolvedProblems: jest.fn(async () => ({
     cascaded: 0,
+    heldOpen: [],
     bells: [],
     emails: [],
   })),
@@ -54,6 +56,10 @@ jest.mock("../../lib/prisma", () => {
       findFirst: jest.fn(async () => null),
       findUnique: jest.fn(async () => null),
     },
+    failedEmail: {
+      findMany: jest.fn(async () => []),
+      findFirst: jest.fn(async () => null),
+    },
     moderationReport: { findMany: jest.fn(async () => []) },
     supportCaseEvidenceRequest: { findMany: jest.fn(async () => []) },
     $transaction: jest.fn(),
@@ -73,6 +79,7 @@ interface MockPrismaClient {
   supportCase: { findMany: jest.Mock };
   dispute: { findMany: jest.Mock };
   user: { findMany: jest.Mock };
+  failedEmail: { findMany: jest.Mock; findFirst: jest.Mock };
   notificationOutbox: {
     findMany: jest.Mock;
     findFirst: jest.Mock;
@@ -149,7 +156,7 @@ describe("dispute deadline alerts", () => {
     expect(stagedDisputeKeys()).toEqual(["dispute-due:soon:24"]);
   });
 
-  it("pages once per run with every dispute due within 12 h or past due", async () => {
+  it("pages one Sentry warning per run with every dispute due within 12 h or past due, each dispute once", async () => {
     seedDisputes([
       dispute("due-10h", 10),
       dispute("past-2h", -2),
@@ -162,11 +169,15 @@ describe("dispute deadline alerts", () => {
     expect(mockReportStandingFinding).toHaveBeenCalledTimes(1);
     const [args] = mockReportStandingFinding.mock.calls[0] as [
       { key: string; ids: string[] },
-      () => void,
+      (() => void) | undefined,
     ];
     expect(args.key).toBe("dispute-deadline:critical");
     expect([...args.ids].sort()).toEqual(["due-10h", "past-2h"]);
-    expect(mockReportSentryMessage).toHaveBeenCalledTimes(1);
+    expect(args).toMatchObject({ windowMs: 7 * 24 * 60 * 60 * 1000 });
+    expect(mockReportSentryMessage).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ level: "warning" }),
+    );
     expect(stagedDisputeKeys()).toHaveLength(4);
   });
 
@@ -221,5 +232,101 @@ describe("dispute deadline alerts", () => {
     expect(
       (call?.[1] as { payload: { dashboardUrl: string } }).payload.dashboardUrl,
     ).toMatch(/\/dashboard\/admin\/disputes\/disp-link$/);
+  });
+});
+
+describe("alert emails with every bell off", () => {
+  const now = new Date("2026-10-10T12:00:00.000Z");
+  const sent: Array<{ to: string; emailType: string; entityRef?: string }> = [];
+
+  beforeEach(() => {
+    sent.length = 0;
+    const { deliver } = jest.requireMock<{ deliver: jest.Mock }>(
+      "../../lib/email",
+    );
+    deliver.mockImplementation(
+      async (
+        msg: { to: string },
+        emailType: string,
+        opts: { entityRef?: string },
+      ) => {
+        sent.push({ to: msg.to, emailType, entityRef: opts.entityRef });
+        return { success: true };
+      },
+    );
+    // stageBell stays null: no outbox row exists, only the staged email rows.
+    const staged = (w: {
+      entityRef?: string | { in: string[] };
+      emailType: { in: string[] };
+    }) =>
+      sent.filter(
+        (s) =>
+          w.emailType.in.includes(s.emailType) &&
+          (typeof w.entityRef === "string"
+            ? s.entityRef === w.entityRef
+            : w.entityRef?.in.includes(s.entityRef ?? "")),
+      );
+    mockPrisma.failedEmail.findFirst.mockImplementation(
+      async (a: { where: Parameters<typeof staged>[0] }) =>
+        staged(a.where)[0] ? { id: "fe" } : null,
+    );
+    mockPrisma.failedEmail.findMany.mockImplementation(
+      async (a: { where: Parameters<typeof staged>[0] }) =>
+        staged(a.where).map((s) => ({ entityRef: s.entityRef })),
+    );
+    mockPrisma.user.findMany.mockResolvedValue([
+      { id: "admin-1", email: "admin@test.com", name: "A", role: "ADMIN" },
+    ]);
+    mockPrisma.dispute.findMany.mockResolvedValue([]);
+    mockPrisma.supportCase.findMany.mockResolvedValue([]);
+  });
+
+  it("emails admins once per dispute window across sweep runs", async () => {
+    mockPrisma.dispute.findMany.mockResolvedValue([
+      {
+        id: "d1",
+        disputeId: "rzp_d1",
+        amountPaise: 10_000,
+        currency: "INR",
+        reason: "fraudulent",
+        dueBy: new Date(now.getTime() + 10 * 3_600_000),
+      },
+    ]);
+
+    await runSupportSlaSweep({ now, limit: 20 });
+    await runSupportSlaSweep({ now, limit: 20 });
+
+    expect(
+      sent.filter((s) => s.emailType === "dispute-deadline-alert"),
+    ).toHaveLength(1);
+  });
+
+  it("emails an SLA notice and the org escalation contact once per window", async () => {
+    mockPrisma.supportCase.findMany.mockResolvedValue([
+      {
+        id: "c1",
+        referenceNumber: "SUP-1",
+        title: "t",
+        status: "OPEN",
+        assignedToId: null,
+        ackDueAt: new Date(now.getTime() - 3_600_000),
+        acknowledgedAt: null,
+        resolutionDueAt: null,
+        statutoryDueAt: null,
+        resolvedAt: null,
+        awaitingUserSince: null,
+        pausedSeconds: 0,
+        ownershipScope: "ORGANIZATION",
+        organization: { name: "O", escalationContactEmail: "esc@org.test" },
+      },
+    ]);
+
+    await runSupportSlaSweep({ now, limit: 20 });
+    await runSupportSlaSweep({ now, limit: 20 });
+
+    expect(sent.map((s) => s.emailType).sort()).toEqual([
+      "support-sla-alert",
+      "support-sla-alert-org",
+    ]);
   });
 });

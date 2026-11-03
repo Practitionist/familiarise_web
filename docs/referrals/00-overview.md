@@ -28,7 +28,7 @@ The full resolution order is in [01-architecture.md](./01-architecture.md).
 
 ## What the money rules guarantee
 
-The rules below are enforced in code and, where marked, in Postgres. The reasoning behind each rule is in [04-reward-economics-and-decisions.md](./04-reward-economics-and-decisions.md).
+The rules below are enforced in code and, where marked, in Postgres. The reasoning behind each rule is in [03-reward-economics-and-decisions.md](./03-reward-economics-and-decisions.md).
 
 - A promotional credit or discount never costs more than the platform earns on the order it touches. The welcome discount is capped at the order's take rate, and credit redemption is capped at the smaller of the configured cap and that take.
 - A buyer may hold only one live welcome-discounted order at a time. A partial unique index in `prisma/sql/check-constraints.sql` enforces this.
@@ -65,28 +65,28 @@ These items are designed but not implemented. They are tracked together as the s
 
 The table below lists where each part of the system lives.
 
-| Area                                   | Location                                                                                               |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Codes, apply, credits, refund restores | `lib/referrals/service.ts`                                                                             |
-| Attribution at checkout                | `lib/referrals/attribution.ts`, `lib/referrals/attribution-token.ts`                                   |
-| Capture inside the payment transaction | `lib/referrals/capture.ts`                                                                             |
-| Vest, void, reopen, breakage           | `lib/referrals/vesting.ts`                                                                             |
-| Configuration and budget               | `lib/referrals/program-config.ts`                                                                      |
-| Discount and credit arithmetic         | `lib/referrals/promo-math.ts`, `lib/payments/pricing/derive-checkout-amount.ts`                        |
-| Take rate, waiver, schedule approval   | `lib/payments/pricing/platform-fee.ts`                                                                 |
-| Share links                            | `app/r/[code]/route.ts`, the `?via=` handling in `middleware.ts`                                       |
-| User routes                            | `app/api/referrals/**`, `app/api/checkout/referral-pricing/route.ts`                                   |
-| Admin routes                           | `app/api/admin/referrals/**`, `app/api/admin/fee-schedules/**`                                         |
-| Job registration                       | `lib/cron/cleanup-registry.ts`, `netlify/functions/cron-tick.mts`, `.github/workflows/cron-weekly.yml` |
-| Ledger reconciliation                  | `scripts/reconcile/reconcile-ledgers.ts`                                                               |
+| Area                                   | Location                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| Codes, apply, credits, refund restores | `lib/referrals/service.ts`                                                      |
+| Attribution at checkout                | `lib/referrals/attribution.ts`, `lib/referrals/attribution-token.ts`            |
+| Capture inside the payment transaction | `lib/referrals/capture.ts`                                                      |
+| Vest, void, reopen, breakage           | `lib/referrals/vesting.ts`                                                      |
+| Configuration and budget               | `lib/referrals/program-config.ts`                                               |
+| Discount and credit arithmetic         | `lib/referrals/promo-math.ts`, `lib/payments/pricing/derive-checkout-amount.ts` |
+| Take rate, waiver, schedule approval   | `lib/payments/pricing/platform-fee.ts`                                          |
+| Share links                            | `app/r/[code]/route.ts`, the `?via=` handling in `middleware.ts`                |
+| User routes                            | `app/api/referrals/**`, `app/api/checkout/referral-pricing/route.ts`            |
+| Admin routes                           | `app/api/admin/referrals/**`, `app/api/admin/fee-schedules/**`                  |
+| Job registration                       | `lib/cron/cleanup-registry.ts`, `netlify/functions/cron-tick.mts`               |
+| Ledger reconciliation                  | `scripts/reconcile/reconcile-ledgers.ts`                                        |
 
 ## Related documents
 
 - [01 — Architecture and flows](./01-architecture.md)
 - [02 — API reference](./02-api-reference.md)
-- [03 — Credit system and ledger](./03-credit-system.md)
-- [04 — Economics, guards and owner decisions](./04-reward-economics-and-decisions.md)
-- [05 — Authentication and onboarding integration](./05-auth-onboarding-integration.md)
+- [Credit system and ledger](../finance/20-ledger/07-referral-credits.md)
+- [03 — Economics, guards and owner decisions](./03-reward-economics-and-decisions.md)
+- [04 — Authentication and onboarding integration](./04-auth-onboarding-integration.md)
 
 ## Deprecated & Superseded Approaches
 

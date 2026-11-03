@@ -116,8 +116,8 @@ describe("subscriptionEntitlement — fill-order cycles on a 12-plan at 4/week",
     const e = plan12(rows({ COMPLETED: 4 }));
     const lastEnd = new Date(NOW.getTime() + 3 * 24 * HOUR + HOUR);
     expect(e.cycle.windowStart).toEqual(lastEnd);
-    // IST day of lastEnd is 05 Mar; the seventh day ends 11 Mar 23:59:59.999 IST.
-    expect(e.cycle.windowEnd.toISOString()).toBe("2026-03-11T18:29:59.999Z");
+    // IST day of lastEnd is 05 Mar; the window ends (exclusive) at 12 Mar 00:00 IST.
+    expect(e.cycle.windowEnd.toISOString()).toBe("2026-03-11T18:30:00.000Z");
   });
 });
 
@@ -129,7 +129,7 @@ describe("firstCycleWindow", () => {
       TZ,
     );
     expect(start).toBe(NOW);
-    expect(end.toISOString()).toBe("2026-03-08T18:29:59.999Z");
+    expect(end.toISOString()).toBe("2026-03-08T18:30:00.000Z");
   });
 });
 
@@ -151,4 +151,3 @@ describe("subscriptionEntitlement — rescheduling & cycle window Start", () => 
     expect(e.cycle.windowStart).toEqual(NOW);
   });
 });
-

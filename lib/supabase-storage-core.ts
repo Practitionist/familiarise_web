@@ -6,6 +6,14 @@
  * import storage from here. `lib/supabase.ts` re-exports every name unchanged.
  */
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { z } from "zod";
+
+const missingObjectErrorSchema = z.object({ code: z.literal("NoSuchKey") });
+
+import {
+  bucketPolicyFor,
+  type BucketPolicy,
+} from "@/lib/storage/bucket-policies";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -91,9 +99,9 @@ export function generateStorageFileName(mimeType: string): string {
   return `${globalThis.crypto.randomUUID()}.${ext}`;
 }
 
+/** Caller limits; visibility comes only from the bucket registry. */
 export interface BucketOptions {
-  public?: boolean;
-  allowedMimeTypes?: string[];
+  allowedMimeTypes?: readonly string[];
   fileSizeLimit?: number;
 }
 
@@ -116,26 +124,31 @@ function sameMembers(a: readonly string[], b: readonly string[]): boolean {
  * nothing at all. The recordings bucket sat at 500MB that way while the code
  * around it was changed to expect more (#1314).
  *
- * Best-effort on purpose: a bucket whose settings cannot be widened is still a
- * usable bucket, and failing the caller here would turn a config nicety into an
- * outage. Notably the Supabase FREE plan clamps every object to 50MB no matter
- * what the bucket says, so this call can legitimately succeed and change
- * nothing.
+ * A visibility mismatch is security-relevant: if the bucket cannot be read or
+ * its visibility cannot be changed, provisioning fails rather than letting a
+ * private bucket stay public. Size and MIME limits remain best-effort: the
+ * Supabase FREE plan clamps every object to 50MB whatever the bucket says, so a
+ * bucket that cannot be widened is still usable.
  */
 async function reconcileBucketOptions(
   bucketName: string,
-  options?: BucketOptions,
-): Promise<void> {
-  if (!options || !supabaseAdmin) return;
+  options?: BucketPolicy,
+): Promise<boolean> {
+  if (!options || !supabaseAdmin) return true;
 
-  const { data: bucket } = await supabaseAdmin.storage.getBucket(bucketName);
-  if (!bucket) return;
+  const { data: bucket, error: readError } =
+    await supabaseAdmin.storage.getBucket(bucketName);
+  if (readError || !bucket) {
+    console.error(
+      `Could not read bucket ${bucketName} settings: ${readError?.message ?? "bucket missing"}`,
+    );
+    return false;
+  }
 
   const wantsSize =
     options.fileSizeLimit !== undefined &&
     Number(bucket.file_size_limit ?? 0) !== options.fileSizeLimit;
-  const wantsPublic =
-    options.public !== undefined && bucket.public !== options.public;
+  const wantsPublic = bucket.public !== options.public;
   // A MIME-only drift is the one that actually bites: Stream's storage probe
   // uploads `text/plain`, and a bucket still carrying a video-only allow-list
   // rejects it with a 415 that reads like a credentials failure.
@@ -147,43 +160,89 @@ async function reconcileBucketOptions(
   const wantsMime =
     options.allowedMimeTypes !== undefined &&
     !sameMembers(options.allowedMimeTypes, bucket.allowed_mime_types ?? []);
-  if (!wantsSize && !wantsPublic && !wantsMime) return;
+  if (!wantsSize && !wantsPublic && !wantsMime) return true;
 
-  // `public` is required by updateBucket, so carry the bucket's own value
-  // through rather than flipping visibility as a side effect of a size change.
+  // Visibility always comes from the registry policy, never from a caller.
   const { error } = await supabaseAdmin.storage.updateBucket(bucketName, {
-    public: options.public ?? bucket.public,
+    public: options.public,
     ...(options.fileSizeLimit !== undefined
       ? { fileSizeLimit: options.fileSizeLimit }
       : {}),
     ...(options.allowedMimeTypes
-      ? { allowedMimeTypes: options.allowedMimeTypes }
+      ? { allowedMimeTypes: [...options.allowedMimeTypes] }
       : {}),
   });
 
   if (error) {
+    if (wantsPublic) {
+      console.error(
+        `Could not change bucket ${bucketName} visibility: ${error.message}`,
+      );
+      return false;
+    }
     console.warn(
       `Could not update bucket ${bucketName} settings: ${error.message}`,
     );
-    return;
+    return true;
   }
   console.log(`Updated bucket ${bucketName} settings to match caller options`);
+  return true;
+}
+
+/** Creates a bucket from its policy; a concurrent first create that won is adopted. */
+async function createBucketFromPolicy(
+  storage: ReturnType<typeof adminStorage>,
+  bucketName: string,
+  policy: BucketPolicy,
+): Promise<boolean> {
+  console.log(`Creating bucket: ${bucketName}`);
+  const { error: createError } = await storage.createBucket(bucketName, {
+    public: policy.public,
+    fileSizeLimit: policy.fileSizeLimit,
+    ...(policy.allowedMimeTypes
+      ? { allowedMimeTypes: [...policy.allowedMimeTypes] }
+      : {}),
+  });
+  if (createError) {
+    const { data: raced } = await storage.getBucket(bucketName);
+    if (!raced) {
+      console.error(`Failed to create bucket ${bucketName}:`, createError);
+      return false;
+    }
+    // The winner may have created it from another caller's options.
+    if (!(await reconcileBucketOptions(bucketName, policy))) return false;
+  } else {
+    console.log(`Successfully created bucket: ${bucketName}`);
+  }
+  knownBuckets.add(bucketName);
+  return true;
 }
 
 /**
  * Ensure a storage bucket exists, create it if it doesn't.
- * Pass options to customize bucket settings per use case.
- * Memoized per process: a bucket confirmed once is never re-probed.
+ * Existence is memoized per process; a later call that passes options
+ * reconciles the settings of a bucket already confirmed.
  */
 export const ensureBucketExists = async (
   bucketName: string,
   options?: BucketOptions,
 ): Promise<boolean> => {
+  // A bucket with no policy is not provisioned: the old fallback created it
+  // public with a document allowlist that no caller had chosen.
+  const policy = bucketPolicyFor(bucketName, options);
+  if (!policy) {
+    console.error(
+      `No storage policy for bucket "${bucketName}" — refusing to provision it.`,
+    );
+    return false;
+  }
   // Memoization skips the existence probe, not the settings. A later caller
   // passing options to a bucket already seen without them would otherwise be
   // silently ignored for the rest of the process.
   if (knownBuckets.has(bucketName)) {
-    if (options) await reconcileBucketOptions(bucketName, options);
+    if (options && !(await reconcileBucketOptions(bucketName, policy))) {
+      return false;
+    }
     return true;
   }
   try {
@@ -195,7 +254,7 @@ export const ensureBucketExists = async (
 
     // If no error, bucket exists
     if (!listError) {
-      await reconcileBucketOptions(bucketName, options);
+      if (!(await reconcileBucketOptions(bucketName, policy))) return false;
       knownBuckets.add(bucketName);
       return true;
     }
@@ -205,31 +264,7 @@ export const ensureBucketExists = async (
       listError.message.includes("Bucket not found") ||
       listError.message.includes("not found")
     ) {
-      console.log(`Creating bucket: ${bucketName}`);
-
-      const { data: _createData, error: createError } =
-        await storage.createBucket(bucketName, {
-          public: options?.public ?? true,
-          allowedMimeTypes: options?.allowedMimeTypes ?? [
-            "application/pdf",
-            "application/msword",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "image/jpeg",
-            "image/png",
-            "image/gif",
-            "text/plain",
-          ],
-          fileSizeLimit: options?.fileSizeLimit ?? 10485760, // 10MB
-        });
-
-      if (createError) {
-        console.error(`Failed to create bucket ${bucketName}:`, createError);
-        return false;
-      }
-
-      console.log(`Successfully created bucket: ${bucketName}`);
-      knownBuckets.add(bucketName);
-      return true;
+      return await createBucketFromPolicy(storage, bucketName, policy);
     }
 
     // Other errors
@@ -241,11 +276,7 @@ export const ensureBucketExists = async (
   }
 };
 
-/**
- * Remove objects; true only when every path is gone afterwards. Storage's batch
- * delete answers with just the rows it removed, so each path missing from that
- * answer is re-checked and counts as removed only if it no longer exists.
- */
+/** Confirms every key via a deletion receipt or explicit missing-key metadata. */
 export const removeObjects = async (
   bucket: string,
   paths: string[],
@@ -261,9 +292,17 @@ export const removeObjects = async (
     const removed = new Set((data ?? []).map((object) => object.name));
     for (const path of paths) {
       if (removed.has(path)) continue;
-      const { data: present } = await api.exists(path);
-      if (present) {
-        console.error(`Storage remove left ${bucket}/${path} in place`);
+      // HEAD can hide the error code; metadata must identify a missing key explicitly.
+      const { data: metadata, error: metadataError } = await api.info(path);
+      if (
+        metadata !== null ||
+        !missingObjectErrorSchema.safeParse(metadataError).success
+      ) {
+        console.error(
+          `Storage remove could not confirm absence of ${bucket}/${path}`,
+          metadataError?.message ??
+            "Object is present or absence is unconfirmed",
+        );
         return false;
       }
     }

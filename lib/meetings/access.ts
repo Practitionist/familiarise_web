@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import { liveParticipant, paidParticipant } from "@/lib/booking/participants";
 import { isPresenterRole } from "@/lib/collaborators/roles";
 import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
@@ -21,7 +21,6 @@ import {
   REJOIN_GRACE_MS,
   getOccurrenceJoinState,
   isDeadOccurrence,
-  isDeliberateEnd,
   type JoinableOccurrence,
 } from "@/lib/appointments/occurrences";
 import {
@@ -29,6 +28,11 @@ import {
   isCompletedLikeStatus,
   isConfirmedStatus,
 } from "@/lib/appointments/status";
+import { resolveRoomEndsAt } from "@/lib/meetings/duration-cap";
+import {
+  endAllowsHostReopen,
+  endBlocksRejoin,
+} from "@/lib/meetings/end-reasons";
 
 /** Server-side meeting access role granted to an authorized caller. */
 export type MeetingRole = "host" | "participant" | null;
@@ -184,10 +188,15 @@ function bookingStatusRefusal(status: string | null): string | null {
 }
 
 export type GatedOccurrence = JoinableOccurrence & {
-  meeting: { id: string; endedAt: Date | null; endedReason: string | null };
+  meeting: {
+    id: string;
+    endedAt: Date | null;
+    endedReason: string | null;
+    extendedSeconds: number;
+  };
 };
 
-/** Evaluates time-window, deliberate-end, and live-room rejoin rules for an occurrence. */
+/** Evaluates the end-reason policy, then the room-time window and live-room rejoin rules. */
 export async function meetingPolicyRefusal(args: {
   occurrence: GatedOccurrence;
   role: Exclude<MeetingRole, null>;
@@ -199,22 +208,34 @@ export async function meetingPolicyRefusal(args: {
     return { message: "This session has no active time slot." };
   }
 
-  const state = getOccurrenceJoinState(occurrence, {
-    joinWindowMs:
-      args.role === "host"
-        ? CONSULTANT_JOIN_WINDOW_MS
-        : CONSULTEE_JOIN_WINDOW_MS,
-    rejoinGraceMs: 0,
-    now,
-  });
+  const roomEndsAt = occurrence.endsAt
+    ? resolveRoomEndsAt(occurrence.endsAt, occurrence.meeting.extendedSeconds)
+    : null;
+  const state = getOccurrenceJoinState(
+    { ...occurrence, endsAt: roomEndsAt },
+    {
+      joinWindowMs:
+        args.role === "host"
+          ? CONSULTANT_JOIN_WINDOW_MS
+          : CONSULTEE_JOIN_WINDOW_MS,
+      rejoinGraceMs: 0,
+      now,
+    },
+  );
+
+  if (state === "disabled") {
+    return {
+      message: occurrence.isTentative
+        ? "This session is not confirmed yet."
+        : "This session is no longer available.",
+    };
+  }
+  // A room whose end a join can neither continue nor rebuild is closed to everyone.
+  if (endBlocksRejoin(occurrence.meeting)) {
+    return { message: "This session has ended.", code: "SESSION_ENDED" };
+  }
 
   switch (state) {
-    case "disabled":
-      return {
-        message: occurrence.isTentative
-          ? "This session is not confirmed yet."
-          : "This session is no longer available.",
-      };
     case "countdown":
       return {
         message: `Join opens ${
@@ -225,14 +246,7 @@ export async function meetingPolicyRefusal(args: {
         code: "TOO_EARLY",
       };
     case "ended": {
-      if (isDeliberateEnd(occurrence.meeting)) {
-        return { message: "This session has ended.", code: "SESSION_ENDED" };
-      }
-
-      if (
-        occurrence.endsAt &&
-        now.getTime() <= new Date(occurrence.endsAt).getTime() + REJOIN_GRACE_MS
-      )
+      if (roomEndsAt && now.getTime() <= roomEndsAt.getTime() + REJOIN_GRACE_MS)
         return null;
 
       if (await callHasLiveParticipants(args.streamCallId)) return null;
@@ -284,8 +298,14 @@ export async function resolveMeetingAccess(
     select: { consultantProfileId: true },
   });
 
+  // A group-event room opens on the seat alone, so it needs a fulfilled entitlement
+  // (`paidParticipant`); a 1:1 is also gated by its own booking status.
+  const isGroupEvent = Boolean(appointment.webinar || appointment.class);
   const seat = await prisma.appointmentParticipant.findFirst({
-    where: { appointmentId: appointment.id, ...liveParticipant(userId) },
+    where: {
+      appointmentId: appointment.id,
+      ...(isGroupEvent ? paidParticipant(userId) : liveParticipant(userId)),
+    },
     select: { id: true },
   });
   const isParticipant = seat !== null;
@@ -346,6 +366,7 @@ export async function resolveMeetingAccess(
           id: meeting.id,
           endedAt: meeting.endedAt,
           endedReason: meeting.endedReason,
+          extendedSeconds: meeting.extendedSeconds,
         },
       },
       role,
@@ -356,15 +377,13 @@ export async function resolveMeetingAccess(
       const occEnd = meeting.occurrence.endsAt
         ? new Date(meeting.occurrence.endsAt)
         : new Date(occStart.getTime() + 60 * 60 * 1000);
+      const roomEndsAt = resolveRoomEndsAt(occEnd, meeting.extendedSeconds);
       const canReopen =
         role === "host" &&
         refusal.code === "SESSION_ENDED" &&
-        isDeliberateEnd({
-          endedAt: meeting.endedAt,
-          endedReason: meeting.endedReason,
-        }) &&
+        endAllowsHostReopen(meeting) &&
         !isDeadOccurrence(meeting.occurrence) &&
-        Date.now() <= occEnd.getTime() + REJOIN_GRACE_MS;
+        Date.now() <= roomEndsAt.getTime() + REJOIN_GRACE_MS;
 
       return {
         hasAccess: false,

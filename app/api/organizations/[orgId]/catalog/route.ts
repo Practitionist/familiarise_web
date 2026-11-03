@@ -20,8 +20,13 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { planLevelSchema, planPositioningShape } from "@/schemas/plans";
+import {
+  maxParticipantsSchema,
+  planLevelSchema,
+  planPositioningShape,
+} from "@/schemas/plans";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import { planTotalSessions } from "@/lib/booking/entitlement";
 
 const PlanKindSchema = z.enum(["WEBINAR", "CLASS"]);
 
@@ -41,7 +46,7 @@ const BaseCreateSchema = z.object({
   // can deliver is not bookable, so the endpoint requires it.
   consultantProfileId: z.string().min(1),
   visibility: VisibilitySchema.default("ORG_AND_PUBLIC"),
-  maxParticipants: z.number().int().positive().optional(),
+  maxParticipants: maxParticipantsSchema.optional(),
   language: z.string().default("English"),
   level: planLevelSchema,
   certificateProvided: z.boolean().default(false),
@@ -197,15 +202,9 @@ export async function POST(
                 durationInMonths: body.durationInMonths,
                 sessionsPerWeek: body.sessionsPerWeek,
                 sessionDurationInHours: body.sessionDurationInHours,
-                // Kept consistent with the schema's own derivation note
-                // (sessionsPerWeek × durationInMonths × 4) so the stored
-                // totals never disagree with the grid that produced them.
-                totalSessions: body.sessionsPerWeek * body.durationInMonths * 4,
+                totalSessions: planTotalSessions(body),
                 totalHours:
-                  body.sessionsPerWeek *
-                  body.durationInMonths *
-                  4 *
-                  body.sessionDurationInHours,
+                  planTotalSessions(body) * body.sessionDurationInHours,
                 maxParticipants: body.maxParticipants ?? 30,
               },
             });

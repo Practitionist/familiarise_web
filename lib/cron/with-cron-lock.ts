@@ -1,33 +1,36 @@
-import * as Sentry from "@sentry/nextjs";
+import { randomUUID } from "node:crypto";
+import * as Sentry from "@sentry/core";
+import { z } from "zod";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
 } from "@/lib/cron/cron-lock-errors";
 import { isPoolExhaustion, isUniqueViolation } from "@/lib/db/pg-errors";
+import { jobOutcome } from "@/lib/cron/job-outcome";
+import {
+  currentRun,
+  noteCounter,
+  noteRunFinished,
+  noteRunId,
+  schedulerTrigger,
+} from "@/lib/cron/run-context";
+import {
+  checkpointOf,
+  jobEnvironment,
+  runOutcomeOfJob,
+  statusOfOutcome,
+  type RunOutcome,
+} from "@/lib/cron/run-outcome";
+import { onNetlify } from "@/lib/runtime-host";
+import { mayWriteProductionState } from "@/lib/production-state";
 
-/**
- * #476 / #1915 — distributed mutual exclusion for cron job entries backed by a
- * Postgres lease on `SystemJobExecution`.
- *
- * Schedule overlap, workflow_dispatch re-runs, and the GH-Actions + CRON_SECRET
- * HTTP double entry can all run the same job twice; jobs whose side effects are
- * only partially idempotent (dunning emails, notify fan-outs) must not
- * double-run.
- *
- * A job holds the lease while a `SystemJobExecution` row with
- * `jobName, status = "RUNNING", startedAt > now - ttlMs` exists, enforced at
- * the database level by `SystemJobExecution_running_jobName_key`
- * (`prisma/sql/check-constraints.sql`).
- */
+// Postgres leases prevent overlap; each worker must independently tolerate replay.
 
 export { CronLockHeldError, CronLockUnavailableError };
 
 const DEFAULT_TTL_MS = 15 * 60 * 1000; // workflows set timeout-minutes: 10
 /** Payout/reconcile family runs up to 30 min (ADR 05) — lock must outlive it. */
 export const LONG_JOB_TTL_MS = 35 * 60 * 1000;
-
-/** Test-only: retained for call-site compatibility. */
-export function resetCronHealthCacheForTesting(): void {}
 
 export interface CronLockOpts {
   ttlMs?: number;
@@ -46,49 +49,14 @@ const ERROR_LOG_MAX_CHARS = 8_000;
 
 const LEASE_EXPIRED_SWEEP_MESSAGE = "Lease expired (stale RUNNING row swept)";
 
-type SystemJobExecutionDelegate = {
-  findFirst?: (args: {
-    where: {
-      jobName: string;
-      status: "RUNNING";
-      startedAt: { gt: Date };
-    };
-    select: { id: true };
-  }) => Promise<{ id: string } | null>;
-  create?: (args: {
-    data: {
-      jobId: string;
-      jobName: string;
-      status: "RUNNING";
-      triggeredBy: string;
-    };
-    select: { id: true };
-  }) => Promise<{ id: string } | null>;
-  update?: (args: {
-    where: { id: string };
-    data: {
-      status?: "RUNNING" | "COMPLETED" | "FAILED";
-      startedAt?: Date;
-      endedAt?: Date;
-      durationMs?: number;
-      errorLog?: string;
-    };
-  }) => Promise<unknown>;
-  updateMany?: (args: {
-    where: {
-      id?: string;
-      jobName?: string;
-      status: "RUNNING";
-      startedAt?: { lte: Date };
-    };
-    data: {
-      startedAt?: Date;
-      status?: "FAILED";
-      endedAt?: Date;
-      errorLog?: string;
-    };
-  }) => Promise<{ count: number }>;
-};
+const runEnvironmentSchema = z.object({ environment: z.string() });
+
+/** `/api/health` reads it as production's dead-man signal. */
+const HEARTBEAT_KEY = "cron:heartbeat:last";
+
+type SystemJobExecutionDelegate = Awaited<
+  ReturnType<typeof getExecutionDelegate>
+>;
 
 const PRISMA_CONNECTION_ERROR_CODES = new Set([
   "P1001",
@@ -98,7 +66,7 @@ const PRISMA_CONNECTION_ERROR_CODES = new Set([
   "P2024",
 ]);
 
-function isDbConnectionOrPoolError(error: unknown): boolean {
+export function isDbConnectionOrPoolError(error: unknown): boolean {
   if (isPoolExhaustion(error)) return true;
   if (!error || typeof error !== "object") return false;
   const code = (error as { code?: unknown }).code;
@@ -114,49 +82,75 @@ function isDbConnectionOrPoolError(error: unknown): boolean {
   );
 }
 
-async function getExecutionDelegate(): Promise<SystemJobExecutionDelegate | null> {
-  try {
-    const mod = await import("@/lib/prisma");
-    const prisma = mod.default as unknown as
-      { systemJobExecution?: SystemJobExecutionDelegate } | undefined;
-    return prisma?.systemJobExecution ?? null;
-  } catch {
-    return null;
+/** The same fault, raised by Prisma itself, so a vendor timeout in a mixed path is not mistaken for one. */
+export function isPrismaConnectionOrPoolError(error: unknown): boolean {
+  if (!isDbConnectionOrPoolError(error) || typeof error !== "object") {
+    return false;
   }
+  const { code, name } = error as { code?: unknown; name?: unknown };
+  if (typeof code === "string" && PRISMA_CONNECTION_ERROR_CODES.has(code)) {
+    return true;
+  }
+  return (
+    typeof name === "string" &&
+    (name.startsWith("PrismaClient") || name === "DriverAdapterError")
+  );
+}
+
+async function getExecutionDelegate() {
+  const { default: prisma } = await import("@/lib/prisma");
+  return prisma.systemJobExecution;
 }
 
 async function touchRedisHeartbeat(): Promise<void> {
+  if (!mayWriteProductionState(HEARTBEAT_KEY)) return;
   try {
-    const mod = await import("@/lib/redis");
-    const redis = mod.default as
-      { set?: (key: string, value: string) => Promise<unknown> } | undefined;
-    if (redis && typeof redis.set === "function") {
-      await Promise.resolve(
-        redis.set("cron:heartbeat:last", new Date().toISOString()),
-      ).catch(() => {});
-    }
+    const { default: redis } = await import("@/lib/redis");
+    await redis.set(HEARTBEAT_KEY, new Date().toISOString());
   } catch {
-    // Non-fatal: Postgres SystemJobExecution is the authoritative trail.
+    // Execution history remains authoritative when Redis is unavailable.
   }
+}
+
+/** The checkpoint the job's latest finished run left, or null to start from the beginning. */
+export async function readJobCheckpoint(
+  jobName: string,
+): Promise<string | null> {
+  const delegate = await getExecutionDelegate();
+  const rows = await delegate.findMany({
+    where: { jobName, status: { in: ["COMPLETED", "FAILED"] } },
+    orderBy: { startedAt: "desc" },
+    take: 5,
+    select: { result: true },
+  });
+  for (const row of rows) {
+    const found = checkpointOf(row.result);
+    if (found) return found.checkpoint;
+  }
+  return null;
 }
 
 async function recordJobFinish(
   jobName: string,
-  delegate: SystemJobExecutionDelegate | null,
+  delegate: SystemJobExecutionDelegate,
   executionId: string | null,
   acquiredAtMs: number,
+  outcome: RunOutcome,
   error?: unknown,
+  checkpoint?: { checkpoint: string | null } | null,
 ): Promise<void> {
-  if (error === undefined) {
-    await touchRedisHeartbeat();
-  }
-  if (!executionId || typeof delegate?.update !== "function") return;
+  if (!executionId) return;
   try {
     const now = new Date();
-    await delegate.update({
-      where: { id: executionId },
+    const finished = await delegate.updateMany({
+      where: { id: executionId, status: "RUNNING" },
       data: {
-        status: error === undefined ? "COMPLETED" : "FAILED",
+        status: statusOfOutcome(outcome),
+        result: {
+          outcome,
+          environment: jobEnvironment(),
+          ...(checkpoint ?? {}),
+        },
         endedAt: now,
         durationMs: Math.max(0, now.getTime() - acquiredAtMs),
         errorLog:
@@ -167,9 +161,29 @@ async function recordJobFinish(
               ).slice(0, ERROR_LOG_MAX_CHARS),
       },
     });
+    if (finished.count > 0) noteRunFinished(executionId, checkpoint ?? null);
+    if (finished.count > 0 && outcome === "completed")
+      await touchRedisHeartbeat();
   } catch (err) {
     console.warn(`[${jobName}] job-trail finish write failed:`, err);
   }
+}
+
+/** Tags every Sentry event of this request with the run id; telemetry never breaks a run. */
+function tagSentryRun(executionId: string): void {
+  try {
+    Sentry.getIsolationScope().setTag("job_run_id", executionId);
+  } catch {
+    // Sentry may be uninitialised in CLI runs.
+  }
+}
+
+// Renewal refreshes a live run every ttl/3 (background functions included), so a
+// short lease only shortens how long a killed Netlify run's row blocks the next tick.
+const NETLIFY_MAX_LEASE_MS = 90_000;
+
+export function effectiveLeaseTtlMs(ttlMs: number): number {
+  return onNetlify() ? Math.min(ttlMs, NETLIFY_MAX_LEASE_MS) : ttlMs;
 }
 
 export async function withCronLock<T>(
@@ -177,64 +191,67 @@ export async function withCronLock<T>(
   opts: CronLockOpts,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
-  const delegate = await getExecutionDelegate();
-
-  // Graceful fallback when `prisma.systemJobExecution` is omitted in partial unit-test mocks.
-  if (!delegate || typeof delegate.create !== "function") {
-    return fn();
-  }
+  const ttlMs = effectiveLeaseTtlMs(opts.ttlMs ?? DEFAULT_TTL_MS);
+  let delegate: SystemJobExecutionDelegate;
 
   let executionId: string | null = null;
   try {
+    delegate = await getExecutionDelegate();
     const now = new Date();
     const cutoff = new Date(now.getTime() - ttlMs);
+    const newId = randomUUID();
 
-    // Sweep stale RUNNING rows whose lease has expired before checking or
-    // inserting, so `SystemJobExecution_running_jobName_key` is released for
-    // crashed runs while preserving an explicit audit trail.
-    if (typeof delegate.updateMany === "function") {
-      await delegate.updateMany({
+    // `startedAt` is the last heartbeat and `createdAt` the acquisition.
+    // The partial unique index allows at most one RUNNING row per job.
+    const running = await delegate.findFirst({
+      where: { jobName, status: "RUNNING" },
+      select: { id: true, startedAt: true, createdAt: true, result: true },
+    });
+    if (running && running.startedAt > cutoff) {
+      throw new CronLockHeldError(jobName, running.id);
+    }
+    if (running) {
+      // The swept row keeps its owner's environment, not the taker's.
+      const owner = runEnvironmentSchema.safeParse(running.result);
+      const swept = await delegate.updateMany({
         where: {
-          jobName,
+          id: running.id,
           status: "RUNNING",
           startedAt: { lte: cutoff },
         },
         data: {
           status: "FAILED",
           endedAt: now,
+          durationMs: Math.max(0, now.getTime() - running.createdAt.getTime()),
           errorLog: LEASE_EXPIRED_SWEEP_MESSAGE,
+          result: {
+            outcome: "failed",
+            reason: "lease-expired",
+            ...(owner.success ? owner.data : {}),
+            takenOverBy: newId,
+          },
         },
       });
-    }
-
-    if (typeof delegate.findFirst === "function") {
-      const active = await delegate.findFirst({
-        where: {
-          jobName,
-          status: "RUNNING",
-          startedAt: { gt: cutoff },
-        },
-        select: { id: true },
-      });
-      if (active) {
-        throw new CronLockHeldError(jobName);
-      }
+      if (swept.count > 0) noteCounter("leaseTakeover");
     }
 
     const row = await delegate.create({
       data: {
+        id: newId,
         jobId: jobName,
         jobName,
         status: "RUNNING",
-        triggeredBy: process.env.GITHUB_ACTIONS ? "github-actions" : "cron",
+        triggeredBy: currentRun()?.triggeredBy ?? schedulerTrigger(),
+        result: { environment: jobEnvironment() },
       },
       select: { id: true },
     });
     if (row === null) {
       throw new CronLockHeldError(jobName);
     }
-    executionId = row?.id ?? null;
+    executionId = row.id;
+    noteRunId(row.id);
+    tagSentryRun(row.id);
   } catch (err) {
     if (err instanceof CronLockHeldError) {
       throw err;
@@ -252,30 +269,34 @@ export async function withCronLock<T>(
     return fn();
   }
 
-  // Capture original acquisition timestamp in closure memory so lease renewals
-  // advancing `startedAt` never skew the final `durationMs` calculation.
+  // Renewals advance `startedAt`, so duration is measured from this acquisition instant.
   const acquiredAtMs = Date.now();
   const renewal = startLeaseRenewal(jobName, delegate, executionId, ttlMs);
 
   try {
     const result = await fn();
-    const softFailed =
-      result !== null &&
-      typeof result === "object" &&
-      (("overallSuccess" in result &&
-        (result as { overallSuccess?: unknown }).overallSuccess === false) ||
-        ("success" in result &&
-          (result as { success?: unknown }).success === false));
+    const outcome = runOutcomeOfJob(jobOutcome(result));
     await recordJobFinish(
       jobName,
       delegate,
       executionId,
       acquiredAtMs,
-      softFailed ? new Error("Job returned success=false") : undefined,
+      outcome,
+      outcome === "failed" || outcome === "partial"
+        ? new Error(`Job returned ${outcome}`)
+        : undefined,
+      checkpointOf(result),
     );
     return result;
   } catch (err) {
-    await recordJobFinish(jobName, delegate, executionId, acquiredAtMs, err);
+    await recordJobFinish(
+      jobName,
+      delegate,
+      executionId,
+      acquiredAtMs,
+      "failed",
+      err,
+    );
     throw err;
   } finally {
     renewal.stop();
@@ -288,7 +309,7 @@ function startLeaseRenewal(
   executionId: string | null,
   ttlMs: number,
 ): { stop: () => void } {
-  if (!executionId || typeof delegate.updateMany !== "function") {
+  if (!executionId) {
     return { stop: () => {} };
   }
   let lost = false;
@@ -296,21 +317,22 @@ function startLeaseRenewal(
     async () => {
       if (lost) return;
       try {
-        const res = await delegate.updateMany!({
+        const res = await delegate.updateMany({
           where: { id: executionId, status: "RUNNING" },
           data: { startedAt: new Date() },
         });
         if (res.count === 0) {
           lost = true;
+          noteCounter("leaseLost");
           console.warn(
             `[${jobName}] cron lock renewal failed — ownership lost`,
           );
           try {
-            Sentry.logger?.warn("cron lock renewal failed — ownership lost", {
+            Sentry.logger.warn("cron lock renewal failed — ownership lost", {
               jobName,
               executionId,
             });
-            Sentry.metrics?.count("cron.lock_ownership_lost", 1, {
+            Sentry.metrics.count("cron.lock_ownership_lost", 1, {
               attributes: { job_name: jobName },
             });
           } catch {

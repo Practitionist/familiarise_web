@@ -7,7 +7,7 @@ description: Work on this repo's DPDP/consent/erasure/retention subsystem and th
 
 The index for the data-protection domain: what a person agreed to, what that
 permits, how it stops, and how it is proven to a regulator. The facts live in
-`docs/compliance/` and `docs/market-research/`; this skill holds the doctrine
+`docs/compliance/`; this skill holds the doctrine
 and the decision procedure.
 
 ## Standing instruction — India-first
@@ -79,12 +79,13 @@ different layers. Building only the legal view is the standard mistake.
 
 The intended use of this work is **another company**. So:
 
-- The portable architecture — state machines, gate, retention engine,
-  jurisdiction registry — is in `docs/market-research/04-reusable-substrate.md`.
-  A new country is a new entry in `jurisdictions/`, never a rewrite.
-- `docs/market-research/05-claims-register.md` is the pattern to extend: every
-  decision traces to a row with a source, a date checked, and a confidence
-  marker. **A decision with no row is a guess.**
+- The portable architecture is four separations (contract acceptance versus
+  data-processing consent, consent versus erasure, state versus evidence,
+  gate versus policy), a whitelist consent gate, a per-data-class retention
+  engine and a jurisdiction registry. A new country is a new entry in
+  `jurisdictions/`, never a rewrite.
+- Every decision should trace to a claim with a source, a date checked and a
+  confidence marker. **A decision with no such claim is a guess.**
 - Do not copy the India answers. Copy the questions and the sources.
 
 ## Money-adjacent consequences
@@ -100,5 +101,24 @@ obvious from the compliance side alone. `/finance` and `/enterprise` own it.
 - Statutory retention (tax, accounting) **overrides** erasure. That is not a
   failure to comply; it is the reason the retention engine records a basis
   instead of deleting.
+- Vendor-side copies are part of erasure. `scrubUser` deletes the R2 object,
+  the preview folder (clip and thumbnail), the transcript and Stream's copy of
+  the user's 1:1 recordings; the row is marked `EXPIRED` only after the vendor
+  confirms. A failed vendor delete fails the erasure and stays retryable —
+  never downgrade it to a database-only delete.
 
 For how the breach and MSME alert emails are routed and guarded, see [docs/email/README.md](../../../docs/email/README.md).
+
+## Breach deadline staging
+
+Preserve the boundary between recipient transactions and digest completion when
+refactoring `lib/compliance/databreach-deadline-alerts.ts`. Stage recipients
+sequentially with budget checks; keep email and notification obligations on the
+supplied transaction client. Aggregate errors before deciding completion, including
+an invalid officer configuration that must still allow eligible admins to stage.
+
+Retention and deadline workers preserve the original caller `startedAt` across maintenance checks, lease admission and batch slices. Check the budget after awaited selection/officer/chat work before admitting another write; timeouts leave continuation visible. Keep the existing consent-delete gate and stored retention deadlines. [Worker contracts and verification](../../../docs/maintenance/compliance-retention-workers.md) also document the ticker owner and operator recovery.
+
+## Retention windows
+
+Every log-like and audit table has a window, a legal driver and a named prune job. Read [the retention table](references/retention-windows.md) before adding or changing any of them; the same table is in `docs/compliance/02-dpdp-and-privacy.md`.

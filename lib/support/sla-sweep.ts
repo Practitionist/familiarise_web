@@ -1,6 +1,9 @@
+import type { Prisma } from "@prisma/client";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type Tx,
+  type PrismaLike,
 } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { stageBell } from "@/lib/novu/stage-bell";
@@ -15,16 +18,35 @@ import {
 } from "@/lib/observability/report";
 import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { slaStateOf } from "./sla";
-import { cascadeResolvedProblems } from "./problem-cascade";
-import { purgeExpiredSupportEvidence } from "./evidence-retention";
+import {
+  CASCADE_INCIDENT_WHERE,
+  cascadeResolvedProblems,
+  HELD_OPEN_SCAN_FACTOR,
+} from "./problem-cascade";
+import {
+  LIVE_DISPUTE_WHERE,
+  purgeEligibleWhere,
+  purgeExpiredSupportEvidence,
+} from "./evidence-retention";
+import { hasChatAccessWork, sweepSupportChatAccess } from "./chat-sweep";
+import { activeHolds, caseHoldEvents, releaseAllCaseHolds } from "./case-holds";
+import { endCaseChatAccessTx } from "./chat-access-end";
+import {
+  moneyDoorsRefusal,
+  openRecommendationTx,
+  recordLifecycleHoldReleaseTx,
+} from "./case-service";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 const ACK_WARN_MS = 2 * HOUR_MS;
 const RES_WARN_MS = 24 * HOUR_MS;
 const AUTO_CLOSE_DAYS_MS = 28 * DAY_MS;
+const AUTO_CLOSE_START_BUDGET_MS = 16_000;
+const AUTO_CLOSE_HOLD_SAMPLE_LIMIT = 10;
 const DISPUTE_HORIZON_MS = 72 * HOUR_MS;
 const DISPUTE_CRITICAL_MS = 12 * HOUR_MS;
+const DISPUTE_PAGE_WINDOW_MS = 7 * 24 * HOUR_MS;
 // Past due by more than a day, earlier sweeps already fired both windows; the bound keeps those rows from filling the batch.
 const DISPUTE_LOOKBACK_MS = DAY_MS;
 // Open disputes due within the four-day window; far above any real backlog, it only bounds the read.
@@ -33,6 +55,8 @@ const DISPUTE_WINDOW_CAP = 500;
 const PROBLEM_CASCADE_CAP = 10;
 // Each purged case is a storage round trip plus a transaction.
 const EVIDENCE_PURGE_CAP = 5;
+// Each chat-access step is a Stream round trip or a short transaction per row.
+const CHAT_ACCESS_CAP = 10;
 
 type SlaNoticeKind = "ack" | "res";
 type SlaNoticeLevel = "warn" | "breach";
@@ -75,11 +99,37 @@ export interface SupportSlaSweepResult {
   slaNoticesStaged: number;
   orgEscalationEmailsSent: number;
   autoClosedCount: number;
+  autoCloseHeldOpen: number;
+  autoCloseHolds: Array<{ caseId: string; reason: string }>;
+  autoCloseHasMore: boolean;
   incidentsCascaded: number;
+  /** Incidents left open because releasing their payout holds was refused. */
+  incidentsHeldOpen: number;
   evidenceCasesPurged: number;
   evidenceFilesDeleted: number;
+  chatAccessEnded: number;
+  chatInterventionsJoined: number;
+  chatInterventionsLeft: number;
+  /** Channels whose support lock was re-applied or cleared. */
+  chatBoundariesSynced: number;
+  chatReviewNotices: number;
   disputeNoticesStaged: number;
   errors: string[];
+}
+
+const DISPUTE_ALERT_EMAIL_TYPES = ["dispute-deadline-alert"];
+const SLA_ALERT_EMAIL_TYPES = ["support-sla-alert", "support-sla-alert-org"];
+
+// Staged alert emails (keyed by entityRef = the alert's dedupe key) outlive a bell the policy dropped.
+async function alertEmailStaged(
+  db: Pick<typeof prisma, "failedEmail">,
+  entityRef: string,
+  emailTypes: string[],
+): Promise<{ id: string } | null> {
+  return db.failedEmail.findFirst({
+    where: { entityRef, emailType: { in: emailTypes } },
+    select: { id: true },
+  });
 }
 
 function slaNoticeTransitions(
@@ -195,6 +245,67 @@ function parseStagedSlaOutboxRows(
   };
 }
 
+type SlaNotifiedIds = {
+  ackBreachIds: string[];
+  resBreachIds: string[];
+  ackWarnIds: string[];
+  resWarnIds: string[];
+};
+
+const NO_NOTIFIED_IDS: SlaNotifiedIds = {
+  ackBreachIds: [],
+  resBreachIds: [],
+  ackWarnIds: [],
+  resWarnIds: [],
+};
+
+/** Open cases inside an SLA warn or breach window, minus cases already noticed at that level. */
+function slaNoticeCaseWhere(
+  now: Date,
+  notified: SlaNotifiedIds = NO_NOTIFIED_IDS,
+): Prisma.SupportCaseWhereInput {
+  const { ackBreachIds, resBreachIds, ackWarnIds, resWarnIds } = notified;
+  const ackWarnHorizon = new Date(now.getTime() + ACK_WARN_MS);
+  const resWarnHorizon = new Date(now.getTime() + RES_WARN_MS);
+  const breachCutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  return {
+    status: { notIn: ["RESOLVED", "CLOSED"] },
+    deletedAt: null,
+    OR: [
+      {
+        acknowledgedAt: null,
+        ackDueAt: { gte: breachCutoff, lte: now },
+        ...(ackBreachIds.length > 0 ? { id: { notIn: ackBreachIds } } : {}),
+      },
+      {
+        resolvedAt: null,
+        resolutionDueAt: { gte: breachCutoff, lte: now },
+        ...(resBreachIds.length > 0 ? { id: { notIn: resBreachIds } } : {}),
+      },
+      {
+        acknowledgedAt: null,
+        ackDueAt: { gt: now, lte: ackWarnHorizon },
+        ...(ackWarnIds.length > 0 ? { id: { notIn: ackWarnIds } } : {}),
+      },
+      {
+        resolvedAt: null,
+        resolutionDueAt: { gt: now, lte: resWarnHorizon },
+        ...(resWarnIds.length > 0 ? { id: { notIn: resWarnIds } } : {}),
+      },
+      {
+        statutoryDueAt: { gte: breachCutoff, lte: now },
+        resolvedAt: null,
+        ...(resBreachIds.length ? { id: { notIn: resBreachIds } } : {}),
+      },
+      {
+        statutoryDueAt: { gt: now, lte: resWarnHorizon },
+        resolvedAt: null,
+        ...(resWarnIds.length ? { id: { notIn: resWarnIds } } : {}),
+      },
+    ],
+  };
+}
+
 async function fetchSlaSweepCandidates(
   now: Date,
   limit: number,
@@ -203,60 +314,19 @@ async function fetchSlaSweepCandidates(
   ackWarnIds: string[] = [],
   resWarnIds: string[] = [],
 ): Promise<SlaSweepCandidate[]> {
-  const ackWarnHorizon = new Date(now.getTime() + ACK_WARN_MS);
-  const resWarnHorizon = new Date(now.getTime() + RES_WARN_MS);
   const orgInclude = {
     organization: {
       select: { name: true, escalationContactEmail: true },
     },
   } as const;
 
-  const breachCutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const breachOrFilter = [
-    {
-      acknowledgedAt: null,
-      ackDueAt: { gte: breachCutoff, lte: now },
-      ...(ackBreachIds.length > 0 ? { id: { notIn: ackBreachIds } } : {}),
-    },
-    {
-      resolvedAt: null,
-      resolutionDueAt: { gte: breachCutoff, lte: now },
-      ...(resBreachIds.length > 0 ? { id: { notIn: resBreachIds } } : {}),
-    },
-  ];
-
-  const warnOrFilter = [
-    {
-      acknowledgedAt: null,
-      ackDueAt: { gt: now, lte: ackWarnHorizon },
-      ...(ackWarnIds.length > 0 ? { id: { notIn: ackWarnIds } } : {}),
-    },
-    {
-      resolvedAt: null,
-      resolutionDueAt: { gt: now, lte: resWarnHorizon },
-      ...(resWarnIds.length > 0 ? { id: { notIn: resWarnIds } } : {}),
-    },
-  ];
-
   const cases = await prisma.supportCase.findMany({
-    where: {
-      status: { notIn: ["RESOLVED", "CLOSED"] },
-      deletedAt: null,
-      OR: [
-        ...breachOrFilter,
-        ...warnOrFilter,
-        {
-          statutoryDueAt: { gte: breachCutoff, lte: now },
-          resolvedAt: null,
-          ...(resBreachIds.length ? { id: { notIn: resBreachIds } } : {}),
-        },
-        {
-          statutoryDueAt: { gt: now, lte: resWarnHorizon },
-          resolvedAt: null,
-          ...(resWarnIds.length ? { id: { notIn: resWarnIds } } : {}),
-        },
-      ],
-    },
+    where: slaNoticeCaseWhere(now, {
+      ackBreachIds,
+      resBreachIds,
+      ackWarnIds,
+      resWarnIds,
+    }),
     include: orgInclude,
     orderBy: [
       { statutoryDueAt: { sort: "asc", nulls: "last" } },
@@ -319,7 +389,7 @@ async function deliverSlaNoticeEmails(
           from: DEFAULT_FROM_ADDRESS,
           to: row.escalationContactEmail,
           subject,
-          html: `<p>${escapedSubject} for your organization's support request <strong>${escapedRef}</strong>.</p>`,
+          html: `<p>${escapedSubject} for your organization's support case <strong>${escapedRef}</strong>.</p>`,
         },
         "support-sla-alert-org",
         { entityRef: dedupeKey, budgetMs: EMAIL_BUDGET_MS.JOB },
@@ -360,6 +430,10 @@ async function processSingleSlaNotice(
   const subject = `[${label}] ${row.referenceNumber}: ${clockName} clock`;
 
   try {
+    // The email row is the durable marker when every bell is off and no outbox row exists.
+    if (await alertEmailStaged(prisma, dedupeKey, SLA_ALERT_EMAIL_TYPES)) {
+      return { staged: 0, orgEmails: 0 };
+    }
     let newlyStaged = true;
     let countedStaged = 0;
 
@@ -483,67 +557,193 @@ async function processCandidateSlaNotices(
   );
 }
 
+/** No human acts on an auto-close, so the system releases the case's payout holds and ends its chat grants without step-up. */
+async function releaseAutoClosedCaseTx(tx: Tx, caseId: string, now: Date) {
+  const note = "Released when the case was auto-closed";
+  await recordLifecycleHoldReleaseTx(tx, {
+    caseId,
+    actorId: null,
+    actorRole: "SYSTEM",
+    status: "CLOSED",
+    reason: note,
+    released: await releaseAllCaseHolds(tx, { caseId, actorId: null, note }),
+  });
+  // The chat arm later in this run clears Familiarise Support from any grant still seated.
+  await endCaseChatAccessTx(tx, {
+    caseId,
+    actorId: null,
+    reason: "CASE_RESOLVED",
+    now,
+  });
+}
+
+/**
+ * Why a case holding payouts may not auto-close yet: an undecided refund
+ * recommendation or closed money doors. The doors gate is read lazily.
+ */
+async function autoCloseRefusalTx(
+  tx: Tx,
+  caseId: string,
+  doors: () => Promise<string | null>,
+): Promise<string | null> {
+  const held = activeHolds(await caseHoldEvents(tx, [caseId]));
+  if (held.length === 0) return null;
+  if (await openRecommendationTx(tx, caseId)) return "RECOMMENDATION_OPEN";
+  return doors();
+}
+
+type AutoCloseResult = Pick<
+  SupportSlaSweepResult,
+  | "autoClosedCount"
+  | "autoCloseHeldOpen"
+  | "autoCloseHolds"
+  | "autoCloseHasMore"
+>;
+
+async function attemptAutoCloseCase(
+  c: {
+    id: string;
+    autoCloseLastAttemptAt: Date | null;
+    updatedAt: Date;
+  },
+  now: Date,
+  autoCloseCutoff: Date,
+  doors: () => Promise<string | null>,
+): Promise<number | string> {
+  // Polling progress must advance without resetting the case's business clocks.
+  const attemptedAt = new Date(
+    Math.max(Date.now(), (c.autoCloseLastAttemptAt?.getTime() ?? 0) + 1),
+  );
+  const stamped = await prisma.supportCase.updateMany({
+    where: {
+      id: c.id,
+      status: "RESOLVED",
+      resolvedAt: { lte: autoCloseCutoff },
+      deletedAt: null,
+      autoCloseLastAttemptAt: c.autoCloseLastAttemptAt,
+      updatedAt: c.updatedAt,
+    },
+    data: { autoCloseLastAttemptAt: attemptedAt, updatedAt: c.updatedAt },
+  });
+  if (stamped.count === 0) return 0;
+  return prisma.$transaction(
+    async (tx) => {
+      const refused = await autoCloseRefusalTx(tx, c.id, doors);
+      if (refused) return refused;
+      const res = await tx.supportCase.updateMany({
+        where: {
+          id: c.id,
+          status: "RESOLVED",
+          resolvedAt: { lte: autoCloseCutoff },
+          deletedAt: null,
+        },
+        data: { status: "CLOSED", closedAt: now },
+      });
+      if (res.count > 0) {
+        await tx.supportCaseEvent.create({
+          data: {
+            caseId: c.id,
+            kind: "AUTO_CLOSED",
+            fromValue: "RESOLVED",
+            toValue: "CLOSED",
+            createdAt: now,
+          },
+        });
+        await releaseAutoClosedCaseTx(tx, c.id, now);
+      }
+      return res.count;
+    },
+    {
+      maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+      timeout: ALLOCATION_TX_TIMEOUT_MS,
+    },
+  );
+}
+
+function recordAutoCloseRefusal(
+  result: AutoCloseResult,
+  caseId: string,
+  reason: string,
+  errors: string[],
+) {
+  result.autoCloseHasMore = true;
+  if (reason !== "RECOMMENDATION_OPEN" && reason !== "MAINTENANCE") {
+    errors.push(`auto-close case ${caseId}: left RESOLVED (${reason})`);
+    return;
+  }
+  result.autoCloseHeldOpen++;
+  if (result.autoCloseHolds.length < AUTO_CLOSE_HOLD_SAMPLE_LIMIT)
+    result.autoCloseHolds.push({ caseId, reason });
+}
+
+/** RESOLVED cases past the auto-close window. */
+function autoCloseWhere(now: Date): Prisma.SupportCaseWhereInput {
+  return {
+    status: "RESOLVED",
+    resolvedAt: { lte: new Date(now.getTime() - AUTO_CLOSE_DAYS_MS) },
+    deletedAt: null,
+  };
+}
+
 async function autoCloseResolvedRows(
   now: Date,
   limit: number,
   errors: string[],
-): Promise<number> {
+  startedAt: number,
+): Promise<AutoCloseResult> {
+  const result: AutoCloseResult = {
+    autoClosedCount: 0,
+    autoCloseHeldOpen: 0,
+    autoCloseHolds: [],
+    autoCloseHasMore: false,
+  };
+  const timedOut = () => Date.now() - startedAt >= AUTO_CLOSE_START_BUDGET_MS;
+  if (timedOut()) return { ...result, autoCloseHasMore: true };
   const autoCloseCutoff = new Date(now.getTime() - AUTO_CLOSE_DAYS_MS);
+  let gate: Promise<string | null> | undefined;
+  const doors = () =>
+    (gate ??= moneyDoorsRefusal().then((refusal) => refusal?.code ?? null));
+  const readCap = limit * HELD_OPEN_SCAN_FACTOR;
   const staleResolvedCases = await prisma.supportCase.findMany({
-    where: {
-      status: "RESOLVED",
-      resolvedAt: { lte: autoCloseCutoff },
-      deletedAt: null,
-    },
-    select: { id: true },
-    take: limit,
+    where: autoCloseWhere(now),
+    orderBy: [
+      { autoCloseLastAttemptAt: { sort: "asc", nulls: "first" } },
+      { resolvedAt: "asc" },
+      { id: "asc" },
+    ],
+    select: { id: true, autoCloseLastAttemptAt: true, updatedAt: true },
+    take: readCap,
   });
-
-  const caseResults = await runSequential(
-    staleResolvedCases ?? [],
-    async (c) => {
-      try {
-        return await prisma.$transaction(
-          async (tx) => {
-            const res = await tx.supportCase.updateMany({
-              where: {
-                id: c.id,
-                status: "RESOLVED",
-                resolvedAt: { lte: autoCloseCutoff },
-              },
-              data: { status: "CLOSED", closedAt: now },
-            });
-            if (res.count > 0) {
-              await tx.supportCaseEvent.create({
-                data: {
-                  caseId: c.id,
-                  kind: "AUTO_CLOSED",
-                  fromValue: "RESOLVED",
-                  toValue: "CLOSED",
-                  createdAt: now,
-                },
-              });
-            }
-            return res.count;
-          },
-          {
-            maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-            timeout: ALLOCATION_TX_TIMEOUT_MS,
-          },
-        );
-      } catch (err) {
-        errors.push(
-          `auto-close case ${c.id}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return 0;
+  let examined = 0;
+  // Each attempt commits progress before the next budget admission check.
+  for (const c of staleResolvedCases ?? []) {
+    if (result.autoClosedCount >= limit || timedOut()) break;
+    examined++;
+    try {
+      const closed = await attemptAutoCloseCase(c, now, autoCloseCutoff, doors);
+      if (typeof closed === "number") {
+        result.autoClosedCount += closed;
+        result.autoCloseHasMore ||= closed === 0;
+        continue;
       }
-    },
-  );
-
-  return caseResults.reduce((sum, n) => sum + n, 0);
+      recordAutoCloseRefusal(result, c.id, closed, errors);
+    } catch (err) {
+      result.autoCloseHasMore = true;
+      errors.push(
+        `auto-close case ${c.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  result.autoCloseHasMore ||=
+    staleResolvedCases.length === readCap ||
+    examined < staleResolvedCases.length;
+  return result;
 }
 
-/** One page per run for disputes due within 12 h or already past due; new ids re-page, repeats stay quiet for 24 h. */
+/**
+ * A money exception: one Sentry warning per run that holds a dispute not paged
+ * before. The window outlives the sweep's 36 h critical span, so each dispute pages once.
+ */
 async function pageCriticalDisputeDeadlines(
   now: Date,
   disputes: { id: string; disputeId: string; dueBy: Date | null }[],
@@ -560,12 +760,14 @@ async function pageCriticalDisputeDeadlines(
         key: "dispute-deadline:critical",
         ids: critical.map((d) => d.id),
         message,
+        windowMs: DISPUTE_PAGE_WINDOW_MS,
       },
       () =>
         reportSentryMessage(message, {
           subsystem: "payments",
           op: "dispute-deadline-critical",
-          level: "error",
+          level: "warning",
+          fingerprint: ["payments", "dispute-deadline-critical"],
           extra: {
             disputes: critical.map((d) => ({
               id: d.id,
@@ -621,13 +823,15 @@ async function stageDisputeDeadlineAlert(
 
     const txResult = await prisma.$transaction(
       async (tx) => {
-        const existing = await tx.notificationOutbox.findFirst({
-          where: {
-            workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
-            entityRef: dedupeKey,
-          },
-          select: { id: true },
-        });
+        const existing =
+          (await tx.notificationOutbox.findFirst({
+            where: {
+              workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
+              entityRef: dedupeKey,
+            },
+            select: { id: true },
+          })) ??
+          (await alertEmailStaged(tx, dedupeKey, DISPUTE_ALERT_EMAIL_TYPES));
         const rowOutbox = await stageBell(tx, {
           workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
           recipients,
@@ -682,6 +886,17 @@ async function stageDisputeDeadlineAlert(
   }
 }
 
+/** Disputes needing a response whose deadline sits inside the alert window. */
+function disputeDeadlineWhere(now: Date): Prisma.DisputeWhereInput {
+  return {
+    status: { in: ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE"] },
+    dueBy: {
+      gte: new Date(now.getTime() - DISPUTE_LOOKBACK_MS),
+      lte: new Date(now.getTime() + DISPUTE_HORIZON_MS),
+    },
+  };
+}
+
 async function processDisputeDeadlineAlerts(
   now: Date,
   limit: number,
@@ -692,13 +907,7 @@ async function processDisputeDeadlineAlerts(
   // The whole window, so the page and the unsent-pair filter see every dispute; `limit` caps only the sends.
   const actionableDisputes =
     (await prisma.dispute.findMany({
-      where: {
-        status: { in: ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE"] },
-        dueBy: {
-          gte: new Date(now.getTime() - DISPUTE_LOOKBACK_MS),
-          lte: new Date(now.getTime() + DISPUTE_HORIZON_MS),
-        },
-      },
+      where: disputeDeadlineWhere(now),
       orderBy: { dueBy: "asc" },
       take: DISPUTE_WINDOW_CAP,
     })) ?? [];
@@ -726,8 +935,20 @@ async function processDisputeDeadlineAlerts(
       })) ?? []
     ).map((r) => r.entityRef),
   );
+  const emailStaged = new Set(
+    (
+      (await prisma.failedEmail.findMany({
+        where: {
+          emailType: { in: DISPUTE_ALERT_EMAIL_TYPES },
+          entityRef: { in: pairs.map((p) => p.dedupeKey) },
+        },
+        select: { entityRef: true },
+      })) ?? []
+    ).map((r) => r.entityRef),
+  );
   const unsent = pairs
     .filter((p) => !alreadyStaged.has(p.dedupeKey))
+    .filter((p) => !emailStaged.has(p.dedupeKey))
     .slice(0, limit);
 
   const stagedFlags = await runSequential(unsent, (pair) =>
@@ -758,16 +979,105 @@ function moderationDeadlineIds(
   );
 }
 
+/** Moderation reports in their deadline window, minus reports already noticed at that level. */
+function moderationDeadlineWhere(
+  now: Date,
+  breachNoticedIds: string[] = [],
+  warnNoticedIds: string[] = [],
+): Prisma.ModerationReportWhereInput {
+  return {
+    status: { in: ["PENDING", "UNDER_REVIEW", "ESCALATED"] },
+    OR: [
+      {
+        resolutionDueAt: { gte: noticeCutoffOf(now), lte: now },
+        id: { notIn: breachNoticedIds },
+      },
+      {
+        resolutionDueAt: {
+          gt: now,
+          lte: new Date(now.getTime() + RES_WARN_MS),
+        },
+        id: { notIn: warnNoticedIds },
+      },
+    ],
+  };
+}
+
+/** Overdue, unanswered evidence requests on open cases, minus requests already noticed. */
+function overdueEvidenceWhere(
+  now: Date,
+  noticedIds: string[] = [],
+): Prisma.SupportCaseEvidenceRequestWhereInput {
+  return {
+    id: { notIn: noticedIds },
+    dueAt: { gte: noticeCutoffOf(now), lte: now },
+    respondedAt: null,
+    cancelledAt: null,
+    supportCase: { resolvedAt: null, deletedAt: null },
+  };
+}
+
+function noticeCutoffOf(now: Date): Date {
+  return new Date(now.getTime() - 30 * DAY_MS);
+}
+
+/**
+ * Ticker idle probe over every row-driven arm, with already-noticed exclusions
+ * dropped; any live dispute counts, since enough of them make the evidence purge report.
+ */
+export async function hasSupportSlaSweepWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const supportCase = await db.supportCase.findFirst({
+    where: {
+      OR: [
+        slaNoticeCaseWhere(now),
+        autoCloseWhere(now),
+        CASCADE_INCIDENT_WHERE,
+        purgeEligibleWhere(now),
+      ],
+    },
+    select: { id: true },
+  });
+  if (supportCase) return true;
+  if (outOfTime()) return true;
+  if (await hasChatAccessWork(db, now)) return true;
+  if (outOfTime()) return true;
+  const dispute = await db.dispute.findFirst({
+    where: { OR: [disputeDeadlineWhere(now), LIVE_DISPUTE_WHERE] },
+    select: { id: true },
+  });
+  if (dispute) return true;
+  if (outOfTime()) return true;
+  const report = await db.moderationReport.findFirst({
+    where: moderationDeadlineWhere(now),
+    select: { id: true },
+  });
+  if (report) return true;
+  if (outOfTime()) return true;
+  const evidence = await db.supportCaseEvidenceRequest.findFirst({
+    where: overdueEvidenceWhere(now),
+    select: { id: true },
+  });
+  return evidence !== null;
+}
+
 /**
  * Single background sweep for support SLA warnings/breaches, 28-day RESOLVED auto-close,
- * resolved-problem incident cascade, 180-day evidence purge,
+ * resolved-problem incident cascade, 180-day evidence purge, chat-access expiry,
+ * Stream join/leave retries and post-decision review notices,
  * T-72h / T-24h dispute deadlines and one page for disputes due within 12 h or past due.
  * Collects row errors and reports to Sentry at most once.
  */
 export async function runSupportSlaSweep(opts?: {
   limit?: number;
   now?: Date;
+  startedAt?: number;
 }): Promise<SupportSlaSweepResult> {
+  const startedAt = opts?.startedAt ?? Date.now();
   return withCronLock("support-sla-sweep", { failMode: "open" }, async () => {
     const now = opts?.now ?? new Date();
     const limit = opts?.limit ?? 50;
@@ -826,7 +1136,12 @@ export async function runSupportSlaSweep(opts?: {
       0,
     );
 
-    const autoClosedCount = await autoCloseResolvedRows(now, limit, errors);
+    const autoClose = await autoCloseResolvedRows(
+      now,
+      limit,
+      errors,
+      startedAt,
+    );
     const cascade = await cascadeResolvedProblems({
       limit: Math.min(limit, PROBLEM_CASCADE_CAP),
       now,
@@ -838,6 +1153,12 @@ export async function runSupportSlaSweep(opts?: {
       now,
       errors,
     });
+    const chatAccess = await sweepSupportChatAccess({
+      limit: Math.min(limit, CHAT_ACCESS_CAP),
+      now,
+      errors,
+      stagedBells,
+    });
     const admins = operators.filter((o) => o.role === "ADMIN");
     const disputeNoticesStaged = await processDisputeDeadlineAlerts(
       now,
@@ -847,7 +1168,7 @@ export async function runSupportSlaSweep(opts?: {
       stagedBells,
     );
 
-    const noticeCutoff = new Date(now.getTime() - 30 * DAY_MS);
+    const noticeCutoff = noticeCutoffOf(now);
     const moderationNotices = await prisma.notificationOutbox.findMany({
       where: {
         entityRef: { startsWith: "moderation-deadline:" },
@@ -856,22 +1177,11 @@ export async function runSupportSlaSweep(opts?: {
       select: { entityRef: true },
     });
     const pendingReports = await prisma.moderationReport.findMany({
-      where: {
-        status: { in: ["PENDING", "UNDER_REVIEW", "ESCALATED"] },
-        OR: [
-          {
-            resolutionDueAt: { gte: noticeCutoff, lte: now },
-            id: { notIn: moderationDeadlineIds(moderationNotices, "breach") },
-          },
-          {
-            resolutionDueAt: {
-              gt: now,
-              lte: new Date(now.getTime() + RES_WARN_MS),
-            },
-            id: { notIn: moderationDeadlineIds(moderationNotices, "warn") },
-          },
-        ],
-      },
+      where: moderationDeadlineWhere(
+        now,
+        moderationDeadlineIds(moderationNotices, "breach"),
+        moderationDeadlineIds(moderationNotices, "warn"),
+      ),
       orderBy: { resolutionDueAt: "asc" },
       take: limit,
       select: { id: true, assignedToId: true, resolutionDueAt: true },
@@ -920,13 +1230,7 @@ export async function runSupportSlaSweep(opts?: {
         : [],
     );
     const overdueEvidence = await prisma.supportCaseEvidenceRequest.findMany({
-      where: {
-        id: { notIn: notifiedEvidenceIds },
-        dueAt: { gte: noticeCutoff, lte: now },
-        respondedAt: null,
-        cancelledAt: null,
-        supportCase: { resolvedAt: null, deletedAt: null },
-      },
+      where: overdueEvidenceWhere(now, notifiedEvidenceIds),
       take: limit,
       orderBy: { dueAt: "asc" },
       select: { id: true, requestedById: true, caseId: true },
@@ -985,10 +1289,16 @@ export async function runSupportSlaSweep(opts?: {
       scanned: candidates.length,
       slaNoticesStaged,
       orgEscalationEmailsSent,
-      autoClosedCount,
+      ...autoClose,
       incidentsCascaded: cascade.cascaded,
+      incidentsHeldOpen: cascade.heldOpen.length,
       evidenceCasesPurged: evidencePurge.casesPurged,
       evidenceFilesDeleted: evidencePurge.filesDeleted,
+      chatAccessEnded: chatAccess.ended,
+      chatInterventionsJoined: chatAccess.joined,
+      chatInterventionsLeft: chatAccess.left,
+      chatBoundariesSynced: chatAccess.boundaries,
+      chatReviewNotices: chatAccess.notices,
       disputeNoticesStaged,
       errors,
     };

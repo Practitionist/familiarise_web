@@ -1,6 +1,6 @@
 /**
  * Test script for MockRedis implementation
- * Run with: USE_MOCK_REDIS=true npx tsx tests/typescript/redis/test-mock-redis.ts
+ * Run with: NODE_ENV=test npx tsx tests/typescript/redis/test-mock-redis.ts
  */
 
 import redis, { isMockRedis, resetRedisForTesting } from "@/lib/redis";
@@ -10,7 +10,7 @@ async function runTests() {
   console.log("Using mock Redis:", isMockRedis());
 
   if (!isMockRedis()) {
-    console.error("ERROR: Not using mock Redis! Set USE_MOCK_REDIS=true");
+    console.error("ERROR: Not using mock Redis! Set NODE_ENV=test");
     process.exit(1);
   }
 

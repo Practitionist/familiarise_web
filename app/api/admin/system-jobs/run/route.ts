@@ -1,73 +1,18 @@
 /**
- * System Jobs API - Secure Wrapper
- *
- * Provides authenticated access to system jobs for Admin users only.
- * This wrapper verifies user session server-side and calls cleanup routes internally.
- *
- * NO CRON_SECRET is exposed to the frontend.
- * Uses session-based authentication instead.
+ * POST /api/admin/system-jobs/run — the admin Run door for every registered
+ * cleanup job. It runs the registry's own handler in-process, inside an admin
+ * run context, so a manual run and a ticker run share one implementation and
+ * one execution trail. No CRON_SECRET reaches the browser. Off production the
+ * route refuses every job (409 `JOB_RUN_PRODUCTION_ONLY`); the database is shared.
+ * A `manualRun: "after"` job is persisted as an `AdminRunRequest` before its 202.
  */
 
+import { randomUUID } from "node:crypto";
+import type { AdminRunRequest } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-
-// Import job functions directly - organized by category
-// Payments
-import {
-  cleanupAbandonedPayments,
-  cleanupExpiredApprovalPendingPayments,
-} from "@/scripts/payments/cleanup-abandoned-payments";
-import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
-import { reconcileOrphanedPayments } from "@/scripts/payments/reconcile-orphaned-confirmations";
-
-// Refunds
-import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
-
-// Disputes
-import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
-
-// Earnings
-import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
-import { releaseEarningsFromHold } from "@/scripts/earnings/release-earnings";
-
-// Appointments
-import { autoCompleteAppointments } from "@/scripts/appointments/auto-complete-appointments";
-import { expireStaleRequests } from "@/scripts/appointments/expire-stale-requests";
-import { cleanupTentativeOccurrences } from "@/scripts/appointments/cleanup-tentative-occurrences";
-import { reconcileOccurrenceAvailability } from "@/scripts/appointments/reconcile-occurrence-availability";
-
-// Payouts — FIX #620: Use canonical service for batch/process (has distributed locking).
-// Keep handleStuckPayouts and reconcilePayoutStatus from scripts (no canonical lib equivalent yet).
-import {
-  createPayoutBatch as createPayoutBatchService,
-  processApprovedPayouts as processApprovedPayoutsService,
-  REQUEST_PAYOUT_RUN_BOUNDS,
-} from "@/lib/payments/payouts";
-import { handleStuckPayouts } from "@/scripts/payouts/handle-stuck-payouts";
-import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status";
-
-// Cleanup
-import { cleanupAuthTokens } from "@/lib/auth/cleanup-auth-tokens";
-import { archiveWebhookEvents } from "@/scripts/cleanup/archive-webhook-events";
-import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
-import { purgeDeletedDocuments } from "@/lib/documents/document-purge";
-
-// Alerts
-import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments";
-
-// Stream — #1270. Six scheduled Stream jobs existed and not one of them was
-// reachable from any operator surface: this map could execute twenty-five jobs
-// and the staff catalogue listed nine, and no Stream job appeared in either.
-// When recordings stop transferring or event channels stop expiring, the only
-// way to run the repair was to dispatch a GitHub workflow.
-import { performStreamUserSync } from "@/scripts/stream/stream-sync";
-import { reconcileOrphanedRecordings } from "@/scripts/stream/reconcile-orphaned-recordings";
-import { transferRecordings } from "@/lib/stream/recording-transfer-service";
-import { expireRecordings } from "@/lib/stream/recording-retention";
-import { expireEventChannels } from "@/jobs/stream/expire-event-channels";
-import { reconcileOrphanedSessions } from "@/jobs/meetings/reconcile-orphaned-sessions";
-
 import { z } from "zod";
+
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import {
@@ -77,336 +22,115 @@ import {
 import { reportSentryError } from "@/lib/observability/report";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { getMaintenanceState } from "@/lib/maintenance-edge";
-// #1599 F-P1-03 — one money list: the gate below derives from
-// FINANCIAL_JOB_NAMES instead of a second, drifting copy (11 vs 24 names).
-import { isFinancialJob } from "@/lib/maintenance-cron";
+import { FINANCIAL_JOB_NAMES } from "@/lib/cron/financial-jobs";
+import {
+  CLEANUP_JOB_BUILDERS,
+  getCleanupJobHandlers,
+} from "@/lib/cron/cleanup-registry";
+import { jobsMayRunHere } from "@/lib/cron/dispatch-refusal";
+import { runOutcomeSchema } from "@/lib/cron/run-outcome";
+import {
+  auditStatusOf,
+  manualRunRequest,
+  openAdminRunWhere,
+  runAdminRunRequest,
+  type AdminRunAuditStatus,
+} from "@/lib/cron/admin-run-requests";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { withRunContext } from "@/lib/cron/run-context";
+import { isWindowedTarget, latestWindowStart } from "@/lib/cron/schedule";
 
-// Job ID to function mapping
-type JobResult = {
-  success: boolean;
-  [key: string]: unknown;
-};
-
-type JobFunction = (actorUserId?: string) => Promise<JobResult>;
-
-const JOB_FUNCTIONS: Record<string, JobFunction> = {
-  "cleanup-abandoned-payments": async () => {
-    const result = await cleanupAbandonedPayments();
-    return {
-      success: result.success,
-      cleanedCount: result.cleanedCount,
-      errorCount: result.errorCount,
-    };
-  },
-  "cleanup-approval-payments": async () => {
-    const result = await cleanupExpiredApprovalPendingPayments();
-    return {
-      success: result.success,
-      cleanedCount: result.cleanedCount,
-      errorCount: result.errorCount,
-    };
-  },
-  "reconcile-refunds": async () => {
-    const result = await reconcilePendingRefunds();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      reconciledCount: result.reconciledCount,
-      errorCount: result.failedCount,
-    };
-  },
-  "reconcile-disputes": async () => {
-    const result = await reconcileDisputes();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      reconciledCount: result.reconciledCount,
-      urgentCount: result.urgentCount,
-      errorCount: result.errors.length,
-    };
-  },
-  "sync-payment-earnings": async () => {
-    const result = await syncPaymentEarnings();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      createdCount: result.createdCount,
-      errorCount: result.errorCount,
-    };
-  },
-  "release-earnings": async () => {
-    const result = await releaseEarningsFromHold();
-    return {
-      success: result.success,
-      releasedCount: result.releasedCount,
-      // #1471 — the same run now also releases host-org earnings.
-      organizationEarningsReleased: result.organizationEarningsReleased,
-      errorCount: result.errorCount,
-    };
-  },
-  "create-payout-batch": async (actorUserId?: string) => {
-    const run = await createPayoutBatchService(
-      undefined,
-      actorUserId ? { createdBy: actorUserId } : undefined,
-    );
-    return { success: true, ...run };
-  },
-  "process-payouts": async (actorUserId?: string) => {
-    const results = await processApprovedPayoutsService(
-      actorUserId
-        ? { ...REQUEST_PAYOUT_RUN_BOUNDS, triggeredByUserId: actorUserId }
-        : REQUEST_PAYOUT_RUN_BOUNDS,
-    );
-    const succeeded = results.filter((r) => r.success).length;
-    const failed = results.filter((r) => !r.success).length;
-    return {
-      success: failed === 0,
-      totalProcessed: results.length,
-      succeededCount: succeeded,
-      failedCount: failed,
-    };
-  },
-  // New jobs
-  "alert-orphaned-payments": async () => {
-    const result = await alertOrphanedPayments();
-    return {
-      success: result.success,
-      totalProcessed: result.totalOrphaned,
-      orphanedCount: result.totalOrphaned,
-      criticalAlerts: result.criticalCount,
-      totalAmount: result.totalAmount,
-    };
-  },
-  "reconcile-orphaned-payments": async () => {
-    const result = await reconcileOrphanedPayments();
-    return {
-      success: result.success,
-      totalProcessed: result.scanned,
-      scannedCount: result.scanned,
-      linkedCount: result.linked,
-      refundedCount: result.refunded,
-      escrowedCount: result.escrowed,
-      stillFailingCount: result.stillFailing,
-      errorCount: result.stillFailing,
-    };
-  },
-  "handle-stuck-payouts": async () => {
-    const result = await handleStuckPayouts();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      reconciledCount: result.reconciledCount,
-      retriedCount: result.retriedCount,
-      failedCount: result.failedCount,
-      errorCount: result.errors.length,
-    };
-  },
-  "auth-tokens": async () => {
-    const result = await cleanupAuthTokens();
-    return {
-      success: result.success,
-      totalProcessed: result.totalCleaned,
-      cleanedCount: result.totalCleaned,
-      verificationTokensDeleted: result.verificationTokensDeleted,
-      sessionsDeleted: result.sessionsDeleted,
-      idempotencyRecordsDeleted: result.idempotencyRecordsDeleted,
-      staleInvitationsExpired: result.staleInvitationsExpired,
-    };
-  },
-  "reconcile-payment-status": async () => {
-    const result = await reconcilePaymentStatus();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      reconciledCount: result.reconciledCount,
-      succeededCount: result.succeededCount,
-      failedCount: result.failedCount,
-      errorCount: result.errors.length,
-    };
-  },
-  "reconcile-payout-status": async () => {
-    const result = await reconcilePayoutStatus();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      reconciledCount: result.reconciledCount,
-      completedCount: result.completedCount,
-      failedCount: result.failedCount,
-      discrepanciesCount: result.discrepancies.length,
-      errorCount: result.errors.length,
-    };
-  },
-  "auto-complete-appointments": async () => {
-    const result = await autoCompleteAppointments();
-    return {
-      success: result.success,
-      webinarsCompleted: result.webinarsCompleted,
-      classesCompleted: result.classesCompleted,
-      totalProcessed: result.webinarsCompleted + result.classesCompleted,
-      errorCount: result.errors.length,
-    };
-  },
-  "expire-stale-requests": async () => {
-    const result = await expireStaleRequests();
-    return {
-      success: result.success,
-      consultationsExpired: result.consultationsExpired,
-      subscriptionsExpired: result.subscriptionsExpired,
-      paymentPendingExpired: result.paymentPendingExpired,
-      totalProcessed:
-        result.consultationsExpired +
-        result.subscriptionsExpired +
-        result.paymentPendingExpired,
-      errorCount: result.errors.length,
-    };
-  },
-  "tentative-occurrences": async () => {
-    const result = await cleanupTentativeOccurrences();
-    return {
-      success: result.success,
-      slotsReleased: result.slotsReleased,
-      appointmentsAffected: result.appointmentsAffected,
-      cleanedCount: result.slotsReleased,
-      errorCount: result.errors.length,
-    };
-  },
-  "archive-webhook-events": async () => {
-    const result = await archiveWebhookEvents();
-    return {
-      success: result.success,
-      processedEventsDeleted: result.processedEventsDeleted,
-      failedEventsDeleted: result.failedEventsDeleted,
-      totalDeleted: result.totalDeleted,
-      cleanedCount: result.totalDeleted,
-      errorCount: result.errors.length,
-    };
-  },
-  "reconcile-occurrence-availability": async () => {
-    const result = await reconcileOccurrenceAvailability();
-    return {
-      success: result.success,
-      tentativeFlagsCleared: result.tentativeFlagsCleared,
-      doubleBookingsDetected: result.doubleBookingsDetected,
-      reconciledCount: result.tentativeFlagsCleared,
-      errorCount: result.errors.length,
-    };
-  },
-  "purge-deleted-documents": async () => {
-    const result = await purgeDeletedDocuments();
-    return {
-      success: result.success,
-      tombstoned: result.tombstoned,
-      purged: result.purged,
-      cleanedCount: result.purged,
-      errorCount: result.failedStorage + result.failedRows,
-    };
-  },
-  "reconcile-document-storage": async () => {
-    const result = await reconcileDocumentStorage();
-    return {
-      success: result.success,
-      orphanedFilesFound: result.orphanedFilesFound,
-      orphanedFilesDeleted: result.orphanedFilesDeleted,
-      missingFilesFound: result.missingFilesFound,
-      cleanedCount: result.orphanedFilesDeleted,
-      errorCount: result.errors.length,
-    };
-  },
-  // Stream (#1270). Each of these delegates to the SAME core the scheduled
-  // workflow runs, so an operator-triggered run and a cron run cannot diverge.
-  "stream-sync": async () => {
-    const result = await performStreamUserSync();
-    return {
-      success: result.success,
-      totalProcessed: result.totalStreamUsersProcessed,
-      staleIdentified: result.totalStaleUsersIdentified,
-      usersDeleted: result.totalStaleUsersDeleted,
-      errorCount: result.totalFailedDeletions,
-    };
-  },
-  "transfer-recordings": async () => {
-    const result = await transferRecordings();
-    return {
-      success: result.failed === 0,
-      totalProcessed: result.processed,
-      succeededCount: result.succeeded,
-      failedCount: result.failed,
-      errorCount: result.errors.length,
-    };
-  },
-  "expire-recordings": async () => {
-    const result = await expireRecordings();
-    return {
-      success: result.success,
-      totalProcessed: result.scanned,
-      expiredCount: result.expired + result.lapsed,
-      cleanedCount: result.cleaned,
-      errorCount: result.errors.length,
-    };
-  },
-  "expire-event-channels": async () => {
-    const result = await expireEventChannels();
-    return {
-      success: result.success,
-      totalProcessed: result.frozen + result.deleted,
-      frozenCount: result.frozen,
-      deletedCount: result.deleted,
-      skippedAlreadyFrozen: result.skippedAlreadyFrozen,
-      errorCount: result.errors.length,
-    };
-  },
-  "reconcile-orphaned-sessions": async () => {
-    const result = await reconcileOrphanedSessions();
-    return {
-      success: result.success,
-      totalProcessed: result.processed,
-      reconciledCount: result.reconciled,
-      streamNotFoundCount: result.streamNotFound,
-      errorCount: result.errors,
-    };
-  },
-  "reconcile-orphaned-recordings": async () => {
-    const result = await reconcileOrphanedRecordings();
-    return {
-      success: result.success,
-      totalProcessed: result.scanned,
-      recoveredCount: result.recovered,
-      stillMissingCount: result.stillMissing,
-      unrecoverableCount: result.unrecoverable,
-      errorCount: result.errors.length,
-    };
-  },
-};
-
-/**
- * #1846 N6 — the payout jobs hold Redis resource locks and, for
- * process-payouts, make a gateway call per payout with a 30 s timeout. Run
- * inside the request they met the ~26 s edge cut: the operator saw a 504, and
- * a function killed at the Lambda limit never released its lock. These are
- * answered 202 at once and run after the response (process-payouts under
- * REQUEST_PAYOUT_RUN_BOUNDS); the outcome lands in the ops log.
- */
-const BACKGROUND_JOBS = new Set(["process-payouts", "create-payout-batch"]);
-
-/**
- * POST /api/admin/system-jobs/run
- * Run a system job by ID (requires ADMIN role)
- */
 const runJobSchema = z.object({
   jobId: z.string().min(1, "Missing or invalid jobId"),
-  // #1527 Q10 — every manual run carries a reason into the audit log.
+  // Every manual run carries a reason into the audit log.
   reason: opsReasonSchema,
+  // One per click, reused by its retries; absent from an older client, so the server mints one.
+  idempotencyKey: z.string().uuid().optional(),
 });
+
+const bodySchema = z.record(z.string(), z.unknown()).catch({});
+
+/** The window a manual run repeats: the latest due one for a windowed job, none otherwise. */
+function manualRunWindow(slug: string, now: Date): Date | null | undefined {
+  return isWindowedTarget(slug) ? latestWindowStart(slug, now) : undefined;
+}
+
+/**
+ * Persists the request and its audit row in one transaction before any dispatch.
+ * A retry of the same click returns its request in any status; otherwise the job's open request.
+ */
+async function admitRunRequest(input: {
+  job: string;
+  idempotencyKey: string;
+  actorUserId: string;
+  actorRole: string;
+  reason: string;
+  windowStart: Date | null;
+}): Promise<{ request: AdminRunRequest; created: boolean }> {
+  const id = randomUUID();
+  try {
+    const request = await prisma.$transaction(async (tx) => {
+      const row = await tx.adminRunRequest.create({
+        data: {
+          id,
+          job: input.job,
+          idempotencyKey: input.idempotencyKey,
+          requestedBy: input.actorUserId,
+          windowStart: input.windowStart,
+        },
+      });
+      await recordOpsAction(tx, {
+        id,
+        actorUserId: input.actorUserId,
+        actorRole: input.actorRole,
+        surface: "systemJobs.manage",
+        action: "system-job.run",
+        targetKind: "SystemJob",
+        targetId: input.job,
+        reason: input.reason,
+        after: { status: "REQUESTED", requestId: id },
+      });
+      return row;
+    });
+    return { request, created: true };
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    const existing =
+      (await prisma.adminRunRequest.findUnique({
+        where: {
+          job_idempotencyKey: {
+            job: input.job,
+            idempotencyKey: input.idempotencyKey,
+          },
+        },
+      })) ??
+      (await prisma.adminRunRequest.findFirst({
+        where: openAdminRunWhere(input.job),
+      }));
+    if (!existing) throw error;
+    return { request: existing, created: false };
+  }
+}
+
+/** The audit status follows the outcome the run row recorded, so a 207 with failed items is PARTIAL. */
+function runStatusOf(res: NextResponse): AdminRunAuditStatus {
+  if (res.status === 202) return "ACCEPTED";
+  const parsed = runOutcomeSchema.safeParse(res.headers.get("x-run-outcome"));
+  return auditStatusOf(parsed.success ? parsed.data : null);
+}
+
+/** Hands the recorded run outcome to the console so it can name it. */
+function outcomeHeaders(res: NextResponse): Record<string, string> {
+  const outcome = res.headers.get("x-run-outcome");
+  return outcome ? { "X-Run-Outcome": outcome } : {};
+}
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    // 1. Verify admin auth
     const auth = await requireBackofficeSurface("systemJobs.manage");
     if (auth.error) return auth.error;
-    const session = auth.session;
-    const user = session.user;
+    const user = auth.session.user;
 
-    // 2. Get job ID + reason from body
     const parsed = runJobSchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
       return NextResponse.json(
@@ -415,20 +139,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
     const { jobId, reason } = parsed.data;
+    const idempotencyKey = parsed.data.idempotencyKey ?? randomUUID();
 
-    // 4. Find and execute the job
-    const jobFunction = JOB_FUNCTIONS[jobId];
-
-    if (!jobFunction) {
+    const entry = Object.hasOwn(CLEANUP_JOB_BUILDERS, jobId)
+      ? CLEANUP_JOB_BUILDERS[jobId]
+      : undefined;
+    const handlers = entry ? getCleanupJobHandlers(jobId) : null;
+    if (!entry || !handlers) {
       return NextResponse.json(
         { error: `Unknown job ID: ${jobId}` },
         { status: 400 },
       );
     }
 
-    // 5. Check maintenance mode — block financial jobs in DEGRADED
-    const maintenanceState = await getMaintenanceState();
-    if (maintenanceState.phase === "DEGRADED" && isFinancialJob(jobId)) {
+    // Where jobs may run, checking maintenance first keeps a deferred payout run from a silent refusal;
+    // elsewhere the handler answers its 409 production-only refusal instead.
+    const mayRun = jobsMayRunHere();
+    const maintenanceState = mayRun ? await getMaintenanceState() : null;
+    if (
+      maintenanceState?.phase === "DEGRADED" &&
+      FINANCIAL_JOB_NAMES.has(handlers.job)
+    ) {
       return NextResponse.json(
         {
           error: `Job "${jobId}" is blocked during DEGRADED maintenance to protect payment integrity. End maintenance mode first.`,
@@ -437,7 +168,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         { status: 503 },
       );
     }
-    if (maintenanceState.phase === "OFFLINE") {
+    if (maintenanceState?.phase === "OFFLINE") {
       return NextResponse.json(
         {
           error: `All system jobs are blocked during OFFLINE maintenance. End maintenance mode first.`,
@@ -447,14 +178,60 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
+    const windowStart = manualRunWindow(jobId, new Date());
+    if (windowStart === null) {
+      return NextResponse.json(
+        {
+          error: `Job "${jobId}" has had no calendar window yet, so there is no slice to repeat.`,
+          code: "NO_DUE_WINDOW",
+        },
+        { status: 409 },
+      );
+    }
+
     console.log(
       `[System Jobs] ${user.name || user.email} (${user.role}) running job: ${jobId}`,
     );
 
-    // 6. Execute the job; one ops-log row per run, whatever the outcome
-    // (#1527 Q10 — the gateway-door shape of lib/backoffice/ops-action-log.ts).
-    const logRun = (status: "SUCCEEDED" | "FAILED") =>
+    // A run that outlives the edge timeout is persisted before the 202 and dispatched after it;
+    // the drain-admin-run-requests ticker job retries a dispatch that never claimed it.
+    if (entry.meta.manualRun === "after" && mayRun) {
+      const { request, created } = await admitRunRequest({
+        job: jobId,
+        idempotencyKey,
+        actorUserId: user.id,
+        actorRole: String(user.role ?? "UNKNOWN"),
+        reason,
+        windowStart: windowStart ?? null,
+      });
+      if (created) {
+        // scheduleAfter never rejects: it reports a failed dispatch, and the committed row waits for the drain.
+        void scheduleAfter(
+          () => runAdminRunRequest(request),
+          "admin.system-job.dispatch",
+        );
+      }
+      return NextResponse.json(
+        {
+          success: true,
+          accepted: true,
+          dispatched: true,
+          requestId: request.id,
+          status: request.status,
+          existing: !created,
+          message: created
+            ? "Queued. The request is recorded and its status shows under Run requests."
+            : "This run was already requested; its status shows under Run requests.",
+        },
+        { status: 202 },
+      );
+    }
+
+    // The audit row's id is fixed up front so the run's execution row can point at it.
+    const opsActionLogId = randomUUID();
+    const logRun = (status: AdminRunAuditStatus, httpStatus?: number) =>
       recordOpsAction(prisma, {
+        id: opsActionLogId,
         actorUserId: user.id,
         actorRole: String(user.role ?? "UNKNOWN"),
         surface: "systemJobs.manage",
@@ -462,62 +239,44 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         targetKind: "SystemJob",
         targetId: jobId,
         reason,
-        after: { status },
+        after: httpStatus === undefined ? { status } : { status, httpStatus },
       }).catch((logErr: unknown) =>
         reportSentryError(logErr, { subsystem: "admin", op: "ops-log" }),
       );
-    if (BACKGROUND_JOBS.has(jobId)) {
-      scheduleAfter(async () => {
-        try {
-          const outcome = await jobFunction(user.id);
-          await logRun(outcome.success ? "SUCCEEDED" : "FAILED");
-        } catch (err) {
-          await logRun("FAILED");
-          reportSentryError(err, {
-            subsystem: "admin",
-            op: "system-job",
-            extra: { jobId },
-          });
-        }
-      }, "admin.system-job.dispatch");
-      return NextResponse.json(
-        {
-          success: true,
-          dispatched: true,
-          message:
-            "Started in the background. The outcome is recorded in the ops log.",
-        },
-        { status: 202 },
+    const run = () =>
+      withRunContext({ triggeredBy: `admin:${user.id}`, opsActionLogId }, () =>
+        handlers.invoke(manualRunRequest(jobId, windowStart ?? null)),
       );
-    }
 
-    let result: JobResult;
+    let res: NextResponse;
     try {
-      result = await jobFunction(user.id);
+      res = await run();
     } catch (err) {
       await logRun("FAILED");
       throw err;
     }
-    await logRun(result.success ? "SUCCEEDED" : "FAILED");
-
-    console.log(`[System Jobs] Job ${jobId} completed:`, {
-      success: result.success,
-      user: user.email,
+    await logRun(runStatusOf(res), res.status);
+    const body = bodySchema.parse(await res.json().catch(() => ({})));
+    if (res.status === 202) {
+      return NextResponse.json(
+        {
+          ...body,
+          dispatched: true,
+          message:
+            "Queued for processing. Check execution history for completion.",
+        },
+        { status: 202, headers: outcomeHeaders(res) },
+      );
+    }
+    return NextResponse.json(body, {
+      status: res.status,
+      headers: outcomeHeaders(res),
     });
-
-    return NextResponse.json(result);
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
+    const runtimeError =
+      error instanceof Error ? error : new Error(String(error));
+    Sentry.captureException(runtimeError, { tags: { subsystem: "admin" } });
     console.error("[System Jobs] Error running job:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to run job",
-        details: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to run job" }, { status: 500 });
   }
 }

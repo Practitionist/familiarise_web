@@ -20,6 +20,8 @@ jest.mock("@sentry/nextjs", () => ({
   captureMessage: jest.fn(),
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
+// reportSentryError and the shared loggers capture through @sentry/core; share the one mock.
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -61,6 +63,10 @@ jest.mock("../../lib/collaborators/service", () => ({
   revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
 }));
 
+jest.mock("../../lib/stream/access-revocation", () => ({
+  redriveAccessRevocation: jest.fn(async () => null),
+}));
+
 jest.mock("../../lib/moderation/side-effects", () => ({
   __esModule: true,
   applyStreamEnforcement: jest.fn(async () => undefined),
@@ -73,16 +79,19 @@ import { retryModerationEnforcement } from "../../scripts/cleanup/retry-moderati
 import prisma from "../../lib/prisma";
 import { applyStreamEnforcement } from "../../lib/moderation/side-effects";
 import { revokeCollaboratorAccess } from "../../lib/collaborators/service";
+import * as Sentry from "@sentry/nextjs";
 
 const findMany = prisma.moderationAction.findMany as jest.Mock;
 const update = prisma.moderationAction.update as jest.Mock;
 const outboxFindMany = prisma.streamRevocationRetry.findMany as jest.Mock;
 const outboxUpdate = prisma.streamRevocationRetry.update as jest.Mock;
+const outboxCount = prisma.streamRevocationRetry.count as jest.Mock;
 const vendorOutboxFindMany = prisma.vendorErasureRetry.findMany as jest.Mock;
 const vendorOutboxUpdate = prisma.vendorErasureRetry.update as jest.Mock;
 const erasureRequestUpdateMany = prisma.erasureRequest.updateMany as jest.Mock;
 const findUser = prisma.user.findUnique as jest.Mock;
 const enforce = applyStreamEnforcement as jest.Mock;
+const revokeCollaboratorAccessMock = revokeCollaboratorAccess as jest.Mock;
 
 const failedBan = (overrides: Record<string, unknown> = {}) => ({
   id: "action-1",
@@ -109,6 +118,11 @@ beforeEach(() => {
   enforce.mockResolvedValue(undefined);
   outboxFindMany.mockResolvedValue([]);
   vendorOutboxFindMany.mockResolvedValue([]);
+  // `clearMocks` clears call records, not implementations, so the delegates
+  // are re-pinned here so a later case cannot inherit an override.
+  outboxCount.mockResolvedValue(0);
+  outboxUpdate.mockResolvedValue({});
+  revokeCollaboratorAccessMock.mockResolvedValue({ success: true });
 });
 
 describe("retryModerationEnforcement", () => {
@@ -273,6 +287,7 @@ describe("retryModerationEnforcement", () => {
     outboxFindMany.mockResolvedValue([
       {
         id: "retry-1",
+        kind: "ERASURE_REVOKE",
         erasureRequestId: "er-1",
         planType: "CLASS",
         planId: "cp-9",
@@ -301,6 +316,40 @@ describe("retryModerationEnforcement", () => {
     expect(result.success).toBe(true);
   });
 
+  it("re-drives a queued cancellation revocation by kind, capped by attempts", async () => {
+    const { redriveAccessRevocation } = jest.requireMock(
+      "../../lib/stream/access-revocation",
+    ) as { redriveAccessRevocation: jest.Mock };
+    findMany.mockResolvedValue([]);
+    outboxFindMany.mockResolvedValueOnce([
+      {
+        id: "retry-dm",
+        kind: "DM_REMOVE",
+        erasureRequestId: null,
+        erasureRequest: null,
+        userId: "client-1",
+        counterpartUserId: "host-1",
+        planType: null,
+        planId: "dm-client-1-host-1",
+        attempts: 0,
+        createdAt: new Date(),
+      },
+    ]);
+
+    const result = await retryModerationEnforcement();
+
+    expect(outboxFindMany.mock.calls[0][0].where.attempts).toEqual({ lt: 6 });
+    expect(redriveAccessRevocation).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "DM_REMOVE", userId: "client-1" }),
+    );
+    expect(outboxUpdate).toHaveBeenCalledWith({
+      where: { id: "retry-dm" },
+      data: { status: "SUCCEEDED", attempts: 1, completedAt: expect.any(Date) },
+    });
+    expect(result.accessRevocationsRecovered).toBe(1);
+    expect(erasureRequestUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("drains VendorErasureRetry rows and finalizes IN_PROGRESS ErasureRequest when all outbox legs succeed", async () => {
     findMany.mockResolvedValue([]);
     vendorOutboxFindMany.mockResolvedValueOnce([
@@ -327,5 +376,105 @@ describe("retryModerationEnforcement", () => {
     });
     expect(result.erasureRevocationsRecovered).toBe(1);
     expect(result.success).toBe(true);
+  });
+
+  it("never selects a Stream erasure row that already spent its attempt budget", async () => {
+    await retryModerationEnforcement();
+
+    expect(outboxFindMany.mock.calls[0][0].where).toMatchObject({
+      status: { in: ["PENDING", "FAILED"] },
+      attempts: { lt: 6 },
+    });
+    // The vendor leg already carried the cap; the two legs must agree.
+    expect(vendorOutboxFindMany.mock.calls[0][0].where).toMatchObject({
+      attempts: { lt: 6 },
+    });
+  });
+
+  it("gives up on a Stream erasure row once, reports it once and leaves it terminal", async () => {
+    findMany.mockResolvedValue([]);
+    const capped = {
+      id: "retry-1",
+      kind: "ERASURE_REVOKE",
+      userId: null,
+      counterpartUserId: null,
+      erasureRequestId: "er-1",
+      planType: "CLASS",
+      planId: "cp-9",
+      attempts: 5,
+      erasureRequest: { userId: "u-erased" },
+    };
+    // A row leaves the cohort once its budget is spent, so the mock has to
+    // honour the cap the way the database does: the write bumps the very
+    // attempts the next read filters on.
+    outboxFindMany.mockImplementation(
+      async ({ where }: { where: { attempts?: { lt?: number } } }) => {
+        const cap = where.attempts?.lt;
+        return cap === undefined || capped.attempts < cap ? [capped] : [];
+      },
+    );
+    outboxUpdate.mockImplementation(
+      async ({ data }: { data: { attempts: number } }) => {
+        capped.attempts = data.attempts;
+        return {};
+      },
+    );
+    // The row keeps failing, the way a permanently broken leg does.
+    revokeCollaboratorAccessMock.mockRejectedValue(new Error("stream down"));
+
+    const first = await retryModerationEnforcement();
+
+    expect(outboxUpdate).toHaveBeenCalledWith({
+      where: { id: "retry-1" },
+      data: {
+        status: "FAILED",
+        attempts: 6,
+        lastError: "stream down",
+        nextRetryAt: null,
+      },
+    });
+    expect(first.gaveUp).toBe(1);
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+
+    // The next tick: the row is at its budget, so it is neither re-driven nor
+    // re-reported.
+    const second = await retryModerationEnforcement();
+
+    expect(outboxUpdate).toHaveBeenCalledTimes(1);
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    expect(second.gaveUp).toBe(0);
+    expect(second.success).toBe(true);
+  });
+
+  it("keeps the erasure request open while a leg is still outstanding", async () => {
+    findMany.mockResolvedValue([]);
+    outboxFindMany.mockResolvedValue([
+      {
+        id: "retry-ok",
+        kind: "ERASURE_REVOKE",
+        userId: null,
+        counterpartUserId: null,
+        erasureRequestId: "er-1",
+        planType: "CLASS",
+        planId: "cp-1",
+        attempts: 1,
+        erasureRequest: { userId: "u-erased" },
+      },
+    ]);
+    // Another leg of this request is capped, so it is still outstanding: an
+    // unconfirmed processor copy must not be counted as a completed erasure.
+    outboxCount.mockResolvedValue(1);
+
+    await retryModerationEnforcement();
+
+    // The count that gates completion carries no attempts filter, so a capped
+    // leg is still outstanding and the request must not be completed.
+    expect(outboxCount).toHaveBeenCalledWith({
+      where: {
+        erasureRequestId: "er-1",
+        status: { in: ["PENDING", "FAILED"] },
+      },
+    });
+    expect(erasureRequestUpdateMany).not.toHaveBeenCalled();
   });
 });

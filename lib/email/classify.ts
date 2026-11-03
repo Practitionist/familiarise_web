@@ -43,6 +43,7 @@ export function isTerminalSendError(
 const CREDENTIAL_EMAIL_TYPES: ReadonlySet<string> = new Set([
   "EMAIL_VERIFICATION",
   "PASSWORD_RESET",
+  "STAFF_INVITE",
 ]);
 
 export const REDACTED_CREDENTIAL_BODY =

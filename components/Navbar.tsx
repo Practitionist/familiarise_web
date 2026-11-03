@@ -11,7 +11,6 @@ import {
   ArrowRightLeft,
   UserCheck,
   Building2,
-  FileText,
   HelpCircle,
   Info,
   Mail,
@@ -20,7 +19,11 @@ import {
   Star,
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
-import { accountSettingsHref } from "@/lib/dashboard/account-href";
+import {
+  accountBaseLinks,
+  accountFacetLinks,
+} from "@/lib/navigation/account-menu";
+import { useDashboardFacets } from "@/hooks/useDashboardFacets";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
@@ -34,6 +37,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -162,12 +167,15 @@ const EXPLORE_COLUMNS: NavColumn[] = [
 const EXPLORE_CATEGORIES: NavCategoryChip[] = [
   { label: "Technology", href: "/explore/experts?domain=Technology" },
   { label: "Business", href: "/explore/experts?domain=Business" },
-  { label: "Creative Arts", href: "/explore/experts?domain=Creative Arts" },
+  {
+    label: "Creative Arts",
+    href: `/explore/experts?domain=${encodeURIComponent("Creative Arts")}`,
+  },
   { label: "Education", href: "/explore/experts?domain=Education" },
   { label: "Health", href: "/explore/experts?domain=Health" },
   {
     label: "Personal Dev",
-    href: "/explore/experts?domain=Personal Development",
+    href: `/explore/experts?domain=${encodeURIComponent("Personal Development")}`,
   },
 ];
 
@@ -236,8 +244,6 @@ const ENTERPRISE_COLUMNS: NavColumn[] = [
   },
 ];
 
-// Community and Blog previously rendered a "Soon" pill while linking to live
-// pages — the pill told users not to bother clicking something that worked.
 const RESOURCE_COLUMNS: NavColumn[] = [
   {
     heading: "Resources",
@@ -249,21 +255,9 @@ const RESOURCE_COLUMNS: NavColumn[] = [
         icon: HelpCircle,
       },
       {
-        label: "Community",
-        href: "/explore/community",
-        description: "Connect with peers and mentors",
-        icon: Users,
-      },
-      {
-        label: "Blog",
-        href: "/blog",
-        description: "Insights, tips, and career advice",
-        icon: FileText,
-      },
-      {
         label: "About",
         href: "/about",
-        description: "Our mission and story",
+        description: "Our company and what we do",
         icon: Info,
       },
       {
@@ -525,6 +519,11 @@ const Navbar = () => {
   });
   const isAuthedView = authView.mode === "authed";
   const [isOpen, setIsOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const remoteFacets = useDashboardFacets(
+    session?.user,
+    accountMenuOpen || isOpen,
+  );
   const [isScrolled, setIsScrolled] = useState(false);
   const { currency, symbol, setCurrency, isEstimate } = useCurrency();
   const { isVisible: isAnnouncementVisible } = useAnnouncementBar();
@@ -549,6 +548,12 @@ const Navbar = () => {
     await signOutEverywhere("/auth/signin");
     closeMenu();
   };
+
+  const { links: facetLinks, loading: facetsLoading } = accountFacetLinks(
+    session?.user ?? {},
+    remoteFacets,
+  );
+  const baseLinks = accountBaseLinks(session?.user ?? {});
 
   const getUserImage = () => {
     return authView.image && authView.image !== ""
@@ -686,30 +691,58 @@ const Navbar = () => {
                   <Skeleton className="h-9 w-28 rounded-md" />
                 </div>
               ) : isAuthedView ? (
-                <div className="flex items-center gap-3">
-                  {/* #1527 — straight to the viewer's Settings › Account;
-                      /profile would only 308 there. */}
-                  <Link
-                    href={
-                      accountSettingsHref(session?.user ?? {}) ?? "/profile"
-                    }
-                    aria-label="Account settings"
-                  >
-                    <Avatar className="h-9 w-9 border-2 border-zinc-200 hover:border-zinc-400 transition-colors cursor-pointer">
-                      <AvatarImage src={getUserImage()} alt="Profile" />
-                      <AvatarFallback className="bg-zinc-900 text-white text-sm">
-                        {authView.name?.charAt(0) ?? "U"}
-                      </AvatarFallback>
-                    </Avatar>
-                  </Link>
-                  <Button
-                    variant="ghost"
-                    onClick={handleSignOut}
-                    className={`text-sm ${showDarkStyle ? "text-zinc-300 hover:text-white hover:bg-white/10" : "text-muted-foreground hover:text-foreground"}`}
-                  >
-                    Sign out
-                  </Button>
-                </div>
+                <DropdownMenu
+                  open={accountMenuOpen}
+                  onOpenChange={setAccountMenuOpen}
+                >
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="Account menu"
+                      className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <Avatar className="h-9 w-9 border-2 border-zinc-200 hover:border-zinc-400 transition-colors cursor-pointer">
+                        <AvatarImage src={getUserImage()} alt="Profile" />
+                        <AvatarFallback className="bg-zinc-900 text-white text-sm">
+                          {authView.name?.charAt(0) ?? "U"}
+                        </AvatarFallback>
+                      </Avatar>
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    {authView.name && (
+                      <>
+                        <DropdownMenuLabel className="truncate">
+                          {authView.name}
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                      </>
+                    )}
+                    {facetLinks.map((link) => (
+                      <DropdownMenuItem key={link.key} asChild>
+                        <Link href={link.href}>{link.label}</Link>
+                      </DropdownMenuItem>
+                    ))}
+                    {facetsLoading && (
+                      <output
+                        aria-label="Loading dashboards"
+                        className="block px-2 py-1.5"
+                      >
+                        <Skeleton className="h-4 w-32" />
+                      </output>
+                    )}
+                    <DropdownMenuSeparator />
+                    {baseLinks.map((link) => (
+                      <DropdownMenuItem key={link.key} asChild>
+                        <Link href={link.href}>{link.label}</Link>
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onSelect={handleSignOut}>
+                      Sign out
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               ) : (
                 <Button
                   asChild
@@ -922,7 +955,7 @@ const Navbar = () => {
                   <Skeleton className="h-4 w-32 rounded" />
                 </div>
               ) : isAuthedView ? (
-                <div className="flex items-center justify-between">
+                <div className="space-y-3">
                   <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10 border border-zinc-700">
                       <AvatarImage src={getUserImage()} alt="Profile" />
@@ -934,13 +967,35 @@ const Navbar = () => {
                       {authView.name}
                     </span>
                   </div>
-                  <Button
-                    variant="ghost"
-                    onClick={handleSignOut}
-                    className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                  >
-                    Sign out
-                  </Button>
+                  <ul aria-label="Account" className="space-y-1">
+                    {[...facetLinks, ...baseLinks].map((link) => (
+                      <li key={link.key}>
+                        <Link
+                          href={link.href}
+                          onClick={closeMenu}
+                          className="block rounded-md px-2 py-2 text-sm text-zinc-200 hover:bg-white/10"
+                        >
+                          {link.label}
+                        </Link>
+                      </li>
+                    ))}
+                    {facetsLoading && (
+                      <li className="px-2 py-2">
+                        <output aria-label="Loading dashboards">
+                          <Skeleton className="h-4 w-32" />
+                        </output>
+                      </li>
+                    )}
+                    <li>
+                      <Button
+                        variant="ghost"
+                        onClick={handleSignOut}
+                        className="h-auto w-full justify-start px-2 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                      >
+                        Sign out
+                      </Button>
+                    </li>
+                  </ul>
                 </div>
               ) : (
                 /* Mirrors the desktop bar: no marketing CTAs, sign in only. */

@@ -13,7 +13,7 @@ import {
 } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
-import { firstCycleWindow } from "@/lib/booking/entitlement";
+import { firstCycleWindow, planEndOf } from "@/lib/booking/entitlement";
 import {
   liveParticipant,
   recordParticipants,
@@ -258,6 +258,11 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
       bookingSource: "DIRECT_CHECKOUT",
       schedulingPeriodStartsAt: startDate,
       schedulingPeriodEndsAt: endDate,
+      planEndsAt: planEndOf(
+        startDate,
+        plan.durationInMonths,
+        schedulingTimezone,
+      ),
       schedulingTimezone,
       sessionsTotal: plan.totalSessions,
     },

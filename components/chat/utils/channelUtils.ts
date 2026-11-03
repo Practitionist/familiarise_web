@@ -1,6 +1,14 @@
-import type { Channel } from "stream-chat";
+import {
+  differenceInCalendarDays,
+  format,
+  isSameDay,
+  isSameYear,
+} from "date-fns";
+import type { Channel, ChannelState } from "stream-chat";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeOrgId } from "@/lib/api/scope/parse";
+import { isSupportStreamUser } from "@/lib/stream/support-user";
+import { withoutLegacyBookingCards } from "@/lib/stream/system-users";
 
 export interface ChannelDisplayInfo {
   displayName: string;
@@ -9,7 +17,27 @@ export interface ChannelDisplayInfo {
   memberCount: number;
   statusText: string;
   fullGroupName?: string; // For tooltips
+  /** Familiarise Support is currently a member of this channel. */
+  hasSupport: boolean;
 }
+
+type ChannelMembers = ChannelState["members"];
+type ChannelMember = ChannelMembers[string];
+
+const isSupportMember = (member: ChannelMember | undefined): boolean =>
+  isSupportStreamUser(member?.user?.id ?? member?.user_id);
+
+/** Support presence is read from membership only, never from channel data. */
+export const membersIncludeSupport = (
+  members: ChannelMembers | undefined | null,
+): boolean => Object.values(members ?? {}).some(isSupportMember);
+
+export const channelHasSupportMember = (channel: Channel): boolean =>
+  membersIncludeSupport(channel.state?.members);
+
+/** Members other than Familiarise Support, who joins visibly but is never a party. */
+const partyMembers = (members: ChannelMembers | undefined): ChannelMember[] =>
+  Object.values(members ?? {}).filter((member) => !isSupportMember(member));
 
 /**
  * Is this a direct message that actually has someone on the other end?
@@ -51,7 +79,7 @@ export const viewerOwnsChannel = (
 
 export const isUsableDmChannel = (channel: Channel): boolean => {
   if (channel.type !== "messaging") return true;
-  return Object.keys(channel.state?.members ?? {}).length >= 2;
+  return partyMembers(channel.state?.members).length >= 2;
 };
 
 /**
@@ -63,6 +91,7 @@ export const getChannelDisplayInfo = (
 ): ChannelDisplayInfo => {
   const isTeamChannel = channel.type === "team";
   const isDirectMessage = channel.type === "messaging";
+  const hasSupport = channelHasSupportMember(channel);
 
   if (isTeamChannel) {
     // Team channel logic
@@ -75,12 +104,13 @@ export const getChannelDisplayInfo = (
       isGroupDM: false,
       memberCount,
       statusText: `${memberCount} ${memberCount === 1 ? "member" : "members"}`,
+      hasSupport,
     };
   }
 
   if (isDirectMessage && currentUserId) {
-    // Get all members except current user
-    const otherMembers = Object.values(channel.state.members || {})
+    // Every party except the viewer; support never turns a 1:1 into a group.
+    const otherMembers = partyMembers(channel.state.members)
       .filter((member) => member.user?.id !== currentUserId)
       .map((member) => member.user)
       .filter(Boolean);
@@ -115,6 +145,7 @@ export const getChannelDisplayInfo = (
         memberCount,
         statusText: `${memberCount} members`,
         fullGroupName,
+        hasSupport,
       };
     } else if (otherMembers.length === 1) {
       // 1-on-1 DM logic
@@ -126,6 +157,7 @@ export const getChannelDisplayInfo = (
         isGroupDM: false,
         memberCount: 1,
         statusText: otherMember?.online ? "Online" : "Offline",
+        hasSupport,
       };
     }
   }
@@ -151,6 +183,7 @@ export const getChannelDisplayInfo = (
     isGroupDM: false,
     memberCount: 0,
     statusText: isOrphanedDm ? "No other participants" : "No members",
+    hasSupport,
   };
 };
 
@@ -183,6 +216,78 @@ export const getTruncatedDisplayName = (
   return displayInfo.displayName.substring(0, maxLength - 3) + "...";
 };
 
+/** When the viewer pinned this channel (ISO), or null. `overrides` holds pins changed since the list loaded. */
+export function channelPinnedAt(
+  channel: Channel,
+  overrides: Readonly<Record<string, string | null>> = {},
+): string | null {
+  if (channel.cid in overrides) return overrides[channel.cid];
+  return channel.state?.membership?.pinned_at ?? null;
+}
+
+/**
+ * Pinned channels first, the most recently pinned on top, then the rest in the
+ * order given (the list is already newest-activity first, and this is stable).
+ * Returns `channels` itself when nothing is pinned.
+ */
+export function pinnedFirst(
+  channels: Channel[],
+  overrides: Readonly<Record<string, string | null>> = {},
+): Channel[] {
+  const pinned = channels.filter((ch) => channelPinnedAt(ch, overrides));
+  if (pinned.length === 0) return channels;
+  pinned.sort(
+    (a, b) =>
+      new Date(channelPinnedAt(b, overrides)!).getTime() -
+      new Date(channelPinnedAt(a, overrides)!).getTime(),
+  );
+  return [...pinned, ...channels.filter((ch) => !pinned.includes(ch))];
+}
+
+/**
+ * The time a list row shows, in the viewer's zone: the clock time today, then
+ * "Yesterday", the weekday within the last week, then the date.
+ */
+export function formatRowTime(
+  when: Date | string,
+  now: Date = new Date(),
+): string {
+  const date = new Date(when);
+  if (isSameDay(date, now) || date > now) return format(date, "h:mm a");
+  const daysAgo = differenceInCalendarDays(now, date);
+  if (daysAgo === 1) return "Yesterday";
+  if (daysAgo < 7) return format(date, "EEE");
+  return format(date, isSameYear(date, now) ? "d MMM" : "d MMM yyyy");
+}
+
+/** Shortest term the chat search acts on, shared by the sidebar filter and the server search. */
+export const MIN_SEARCH_LENGTH = 2;
+
+/**
+ * The channels whose listed title contains `term`, case-insensitively.
+ *
+ * Matches only what the row shows (the other person's name, a group's members, an
+ * event's name), so a filtered list never contains a row that looks unrelated.
+ * Returns `channels` itself while `term` is too short to filter by.
+ */
+export function filterChannelsByTerm(
+  channels: Channel[],
+  viewerId: string | undefined,
+  term: string,
+): Channel[] {
+  const needle = term.trim().toLowerCase();
+  if (needle.length < MIN_SEARCH_LENGTH) return channels;
+  return channels.filter((channel) => {
+    const { displayName, fullGroupName } = getChannelDisplayInfo(
+      channel,
+      viewerId,
+    );
+    return `${displayName} ${fullGroupName ?? ""}`
+      .toLowerCase()
+      .includes(needle);
+  });
+}
+
 /**
  * The `?orgScope=` selection as a Stream channel filter. Stream channels
  * created by the enterprise wiring carry a `custom.organization_id`, and
@@ -201,4 +306,31 @@ export function buildOrgChannelFilter(scope: Scope): Record<string, unknown> {
   if (scope.kind === "personal") return { organization_id: { $exists: false } };
   const pinnedOrgId = scopeOrgId(scope);
   return pinnedOrgId ? { organization_id: { $eq: pinnedOrgId } } : {};
+}
+
+/** The class or webinar channel subtitle: who hosts it, how many others, and who can read it. */
+export function eventChannelSubtitle({
+  eventType,
+  hostName,
+  memberCount,
+}: {
+  eventType: "webinar" | "class";
+  hostName: string | null;
+  memberCount: number;
+}): string {
+  const noun = eventType === "class" ? "classmate" : "attendee";
+  const count = hostName ? Math.max(0, memberCount - 1) : memberCount;
+  const people = `${count} ${noun}${count === 1 ? "" : "s"}`;
+  return [
+    "group chat",
+    hostName ? `${hostName} (host) + ${people}` : people,
+    `Everyone in this ${eventType} can read this`,
+  ].join(" · ");
+}
+
+/** The latest message a channel row previews; retired booking cards never count. */
+export function lastVisibleMessage<T extends { user?: { id?: string } | null }>(
+  messages: T[],
+): T | null {
+  return withoutLegacyBookingCards(messages).at(-1) ?? null;
 }

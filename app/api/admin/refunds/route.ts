@@ -145,6 +145,7 @@ const refundDoor = withOpsAction(
           reason: `admin refund: ${body.reason}`,
           initiatedByUserId: actor.userId,
           dedupeKey,
+          settlesOwedByHand: true,
         }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
         return {
           target: refundTarget(body),

@@ -7,8 +7,8 @@ export const ERASED_SUPPORT_TEXT = "[erased]";
 
 /**
  * Support rows that a hard delete cannot remove: decisions, evidence,
- * recommendations and attachments restrict their case and author. An account
- * with any of these takes the scrub path instead.
+ * recommendations, attachments and chat-access grants restrict their case and
+ * author. An account with any of these takes the scrub path instead.
  */
 export async function supportRetainedHistoryCount(
   db: Pick<
@@ -18,10 +18,11 @@ export async function supportRetainedHistoryCount(
     | "supportCaseAttachment"
     | "supportCaseDecision"
     | "supportFinancialRecommendation"
+    | "supportCaseChatAccess"
   >,
   userId: string,
 ): Promise<number> {
-  const [cases, evidence, attachments, decisions, recommendations] =
+  const [cases, evidence, attachments, decisions, recommendations, grants] =
     await Promise.all([
       db.supportCase.count({
         where: {
@@ -32,6 +33,7 @@ export async function supportRetainedHistoryCount(
               { evidenceRequests: { some: {} } },
               { attachments: { some: {} } },
               { recommendations: { some: {} } },
+              { chatAccess: { some: {} } },
             ],
           },
         },
@@ -46,8 +48,9 @@ export async function supportRetainedHistoryCount(
       db.supportFinancialRecommendation.count({
         where: { OR: [{ proposedById: userId }, { decidedById: userId }] },
       }),
+      db.supportCaseChatAccess.count({ where: { grantedById: userId } }),
     ]);
-  return cases + evidence + attachments + decisions + recommendations;
+  return cases + evidence + attachments + decisions + recommendations + grants;
 }
 
 /**
@@ -66,7 +69,7 @@ export async function scrubSupportPiiTx(
   await tx.supportCase.updateMany({
     where: ownCases,
     data: {
-      title: "Erased support request",
+      title: "Erased support case",
       description: ERASED_SUPPORT_TEXT,
       callbackPhone: null,
       callbackWindow: null,

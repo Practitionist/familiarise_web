@@ -1,26 +1,12 @@
 # Cost rule: Actions minutes are capped, so a PR pays only for what it can break.
-# Docs-only changes skip every job (paths filter), PRs into non-release branches
-# run jest on changed files only, and the full sharded suite plus the build run
-# on pushes and on PRs into prod. New jobs must state which of these they follow.
+# Docs-only changes and draft PRs skip every job, non-release runs (PRs into dev or
+# feat/**, pushes to dev) pay setup once in one job and lint and test changed files
+# only (changed-file jest runs on pull requests only, never on pushes to dev), and
+# the cold tsc, full sharded suite and build run on PRs into prod and on pushes to
+# staging or prod. New jobs must state which of these they follow.
 
-# Bot review rounds: two, then stop.
-#
-# CodeRabbit runs on the ASSERTIVE profile and re-reviews on every push, so each
-# round of fixes produces a fresh round of comments on the diff those fixes
-# created. Round 1 clears the substantive findings; round 2 clears whatever
-# round 1 provoked. After that, answer remaining comments in the thread and
-# merge — do not push again just to silence the bot.
-#
-# The drawback, stated so nobody has to rediscover it: stopping at two means a
-# genuine finding raised in round 3 gets a reply rather than a fix in this PR.
-# That is the accepted cost. The alternative — looping until the bot is silent —
-# does not converge on an ASSERTIVE profile: it reliably finds something on any
-# new diff, and past round 2 that something is overwhelmingly refactor-for-its-
-# own-sake (cognitive-complexity thresholds, helper extraction). Each extra push
-# also resets approvals and burns a full CI cycle, so the churn is not free.
-#
-# Anything real that surfaces late belongs in a follow-up issue, where it keeps
-# its own context, instead of growing this PR's diff past what a human will read.
+# CodeRabbit reviews dev-target PRs once when ready; other bases and later rounds
+# are manual. Triage findings by risk: blocking defects must be fixed before merge.
 
 name: CI
 
@@ -51,14 +37,13 @@ on:
       - "!prompts/**"
       - "docs/enterprise/50-operations/07-required-secrets.md"
   pull_request:
-    # `feat/**` is here because a stacked train is the normal shape for large
-    # work in this repo and, without it, a sub-PR whose base is a feature branch
-    # ran NO checks at all — no tsc, no drift guard, no sidecar assertion — until
-    # the integration PR. The gap was found the hard way (#1268's stack).
+    # `feat/**` is here because a sub-PR whose base is a feature branch would
+    # otherwise run no checks until the integration PR.
     branches: [dev, staging, prod, "feat/**"]
     # labeled/unlabeled: the `db-reset` label decides which database the guards
-    # and the build run against (#1554), so toggling it must re-run the job.
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    # and the build run against, so toggling it must re-run the job.
+    # ready_for_review: draft PRs are skipped, so marking one ready starts its run.
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     # Docs-only changes skip CI; the secrets manifest is re-included because the
     # workflow hygiene guard reads it.
     paths:
@@ -70,17 +55,76 @@ on:
       - "docs/enterprise/50-operations/07-required-secrets.md"
   workflow_dispatch:
 
+# `release` = PRs into prod, pushes to staging or prod, manual runs. Every other
+# run (PRs into dev, staging or feat/**, pushes to dev) is a changed-files run.
 jobs:
-  lint:
-    name: Lint
-    timeout-minutes: 15
-    if: github.actor != 'dependabot[bot]' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+  checks:
+    name: Lint, TypeScript & guards
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false)) &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      RELEASE: ${{ github.event_name == 'workflow_dispatch' || github.base_ref == 'prod' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/staging' }}
 
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select changed files
+        # Writes NUL-delimited lists (never newline text, so any filename survives):
+        # /tmp/changed.z = existing changed files for the linters, /tmp/all.z = every
+        # touched path (deletions, type changes, both sides of renames) for the gates.
+        # Outputs `full` (config changed or no base: also lint everything) and `db`
+        # (run the database sidecar guard). Release runs always do both.
+        id: changed
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          : > /tmp/changed.z
+          : > /tmp/all.z
+          full=true
+          if [ "$RELEASE" != "true" ]; then
+            if [ "$EVENT" = pull_request ]; then base="origin/${BASE_REF}"; else base="$BEFORE"; fi
+            if [ -n "$base" ] && git cat-file -e "${base}^{commit}" 2>/dev/null; then
+              git diff -z --name-only --diff-filter=ACMR "${base}...HEAD" -- > /tmp/changed.z
+              git diff -z --name-only --no-renames "${base}...HEAD" -- > /tmp/all.z
+              full=false
+              # Config and lockfile changes alter what every file is checked against.
+              if grep -zEq '^(eslint\.config|\.prettier|package(-lock)?\.json$)' /tmp/all.z; then full=true; fi
+            fi
+          fi
+          db=true
+          if [ "$full" = false ] && ! grep -zEq '^(prisma/|scripts/ci/check-db|jest\.db\.config|__tests__/db/|\.github/workflows/ci\.yaml$)' /tmp/all.z; then db=false; fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "db=$db" >> "$GITHUB_OUTPUT"
+
+      - name: Start Postgres 17
+        # Supabase runs 17; the sidecars need 15+ (NULLS NOT DISTINCT) and btree_gist.
+        # Not a `services:` container: those pull from one registry, and ECR Public's
+        # anonymous per-IP quota fails the job ("toomanyrequests"). Same official image,
+        # tried from ECR, then Google's Docker Hub mirror, then Docker Hub. Started
+        # before the install so it initialises meanwhile.
+        if: steps.changed.outputs.db == 'true'
+        run: |
+          for img in public.ecr.aws/docker/library/postgres:17 \
+                     mirror.gcr.io/library/postgres:17 \
+                     docker.io/library/postgres:17; do
+            if docker pull -q "$img"; then IMG="$img"; break; fi
+            echo "::warning::postgres pull failed from $img, trying next mirror"
+          done
+          if [ -z "${IMG:-}" ]; then
+            echo "::error::postgres:17 unavailable from every mirror"
+            exit 1
+          fi
+          docker run -d --name pg -p 5432:5432 \
+            -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ci "$IMG"
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -91,24 +135,96 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Restore Prisma engines
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/prisma
+          key: prisma-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       - name: Generate Prisma Client
         run: npm run db:generate
 
+      - name: Wait for Postgres
+        # Over TCP on purpose: during first-boot init the entrypoint runs a
+        # socket-only temporary server, so a socket check can pass too early.
+        if: steps.changed.outputs.db == 'true'
+        run: |
+          for _ in $(seq 1 30); do
+            docker exec pg pg_isready -h 127.0.0.1 -U postgres -d ci && exit 0
+            sleep 2
+          done
+          docker logs pg
+          exit 1
+
+      - name: Push schema + sidecars
+        # Only ever the throwaway container above, and before `.env` exists, so these
+        # are the only URLs prisma.config.ts and lib/prisma.ts see. `db push` alone
+        # drops the ledger trigger and every CHECK.
+        if: steps.changed.outputs.db == 'true'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ci
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ci
+        run: |
+          node_modules/.bin/prisma db push
+          npm run db:sidecars
+
+      - name: Database sidecar guard
+        if: steps.changed.outputs.db == 'true'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ci
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ci
+        run: node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts
+
+      - name: Support transaction races on disposable Postgres
+        # __tests__/db/guard.ts refuses any DATABASE_URL other than this container.
+        if: steps.changed.outputs.db == 'true'
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ci
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ci
+        run: node_modules/.bin/jest -c jest.db.config.ts
+
+      - name: Load environment
+        # The production environment is materialised here, so only a branch
+        # inside this repository may run this job: a pull request from a fork
+        # would otherwise run untrusted test code with the production
+        # credentials in its environment. The job condition carries the same
+        # same-repo guard.
+        run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
+
       - name: Shell syntax + shellcheck
-        # #1757 — scripts/ci/notify-ops-failure.sh is the alert path for every
-        # money cron; a script that does not parse is a dead sink nobody sees.
+        # scripts/ci/notify-ops-failure.sh is the alert path for every money cron;
+        # a script that does not parse is a dead sink nobody sees.
         run: |
           for f in scripts/ci/*.sh; do bash -n "$f"; done
           shellcheck scripts/ci/*.sh
 
       - name: Prettier Check
         id: prettier
-        run: npm run format:check 2>&1 | tee /tmp/prettier.txt; exit ${PIPESTATUS[0]}
+        run: |
+          if [ "${{ steps.changed.outputs.full }}" = "true" ]; then
+            npm run format:check 2>&1 | tee /tmp/prettier.txt; exit "${PIPESTATUS[0]}"
+          else
+            xargs -0 -r node_modules/.bin/prettier --check --ignore-unknown -- < /tmp/changed.z 2>&1 | tee /tmp/prettier.txt; exit "${PIPESTATUS[0]}"
+          fi
         continue-on-error: true
 
       - name: ESLint Check
+        # Non-release runs fail on any warning in a changed file; a config change
+        # adds a full pass whose warnings in untouched files stay advisory.
+        # Release runs lint everything with warnings advisory.
         id: eslint
-        run: npx eslint . --format stylish 2>&1 | tee /tmp/eslint.txt; exit ${PIPESTATUS[0]}
+        run: |
+          rc=0
+          if [ "$RELEASE" != "true" ]; then
+            grep -zE '\.(js|jsx|mjs|cjs|ts|tsx|mts|cts)$' /tmp/changed.z > /tmp/changed-src.z || true
+            xargs -0 -r node_modules/.bin/eslint --max-warnings=0 --no-warn-ignored --format stylish -- < /tmp/changed-src.z 2>&1 | tee /tmp/eslint.txt
+            rc=${PIPESTATUS[0]}
+          fi
+          if [ "${{ steps.changed.outputs.full }}" = "true" ]; then
+            node_modules/.bin/eslint . --format stylish 2>&1 | tee -a /tmp/eslint.txt
+            [ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
+          fi
+          exit "$rc"
 
       - name: Lint Summary
         if: always()
@@ -129,59 +245,34 @@ jobs:
             echo ""
 
             if [ "${{ steps.eslint.outcome }}" = "failure" ]; then
-              echo "### ⚠️ ESLint — errors found (warnings are advisory)"
+              echo "### ⚠️ ESLint — errors found"
               echo '```'
               cat /tmp/eslint.txt | head -100
               echo '```'
             else
               echo "### ✅ ESLint — no issues"
             fi
-          } >> $GITHUB_STEP_SUMMARY
-
-  typecheck:
-    name: TypeScript & guards
-    if: >-
-      github.actor != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      ((github.event.action != 'labeled' &&
-      github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Supply-chain security audit
-        # #1885 — fail CI when any production dependency has a high or critical
-        # advisory so vulnerable transitive packages cannot ship to prod.
+        # Fail CI when any production dependency has a high or critical advisory
+        # so vulnerable transitive packages cannot ship to prod.
         run: npm audit --omit=dev --audit-level=high
-
-      - name: Load environment
-        # The production environment is materialised here, so only a branch
-        # inside this repository may run this job: a pull request from a fork
-        # would otherwise run untrusted test code with the production
-        # credentials in its environment. The job conditions carry the same
-        # same-repo guard.
-        run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
-
-      - name: Generate Prisma Client
-        run: npm run db:generate
 
       - name: Runner resources
         # Private-repo ubuntu-latest is ~2 vCPU / ~7 GB. Printed so a future
         # OOM can be read against the real ceiling instead of guessed.
         run: nproc && free -m
+
+      - name: Restore tsc incremental state
+        # Release runs stay cold: a warm tsc can mask errors.
+        if: env.RELEASE != 'true'
+        uses: actions/cache@v6
+        with:
+          path: tsconfig.tsbuildinfo
+          key: tsc-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            tsc-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
 
       - name: TypeScript Check
         # tsc's peak for this project sits at Node's RAM-derived default heap
@@ -192,9 +283,9 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Money-column guard
-        # #780 — no money column may be declared Int (int4 overflows at
-        # ₹2.14cr). BigInt columns must also be in the lib/prisma.ts
-        # boundary map; that half is enforced by the extension drift test.
+        # No money column may be declared Int (int4 overflows at ₹2.14cr).
+        # BigInt columns must also be in the lib/prisma.ts boundary map; that
+        # half is enforced by the extension drift test.
         run: npx --yes tsx@4.23.1 scripts/ci/check-money-columns.ts
 
       - name: Auth schema guard
@@ -204,14 +295,9 @@ jobs:
 
       - name: Workflow hygiene guard
         # A `${{ secrets.X }}` that doesn't exist interpolates an empty string
-        # and the job still reports success — that is how #677 PM-1 came back
-        # after being fixed in code. Static only: no network, no database.
-        #
-        # tsx is pinned at the call site (`tsx@4.23.1`). It used to be a bare
-        # `npx tsx`, which resolves whatever the registry currently serves —
-        # an unversioned package on the execution path of every money cron.
-        # Adding it as a devDependency would be better still, but it pulls in
-        # esbuild and that broke the Netlify build; see the PR discussion.
+        # and the job still reports success. Static only: no network, no
+        # database. tsx is pinned at the call site so the registry cannot
+        # change what runs on the execution path of every money cron.
         run: npx --yes tsx@4.23.1 scripts/ci/check-workflow-hygiene.ts
 
       - name: Docs drift guard (warn-only)
@@ -220,47 +306,12 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx scripts/ci/check-docs-drift.ts
 
-  # Pull requests into non-release branches: only tests related to the diff.
-  unit-tests-changed:
-    name: Unit tests (changed files)
-    if: >-
-      github.actor != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      github.event_name == 'pull_request' &&
-      github.base_ref != 'prod' &&
-      ((github.event.action != 'labeled' &&
-      github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Load environment
-        # The production environment is materialised here, so only a branch
-        # inside this repository may run this job: a pull request from a fork
-        # would otherwise run untrusted test code with the production
-        # credentials in its environment. The job conditions carry the same
-        # same-repo guard.
-        run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
-
-      - name: Generate Prisma Client
-        run: npm run db:generate
-
       - name: Unit Tests (changed since base)
+        # Release runs use the sharded full suite below. Inputs outside Jest's
+        # import graph (schema, config, lockfile) run the full suite here.
+        if: env.RELEASE != 'true' && github.event_name == 'pull_request'
         env:
           BASE_REF: ${{ github.base_ref }}
-        # Inputs outside Jest's import graph (schema, config, lockfile) run the full suite.
         run: |
           if git diff --name-only "origin/${BASE_REF}...HEAD" | grep -Eq '^(prisma/|jest\.|package(-lock)?\.json$|tsconfig)'; then
             npx jest --coverage=false
@@ -268,15 +319,14 @@ jobs:
             npx jest --changedSince="origin/${BASE_REF}" --passWithNoTests --coverage=false
           fi
 
-  # Pushes and pull requests into prod: the full suite, sharded.
+  # Release runs only (PRs into prod, pushes to staging or prod): the full suite, sharded.
   unit-tests:
     name: Unit tests (${{ matrix.shard }})
     if: >-
       github.actor != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      (github.event_name != 'pull_request' || github.base_ref == 'prod') &&
-      ((github.event.action != 'labeled' &&
-      github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+      (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false)) &&
+      (github.event_name == 'workflow_dispatch' || github.base_ref == 'prod' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/staging') &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -284,13 +334,9 @@ jobs:
       matrix:
         shard: ["1/2", "2/2"]
     # No redis service: nothing in the app speaks TCP redis (it uses Upstash
-    # over REST, and tests mock it). The old container was dead weight whose
-    # anonymous ECR Public pull failed jobs with "toomanyrequests: Data limit
-    # exceeded" before a single test ran.
+    # over REST, and tests mock it).
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -301,12 +347,14 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
+      - name: Restore Prisma engines
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/prisma
+          key: prisma-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       - name: Load environment
-        # The production environment is materialised here, so only a branch
-        # inside this repository may run this job: a pull request from a fork
-        # would otherwise run untrusted test code with the production
-        # credentials in its environment. The job conditions carry the same
-        # same-repo guard.
+        # Same-repo only: see the note on the `checks` job.
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
       - name: Generate Prisma Client
@@ -315,24 +363,18 @@ jobs:
       - name: Unit Tests
         run: npx jest --shard=${{ matrix.shard }} --coverage=false
 
+  # Release runs only; non-release PRs are built by the Netlify deploy preview.
   build:
     name: Build
-    # PRs are built by the Netlify deploy preview (the build gate); CI builds pushes and release PRs.
     if: >-
       github.actor != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      (github.event_name != 'pull_request' || github.base_ref == 'prod') &&
-      ((github.event.action != 'labeled' &&
-      github.event.action != 'unlabeled') || github.event.label.name == 'db-reset') &&
-      ((github.event.action != 'labeled' &&
-      github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+      (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false)) &&
+      (github.event_name == 'workflow_dispatch' || github.base_ref == 'prod' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/staging') &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    # No redis service — see the note on unit-tests.
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -344,11 +386,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Load environment
-        # The production environment is materialised here, so only a branch
-        # inside this repository may run this job: a pull request from a fork
-        # would otherwise run untrusted test code with the production
-        # credentials in its environment. The job conditions carry the same
-        # same-repo guard.
+        # Same-repo only: see the note on the `checks` job.
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
       - name: Runner resources
@@ -363,108 +401,35 @@ jobs:
             next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
 
       - name: Build
-        # Raise the V8 heap so `next build` does not flaky-OOM on the runner. It
-        # was 6144, which on a ~7 GB VM left the OS nothing: the runner itself
-        # was killed ("received a shutdown signal") at "Linting and checking
-        # validity of types". CI_LEAN_BUILD (next.config.mjs) drops that phase —
-        # the TypeScript & guards and Lint jobs already cover it — plus Sentry
-        # source maps / release, so the build fits in 5 GB with room to spare.
+        # Raise the V8 heap so `next build` does not flaky-OOM on the runner; a
+        # 6144 heap left the OS nothing on a ~7 GB VM. CI_LEAN_BUILD
+        # (next.config.mjs) drops the type-check phase (the `checks` job covers
+        # it) plus Sentry source maps / release, so the build fits in 5 GB.
         run: npm run build
         env:
           NODE_OPTIONS: --max-old-space-size=5120
           CI_LEAN_BUILD: "true"
 
+  # The one required check: passes only when every job that applies to this run passed.
+  # Skipped (reported as passing) where its inputs skip for Dependabot, except on release runs, which fail closed.
   test-and-build:
     name: TypeScript, Tests & Build
-    needs: [typecheck, unit-tests, unit-tests-changed, build]
-    if: always() && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+    needs: [checks, unit-tests, build]
+    if: >-
+      always() &&
+      (github.actor != 'dependabot[bot]' || github.event_name == 'workflow_dispatch' || github.base_ref == 'prod' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/staging') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: All of typecheck, unit tests and build passed
+      - name: All applicable jobs passed
         run: |
-          test "${{ needs.typecheck.result }}" = success
-          full="${{ needs.unit-tests.result }}"; changed="${{ needs.unit-tests-changed.result }}"
-          { test "$full" = success && test "$changed" = skipped; } \
-            || { test "$changed" = success && test "$full" = skipped; }
-          test "${{ needs.build.result }}" = success \
-            || { test "${{ github.event_name }}" = pull_request \
-              && test "${{ github.base_ref }}" != prod \
-              && test "${{ needs.build.result }}" = skipped; }
-
-  # Hermetic: applies this branch's schema + SQL sidecars to a throwaway Postgres
-  # and asserts them, so red means the branch is broken, never the shared DB.
-  db-guards:
-    name: Database sidecar guard
-    if: ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-
-    # No .env exists here, so these are the only URLs prisma.config.ts and lib/prisma.ts see.
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ci
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ci
-
-    steps:
-      # Supabase runs 17; the sidecars need 15+ (NULLS NOT DISTINCT) and btree_gist.
-      # Not a `services:` container: those pull from exactly one registry, and
-      # ECR Public's anonymous per-IP quota on shared runners fails the job
-      # outright ("toomanyrequests: Data limit exceeded"). Same official image,
-      # tried from ECR, then Google's Docker Hub mirror, then Docker Hub.
-      # Started first so it initialises while dependencies install.
-      - name: Start Postgres 17
-        run: |
-          for img in public.ecr.aws/docker/library/postgres:17 \
-                     mirror.gcr.io/library/postgres:17 \
-                     docker.io/library/postgres:17; do
-            if docker pull -q "$img"; then IMG="$img"; break; fi
-            echo "::warning::postgres pull failed from $img, trying next mirror"
-          done
-          if [ -z "${IMG:-}" ]; then
-            echo "::error::postgres:17 unavailable from every mirror"
-            exit 1
+          test "${{ needs.checks.result }}" = success
+          if [ "${{ github.event_name == 'workflow_dispatch' || github.base_ref == 'prod' || github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/staging' }}" = true ]; then
+            test "${{ needs.unit-tests.result }}" = success
+            test "${{ needs.build.result }}" = success
+          else
+            test "${{ needs.unit-tests.result }}" = skipped
+            test "${{ needs.build.result }}" = skipped
           fi
-          docker run -d --name pg -p 5432:5432 \
-            -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ci "$IMG"
-
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Generate Prisma Client
-        run: npm run db:generate
-
-      - name: Wait for Postgres
-        # Over TCP on purpose: during first-boot init the entrypoint runs a
-        # socket-only temporary server, so a socket check can pass too early.
-        run: |
-          for _ in $(seq 1 30); do
-            docker exec pg pg_isready -h 127.0.0.1 -U postgres -d ci && exit 0
-            sleep 2
-          done
-          docker logs pg
-          exit 1
-
-      - name: Push schema + sidecars
-        # Only ever the throwaway container above; `db push` alone drops the ledger trigger and every CHECK.
-        run: |
-          node_modules/.bin/prisma db push
-          npm run db:sidecars
-
-      - name: Database sidecar guard
-        run: node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts
-
-      - name: Support transaction races on disposable Postgres
-        # Only ever the throwaway container above; __tests__/db/guard.ts refuses any other DATABASE_URL.
-        run: node_modules/.bin/jest -c jest.db.config.ts

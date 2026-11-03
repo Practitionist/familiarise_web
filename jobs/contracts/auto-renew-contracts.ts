@@ -25,10 +25,11 @@
  */
 
 import prisma from "@/lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import * as Sentry from "@sentry/nextjs";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -124,6 +125,30 @@ async function notifyAutoRenewedContract(
   }
 }
 
+/** Contracts due for renewal by `asOf`; shared by the run and the ticker's idle probe. */
+function renewalDueWhere(asOf: Date): Prisma.ContractWhereInput {
+  return {
+    status: "ACTIVE",
+    autoRenew: true,
+    autoRenewedAt: null,
+    effectiveTo: { lte: asOf, not: null },
+  };
+}
+
+/** Ticker idle probe: the cohort at `now` covers any window start at or before it. */
+export async function hasAutoRenewContractsWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  if (outOfTime()) return true;
+  const row = await db.contract.findFirst({
+    where: renewalDueWhere(now),
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 // fail-closed: renewal mints the next contract period the checkout sponsorship resolver reads.
 export async function runAutoRenewContracts(opts: {
   limit?: number;
@@ -139,17 +164,13 @@ async function autoRenewContracts(opts: {
   limit?: number;
   windowStart?: Date;
 }): Promise<RenewStats> {
+  const failures = createRunFailureReporter("jobs");
   const stats: RenewStats = { scanned: 0, renewed: 0, skipped: 0, failed: 0 };
   const now = new Date();
   const asOf = opts.windowStart ?? now;
 
   const due = await prisma.contract.findMany({
-    where: {
-      status: "ACTIVE",
-      autoRenew: true,
-      autoRenewedAt: null,
-      effectiveTo: { lte: asOf, not: null },
-    },
+    where: renewalDueWhere(asOf),
     orderBy: { effectiveTo: "asc" },
     take: opts.limit ?? BATCH_SIZE,
     select: {
@@ -321,13 +342,12 @@ async function autoRenewContracts(opts: {
         stats.skipped += 1;
         continue;
       }
-      Sentry.captureException(err, {
-        tags: { subsystem: "jobs", job: "auto-renew-contracts" },
-      });
+      failures.add("auto-renew-contracts", err, { contractId: c.id });
       console.error(`[auto-renew-contracts] Failed for contract ${c.id}:`, err);
       stats.failed += 1;
     }
   }
 
+  failures.flush();
   return stats;
 }

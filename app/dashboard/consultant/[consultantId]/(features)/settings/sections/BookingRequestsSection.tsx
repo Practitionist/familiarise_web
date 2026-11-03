@@ -7,11 +7,11 @@ import { RadioGroup, RadioGroupItem } from "components/ui/radio-group";
 import { Separator } from "components/ui/separator";
 import { Switch } from "components/ui/switch";
 import type { Dispatch, SetStateAction } from "react";
-import type { FormData } from "../settings";
+import type { BookingRequestSettings } from "../settings";
 
 interface BookingRequestsSectionProps {
-  formData: FormData;
-  setFormData: Dispatch<SetStateAction<FormData>>;
+  value: BookingRequestSettings;
+  onChange: Dispatch<SetStateAction<BookingRequestSettings>>;
 }
 
 /** The cap's accepted range; blank means no limit (#1703 D4). */
@@ -35,12 +35,12 @@ export function parseMaxOpenRequests(
 }
 
 /**
- * "Booking requests" tab of the consultant settings form (#1703 D1/D4).
- * Presentational: the three fields ride the combined settings PUT.
+ * "Booking requests" settings. Presentational: the form saves the changed
+ * fields through the booking-settings PATCH.
  */
 export function BookingRequestsSection({
-  formData,
-  setFormData,
+  value: formData,
+  onChange: setFormData,
 }: Readonly<BookingRequestsSectionProps>) {
   return (
     <div className="space-y-6">
@@ -48,7 +48,7 @@ export function BookingRequestsSection({
         <h3 className="text-lg font-semibold">Booking requests</h3>
         <p className="text-sm text-muted-foreground">
           How new bookings reach your calendar, and whether you are taking new
-          requests right now.
+          1:1 bookings right now.
         </p>
       </div>
 
@@ -101,10 +101,13 @@ export function BookingRequestsSection({
 
       <div className="flex items-center justify-between gap-4">
         <div>
-          <Label htmlFor="accepting-requests">Accepting new requests</Label>
+          <Label htmlFor="accepting-requests">
+            Taking new 1:1 bookings and trials
+          </Label>
           <p className="text-sm text-muted-foreground">
-            Turn this off to pause new requests. Requests already open are not
-            affected, and your profile stays visible.
+            Turn this off to pause new 1:1 bookings and trials (webinars and
+            classes keep selling). Requests already open are not affected, and
+            your profile stays visible.
           </p>
         </div>
         <Switch

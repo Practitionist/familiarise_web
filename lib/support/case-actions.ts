@@ -43,9 +43,11 @@ import { isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   assertBoundedRefund,
   assertNotOwnRemedy,
-  STAFF_REFUND_PER_PAYMENT_PAISE,
+  committedSupportPaiseByPayment,
   SUPPORT_REFUND_SEND_GRACE_MS,
 } from "./money-policy";
+import { STAFF_REFUND_PER_PAYMENT_PAISE } from "./staff-refund-limits";
+import { deliveringPartiesByAppointment } from "./evidence-parties";
 import {
   activeHolds,
   caseHoldEvents,
@@ -122,7 +124,12 @@ export const CaseActionRequestSchema = CaseActionSchema.superRefine(
   },
 );
 export type CaseAction = z.infer<typeof CaseActionSchema>;
-export type CaseActor = { userId: string; role: UserRole | null };
+export type CaseActor = {
+  userId: string;
+  role: UserRole | null;
+  /** Re-authenticated within the step-up window; a decision that releases payout holds needs it. */
+  freshSession?: boolean;
+};
 
 export class CaseActionError extends Error {
   constructor(
@@ -279,8 +286,9 @@ type EvidenceRecipientDb = Pick<
 >;
 
 /**
- * Current evidence parties per appointment, read in four queries for the whole
- * batch. Pure reads: pass `prisma` outside a transaction, `tx` inside one.
+ * Current evidence parties per appointment: the delivering parties plus the
+ * host organization's operators. Pure reads: pass `prisma` outside a
+ * transaction, `tx` inside one.
  */
 export async function evidenceRecipientsByAppointment(
   db: EvidenceRecipientDb,
@@ -288,61 +296,12 @@ export async function evidenceRecipientsByAppointment(
 ): Promise<Map<string, { id: string; name: string }[]>> {
   const result = new Map<string, { id: string; name: string }[]>();
   if (appointmentIds.length === 0) return result;
-  const plan = { consultantProfileId: true } as const;
-  // Only delivering collaborators answer for a session; crew seats never do.
-  const groupPlan = {
-    ...plan,
-    collaborators: {
-      where: { status: "ACCEPTED" as const, tier: "PRESENTER" as const },
-      select: { consultantProfileId: true },
-    },
-  };
-  const bookings = await db.appointment.findMany({
-    where: { id: { in: [...new Set(appointmentIds)] } },
-    select: {
-      id: true,
-      participants: {
-        where: {
-          role: "CONSULTANT",
-          status: { in: ["CONFIRMED", "ATTENDED"] },
-        },
-        select: { userId: true },
-      },
-      consultation: { select: { consultationPlan: { select: plan } } },
-      subscription: { select: { subscriptionPlan: { select: plan } } },
-      webinar: { select: { webinarPlan: { select: groupPlan } } },
-      class: { select: { classPlan: { select: groupPlan } } },
-      payment: { select: { hostOrganizationId: true } },
-    },
-  });
-  const profileIdsOf = (booking: (typeof bookings)[number]) =>
-    [
-      booking.consultation?.consultationPlan.consultantProfileId,
-      booking.subscription?.subscriptionPlan.consultantProfileId,
-      booking.webinar?.webinarPlan.consultantProfileId,
-      booking.class?.classPlan.consultantProfileId,
-      ...(booking.webinar?.webinarPlan.collaborators ?? []).map(
-        (c) => c.consultantProfileId,
-      ),
-      ...(booking.class?.classPlan.collaborators ?? []).map(
-        (c) => c.consultantProfileId,
-      ),
-    ].filter((profileId): profileId is string => Boolean(profileId));
-  const hostIdsOf = (booking: (typeof bookings)[number]) =>
-    booking.payment.flatMap((p) =>
-      p.hostOrganizationId ? [p.hostOrganizationId] : [],
-    );
-  const allProfileIds = [...new Set(bookings.flatMap(profileIdsOf))];
-  const allHostIds = [...new Set(bookings.flatMap(hostIdsOf))];
-  const profiles = allProfileIds.length
-    ? await db.consultantProfile.findMany({
-        where: { id: { in: allProfileIds }, deletedAt: null },
-        select: { id: true, user: { select: { id: true } } },
-      })
-    : [];
-  const profileUser = new Map(
-    profiles.flatMap((p) => (p.user ? [[p.id, p.user.id] as const] : [])),
-  );
+  const parties = await deliveringPartiesByAppointment(db, appointmentIds);
+  const allHostIds = [
+    ...new Set(
+      [...parties.values()].flatMap((p) => [...p.hostOrganizationIds]),
+    ),
+  ];
   const operators = allHostIds.length
     ? await db.membership.findMany({
         where: {
@@ -354,16 +313,12 @@ export async function evidenceRecipientsByAppointment(
       })
     : [];
   const peopleByBooking = new Map(
-    bookings.map((booking) => {
-      const people = new Set(booking.participants.map((p) => p.userId));
-      for (const profileId of profileIdsOf(booking)) {
-        const userId = profileUser.get(profileId);
-        if (userId) people.add(userId);
-      }
-      const hosts = new Set(hostIdsOf(booking));
+    [...parties].map(([bookingId, booking]) => {
+      const people = new Set(booking.deliveringIds);
       for (const m of operators)
-        if (hosts.has(m.organizationId)) people.add(m.userId);
-      return [booking.id, people] as const;
+        if (booking.hostOrganizationIds.has(m.organizationId))
+          people.add(m.userId);
+      return [bookingId, people] as const;
     }),
   );
   const everyone = [
@@ -549,7 +504,8 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
 /**
  * What a recommendation may still refund: the payment's refundable balance
  * less other approved support remedies on it that have no live refund yet,
- * plus the remedies already committed on the payment and any blocker.
+ * plus what other refunds and remedies already committed on the payment and
+ * any blocker.
  */
 export async function quoteCaseRefund(
   tx: Tx,
@@ -557,6 +513,12 @@ export async function quoteCaseRefund(
   recommendation: { id: string; paymentId: string },
 ) {
   const payment = await linkedPayment(tx, caseId, recommendation.paymentId);
+  const committed = await committedSupportPaiseByPayment(
+    tx,
+    [recommendation.paymentId],
+    { excludeRecommendationId: recommendation.id },
+  );
+  const committedPaise = committed.get(recommendation.paymentId) ?? 0;
   const others = await tx.supportFinancialRecommendation.findMany({
     where: {
       paymentId: recommendation.paymentId,
@@ -565,10 +527,6 @@ export async function quoteCaseRefund(
     },
     select: { amountPaise: true, refund: { select: { status: true } } },
   });
-  const committedPaise = others.reduce(
-    (sum, other) => sum + Number(other.amountPaise),
-    0,
-  );
   const unrefundedPaise = others
     .filter((other) => !isLiveRefund(other.refund))
     .reduce((sum, other) => sum + Number(other.amountPaise), 0);
@@ -827,6 +785,35 @@ async function assertDecisionMatchesMoney(
   }
 }
 
+/** Deciding releases the case's payout holds, so every recommendation must be reviewed or voided first. */
+async function assertNoOpenRecommendation(tx: Tx, caseId: string) {
+  const open = await tx.supportFinancialRecommendation.findFirst({
+    where: { caseId, decidedAt: null, voidedAt: null },
+    select: { id: true },
+  });
+  if (open)
+    throw new CaseActionError(
+      "RECOMMENDATION_OPEN",
+      "This case has a refund recommendation awaiting review. Review or void it before recording a decision.",
+    );
+}
+
+/** A decision released the case's holds; only a failed refund under REFUND_APPROVED may still be retried. */
+async function assertUndecidedForApproval(
+  tx: Tx,
+  caseId: string,
+  retry: boolean,
+) {
+  const decision = await latestCaseDecisionTx(tx, caseId);
+  if (!decision || (retry && decision.outcome === "REFUND_APPROVED")) return;
+  throw new CaseActionError(
+    "CASE_ALREADY_DECIDED",
+    "This case already has a decision, so its refund recommendations can only be declined.",
+    409,
+    caseDecidedDetail(decision),
+  );
+}
+
 const APPEAL_OUTCOMES: ReadonlySet<string> = new Set(["UPHELD", "OVERTURNED"]);
 
 /** Problems are resolved, not decided; appeals are upheld or overturned; incidents get a remedy outcome. */
@@ -896,6 +883,7 @@ async function recordCaseDecisionTx(
       caseDecidedDetail(latest),
     );
   await assertDecisionMatchesMoney(tx, caseId, input.outcome);
+  await assertNoOpenRecommendation(tx, caseId);
   const restoredConsultantProfileId = await reverseModerationIfOverturned(
     tx,
     supportCase,
@@ -911,6 +899,7 @@ async function recordCaseDecisionTx(
       status: "RESOLVED",
     },
     new Date(),
+    { actorRole: actor.role ?? "UNKNOWN", freshSession: !!actor.freshSession },
   );
   if (!moved.ok)
     throw new CaseActionError(moved.code, moved.error, moved.status);
@@ -1213,11 +1202,14 @@ async function reviewRefundTx(
         "CONFLICT",
         "Another administrator reviewed this recommendation.",
       );
-    if (input.approve && !isLiveRefund(recommendation.refund))
+    if (input.approve && !isLiveRefund(recommendation.refund)) {
+      await assertUndecidedForApproval(tx, caseId, true);
       await claimRefundRetry(tx, caseId, actor, recommendation, input);
+    }
     return recommendation;
   }
-  if (input.approve)
+  if (input.approve) {
+    await assertUndecidedForApproval(tx, caseId, false);
     await assertRefundExecutable(
       tx,
       caseId,
@@ -1225,6 +1217,7 @@ async function reviewRefundTx(
       recommendation,
       input.expectedRefundablePaise,
     );
+  }
   const decidedAt = new Date();
   const claimed = await tx.supportFinancialRecommendation.updateMany({
     where: { id: recommendation.id, decidedAt: null },
@@ -1613,6 +1606,7 @@ async function executeApprovedRefund(
     dedupeKey,
     supportRecommendationId: recommendation.id,
     keepSeat: !recommendation.releaseSeat,
+    settlesOwedByHand: true,
   }).catch((error: unknown) => refundInFlightOr(error, dedupeKey));
   return {
     refund,

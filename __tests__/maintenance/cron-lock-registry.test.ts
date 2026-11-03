@@ -25,6 +25,7 @@ jest.mock("../../lib/observability/job-sentry", () => ({
 }));
 
 import fs from "node:fs";
+import { TARGETS, TARGET_BACKGROUND_FUNCTIONS } from "@/lib/cron/schedule";
 import path from "node:path";
 
 import { FINANCIAL_JOB_NAMES } from "../../lib/maintenance-cron";
@@ -38,19 +39,8 @@ const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
  * names the mechanism that replaces it — "no lock" is never an accepted reason.
  */
 const LOCK_EXEMPT: Record<string, string> = {
-  // The dead-man switch itself. Locking it through Redis would make the
-  // watchdog depend on the infrastructure it exists to report on, and the
-  // check is read-only, so a double-run costs nothing.
-  "cron-heartbeat.yml": "deliberately unlocked — read-only dead-man switch",
-  // Ticker-only probe: one Sentry event per run and no DB writes; a double run
-  // costs one extra event and the email alert is deduped in Redis.
-  "cron-tick:sentry-ingest-canary": "deliberately unlocked — vendor probe",
-  // #1270 — a drift DETECTOR, not a job. It runs the operator script in
-  // `--check` mode, which makes no Stream write and no database write; the
-  // whole run is one `getAppSettings` read. Two concurrent reads cost one
-  // extra API call, so a lock would buy nothing and would give a read-only
-  // guard a hard dependency on Redis.
-  "stream-webhook-drift.yml": "deliberately unlocked — read-only drift check",
+  // Read-only Actions API check of the Actions-scheduled workflows; a double run costs nothing.
+  "cron-heartbeat.yml": "deliberately unlocked — read-only Actions watcher",
   // #1885 — Weekly supply-chain vulnerability scan (`npm audit --omit=dev`);
   // read-only lockfile audit with no database or external state mutation.
   "security-audit.yml": "deliberately unlocked — read-only npm audit check",
@@ -162,13 +152,7 @@ function lockFor(
 
 /** The `/api/cleanup/<target>` routes netlify/functions/cron-tick.mts POSTs. */
 function tickerTargets(): string[] {
-  const src = read(path.join(ROOT, "netlify", "functions", "cron-tick.mts"));
-  const block =
-    src?.match(/const TARGETS = \[([\s\S]*?)\] as const/)?.[1] ?? "";
-  return Array.from(
-    block.replace(/\/\/.*$/gm, "").matchAll(/["']([a-z0-9-]+)["']/g),
-    (m) => m[1],
-  );
+  return [...TARGETS];
 }
 
 /** Scheduled workflow steps that POST `/api/cleanup/<slug>` instead of running a tsx entrypoint. */
@@ -245,14 +229,23 @@ function buildRegistry(): Row[] {
     ...workflowTwinCalls(),
   ];
   for (const [workflow, target] of twinCallers) {
-    const entrySrc = twinBlocks.get(target) ?? null;
-    const jobName =
-      entrySrc?.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? target;
+    const twinSrc = twinBlocks.get(target) ?? null;
+    const background = Object.entries(TARGET_BACKGROUND_FUNCTIONS).find(
+      ([name]) => name === target,
+    )?.[1];
+    const entrypoint = background
+      ? (["mts", "ts"]
+          .map((ext) => `netlify/functions/${background}.${ext}`)
+          .find((file) => fs.existsSync(path.join(ROOT, file))) ??
+        `netlify/functions/${background}.mts`)
+      : `${registryRel}#${target}`;
+    const entryFile = background ? path.join(ROOT, entrypoint) : registryFile;
+    const entrySrc = background ? read(entryFile) : twinSrc;
+    const jobName = twinSrc?.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? target;
     if (viaYaml.has(jobName)) continue;
-    const entrypoint = `${registryRel}#${target}`;
     const { lock, lockedIn } = lockFor(
       entrypoint,
-      registryFile,
+      entryFile,
       entrySrc,
       /^(scripts|lib|jobs)\//,
     );
@@ -433,6 +426,9 @@ describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
   ];
   /** Money-adjacent twins that deliberately keep running in DEGRADED. */
   const NOT_FINANCIAL: Record<string, string> = {
+    // Read-only audits and protective spend freezes must continue during maintenance.
+    "reconcile-ledgers":
+      "detects drift and blocks discretionary wallet spending",
     // Re-drives a booking confirmation from an already-settled capture and
     // moves no money; #1686 keeps it on every ticker slot for the buyer.
     "reconcile-orphaned-confirmations": "booking re-drive from settled money",

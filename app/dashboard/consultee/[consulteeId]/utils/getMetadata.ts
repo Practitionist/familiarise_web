@@ -72,17 +72,6 @@ export function formatDate(date: Date | null | undefined): string {
   return new Date(date).toLocaleDateString();
 }
 
-export function getEventEndDate(event: EventWithType): Date | null {
-  switch (event.type) {
-    case "Subscription":
-      return event.schedulingPeriodEndsAt;
-    case "Class":
-      return event.schedulingPeriodEndsAt;
-    default:
-      return null;
-  }
-}
-
 export function isRecurringEvent(event: EventWithType): boolean {
   return event.type === "Subscription" || event.type === "Class";
 }

@@ -7,6 +7,7 @@
 
 import type { AppointmentStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
+import type { ApprovalLock } from "@/utils/appointmentlock";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 import type { PendingOverageNotification } from "@/lib/payments/billing/overage-settlement";
 import type { AppointmentWithSlots } from "@/lib/booking/allocation/types";
@@ -68,6 +69,15 @@ export function isReleasedForReschedule(slot: {
 /**
  * Request structure for slot allocation
  */
+/** What an allocation freed and placed, handed to `inTx` in the same transaction. */
+export interface AllocationMove {
+  consultantProfileId: string;
+  /** Released windows the allocation replaced (a reschedule); empty otherwise. */
+  freedWindows: { startsAt: Date; endsAt: Date }[];
+  /** The occurrences the allocation wrote. */
+  placed: { startsAt: Date; endsAt: Date }[];
+}
+
 export interface AllocationRequest {
   eventType: EventType;
   eventId: string;
@@ -88,18 +98,6 @@ export interface AllocationRequest {
    * slots. Fresh allocations omit the field.
    */
   expectedTentativeSlotCount?: number;
-  /**
-   * Manual mode only. When true the Redis lock is taken consultant-WIDE rather
-   * than sharded by the target day.
-   *
-   * #860 shards the manual key so allocations on different days for one
-   * consultant run in parallel, with #440's GiST constraint backstopping
-   * overlap. But GiST only prevents time OVERLAP — per-day and per-week caps
-   * are validated by COUNTING, so two sharded allocations can each read the
-   * same count and both add, taking a 4-session week to 5. Callers that place
-   * times a human did not pick per-day (auto-confirm) must set this.
-   */
-  wideLock?: boolean;
   /**
    * Consultant's explicit acceptance of times outside their own published
    * availability. Routes must only set this for the consultant or a privileged
@@ -142,7 +140,12 @@ export interface AllocationRequest {
   /** Narrows the request statuses the approval CAS accepts (1:1 events only). */
   approvableFrom?: AppointmentStatus[];
   /** Runs inside the allocator's transaction after the status CAS; a throw rolls the move back. */
-  inTx?: (tx: Tx) => Promise<void>;
+  inTx?: (tx: Tx, moved: AllocationMove) => Promise<void>;
+  /**
+   * The caller already holds this booking's appointment lock (reschedule
+   * accept and auto-confirm): the allocator renews it instead of acquiring it.
+   */
+  heldAppointmentLock?: ApprovalLock;
 }
 
 /** The per-call extras every allocation mode threads into its transaction. */
@@ -171,10 +174,8 @@ export interface ConflictDetail {
   slot: string;
   appointmentId: string;
   type: "Consultation" | "Subscription" | "Webinar" | "Class" | "Booking";
-  /** The consultee on the conflicting booking, when it has one. */
-  otherParty: { userId: string; name: string | null } | null;
-  /** A group event's plan title — what a webinar or class is "with". */
-  title: string | null;
+  /** On the consultant's own calendar; otherwise the consultee is the busy party. */
+  onConsultantCalendar: boolean;
 }
 
 /**
@@ -190,11 +191,15 @@ export interface SlotConflictResult {
       type: string;
       with: string;
       time: string;
-      /** The conflicting booking, for the event's own consultant only. */
+      /** The conflicting booking, only when it is the viewing consultant's own. */
       appointmentId?: string;
     };
   }>;
   outsideAvailability: Array<{
+    slot: string;
+  }>;
+  /** Slots that start inside the lead time (or have passed): never valid. */
+  tooSoon?: Array<{
     slot: string;
   }>;
   validSlots: string[];
@@ -212,6 +217,9 @@ export type AllocationErrorCode =
   | "ALREADY_ALLOCATED" // confirmed slots already exist for this event — 409
   | "RESCHEDULE_STATE_CHANGED" // #1012 stale-tab tentative count moved — 409
   | "SLOT_TAKEN" // a chosen time went to someone else mid-allocation — 409
+  | "TIMES_TAKEN" // a picked time is held by another writer right now — 409
+  | "ALLOCATION_RACE" // auto found no free times after its re-searches; retryable — 409
+  | "AVAILABILITY_CHANGED" // the host's published availability shrank under the allocation — 409
   | "IDEMPOTENCY_KEY_REUSE" // same Idempotency-Key, different payload — 422
   | "ILLEGAL_TRANSITION" // event left the approvable state mid-allocation (#836) — 409
   | "PROGRAM_CAP_EXHAUSTED" // org's per-cycle overage ceiling vetoed it — 402
@@ -220,7 +228,12 @@ export type AllocationErrorCode =
   | "SLOT_SHORTAGE" // not enough free slots in the window — 400
   | "COLLABORATOR_UNAVAILABLE" // AE-2 (#784) — a co-host is already committed — 409
   | "SUBSCRIPTION_UNPAID" // #1775 C-1 — a plan with no settled payment is never approved — 409
+  | "CHECKOUT_IN_PROGRESS" // the buyer's own direct checkout is still being paid — 409
+  | "TOO_CLOSE_TO_START" // an unpaid approval whose first session starts too soon to pay — 409
   | "RESCHEDULE_NO_LONGER_OPEN" // the confirmed proposal was answered or expired mid-move — 409
+  | "SESSION_HAS_REMEDY" // a session to be re-planned carries an incident remedy — 409
+  | "BOOKING_LOCK_UNAVAILABLE" // the locking service is down; retry shortly — 503
+  | "SEARCH_TIMEOUT" // the auto search ran out of time before placing every session — 503
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**
@@ -272,6 +285,10 @@ export interface AllocationResult {
    * COULD have placed. Zero means offering a partial allocation is pointless.
    */
   placeableSessions?: number;
+  /** On TIMES_TAKEN: the 30-minute interval starts (ISO) another writer holds. */
+  takenSlotStarts?: string[];
+  /** On ALLOCATION_RACE: when a retry may succeed. */
+  retryAfterSeconds?: number;
 }
 
 /**

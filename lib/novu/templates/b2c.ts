@@ -71,7 +71,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "Make-up session scheduled",
-      body: "The make-up session of {{payload.planTitle}} is on {{payload.dateTime}}.",
+      body: "The make-up session of {{payload.planTitle}} is on {{payload.dateTime}}.{% if payload.clash %} You already have a session then.{% endif %}{% if payload.leaveBy %} Keep your seat — nothing to do. Can't make it? Leave the class with a full refund of the sessions still to come until {{payload.leaveBy}}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -143,7 +143,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "Schedule change",
-      body: "{% if payload.outcome == 'MOVED' %}Your {{payload.appointmentType}} for {{payload.planTitle}} moved from {{payload.oldDateTime}} to {{payload.newDateTime}}.{% elsif payload.outcome == 'PROPOSED' %}A new time was proposed for your {{payload.appointmentType}} for {{payload.planTitle}}: {{payload.newDateTime}} instead of {{payload.oldDateTime}}. Please review it.{% elsif payload.outcome == 'RELEASED' %}The {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.oldDateTime %} on {{payload.oldDateTime}}{% endif %} was released. You will be told once a new time is set.{% elsif payload.outcome == 'DECLINED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} was declined{% if payload.oldDateTime %}; it stays on {{payload.oldDateTime}}{% endif %}.{% elsif payload.outcome == 'EXPIRED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} expired, so your original time stands{% if payload.oldDateTime %}: {{payload.oldDateTime}}{% endif %}.{% else %}The reschedule request for your {{payload.appointmentType}} for {{payload.planTitle}} was withdrawn{% if payload.oldDateTime %}; it stays on {{payload.oldDateTime}}{% endif %}.{% endif %}",
+      body: "{% if payload.outcome == 'MOVED' %}Your {{payload.appointmentType}} for {{payload.planTitle}} moved from {{payload.oldDateTime}} to {{payload.newDateTime}}.{% if payload.clash %} You already have a session then.{% endif %}{% if payload.leaveBy %} Keep your seat — nothing to do. Can't make it? Leave with a full refund until {{payload.leaveBy}}.{% endif %}{% elsif payload.outcome == 'PROPOSED' %}A new time was proposed for your {{payload.appointmentType}} for {{payload.planTitle}}: {{payload.newDateTime}} instead of {{payload.oldDateTime}}. Please review it.{% elsif payload.outcome == 'RELEASED' %}The {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.oldDateTime %} on {{payload.oldDateTime}}{% endif %} was released. You will be told once a new time is set.{% elsif payload.outcome == 'DECLINED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} was declined{% if payload.oldDateTime %}; it stays on {{payload.oldDateTime}}{% endif %}.{% elsif payload.outcome == 'EXPIRED' %}The proposed new time for your {{payload.appointmentType}} for {{payload.planTitle}} expired, so your original time stands{% if payload.oldDateTime %}: {{payload.oldDateTime}}{% endif %}.{% else %}The reschedule request for your {{payload.appointmentType}} for {{payload.planTitle}} was withdrawn{% if payload.oldDateTime %}; it stays on {{payload.oldDateTime}}{% endif %}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -166,6 +166,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Session complete",
       body: "Your {{payload.appointmentType}} for {{payload.planTitle}} has ended. Open it to rate the session or find the recording.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.CHAT_UNREAD_DIGEST,
+    name: "Unread chat messages",
+    description:
+      "One digest per user per 30-minute window from Stream's unread reminder. Never quotes message text.",
+    category: "appointments",
+    inApp: {
+      subject: "Unread messages",
+      body: "{{payload.summary}}",
       redirect: "dashboardUrl",
     },
   },
@@ -455,10 +467,10 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.SUPPORT_TICKET_CREATED,
     name: "Support ticket opened",
-    description: "Ops, when a ticket lands in the queue.",
+    description: "Ops, when a support case lands in the queue.",
     category: "support",
     inApp: {
-      subject: "New support ticket",
+      subject: "New support case",
       body: `{{payload.userName | default: 'A customer'}} opened ${TICKET}.`,
       redirect: "dashboardUrl",
     },
@@ -467,10 +479,10 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.SUPPORT_TICKET_RECEIVED,
     name: "Support ticket received",
     description:
-      "The requester, confirming ticket intake and expected response window.",
+      "The requester, confirming support case intake and expected response window.",
     category: "support",
     inApp: {
-      subject: "Support request received",
+      subject: "Support case received",
       body: `We received ${TICKET}. Expected response within {{payload.slaWindow | default: '24 hours'}}.`,
       redirect: "dashboardUrl",
     },
@@ -482,7 +494,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
       "Ops (the assignee, else everyone), when the customer replies or reopens.",
     category: "support",
     inApp: {
-      subject: "Ticket activity",
+      subject: "Support case activity",
       body: `{{payload.userName | default: 'The customer'}} {{payload.activity | default: 'replied'}} on ${TICKET}.`,
       redirect: "dashboardUrl",
     },
@@ -490,18 +502,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.SUPPORT_TICKET_UPDATE,
     name: "Support ticket status",
-    description: "The ticket's owner, when ops changes its status.",
+    description: "The support case's owner, when ops changes its status.",
     category: "support",
     inApp: {
-      subject: "Ticket updated",
-      body: `Your ticket ${TICKET} is now {{payload.status}}.`,
+      subject: "Support case updated",
+      body: `Your support case ${TICKET} is now {{payload.status}}.`,
       redirect: "dashboardUrl",
     },
   },
   {
     workflowId: W.SUPPORT_TICKET_RESPONSE,
     name: "Support ticket reply",
-    description: "The ticket's owner, when ops replies.",
+    description: "The support case's owner, when ops replies.",
     category: "support",
     inApp: {
       subject: "Reply from support",
@@ -704,7 +716,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
 
-  // ── Recordings & documents ──────────────────────────────────────────────
+  // ── Session recordings & documents ──────────────────────────────────────────────
   {
     workflowId: W.RECORDING_AVAILABLE,
     name: "Recording ready",

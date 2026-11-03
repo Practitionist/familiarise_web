@@ -30,24 +30,12 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 }));
 
 jest.mock("../../lib/prisma", () => {
+  const { bookingExpiryPrismaModels } = jest.requireActual(
+    "../fixtures/booking-expiry-test-doubles",
+  );
   const db: Record<string, unknown> = {
-    consultation: {
-      findMany: jest.fn(),
-      findUnique: jest.fn().mockResolvedValue(null),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    subscription: {
-      findMany: jest.fn(),
-      findUnique: jest.fn().mockResolvedValue(null),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-    },
-    appointmentOccurrence: {
-      findMany: jest.fn().mockResolvedValue([]),
-      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
-      updateManyAndReturn: jest.fn().mockResolvedValue([]),
-    },
-    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
-    appointment: { findMany: jest.fn() },
+    ...bookingExpiryPrismaModels(),
+    $queryRaw: jest.fn(async () => []),
     $disconnect: jest.fn(),
   };
   // The payment-pending arm now expires each request in its own transaction.
@@ -63,7 +51,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 import prisma from "../../lib/prisma";
 import { expireStaleRequests } from "../../scripts/appointments/expire-stale-requests";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
-import { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, PaymentStatus, Prisma } from "@prisma/client";
 
 /**
  * Every guard in the sweep is expressed as "no reschedule request of mine is
@@ -96,20 +84,35 @@ describe("expiry sweep × live reschedule proposals", () => {
 
       const cohortRead = (prisma.consultation.findMany as jest.Mock).mock.calls
         .map(([args]) => args)
-        .find((args) => args?.where?.status === AppointmentStatus.PENDING);
+        .find(
+          (args) =>
+            args?.where?.status === AppointmentStatus.PENDING &&
+            JSON.stringify(args.where.appointment?.payment).includes('"none"'),
+        );
 
       expect(cohortRead).toBeDefined();
-      expect(cohortRead.where.appointment).toEqual({
+      expect(cohortRead.where.appointment).toMatchObject({
         rescheduleRequests: { none: openStatusFilter },
+        payment: {
+          none: expect.objectContaining({
+            paymentStatus: PaymentStatus.SUCCEEDED,
+            deletedAt: null,
+            refundOwedKey: { not: null },
+            refundOwedPaise: { not: null },
+          }),
+        },
       });
       // The original staleness predicate must survive alongside the guard.
       expect(cohortRead.where.requestedAt).toHaveProperty("lt");
     });
 
     it("re-checks the guard at WRITE time, not just at read time", async () => {
-      (prisma.consultation.findMany as jest.Mock).mockResolvedValueOnce([
-        { id: "cons-1", appointment: { id: "apt-1" } },
-      ]);
+      (prisma.consultation.findMany as jest.Mock).mockImplementation(
+        async ({ select }: { select?: Prisma.ConsultationSelect }) =>
+          select?.id === true && Object.keys(select).length === 1
+            ? []
+            : [{ id: "cons-1", appointment: { id: "apt-1" } }],
+      );
       (prisma.consultation.updateMany as jest.Mock).mockResolvedValue({
         count: 1,
       });
@@ -194,13 +197,41 @@ describe("expiry sweep × live reschedule proposals", () => {
     // #1775 C-4 — the nudge now reads the paid PENDING cohort instead.
     const approvedReads = (prisma.subscription.findMany as jest.Mock).mock.calls
       .map(([args]) => args)
-      .filter((args) => args?.where?.status === AppointmentStatus.APPROVED);
+      .filter(
+        (args) =>
+          (JSON.stringify(args?.where?.AND) ?? "").includes(
+            '"status":"APPROVED"',
+          ) &&
+          JSON.stringify(args.where.AND).includes(
+            '"NOT":{"appointment":{"payment":{"some"',
+          ),
+      );
     expect(approvedReads).toHaveLength(1);
     const held = { isTentative: false, deletedAt: null };
     for (const read of approvedReads) {
-      expect(read.where.NOT).toEqual({
-        appointment: { occurrences: { some: held } },
-      });
+      expect(read.where.AND).toEqual(
+        expect.arrayContaining([
+          {
+            NOT: {
+              appointment: {
+                payment: {
+                  some: expect.objectContaining({
+                    paymentStatus: PaymentStatus.SUCCEEDED,
+                    deletedAt: null,
+                    refundOwedKey: { not: null },
+                    refundOwedPaise: { not: null },
+                  }),
+                },
+              },
+            },
+          },
+        ]),
+      );
+      expect(read.where.AND).toContainEqual(
+        expect.objectContaining({
+          NOT: { appointment: { occurrences: { some: held } } },
+        }),
+      );
     }
     // The predicate carries no completionStatus filter, so a COMPLETED row
     // satisfies `some` and takes the row out of the cohort.
@@ -230,6 +261,7 @@ describe("expiry sweep × live reschedule proposals", () => {
           },
         },
       ])
+      .mockResolvedValueOnce([]) // Partial-marker presence probe
       .mockResolvedValueOnce([]);
     (prisma.subscription.updateMany as jest.Mock).mockResolvedValue({
       count: 1,

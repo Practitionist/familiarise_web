@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useEffect, type ReactNode } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { LayoutGrid, SearchX } from "lucide-react";
@@ -45,9 +46,7 @@ import {
   type OfferingPlanType,
 } from "@/lib/offerings/stats";
 import { OfferingCard } from "@/components/offerings/list/OfferingCard";
-import { NewOfferingMenu } from "@/components/offerings/list/NewOfferingMenu";
 import {
-  OFFERING_TYPE_FILTERS,
   buildOfferingRows,
   filterOfferingRows,
   type OfferingRow,
@@ -73,7 +72,35 @@ interface Props {
    * that key (usePlanner.ts) and fresh data flows back down.
    */
   data: PlannerData;
+  /** The one plan kind this Sell tab lists. */
+  type: OfferingPlanType;
 }
+
+const EMPTY_COPY: Record<
+  OfferingPlanType,
+  { title: string; description: string; action: string }
+> = {
+  consultation: {
+    title: "No 1:1 consultations yet",
+    description: "Create a 1:1 consultation to start taking bookings.",
+    action: "New 1:1 consultation",
+  },
+  subscription: {
+    title: "No subscriptions yet",
+    description: "Create a subscription for clients who meet you every week.",
+    action: "New subscription",
+  },
+  webinar: {
+    title: "No webinars yet",
+    description: "Create a webinar to run one session for many attendees.",
+    action: "New webinar",
+  },
+  class: {
+    title: "No classes yet",
+    description: "Create a class to teach a group across several sessions.",
+    action: "New class",
+  },
+};
 
 async function fetchPendingTrialCounts(
   consultantId: string,
@@ -94,13 +121,13 @@ async function fetchPendingTrialCounts(
 }
 
 /**
- * The Offerings list (#1527 §7.2, the Event Planner renamed): type pills and a
- * search held in the URL, one card per offering with its status, stats and
- * actions. Webinar and class cards keep the host's Join.
+ * One Sell tab's offerings: a search held in the URL, one card per offering
+ * with its status, stats and actions. Webinar and class cards keep the host's Join.
  */
 export function EventManagementDashboard({
   consultantId,
   data,
+  type,
 }: Readonly<Props>) {
   const webinars = data.webinars;
   const classes = data.classes;
@@ -349,11 +376,18 @@ export function EventManagementDashboard({
   const pendingTrials = useQuery({
     queryKey: ["trials", consultantId, "PENDING", "counts"],
     queryFn: () => fetchPendingTrialCounts(consultantId),
+    enabled: type === "subscription",
     staleTime: 60_000,
   });
 
-  const consultationPlans = useConsultationPlans(consultantId);
-  const subscriptionPlans = useSubscriptionPlans(consultantId);
+  const consultationPlans = useConsultationPlans(
+    consultantId,
+    type === "consultation",
+  );
+  const subscriptionPlans = useSubscriptionPlans(
+    consultantId,
+    type === "subscription",
+  );
   const expertShareHref = useExpertShareHref(consultantId);
 
   const archive: Record<
@@ -375,7 +409,7 @@ export function EventManagementDashboard({
     class: useDeleteOffering(consultantId, "class"),
   };
 
-  const list = useListParams({ filterKeys: ["type"] as const });
+  const list = useListParams();
   const rows = useMemo(
     () =>
       buildOfferingRows({
@@ -405,7 +439,8 @@ export function EventManagementDashboard({
       data.participantCounts,
     ],
   );
-  const visible = filterOfferingRows(rows, list.filters.type, list.q);
+  const hasAny = rows.some((r) => r.type === type);
+  const visible = filterOfferingRows(rows, type, list.q);
 
   const cardProps = (row: OfferingRow) => {
     const planId = row.planId;
@@ -469,13 +504,20 @@ export function EventManagementDashboard({
         ))}
       </div>
     );
-  } else if (rows.length === 0) {
+  } else if (!hasAny) {
+    const copy = EMPTY_COPY[type];
     body = (
       <EmptyState
         icon={LayoutGrid}
-        title="No offerings yet"
-        description="Create a 1:1 session, a subscription, a webinar or a class to start taking bookings."
-        action={<NewOfferingMenu consultantId={consultantId} />}
+        title={copy.title}
+        description={copy.description}
+        action={
+          <Button asChild size="sm">
+            <Link href={`${basePath}/offerings/${type}/new`}>
+              {copy.action}
+            </Link>
+          </Button>
+        }
       />
     );
   } else if (visible.length === 0) {
@@ -483,7 +525,7 @@ export function EventManagementDashboard({
       <EmptyState
         icon={SearchX}
         title="Nothing matches"
-        description="Try another type or search."
+        description="Try another search."
         action={
           <Button variant="outline" size="sm" onClick={list.clear}>
             Clear filters
@@ -520,19 +562,6 @@ export function EventManagementDashboard({
           placeholder: "Search by title",
           value: list.q,
           onChange: list.setQ,
-        }}
-        chips={{
-          label: "Type",
-          options: [
-            { value: "all", label: "All" },
-            ...OFFERING_TYPE_FILTERS.map((f) => ({
-              ...f,
-              count: rows.filter((r) => r.type === f.value).length,
-            })),
-          ],
-          value: list.filters.type ?? "all",
-          onChange: (value) =>
-            list.setFilter("type", value === "all" ? null : value),
         }}
         onClear={list.clear}
       />

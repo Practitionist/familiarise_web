@@ -353,12 +353,13 @@ These are well-structured and not the focus of this assessment, but a few notes:
 
 Every number on the consultant Home page is a personal (B2C) number, and that
 is a deliberate consequence of ADR 19: the dashboards are split by the org-ness
-of the underlying work, so a booking an organisation funds is reported on that
-organisation's dashboard rather than here. `lib/data/consultant-dashboard.ts`
-expresses this with a single `PERSONAL_ORG_PIN`, taken from the shared scope
-projector in `lib/api/scope/parse.ts` so that "what personal means" has exactly
-one definition on the platform, and it applies that pin to the earnings
-aggregates, the session-completion rate and the active book.
+of the underlying work, and the work belongs to whoever hosts the plan. A
+booking on a plan no org hosts is personal even when a sponsor org paid for it
+(money shown as metadata only); a booking on an org-hosted plan is reported on
+that organisation's dashboard and in Home's "Organisation sessions" strip. The
+split is `scopeToPlanHostWhere` in `lib/api/scope/parse.ts`, so the Requests
+inbox, the badge, Needs you, Home and the Appointments list share one
+definition of "personal".
 
 The Pending Requests badge is part of that family. It is a `count()` rather than
 the length of the list beside it, because the list is capped and a capped list
@@ -547,9 +548,9 @@ Implementation: A `Cmd+K` style search bar in `DashboardNavbar` that queries a u
 #### 7.9 Add Audit Log
 
 Track who did what:
-- "Admin Kaustav approved payout PO-123 for ₹50,000"
+- "Admin Olivia Brown approved payout PO-123 for ₹50,000"
 - "Staff Shubham resolved ticket TKT-456"
-- "Admin Kaustav put platform in maintenance mode"
+- "Admin Olivia Brown put platform in maintenance mode"
 
 Critical for financial compliance and debugging "who changed this?"
 

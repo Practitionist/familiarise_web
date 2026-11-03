@@ -67,7 +67,7 @@ import {
 } from "@/lib/payments/billing/org-invoice-settlement";
 import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
 import { cancelOpenPayoutsForPayment } from "@/lib/payments/payouts/cancel-open-payouts";
-import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
+import { revokeStandaloneSaleEntitlement } from "@/lib/payments/digital-product-entitlement";
 import {
   applyReversal,
   consultantClawbackKey,
@@ -77,6 +77,10 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
+import {
+  restoreOwedOnFailedRefund,
+  resettleOwedOnLateSuccess,
+} from "@/lib/payments/operations/refund-owed";
 import {
   EMAIL_BUDGET_MS,
   MONEY_EMAIL_TYPES,
@@ -207,6 +211,11 @@ export async function handleOrgPaymentSuccess(
       console.log(
         `[Webhook] credit_purchase confirmed=${result.confirmed} order=${walletEntryOrderId} org=${organizationId ?? "?"} balanceAfter=${result.balanceAfter ?? "?"}`,
       );
+      const settledPaise = result.receivableSettledPaise ?? 0;
+      const settledNote =
+        settledPaise > 0
+          ? `, ₹${(settledPaise / 100).toLocaleString("en-IN")} of it settled the org's open receivable`
+          : "";
       if (organizationId && result.confirmed) {
         await prisma.orgAuditLog
           .create({
@@ -215,11 +224,12 @@ export async function handleOrgPaymentSuccess(
               actorMembershipId: null,
               category: "WALLET",
               action: AUDIT_ACTIONS.WALLET.WALLET_TOPUP_CONFIRMED,
-              description: `Top-up confirmed: ₹${(paise / 100).toLocaleString("en-IN")}`,
+              description: `Top-up confirmed: ₹${(paise / 100).toLocaleString("en-IN")}${settledNote}`,
               details: {
                 walletEntryOrderId,
                 providerPaymentId: razorpayPaymentId,
                 amountPaise: paise,
+                receivableSettledPaise: settledPaise,
               },
             },
           })
@@ -270,6 +280,7 @@ export async function handleOrgPaymentSuccess(
                       amountPaise: paise,
                       currency,
                       newBalancePaise,
+                      receivableSettledPaise: settledPaise,
                       dashboardUrl,
                     },
                     EMAIL_BUDGET_MS.WEBHOOK,
@@ -407,17 +418,9 @@ export async function handleOrgPaymentFailure(
       console.error("[Webhook] invoice_payment.failed missing invoiceId");
       return;
     }
-    // Clear the stored order id so the UI retry creates a fresh one.
-    // Leave the invoice status untouched (still ISSUED/OVERDUE).
-    await prisma.organizationInvoice.updateMany({
-      where: {
-        id: invoiceId,
-        status: { in: ["ISSUED", "OVERDUE"] },
-      },
-      data: { providerPaymentOrderId: null },
-    });
+    // A failed attempt leaves its order retryable and must not hide a later capture.
     console.log(
-      `[Webhook] invoice_payment.failed cleared provider order id for invoice ${invoiceId}`,
+      `[Webhook] invoice_payment.failed retained provider order id for invoice ${invoiceId}`,
     );
     if (organizationId) {
       await prisma.orgAuditLog
@@ -727,7 +730,6 @@ export async function handleRefundCreated(
                   billingAccountId: ba.id,
                   amountPaise: amount,
                   reason: "REFUND",
-                  providerPaymentId,
                   notes: `Invoice ${invoice.invoiceNumber} refund (${refundId})`,
                 });
               }
@@ -852,6 +854,13 @@ export async function handleRefundCreated(
             });
             if (claimed.count === 0) return;
             console.log(`✅ Refund ${refundId} status updated to ${newStatus}`);
+            // A failed hand refund gives back the owed refund it settled; a late success takes it off again.
+            if (newStatus === "FAILED") {
+              await restoreOwedOnFailedRefund(tx, existingRefund.id);
+            }
+            if (lateSuccess) {
+              await resettleOwedOnLateSuccess(tx, existingRefund.id);
+            }
 
             // Run side effects when transitioning TO SUCCEEDED
             if (newStatus === "SUCCEEDED") {
@@ -917,6 +926,9 @@ export async function handleRefundCreated(
               },
             });
             if (claimed.count > 0) {
+              if (mappedNewStatus === "FAILED") {
+                await restoreOwedOnFailedRefund(tx, reservation.id);
+              }
               if (mappedNewStatus === "SUCCEEDED") {
                 await runRefundSideEffects(
                   payment.id,
@@ -1543,6 +1555,7 @@ export async function settleLostDispute(
           kind: "PAYOUT_CLAWBACK",
           orgPayoutId: oe.orgPayoutId,
           organizationId: oe.organizationId,
+          orgEarningsId: oe.id,
         },
         amountPaise: orgApplied,
         reason: `chargeback lost (dispute ${disputeId})`,
@@ -1593,9 +1606,9 @@ export async function settleLostDispute(
     reason: `chargeback lost (dispute ${disputeId})`,
   });
 
-  // Replay sales are the only appointment-less payments that grant playback.
+  // A lost chargeback on a standalone sale revokes the entitlement it granted.
   if (disputedPayment?.appointmentId === null) {
-    await revokeReplayEntitlement(tx, disputedPayment.paymentIntent);
+    await revokeStandaloneSaleEntitlement(tx, disputedPayment);
   }
 
   // The consumer invoice's own s.34 credit note; idempotent on

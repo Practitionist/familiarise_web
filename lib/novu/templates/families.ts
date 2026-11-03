@@ -40,14 +40,14 @@ export type Family = {
  *  duplicated block. */
 const FAMILY_NAME: Record<FamilyId, string> = {
   appointment: "Appointments",
-  "session-media": "Recordings & documents",
+  "session-media": "Session recordings & documents",
   payment: "Payments",
   refund: "Refunds & disputes",
   payout: "Payouts",
   referral: "Referrals",
   subscription: "Subscriptions",
   trial: "Trial sessions",
-  "support-ticket": "Support tickets",
+  "support-ticket": "Support cases",
   feedback: "Feedback & reviews",
   account: "Account",
   collaborator: "Collaborators",
@@ -78,14 +78,15 @@ const FAMILY_CATEGORY: Record<FamilyId, PreferenceCategory | null> = {
 
 const FAMILY_DESCRIPTION: Record<FamilyId, string> = {
   appointment: "Booking lifecycle for both parties.",
-  "session-media": "What a session produced: recordings and shared documents.",
+  "session-media":
+    "What a session produced: session recordings and shared documents.",
   payment: "The payer's money going out.",
   refund: "Money contested or coming back; consultant and ops.",
   payout: "The consultant's earnings leaving for their bank.",
   referral: "Referral credits earned and granted.",
   subscription: "Subscription lifecycle.",
   trial: "Free-trial lifecycle.",
-  "support-ticket": "Ops-facing and owner-facing ticket events.",
+  "support-ticket": "Ops-facing and owner-facing support case events.",
   feedback: "Product feedback to admins; reviews to consultants.",
   account: "Verification, security, moderation and applications. No opt-out.",
   collaborator: "Co-hosting invitations on a plan.",
@@ -121,6 +122,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "appointment-reminder": "appointment",
   "appointment-completed": "appointment",
   "new-booking-request": "appointment",
+  "chat-unread-digest": "appointment",
 
   "recording-available": "session-media",
   "recording-failed": "session-media",

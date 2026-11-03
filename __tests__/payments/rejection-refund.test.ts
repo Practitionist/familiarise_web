@@ -28,6 +28,7 @@ const mockNotifyRefundProcessed = jest.fn();
 const mockPaymentFindUnique = jest.fn();
 const mockCaptureException = jest.fn();
 const mockRecordSystemError = jest.fn();
+const mockRecordSystemEvent = jest.fn();
 
 jest.mock("../../lib/booking/cancellation-scope", () => ({
   resolveBookingRefundContext: (...a: unknown[]) => mockResolveContext(...a),
@@ -59,6 +60,7 @@ jest.mock("../../lib/payments/operations/refund", () => ({
   RefundValidationError: class extends Error {},
 }));
 
+jest.mock("@sentry/core", () => jest.requireMock("@sentry/nextjs"));
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => mockCaptureException(...a),
 }));
@@ -67,6 +69,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
   return {
     recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
     recordSystemErrorSafe: (...a: unknown[]) => mockRecordSystemError(...a),
+    recordSystemEvent: (...a: unknown[]) => mockRecordSystemEvent(...a),
   };
 });
 
@@ -77,7 +80,10 @@ import {
 } from "../../lib/booking/rejection-refund";
 
 const mockStamp = jest.fn(async () => ({ count: 1 }));
-const tx = { payment: { updateMany: mockStamp } } as never;
+const mockTxFindUnique = jest.fn();
+const tx = {
+  payment: { updateMany: mockStamp, findUnique: mockTxFindUnique },
+} as never;
 
 /** The route's two halves: stamp in the reject commit, drive after it. */
 async function rejectAndRefund(args: {
@@ -184,6 +190,35 @@ describe("refundRejectedRequest", () => {
         paymentId: "pay-1",
         amountPaise: 100_000,
         dedupeKey: "rejection:cons-1:pay-1",
+      }),
+    );
+  });
+
+  it("adds nothing to another door's owed refund, and says so", async () => {
+    mockStamp.mockResolvedValueOnce({ count: 0 });
+    mockTxFindUnique.mockResolvedValueOnce({
+      id: "pay-1",
+      refundOwedKey: "cancel:appt-1:pay-1",
+      refundOwedPaise: 40_000,
+    });
+    const result = await rejectAndRefund({
+      kind: "consultation",
+      requestId: "cons-1",
+      initiatedByUserId: "consultant-1",
+      actor: "CONSULTANT",
+    });
+    expect(result).toMatchObject({
+      amountRefundedPaise: 0,
+      alreadyOwed: {
+        heldKey: "cancel:appt-1:pay-1",
+        note: "A refund of ₹400.00 was already owed on payment pay-1 for another reason (cancel:appt-1:pay-1), so this action added nothing to it. Refund any difference by hand.",
+      },
+    });
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    expect(mockRecordSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: "WARN",
+        correlationId: "owed-already-held:pay-1:rejection:cons-1:pay-1",
       }),
     );
   });

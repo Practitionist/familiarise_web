@@ -1,9 +1,7 @@
 // Seats a registrant on the webinar's shared appointment.
 
-import {
-  liveParticipant,
-  recordParticipants,
-} from "@/lib/booking/participants";
+import { seatHoldingParticipant } from "@/utils/scheduling-engine/occupancyPolicy";
+import { recordParticipants } from "@/lib/booking/participants";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import { AppointmentsType } from "@prisma/client";
@@ -31,7 +29,7 @@ export async function handleWebinarCheckout(
         include: {
           occurrences: true,
           participants: {
-            where: { ...liveParticipant(), role: "CONSULTEE" },
+            where: seatHoldingParticipant(new Date()),
             select: { userId: true },
           },
         },
@@ -118,7 +116,7 @@ export async function handleWebinarCheckout(
       include: {
         occurrences: true,
         participants: {
-          where: { ...liveParticipant(), role: "CONSULTEE" },
+          where: seatHoldingParticipant(new Date()),
           select: { userId: true },
         },
       },

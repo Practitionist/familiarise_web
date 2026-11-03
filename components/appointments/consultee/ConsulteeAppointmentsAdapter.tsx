@@ -23,6 +23,7 @@ import {
   getJoinableOccurrence,
   occurrencesAllowReschedule,
 } from "@/lib/appointments/occurrences";
+import { rescheduleReleasable } from "@/lib/booking/reschedule-proposals";
 import {
   consulteeDestructiveAction,
   consulteeMayReschedule,
@@ -44,6 +45,8 @@ import { useEventActions } from "@/components/appointments/consultee/useEventAct
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import type { ShownCancelQuote } from "@/lib/appointments/cancel-requote";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
+import { operatorOpsHref } from "@/lib/backoffice/booking-href";
+import { OPS_HINT_LABEL } from "@/components/appointments/OperatorOpsHint";
 import {
   DM_ELIGIBLE_STATUSES,
   OPENABLE_EVENT_STATUSES,
@@ -100,78 +103,75 @@ function sourceId(vm: AppointmentVM): string | null {
   }
 }
 
-export function consultantUserIdOf(vm: AppointmentVM): string | null {
+type UserRef = { id?: string; name?: string | null };
+type PlanRef = { consultantProfile?: { user?: UserRef } } | null | undefined;
+
+/** The first reference that carries an id, so the name always belongs to that user. */
+function firstUser(...refs: (UserRef | null | undefined)[]): UserRef | null {
+  return refs.find((u) => u?.id) ?? null;
+}
+
+function consultantUserOf(vm: AppointmentVM): UserRef | null {
   const src = vm.raw.source as
     | {
-        consultationPlan?: {
-          consultantProfile?: { user?: { id?: string } };
-        };
-        subscriptionPlan?: {
-          consultantProfile?: { user?: { id?: string } };
-        };
-        webinarPlan?: {
-          consultantProfile?: { user?: { id?: string } };
-        };
-        classPlan?: {
-          consultantProfile?: { user?: { id?: string } };
-        };
+        consultationPlan?: PlanRef;
+        subscriptionPlan?: PlanRef;
+        webinarPlan?: PlanRef;
+        classPlan?: PlanRef;
       }
     | undefined;
-  const fromSource =
-    src?.consultationPlan?.consultantProfile?.user?.id ??
-    src?.subscriptionPlan?.consultantProfile?.user?.id ??
-    src?.webinarPlan?.consultantProfile?.user?.id ??
-    src?.classPlan?.consultantProfile?.user?.id;
-  if (fromSource) return fromSource;
-
   const appt = vm.raw.appointment as
     | {
-        consultation?: {
-          consultationPlan?: {
-            consultantProfile?: { user?: { id?: string } };
-          };
-        } | null;
-        subscription?: {
-          subscriptionPlan?: {
-            consultantProfile?: { user?: { id?: string } };
-          };
-        } | null;
-        webinar?: {
-          webinarPlan?: {
-            consultantProfile?: { user?: { id?: string } };
-          };
-        } | null;
-        class?: {
-          classPlan?: {
-            consultantProfile?: { user?: { id?: string } };
-          };
-        } | null;
+        consultation?: { consultationPlan?: PlanRef } | null;
+        subscription?: { subscriptionPlan?: PlanRef } | null;
+        webinar?: { webinarPlan?: PlanRef } | null;
+        class?: { classPlan?: PlanRef } | null;
       }
     | undefined;
-  return (
-    appt?.consultation?.consultationPlan?.consultantProfile?.user?.id ??
-    appt?.subscription?.subscriptionPlan?.consultantProfile?.user?.id ??
-    appt?.webinar?.webinarPlan?.consultantProfile?.user?.id ??
-    appt?.class?.classPlan?.consultantProfile?.user?.id ??
-    null
+  return firstUser(
+    src?.consultationPlan?.consultantProfile?.user,
+    src?.subscriptionPlan?.consultantProfile?.user,
+    src?.webinarPlan?.consultantProfile?.user,
+    src?.classPlan?.consultantProfile?.user,
+    appt?.consultation?.consultationPlan?.consultantProfile?.user,
+    appt?.subscription?.subscriptionPlan?.consultantProfile?.user,
+    appt?.webinar?.webinarPlan?.consultantProfile?.user,
+    appt?.class?.classPlan?.consultantProfile?.user,
   );
 }
 
-export function consulteeUserIdOf(vm: AppointmentVM): string | null {
+function consulteeUserOf(vm: AppointmentVM): UserRef | null {
   const appt = vm.raw.appointment;
-  if (appt?.consultation?.requestedBy?.user?.id) {
-    return appt.consultation.requestedBy.user.id;
-  }
-  if (appt?.subscription?.requestedBy?.user?.id) {
-    return appt.subscription.requestedBy.user.id;
-  }
   const src = vm.raw.source as
     | {
-        requestedBy?: { user?: { id?: string } };
-        consulteeProfile?: { user?: { id?: string } };
+        requestedBy?: { user?: UserRef };
+        consulteeProfile?: { user?: UserRef };
       }
     | undefined;
-  return src?.requestedBy?.user?.id ?? src?.consulteeProfile?.user?.id ?? null;
+  return firstUser(
+    appt?.consultation?.requestedBy?.user,
+    appt?.subscription?.requestedBy?.user,
+    src?.requestedBy?.user,
+    src?.consulteeProfile?.user,
+  );
+}
+
+export function consultantUserIdOf(vm: AppointmentVM): string | null {
+  return consultantUserOf(vm)?.id ?? null;
+}
+
+export function consulteeUserIdOf(vm: AppointmentVM): string | null {
+  return consulteeUserOf(vm)?.id ?? null;
+}
+
+/** "Message <name>" for the DM's other person, else the role label. */
+export function messageLabel(
+  name: string | null | undefined,
+  role: "consultant" | "consultee",
+): string {
+  const trimmed = name?.trim();
+  if (trimmed) return `Message ${trimmed}`;
+  return role === "consultant" ? "Message Consultee" : "Message Consultant";
 }
 
 export function eventChannelIdOf(vm: AppointmentVM): string | null {
@@ -208,27 +208,49 @@ export function chatAffordancesForVm(options: {
   ) {
     const eventId = eventChannelIdOf(vm);
     if (eventId) {
-      const eventChatHref = `${messagesBasePath}?eventType=${vm.kind.toLowerCase()}&eventId=${encodeURIComponent(eventId)}`;
+      const eventType = vm.kind === "CLASS" ? "class" : "webinar";
+      const eventChatHref = `${messagesBasePath}?eventType=${eventType}&eventId=${encodeURIComponent(eventId)}`;
+      const label = eventType === "class" ? "Class chat" : "Webinar chat";
       chatItems.push({
         key: "event-chat",
-        label: "Open Event Chat",
+        label,
         href: eventChatHref,
         onClick: () => push(eventChatHref),
+        chat: {
+          kind: "event",
+          title: label,
+          messagesHref: eventChatHref,
+          eventType,
+          eventId,
+        },
       });
     }
   }
 
-  if (DM_ELIGIBLE_SET.has(vm.status) && vm.appointmentId) {
-    const counterpartyUserId =
-      role === "consultant" ? consulteeUserIdOf(vm) : consultantUserIdOf(vm);
+  // A class or webinar DM follows the event's openable states, as the server's gate does.
+  const dmOpen =
+    vm.kind === "WEBINAR" || vm.kind === "CLASS"
+      ? OPENABLE_EVENT_SET.has(vm.status)
+      : DM_ELIGIBLE_SET.has(vm.status);
+  if (dmOpen && vm.appointmentId) {
+    const counterparty =
+      role === "consultant" ? consulteeUserOf(vm) : consultantUserOf(vm);
+    const counterpartyUserId = counterparty?.id;
     if (counterpartyUserId) {
       const dmHref = `${messagesBasePath}?contextAppointmentId=${encodeURIComponent(vm.appointmentId)}&counterpartyUserId=${encodeURIComponent(counterpartyUserId)}`;
+      const label = messageLabel(counterparty.name, role);
       chatItems.push({
         key: "message",
-        label:
-          role === "consultant" ? "Message Consultee" : "Message Consultant",
+        label,
         href: dmHref,
         onClick: () => push(dmHref),
+        chat: {
+          kind: "dm",
+          title: label,
+          messagesHref: dmHref,
+          counterpartyUserId,
+          appointmentId: vm.appointmentId,
+        },
       });
     }
   }
@@ -355,6 +377,15 @@ export function useConsulteeAppointmentsAdapter(options?: {
 
   const isDev = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";
 
+  const viewer = session?.user;
+  const isPartyTo = (vm: AppointmentVM): boolean =>
+    Boolean(
+      viewer &&
+      ((viewer.consulteeProfileId &&
+        viewer.consulteeProfileId === consulteeId) ||
+        [consulteeUserIdOf(vm), consultantUserIdOf(vm)].includes(viewer.id)),
+    );
+
   const primaryAction = (vm: AppointmentVM): PrimaryAction => {
     const joinable = getJoinableOccurrence(vm.raw.rawOccurrences ?? [], {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
@@ -403,7 +434,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
       });
     }
     // #1005 — kind-gate: only offer actions the server will honour.
-    if (
+    const mayReschedule = Boolean(
       consulteeMayReschedule(vm.kind) &&
       vm.appointmentId &&
       // The reschedule page lives under this route's consultee; off that route
@@ -411,8 +442,18 @@ export function useConsulteeAppointmentsAdapter(options?: {
       consulteeId &&
       !inactive &&
       isApprovedStatus(vm.status) &&
-      occurrencesAllowReschedule(slots)
-    ) {
+      occurrencesAllowReschedule(slots) &&
+      rescheduleReleasable(slots),
+    );
+    const destructive = consulteeDestructiveAction(vm.kind);
+    const mayCancel =
+      !inactive &&
+      ((destructive === "cancel-booking" && Boolean(vm.appointmentId)) ||
+        (destructive === "cancel-trial" && Boolean(sourceId(vm))));
+    const opsHref = vm.appointmentId
+      ? operatorOpsHref(viewer, isPartyTo(vm), vm.appointmentId)
+      : null;
+    if (mayReschedule && !opsHref) {
       // A page, not a dialog: choosing a time is a full-width task, and a
       // URL means a half-finished choice survives a refresh. The returnTo
       // query rides along literally; only the base path prefetches.
@@ -428,8 +469,21 @@ export function useConsulteeAppointmentsAdapter(options?: {
         onClick: () => router.push(rescheduleHref),
       });
     }
-    const destructive = consulteeDestructiveAction(vm.kind);
-    if (!inactive && destructive === "cancel-booking" && vm.appointmentId) {
+    if (
+      opsHref &&
+      (mayReschedule || (mayCancel && destructive !== "cancel-trial"))
+    ) {
+      items.push({
+        key: "ops-hint",
+        label: OPS_HINT_LABEL,
+        href: opsHref,
+        onClick: () => router.push(opsHref),
+      });
+    } else if (
+      !inactive &&
+      destructive === "cancel-booking" &&
+      vm.appointmentId
+    ) {
       items.push({
         key: "cancel",
         label: isPendingPaymentStatus(vm.status)

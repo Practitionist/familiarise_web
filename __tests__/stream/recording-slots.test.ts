@@ -78,6 +78,21 @@ function classBooking(id: string, planId = "plan-1"): BookingRow {
   };
 }
 
+function oneToOneBooking(id = "b1"): BookingRow {
+  return {
+    id,
+    appointmentType: "CONSULTATION",
+    consultation: {
+      requestedById: "cp-l",
+      consultationPlan: { title: "1:1", consultantProfileId: "host" },
+    },
+    subscription: null,
+    trial: null,
+    webinar: null,
+    class: null,
+  };
+}
+
 function session(
   ordinal: number,
   endedDaysAgo: number,
@@ -152,6 +167,14 @@ describe("the slot rule", () => {
       "host",
     );
     expect(recordingViewerOf(classBooking("b2"), LEARNER, false)).toBeNull();
+  });
+
+  it("revokes a 1:1 learner after a full refund but keeps the host and a partial refund", () => {
+    const host = { consultantProfileId: "host", consulteeProfileId: null };
+    const booking = oneToOneBooking();
+    expect(recordingViewerOf(booking, LEARNER, true)?.role).toBe("learner");
+    expect(recordingViewerOf(booking, LEARNER, true, true)).toBeNull();
+    expect(recordingViewerOf(booking, host, true, true)?.role).toBe("host");
   });
 
   it("shows the own batch's recordings as ordered parts", () => {
@@ -291,6 +314,42 @@ describe("the batched loader and library pages", () => {
     expect(loaded.get("b2")!.view.expertName).toBe("Ananya Anderson");
   });
 
+  it("keeps the payment relation on a 1:1-only page and revokes a fully refunded learner", async () => {
+    const row = {
+      ...oneToOneBooking("b1"),
+      participants: [],
+      payment: [
+        {
+          amount: 50_000,
+          refunds: [{ amountPaise: 50_000, status: "SUCCEEDED" }],
+        },
+      ],
+      occurrences: [session(1, 5, [{ id: "rec" }])],
+    };
+    (prisma.appointment.findMany as jest.Mock)
+      .mockResolvedValueOnce([{ appointmentType: "CONSULTATION" }])
+      // Honour the select like Prisma: a dropped relation comes back undefined,
+      // so the refund check fails if the loader stops asking for payments.
+      .mockImplementationOnce(
+        async (args: { select: Record<string, unknown> }) => [
+          Object.fromEntries(
+            Object.entries(args.select).map(([key]) => [
+              key,
+              (row as Record<string, unknown>)[key],
+            ]),
+          ),
+        ],
+      );
+
+    const loaded = await loadRecordingViews(["b1"], "learner", NOW);
+
+    const { select } = (prisma.appointment.findMany as jest.Mock).mock
+      .calls[1][0];
+    expect(select).toHaveProperty("payment");
+    expect(select).not.toHaveProperty("participants");
+    expect(loaded.size).toBe(0);
+  });
+
   it("counts and pages only the bookings that render a row", () => {
     const empty = view([session(1, -1)]);
     const recorded = view([session(1, 5, [{ id: "rec" }])]);
@@ -367,5 +426,71 @@ describe("playback follows the list", () => {
       allowed: false,
       code: "LATE_JOIN_HIDDEN",
     });
+  });
+});
+
+describe("co-host playback scope", () => {
+  it("asks only for accepted PRESENTER co-hosts, never a removed collaborator", async () => {
+    (prisma.appointment.findMany as jest.Mock)
+      .mockReset()
+      .mockResolvedValue([]);
+    (prisma.consultantProfile.findUnique as jest.Mock).mockResolvedValue({
+      id: "host",
+    });
+
+    const webinarBooking = {
+      id: "b-web",
+      appointmentType: "WEBINAR",
+      consultation: null,
+      subscription: null,
+      trial: null,
+      class: null,
+      webinar: {
+        id: "web-1",
+        webinarPlan: {
+          id: "plan-web",
+          title: "Webinar",
+          shareRecordingsWithAllAttendees: true,
+          consultantProfileId: "host",
+          organizationId: null,
+          collaborators: [],
+        },
+      },
+      participants: [],
+      payment: [],
+      occurrences: [],
+    };
+
+    (prisma.appointment.findMany as jest.Mock)
+      .mockResolvedValueOnce([{ appointmentType: "WEBINAR" }])
+      .mockResolvedValueOnce([webinarBooking])
+      .mockResolvedValue([]);
+
+    await loadRecordingViews(["b-web"], "host", NOW);
+
+    const bookingCall = (
+      prisma.appointment.findMany as jest.Mock
+    ).mock.calls.find(([args]) => args.select?.webinar);
+    if (!bookingCall) throw new Error("booking query was not issued");
+    const { select } = bookingCall[0];
+    // A removed or withdrawn collaborator must never be treated as a host.
+    expect(select.webinar.select.webinarPlan.select.collaborators).toEqual({
+      where: { status: "ACCEPTED", tier: "PRESENTER" },
+      select: { consultantProfileId: true },
+    });
+  });
+
+  it("treats an accepted co-host as a host", () => {
+    const booking = classBooking("b-cohost");
+    if (!booking.class) throw new Error("classBooking must include a class");
+    booking.class.classPlan.collaborators = [{ consultantProfileId: "cohost" }];
+
+    expect(
+      recordingViewerOf(
+        booking,
+        { consultantProfileId: "cohost", consulteeProfileId: null },
+        false,
+      )?.role,
+    ).toBe("host");
   });
 });

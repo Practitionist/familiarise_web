@@ -152,9 +152,8 @@ describe("checkSlotAvailability", () => {
             endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
           },
         ],
-        consultation: {
-          requestedBy: { user: { name: "Existing User" } },
-        },
+        consultation: { status: "APPROVED" },
+        participants: [],
       },
     ]);
 
@@ -163,7 +162,7 @@ describe("checkSlotAvailability", () => {
     expect(result.errors[0]).toContain("already booked");
   });
 
-  it("carries the conflicting booking and its other party beside the string (#1721)", async () => {
+  it("carries the conflicting booking and never the other party's identity", async () => {
     const slots = futureSlots(1);
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
@@ -174,9 +173,9 @@ describe("checkSlotAvailability", () => {
             endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
           },
         ],
-        consultation: {
-          requestedBy: { user: { id: "user-9", name: "Existing User" } },
-        },
+        consultation: { status: "APPROVED" },
+        // The consultant is a live participant: their own booking.
+        participants: [{ userId: "user-1" }],
       },
     ]);
 
@@ -186,12 +185,11 @@ describe("checkSlotAvailability", () => {
         slot: slots[0].toISOString().slice(0, 19),
         appointmentId: "existing-apt",
         type: "Consultation",
-        otherParty: { userId: "user-9", name: "Existing User" },
-        title: null,
+        onConsultantCalendar: true,
       },
     ]);
-    // The event's consultant sees who; anyone else keeps "Another user".
     const detail = result.conflicts?.[0];
+    // The event's consultant gets a link to their own booking, no name.
     expect(
       describeConflict(
         detail!.slot,
@@ -199,7 +197,8 @@ describe("checkSlotAvailability", () => {
         { userId: "c-1", isEventConsultant: true },
         "Consultation",
       ).existingAppointment,
-    ).toMatchObject({ with: "Existing User", appointmentId: "existing-apt" });
+    ).toMatchObject({ with: "you", appointmentId: "existing-apt" });
+    // Anyone else: a time, never a party or a booking id.
     expect(
       describeConflict(
         detail!.slot,
@@ -208,57 +207,53 @@ describe("checkSlotAvailability", () => {
         "Consultation",
       ).existingAppointment,
     ).toEqual({
-      type: "Consultation",
-      with: "Another user",
-      time: expect.any(String),
+      type: "Booking",
+      with: "another booking",
+      time: `${detail!.slot}Z`,
     });
   });
 
-  it("names a conflicting class by its plan title for the event's consultant (#1721 QA)", async () => {
+  it("tells the consultant their client is busy, without naming the client's other booking", async () => {
     const slots = futureSlots(1);
+    // The consultee's session with another expert (not on this consultant's calendar).
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
-        id: "class-apt",
+        id: "other-expert-apt",
         occurrences: [
           {
             startsAt: slots[0],
             endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+            consultantProfileId: "cp-other",
           },
         ],
         consultation: null,
         subscription: null,
         webinar: null,
-        class: { status: "SCHEDULED", classPlan: { title: "Algebra I" } },
+        class: { status: "SCHEDULED" },
+        participants: [],
       },
     ]);
 
-    const result = await service.checkSlotAvailability(slots, "user-1");
+    const result = await service.checkSlotAvailability(
+      slots,
+      "user-1",
+      "cp-1",
+      "consultee-1",
+    );
     const detail = result.conflicts?.[0];
-    expect(detail).toMatchObject({
-      appointmentId: "class-apt",
-      type: "Class",
-      title: "Algebra I",
+    expect(detail).toMatchObject({ onConsultantCalendar: false });
+    expect(JSON.stringify(result)).not.toMatch(/title|name/i);
+    const view = describeConflict(
+      detail!.slot,
+      detail,
+      { userId: "c-1", isEventConsultant: true },
+      "Consultation",
+    ).existingAppointment;
+    expect(view).toEqual({
+      type: "Booking",
+      with: "your client",
+      time: `${detail!.slot}Z`,
     });
-    expect(
-      describeConflict(
-        detail!.slot,
-        detail,
-        { userId: "c-1", isEventConsultant: true },
-        "Consultation",
-      ).existingAppointment,
-    ).toMatchObject({
-      type: "Class",
-      with: "Algebra I",
-      appointmentId: "class-apt",
-    });
-    expect(
-      describeConflict(
-        detail!.slot,
-        detail,
-        { userId: "c-1", isEventConsultant: false },
-        "Consultation",
-      ).existingAppointment.with,
-    ).toBe("Another user");
   });
 
   // AE-5/RV-6 — the interval is no longer a parameter; it is the shared
@@ -324,11 +319,13 @@ describe("checkSlotAvailability", () => {
     // participant predicate sits on the appointment, not on the rows.
     expect(includeFilter).toEqual(slotFilter);
     expect(includeFilter).toContainEqual(OCCUPYING_OCCURRENCE_WHERE);
+    // A HELD seat whose own payment lapsed holds no time.
     expect(reachOrOf(call)).toContainEqual({
       participants: {
         some: {
           userId: { in: ["user-1"] },
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+          NOT: expect.objectContaining({ status: "HELD" }),
         },
       },
     });
@@ -446,10 +443,8 @@ describe("checkSlotAvailability", () => {
             endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
           },
         ],
-        subscription: {
-          status: "APPROVED_PENDING_PAYMENT",
-          requestedBy: { user: { name: "Active Sub User" } },
-        },
+        subscription: { status: "APPROVED_PENDING_PAYMENT" },
+        participants: [],
         payment: [
           {
             paymentStatus: "PENDING",
@@ -531,13 +526,12 @@ describe("validate: future slot validation", () => {
       { durationInHours: 0.5 },
     );
     expect(result.isValid).toBe(false);
-    expect(result.errors[0]).toContain("past");
+    expect(result.errors[0]).toMatch(/^\[TOO_SOON\]/);
   });
 
-  it("should reject slots within 5-second buffer", async () => {
-    // Set time to just before slot
+  it("should reject slots inside the 15-minute settled lead time", async () => {
     jest.setSystemTime(new Date("2025-06-01T10:00:00Z"));
-    const tooSoonSlot = [new Date("2025-06-01T10:00:03.000Z")]; // 3 seconds from now
+    const tooSoonSlot = [new Date("2025-06-01T10:14:00.000Z")];
     const result = await service.validate(
       "consultation",
       "event-1",

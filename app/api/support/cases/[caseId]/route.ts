@@ -19,6 +19,7 @@ import {
   readSupportCaseForViewer,
 } from "@/lib/support/case-service";
 import { sessionRole } from "@/lib/auth/session-role";
+import { isFreshSession } from "@/lib/auth/step-up";
 
 const CaseIdParamsSchema = z.object({
   caseId: z.string().min(1).max(64),
@@ -116,11 +117,14 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         { status: 403 },
       );
 
-    const result = await patchSupportCaseLifecycle({
-      ...parsed.data,
-      caseId,
-      actorId,
-    });
+    const result = await patchSupportCaseLifecycle(
+      { ...parsed.data, caseId, actorId },
+      new Date(),
+      {
+        actorRole: String(auth.session.user.role ?? "UNKNOWN"),
+        freshSession: isFreshSession(auth.session.session),
+      },
+    );
 
     if (!result.ok) {
       const { ok: _ok, status, ...body } = result;
@@ -192,7 +196,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
                   title:
                     current.ownershipScope === "PERSONAL"
                       ? t.title
-                      : "Organization support request",
+                      : "Organization support case",
                   statusCode:
                     t.status === "ESCALATED" ? "IN_PROGRESS" : t.status,
                   statusLabel,

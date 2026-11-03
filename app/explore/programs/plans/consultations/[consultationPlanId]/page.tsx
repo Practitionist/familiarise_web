@@ -1,3 +1,4 @@
+import { PlanBreadcrumb } from "@/components/explore/PublicBreadcrumb";
 import { notFound } from "next/navigation";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
 import { getSession } from "@/lib/auth-server";
@@ -61,5 +62,10 @@ export default async function ConsultationDetailsPage({
     notFound();
   }
 
-  return <ConsultationDetails plan={plan} />;
+  return (
+    <>
+      <PlanBreadcrumb plan={plan} />
+      <ConsultationDetails plan={plan} />
+    </>
+  );
 }

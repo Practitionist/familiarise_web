@@ -3,6 +3,8 @@
  * Provider-agnostic consultant payout orchestration with admin approval workflow.
  */
 
+import { casMiss } from "@/lib/cron/run-counters";
+import { isMakerCheckerDisbursementBlocked } from "./maker-checker";
 import * as Sentry from "@sentry/nextjs";
 import {
   reportSentryError,
@@ -286,6 +288,7 @@ export interface PayoutBatchSlice extends PayoutBatchRun {
 export async function createPayoutBatchSlice(opts: {
   limit: number;
   windowStart?: Date;
+  createdBy?: string;
 }): Promise<PayoutBatchSlice> {
   return runPayoutBatch(undefined, opts);
 }
@@ -640,6 +643,7 @@ export async function approvePayout(
     },
   });
   if (claimed.count === 0) {
+    casMiss();
     const current = await prisma.consultantPayout.findUnique({
       where: { id: payoutId },
       select: { status: true },
@@ -852,6 +856,7 @@ export async function rejectPayout(
       },
     });
     if (claimed.count === 0) {
+      casMiss();
       const current = await tx.consultantPayout.findUnique({
         where: { id: payoutId },
         select: { status: true },
@@ -944,6 +949,12 @@ export const REQUEST_PAYOUT_RUN_BOUNDS = {
   lockTtlMs: 2 * 60_000,
 } as const;
 
+/** APPROVED consultant payouts still under the retry cap; the disbursement run's cohort. */
+export const APPROVED_PAYOUT_WHERE = {
+  status: PayoutStatus.APPROVED,
+  retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
+} satisfies Prisma.ConsultantPayoutWhereInput;
+
 export async function processApprovedPayouts(
   opts: {
     budgetMs?: number;
@@ -983,16 +994,30 @@ export async function processApprovedPayouts(
 
   try {
     const approvedPayouts = await prisma.consultantPayout.findMany({
-      where: {
-        status: PayoutStatus.APPROVED,
-        retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
-      },
+      where: APPROVED_PAYOUT_WHERE,
       include: APPROVED_PAYOUT_INCLUDE,
       orderBy: [{ approvedAt: "asc" }, { createdAt: "asc" }],
     });
 
+    // Payouts this run's admin approved are skipped up front, so they never count toward the balance check.
+    const results: PayoutResult[] = [];
+    const disbursable: typeof approvedPayouts = [];
+    for (const payout of approvedPayouts) {
+      if (
+        await isMakerCheckerDisbursementBlocked(
+          payout.id,
+          payout.approvedBy,
+          opts.triggeredByUserId,
+        )
+      ) {
+        results.push({ payoutId: payout.id, success: false, skipped: true });
+      } else {
+        disbursable.push(payout);
+      }
+    }
+
     // The balance must cover what this run can disburse: the oldest `limit` rows, or all of them.
-    const batchTotalPaise = approvedPayouts
+    const batchTotalPaise = disbursable
       .slice(0, opts.limit)
       .reduce((s, p) => s + p.amount, 0);
     const preflight = await assertPayoutBalance(batchTotalPaise);
@@ -1001,9 +1026,7 @@ export async function processApprovedPayouts(
       return [];
     }
 
-    const results: PayoutResult[] = [];
-
-    for (const payout of approvedPayouts) {
+    for (const payout of disbursable) {
       if (
         opts.budgetMs !== undefined &&
         Date.now() - startedAt >= opts.budgetMs
@@ -1019,7 +1042,7 @@ export async function processApprovedPayouts(
       ) {
         break;
       }
-      const result = await processSinglePayout(payout, opts.triggeredByUserId);
+      const result = await processSinglePayout(payout);
       results.push(result);
     }
 
@@ -1279,43 +1302,6 @@ export async function previewInstantPayout(
   };
 }
 
-async function isMakerCheckerDisbursementBlocked(
-  payoutId: string,
-  approvedByValue: unknown,
-  triggeredByUserId?: string,
-): Promise<boolean> {
-  const approvedBy =
-    typeof approvedByValue === "string" ? approvedByValue : null;
-  if (
-    !triggeredByUserId ||
-    !approvedBy ||
-    approvedBy !== triggeredByUserId ||
-    approvedBy === "SYSTEM_AUTO_APPROVE"
-  ) {
-    return false;
-  }
-  const makerCheckerRequired =
-    process.env.PAYOUT_MAKER_CHECKER_REQUIRED !== "false";
-  const activeAdminCount =
-    typeof (prisma as { user?: { count?: (args: unknown) => Promise<number> } })
-      .user?.count === "function"
-      ? await prisma.user.count({ where: { role: "ADMIN" } })
-      : 2;
-  if (!makerCheckerRequired || activeAdminCount <= 1) {
-    return false;
-  }
-  console.warn(
-    `[Payouts] Payout ${payoutId} skipped — triggered by the same admin (${triggeredByUserId}) who approved it`,
-  );
-  await recordSystemEventSafe({
-    category: "PAYOUT",
-    severity: "WARN",
-    message: `PAYOUT_MAKER_CHECKER_DISBURSEMENT_SKIPPED: Payout ${payoutId} approved by ${approvedBy} cannot be disbursed by the same admin`,
-    context: { payoutId, approvedBy, triggeredByUserId },
-  });
-  return true;
-}
-
 type ClaimGateOutcome =
   | { kind: "dispute_blocked" }
   | { kind: "refund_blocked" }
@@ -1390,6 +1376,7 @@ async function runConsultantPayoutClaimGate(
     data: { status: PayoutStatus.PROCESSING, tdsCatchUpFy: null },
   });
   if (claimed.count === 0) {
+    casMiss();
     return { kind: "already_claimed" };
   }
   return { kind: "claimed" };
@@ -1612,29 +1599,26 @@ async function handleProcessSinglePayoutError(
   };
 }
 
-async function processSinglePayout(
-  payout: {
-    id: string;
-    consultantProfileId: string;
-    provider: PaymentGateway;
-    amount: number;
-    currency: string;
-    method: PayoutMethod;
-    idempotencyKey: string | null;
-    payoutAccount: PayoutDestination | null;
-    consultantProfile: {
-      payoutAccounts?: PayoutDestination[];
-      user: {
-        name: string | null;
-        email: string | null;
-        [key: string]: unknown;
-      };
+async function processSinglePayout(payout: {
+  id: string;
+  consultantProfileId: string;
+  provider: PaymentGateway;
+  amount: number;
+  currency: string;
+  method: PayoutMethod;
+  idempotencyKey: string | null;
+  payoutAccount: PayoutDestination | null;
+  consultantProfile: {
+    payoutAccounts?: PayoutDestination[];
+    user: {
+      name: string | null;
+      email: string | null;
       [key: string]: unknown;
     };
     [key: string]: unknown;
-  },
-  triggeredByUserId?: string,
-): Promise<PayoutResult> {
+  };
+  [key: string]: unknown;
+}): Promise<PayoutResult> {
   let providerPayoutId: string | undefined;
   let submittedToGateway = false;
   const markSubmitted = () => {
@@ -1642,16 +1626,6 @@ async function processSinglePayout(
   };
   const financialYear = getIndianFinancialYear();
   try {
-    if (
-      await isMakerCheckerDisbursementBlocked(
-        payout.id,
-        payout.approvedBy,
-        triggeredByUserId,
-      )
-    ) {
-      return { payoutId: payout.id, success: false, skipped: true };
-    }
-
     const blockedResult = await claimConsultantPayoutForDisbursement(
       payout.id,
       payout.amount,

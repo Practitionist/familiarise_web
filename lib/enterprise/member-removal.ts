@@ -1,3 +1,4 @@
+import { revokeMemberStreamAccess } from "@/lib/stream/org-access-revocation";
 import * as Sentry from "@sentry/nextjs";
 import { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -6,6 +7,10 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { transitionMembership } from "@/lib/enterprise/transitions";
 import { revokeOrgManagedUserSessions } from "@/lib/sso/session-sweeps";
+import {
+  stampSessionEnds,
+  type EndedSessions,
+} from "@/lib/auth/session-access-log";
 import {
   assertNotLastOwner,
   assertRemovable,
@@ -32,28 +37,17 @@ import {
 } from "@/lib/email";
 import { sendCollaboratorWithdrawnEmail } from "@/lib/email/senders/collaborators";
 import { scheduleAfter } from "@/lib/api/after-safe";
+
 import {
-  getStreamChatClient,
-  isExpectedStreamError,
-  isStreamConfigured,
-} from "@/lib/stream-client";
-import { streamLogger } from "@/lib/stream-logger";
-import { markMembership } from "@/lib/stream-cache";
-import { CLASS_PREFIX, WEBINAR_PREFIX } from "@/lib/stream-channel-ids";
-import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
-import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
-import { queryOrgTaggedChannels } from "@/lib/stream/event-channel-service";
-import {
-  liveParticipant,
-  transitionParticipant,
-} from "@/lib/booking/participants";
+  enqueueCollaboratorRevocationRetry,
+  enqueueOrgMemberRevocationRetry,
+} from "@/lib/stream/access-revocation";
+import { transitionParticipant } from "@/lib/booking/participants";
 import { getAppUrl } from "@/lib/url";
 import {
   revokeCollaboratorAccess,
   type PlanType,
 } from "@/lib/collaborators/service";
-
-export const STREAM_REVOCATION_RETRY_WINDOW_HOURS = 72;
 
 export interface RemoveMemberInput {
   orgId: string;
@@ -85,6 +79,7 @@ interface PostCommit {
   memberBells: StagedTrigger[];
   email: StagedOnboardingEmail | null;
   revokedCollaborations: RevokedOrgCollaboration[];
+  endedSessions: EndedSessions[];
 }
 
 async function validateSelfLeaveObligations(
@@ -234,6 +229,7 @@ async function removeInTx(
       memberBells: [],
       email: null,
       revokedCollaborations: [],
+      endedSessions: [],
     };
   }
 
@@ -263,9 +259,9 @@ async function removeInTx(
     where: { id: memberId, organizationId: orgId },
     to: "REMOVED",
   });
-  if (!isSelfLeave) {
-    await revokeOrgManagedUserSessions(tx, orgId, current.userId);
-  }
+  const endedSessions = isSelfLeave
+    ? []
+    : (await revokeOrgManagedUserSessions(tx, orgId, current.userId)).ended;
   if (current.role === "EXPERT" && current.consultantProfileId) {
     await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
   }
@@ -335,6 +331,7 @@ async function removeInTx(
       memberBells: [],
       email: null,
       revokedCollaborations,
+      endedSessions,
     };
   }
   const actorName = actorUser?.name ?? actorUser?.email ?? "An operator";
@@ -362,6 +359,7 @@ async function removeInTx(
       email,
       memberBells: [],
       revokedCollaborations,
+      endedSessions,
       expertNotice: {
         userId: current.userId,
         payload: {
@@ -393,373 +391,7 @@ async function removeInTx(
     memberBells,
     email,
     revokedCollaborations,
-  };
-}
-
-export interface OrgStreamSurfaces {
-  webinarIds: string[];
-  classIds: string[];
-  dmChannelIds: string[];
-}
-
-function buildOrgWebinarSurfaceWhere(
-  orgId: string,
-  userId: string | undefined,
-  onlyUnfrozen: boolean,
-): Prisma.WebinarWhereInput {
-  return {
-    deletedAt: null,
-    ...(onlyUnfrozen ? { chatFrozenAt: null } : {}),
-    AND: [
-      {
-        OR: [
-          { webinarPlan: { organizationId: orgId } },
-          { appointment: { organizationId: orgId, deletedAt: null } },
-        ],
-      },
-      ...(userId
-        ? [
-            {
-              OR: [
-                {
-                  appointment: {
-                    deletedAt: null,
-                    participants: { some: liveParticipant(userId) },
-                  },
-                },
-                { webinarPlan: { consultantProfile: { userId } } },
-                {
-                  webinarPlan: {
-                    collaborators: {
-                      some: {
-                        consultantProfile: { userId },
-                        status: "ACCEPTED" as const,
-                      },
-                    },
-                  },
-                },
-              ],
-            },
-          ]
-        : []),
-    ],
-  };
-}
-
-function buildOrgClassSurfaceWhere(
-  orgId: string,
-  userId: string | undefined,
-  onlyUnfrozen: boolean,
-): Prisma.ClassWhereInput {
-  return {
-    deletedAt: null,
-    ...(onlyUnfrozen ? { chatFrozenAt: null } : {}),
-    AND: [
-      {
-        OR: [
-          { classPlan: { organizationId: orgId } },
-          { appointment: { organizationId: orgId, deletedAt: null } },
-        ],
-      },
-      ...(userId
-        ? [
-            {
-              OR: [
-                {
-                  appointment: {
-                    deletedAt: null,
-                    participants: { some: liveParticipant(userId) },
-                  },
-                },
-                { classPlan: { consultantProfile: { userId } } },
-                {
-                  classPlan: {
-                    collaborators: {
-                      some: {
-                        consultantProfile: { userId },
-                        status: "ACCEPTED" as const,
-                      },
-                    },
-                  },
-                },
-              ],
-            },
-          ]
-        : []),
-    ],
-  };
-}
-
-function addOneToOneOrgDmChannels(
-  dmChannelIds: Set<string>,
-  orgId: string,
-  rows: {
-    plan: {
-      organizationId: string | null;
-      consultantProfile: { userId: string } | null;
-    };
-    requestedBy: { userId: string } | null;
-    appointment: { organizationId: string | null } | null;
-  }[],
-): void {
-  for (const row of rows) {
-    const a = row.plan.consultantProfile?.userId;
-    const b = row.requestedBy?.userId;
-    if (!a || !b || a === b) continue;
-    const resolvedOrgId = bookingOrgId({
-      consultationPlan: row.plan,
-      appointment: row.appointment,
-    });
-    if (resolvedOrgId !== orgId) continue;
-    dmChannelIds.add(getDmChannelId(a, b, orgId));
-  }
-}
-
-export async function loadOrgStreamSurfaces(
-  orgId: string,
-  opts: { userId?: string; onlyUnfrozen?: boolean } = {},
-): Promise<OrgStreamSurfaces> {
-  const { userId, onlyUnfrozen = false } = opts;
-
-  const webinars = await prisma.webinar.findMany({
-    where: buildOrgWebinarSurfaceWhere(orgId, userId, onlyUnfrozen),
-    select: { id: true },
-  });
-
-  const classes = await prisma.class.findMany({
-    where: buildOrgClassSurfaceWhere(orgId, userId, onlyUnfrozen),
-    select: { id: true },
-  });
-
-  const consultations = await prisma.consultation.findMany({
-    where: {
-      status: dmEligibleStatusFilter(),
-      ...(userId
-        ? {
-            OR: [
-              { consultationPlan: { consultantProfile: { userId } } },
-              { requestedBy: { userId } },
-            ],
-          }
-        : {}),
-      AND: [
-        {
-          OR: [
-            { consultationPlan: { organizationId: orgId } },
-            { appointment: { organizationId: orgId, deletedAt: null } },
-          ],
-        },
-      ],
-    },
-    select: {
-      consultationPlan: {
-        select: {
-          organizationId: true,
-          consultantProfile: { select: { userId: true } },
-        },
-      },
-      requestedBy: { select: { userId: true } },
-      appointment: { select: { organizationId: true } },
-    },
-  });
-
-  const subscriptions = await prisma.subscription.findMany({
-    where: {
-      status: dmEligibleStatusFilter(),
-      ...(userId
-        ? {
-            OR: [
-              { subscriptionPlan: { consultantProfile: { userId } } },
-              { requestedBy: { userId } },
-            ],
-          }
-        : {}),
-      AND: [
-        {
-          OR: [
-            { subscriptionPlan: { organizationId: orgId } },
-            { appointment: { organizationId: orgId, deletedAt: null } },
-          ],
-        },
-      ],
-    },
-    select: {
-      subscriptionPlan: {
-        select: {
-          organizationId: true,
-          consultantProfile: { select: { userId: true } },
-        },
-      },
-      requestedBy: { select: { userId: true } },
-      appointment: { select: { organizationId: true } },
-    },
-  });
-
-  const dmChannelIds = new Set<string>();
-  addOneToOneOrgDmChannels(
-    dmChannelIds,
-    orgId,
-    consultations.map((c) => ({
-      plan: c.consultationPlan,
-      requestedBy: c.requestedBy,
-      appointment: c.appointment,
-    })),
-  );
-  addOneToOneOrgDmChannels(
-    dmChannelIds,
-    orgId,
-    subscriptions.map((s) => ({
-      plan: s.subscriptionPlan,
-      requestedBy: s.requestedBy,
-      appointment: s.appointment,
-    })),
-  );
-
-  return {
-    webinarIds: webinars.map((w) => w.id),
-    classIds: classes.map((c) => c.id),
-    dmChannelIds: Array.from(dmChannelIds),
-  };
-}
-
-export interface RevokeMemberStreamResult {
-  channelsRemoved: number;
-  tokenRevoked: boolean;
-  complete: boolean;
-  failures: string[];
-}
-
-async function populateOrgTaggedMemberTargets(
-  chat: ReturnType<typeof getStreamChatClient>,
-  orgId: string,
-  userId: string,
-  targets: Map<string, "team" | "messaging">,
-  failures: string[],
-): Promise<void> {
-  try {
-    const { channels: taggedChannels, truncated } =
-      await queryOrgTaggedChannels(chat, orgId, {
-        members: { $in: [userId] },
-      });
-    if (truncated) {
-      failures.push("queryChannels:truncated");
-      streamLogger.warn(
-        "Org-tagged Stream channel query truncated during member removal",
-        { userId, orgId, examined: taggedChannels.length },
-      );
-    }
-    for (const ch of taggedChannels) {
-      if (ch.id) {
-        targets.set(ch.id, ch.type === "team" ? "team" : "messaging");
-      }
-    }
-  } catch (err) {
-    if (!isExpectedStreamError(err)) {
-      const msg = err instanceof Error ? err.message : String(err);
-      failures.push(`queryChannels:${msg}`);
-      streamLogger.warn(
-        "Failed to query org-tagged Stream channels during member removal",
-        {
-          userId,
-          orgId,
-          error: msg,
-        },
-      );
-    }
-  }
-}
-
-async function removeMemberFromTargetChannels(
-  chat: ReturnType<typeof getStreamChatClient>,
-  orgId: string,
-  userId: string,
-  targets: Map<string, "team" | "messaging">,
-  failures: string[],
-): Promise<number> {
-  let channelsRemoved = 0;
-  for (const [cid, type] of targets) {
-    try {
-      await chat.channel(type, cid).removeMembers([userId]);
-      markMembership(cid, userId, false);
-      channelsRemoved++;
-    } catch (err) {
-      markMembership(cid, userId, false);
-      if (isExpectedStreamError(err)) continue;
-      const msg = err instanceof Error ? err.message : String(err);
-      failures.push(`removeMembers:${cid}:${msg}`);
-      streamLogger.warn("Failed to remove org member from Stream channel", {
-        userId,
-        orgId,
-        channelId: cid,
-        error: msg,
-      });
-    }
-  }
-  return channelsRemoved;
-}
-
-export async function revokeMemberStreamAccess(input: {
-  userId: string;
-  orgId: string;
-}): Promise<RevokeMemberStreamResult> {
-  const { userId, orgId } = input;
-  if (!isStreamConfigured()) {
-    return {
-      channelsRemoved: 0,
-      tokenRevoked: false,
-      complete: true,
-      failures: [],
-    };
-  }
-
-  const chat = getStreamChatClient();
-  const failures: string[] = [];
-  const tokenRevoked = false;
-
-  let surfaces: OrgStreamSurfaces;
-  try {
-    surfaces = await loadOrgStreamSurfaces(orgId, { userId });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    failures.push(`loadOrgStreamSurfaces:${msg}`);
-    streamLogger.error(
-      "Failed to load org Stream surfaces for member removal",
-      err,
-      { userId, orgId },
-    );
-    return {
-      channelsRemoved: 0,
-      tokenRevoked,
-      complete: false,
-      failures,
-    };
-  }
-
-  const targets = new Map<string, "team" | "messaging">();
-  for (const id of surfaces.webinarIds) {
-    targets.set(`${WEBINAR_PREFIX}${id}`, "team");
-  }
-  for (const id of surfaces.classIds) {
-    targets.set(`${CLASS_PREFIX}${id}`, "team");
-  }
-  for (const cid of surfaces.dmChannelIds) {
-    targets.set(cid, "messaging");
-  }
-
-  await populateOrgTaggedMemberTargets(chat, orgId, userId, targets, failures);
-  const channelsRemoved = await removeMemberFromTargetChannels(
-    chat,
-    orgId,
-    userId,
-    targets,
-    failures,
-  );
-
-  return {
-    channelsRemoved,
-    tokenRevoked,
-    complete: failures.length === 0,
-    failures,
+    endedSessions,
   };
 }
 
@@ -806,6 +438,7 @@ async function revokeRemovedMemberStream(
       orgId,
     });
     if (!revocation.complete) {
+      await enqueueOrgMemberRevocationRetry(orgId, removedUserId);
       Sentry.captureException(
         new Error(
           `Partial Stream revocation on org member removal: ${revocation.failures.join("; ")}`,
@@ -841,6 +474,7 @@ export async function removeMember(
     }),
   );
 
+  await stampSessionEnds(result.endedSessions);
   // Fire-and-forget after commit: a failed notice must not undo a removal.
   if (result.expertNotice) {
     const notice = result.expertNotice;
@@ -864,7 +498,18 @@ export async function removeMember(
   if (result.removedUserId) {
     const removedUserId = result.removedUserId;
     for (const c of result.revokedCollaborations) {
-      await revokeCollaboratorAccess(c.planType, c.planId, removedUserId);
+      const { success } = await revokeCollaboratorAccess(
+        c.planType,
+        c.planId,
+        removedUserId,
+      );
+      if (!success) {
+        await enqueueCollaboratorRevocationRetry(
+          c.planType,
+          c.planId,
+          removedUserId,
+        );
+      }
     }
     await dispatchRevokedCollaborationNotices(result.revokedCollaborations);
     await revokeRemovedMemberStream(input.orgId, removedUserId);

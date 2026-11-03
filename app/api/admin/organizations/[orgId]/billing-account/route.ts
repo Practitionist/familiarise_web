@@ -13,6 +13,7 @@ import { z } from "zod";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { creditLimitRaisePaise } from "@/lib/backoffice/ops-proposal-amounts";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import { assertWalletFundingSwitchable } from "@/lib/api/organizations/wallet";
 import { recordBillingAccountUpdate } from "@/lib/enterprise/billing-account-audit";
 import { assertVerifiedDomainOrThrow } from "@/lib/enterprise/governance";
 
@@ -52,6 +53,9 @@ export const PATCH = withOpsAction(
             "WALLET_BALANCE_NOT_EMPTY",
             "Cannot switch funding source with a non-zero wallet balance. Drain or refund the wallet first.",
           );
+        }
+        if (ba.fundingSource === "WALLET") {
+          await assertWalletFundingSwitchable(tx, ba.id);
         }
         await assertVerifiedDomainOrThrow(tx, params.orgId, "INVOICE_FUNDING");
       }

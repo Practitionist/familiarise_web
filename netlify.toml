@@ -75,3 +75,18 @@
   for = "/fonts/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+
+# The apex netlify.app host is not a trusted auth origin; send it to the canonical domain.
+# Host-specific `from` does not match deploy-preview-N-- or branch-deploy hosts.
+# Webhooks keep working on the apex host: a 301 would drop the POST body.
+[[redirects]]
+  from = "https://familiarise.netlify.app/api/webhooks/*"
+  to = "/api/webhooks/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "https://familiarise.netlify.app/*"
+  to = "https://familiarisenow.com/:splat"
+  status = 301
+  force = true

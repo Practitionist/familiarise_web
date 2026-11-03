@@ -1,7 +1,9 @@
 /**
- * The 100 % refund a declared platform incident owes one seat, keyed
- * `incident:<incident>:<occurrence>:<user>`: the marker is stamped first, so a
- * failed drive is re-driven by retry-auto-refunds as well as by the next sweep.
+ * The refund a declared platform incident owes one seat, keyed
+ * `incident:<incident>:<occurrence>:<user>`: 100 % of the balance, or the
+ * amount already stamped under that key (a settled plan's one-session unit).
+ * The marker is stamped first, so a failed drive is re-driven by
+ * retry-auto-refunds as well as by the next sweep.
  */
 
 import { PaymentStatus } from "@prisma/client";
@@ -12,6 +14,8 @@ import { freeTrialPair } from "@/lib/booking/platform-incidents";
 import { findDedupedRefund } from "./refund";
 import {
   driveRefundOwed,
+  markerFromRow,
+  REFUND_OWED_SELECT,
   stampRefundOwed,
   type RefundOwedMarker,
 } from "./refund-owed";
@@ -53,10 +57,11 @@ export async function refundIncidentSeat(
   if (prior) return { kind: "done", refundedPaise: prior.amountRefundedPaise };
 
   const claim = await prisma.$transaction(async (tx) => {
+    let owed = marker;
     if (!(await stampRefundOwed(tx, marker))) {
       const pay = await tx.payment.findUnique({
         where: { id: marker.paymentId },
-        select: { refundOwedKey: true, paymentStatus: true, deletedAt: true },
+        select: { ...REFUND_OWED_SELECT, paymentStatus: true, deletedAt: true },
       });
       if (
         !pay ||
@@ -69,13 +74,17 @@ export async function refundIncidentSeat(
       if (pay.refundOwedKey && pay.refundOwedKey !== marker.key) {
         return { kind: "conflict" as const, heldKey: pay.refundOwedKey };
       }
+      // This key stamped earlier (a settled plan's one-session unit) keeps its amount.
+      owed = markerFromRow(pay) ?? marker;
     }
     if (seat.trialId) await freeTrialPair(tx, seat.trialId, seat.incidentId);
-    return { kind: "drive" as const };
+    return { kind: "drive" as const, owed };
   });
   if (claim.kind !== "drive") return claim;
 
-  const outcome = await driveRefundOwed(marker, { initiatedByUserId: null });
+  const outcome = await driveRefundOwed(claim.owed, {
+    initiatedByUserId: null,
+  });
   switch (outcome.kind) {
     case "refunded":
     case "replayed":

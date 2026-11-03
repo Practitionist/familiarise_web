@@ -22,26 +22,29 @@
  */
 
 import prisma, { type Tx } from "@/lib/prisma";
-import {
-  reportSentryError,
-  reportSentryMessage,
-} from "@/lib/observability/report";
-import {
-  recordSystemEventSafe,
-  recordSystemErrorSafe,
-} from "@/lib/enterprise/system-events";
+import { reportSentryError } from "@/lib/observability/report";
+import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { numericStateCode } from "@/lib/compliance/state-codes";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
-import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
+import {
+  DIGITAL_PRODUCT_SAC_CODES,
+  TAX_CONSTANTS,
+} from "@/lib/payments/payouts/constants";
 import {
   COMMERCIAL_CREDIT_NOTE_REASON_PREFIX,
   isPastGstCreditNoteCutoff,
 } from "@/lib/compliance/gst-credit-note-cutoff";
-import { getPlatformSupplier } from "@/lib/pdf/supplier";
+import { REGISTERED_OFFICE } from "@/lib/company";
+import {
+  configuredGstin,
+  getPlatformSupplier,
+  resolveSupplierStateCode,
+} from "@/lib/pdf/supplier";
 import { generateConsumerInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { generateConsumerCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import type {
+  RefundStatus,
   PaymentLegSource,
   PlaceOfSupplySource,
   Prisma,
@@ -82,7 +85,7 @@ export interface ConsumerInvoiceTax {
  * absent state produces an intra-state (CGST+SGST) document, not IGST.
  *
  * @param buyerStateCode alpha or numeric; normalised here.
- * @param supplierStateCode the platform's own state, as `resolveSupplierStateCode` settled it.
+ * @param supplierStateCode the platform's own state (the GSTIN's first two digits).
  */
 export function deriveConsumerInvoiceTax(params: {
   /** Tax-inclusive amount the buyer was charged, paise. */
@@ -172,52 +175,27 @@ export function deriveConsumerInvoiceTax(params: {
   };
 }
 
-/**
- * Resolve the platform's OWN state for a statutory document.
- *
- * PURE. The first two digits of a GSTIN are the state of registration by law,
- * so the GSTIN is authoritative and `SUPPLIER_STATE_CODE` is only the fallback
- * for a GSTIN that carries none. A disagreement between the two is a
- * configuration fault, never a fact about the supply, and it decides CGST+SGST
- * against IGST on a gapless Rule 46 number that cannot be corrected in place —
- * so the caller must fail closed rather than pick one (#1365).
- */
-export function resolveSupplierStateCode(
-  gstin: string | null | undefined,
-  envStateCode: string | null | undefined,
-): {
-  stateCode: string | null;
-  mismatch: { fromGstin: string; fromEnv: string } | null;
-} {
-  const fromGstin = numericStateCode(gstin, null);
-  const fromEnv = numericStateCode(null, envStateCode);
-  if (fromGstin && fromEnv && fromGstin !== fromEnv) {
-    return { stateCode: null, mismatch: { fromGstin, fromEnv } };
-  }
-  return { stateCode: fromGstin ?? fromEnv, mismatch: null };
-}
-
-/** #1447 — GSTIN and SUPPLIER_STATE_CODE disagree; the caller refuses, it never picks one. */
+/** The GSTIN and the registered office disagree; the caller refuses, it never picks one. */
 export class SupplierStateMismatchError extends Error {
-  constructor(readonly mismatch: { fromGstin: string; fromEnv: string }) {
+  constructor(readonly mismatch: { fromGstin: string; registered: string }) {
     super(
-      `Supplier state is ambiguous: PLATFORM_GSTIN says "${mismatch.fromGstin}", SUPPLIER_STATE_CODE says "${mismatch.fromEnv}".`,
+      `Supplier state is ambiguous: PLATFORM_GSTIN says "${mismatch.fromGstin}", the registered office in lib/company.ts says "${mismatch.registered}".`,
     );
     this.name = "SupplierStateMismatchError";
   }
 }
 
 /**
- * #1447 — the platform's own numeric state for the org rails, GSTIN-first
- * like the B2C mint; "29" is the historical default when neither source is set.
+ * The platform's own numeric state for the org rails: the GSTIN's, or the
+ * registered office's while no GSTIN is set. Throws on a GSTIN from another state.
  */
 export function supplierStateCode(): string {
   const { stateCode, mismatch } = resolveSupplierStateCode(
-    getPlatformSupplier()?.gstin,
-    process.env.SUPPLIER_STATE_CODE,
+    configuredGstin(),
+    REGISTERED_OFFICE.stateCode,
   );
   if (mismatch) throw new SupplierStateMismatchError(mismatch);
-  return stateCode ?? "29";
+  return stateCode ?? REGISTERED_OFFICE.stateCode;
 }
 
 /** Funding sources that make a payment ORG-funded. Those supplies are invoiced
@@ -228,6 +206,12 @@ const ORG_FUNDED_LEG_SOURCES: readonly PaymentLegSource[] = [
   "LICENSE",
   "INVOICE_ACCRUAL",
   "OVERAGE_INVOICE_ACCRUAL",
+];
+
+/** Refund states that owe a credit note; an invoice is never minted after one exists. */
+export const CREDIT_NOTE_REFUND_STATUSES: RefundStatus[] = [
+  "PENDING",
+  "SUCCEEDED",
 ];
 
 /** The static half of {@link mintConsumerInvoice}'s eligibility, so a bounded
@@ -253,9 +237,6 @@ function resolvePlaceOfSupplySource(
 }
 
 let supplierUnconfiguredLogged = false;
-// #1757 — every capture skipped here is an un-invoiced supply; counted so the
-// one-per-process Sentry warning below carries how many the console line hid.
-let supplierUnconfiguredSkips = 0;
 
 /**
  * Mint the statutory tax invoice for one successful consumer payment.
@@ -298,6 +279,14 @@ export async function mintConsumerInvoice(
       userId: true,
       legs: { select: { source: true } },
       creditUsages: { select: { originalAmount: true } },
+      digitalProductPurchase: {
+        select: { product: { select: { category: true } } },
+      },
+      refunds: {
+        where: { status: { in: CREDIT_NOTE_REFUND_STATUSES } },
+        select: { id: true },
+        take: 1,
+      },
       user: {
         select: {
           id: true,
@@ -315,6 +304,8 @@ export async function mintConsumerInvoice(
   if (payment.deletedAt !== null || payment.paymentStatus !== "SUCCEEDED") {
     return { consumerInvoiceId: null };
   }
+  // A refund here would get no credit note, so a refunded supply is left to ops.
+  if (payment.refunds.length > 0) return { consumerInvoiceId: null };
 
   // Org-funded supplies are invoiced to the organization, on the org series.
   if (
@@ -326,35 +317,17 @@ export async function mintConsumerInvoice(
 
   const supplier = getPlatformSupplier();
   if (!supplier) {
-    // Fail closed and loudly ONCE per process: minting a tax invoice without a
-    // real GSTIN is worse than minting none, and the download route already
-    // returns an ops-actionable 503 for the same reason.
-    supplierUnconfiguredSkips++;
+    // Fail closed, logged once per process; the heal-consumer-invoices run
+    // records the same gap as a config skip, so it stays out of Sentry.
     if (!supplierUnconfiguredLogged) {
       supplierUnconfiguredLogged = true;
       console.warn(
         JSON.stringify({
           event: "consumer_invoice_supplier_unconfigured",
           reason:
-            "PLATFORM_GSTIN is unset or malformed; consumer tax invoices are not being issued.",
+            "PLATFORM_GSTIN is unset, malformed, or from another state than the registered office; consumer tax invoices are not being issued.",
         }),
       );
-      // #1757 — the console line alone left the gate invisible on real
-      // traffic; one expected warning per process makes it show up in Sentry.
-      reportSentryMessage("CONSUMER_INVOICE_MINT_DISABLED", {
-        subsystem: "payments",
-        op: "consumer-invoice.mint",
-        expected: true,
-        level: "warning",
-        tags: { feature: "consumer-invoice" },
-        extra: {
-          env: "PLATFORM_GSTIN",
-          reason:
-            "PLATFORM_GSTIN is unset or malformed; consumer tax invoices are not being issued (fail-open, pre-launch posture).",
-          skippedMints: supplierUnconfiguredSkips,
-          firstSkippedPaymentId: payment.id,
-        },
-      });
     }
     return { consumerInvoiceId: null };
   }
@@ -374,33 +347,9 @@ export async function mintConsumerInvoice(
     payment.user.consulteeProfile?.billingStateCode ?? null;
   const buyerStateCode = declaredStateCode ?? profileStateCode;
 
-  const { stateCode: supplierStateCode, mismatch } = resolveSupplierStateCode(
-    supplier.gstin,
-    process.env.SUPPLIER_STATE_CODE,
-  );
-  if (mismatch) {
-    // Fail closed exactly like a missing PLATFORM_GSTIN: minting under the
-    // wrong state puts IGST on an intra-state supply (or the reverse) and the
-    // document then contradicts the GST_PAYABLE credit settlement posted.
-    const ambiguous = new Error(
-      `Supplier state is ambiguous: PLATFORM_GSTIN says "${mismatch.fromGstin}", SUPPLIER_STATE_CODE says "${mismatch.fromEnv}".`,
-    );
-    reportSentryError(ambiguous, {
-      subsystem: "payments",
-      level: "warning",
-      tags: { feature: "consumer-invoice" },
-      extra: { paymentId: payment.id, ...mismatch },
-    });
-    await recordSystemErrorSafe({
-      organizationId: null,
-      category: "PAYMENT",
-      summary: "Consumer tax invoice not minted: supplier state is ambiguous",
-      err: ambiguous,
-      context: { paymentId: payment.id, ...mismatch },
-      db: tx,
-    });
-    return { consumerInvoiceId: null };
-  }
+  // getPlatformSupplier() only returns a GSTIN from the registered office's state.
+  const supplierStateCode =
+    numericStateCode(supplier.gstin, null) ?? REGISTERED_OFFICE.stateCode;
 
   const tax = deriveConsumerInvoiceTax({
     totalPaise,
@@ -439,7 +388,7 @@ export async function mintConsumerInvoice(
       supplierAddress: supplier.address,
       // The same variable the derivation above used, so the stored state and
       // the heads on the document can never disagree.
-      supplierStateCode: supplierStateCode ?? "00",
+      supplierStateCode,
       buyerName: payment.user.name ?? payment.user.email,
       buyerEmail: payment.user.email,
       buyerAddress,
@@ -452,7 +401,12 @@ export async function mintConsumerInvoice(
       igstPaise: tax.igstPaise,
       totalPaise: tax.totalPaise,
       currency: payment.currency,
-      sacCode: TAX_CONSTANTS.HSN_CODES.CONSULTING,
+      // A digital product sale carries its category's SAC; every other supply is coaching.
+      sacCode: payment.digitalProductPurchase
+        ? DIGITAL_PRODUCT_SAC_CODES[
+            payment.digitalProductPurchase.product.category
+          ]
+        : TAX_CONSTANTS.HSN_CODES.CONSULTING,
       taxRateBps: CONSUMER_TAX_RATE_BPS,
       // The supply happened when the buyer paid, not when we got around to
       // documenting it; `issuedAt` is always now (a back-dated issue date on a

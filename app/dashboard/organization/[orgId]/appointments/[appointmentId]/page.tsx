@@ -1,3 +1,4 @@
+import { orgOwnedAppointmentWhere } from "@/lib/api/scope/list-appointments";
 import { notFound } from "next/navigation";
 
 import prisma from "@/lib/prisma";
@@ -14,6 +15,7 @@ import {
   type TAppointmentDetail,
 } from "@/lib/data/appointment-detail";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { operatorOpsHref } from "@/lib/backoffice/booking-href";
 
 import DetailPageClient from "./DetailPageClient";
 import { DelivererDetailClient } from "./DelivererDetailClient";
@@ -111,8 +113,13 @@ export default async function OrgAppointmentDetailPage({
 
   const { appointment } = detail;
 
-  // Belongs to THIS org — not merely to some org.
-  if (appointment.organizationId !== orgId) notFound();
+  // Belongs to THIS org: tagged to it, or owned by it on the list's grounds
+  // (the operator branch below needs ownership, not the tag alone).
+  const ownedByOrg =
+    (await prisma.appointment.count({
+      where: { id: appointmentId, ...orgOwnedAppointmentWhere(orgId) },
+    })) > 0;
+  if (appointment.organizationId !== orgId && !ownedByOrg) notFound();
 
   // 1. The caller is on it. Mirrors the consultee detail page's participation
   // test: requester, trial consultee, or a live seat holder (#1554).
@@ -154,7 +161,7 @@ export default async function OrgAppointmentDetailPage({
 
   // 3. Operators read metadata; the funding org's payer-side actors may act —
   // MANAGER reschedules, cancel (it refunds) stays OWNER/MAINTAINER (#1527).
-  if (suspended) notFound();
+  if (suspended || !ownedByOrg) notFound();
   const role = access.member.role;
   const mayCancel = canActForOrg(role, "cancel");
   const mayReschedule = canActForOrg(role, "reschedule");
@@ -215,6 +222,8 @@ export default async function OrgAppointmentDetailPage({
         !hasConfirmedLiveSession
       }
       isSubscription={appointment.subscription !== null}
+      // Branches 1 and 2 returned every party, so an operator here is not one.
+      opsHref={operatorOpsHref(access.session.user, false, appointmentId)}
     />
   );
 }

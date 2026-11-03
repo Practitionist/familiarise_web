@@ -14,6 +14,7 @@ const mockResolveMeetingAccess = jest.fn();
 const mockGetOrCreate = jest.fn();
 const mockUpdateCallMembers = jest.fn();
 const mockUpdateUserPermissions = jest.fn();
+const mockQueryMembers = jest.fn();
 const mockUpsertUsersToStream = jest.fn();
 
 /** Ordered log of what the route did, so we can assert sequence, not just calls. */
@@ -55,22 +56,26 @@ jest.mock("../../lib/stream-client", () => ({
     video: {
       call: () => ({
         getOrCreate: (...a: unknown[]) => {
-          const { assertValidGetOrCreateCall } =
-            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          const { assertValidGetOrCreateCall } = jest.requireActual<
+            typeof import("../../lib/stream/video-contracts")
+          >("../../lib/stream/video-contracts");
           assertValidGetOrCreateCall(a[0]);
           sequence.push("getOrCreate");
           return mockGetOrCreate(...a);
         },
         updateCallMembers: (...a: unknown[]) => {
-          const { assertValidUpdateCallMembers } =
-            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          const { assertValidUpdateCallMembers } = jest.requireActual<
+            typeof import("../../lib/stream/video-contracts")
+          >("../../lib/stream/video-contracts");
           assertValidUpdateCallMembers(a[0]);
           sequence.push("updateCallMembers");
           return mockUpdateCallMembers(...a);
         },
+        queryMembers: (...a: unknown[]) => mockQueryMembers(...a),
         updateUserPermissions: (...a: unknown[]) => {
-          const { assertValidUpdateUserPermissions } =
-            require("../../lib/stream/video-contracts") as typeof import("../../lib/stream/video-contracts");
+          const { assertValidUpdateUserPermissions } = jest.requireActual<
+            typeof import("../../lib/stream/video-contracts")
+          >("../../lib/stream/video-contracts");
           assertValidUpdateUserPermissions(a[0]);
           return mockUpdateUserPermissions(...a);
         },
@@ -111,12 +116,14 @@ import { POST } from "../../app/api/meetings/[meetingId]/join/route";
 // The mocked class — `instanceof` in the route must match what we throw here.
 import { StreamUnavailableError } from "../../lib/stream-client";
 import { reportSentryError } from "../../lib/observability/report";
+import { resetThrottledCaptureForTesting } from "../../lib/observability/throttled-capture";
 
 const params = Promise.resolve({ meetingId: "slot-abc" });
 const req = {} as never;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  resetThrottledCaptureForTesting();
   sequence = [];
   mockGetSession.mockResolvedValue({
     user: { id: "user_1", banned: false },
@@ -131,6 +138,7 @@ beforeEach(() => {
   mockGetOrCreate.mockResolvedValue({});
   mockUpdateCallMembers.mockResolvedValue({});
   mockUpdateUserPermissions.mockResolvedValue({});
+  mockQueryMembers.mockResolvedValue({ members: [] });
   mockUpsertUsersToStream.mockResolvedValue({ users: {} });
 });
 
@@ -142,20 +150,125 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     expect(mockGetOrCreate).not.toHaveBeenCalled();
   });
 
-  it("refuses a Meeting row whose Stream call is missing with a typed 409", async () => {
+  it("skips the membership write when a webinar attendee already holds the role", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "participant",
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { appointmentType: "WEBINAR" },
+    });
+    mockQueryMembers.mockResolvedValue({
+      members: [{ user_id: "user_1", role: "call_member" }],
+    });
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateCallMembers).not.toHaveBeenCalled();
+    expect(mockUpdateUserPermissions).toHaveBeenCalled();
+  });
+
+  it("writes the membership when a webinar attendee is not yet a member", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "participant",
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { appointmentType: "WEBINAR" },
+    });
+
+    await POST(req, { params });
+
+    expect(mockUpdateCallMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the membership write when the member read fails", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "participant",
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { appointmentType: "WEBINAR" },
+    });
+    mockQueryMembers.mockRejectedValue(new Error("stream down"));
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateCallMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes when an existing member holds a different role", async () => {
+    mockResolveMeetingAccess.mockResolvedValue({
+      hasAccess: true,
+      role: "host",
+      coPresenter: true,
+      reason: "granted",
+      streamCallId: "slot-abc",
+      appointment: { appointmentType: "WEBINAR" },
+    });
+    mockQueryMembers.mockResolvedValue({
+      members: [{ user_id: "user_1", role: "call_member" }],
+    });
+
+    await POST(req, { params });
+
+    expect(mockUpdateCallMembers).toHaveBeenCalledWith({
+      update_members: [{ user_id: "user_1", role: "co_presenter" }],
+    });
+  });
+
+  it("refuses a Meeting row whose Stream call is missing with a typed 409, without spending an error event", async () => {
     mockUpdateCallMembers.mockRejectedValue(
       Object.assign(new Error("Can't find call"), { status: 404, code: 16 }),
     );
 
-    const res = await POST(req, { params });
+    const res = await POST(req, {
+      params: Promise.resolve({ meetingId: "slot-first-refusal" }),
+    });
 
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("ROOM_NOT_PROVISIONED");
     expect(mockGetOrCreate).not.toHaveBeenCalled();
+    expect(reportSentryError).not.toHaveBeenCalled();
+  });
+
+  it("reports ROOM_NOT_PROVISIONED when the room is still missing after the client's self-heal", async () => {
+    mockUpdateCallMembers.mockRejectedValue(
+      Object.assign(new Error("Can't find call"), { status: 404, code: 16 }),
+    );
+    const repeatParams = Promise.resolve({
+      meetingId: "slot-never-provisions",
+    });
+
+    await POST(req, { params: repeatParams });
+    expect(reportSentryError).not.toHaveBeenCalled();
+
+    const res = await POST(req, { params: repeatParams });
+
+    expect(res.status).toBe(409);
+    expect(reportSentryError).toHaveBeenCalledTimes(1);
     expect(reportSentryError).toHaveBeenCalledWith(
       new Error("ROOM_NOT_PROVISIONED"),
       expect.objectContaining({ op: "meetings.join" }),
     );
+  });
+
+  it("treats a refusal after the heal window as a fresh first refusal", async () => {
+    mockUpdateCallMembers.mockRejectedValue(
+      Object.assign(new Error("Can't find call"), { status: 404, code: 16 }),
+    );
+    const windowParams = Promise.resolve({ meetingId: "slot-window" });
+    const now = jest.spyOn(Date, "now");
+
+    now.mockReturnValue(1_000_000);
+    await POST(req, { params: windowParams });
+    now.mockReturnValue(1_000_000 + 121_000);
+    await POST(req, { params: windowParams });
+    now.mockRestore();
+
+    expect(reportSentryError).not.toHaveBeenCalled();
   });
 
   it("treats a bare 404 without Stream's not-found code as a fault", async () => {
@@ -272,6 +385,17 @@ describe("POST /api/meetings/[meetingId]/join", () => {
     expect(body.error).toMatch(/temporarily unavailable/i);
     // No `reason` — that field marks an authorization verdict, and this is not one.
     expect(body.reason).toBeUndefined();
+  });
+
+  it("keeps a Stream 5xx out of Sentry, because the client retries it", async () => {
+    mockUpdateCallMembers.mockRejectedValue(
+      Object.assign(new Error("upstream"), { status: 502 }),
+    );
+
+    const res = await POST(req, { params });
+
+    expect(res.status).toBe(503);
+    expect(reportSentryError).not.toHaveBeenCalled();
   });
 
   it("still reports a genuine fault as 500", async () => {
@@ -391,6 +515,7 @@ const { resolveMeetingAccess } = jest.requireActual<
 >("../../lib/meetings/access");
 
 import prismaClient from "../../lib/prisma";
+import { paidParticipant } from "../../lib/booking/participants";
 
 const db = prismaClient as unknown as {
   meeting: { findUnique: jest.Mock };
@@ -558,9 +683,20 @@ describe("resolveMeetingAccess still admits a live session", () => {
     );
     expect(db.appointmentParticipant.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
+        // The fulfilled-entitlement predicate; its cases are pinned in paid-participant.test.ts.
+        where: { appointmentId: "appt-1", ...paidParticipant("user_1") },
+      }),
+    );
+  });
+
+  it("keeps the live-seat probe for a 1:1, which has its own payment gate", async () => {
+    seedAccess(consultation("APPROVED"));
+
+    await resolveMeetingAccess("slot-abc", "user_1");
+
+    expect(db.appointmentParticipant.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
         where: expect.objectContaining({
-          appointmentId: "appt-1",
-          userId: "user_1",
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
         }),
       }),

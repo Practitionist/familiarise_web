@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { toPlain } from "@/lib/data/serialize";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import { planConsultantUserSelect } from "@/lib/api/plans/consultant-projection";
 
 /**
  * Server-side data access for the four plan detail pages.
@@ -46,22 +47,7 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
       consultantProfile: {
         select: {
           ...consultantPublicScalars,
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-              workExperiences: {
-                select: { company: true, companyDomain: true, isCurrent: true },
-                orderBy: [
-                  { isCurrent: "desc" as const },
-                  { startDate: "desc" as const },
-                ],
-                take: 3,
-              },
-            },
-          },
+          user: planConsultantUserSelect,
           domain: true,
           subDomains: true,
           tags: true,
@@ -132,22 +118,7 @@ export async function fetchClassPlanDetail(classPlanId: string) {
       consultantProfile: {
         select: {
           ...consultantPublicScalars,
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-              workExperiences: {
-                select: { company: true, companyDomain: true, isCurrent: true },
-                orderBy: [
-                  { isCurrent: "desc" as const },
-                  { startDate: "desc" as const },
-                ],
-                take: 3,
-              },
-            },
-          },
+          user: planConsultantUserSelect,
           domain: true,
           subDomains: true,
           tags: true,
@@ -223,22 +194,7 @@ export const getClassPlanDetail = cache(fetchClassPlanDetail);
 const planOwnerSelect = {
   select: {
     ...consultantPublicScalars,
-    user: {
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        image: true,
-        workExperiences: {
-          select: { company: true, companyDomain: true, isCurrent: true },
-          orderBy: [
-            { isCurrent: "desc" as const },
-            { startDate: "desc" as const },
-          ],
-          take: 3,
-        },
-      },
-    },
+    user: planConsultantUserSelect,
     domain: true,
     subDomains: true,
     tags: true,

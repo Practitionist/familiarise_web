@@ -28,6 +28,7 @@ process.env.RAZORPAY_SECRET = "rzp_test_secret";
 // lazily (referencing top-level `const`s directly throws "before init").
 const rzp = {
   ordersFetchPayments: jest.fn(),
+  ordersFetch: jest.fn(),
   ordersCreate: jest.fn(),
   paymentsRefund: jest.fn(),
   paymentsFetchMultipleRefund: jest.fn(),
@@ -37,6 +38,7 @@ jest.mock("razorpay", () => {
   return jest.fn().mockImplementation(() => ({
     orders: {
       fetchPayments: (...a: unknown[]) => rzp.ordersFetchPayments(...a),
+      fetch: (...a: unknown[]) => rzp.ordersFetch(...a),
       create: (...a: unknown[]) => rzp.ordersCreate(...a),
     },
     payments: {
@@ -52,9 +54,12 @@ import {
   createRazorpayRefund,
   listRazorpayRefunds,
   createRazorpayOrder,
+  fetchRazorpayOrder,
+  readRazorpayOrderHolding,
 } from "@/lib/payments/core/razorpay";
 
 const ordersFetchPayments = rzp.ordersFetchPayments;
+const ordersFetch = rzp.ordersFetch;
 const ordersCreate = rzp.ordersCreate;
 const paymentsFetchMultipleRefund = rzp.paymentsFetchMultipleRefund;
 
@@ -78,6 +83,42 @@ function refundedPaymentId(call = 0): string {
 
 beforeEach(() => {
   jest.clearAllMocks();
+});
+
+describe("order holding capture evidence", () => {
+  it.each([
+    [0, "INR"],
+    [-100, "INR"],
+    [1.5, "INR"],
+    [Number.MAX_SAFE_INTEGER + 1, "INR"],
+    [Number.NaN, "INR"],
+    [100, "USD"],
+  ])("rejects a captured amount of %s %s", async (amount, currency) => {
+    ordersFetchPayments.mockResolvedValue({
+      count: 1,
+      items: [{ id: "pay_invalid", status: "captured", amount, currency }],
+    });
+
+    await expect(readRazorpayOrderHolding("order_invalid")).rejects.toThrow(
+      /Order order_invalid captured/,
+    );
+  });
+
+  it("returns a positive whole-INR capture after a failed payment attempt", async () => {
+    ordersFetchPayments.mockResolvedValue({
+      count: 2,
+      items: [
+        { id: "pay_failed", status: "failed", amount: 0, currency: "INR" },
+        { id: "pay_valid", status: "captured", amount: 100, currency: "INR" },
+      ],
+    });
+
+    await expect(readRazorpayOrderHolding("order_valid")).resolves.toEqual({
+      kind: "captured",
+      paymentId: "pay_valid",
+      amountPaise: 100,
+    });
+  });
 });
 
 describe("PM-12 — createRazorpayRefund targets the captured payment", () => {
@@ -171,5 +212,48 @@ describe("PM-11 — createRazorpayOrder receipts are unique within the same ms",
     expect(r1).not.toBe(r2);
     // Shape: receipt_<ms>_<8-char uuid slice>
     expect(r1).toMatch(/^receipt_\d+_[0-9a-f]{8}$/);
+  });
+});
+
+describe("caller-bounded Razorpay SDK reads and creates", () => {
+  afterEach(() => jest.useRealTimers());
+
+  it("honours the caller timeout for order fetch and payment holding reads", async () => {
+    jest.useFakeTimers();
+    ordersFetch.mockReturnValue(new Promise(() => undefined));
+    ordersFetchPayments.mockReturnValue(new Promise(() => undefined));
+
+    const orderRead = fetchRazorpayOrder("order_slow", 25).catch(
+      (error: unknown) => error,
+    );
+    const holdingRead = readRazorpayOrderHolding("order_slow", 25).catch(
+      (error: unknown) => error,
+    );
+    await jest.advanceTimersByTimeAsync(25);
+
+    for (const failure of await Promise.all([orderRead, holdingRead])) {
+      expect(failure).toEqual(
+        expect.objectContaining({
+          message: expect.stringMatching(/timed out after 25ms/),
+        }),
+      );
+    }
+  });
+
+  it("honours the caller timeout for order creation", async () => {
+    jest.useFakeTimers();
+    ordersCreate.mockReturnValue(new Promise(() => undefined));
+    const request = createRazorpayOrder(
+      {
+        amount: 1000,
+        currency: "INR",
+        metadata: { appointmentId: "appt_1", appointmentType: "ONE_ON_ONE" },
+        paymentGateway: PaymentGateway.RAZORPAY,
+      },
+      25,
+    ).catch((error: unknown) => error);
+    await jest.advanceTimersByTimeAsync(25);
+
+    expect(await request).toMatchObject({ code: "UNKNOWN_ERROR" });
   });
 });

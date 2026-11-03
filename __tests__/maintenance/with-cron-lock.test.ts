@@ -7,9 +7,12 @@ import {
   CronLockHeldError,
   CronLockUnavailableError,
   LONG_JOB_TTL_MS,
+  effectiveLeaseTtlMs,
+  isPrismaConnectionOrPoolError,
 } from "../../lib/cron/with-cron-lock";
 import prisma from "../../lib/prisma";
 import redis from "../../lib/redis";
+import { currentRun, withRunContext } from "../../lib/cron/run-context";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -43,7 +46,23 @@ const delegate = (
 
 const mockRedisSet = (redis as unknown as { set: jest.Mock }).set;
 
+// Either host marker caps the lease, so every test starts off Netlify.
+const priorHost = {
+  NETLIFY: process.env.NETLIFY,
+  SITE_ID: process.env.SITE_ID,
+  NEXT_PUBLIC_SENTRY_ENVIRONMENT: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
+};
+afterAll(() => {
+  for (const [key, value] of Object.entries(priorHost)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
+
 beforeEach(() => {
+  delete process.env.NETLIFY;
+  delete process.env.SITE_ID;
+  process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
   jest.clearAllMocks();
   delegate.findFirst.mockResolvedValue(null);
   delegate.create.mockResolvedValue({ id: "exec-1" });
@@ -53,44 +72,33 @@ beforeEach(() => {
 });
 
 describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
-  it("sweeps expired RUNNING rows, acquires a RUNNING row, runs the callback, marks COMPLETED, and touches cron:heartbeat:last", async () => {
+  it("acquires a RUNNING row, runs the callback, marks COMPLETED, and touches cron:heartbeat:last", async () => {
     const fn = jest.fn().mockResolvedValue("done");
     await expect(
       withCronLock("dunning", { failMode: "closed" }, fn),
     ).resolves.toBe("done");
 
-    expect(delegate.updateMany).toHaveBeenCalledWith({
-      where: {
-        jobName: "dunning",
-        status: "RUNNING",
-        startedAt: { lte: expect.any(Date) },
-      },
-      data: {
-        status: "FAILED",
-        endedAt: expect.any(Date),
-        errorLog: "Lease expired (stale RUNNING row swept)",
-      },
+    expect(delegate.findFirst).toHaveBeenCalledWith({
+      where: { jobName: "dunning", status: "RUNNING" },
+      select: { id: true, startedAt: true, createdAt: true, result: true },
     });
-
-    expect(delegate.findFirst).toHaveBeenCalledTimes(1);
-    const findArgs = delegate.findFirst.mock.calls[0][0];
-    expect(findArgs.where.jobName).toBe("dunning");
-    expect(findArgs.where.status).toBe("RUNNING");
-    expect(findArgs.where.startedAt.gt).toBeInstanceOf(Date);
-
     expect(delegate.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
+        id: expect.any(String),
         jobId: "dunning",
         jobName: "dunning",
         status: "RUNNING",
         triggeredBy: expect.stringMatching(/^(cron|github-actions)$/),
+        result: { environment: "production" },
       }),
       select: { id: true },
     });
-    expect(delegate.update).toHaveBeenCalledWith({
-      where: { id: "exec-1" },
+    expect(delegate.updateMany).toHaveBeenCalledTimes(1);
+    expect(delegate.updateMany).toHaveBeenCalledWith({
+      where: { id: "exec-1", status: "RUNNING" },
       data: expect.objectContaining({
         status: "COMPLETED",
+        result: expect.objectContaining({ outcome: "completed" }),
         endedAt: expect.any(Date),
         durationMs: expect.any(Number),
       }),
@@ -101,8 +109,12 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
     );
   });
 
-  it("throws CronLockHeldError (409) when an active RUNNING row exists within TTL", async () => {
-    delegate.findFirst.mockResolvedValue({ id: "exec-live" });
+  it("throws CronLockHeldError (409) carrying the holder when a live RUNNING row exists", async () => {
+    delegate.findFirst.mockResolvedValue({
+      id: "exec-live",
+      startedAt: new Date(),
+      createdAt: new Date(Date.now() - 60_000),
+    });
     const fn = jest.fn();
 
     const err = await withCronLock("dunning", { failMode: "closed" }, fn).catch(
@@ -110,6 +122,7 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
     );
     expect(err).toBeInstanceOf(CronLockHeldError);
     expect((err as CronLockHeldError).httpStatus).toBe(409);
+    expect((err as CronLockHeldError).holderRunId).toBe("exec-live");
     expect(fn).not.toHaveBeenCalled();
     expect(delegate.create).not.toHaveBeenCalled();
   });
@@ -135,18 +148,71 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
-  it("honours a custom TTL cutoff when checking for an active lease", async () => {
-    const before = Date.now();
-    await withCronLock(
-      "create-payout-batch",
-      { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
-      async () => null,
+  it("honours a custom TTL: a heartbeat inside it holds, one past it is swept", async () => {
+    const heartbeat = (ageMs: number) => ({
+      id: "exec-old",
+      startedAt: new Date(Date.now() - ageMs),
+      createdAt: new Date(Date.now() - ageMs - 60_000),
+      result: { environment: "preview" },
+    });
+    delegate.findFirst.mockResolvedValueOnce(
+      heartbeat(LONG_JOB_TTL_MS - 5_000),
     );
-    const cutoff = delegate.findFirst.mock.calls[0][0].where.startedAt
-      .gt as Date;
-    expect(before - cutoff.getTime()).toBeGreaterThanOrEqual(
-      LONG_JOB_TTL_MS - 1_000,
+    await expect(
+      withCronLock(
+        "create-payout-batch",
+        { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+        async () => null,
+      ),
+    ).rejects.toBeInstanceOf(CronLockHeldError);
+
+    delegate.findFirst.mockResolvedValueOnce(
+      heartbeat(LONG_JOB_TTL_MS + 5_000),
     );
+    await withRunContext({ triggeredBy: "cron" }, async () => {
+      await withCronLock(
+        "create-payout-batch",
+        { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+        async () => null,
+      );
+      expect(currentRun()?.counters.leaseTakeover).toBe(1);
+    });
+    const sweep = delegate.updateMany.mock.calls[0][0];
+    const takenOverBy = delegate.create.mock.calls[0][0].data.id;
+    expect(sweep).toEqual({
+      where: {
+        id: "exec-old",
+        status: "RUNNING",
+        startedAt: { lte: expect.any(Date) },
+      },
+      data: {
+        status: "FAILED",
+        endedAt: expect.any(Date),
+        durationMs: expect.any(Number),
+        errorLog: "Lease expired (stale RUNNING row swept)",
+        result: {
+          outcome: "failed",
+          reason: "lease-expired",
+          environment: "preview",
+          takenOverBy,
+        },
+      },
+    });
+    // Duration runs from the swept row's acquisition, not its last heartbeat.
+    expect(sweep.data.durationMs).toBeGreaterThanOrEqual(
+      LONG_JOB_TTL_MS + 65_000,
+    );
+  });
+
+  it("caps the lease to 90 s on Netlify and leaves other hosts alone", () => {
+    process.env.NETLIFY = "true";
+    expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
+    expect(effectiveLeaseTtlMs(30_000)).toBe(30_000);
+    delete process.env.NETLIFY;
+    process.env.SITE_ID = "site";
+    expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(90_000);
+    delete process.env.SITE_ID;
+    expect(effectiveLeaseTtlMs(LONG_JOB_TTL_MS)).toBe(LONG_JOB_TTL_MS);
   });
 
   it("re-arms the lease every third of the TTL while the job runs and computes durationMs from initial acquisition", async () => {
@@ -171,7 +237,9 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
       expect(delegate.updateMany).toHaveBeenCalledTimes(renewals);
 
       // Total elapsed time is ~15 minutes (900_000 ms), not ~5 minutes since the 10-min renewal.
-      const finishArgs = delegate.update.mock.calls[0][0];
+      const finishArgs = delegate.updateMany.mock.calls.find(
+        ([args]) => args.data.endedAt && args.where.id,
+      )[0];
       expect(finishArgs.data.durationMs).toBeGreaterThanOrEqual(15 * 60 * 1000);
     } finally {
       jest.useRealTimers();
@@ -186,8 +254,10 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
       }),
     ).rejects.toBe(huge);
 
-    const finish = delegate.update.mock.calls[0][0];
-    expect(finish.where).toEqual({ id: "exec-1" });
+    const finish = delegate.updateMany.mock.calls.find(
+      ([args]) => args.data.endedAt && args.where.id,
+    )[0];
+    expect(finish.where).toEqual({ id: "exec-1", status: "RUNNING" });
     expect(finish.data.status).toBe("FAILED");
     expect(finish.data.errorLog).toHaveLength(8_000);
   });
@@ -230,6 +300,22 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
     warn.mockRestore();
   });
 
+  it("records the run in the active context and takes triggeredBy from it", async () => {
+    await withRunContext({ triggeredBy: "admin:user-1" }, async () => {
+      await withCronLock("dunning", { failMode: "closed" }, async () => ({
+        checkpoint: "cursor-9",
+      }));
+      const run = currentRun();
+      expect(run?.runIds).toEqual(["exec-1"]);
+      expect(run?.finished.get("exec-1")).toEqual({ checkpoint: "cursor-9" });
+    });
+    expect(delegate.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ triggeredBy: "admin:user-1" }),
+      }),
+    );
+  });
+
   it("stamps triggeredBy as github-actions when GITHUB_ACTIONS is set, otherwise cron", async () => {
     const prev = process.env.GITHUB_ACTIONS;
     try {
@@ -255,5 +341,76 @@ describe("withCronLock (Postgres lease on SystemJobExecution)", () => {
         process.env.GITHUB_ACTIONS = prev;
       }
     }
+  });
+});
+
+describe("execution outcomes", () => {
+  it.each([
+    {
+      result: { failed: 2, remaining: 0 },
+      outcome: "partial",
+      status: "FAILED",
+    },
+    { result: { success: false }, outcome: "failed", status: "FAILED" },
+    { result: { skipped: true }, outcome: "skipped", status: "CANCELLED" },
+  ])(
+    "records $outcome without advancing success freshness",
+    async ({ result, outcome, status }) => {
+      await withCronLock("job", { failMode: "closed" }, async () => result);
+      expect(delegate.updateMany).toHaveBeenCalledWith({
+        where: { id: "exec-1", status: "RUNNING" },
+        data: expect.objectContaining({
+          status,
+          result: expect.objectContaining({ outcome }),
+        }),
+      });
+      expect(mockRedisSet).not.toHaveBeenCalled();
+    },
+  );
+
+  it("cannot finish or refresh freshness after another runner expired the lease", async () => {
+    delegate.updateMany.mockResolvedValue({ count: 0 });
+    await withCronLock("job", { failMode: "closed" }, async () => ({
+      success: true,
+    }));
+    expect(mockRedisSet).not.toHaveBeenCalled();
+    expect(delegate.update).not.toHaveBeenCalled();
+  });
+
+  it("does not invoke a closed job when importing the lock delegate fails", async () => {
+    jest.resetModules();
+    jest.doMock("../../lib/prisma", () => {
+      throw new Error("Prisma unavailable");
+    });
+    const isolated = await import("../../lib/cron/with-cron-lock");
+    const fn = jest.fn();
+    await expect(
+      isolated.withCronLock("money", { failMode: "closed" }, fn),
+    ).rejects.toMatchObject({ code: "CRON_LOCK_UNAVAILABLE" });
+    expect(fn).not.toHaveBeenCalled();
+  });
+});
+
+describe("isPrismaConnectionOrPoolError", () => {
+  it("matches Prisma-raised pool and connection faults only", () => {
+    expect(isPrismaConnectionOrPoolError({ code: "P2024", message: "x" })).toBe(
+      true,
+    );
+    const txTimeout = Object.assign(
+      new Error("Unable to start a transaction in the given time."),
+      { name: "PrismaClientKnownRequestError" },
+    );
+    expect(isPrismaConnectionOrPoolError(txTimeout)).toBe(true);
+    expect(
+      isPrismaConnectionOrPoolError(new Error("timeout of 3000ms exceeded")),
+    ).toBe(false);
+    expect(
+      isPrismaConnectionOrPoolError(
+        Object.assign(new Error("Unique constraint failed"), {
+          name: "PrismaClientKnownRequestError",
+          code: "P2002",
+        }),
+      ),
+    ).toBe(false);
   });
 });

@@ -1,5 +1,7 @@
 import { RefundStatus } from "@prisma/client";
 
+import { isFreeCreditIntent } from "@/lib/payments/funding-rail";
+
 /**
  * Refund-aware entitlement, shared across access-control paths (#689).
  *
@@ -20,7 +22,8 @@ export function refundedPaise(refunds: RefundLike[]): number {
   return refunds
     .filter(
       (r) =>
-        r.status === RefundStatus.SUCCEEDED || r.status === RefundStatus.PENDING,
+        r.status === RefundStatus.SUCCEEDED ||
+        r.status === RefundStatus.PENDING,
     )
     .reduce((acc, r) => acc + r.amountPaise, 0);
 }
@@ -36,4 +39,40 @@ export function isPaymentEntitled(payment: {
   refunds: RefundLike[];
 }): boolean {
   return refundedPaise(payment.refunds) < payment.amount;
+}
+
+/** A refund that moved or is moving value back; FAILED/CANCELLED never did. */
+function isLiveRefund(refund: RefundLike): boolean {
+  return (
+    refund.status === RefundStatus.SUCCEEDED ||
+    refund.status === RefundStatus.PENDING
+  );
+}
+
+/**
+ * True when the buyer was refunded out of a purchase: some payment bought the
+ * booking and none of them is still entitled. Cash revokes once refunds cover
+ * the amount; a credit-funded payment (amount 0) revokes on its one live credit
+ * restoration. A free booking (no payment, or a zero-amount non-credit row)
+ * was never bought, so it is never revoked.
+ */
+export function isFullyRefundedPurchase(
+  payments: readonly {
+    amount: number;
+    paymentIntent: string;
+    refunds: RefundLike[];
+  }[],
+): boolean {
+  const bought = payments.filter(
+    (payment) =>
+      payment.amount > 0 || isFreeCreditIntent(payment.paymentIntent),
+  );
+  return (
+    bought.length > 0 &&
+    bought.every((payment) =>
+      payment.amount > 0
+        ? !isPaymentEntitled(payment)
+        : payment.refunds.some(isLiveRefund),
+    )
+  );
 }

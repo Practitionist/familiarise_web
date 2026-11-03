@@ -9,7 +9,7 @@ import {
   planContentInclude,
 } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
-import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { planTotalSessions } from "@/lib/booking/entitlement";
 import {
   oneOnOnePlanListCacheControl,
   oneOnOnePlanListWhere,
@@ -155,18 +155,10 @@ export async function POST(request: NextRequest) {
 
     // Compute derived metrics
     const sessionDurationInHours = validatedData.sessionDurationInHours ?? 1.0;
-    // Use accurate week counting instead of fixed * 4 approximation
-    const metricStartDate = new Date();
-    metricStartDate.setHours(0, 0, 0, 0);
-    const metricEndDate = new Date(metricStartDate);
-    metricEndDate.setMonth(
-      metricEndDate.getMonth() + validatedData.durationInMonths,
-    );
-    const estimatedWeeks = ScheduleCalculationService.countWeeks(
-      metricStartDate,
-      metricEndDate,
-    );
-    const totalSessions = (validatedData.sessionsPerWeek || 1) * estimatedWeeks;
+    const totalSessions = planTotalSessions({
+      sessionsPerWeek: validatedData.sessionsPerWeek || 1,
+      durationInMonths: validatedData.durationInMonths,
+    });
     const totalHours = totalSessions * sessionDurationInHours;
 
     // Trial fields — Zod-validated; free by default until paid-trial

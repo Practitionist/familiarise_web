@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { actionFailureMessage, requireJsonResponse } from "@/lib/fetch-helpers";
 import { formatInViewerZone, zoneLabel } from "@/lib/time/viewer-zone";
+import { REFUND_TIMING_BY_RAIL } from "@/lib/payments/operations/refund-policy-copy";
 import {
   OpenIncidentRemediesResponseSchema,
   type OpenIncidentRemedySchema,
@@ -77,11 +78,10 @@ export function IncidentRemedyBanner({
       );
       return requireJsonResponse(res, "Couldn't start your refund");
     },
-    onSuccess: () => {
+    onSuccess: (_body, remedy) => {
       toast({
         title: "Your refund is on its way",
-        description:
-          "We are refunding 100 % of what you paid. It reaches your original payment method in a few working days.",
+        description: `We are refunding 100 % of what you paid. ${REFUND_TIMING_BY_RAIL[remedy.fundingRail]}`,
       });
     },
     onError: (error) => {

@@ -1,7 +1,13 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { NextResponse, type NextRequest } from "next/server";
-import * as Sentry from "@sentry/nextjs";
+// Native Node ESM workers require the explicit package file extension.
+import { NextResponse, type NextRequest } from "next/server.js";
+import * as Sentry from "@sentry/core";
 import { z } from "zod";
+import {
+  hasItemFailures,
+  jobOutcome,
+  type JobOutcome,
+} from "@/lib/cron/job-outcome";
 import {
   CronLockHeldError,
   CronLockUnavailableError,
@@ -10,7 +16,26 @@ import { captureThrottled } from "@/lib/observability/throttled-capture";
 import {
   assertNotInMaintenance,
   MaintenanceActiveError,
+  MaintenanceUnavailableError,
 } from "@/lib/maintenance-cron";
+import { isPoolExhaustion } from "@/lib/db/pg-errors";
+import {
+  currentRun,
+  noteCounter,
+  schedulerTrigger,
+  withRunContext,
+} from "@/lib/cron/run-context";
+import {
+  routeOutcome,
+  type RunItemCounts,
+  type RunOutcome,
+} from "@/lib/cron/run-outcome";
+import { recordRouteRun, type RouteRunRecord } from "@/lib/cron/run-record";
+import {
+  JobRunRefusedError,
+  jobsMayRunHere,
+  ProductionOnlyRefusal,
+} from "@/lib/cron/dispatch-refusal";
 
 /**
  * The one result→status mapping the whole cohort shares. Failure is tested
@@ -24,12 +49,16 @@ import {
  *   operator has to look" — a discrepancy, a double booking, a dispute that was
  *   already paid.
  */
-export function statusFor(
-  result: { success?: boolean },
-  needsAttention = false,
-): number {
-  if (result.success === false) return 500;
-  return needsAttention ? 207 : 200;
+export function statusFor(result: unknown, needsAttention = false): number {
+  const outcome = jobOutcome(result);
+  if (outcome === "failure") return 500;
+  if (outcome === "held") return 503;
+  return needsAttention || outcome === "partial_failure" ? 207 : 200;
+}
+
+/** Outcome for an explicit per-job status; a 207 stays "success" so the ticker's 207 allowlist decides. */
+function outcomeOfStatus(httpStatus: number): JobOutcome {
+  return httpStatus >= 400 ? "failure" : "success";
 }
 
 /** Ceiling on an explicit `?limit=`; above this it is clamped, not rejected. */
@@ -122,6 +151,59 @@ export function parseWindowStartParam(req: NextRequest): Date | undefined {
   return at;
 }
 
+/** Thrown by the GST and TDS period parsers for a malformed `?period=`, `?fy=` or `?quarter=`. */
+export class InvalidPeriodParamError extends Error {
+  constructor() {
+    super("INVALID_PERIOD");
+    this.name = "InvalidPeriodParamError";
+  }
+}
+
+const gstPeriodSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
+
+/** Optional `?period=YYYY-MM` for the GST outward-register export. */
+export function parseGstPeriodParam(req: NextRequest): string | undefined {
+  const raw = req.nextUrl.searchParams.get("period");
+  if (raw === null) return undefined;
+  const parsed = gstPeriodSchema.safeParse(raw);
+  if (!parsed.success) throw new InvalidPeriodParamError();
+  return parsed.data;
+}
+
+const tdsReturnParamsSchema = z.object({
+  fy: z
+    .string()
+    .regex(/^\d{4}-\d{2}$/)
+    .refine(
+      (fy) => (Number(fy.slice(0, 4)) + 1) % 100 === Number(fy.slice(5)),
+      "fy must name consecutive years",
+    )
+    .optional(),
+  quarter: z.coerce.number().int().min(1).max(4).optional(),
+});
+
+/** Optional `?fy=YYYY-YY` and `?quarter=1..4` for the TDS return draft; each defaults to the closed quarter. */
+export function parseTdsReturnParams(req: NextRequest): {
+  financialYear?: string;
+  quarter?: number;
+} {
+  const { searchParams } = req.nextUrl;
+  const parsed = tdsReturnParamsSchema.safeParse({
+    fy: searchParams.get("fy") ?? undefined,
+    quarter: searchParams.get("quarter") ?? undefined,
+  });
+  if (!parsed.success) throw new InvalidPeriodParamError();
+  return { financialYear: parsed.data.fy, quarter: parsed.data.quarter };
+}
+
+const deleteFlagSchema = z.literal("1");
+
+/** `?delete=1` opts a count-only job into deleting; anything else leaves it counting. */
+export function parseDeleteFlag(req: NextRequest): boolean {
+  return deleteFlagSchema.safeParse(req.nextUrl.searchParams.get("delete"))
+    .success;
+}
+
 /**
  * Constant-time bearer comparison. Digesting first keeps both operands the
  * same fixed length, so neither the secret's length nor its matching prefix is
@@ -151,9 +233,192 @@ function ingestCanaryEnabled(job: string): boolean {
     .includes(job);
 }
 
+interface CleanupExecutionResult {
+  body: unknown;
+  status: number;
+  ok: boolean;
+  outcome: JobOutcome;
+  /** The outcome recorded on the run row; absent when the caller was refused before running. */
+  runOutcome?: RunOutcome;
+}
+
+type RunVerdict = Omit<RouteRunRecord, "jobName" | "httpStatus">;
+
+/** How a thrown run is recorded; null leaves no row (a lease the database could not grant). */
+function verdictOfError(error: unknown): RunVerdict | null {
+  if (error instanceof CronLockHeldError) {
+    return {
+      outcome: "held",
+      reason: "lock-held",
+      holderRunId: error.holderRunId,
+    };
+  }
+  if (error instanceof CronLockUnavailableError) return null;
+  if (error instanceof MaintenanceActiveError) {
+    return { outcome: "refused", reason: `maintenance:${error.phase}` };
+  }
+  if (error instanceof MaintenanceUnavailableError) {
+    return { outcome: "refused", reason: "maintenance-state-unreadable" };
+  }
+  if (error instanceof ProductionOnlyRefusal) {
+    return { outcome: "refused", reason: error.reason };
+  }
+  return {
+    outcome: "failed",
+    reason: error instanceof Error ? error.name : "thrown",
+  };
+}
+
+const tickIdSchema = z.string().uuid();
+const runTriggerSchema = z.string().regex(/^(cron|admin:[A-Za-z0-9_-]+)$/);
+
+/** The ticker's per-tick id, when the caller is the ticker. */
+function tickIdOf(req: NextRequest): string | undefined {
+  const parsed = tickIdSchema.safeParse(req.headers.get("x-tick-id"));
+  return parsed.success ? parsed.data : undefined;
+}
+
+export interface CleanupRouteHandlers {
+  GET: (req: NextRequest) => Promise<NextResponse>;
+  POST: (req: NextRequest) => Promise<NextResponse>;
+  /** The job name the route gates and records under. */
+  job: string;
+  /** The same run without the bearer check, for the authenticated admin door in-process. */
+  invoke: (req: NextRequest) => Promise<NextResponse>;
+}
+
+function cleanupFailure(
+  error: unknown,
+  job: string,
+  failureMessage?: string,
+): CleanupExecutionResult {
+  if (error instanceof CronLockHeldError) {
+    return {
+      body: { error: error.message },
+      status: 409,
+      ok: true,
+      outcome: "held",
+    };
+  }
+  // Shared acquisition failures report once per instance and window across jobs.
+  if (error instanceof CronLockUnavailableError) {
+    captureThrottled(
+      "cron:lock-unavailable",
+      error,
+      {
+        subsystem: "cron",
+        op: "lock-unavailable",
+        expected: true,
+        level: "warning",
+        tags: { job },
+      },
+      CRON_FAILURE_REPORT_WINDOW_MS,
+    );
+    // The ticker counts this code in its summary line, the only record a refused lease leaves.
+    return {
+      body: { error: error.message, code: error.code },
+      status: 503,
+      ok: false,
+      outcome: "failure",
+    };
+  }
+  // Each message is its 400 error code.
+  if (
+    error instanceof InvalidLimitError ||
+    error instanceof InvalidWindowStartError ||
+    error instanceof InvalidPeriodParamError
+  ) {
+    return {
+      body: { error: error.message },
+      status: 400,
+      ok: true,
+      outcome: "failure",
+    };
+  }
+  if (error instanceof MaintenanceUnavailableError) {
+    return {
+      body: { error: error.message, code: "MAINTENANCE_STATE_UNREADABLE" },
+      status: 503,
+      ok: false,
+      outcome: "failure",
+    };
+  }
+  if (error instanceof MaintenanceActiveError) {
+    return {
+      body: { error: error.message, phase: error.phase },
+      status: error.httpStatus,
+      ok: true,
+      outcome: "held",
+    };
+  }
+  if (error instanceof ProductionOnlyRefusal) {
+    return {
+      body: { error: error.message, code: error.code },
+      status: error.httpStatus,
+      ok: true,
+      outcome: "held",
+    };
+  }
+  // Keep exception details in telemetry; the HTTP body exposes only a stable message.
+  captureThrottled(
+    `cron:${job}`,
+    error,
+    { subsystem: "cron", tags: { job } },
+    CRON_FAILURE_REPORT_WINDOW_MS,
+  );
+  console.error(`Error in ${job}:`, error);
+  return {
+    body: { error: failureMessage ?? `Failed to run ${job}` },
+    status: 500,
+    ok: false,
+    outcome: "failure",
+  };
+}
+
+/** Null when the bearer is valid (naming the trigger on the active run); else the 401 result. */
+function refuseUnauthorized(
+  req: NextRequest,
+  job: string,
+  unauthorizedMessage: string | undefined,
+): CleanupExecutionResult | null {
+  const authHeader = req.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
+  if (!cronSecret || !bearerMatches(authHeader, cronSecret)) {
+    console.warn(`Unauthorized ${job} attempt`);
+    return {
+      body: unauthorizedMessage
+        ? { error: "Unauthorized", message: unauthorizedMessage }
+        : { error: "Unauthorized" },
+      status: 401,
+      ok: true,
+      outcome: "failure",
+    };
+  }
+  // An authenticated dispatcher (the admin door's background hop) names the trigger.
+  const trigger = runTriggerSchema.safeParse(req.headers.get("x-run-trigger"));
+  const active = currentRun();
+  if (trigger.success && active) active.triggeredBy = trigger.data;
+  return null;
+}
+
+/** A 207 raised only by the needs-attention flag, with no item failing. */
+function isFindingsOnly(
+  result: object,
+  summary: object,
+  flagged: boolean,
+): boolean {
+  return (
+    flagged &&
+    jobOutcome(result) === "success" &&
+    !hasItemFailures(result) &&
+    !hasItemFailures(summary)
+  );
+}
+
 /**
  * Every job under `app/api/cleanup/*` needs the same HTTP twin: a
- * CRON_SECRET bearer check, a maintenance-phase guard, structured start/finish
+ * CRON_SECRET bearer check, an off-production refusal (`jobsMayRunHere`), a
+ * maintenance-phase guard, structured start/finish
  * logging, and a three-way error mapping (lock held → 409, maintenance active
  * → its own status, anything else → captured + 500). Before this factory that
  * ~75-line shape was hand-copied into 40+ route files, which is what SonarCloud
@@ -163,44 +428,54 @@ function ingestCanaryEnabled(job: string): boolean {
  * thing that is actually route-specific: what it runs and how it maps the
  * result to a status code.
  */
-export function cleanupRoute<T extends object>(opts: {
-  /** Job name — feeds `assertNotInMaintenance`, the Sentry logger key, and the tag. */
-  job: string;
-  /** `startedAt` is when the request reached the route, for a sweep's drain deadline. */
-  run: (req: NextRequest, ctx: { startedAt: number }) => Promise<T>;
-  /** What to log on finish; defaults to the whole result. */
-  summarize?: (result: T) => Record<string, unknown>;
-  /** Defaults to {@link statusFor} with no needs-attention flag. */
-  status?: (result: T) => number;
-  failureMessage?: string;
-  /** Extra `message` field on the 401 body, for routes that carry one. */
-  unauthorizedMessage?: string;
-}): {
-  GET: (req: NextRequest) => Promise<NextResponse>;
-  POST: (req: NextRequest) => Promise<NextResponse>;
-} {
-  const { job, run, summarize, status, failureMessage, unauthorizedMessage } =
-    opts;
+export function cleanupRoute<T extends object>(
+  opts: {
+    /** Job name — feeds `assertNotInMaintenance`, the Sentry logger key, and the tag. */
+    job: string;
+    /** `startedAt` is when the request reached the route, for a sweep's drain deadline. */
+    run: (req: NextRequest, ctx: { startedAt: number }) => Promise<T>;
+    /** What to log on finish; defaults to the whole result. */
+    summarize?: (result: T) => Record<string, unknown>;
+    /** Item and error counts for the run row; wins over the generic summary-key extractor. */
+    items?: (result: T) => RunItemCounts;
+    failureMessage?: string;
+    /** Extra `message` field on the 401 body, for routes that carry one. */
+    unauthorizedMessage?: string;
+  } & (
+    | {
+        /** Authoritative when present; a 207 from it is recorded as partial. */
+        status?: (result: T) => number;
+        needsAttention?: never;
+      }
+    | {
+        /** Findings that answer 207 through {@link statusFor}; with no item failing the run is recorded as attention. */
+        needsAttention: (result: T) => boolean;
+        status?: never;
+      }
+  ),
+): CleanupRouteHandlers {
+  const {
+    job,
+    run,
+    summarize,
+    items,
+    status,
+    needsAttention,
+    failureMessage,
+    unauthorizedMessage,
+  } = opts;
 
   async function executeCleanupJob(
     req: NextRequest,
-  ): Promise<{ body: unknown; status: number; ok: boolean }> {
+    authorize: boolean,
+  ): Promise<CleanupExecutionResult> {
     const startedAt = Date.now();
     try {
-      const authHeader = req.headers.get("authorization");
-      const cronSecret =
-        process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
-
-      if (!cronSecret || !bearerMatches(authHeader, cronSecret)) {
-        console.warn(`Unauthorized ${job} attempt`);
-        return {
-          body: unauthorizedMessage
-            ? { error: "Unauthorized", message: unauthorizedMessage }
-            : { error: "Unauthorized" },
-          status: 401,
-          ok: true,
-        };
+      if (authorize) {
+        const refused = refuseUnauthorized(req, job, unauthorizedMessage);
+        if (refused) return refused;
       }
+      if (!jobsMayRunHere()) throw new JobRunRefusedError(job);
       // The cron core is shared with the jobs/** entrypoint, which exits on
       // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
       await assertNotInMaintenance(job);
@@ -209,90 +484,92 @@ export function cleanupRoute<T extends object>(opts: {
       Sentry.logger.info(`cron:${job} started`);
 
       const result = await run(req, { startedAt });
-      const summary: Record<string, unknown> = summarize
-        ? summarize(result)
-        : (result as Record<string, unknown>);
+      const summary = summarize?.(result) ?? result;
 
       console.log(`${job} completed:`, summary);
-      Sentry.logger.info(`cron:${job} finished`, summary);
+      Sentry.logger.info(
+        `cron:${job} finished`,
+        Object.fromEntries(Object.entries(summary)),
+      );
 
+      // An explicit per-job mapping is authoritative, so the outcome header follows its status.
+      const flagged = needsAttention?.(result) ?? false;
       const responseStatus = status
         ? status(result)
-        : statusFor(result as { success?: boolean });
+        : statusFor(result, flagged);
+      const verdict = routeOutcome(
+        result,
+        responseStatus,
+        isFindingsOnly(result, summary, flagged),
+      );
+      await record({
+        ...verdict,
+        httpStatus: responseStatus,
+        summary,
+        items: items?.(result),
+      });
       return {
         body: result,
         status: responseStatus,
         ok: responseStatus < 500,
+        outcome: status ? outcomeOfStatus(responseStatus) : jobOutcome(result),
+        runOutcome: verdict.outcome,
       };
     } catch (error) {
-      // #476 — concurrent invocation (schedule overlap / manual re-run)
-      // skips with a 409 instead of double-running.
-      if (error instanceof CronLockHeldError) {
-        return { body: { error: error.message }, status: 409, ok: true };
-      }
-      // #1822 Q-2 — one Redis outage is one report: a key shared by every job,
-      // 15-min window per instance; the first job to hit it is tagged.
-      if (error instanceof CronLockUnavailableError) {
-        captureThrottled(
-          "cron:lock-unavailable",
-          error,
-          {
-            subsystem: "cron",
-            op: "lock-unavailable",
-            expected: true,
-            level: "warning",
-            tags: { job },
+      if (isPoolExhaustion(error)) noteCounter("poolTimeout");
+      const failure = cleanupFailure(error, job, failureMessage);
+      const verdict = verdictOfError(error);
+      // A held row carries the lock's own name, which a route core may spell differently.
+      const lockJob = error instanceof CronLockHeldError ? error.jobName : job;
+      if (verdict)
+        await record({ ...verdict, httpStatus: failure.status }, lockJob);
+      return { ...failure, runOutcome: verdict?.outcome ?? "failed" };
+    }
+  }
+
+  async function record(
+    verdict: Omit<RouteRunRecord, "jobName">,
+    jobName = job,
+  ): Promise<void> {
+    const active = currentRun();
+    if (active) await recordRouteRun(active, { ...verdict, jobName });
+  }
+
+  async function respond(
+    req: NextRequest,
+    authorize: boolean,
+  ): Promise<NextResponse> {
+    const outer = currentRun();
+    return withRunContext(
+      {
+        triggeredBy: outer?.triggeredBy ?? schedulerTrigger(),
+        tickId: outer?.tickId ?? tickIdOf(req),
+        opsActionLogId: outer?.opsActionLogId,
+      },
+      async () => {
+        const canary = ingestCanaryEnabled(job);
+        const outcome = await executeCleanupJob(req, authorize);
+        if (canary || !outcome.ok) {
+          await Sentry.flush(2_000);
+        }
+        return NextResponse.json(outcome.body, {
+          status: outcome.status,
+          headers: {
+            "X-Job-Outcome": outcome.outcome,
+            ...(outcome.runOutcome
+              ? { "X-Run-Outcome": outcome.runOutcome }
+              : {}),
           },
-          CRON_FAILURE_REPORT_WINDOW_MS,
-        );
-        return { body: { error: error.message }, status: 503, ok: false };
-      }
-      // Each message is its 400 error code.
-      if (
-        error instanceof InvalidLimitError ||
-        error instanceof InvalidWindowStartError
-      ) {
-        return { body: { error: error.message }, status: 400, ok: true };
-      }
-      if (error instanceof MaintenanceActiveError) {
-        return {
-          body: { error: error.message, phase: error.phase },
-          status: error.httpStatus,
-          ok: true,
-        };
-      }
-      // The exception text stays in Sentry and the server log. It used to be
-      // echoed to the caller as `details`, which on these 36 endpoints means
-      // Prisma query fragments, table and column names, gateway payloads and
-      // payout identifiers — an internal leak the `app/api/**` contract
-      // forbids, and one the cron caller has no use for anyway.
-      // #1441 — a script that rethrows a plain object reached Sentry as
-      // "Error: [object Object]"; the report helper keeps its message/code.
-      // Keyed by target like the lock branch above: a systemic fault
-      // fails every tick and used to cost one event per tick per job.
-      captureThrottled(
-        `cron:${job}`,
-        error,
-        { subsystem: "cron", tags: { job } },
-        CRON_FAILURE_REPORT_WINDOW_MS,
-      );
-      console.error(`Error in ${job}:`, error);
-      return {
-        body: { error: failureMessage ?? `Failed to run ${job}` },
-        status: 500,
-        ok: false,
-      };
-    }
+        });
+      },
+    );
   }
 
-  async function handle(req: NextRequest): Promise<NextResponse> {
-    const canary = ingestCanaryEnabled(job);
-    const outcome = await executeCleanupJob(req);
-    if (canary || !outcome.ok) {
-      await Sentry.flush?.(2_000);
-    }
-    return NextResponse.json(outcome.body, { status: outcome.status });
-  }
-
-  return { GET: handle, POST: handle };
+  const handle = (req: NextRequest) => respond(req, true);
+  return {
+    GET: handle,
+    POST: handle,
+    job,
+    invoke: (req: NextRequest) => respond(req, false),
+  };
 }

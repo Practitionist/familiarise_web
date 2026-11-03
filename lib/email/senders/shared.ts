@@ -129,6 +129,115 @@ export async function stageSpecGuarded(
   });
 }
 
+/**
+ * Stages `spec` in `tx`; a render failure throws so the caller's claim rolls back.
+ * No per-recipient Sentry: the caller retries every run and reports its failure count once.
+ */
+export async function stageSpecRequired(
+  tx: StagingTx,
+  spec: RecipientEmailSpec,
+  userIds: string[],
+): Promise<StagedRecipientEmail[]> {
+  const recipients = await loadEmailRecipients(userIds, spec.category, tx);
+  const prepared = await prepareRecipientEmails(
+    {
+      recipients,
+      emailType: spec.emailType,
+      from: spec.from ?? SENDERS.notifications,
+      subject: spec.subject,
+      render: spec.render,
+      entityRef: spec.entityRef,
+    },
+    { reportToSentry: false },
+  );
+  if (prepared.failed > 0) {
+    throw new Error(
+      `${spec.emailType} render failed for ${prepared.failed} recipient(s)`,
+    );
+  }
+  return stagePreparedEmails(tx, prepared);
+}
+
+/** One `IdempotencyRecord` per (scope, key, recipient) makes a staged email at-most-once. */
+export interface RecipientClaim {
+  scope: string;
+  key: (userId: string) => string;
+  ttlMs: number;
+}
+
+/**
+ * Stage `spec` for each recipient not already claimed under `claim`. Renders
+ * outside the transaction; each claim commits with its staged row, so a lost
+ * race or a repeat stages nothing.
+ */
+export async function stageSpecOncePerRecipient(
+  spec: RecipientEmailSpec,
+  userIds: string[],
+  claim: RecipientClaim,
+): Promise<StagedRecipientEmail[]> {
+  const recipients = await loadEmailRecipients(userIds, spec.category);
+  if (recipients.length === 0) return [];
+  const taken = await prisma.idempotencyRecord.findMany({
+    where: {
+      scope: claim.scope,
+      key: { in: recipients.map((r) => claim.key(r.userId)) },
+    },
+    select: { userId: true },
+  });
+  const takenIds = new Set(taken.map((t) => t.userId));
+  const pending: { userId: string; prepared: PreparedRecipientEmails }[] = [];
+  for (const recipient of recipients) {
+    if (takenIds.has(recipient.userId)) continue;
+    const prepared = await prepareRecipientEmails({
+      recipients: [recipient],
+      emailType: spec.emailType,
+      from: spec.from ?? SENDERS.notifications,
+      subject: spec.subject,
+      render: spec.render,
+      entityRef: spec.entityRef,
+    });
+    if (prepared.messages.length > 0) {
+      pending.push({ userId: recipient.userId, prepared });
+    }
+  }
+  if (pending.length === 0) return [];
+
+  return prisma.$transaction((tx) => claimAndStagePrepared(tx, claim, pending));
+}
+
+/**
+ * Inside the caller's transaction, claim each recipient under `claim` and stage
+ * their pre-rendered email only where the claim is new, so a re-run stages nothing.
+ */
+export async function claimAndStagePrepared(
+  tx: Pick<Tx, "idempotencyRecord" | "failedEmail" | "emailSuppression">,
+  claim: RecipientClaim,
+  prepared: { userId: string; prepared: PreparedRecipientEmails }[],
+): Promise<StagedRecipientEmail[]> {
+  const pending = prepared.filter((p) => p.prepared.messages.length > 0);
+  if (pending.length === 0) return [];
+  const now = new Date();
+  const claimed = await tx.idempotencyRecord.createManyAndReturn({
+    data: pending.map(({ userId }) => ({
+      scope: claim.scope,
+      key: claim.key(userId),
+      userId,
+      requestHash: claim.key(userId),
+      completedAt: now,
+      expiresAt: new Date(now.getTime() + claim.ttlMs),
+    })),
+    skipDuplicates: true,
+    select: { userId: true },
+  });
+  const won = new Set(claimed.map((c) => c.userId));
+  const staged: StagedRecipientEmail[] = [];
+  for (const { userId, prepared: emails } of pending) {
+    if (won.has(userId))
+      staged.push(...(await stagePreparedEmails(tx, emails)));
+  }
+  return staged;
+}
+
 export function defineBudgetedEmailSender<TArgs>(
   build: (args: TArgs) => { userIds: string[]; spec: RecipientEmailSpec },
   fallback?: SendToRecipientsResult,

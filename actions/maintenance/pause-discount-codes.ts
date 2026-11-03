@@ -1,16 +1,15 @@
-"use server";
-
 /**
  * Discount Code Pause/Restore — companion to maintenance freeze/recovery.
  *
  * Before OFFLINE: snapshots active discount code IDs to Redis, deactivates all.
  * After recovery: restores active state from snapshot, skipping codes that
- * expired during maintenance.
+ * expired during maintenance. Production only: the codes and snapshot are shared.
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { z } from "zod";
 
 import prisma from "@/lib/prisma";
+import { mayWriteProductionState } from "@/lib/production-state";
 import redis from "@/lib/redis";
 
 const REDIS_KEY = "maintenance:discount_snapshot";
@@ -28,19 +27,19 @@ interface RestoreResult {
  * Snapshot active discount codes to Redis and deactivate them.
  */
 export async function pauseDiscountCodes(): Promise<PauseResult> {
+  if (!mayWriteProductionState(REDIS_KEY)) return { paused: 0 };
   const activeCodes = await prisma.discountCode.findMany({
     where: { isActive: true },
     select: { id: true },
   });
-
-  if (activeCodes.length === 0) {
-    return { paused: 0 };
-  }
-
-  const ids = activeCodes.map((c) => c.id);
-
-  // Store snapshot in Redis before deactivating
-  await redis.set(REDIS_KEY, JSON.stringify(ids));
+  // NX keeps the first snapshot intact across retries and repeated activation.
+  await redis.set(REDIS_KEY, JSON.stringify(activeCodes.map((c) => c.id)), {
+    nx: true,
+  });
+  const raw = await redis.get<unknown>(REDIS_KEY);
+  const ids = z
+    .array(z.string())
+    .parse(typeof raw === "string" ? JSON.parse(raw) : raw);
 
   // Bulk deactivate
   const { count } = await prisma.discountCode.updateMany({
@@ -64,24 +63,18 @@ export async function pauseDiscountCodes(): Promise<PauseResult> {
  * Codes that expired during maintenance are skipped.
  */
 export async function restoreDiscountCodes(): Promise<RestoreResult> {
+  if (!mayWriteProductionState(REDIS_KEY)) {
+    return { restored: 0, expiredDuringMaintenance: 0 };
+  }
   const raw = await redis.get<string>(REDIS_KEY);
   if (!raw) {
     return { restored: 0, expiredDuringMaintenance: 0 };
   }
 
-  let ids: string[];
-  try {
-    ids = typeof raw === "string" ? JSON.parse(raw) : raw;
-  } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "maintenance" } });
-    await redis.del(REDIS_KEY);
-    return { restored: 0, expiredDuringMaintenance: 0 };
-  }
-
-  if (!Array.isArray(ids) || ids.length === 0) {
-    await redis.del(REDIS_KEY);
-    return { restored: 0, expiredDuringMaintenance: 0 };
-  }
+  // Invalid data is an operator error; keep it for repair rather than deleting evidence.
+  const ids = z
+    .array(z.string())
+    .parse(typeof raw === "string" ? JSON.parse(raw) : raw);
 
   const now = new Date();
 
@@ -101,7 +94,10 @@ export async function restoreDiscountCodes(): Promise<RestoreResult> {
   let restored = 0;
   if (validIds.length > 0) {
     const { count } = await prisma.discountCode.updateMany({
-      where: { id: { in: validIds } },
+      where: {
+        id: { in: validIds },
+        OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
+      },
       data: { isActive: true },
     });
     restored = count;

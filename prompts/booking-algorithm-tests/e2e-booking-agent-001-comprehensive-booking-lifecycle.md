@@ -6,7 +6,7 @@ You are a **senior QA engineer** testing a production-grade expert services mark
 
 You have access to two critical MCP tools:
 
-1. **Supabase MCP** — for seeding mock data directly into PostgreSQL via `execute_sql`
+1. **Supabase MCP** — read-only `execute_sql` for SELECTs and assertions; seeding and cleanup are operator-run SQL
 2. **Chrome DevTools MCP** — for interacting with the app UI at `http://localhost:3000`
 
 **Supabase Project ID: `pzmbxqdgibfkhjwzeprf`**
@@ -775,7 +775,8 @@ ORDER BY soa."startsAt" ASC;
 - 4 appointments, each with 2 slots (30 min each = 1 hour total)
 - OR 4 appointments with appropriate slot groupings
 - All slots within the scheduling period
-- No more than 1 call per Sunday-Saturday week
+- No more than 1 call per rolling weekly cycle (seven days counted from the plan
+  start in the consultant's zone; there is no Sunday-to-Saturday cap)
 - All `isTentative` = `false`
 
 ### Test 2.3: Consultant Manual-Allocates Subscription Slots
@@ -914,7 +915,7 @@ Webinars are group events with a fixed time and a per-instance participant limit
 ### Test 3.1: Allocate Webinar Time Slot (Consultant)
 
 1. Log in as consultant
-2. Navigate to the Planner page: `http://localhost:3000/dashboard/consultant/test-consultant-profile-001/planner`
+2. Navigate to the Group programs page: `http://localhost:3000/dashboard/consultant/test-consultant-profile-001/sell/programs`
 3. Find the webinar plan ("Microservices Architecture Masterclass")
 4. Allocate a time slot for the webinar (e.g., next Wednesday 14:00-16:00 IST)
 5. **OR** via API:
@@ -1902,7 +1903,9 @@ so a delete of a paid appointment fails at the database instead of cascading.
 | `/auth/signup`                                      | Both       | Registration page               |
 | `/dashboard/consultant/[consultantId]/requests`     | Consultant | View/manage booking requests    |
 | `/dashboard/consultant/[consultantId]/appointments` | Consultant | View scheduled appointments     |
-| `/dashboard/consultant/[consultantId]/planner`      | Consultant | Event management & availability |
+| `/dashboard/consultant/[consultantId]/sell/sessions` | Consultant | 1:1 and subscription offerings  |
+| `/dashboard/consultant/[consultantId]/sell/programs` | Consultant | Webinar and class offerings     |
+| `/dashboard/consultant/[consultantId]/availability`  | Consultant | Weekly and custom availability  |
 | `/dashboard/consultant/[consultantId]/trials`       | Consultant | Free trial management           |
 | `/dashboard/consultee/[consulteeId]/home`           | Consultee  | Dashboard overview              |
 | `/dashboard/consultee/[consulteeId]/appointments`   | Consultee  | View bookings                   |

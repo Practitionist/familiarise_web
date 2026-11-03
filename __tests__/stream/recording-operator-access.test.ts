@@ -27,12 +27,18 @@ jest.mock("@sentry/nextjs", () => ({
 // depends on Better Stack config; the DB row is the assertion that matters.
 jest.mock("../../lib/observability/betterstack-telemetry", () => ({
   __esModule: true,
-  emitTelemetryLog: jest.fn(async () => undefined),
+  emitTelemetryLog: jest.fn(async () => "skipped"),
+  setTelemetryOutcomeSink: jest.fn(),
 }));
 
 jest.mock("../../lib/auth-server", () => ({
   __esModule: true,
   getSession: jest.fn(),
+}));
+
+jest.mock("../../lib/auth-helpers", () => ({
+  __esModule: true,
+  requireApiAuth: async () => ({ session: await getSession() }),
 }));
 
 jest.mock("../../lib/stream/recording-service", () => ({
@@ -48,16 +54,13 @@ jest.mock("../../lib/stream/recording-storage", () => ({
   durablyOursWhere: jest.fn(() => ({})),
 }));
 
-// The viewer rule (host, own slot, purchase, catch-up) has its own suite; here
-// only a replay purchase stands in for it.
+// The viewer rule (host, own slot, purchase, catch-up) has its own suite; this
+// suite controls its answer.
+const mockViewerPlaybackAccess = jest.fn();
 jest.mock("../../lib/stream/recording-slots", () => ({
   __esModule: true,
-  viewerPlaybackAccess: jest.fn(async () => {
-    const { default: db } = jest.requireMock("../../lib/prisma");
-    return (await db.recordingPurchase.findFirst())
-      ? { allowed: true }
-      : { allowed: false, code: "FORBIDDEN" };
-  }),
+  viewerPlaybackAccess: (...args: unknown[]) =>
+    mockViewerPlaybackAccess(...args),
 }));
 
 jest.mock("../../lib/prisma", () => ({
@@ -120,7 +123,11 @@ const recordingFixture = {
     id: "ms-1",
     streamCallId: "slot-abc",
     organizationId: "org-1",
-    occurrence: { appointment: { id: "appt-1" } },
+    occurrence: {
+      appointmentId: "appt-1",
+      ordinal: 1,
+      appointment: { id: "appt-1" },
+    },
   },
 };
 
@@ -150,6 +157,12 @@ beforeEach(() => {
   // Call history, not just return values — otherwise a later assertion can
   // pass on a call an earlier test made.
   jest.clearAllMocks();
+  mockViewerPlaybackAccess.mockReset();
+  mockViewerPlaybackAccess.mockImplementation(async () =>
+    (await db.recordingPurchase.findFirst())
+      ? { allowed: true }
+      : { allowed: false, code: "FORBIDDEN" },
+  );
   db.payment.findMany.mockResolvedValue([]);
   db.recordingPurchase.findFirst.mockResolvedValue(null);
   db.orgAuditLog.create.mockResolvedValue({ id: "audit-1" });
@@ -252,6 +265,84 @@ describe("GET /api/stream/recordings/[recordingId] — operator access", () => {
     const { res } = await callAs("CONSULTEE");
     expect(res.status).toBe(403);
     expect(mockedBestUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/stream/recordings/[recordingId] — playback freshness", () => {
+  it("re-runs the viewer check on every request and mints no URL for a refused one", async () => {
+    mockViewerPlaybackAccess
+      .mockResolvedValueOnce({ allowed: true })
+      .mockResolvedValueOnce({ allowed: false, code: "FORBIDDEN" });
+
+    const first = await callAs("CONSULTEE");
+    expect(first.res.status).toBe(200);
+    expect(first.body.recording.playbackUrl).toBe(
+      "https://signed.example/play.mp4",
+    );
+
+    const second = await callAs("CONSULTEE");
+    expect(second.res.status).toBe(403);
+    expect(second.body).toMatchObject({ code: "FORBIDDEN" });
+
+    expect(mockViewerPlaybackAccess).toHaveBeenCalledTimes(2);
+    expect(mockViewerPlaybackAccess).toHaveBeenNthCalledWith(
+      1,
+      "user-consultee",
+      expect.objectContaining({
+        id: RECORDING_ID,
+        appointmentId: "appt-1",
+        ordinal: 1,
+        expired: false,
+      }),
+    );
+    expect(mockViewerPlaybackAccess).toHaveBeenNthCalledWith(
+      2,
+      "user-consultee",
+      expect.objectContaining({
+        id: RECORDING_ID,
+        appointmentId: "appt-1",
+        ordinal: 1,
+        expired: false,
+      }),
+    );
+    expect(mockedBestUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("mints a fresh URL for each allowed request", async () => {
+    mockViewerPlaybackAccess.mockResolvedValue({ allowed: true });
+    mockedBestUrl
+      .mockReturnValueOnce("https://signed.example/one.mp4")
+      .mockReturnValueOnce("https://signed.example/two.mp4");
+
+    const first = await callAs("CONSULTEE");
+    const second = await callAs("CONSULTEE");
+
+    expect(first.body.recording.playbackUrl).toBe(
+      "https://signed.example/one.mp4",
+    );
+    expect(second.body.recording.playbackUrl).toBe(
+      "https://signed.example/two.mp4",
+    );
+    expect(mockedBestUrl).toHaveBeenCalledTimes(2);
+  });
+
+  it("marks the full playback response private and no-store", async () => {
+    mockViewerPlaybackAccess.mockResolvedValue({ allowed: true });
+
+    const { res, body } = await callAs("CONSULTEE");
+
+    expect(res.status).toBe(200);
+    expect(body.access.level).toBe("FULL");
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("marks the metadata-only response private and no-store", async () => {
+    const { res, body } = await callAs("STAFF");
+
+    expect(res.status).toBe(200);
+    expect(body.access.level).toBe("METADATA_ONLY");
+    expect(mockedBestUrl).not.toHaveBeenCalled();
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
   });
 });
 

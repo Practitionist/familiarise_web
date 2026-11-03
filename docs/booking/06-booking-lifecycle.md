@@ -90,7 +90,7 @@ flowchart LR
 | **Payment**              | Consultee completes payment in the gateway's UI (Razorpay modal or Stripe form). This happens entirely on the client side.                                                                                               | None (gateway-side only)                                                                                                           | Payment gateway client-side SDK                      |
 | **Webhook Confirms**     | Gateway sends a webhook. The handler runs in two phases: Phase 1 (transaction) marks payment SUCCEEDED and confirms slots; Phase 2 (post-transaction) creates earnings, invoice, and sends notifications.                | Updates: Payment status to SUCCEEDED, AppointmentOccurrence.isTentative to false, event record status. Creates: Earnings, Invoice. | `lib/payments/webhooks/handlers.ts`                  |
 | **Session**              | Consultant and consultee meet for the scheduled session(s).                                                                                                                                                              | None (managed by video/meeting integration)                                                                                        | External integrations                                |
-| **Auto-Complete**        | Cron job runs hourly. Marks sessions as COMPLETED one hour after their end time. For trials, also creates an ActivityLog entry and sets completedAt.                                                                     | Updates: event record status to COMPLETED                                                                                          | `scripts/appointments/auto-complete-appointments.ts` |
+| **Auto-Complete**        | Cron job runs hourly. Marks sessions as COMPLETED one hour after their end time. For trials, also sets completedAt.                                                                                                      | Updates: event record status to COMPLETED                                                                                          | `scripts/appointments/auto-complete-appointments.ts` |
 
 ---
 
@@ -655,7 +655,7 @@ A free trial bypasses the checkout and payment pipeline entirely, and a paid tri
 1. The consultee requests a trial (creates a PENDING Trial record)
 2. The consultant approves and schedules a specific time slot (PENDING --> SCHEDULED)
 3. The session takes place
-4. The cron auto-completes it (SCHEDULED --> COMPLETED, sets `completedAt`, creates ActivityLog)
+4. The cron auto-completes it (SCHEDULED --> COMPLETED, sets `completedAt`)
 5. Optionally, the consultee later purchases a subscription, and the trial is marked CONVERTED
 
 #### Sequence Diagram
@@ -681,7 +681,6 @@ sequenceDiagram
 
     CRON->>DB: Find SCHEDULED trials where slot ended > 1hr ago
     CRON->>DB: UPDATE Trial status = COMPLETED, completedAt = now()
-    CRON->>DB: CREATE ActivityLog (activityType=TRIAL_COMPLETED)
     CRON->>CE: Novu: trial-session-completed
     CRON->>CT: Novu: trial-session-completed
 
@@ -700,15 +699,13 @@ The `completeTrials()` function in the auto-complete cron does more than other e
 1. Finds SCHEDULED trials where all slots ended > 1 hour ago
 2. Updates status to COMPLETED
 3. Sets `completedAt` timestamp (used for analytics -- how long ago did the trial complete?)
-4. Creates an `ActivityLog` entry with type `TRIAL_COMPLETED` (used for the consultant's activity feed)
 
-No other event type creates an ActivityLog entry during auto-completion. The reason trials are special is that the conversion funnel tracking depends on knowing exactly when the trial completed.
+Trials get this treatment because the conversion funnel tracking depends on knowing exactly when the trial completed. The `ActivityLog` model and its writers, which once fed a per-consultant activity feed, are removed from the code because nothing read them, and the table is dropped once that release is on production ([retention decision](../decisions/2026-11-01-data-retention-windows.md)); the booking's transitions are recorded in `BookingStatusHistory`.
 
 #### Source References
 
 - `completeTrials()`: `scripts/appointments/auto-complete-appointments.ts`
 - Trial conversion in subscription checkout: `linkCompletedTrialToSubscription()` in `lib/payments/checkout/handlers/subscription.ts`
-- ActivityLog creation: `scripts/appointments/auto-complete-appointments.ts`
 
 ---
 
@@ -949,7 +946,7 @@ stateDiagram-v2
     PENDING --> REJECTED: Consultant declines the trial request
     PENDING --> CANCELLED: Consultee withdraws their request
 
-    SCHEDULED --> COMPLETED: Cron runs after session ended + 1hr buffer (sets completedAt, creates ActivityLog)
+    SCHEDULED --> COMPLETED: Cron runs after session ended + 1hr buffer (sets completedAt)
     SCHEDULED --> CANCELLED: Either party cancels before session
 
     COMPLETED --> CONVERTED: Consultee purchases subscription from same consultant
@@ -1202,13 +1199,13 @@ Background jobs run on schedules via GitHub Actions and are also exposed as API 
 
 The auto-complete cron (`autoCompleteAppointments()`) runs five separate queries, one for each event type:
 
-| Function                  | Finds                                                                                          | Transition          | Extra Actions                                               |
-| ------------------------- | ---------------------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------- |
-| `completeWebinars()`      | SCHEDULED or IN_PROGRESS webinars where every slot's endsAt < bufferTime                       | Status -> COMPLETED | None                                                        |
-| `completeClasses()`       | SCHEDULED or IN_PROGRESS classes where every appointment's every slot's endsAt < bufferTime    | Status -> COMPLETED | None                                                        |
-| `completeConsultations()` | APPROVED or SCHEDULED consultations where every slot's endsAt < bufferTime                     | status -> COMPLETED | None                                                        |
-| `completeSubscriptions()` | APPROVED or SCHEDULED subscriptions where every appointment's every slot's endsAt < bufferTime | status -> COMPLETED | None                                                        |
-| `completeTrials()`        | SCHEDULED trials where every slot's endsAt < bufferTime                                        | status -> COMPLETED | Sets `completedAt`, creates `ActivityLog` (TRIAL_COMPLETED) |
+| Function                  | Finds                                                                                          | Transition          | Extra Actions      |
+| ------------------------- | ---------------------------------------------------------------------------------------------- | ------------------- | ------------------ |
+| `completeWebinars()`      | SCHEDULED or IN_PROGRESS webinars where every slot's endsAt < bufferTime                       | Status -> COMPLETED | None               |
+| `completeClasses()`       | SCHEDULED or IN_PROGRESS classes where every appointment's every slot's endsAt < bufferTime    | Status -> COMPLETED | None               |
+| `completeConsultations()` | APPROVED or SCHEDULED consultations where every slot's endsAt < bufferTime                     | status -> COMPLETED | None               |
+| `completeSubscriptions()` | APPROVED or SCHEDULED subscriptions where every appointment's every slot's endsAt < bufferTime | status -> COMPLETED | None               |
+| `completeTrials()`        | SCHEDULED trials where every slot's endsAt < bufferTime                                        | status -> COMPLETED | Sets `completedAt` |
 
 **Buffer time**: 1 hour. The reason for the buffer is to give participants time for post-session activities (filling feedback forms, downloading materials) before the system considers the session complete. The `COMPLETION_BUFFER_HOURS` constant is defined at the top of the auto-complete script.
 
@@ -1301,23 +1298,23 @@ T+48 hours      (If the request was never acted on)
 
 ## 13. Cross-References
 
-| Topic                                                           | Document                                                                                                               |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Slot allocation architecture (services, data model, validation) | [01-architecture.md](./01-architecture.md)                                                                             |
-| Event type rules and validation logic                           | [02-event-types-and-validation.md](./02-event-types-and-validation.md)                                                 |
-| Slot math (30-min intervals, weekly distribution)               | [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)                                         |
-| Allocation and validation API endpoints                         | [04-api-reference.md](./04-api-reference.md)                                                                           |
-| Troubleshooting and recent fixes                                | [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md)                                           |
-| Reschedule implementation                                       | [07-rescheduling-flow.md](./07-rescheduling-flow.md)                                                                   |
-| Payment system architecture                                     | [../payments/01-architecture.md](../payments/01-architecture.md)                                                       |
-| Checkout flow details                                           | [../payments/checkout-flow/01-overview-and-consultation.md](../payments/checkout-flow/01-overview-and-consultation.md) |
-| Webhook handling and status flows                               | [../payments/checkout-flow/05-status-flows.md](../payments/checkout-flow/05-status-flows.md)                           |
-| Approval payments (pay-later)                                   | [../payments/approval-payments/01-architecture.md](../payments/approval-payments/01-architecture.md)                   |
-| Cancellation and rescheduling payments                          | [../payments/cancellations-rescheduling/README.md](../payments/cancellations-rescheduling/README.md)                   |
-| Payout processing                                               | [../payments/payouts/01-architecture.md](../payments/payouts/01-architecture.md)                                       |
-| Notification system architecture                                | [../notifications/01-architecture.md](../notifications/01-architecture.md)                                             |
-| Notification workflows and API                                  | [../notifications/02-workflows-and-api.md](../notifications/02-workflows-and-api.md)                                   |
-| Database schema (enums, models)                                 | [../../prisma/schema.prisma](../../prisma/schema.prisma)                                                               |
+| Topic                                                           | Document                                                                                               |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Slot allocation architecture (services, data model, validation) | [01-architecture.md](./01-architecture.md)                                                             |
+| Event type rules and validation logic                           | [02-event-types-and-validation.md](./02-event-types-and-validation.md)                                 |
+| Slot math (30-min intervals, weekly distribution)               | [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)                         |
+| Allocation and validation API endpoints                         | [04-api-reference.md](./04-api-reference.md)                                                           |
+| Troubleshooting and recent fixes                                | [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md)                           |
+| Reschedule implementation                                       | [07-rescheduling-flow.md](./07-rescheduling-flow.md)                                                   |
+| Payment system architecture                                     | [../finance/00-overview/01-money-map.md](../finance/00-overview/01-money-map.md)                       |
+| Checkout flow details                                           | [../finance/10-money-in/01-checkout-and-pricing.md](../finance/10-money-in/01-checkout-and-pricing.md) |
+| Webhook handling and status flows                               | [../finance/10-money-in/01-checkout-and-pricing.md](../finance/10-money-in/01-checkout-and-pricing.md) |
+| Approval payments (pay-later)                                   | [../finance/10-money-in/05-approval-payments.md](../finance/10-money-in/05-approval-payments.md)       |
+| Cancellation and rescheduling payments                          | [../finance/30-refunds-disputes/01-refunds.md](../finance/30-refunds-disputes/01-refunds.md)           |
+| Payout processing                                               | [../finance/40-payouts/03-consultant-payouts.md](../finance/40-payouts/03-consultant-payouts.md)       |
+| Notification system architecture                                | [../notifications/01-architecture.md](../notifications/01-architecture.md)                             |
+| Notification workflows and API                                  | [../notifications/02-workflows-and-api.md](../notifications/02-workflows-and-api.md)                   |
+| Database schema (enums, models)                                 | [../../prisma/schema.prisma](../../prisma/schema.prisma)                                               |
 
 ## Approval-path corrections (2026-08-14, #1169 PR 2)
 

@@ -5,9 +5,14 @@
 import { GET as downloadDocument } from "../../app/api/appointments/[appointmentId]/documents/[documentId]/download/route";
 import { DELETE as deleteDocument } from "../../app/api/appointments/[appointmentId]/documents/[documentId]/route";
 import { POST as reviewDocument } from "../../app/api/appointments/[appointmentId]/documents/[documentId]/review/route";
+import { POST as uploadDocument } from "../../app/api/appointments/[appointmentId]/documents/route";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
-import { createSignedStorageUrl } from "@/lib/documents/storage-verify";
+import {
+  createSignedStorageUrl,
+  verifyDirectUploadedObject,
+} from "@/lib/documents/storage-verify";
+import { notifyDocumentAdded } from "@/lib/documents/document-notify";
 import { resolveDocumentParty } from "@/lib/documents/document-party";
 
 jest.mock("../../lib/auth-server", () => ({
@@ -108,6 +113,39 @@ describe("one party resolver", () => {
     expect(where).toMatchObject({ id: "apt-1", deletedAt: null });
     expect(where.OR).toContainEqual({
       trial: { consulteeProfile: { userId: "l" } },
+    });
+  });
+});
+
+describe("upload commit", () => {
+  it("replays a committed upload with 200 and no second notification", async () => {
+    signedIn("l");
+    (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
+      booking("SCHEDULED"),
+    );
+    (prisma.appointmentDocument.findFirst as jest.Mock).mockResolvedValue({
+      id: "doc-1",
+      rootDocumentId: null,
+      versionNo: 1,
+    });
+
+    const res = await uploadDocument(
+      new Request("http://localhost/x", {
+        method: "POST",
+        body: JSON.stringify({
+          storagePath: "appointments/apt-1/consultee-p-l/a.pdf",
+          originalName: "a.pdf",
+          mimeType: "application/pdf",
+          fileSize: 1000,
+        }),
+      }),
+      { params: Promise.resolve({ appointmentId: "apt-1" }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(notifyDocumentAdded).not.toHaveBeenCalled();
+    expect(await res.json()).toMatchObject({
+      document: { id: "doc-1", rootId: "doc-1", versionNo: 1 },
     });
   });
 });
@@ -256,18 +294,105 @@ describe("review", () => {
     (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
       booking("SCHEDULED"),
     );
+    (prisma.appointmentDocument.findFirst as jest.Mock).mockImplementation(
+      async ({ where }: { where: { reviewStatus?: string } }) =>
+        where.reviewStatus && where.reviewStatus !== "PENDING"
+          ? null
+          : {
+              id: "doc-1",
+              originalName: "cv.pdf",
+              rootDocumentId: null,
+              versionNo: 1,
+              reviewStatus: "PENDING",
+            },
+    );
+    (prisma.appointmentDocument.count as jest.Mock).mockResolvedValue(1);
+    const res = await post({ reviewStatus: "APPROVED" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "SUPERSEDED" });
+    expect(prisma.appointmentDocument.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("answers a retried approval as the first write did, without a second write", async () => {
+    signedIn("e");
+    (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
+      booking("SCHEDULED"),
+    );
     (prisma.appointmentDocument.findFirst as jest.Mock).mockResolvedValue({
       id: "doc-1",
       originalName: "cv.pdf",
       rootDocumentId: null,
       versionNo: 1,
-      reviewStatus: "PENDING",
+      reviewStatus: "APPROVED",
+      reviewNotes: null,
+    });
+    (prisma.appointmentDocument.count as jest.Mock).mockResolvedValue(0);
+    const res = await post({ reviewStatus: "APPROVED" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      document: { id: "doc-1", reviewStatus: "APPROVED" },
+      reply: null,
+    });
+    expect(prisma.appointmentDocument.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("answers SUPERSEDED to a retried approval once the learner uploaded a newer version", async () => {
+    signedIn("e");
+    (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
+      booking("SCHEDULED"),
+    );
+    (prisma.appointmentDocument.findFirst as jest.Mock).mockResolvedValue({
+      id: "doc-1",
+      originalName: "cv.pdf",
+      rootDocumentId: null,
+      versionNo: 1,
+      reviewStatus: "APPROVED",
+      reviewNotes: null,
     });
     (prisma.appointmentDocument.count as jest.Mock).mockResolvedValue(1);
     const res = await post({ reviewStatus: "APPROVED" });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ code: "SUPERSEDED" });
     expect(prisma.appointmentDocument.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("replays a committed reply without re-verifying storage", async () => {
+    signedIn("e");
+    (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
+      booking("SCHEDULED"),
+    );
+    (prisma.appointmentDocument.findFirst as jest.Mock)
+      .mockResolvedValueOnce({ id: "reply-1" })
+      .mockResolvedValueOnce({
+        id: "reply-1",
+        originalName: "reply.pdf",
+        rootDocumentId: "doc-1",
+        versionNo: 1,
+      })
+      .mockResolvedValueOnce({
+        id: "doc-1",
+        originalName: "cv.pdf",
+        rootDocumentId: null,
+        versionNo: 1,
+        reviewStatus: "PENDING",
+      });
+
+    const res = await post({
+      reply: {
+        storagePath: "appointments/apt-1/consultant-p-e/reply.pdf",
+        originalName: "reply.pdf",
+        mimeType: "application/pdf",
+        fileSize: 1000,
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(verifyDirectUploadedObject).not.toHaveBeenCalled();
+    expect(notifyDocumentAdded).not.toHaveBeenCalled();
+    expect(await res.json()).toMatchObject({
+      document: { id: "doc-1", reviewStatus: "PENDING" },
+      reply: { id: "reply-1", versionNo: 1 },
+    });
   });
 
   it("writes the status with the prior status in the WHERE", async () => {

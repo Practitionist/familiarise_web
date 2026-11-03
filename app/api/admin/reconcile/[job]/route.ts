@@ -1,3 +1,6 @@
+import { z } from "zod";
+import { statusFor } from "@/lib/cron/cleanup-route";
+import { ledgerSummarySchema } from "@/schemas/backoffice/reconciliation";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import {
@@ -5,17 +8,13 @@ import {
   type ReconcileJob,
 } from "@/lib/backoffice/reconcile-jobs";
 import { getMaintenanceState } from "@/lib/maintenance";
+import { jobsMayRunHere } from "@/lib/cron/dispatch-refusal";
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
 import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
 import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
 import { startLedgerReconciliation } from "@/lib/backoffice/ledger-run";
 
-/**
- * #1771 K-8 — start one reconcile job from the console, with no CRON_SECRET
- * in the browser. Each job runs in-process under its own cron lock (a held
- * lock answers 409 ALREADY_RUNNING); the full ledger run shares the helper
- * behind POST /api/admin/reconcile-ledgers.
- */
+/** Authenticated bounded batches share canonical leases and retain an operator audit trail. */
 export const POST = withOpsAction(
   "payouts.manage",
   "reconcile.run",
@@ -28,6 +27,12 @@ export const POST = withOpsAction(
       if (!isReconcileJob(job)) {
         throw new OpsRefusal("UNKNOWN_JOB", "No such reconcile job.", 404);
       }
+      if (!jobsMayRunHere()) {
+        throw new OpsRefusal(
+          "JOB_RUN_PRODUCTION_ONLY",
+          "Reconcile jobs run only on the production deploy; this deploy shares its database.",
+        );
+      }
       const { phase } = await getMaintenanceState();
       if (phase === "DEGRADED" || phase === "OFFLINE") {
         throw new OpsRefusal(
@@ -38,11 +43,26 @@ export const POST = withOpsAction(
       }
       const result = await RUNNERS[job](actor.userId);
       const batch = batchOutcome(job, result);
+      const ledger =
+        job === "ledgers"
+          ? z
+              .object({ summary: ledgerSummarySchema, ok: z.boolean() })
+              .parse(result)
+          : null;
       return {
         target: { kind: "ReconcileJob", id: job },
-        after: batch ? { job, ...batch } : { job },
+        after: ledger
+          ? { job, reportStatus: ledger.summary.status, ok: ledger.ok }
+          : batch
+            ? { job, ...batch }
+            : { job },
         response: { job, result, batch },
-        status: 200,
+        status: ledger
+          ? statusFor(
+              { success: ledger.summary.status !== "FAILED" },
+              ledger.summary.status === "COMPLETED" && !ledger.ok,
+            )
+          : 200,
       };
     },
   },
@@ -50,8 +70,7 @@ export const POST = withOpsAction(
 );
 
 /**
- * One bounded batch per click, so the run ends inside the request; the
- * scheduled runs drain the rest (a background driver is needs-decision).
+ * One bounded batch per click; later requests and scheduled runs continue remaining work.
  */
 const CONSOLE_BATCH = 25;
 
@@ -67,8 +86,7 @@ const RUNNERS: Record<ReconcileJob, (actorUserId: string) => Promise<unknown>> =
   };
 
 /**
- * The jobs report no remaining count, so a batch that came back full says
- * "run again"; the ledger run is one background run, so it has no batch.
+ * A full batch may leave more work. Ledger progress is shown by its persisted report.
  */
 function batchOutcome(job: ReconcileJob, result: unknown) {
   if (job === "ledgers") return null;

@@ -1,7 +1,7 @@
 /**
  * Pure, dependency-free: read by the cron maintenance gate
  * (lib/maintenance-cron.ts) and by the System jobs console, which asks for a
- * typed confirm before running any of these by hand (#1527 Q10).
+ * typed confirm before running any of these by hand.
  */
 
 // Financial jobs that must NOT run even in DEGRADED mode.
@@ -23,6 +23,7 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "cleanup-abandoned-payments",
   "release-earnings",
   "reconcile-payment-status",
+  "reconcile-org-invoice-payments",
   "sync-payment-earnings",
   "generate-subscription-invoices",
   "settle-invoice-accruals",
@@ -40,8 +41,11 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "settle-cancelled-sessions",
   // Voids a declared incident's sessions and refunds them through the front door.
   "settle-platform-incidents",
+  "maintenance-booking-remediation",
   // #1846 N2 — re-drives the capture webhook's owed auto-refunds.
   "retry-auto-refunds",
+  // Settles standalone sale captures and stages refunds for the ones it cannot grant.
+  "reconcile-standalone-purchases",
   // Orphan auto-heal refunds stranded captures through the refund front door.
   "reconcile-orphaned-payments",
   // Added by the wave-5 sweep: each of these either moves money directly or
@@ -50,6 +54,7 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "auto-renew-contracts",
   "dunning",
   "timeout-member-overages",
+  "sweep-abandoned-overage-charges",
   "advance-program-cycles",
   "expire-contracts",
   // Registers IRNs with the government portal and writes the resulting IRP
@@ -59,29 +64,11 @@ export const FINANCIAL_JOB_NAMES = new Set([
   // #1370 — its healer mints tax invoices, which burns numbers from a gapless
   // statutory series. A half-deployed run leaves gaps that cannot be filled.
   "gst-outward-register-export",
+  // Mints consumer tax invoices from the same gapless series.
+  "heal-consumer-invoices",
   // Referral vest and breakage post to the referral-credit liability ledger.
   "vest-referral-credits",
   "expire-referral-credits",
   // Posts gateway-fee and settlement journals from Razorpay's settlement report.
   "reconcile-gateway-settlements",
 ]);
-
-/**
- * #1599 F-P1-03 — the admin console (`/api/admin/system-jobs/run`) keys a few
- * jobs by an id spelled differently from the cron job name. Map those here so
- * the DEGRADED gate has one list, `FINANCIAL_JOB_NAMES`, and no second copy.
- */
-const CRON_JOB_NAME_BY_ADMIN_ID: Record<string, string> = {
-  "reconcile-refunds": "reconcile-pending-refunds",
-  // Rides inside the abandoned-payments run since #1321.
-  "cleanup-approval-payments": "cleanup-abandoned-payments",
-  "tentative-occurrences": "cleanup-tentative-occurrences",
-  "auth-tokens": "cleanup-auth-tokens",
-};
-
-/** True when a cron job name, or an admin console job id, is a money job. */
-export function isFinancialJob(jobIdOrName: string): boolean {
-  return FINANCIAL_JOB_NAMES.has(
-    CRON_JOB_NAME_BY_ADMIN_ID[jobIdOrName] ?? jobIdOrName,
-  );
-}

@@ -5,7 +5,9 @@
  * Pure; the page does the one read (`appointments/<id>` participation).
  */
 
-export type GoFacet = "expert" | "client" | "auto";
+import type { LibraryTab } from "./library-tabs";
+
+export type GoFacet = "expert" | "client" | "auto" | "library";
 
 export interface GoViewer {
   role: string | null | undefined;
@@ -33,6 +35,11 @@ export const GO_FALLBACK = "/dashboard";
  */
 export function goHref(facet: GoFacet, path?: string): string {
   return path ? `/dashboard/go/${facet}/${path}` : `/dashboard/go/${facet}`;
+}
+
+/** The viewer's buyer Library, optionally opened on one tab. */
+export function goLibraryHref(tab?: LibraryTab): string {
+  return tab ? `${goHref("library")}?tab=${tab}` : goHref("library");
 }
 
 const SAFE_SEGMENT = /^[A-Za-z0-9_-]+$/;
@@ -72,13 +79,13 @@ const EXPERT_ONLY = new Set([
   "requests",
   "earnings",
   "availability",
-  "planner",
   "collaborations",
+  "sell",
   "offerings",
   "reviews",
   "analytics",
 ]);
-const CLIENT_ONLY = new Set(["payments", "resources"]);
+const CLIENT_ONLY = new Set(["payments"]);
 
 /** The role's own side first, then whichever personal tree exists. */
 function roleFirst(viewer: GoViewer, path: readonly string[]): string | null {
@@ -92,6 +99,11 @@ function roleFirst(viewer: GoViewer, path: readonly string[]): string | null {
       `/dashboard/org-workspace/${viewer.orgWorkspaceProfileId}`,
       path,
     );
+  // Purchases are keyed by user and attended sessions live on the learner
+  // side, so the learner Library leads whenever the viewer has one.
+  if (path[0] === "library") {
+    return clientHref(viewer, path) ?? expertHref(viewer, path);
+  }
   if (EXPERT_ONLY.has(path[0] ?? "")) return expertHref(viewer, path);
   if (CLIENT_ONLY.has(path[0] ?? "")) return clientHref(viewer, path);
   if (viewer.role === "CONSULTEE") {
@@ -111,6 +123,11 @@ export function resolveGoHref(
 
   if (facet === "expert") return expertHref(viewer, path) ?? GO_FALLBACK;
   if (facet === "client") return clientHref(viewer, path) ?? GO_FALLBACK;
+  if (facet === "library") {
+    return path.length === 0
+      ? (roleFirst(viewer, ["library"]) ?? GO_FALLBACK)
+      : GO_FALLBACK;
+  }
   if (facet !== "auto") return GO_FALLBACK;
 
   const appointmentId = goAppointmentId(path);

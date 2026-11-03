@@ -80,13 +80,13 @@ this shape (D1–D28 of the #1878 review) are summarized below.
 
 | Decision              | Outcome                                                                                                                                |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| D1–D2                 | BetterAuth 1.7, pinned exactly (1.7.7 today); keep the two PRs                                                                         |
+| D1–D2                 | BetterAuth 1.7, pinned exactly (1.7.14 today); keep the two PRs                                                                        |
 | D3–D6, D24            | DB-only sessions, no cap, no device columns, 30-day sliding; operators capped ([ADR 35](34-user-session-visibility-and-revocation.md)) |
 | D7, D25               | Mandatory TOTP for staff/admin only; operators use credential sign-in                                                                  |
 | D8, D23, D26          | Staff created with `createUser` + reset link; ADMIN suspend/reactivate and resend                                                      |
 | D9                    | Impersonation off; `Session.impersonatedBy` kept                                                                                       |
 | D10–D11, D20–D22, D28 | OIDC-only SSO, staff-approved providers, no org plugin ([ADR 06](06-typed-membership-over-betterauth-member.md)), one domain truth     |
-| D12–D14, D27          | BetterAuth rate limiter on Upstash, generic errors, no captcha, own HIBP check                                                         |
+| D12–D14, D27          | BetterAuth rate limiter on Upstash, generic errors, Turnstile on mail-sending endpoints only, own HIBP check                           |
 | D15–D16               | Google and GitHub only; CSP report-only at launch                                                                                      |
 | D17–D19               | This freeze, one `REVOKE` sidecar, invitation enums                                                                                    |
 

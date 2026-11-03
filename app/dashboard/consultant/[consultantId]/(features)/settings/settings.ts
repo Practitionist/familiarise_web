@@ -30,10 +30,6 @@ export interface FormData {
   toolsAndTechnologies: string[];
   mentoringStyle: string;
   offeringFormats: OfferingFormat[];
-  // #1703 D1/D4 — the "Booking requests" section; null cap = no limit.
-  bookingMode: BookingMode;
-  acceptingRequests: boolean;
-  maxOpenRequests: number | null;
 }
 
 export interface Domain {
@@ -84,9 +80,6 @@ export const getInitialFormData = (
   toolsAndTechnologies: consultant?.toolsAndTechnologies ?? [],
   mentoringStyle: consultant?.mentoringStyle ?? "",
   offeringFormats: consultant?.offeringFormats ?? [],
-  bookingMode: consultant?.bookingMode ?? BookingMode.INSTANT,
-  acceptingRequests: consultant?.acceptingRequests ?? true,
-  maxOpenRequests: consultant?.maxOpenRequests ?? null,
 });
 
 /**
@@ -237,24 +230,62 @@ export const getMonthYearString = (date: Date) => {
 export const consultantSettingsQueryKey = (consultantId: string) =>
   ["consultant-settings", consultantId] as const;
 
-export type BookingRequestSettings = Pick<
-  FormData,
-  "bookingMode" | "acceptingRequests" | "maxOpenRequests"
->;
+/** The "Booking requests" settings; a null cap means no limit. */
+export interface BookingRequestSettings {
+  bookingMode: BookingMode;
+  acceptingRequests: boolean;
+  maxOpenRequests: number | null;
+}
+
+/** The profile's booking settings, with the schema defaults when absent. */
+export const getInitialBookingRequestSettings = (
+  consultant: TConsultantProfile,
+): BookingRequestSettings => ({
+  bookingMode: consultant?.bookingMode ?? BookingMode.INSTANT,
+  acceptingRequests: consultant?.acceptingRequests ?? true,
+  maxOpenRequests: consultant?.maxOpenRequests ?? null,
+});
+
+/** Only the fields the user changed, each with the value the screen showed. */
+export interface BookingRequestSettingsChange {
+  set: Partial<BookingRequestSettings>;
+  expect: Partial<BookingRequestSettings>;
+}
+
+/** The change from `shown` to `next`, or null when nothing changed. */
+export function bookingRequestSettingsChange(
+  shown: BookingRequestSettings,
+  next: BookingRequestSettings,
+): BookingRequestSettingsChange | null {
+  const change: BookingRequestSettingsChange = { set: {}, expect: {} };
+  if (shown.bookingMode !== next.bookingMode) {
+    change.set.bookingMode = next.bookingMode;
+    change.expect.bookingMode = shown.bookingMode;
+  }
+  if (shown.acceptingRequests !== next.acceptingRequests) {
+    change.set.acceptingRequests = next.acceptingRequests;
+    change.expect.acceptingRequests = shown.acceptingRequests;
+  }
+  if (shown.maxOpenRequests !== next.maxOpenRequests) {
+    change.set.maxOpenRequests = next.maxOpenRequests;
+    change.expect.maxOpenRequests = shown.maxOpenRequests;
+  }
+  return Object.keys(change.set).length > 0 ? change : null;
+}
 
 /**
- * Saves only the Booking requests settings (#1527) through the narrow PATCH,
- * so a stale availability overlap elsewhere in the profile cannot refuse it.
- * Throws the server's sentence on a refusal, for the caller's toast.
+ * Saves the Booking requests settings through their own PATCH, the only
+ * writer of them. Throws the server's refusal (409 SETTINGS_CHANGED when they
+ * changed elsewhere since the screen was drawn) for the caller's toast.
  */
 export async function saveBookingRequestSettings(
   consultantId: string,
-  patch: Partial<BookingRequestSettings>,
+  change: BookingRequestSettingsChange,
 ): Promise<BookingRequestSettings> {
   const res = await fetch(`/api/user/consultants/${consultantId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
+    body: JSON.stringify(change),
   });
   const { data } = (await requireJsonResponse(
     res,
@@ -268,9 +299,8 @@ export async function saveBookingRequestSettings(
  * one URL under `/settings/<slug>`; `group` is the titled block the left nav
  * shows it under. Settings stays ONE sidebar entry with these inside it —
  * Material's settings pattern says to group with specific titles and never to
- * split into synonyms such as "Preferences". #1527 §14 — Account leads (it
- * absorbed Security, `/profile` and change-password); "Public profile" has room
- * for Experience & education.
+ * split into synonyms such as "Preferences". Account leads (security, password
+ * and sessions); "Public profile" has room for Experience & education.
  */
 export interface SettingsSection {
   group: string;
@@ -345,15 +375,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   },
 ];
 
-/**
- * Retired section keys and where they live now. `security` folded into
- * Account (#1527 §14); its old `?tab=security` links and `/settings/security`
- * URL both land there.
- */
-export const SETTINGS_SECTION_ALIASES: Readonly<
-  Record<string, SettingsSectionKey>
-> = { security: "account" };
-
 /** The sections in nav order, grouped under their titles. */
 export function settingsSectionGroups(): {
   title: string;
@@ -377,20 +398,4 @@ export function settingsSectionHref(
   section: Pick<SettingsSection, "slug">,
 ): string {
   return `${basePath}/settings/${section.slug}`;
-}
-
-/**
- * Where a legacy `settings?tab=<key>` deep link lands now that the tabs are
- * gone (#1785). Availability left Settings for the sidebar; every other key
- * is a hub section. Unknown keys and no key land on the first section.
- */
-export function settingsTabRedirect(
-  basePath: string,
-  tab: string | null | undefined,
-): string {
-  if (tab === "availability") return `${basePath}/availability`;
-  const key = (tab && SETTINGS_SECTION_ALIASES[tab]) ?? tab;
-  const section =
-    SETTINGS_SECTIONS.find((s) => s.key === key) ?? SETTINGS_SECTIONS[0];
-  return settingsSectionHref(basePath, section);
 }

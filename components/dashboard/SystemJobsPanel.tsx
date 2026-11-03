@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/utils/tailwind";
 import { Button } from "@/components/ui/button";
@@ -13,9 +13,28 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { isFinancialJob } from "@/lib/cron/financial-jobs";
+import { AdminRunRequests } from "@/components/dashboard/AdminRunRequests";
+import {
+  JOB_CATEGORIES,
+  type JobCategory,
+  type SystemJobCard,
+} from "@/lib/cron/job-categories";
 import type { Tone } from "@/lib/ui/tone";
+import type { MetricsEnvironment } from "@/lib/backoffice/job-run-metrics";
+import {
+  formatDuration,
+  isStandDownOutcome,
+  outcomeLabel,
+  scalarFields,
+  summaryFields,
+} from "@/lib/cron/run-display";
 import {
   CreditCard,
   Clock,
@@ -30,194 +49,28 @@ import {
   Database,
   Bell,
   History,
+  Receipt,
+  ShieldCheck,
+  Mail,
+  Video,
+  LifeBuoy,
 } from "lucide-react";
 
-// Job configuration
-export interface SystemJob {
-  id: string;
-  name: string;
-  description: string;
-  schedule: string;
-  category:
-    | "Payments"
-    | "Refunds"
-    | "Disputes"
-    | "Earnings"
-    | "Appointments"
-    | "Payouts"
-    | "Cleanup"
-    | "Reconciliation"
-    | "Alerts";
-}
-
-const SYSTEM_JOBS: SystemJob[] = [
-  // Payments
-  {
-    id: "cleanup-abandoned-payments",
-    name: "Cleanup Abandoned Payments",
-    description: "Cancel abandoned payment intents and expire pending payments",
-    schedule: "Every 15 minutes",
-    category: "Payments",
-  },
-  {
-    id: "cleanup-approval-payments",
-    name: "Cleanup Approval Payments",
-    description: "Expire lapsed approval pay-links",
-    schedule: "Hourly",
-    category: "Payments",
-  },
-  // Refunds
-  {
-    id: "reconcile-refunds",
-    name: "Reconcile Pending Refunds",
-    description: "Sync refund status with Razorpay",
-    schedule: "Every 15 minutes",
-    category: "Refunds",
-  },
-  // Disputes
-  {
-    id: "reconcile-disputes",
-    name: "Reconcile Disputes",
-    description: "Sync dispute status with Razorpay and track urgent deadlines",
-    schedule: "Every 6 hours",
-    category: "Disputes",
-  },
-  // Earnings
-  {
-    id: "sync-payment-earnings",
-    name: "Sync Payment to Earnings",
-    description: "Create missing earnings records for succeeded payments",
-    schedule: "Hourly",
-    category: "Earnings",
-  },
-  {
-    id: "release-earnings",
-    name: "Release Earnings from Hold",
-    description: "Move PENDING earnings to READY after hold period",
-    schedule: "Hourly",
-    category: "Earnings",
-  },
-  // Payouts
-  {
-    id: "create-payout-batch",
-    name: "Create Payout Batch",
-    description: "Create weekly payout batches for eligible experts",
-    schedule: "Weekly (Mon 8PM UTC)",
-    category: "Payouts",
-  },
-  {
-    id: "process-payouts",
-    name: "Process Payouts",
-    description: "Send approved payouts via RazorpayX",
-    schedule: "Weekly (Mon 9PM UTC)",
-    category: "Payouts",
-  },
-  {
-    id: "handle-stuck-payouts",
-    name: "Handle Stuck Payouts",
-    description: "Retry payouts stuck in PROCESSING >24h, query gateway status",
-    schedule: "Every 4 hours",
-    category: "Payouts",
-  },
-  {
-    id: "reconcile-payout-status",
-    name: "Reconcile Payout Status",
-    description: "Sync PENDING/PROCESSING payout status with gateways",
-    schedule: "Every 6 hours",
-    category: "Reconciliation",
-  },
-  // Alerts
-  {
-    id: "alert-orphaned-payments",
-    name: "Alert Orphaned Payments",
-    description: "Find SUCCEEDED payments with no appointment (CRITICAL)",
-    schedule: "Every 6 hours",
-    category: "Alerts",
-  },
-  // Cleanup
-  {
-    id: "auth-tokens",
-    name: "Auth Token Cleanup",
-    description:
-      "Delete expired sessions, verification tokens, password reset tokens",
-    schedule: "Daily",
-    category: "Cleanup",
-  },
-  {
-    id: "tentative-occurrences",
-    name: "Tentative Occurrence Cleanup",
-    description: "Release occurrences held for abandoned booking flows >7 days",
-    schedule: "Every 2 hours",
-    category: "Cleanup",
-  },
-  {
-    id: "expire-stale-requests",
-    name: "Expire Stale Requests",
-    description:
-      "Auto-expire PENDING requests >30 days, APPROVED_PENDING_PAYMENT >7 days",
-    schedule: "Daily",
-    category: "Cleanup",
-  },
-  {
-    id: "archive-webhook-events",
-    name: "Archive Webhook Events",
-    description: "Delete processed webhook events >30 days",
-    schedule: "Weekly",
-    category: "Cleanup",
-  },
-  // Reconciliation
-  {
-    id: "reconcile-payment-status",
-    name: "Reconcile Payment Status",
-    description: "Query Razorpay for actual status on stale PENDING payments",
-    schedule: "Every 30 minutes",
-    category: "Reconciliation",
-  },
-  {
-    id: "reconcile-occurrence-availability",
-    name: "Reconcile Occurrence Availability",
-    description: "Fix tentative flags, detect double-bookings",
-    schedule: "Hourly",
-    category: "Reconciliation",
-  },
-  {
-    id: "purge-deleted-documents",
-    name: "Purge Deleted Documents",
-    description:
-      "Tombstone session documents past retention, then purge tombstones past the grace window",
-    schedule: "Daily",
-    category: "Reconciliation",
-  },
-  {
-    id: "reconcile-document-storage",
-    name: "Reconcile Document Storage",
-    description: "Find orphaned/missing files in Supabase storage",
-    schedule: "Daily",
-    category: "Reconciliation",
-  },
-  // Appointments
-  {
-    id: "auto-complete-appointments",
-    name: "Auto-Complete Appointments",
-    description: "Move appointments to COMPLETED after session ends",
-    schedule: "Hourly",
-    category: "Appointments",
-  },
-];
-
-const CATEGORY_CONFIG: Record<
-  SystemJob["category"],
-  { icon: typeof CreditCard }
-> = {
-  Payments: { icon: CreditCard },
-  Refunds: { icon: RefreshCw },
-  Disputes: { icon: AlertTriangle },
-  Earnings: { icon: DollarSign },
-  Appointments: { icon: Calendar },
-  Payouts: { icon: Wallet },
-  Cleanup: { icon: Trash2 },
-  Reconciliation: { icon: Database },
-  Alerts: { icon: Bell },
+const CATEGORY_ICONS: Record<JobCategory, typeof CreditCard> = {
+  Payments: CreditCard,
+  Refunds: RefreshCw,
+  Disputes: AlertTriangle,
+  Earnings: DollarSign,
+  Payouts: Wallet,
+  Billing: Receipt,
+  Compliance: ShieldCheck,
+  Appointments: Calendar,
+  Messaging: Mail,
+  Recordings: Video,
+  Support: LifeBuoy,
+  Reconciliation: Database,
+  Alerts: Bell,
+  Cleanup: Trash2,
 };
 
 const EXECUTION_STATUS: Record<
@@ -227,39 +80,23 @@ const EXECUTION_STATUS: Record<
   COMPLETED: { label: "Completed", tone: "success" },
   FAILED: { label: "Failed", tone: "critical" },
   RUNNING: { label: "Running", tone: "info" },
+  CANCELLED: { label: "Stood down", tone: "neutral" },
 };
 
-/**
- * #1527 QA B10 — money-list jobs that only expire unpaid orders and links.
- * Maintenance still holds them with the money jobs, but no balance moves, so
- * the reason every run asks for is enough.
- */
-const NO_TYPED_CONFIRM = new Set([
-  "cleanup-abandoned-payments",
-  "cleanup-approval-payments",
-]);
-
-/**
- * #1527 Q10 — a money job moves or mutates real balances, so running one by
- * hand needs a typed confirmation: the payout pair asks for "RUN PAYOUTS",
- * any other money job for its own id.
- */
-export function runConfirmPhrase(
-  job: Pick<SystemJob, "id" | "category">,
-): string | undefined {
-  if (!isFinancialJob(job.id) || NO_TYPED_CONFIRM.has(job.id)) return undefined;
-  return job.category === "Payouts" ? "RUN PAYOUTS" : job.id;
-}
+/** A completed run that flagged findings with no item failing. */
+const NEEDS_ATTENTION: { label: string; tone: Tone } = {
+  label: "Needs attention",
+  tone: "caution",
+};
 
 interface JobCardProps {
-  job: SystemJob;
+  job: SystemJobCard;
   isRunning: boolean;
   onRun: () => void;
 }
 
 function JobCard({ job, isRunning, onRun }: JobCardProps) {
-  const config = CATEGORY_CONFIG[job.category];
-  const Icon = config.icon;
+  const Icon = CATEGORY_ICONS[job.category];
 
   return (
     <motion.div
@@ -275,7 +112,7 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
             </div>
             <div>
               <h3 className="font-semibold text-foreground text-sm">
-                {job.name}
+                {job.title}
               </h3>
               <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-xs font-medium bg-muted text-muted-foreground">
                 {job.category}
@@ -293,25 +130,47 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
       </div>
 
       <div className="mt-4 pt-4 border-t border-border">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={onRun}
-          disabled={isRunning}
-          className="w-full"
-        >
-          {isRunning ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Running...
-            </>
-          ) : (
-            <>
-              <Play className="mr-2 h-4 w-4" />
-              Run Now
-            </>
-          )}
-        </Button>
+        {job.runBlocked ? (
+          <TooltipProvider delayDuration={150}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* aria-disabled, not disabled: a disabled button is unfocusable and fires no pointer events, so the tooltip would never show. */}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-disabled="true"
+                  className="w-full cursor-not-allowed opacity-50"
+                >
+                  <Play className="mr-2 h-4 w-4" />
+                  Run Now
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-xs">
+                {job.runBlocked}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onRun}
+            disabled={isRunning}
+            className="w-full"
+          >
+            {isRunning ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Running...
+              </>
+            ) : (
+              <>
+                <Play className="mr-2 h-4 w-4" />
+                Run Now
+              </>
+            )}
+          </Button>
+        )}
       </div>
     </motion.div>
   );
@@ -321,9 +180,11 @@ interface JobExecution {
   id: string;
   jobId: string;
   jobName: string;
-  status: "RUNNING" | "COMPLETED" | "FAILED";
+  status: "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
   startedAt: string;
   completedAt: string | null;
+  durationMs: number | null;
+  itemsProcessed: number | null;
   result: Record<string, unknown> | null;
   errorMessage: string | null;
   triggeredBy: {
@@ -333,50 +194,79 @@ interface JobExecution {
 
 interface SystemJobsPanelProps {
   className?: string;
+  /** Built on the server from the cleanup registry. */
+  jobs: SystemJobCard[];
+  /** Recent executions list only this environment's runs. */
+  environment: MetricsEnvironment;
 }
 
-export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
+export function SystemJobsPanel({
+  className,
+  jobs,
+  environment,
+}: Readonly<SystemJobsPanelProps>) {
   const [runningJobs, setRunningJobs] = useState<Set<string>>(new Set());
   const [executions, setExecutions] = useState<JobExecution[]>([]);
   const [loadingExecutions, setLoadingExecutions] = useState(true);
+  const [requestsKey, setRequestsKey] = useState(0);
   const { toast } = useToast();
 
-  // Fetch recent executions
-  const fetchExecutions = async () => {
+  // Only the latest request may set state, so a slower answer for a previous environment is dropped.
+  const latestExecutionsRequest = useRef(0);
+  const fetchExecutions = useCallback(async () => {
+    const request = ++latestExecutionsRequest.current;
     try {
       setLoadingExecutions(true);
       const response = await fetch(
-        "/api/staff/system-jobs/executions?limit=10",
+        `/api/staff/system-jobs/executions?limit=10&environment=${environment}`,
       );
       if (!response.ok) throw new Error("Failed to fetch executions");
       const data = await response.json();
-      setExecutions(data.executions || []);
+      if (request === latestExecutionsRequest.current)
+        setExecutions(data.executions || []);
     } catch (error) {
       console.error("Error fetching executions:", error);
     } finally {
-      setLoadingExecutions(false);
+      if (request === latestExecutionsRequest.current)
+        setLoadingExecutions(false);
     }
-  };
+  }, [environment]);
 
   useEffect(() => {
     fetchExecutions();
-  }, []);
+  }, [fetchExecutions]);
 
   // #1527 Q10 — every "Run now" asks for a reason (the route writes it to the
   // audit log); a money job also needs a typed confirmation.
-  const [confirmJob, setConfirmJob] = useState<SystemJob | null>(null);
+  const [confirmJob, setConfirmJob] = useState<SystemJobCard | null>(null);
+  // One key per Run click; a retry from the same dialog reuses it, so the server returns the same request.
+  const [runKey, setRunKey] = useState("");
 
-  const handleRunJob = async (job: SystemJob, reason: string) => {
+  const handleRunJob = async (
+    job: SystemJobCard,
+    reason: string,
+    idempotencyKey: string,
+  ) => {
     setRunningJobs((prev) => new Set(prev).add(job.id));
 
     try {
       const response = await fetch("/api/admin/system-jobs/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: job.id, reason }),
+        body: JSON.stringify({ jobId: job.id, reason, idempotencyKey }),
       });
 
       const result = await response.json();
+      const runOutcome = response.headers.get("x-run-outcome");
+
+      if (!response.ok && isStandDownOutcome(runOutcome)) {
+        toast({
+          title: `${job.title} ${outcomeLabel(runOutcome)?.toLowerCase() ?? "skipped"}`,
+          description: result.error ?? "The job did not run.",
+          variant: "default",
+        });
+        return;
+      }
 
       if (!response.ok) {
         // Shown inside the dialog, which stays open.
@@ -385,39 +275,24 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
 
       // #1846 N6 — the payout jobs answer 202 and finish after the response.
       if (result.dispatched) {
+        if (result.requestId) setRequestsKey((key) => key + 1);
         toast({
-          title: `${job.name} started`,
+          title: `${job.title} ${result.accepted ? "queued" : "started"}`,
           description: result.message,
           variant: "default",
         });
         return;
       }
 
-      // Format result message
-      const stats = [];
-      if (result.totalProcessed !== undefined)
-        stats.push(`Processed: ${result.totalProcessed}`);
-      if (result.cleanedCount !== undefined)
-        stats.push(`Cleaned: ${result.cleanedCount}`);
-      if (result.updatedCount !== undefined)
-        stats.push(`Updated: ${result.updatedCount}`);
-      if (result.createdCount !== undefined)
-        stats.push(`Created: ${result.createdCount}`);
-      if (result.reconciledCount !== undefined)
-        stats.push(`Reconciled: ${result.reconciledCount}`);
-      if (result.releasedCount !== undefined)
-        stats.push(`Released: ${result.releasedCount}`);
-      if (result.errorCount !== undefined || result.errors?.length) {
-        stats.push(
-          `Errors: ${result.errorCount || result.errors?.length || 0}`,
-        );
-      }
+      const outcome = outcomeLabel(runOutcome);
+      const counts = scalarFields(result, 5);
+      const failed = outcome === "Failed" || outcome === "Partial";
 
       toast({
-        title: `${job.name} completed`,
+        title: `${job.title} ${outcome?.toLowerCase() ?? "completed"}`,
         description:
-          stats.length > 0 ? stats.join(" | ") : "Job completed successfully",
-        variant: "default",
+          counts.length > 0 ? counts.join(" | ") : (outcome ?? "Job finished"),
+        variant: failed ? "destructive" : "default",
       });
 
       // Check for critical alerts
@@ -438,17 +313,11 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
     }
   };
 
-  // Group jobs by category
-  const jobsByCategory = SYSTEM_JOBS.reduce(
-    (acc, job) => {
-      if (!acc[job.category]) acc[job.category] = [];
-      acc[job.category].push(job);
-      return acc;
-    },
-    {} as Record<string, SystemJob[]>,
+  const categories = JOB_CATEGORIES.filter((category) =>
+    jobs.some((job) => job.category === category),
   );
-
-  const categories = Object.keys(jobsByCategory) as SystemJob["category"][];
+  const jobsIn = (category: JobCategory) =>
+    jobs.filter((job) => job.category === category);
 
   const formatExecutionTime = (dateString: string) => {
     const date = new Date(dateString);
@@ -462,6 +331,8 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
 
   return (
     <div className={cn("space-y-8", className)}>
+      <AdminRunRequests refreshKey={requestsKey} />
+
       {/* Recent Executions */}
       <Card>
         <CardHeader>
@@ -471,7 +342,9 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
                 <History className="h-5 w-5" />
                 Recent Executions
               </CardTitle>
-              <CardDescription>Last 10 job executions</CardDescription>
+              <CardDescription>
+                Last 10 job executions in {environment}
+              </CardDescription>
             </div>
             <Button
               variant="ghost"
@@ -513,15 +386,26 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {execution.result && (
-                      <span className="text-xs text-muted-foreground/70">
-                        {Object.entries(execution.result)
-                          .slice(0, 2)
-                          .map(([k, v]) => `${k}: ${v}`)
-                          .join(", ")}
-                      </span>
-                    )}
-                    <StatusBadge {...EXECUTION_STATUS[execution.status]} />
+                    <span className="text-xs text-muted-foreground/70">
+                      {[
+                        outcomeLabel(execution.result?.outcome),
+                        ...summaryFields(execution.result, 3),
+                        execution.itemsProcessed !== null
+                          ? `items: ${execution.itemsProcessed}`
+                          : null,
+                        execution.durationMs !== null
+                          ? formatDuration(execution.durationMs)
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(", ")}
+                    </span>
+                    <StatusBadge
+                      {...(execution.status === "COMPLETED" &&
+                      execution.result?.outcome === "attention"
+                        ? NEEDS_ATTENTION
+                        : EXECUTION_STATUS[execution.status])}
+                    />
                   </div>
                 </div>
               ))}
@@ -535,23 +419,26 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
         <div key={category}>
           <div className="flex items-center gap-2 mb-4">
             {(() => {
-              const Icon = CATEGORY_CONFIG[category].icon;
+              const Icon = CATEGORY_ICONS[category];
               return <Icon className="h-5 w-5 text-muted-foreground/70" />;
             })()}
             <h2 className="text-fluid-xl font-semibold tracking-tight text-foreground">
               {category}
             </h2>
             <span className="text-sm text-muted-foreground/70">
-              ({jobsByCategory[category].length} jobs)
+              ({jobsIn(category).length} jobs)
             </span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {jobsByCategory[category].map((job) => (
+            {jobsIn(category).map((job) => (
               <JobCard
                 key={job.id}
                 job={job}
                 isRunning={runningJobs.has(job.id)}
-                onRun={() => setConfirmJob(job)}
+                onRun={() => {
+                  setRunKey(crypto.randomUUID());
+                  setConfirmJob(job);
+                }}
               />
             ))}
           </div>
@@ -563,14 +450,14 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
           key={confirmJob.id}
           open
           onOpenChange={(open) => !open && setConfirmJob(null)}
-          title={`Run ${confirmJob.name} now?`}
-          description={`${confirmJob.description}. It normally runs ${confirmJob.schedule.toLowerCase()}.`}
+          title={`Run ${confirmJob.title} now?`}
+          description={`${confirmJob.description}. Schedule: ${confirmJob.schedule}.`}
           confirmLabel="Run now"
-          tone={runConfirmPhrase(confirmJob) ? "destructive" : "default"}
+          tone={confirmJob.confirmPhrase ? "destructive" : "default"}
           requireReason={{ label: "Why run it by hand?" }}
-          requireTyped={runConfirmPhrase(confirmJob)}
+          requireTyped={confirmJob.confirmPhrase ?? undefined}
           onConfirm={async ({ reason }) => {
-            await handleRunJob(confirmJob, reason ?? "");
+            await handleRunJob(confirmJob, reason ?? "", runKey);
             setConfirmJob(null);
           }}
         />

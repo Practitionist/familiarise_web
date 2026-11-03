@@ -7,6 +7,11 @@ import { Gender } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
+import {
+  detachSessionAccessLogs,
+  stampSessionEnds,
+  type EndedSessions,
+} from "@/lib/auth/session-access-log";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import {
   derivePseudonym,
@@ -28,7 +33,7 @@ import { sendCollaboratorWithdrawnEmail } from "@/lib/email/senders/collaborator
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { requireFreshSession } from "@/lib/auth/step-up";
 import { supportRetainedHistoryCount } from "@/lib/support/erasure";
-
+import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
  * For enum fields, also validates against the allowed values.
@@ -165,6 +170,14 @@ export async function PUT(
         bio: true,
       },
     });
+
+    if (name !== undefined || image !== undefined) {
+      const expert = await prisma.consultantProfile.findUnique({
+        where: { userId: id },
+        select: { id: true },
+      });
+      if (expert) purgeExpertSurfaces(expert.id);
+    }
 
     return NextResponse.json({ data: updatedUser }, { status: 200 });
   } catch (error) {
@@ -445,6 +458,7 @@ async function executeUserHardDeleteOrFallbackScrub(
   const now = new Date();
   const auditRetainedUntil = new Date(now);
   auditRetainedUntil.setUTCFullYear(auditRetainedUntil.getUTCFullYear() + 7);
+  let endedSessions: EndedSessions[] = [];
   const removedCollaborations = await prisma.$transaction(async (tx) => {
     const removed = await removeCollaboratorStanding(tx, id);
     await tx.consentArtifact.updateMany({
@@ -456,10 +470,14 @@ async function executeUserHardDeleteOrFallbackScrub(
         auditRetainedUntil,
       },
     });
-    await revokeAllUserSessions(tx, id);
+    endedSessions = (await revokeAllUserSessions(tx, id)).ended;
+    // The user row goes first: a concurrent end stamp then waits on it and links nothing.
     await tx.user.delete({ where: { id } });
+    await detachSessionAccessLogs(tx, id);
     return removed;
   });
+  // After commit, so a failed access-log write never fails the deletion.
+  await stampSessionEnds(endedSessions, { forgetUser: true });
 
   for (const c of removedCollaborations) {
     await revokeCollaboratorAccess(c.planType, c.planId, id, { notify: false });

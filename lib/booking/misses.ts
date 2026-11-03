@@ -26,6 +26,16 @@ export const UNSETTLED_MISS = {
   deletedAt: null,
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 
+/**
+ * An unsettled miss that holds its booking's earnings. A subscription's misses
+ * do not: its earnings release per delivered tranche, and the money a miss is
+ * owed is settled at plan end or by the cancel quote.
+ */
+export const EARNINGS_HOLDING_MISS = {
+  ...UNSETTLED_MISS,
+  appointment: { subscriptionId: null },
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
 /** When the session was lost; the make-up window runs from here. */
 export const missedAt = (o: {
   hostCancelledAt?: Date | null;
@@ -34,8 +44,9 @@ export const missedAt = (o: {
 
 /**
  * A past session parked for a human (the ops needs-human list): the sweep could
- * not judge it, the detector declined a host no-show, or maintenance cut it.
- * Its booking neither completes nor releases earnings until ops decides.
+ * not judge it, the detector declined a host no-show, maintenance cut it, or a
+ * paid session had nobody join or no room. Its booking neither completes nor
+ * releases earnings until ops decides.
  */
 export const AWAITING_HUMAN = {
   completionStatus: "UNVERIFIED",
@@ -43,6 +54,13 @@ export const AWAITING_HUMAN = {
   OR: [
     { outcome: { in: ["INCONCLUSIVE", "HOST_ABSENT"] } },
     { outcome: null, meeting: { endedReason: "maintenance" } },
+    // Nobody joined or no room, on a paid booking; a free one has no money to hold and completes.
+    {
+      outcome: { in: ["NOBODY_JOINED", "OFFLINE"] },
+      appointment: {
+        payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
+      },
+    },
   ],
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
 

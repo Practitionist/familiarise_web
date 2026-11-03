@@ -10,10 +10,17 @@
  * auto-complete-appointments is the one writer of an occurrence's outcome.
  */
 
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
+import {
+  endBlocksRejoin,
+  mapStreamCallEndedReason,
+  recordedEndHolds,
+  type MeetingEndReason,
+} from "@/lib/meetings/end-reasons";
 import { parseSlotIdFromCallId, toCallId } from "@/lib/stream/call-cid";
 import { getCallParticipantSessionsFromStream } from "@/lib/stream/call-presence";
+import { closeSegmentPresences } from "@/lib/meetings/segment-presence";
 import { streamLogger } from "@/lib/stream-logger";
 
 export interface StreamSessionEndedEvent {
@@ -34,15 +41,15 @@ export interface StreamCallEndedEvent {
   call?: {
     id: string;
     type: string;
-    created_by_user_id?: string;
-    ended_by_user_id?: string;
+    created_by_user_id?: string | null;
+    ended_by_user_id?: string | null;
   };
   user?: {
     id: string;
     [key: string]: unknown;
-  };
-  reason?: string;
-  ended_by_user_id?: string;
+  } | null;
+  reason?: string | null;
+  ended_by_user_id?: string | null;
 }
 
 export interface StreamSessionParticipantJoinedEvent {
@@ -79,23 +86,6 @@ export function extractEndedByUserId(
     event.ended_by_user_id ??
     null
   );
-}
-
-function resolveCallEndedReason(
-  endedBeforeStart: boolean,
-  endedByUserId: string | null,
-  reason?: string,
-): string {
-  if (endedBeforeStart) return "ended_early";
-  if (
-    reason &&
-    reason !== "call_ended" &&
-    reason !== "end_call" &&
-    !endedByUserId
-  ) {
-    return reason;
-  }
-  return "call_ended";
 }
 
 const MEETING_END_INCLUDE = {
@@ -170,7 +160,7 @@ export async function reconcileWebinarAttendance(
   const intervals = await getCallParticipantSessionsFromStream(
     meeting.streamCallId,
   );
-  if (intervals.length === 0) return;
+  if (!intervals?.length) return;
 
   const summaryByUser = summarizeParticipantIntervals(intervals, endedAt);
 
@@ -181,8 +171,10 @@ export async function reconcileWebinarAttendance(
         appointmentOccurrenceId: meeting.appointmentOccurrenceId,
         userId: interval.userId,
         userSessionId: interval.userSessionId,
+        streamCallId: meeting.streamCallId,
         joinedAt: interval.joinedAt,
         leftAt: interval.leftAt ?? endedAt,
+        closedByEnd: interval.leftAt === null,
       })),
       skipDuplicates: true,
     });
@@ -278,7 +270,7 @@ export async function handleSessionEnded(
     const endedAt = new Date(created_at);
 
     if (
-      isDeliberateEnd(meeting) ||
+      recordedEndHolds(meeting, "session_timeout") ||
       !supersedesRecordedEnd(meeting.endedAt, endedAt)
     ) {
       await runBestEffortGroupReconciliation(
@@ -366,8 +358,18 @@ export async function handleCallEnded(
     }
 
     const endedAt = new Date(created_at);
+    const slotStartsAt = meeting.occurrence.startsAt;
+    const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
+    const endedReason = mapStreamCallEndedReason({
+      endedBeforeStart,
+      endedByUserId,
+      streamReason: event.reason,
+    });
 
-    if (!supersedesRecordedEnd(meeting.endedAt, endedAt)) {
+    if (
+      recordedEndHolds(meeting, endedReason) ||
+      !supersedesRecordedEnd(meeting.endedAt, endedAt)
+    ) {
       await runBestEffortGroupReconciliation(
         meeting,
         meeting.endedAt ?? endedAt,
@@ -379,14 +381,6 @@ export async function handleCallEnded(
       });
       return;
     }
-
-    const slotStartsAt = meeting.occurrence.startsAt;
-    const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
-    const endedReason = resolveCallEndedReason(
-      endedBeforeStart,
-      endedByUserId,
-      event.reason,
-    );
 
     if (!(await stampEnd(meeting, endedAt, endedReason))) return;
 
@@ -409,6 +403,7 @@ export async function handleCallEnded(
       streamCallId,
       endedAt: created_at,
       endedReason,
+      streamReason: event.reason ?? null,
       hasEndedByUser,
     });
   } catch (error) {
@@ -419,48 +414,67 @@ export async function handleCallEnded(
   }
 }
 
+type SynchronousEndResult =
+  | { kind: "not_found" }
+  | { kind: "already_ended"; streamCallId: string }
+  | {
+      kind: "recorded";
+      endedReason: "ended_early" | "call_ended";
+      streamCallId: string;
+    };
+
 /**
- * Synchronously stamps `Meeting.endedAt` and `endedReason` on host-initiated
- * termination before navigating back to the dashboard, eliminating webhook lag.
+ * Stamps `Meeting.endedAt` and `endedReason` on a host's end before the webhook
+ * lands; `streamCallId` is the id that now represents the room.
  */
 export async function recordMeetingEndedSynchronously(
   streamCallId: string,
   endedAt: Date = new Date(),
-): Promise<{
-  endedReason: "ended_early" | "call_ended";
-  nextStreamCallId: string;
-} | null> {
+): Promise<SynchronousEndResult> {
   const meeting = await prisma.meeting.findUnique({
     where: { streamCallId },
     include: { occurrence: true },
   });
-  if (!meeting) return null;
+  if (!meeting) return { kind: "not_found" };
 
-  if (!supersedesRecordedEnd(meeting.endedAt, endedAt)) {
-    return null;
-  }
-
+  const alreadyEnded = {
+    kind: "already_ended" as const,
+    streamCallId: meeting.streamCallId,
+  };
   const slotStartsAt = meeting.occurrence.startsAt;
   const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
   const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
 
-  if (endedBeforeStart) {
-    const nextStreamCallId = `occurrence-${meeting.occurrence.id}-r${endedAt.getTime().toString(36)}`;
-    const updated = await prisma.meeting.updateMany({
-      where: { id: meeting.id, endedAt: meeting.endedAt },
-      data: {
-        endedAt,
-        endedReason,
-        streamCallId: nextStreamCallId,
-        isRecording: false,
-      },
-    });
-    if (updated.count === 0) return null;
-    return { endedReason, nextStreamCallId };
+  if (
+    recordedEndHolds(meeting, endedReason) ||
+    !supersedesRecordedEnd(meeting.endedAt, endedAt)
+  ) {
+    return alreadyEnded;
   }
 
-  if (!(await stampEnd(meeting, endedAt, endedReason))) return null;
-  return { endedReason, nextStreamCallId: meeting.streamCallId };
+  if (endedBeforeStart) {
+    const nextStreamCallId = `occurrence-${meeting.occurrence.id}-r${endedAt.getTime().toString(36)}`;
+    // The rotated-away segment closes its presence and attendance like any other end.
+    const rotated = await prisma.$transaction(async (tx) => {
+      const updated = await tx.meeting.updateMany({
+        where: { id: meeting.id, endedAt: meeting.endedAt },
+        data: {
+          endedAt,
+          endedReason,
+          streamCallId: nextStreamCallId,
+          isRecording: false,
+        },
+      });
+      if (updated.count === 0) return false;
+      await closeSegmentAttendance(tx, meeting, endedAt);
+      return true;
+    });
+    if (!rotated) return alreadyEnded;
+    return { kind: "recorded", endedReason, streamCallId: nextStreamCallId };
+  }
+
+  if (!(await stampEnd(meeting, endedAt, endedReason))) return alreadyEnded;
+  return { kind: "recorded", endedReason, streamCallId: meeting.streamCallId };
 }
 
 /**
@@ -480,15 +494,17 @@ async function resolveMeeting(streamCallId: string) {
     where: { streamCallId },
     select,
   });
-  if (direct) return direct;
+  if (direct) return { meeting: direct, isCurrentSegment: true };
 
+  // A prior segment of the same occurrence (before a reopen or rotation): its rows keep their own call id.
   const occurrenceId = parseSlotIdFromCallId(streamCallId);
   if (!occurrenceId) return null;
 
-  return prisma.meeting.findUnique({
+  const prior = await prisma.meeting.findUnique({
     where: { appointmentOccurrenceId: occurrenceId },
     select,
   });
+  return prior ? { meeting: prior, isCurrentSegment: false } : null;
 }
 
 function presenceKey(
@@ -499,10 +515,27 @@ function presenceKey(
   return participant.user_session_id || `${sessionId}:${userId}`;
 }
 
-function stampEnd(
-  meeting: { id: string; endedAt: Date | null },
+/** Closes the segment's open presence (as assumed) and the meeting's open attendance at its end stamp. */
+async function closeSegmentAttendance(
+  tx: Tx,
+  meeting: { id: string; streamCallId: string },
   endedAt: Date,
-  endedReason: string,
+): Promise<void> {
+  await closeSegmentPresences(tx, {
+    meetingId: meeting.id,
+    streamCallId: meeting.streamCallId,
+    endedAt,
+  });
+  await tx.meetingAttendance.updateMany({
+    where: { meetingId: meeting.id, lastLeftAt: null },
+    data: { lastLeftAt: endedAt },
+  });
+}
+
+function stampEnd(
+  meeting: { id: string; streamCallId: string; endedAt: Date | null },
+  endedAt: Date,
+  endedReason: MeetingEndReason,
 ): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
     const { count } = await tx.meeting.updateMany({
@@ -518,28 +551,36 @@ function stampEnd(
       );
       return false;
     }
-    await tx.meetingPresence?.updateMany?.({
-      where: { meetingId: meeting.id, leftAt: null },
-      data: { leftAt: endedAt },
-    });
-    await tx.meetingAttendance?.updateMany?.({
-      where: { meetingId: meeting.id, lastLeftAt: null },
-      data: { lastLeftAt: endedAt },
-    });
+    await closeSegmentAttendance(tx, meeting, endedAt);
     return true;
   });
+}
+
+/**
+ * A leave reported after the current room ended is clamped to that end, unless the
+ * device joined after it (a rejoin the join webhook has not reopened yet).
+ */
+function clampLeaveToRoomEnd(
+  meeting: { endedAt: Date | null; endedReason: string | null },
+  joinedAt: Date,
+  leftAt: Date,
+): Date {
+  const { endedAt } = meeting;
+  if (!endedAt || leftAt <= endedAt) return leftAt;
+  return endBlocksRejoin(meeting) || joinedAt <= endedAt ? endedAt : leftAt;
 }
 
 function supersedesRecordedEnd(recorded: Date | null, incoming: Date): boolean {
   return !recorded || incoming.getTime() > recorded.getTime();
 }
 
+/** `inCurrentRoom`: the join is to the live current segment, so the person is in the room now. */
 function buildAttendanceJoinUpdate(
   newSessions: number,
-  effectiveEndedAt: Date | null,
+  inCurrentRoom: boolean,
 ): { joinCount?: { increment: number }; lastLeftAt?: null } {
   if (newSessions <= 0) return {};
-  if (effectiveEndedAt) {
+  if (!inCurrentRoom) {
     return { joinCount: { increment: newSessions } };
   }
   return { joinCount: { increment: newSessions }, lastLeftAt: null };
@@ -560,33 +601,34 @@ export async function handleSessionParticipantJoined(
   }
 
   try {
-    const meeting = await resolveMeeting(streamCallId);
-    if (!meeting) {
+    const resolved = await resolveMeeting(streamCallId);
+    if (!resolved) {
       streamLogger.warn("Meeting not found for participant joined", {
         streamCallId,
         userId,
       });
       return;
     }
+    const { meeting, isCurrentSegment } = resolved;
     const meetingId = meeting.id;
     const joinedAt = new Date(created_at);
 
+    // A prior segment's join never reopens, or takes the end of, the current room.
+    const currentEndedAt = isCurrentSegment ? meeting.endedAt : null;
     const reopensSession = Boolean(
-      meeting.endedAt &&
-      joinedAt > meeting.endedAt &&
-      !isDeliberateEnd(meeting),
+      currentEndedAt && joinedAt > currentEndedAt && !isDeliberateEnd(meeting),
     );
     const userSessionId = presenceKey(event.session_id, participant, userId);
 
     // Touch rows in strict `Meeting -> MeetingPresence -> MeetingAttendance` order.
     await prisma.$transaction(async (tx) => {
-      let effectiveEndedAt = meeting.endedAt ?? null;
+      let effectiveEndedAt = currentEndedAt;
       if (reopensSession) {
-        const reopened = await tx.meeting?.updateMany?.({
+        const reopened = await tx.meeting.updateMany({
           where: { id: meetingId, endedAt: meeting.endedAt },
           data: { endedAt: null, endedReason: null },
         });
-        if (reopened && reopened.count > 0) {
+        if (reopened.count > 0) {
           effectiveEndedAt = null;
         } else {
           const latest = await tx.meeting.findUnique({
@@ -604,8 +646,11 @@ export async function handleSessionParticipantJoined(
             appointmentOccurrenceId: meeting.appointmentOccurrenceId,
             userId,
             userSessionId,
+            streamCallId,
             joinedAt,
-            ...(effectiveEndedAt ? { leftAt: effectiveEndedAt } : {}),
+            ...(effectiveEndedAt
+              ? { leftAt: effectiveEndedAt, closedByEnd: true }
+              : {}),
           },
         ],
         skipDuplicates: true,
@@ -633,7 +678,10 @@ export async function handleSessionParticipantJoined(
           firstJoinedAt: joinedAt,
           ...(effectiveEndedAt ? { lastLeftAt: effectiveEndedAt } : {}),
         },
-        update: buildAttendanceJoinUpdate(newSessions, effectiveEndedAt),
+        update: buildAttendanceJoinUpdate(
+          newSessions,
+          isCurrentSegment && !effectiveEndedAt,
+        ),
       });
 
       await tx.meetingAttendance.updateMany?.({
@@ -676,14 +724,15 @@ export async function handleSessionParticipantLeft(
   }
 
   try {
-    const meeting = await resolveMeeting(streamCallId);
-    if (!meeting) {
+    const resolved = await resolveMeeting(streamCallId);
+    if (!resolved) {
       streamLogger.warn("Meeting not found for participant left", {
         streamCallId,
         userId,
       });
       return;
     }
+    const { meeting, isCurrentSegment } = resolved;
     const meetingId = meeting.id;
 
     const leftAt = new Date(created_at);
@@ -691,6 +740,9 @@ export async function handleSessionParticipantLeft(
       leftAt.getTime() - Math.max(0, event.duration_seconds ?? 0) * 1000,
     );
     const userSessionId = presenceKey(event.session_id, participant, userId);
+    const attendanceLeftAt = isCurrentSegment
+      ? clampLeaveToRoomEnd(meeting, joinedAt, leftAt)
+      : leftAt;
 
     // Acquire row locks in strict `Meeting -> MeetingPresence -> MeetingAttendance` order.
     await prisma.$transaction(async (tx) => {
@@ -701,6 +753,7 @@ export async function handleSessionParticipantLeft(
             appointmentOccurrenceId: meeting.appointmentOccurrenceId,
             userId,
             userSessionId,
+            streamCallId,
             joinedAt,
             leftAt,
           },
@@ -708,13 +761,18 @@ export async function handleSessionParticipantLeft(
         skipDuplicates: true,
       });
 
+      // A reported leave always replaces an end-stamp close; between reported leaves the later wins.
       await tx.meetingPresence.updateMany({
         where: {
           meetingId,
           userSessionId,
-          OR: [{ leftAt: null }, { leftAt: { lt: leftAt } }],
+          OR: [
+            { leftAt: null },
+            { closedByEnd: true },
+            { leftAt: { lt: leftAt } },
+          ],
         },
-        data: { leftAt },
+        data: { leftAt, closedByEnd: false },
       });
 
       if (newSessions === 0 && (event.duration_seconds ?? 0) > 0) {
@@ -737,20 +795,26 @@ export async function handleSessionParticipantLeft(
           appointmentOccurrenceId: meeting.appointmentOccurrenceId,
           userId,
           firstJoinedAt: joinedAt,
-          lastLeftAt: leftAt,
+          lastLeftAt: attendanceLeftAt,
         },
         update:
           newSessions > 0 ? { joinCount: { increment: newSessions } } : {},
       });
 
-      await tx.meetingAttendance.updateMany?.({
-        where: {
-          meetingId,
-          userId,
-          OR: [{ lastLeftAt: null }, { lastLeftAt: { lt: leftAt } }],
-        },
-        data: { lastLeftAt: leftAt },
-      });
+      // A prior segment's late leave never marks a user back in the current room as left.
+      if (isCurrentSegment) {
+        await tx.meetingAttendance.updateMany({
+          where: {
+            meetingId,
+            userId,
+            OR: [
+              { lastLeftAt: null },
+              { lastLeftAt: { lt: attendanceLeftAt } },
+            ],
+          },
+          data: { lastLeftAt: attendanceLeftAt },
+        });
+      }
 
       if ((event.duration_seconds ?? 0) > 0) {
         await tx.meetingAttendance.updateMany?.({

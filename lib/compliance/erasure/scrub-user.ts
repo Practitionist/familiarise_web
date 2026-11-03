@@ -17,6 +17,8 @@
  *
  *   BetterAuth Session + Account rows → hard-deleted (forces sign-out
  *   across every device immediately; SSO accounts are dropped too).
+ *   SessionAccessLog.userId → NULL; IP, user agent and times stay until the
+ *   180-day prune (CERT-In Directions, a legal obligation under DPDP s.17).
  *
  *   PayoutAccount holder name, bank name, last-4, IFSC and UPI id → NULL;
  *   the RazorpayX fund account and contact are deactivated, and the
@@ -55,9 +57,19 @@
  */
 
 import { createHash } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import type { Db } from "@/lib/prisma";
+import {
+  purgeDigitalProductSurfaces,
+  purgeRecordingSurfaces,
+} from "@/lib/data/public-cache";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
+import {
+  detachSessionAccessLogs,
+  stampSessionEnds,
+  type EndedSessions,
+} from "@/lib/auth/session-access-log";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
 import {
@@ -65,11 +77,20 @@ import {
   type CollaborationRef,
 } from "@/lib/collaborators/standing";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  createRunFailureReporter,
+  type RunFailureReporter,
+} from "@/lib/observability/run-failures";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { liveParticipant } from "@/lib/booking/participants";
 import { eraseUserSessionDocuments } from "@/lib/documents/document-erasure";
+import {
+  purgeErasedCreatorFiles,
+  scrubDigitalProductsTx,
+} from "@/lib/digital-products/erasure";
 import {
   removeSupportAttachmentObjects,
   scrubSupportPiiTx,
@@ -209,8 +230,6 @@ export async function offboardNotificationVendor(
 }
 
 export const STREAM_PRINCIPAL_PLAN_ID_PREFIX = "principal:";
-const RECORDING_PREVIEWS_BUCKET = "recordings-previews";
-
 export function principalStreamPlanId(userId: string): string {
   return `${STREAM_PRINCIPAL_PLAN_ID_PREFIX}${userId}`;
 }
@@ -240,52 +259,102 @@ export async function eraseStreamPrincipalFootprint(
   }
 }
 
+async function deleteStreamRecordingCopy(rec: {
+  streamCallId: string | null;
+  streamRecordingId: string | null;
+}): Promise<boolean> {
+  const { deleteStreamRecordingCopy: remove } =
+    await import("@/lib/stream/recording-stream-delete");
+  const result = await remove(rec);
+  return result.success;
+}
+
 async function purgeSingleUserRecordingOnErasure(
   db: Db,
-  rec: {
-    id: string;
-    storagePath: string | null;
-    previewClipStoragePath: string | null;
-  },
+  recordingId: string,
+  eligible: Prisma.RecordingWhereInput,
+  now: Date,
+  vendorFailures: RunFailureReporter,
 ): Promise<void> {
-  const { deleteRecordingObject } =
+  // Stop transfer publication and capture the assets from the same row version.
+  const claimSelect = {
+    id: true,
+    storagePath: true,
+    previewClipStoragePath: true,
+    streamCallId: true,
+    streamRecordingId: true,
+    removedAt: true,
+  } satisfies Prisma.RecordingSelect;
+  // A live row is stamped removed at the claim, so a recording_ready racing the vendor deletes is absorbed.
+  const [live] = await db.recording.updateManyAndReturn({
+    where: { ...eligible, id: recordingId, status: { not: "EXPIRED" } },
+    data: { status: "EXPIRED", recordingUrl: "", removedAt: now },
+    select: claimSelect,
+  });
+  const [rec] = live
+    ? [live]
+    : await db.recording.updateManyAndReturn({
+        where: { ...eligible, id: recordingId, status: "EXPIRED" },
+        data: { recordingUrl: "" },
+        select: claimSelect,
+      });
+  if (!rec) return;
+
+  const { deleteRecordingAssets } =
     await import("@/lib/stream/recording-storage");
-  const { removeObjects } = await import("@/lib/supabase-storage-core");
-  if (rec.storagePath) {
-    const deleted = await deleteRecordingObject(rec.storagePath);
-    if (!deleted.success) {
-      throw new Error(
-        deleted.error ?? "Failed to delete recording object from storage",
-      );
-    }
+  const streamCopyGone = await deleteStreamRecordingCopy(rec);
+  const assets = await deleteRecordingAssets(
+    { id: rec.id, storagePath: rec.storagePath },
+    vendorFailures,
+  );
+  // Any vendor failure throws with the pointers still on the row for the retry.
+  if (!assets.success) {
+    throw new Error(
+      assets.error ?? "Failed to delete recording object from storage",
+    );
   }
-  if (rec.previewClipStoragePath) {
-    if (
-      !(await removeObjects(RECORDING_PREVIEWS_BUCKET, [
-        rec.previewClipStoragePath,
-      ]))
-    ) {
-      throw new Error("Recording preview clip was not removed from storage");
-    }
+  if (!streamCopyGone) {
+    throw new Error("Stream copy of the recording was not confirmed deleted");
   }
 
-  const expiredData = {
-    status: "EXPIRED" as const,
-    recordingUrl: "",
-    storagePath: null,
-    previewClipUrl: null,
-    previewClipStoragePath: null,
-  };
-  if (db.recording.update) {
-    await db.recording.update({
+  const cleared = await db.recording.updateMany({
+    where: {
+      id: rec.id,
+      status: "EXPIRED",
+      storagePath: rec.storagePath,
+      previewClipStoragePath: rec.previewClipStoragePath,
+      streamRecordingId: rec.streamRecordingId,
+    },
+    data: {
+      storagePath: null,
+      previewClipUrl: null,
+      previewClipStoragePath: null,
+      previewClipDuration: null,
+      previewTranscript: null,
+      thumbnailUrl: null,
+      streamRecordingId: null,
+      removedAt: rec.removedAt ?? now,
+    },
+  });
+  if (cleared.count === 0) {
+    const current = await db.recording.findUnique({
       where: { id: rec.id },
-      data: expiredData,
+      select: {
+        status: true,
+        storagePath: true,
+        previewClipStoragePath: true,
+        streamRecordingId: true,
+      },
     });
-  } else if (db.recording.updateMany) {
-    await db.recording.updateMany({
-      where: { id: rec.id },
-      data: expiredData,
-    });
+    if (
+      current?.status === "EXPIRED" &&
+      current.storagePath === null &&
+      current.previewClipStoragePath === null &&
+      current.streamRecordingId === null
+    ) {
+      return;
+    }
+    throw new Error("Recording asset pointers changed during erasure");
   }
 }
 
@@ -294,34 +363,42 @@ async function unpublishHostedGroupRecordingsOnErasure(
   userId: string,
   now: Date,
 ): Promise<void> {
+  let listedSlugs: (string | null)[] = [];
   if (db.recording?.updateMany) {
-    await db.recording.updateMany({
-      where: {
-        listingStatus: "PUBLISHED",
-        meeting: {
-          occurrence: {
-            appointment: {
-              OR: [
-                {
-                  webinar: {
-                    webinarPlan: { consultantProfile: { userId } },
-                  },
+    const where: Prisma.RecordingWhereInput = {
+      listingStatus: "PUBLISHED",
+      meeting: {
+        occurrence: {
+          appointment: {
+            OR: [
+              {
+                webinar: {
+                  webinarPlan: { consultantProfile: { userId } },
                 },
-                {
-                  class: {
-                    classPlan: { consultantProfile: { userId } },
-                  },
+              },
+              {
+                class: {
+                  classPlan: { consultantProfile: { userId } },
                 },
-              ],
-            },
+              },
+            ],
           },
         },
       },
+    };
+    const listed =
+      (await db.recording.findMany?.({
+        where,
+        select: { slug: true },
+      })) ?? [];
+    await db.recording.updateMany({
+      where,
       data: {
         listingStatus: "UNPUBLISHED",
         unpublishedAt: now,
       },
     });
+    if (Array.isArray(listed)) listedSlugs = listed.map((row) => row.slug);
   }
 
   if (db.recordingConsent?.updateMany) {
@@ -330,6 +407,9 @@ async function unpublishHostedGroupRecordingsOnErasure(
       data: { decision: "DECLINED", decidedAt: now },
     });
   }
+
+  // After the scrub transaction has committed, and last so a purge failure cannot skip the steps above.
+  if (listedSlugs.length > 0) purgeRecordingSurfaces(listedSlugs);
 }
 
 async function cleanupUserRecordingsOnErasure(
@@ -338,82 +418,95 @@ async function cleanupUserRecordingsOnErasure(
   now: Date,
 ): Promise<string[]> {
   const failures: string[] = [];
+  const errors: unknown[] = [];
+  // Storage-vendor failures report once per erasure run, not once per object.
+  const vendorFailures = createRunFailureReporter("compliance");
   try {
     if (db.recording?.findMany) {
-      const oneToOneRecordings = await db.recording.findMany({
-        where: {
-          status: { notIn: ["EXPIRED", "FAILED"] },
-          purchases: { none: {} },
-          meeting: {
-            occurrence: {
-              appointment: {
-                appointmentType: {
-                  in: ["CONSULTATION", "SUBSCRIPTION", "TRIAL"],
-                },
-                OR: [
-                  { participants: { some: liveParticipant(userId) } },
-                  {
-                    consultation: {
-                      OR: [
-                        { requestedBy: { userId } },
-                        {
-                          consultationPlan: {
-                            consultantProfile: { userId },
-                          },
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    subscription: {
-                      OR: [
-                        { requestedBy: { userId } },
-                        {
-                          subscriptionPlan: {
-                            consultantProfile: { userId },
-                          },
-                        },
-                      ],
-                    },
-                  },
-                  {
-                    trial: {
-                      OR: [
-                        { consulteeProfile: { userId } },
-                        { consultantProfile: { userId } },
-                        {
-                          subscriptionPlan: {
-                            consultantProfile: { userId },
-                          },
-                        },
-                      ],
-                    },
-                  },
-                ],
+      const eligible: Prisma.RecordingWhereInput = {
+        OR: [
+          // FAILED rows are claimed too: a later recording_ready could promote one.
+          { status: { not: "EXPIRED" } },
+          {
+            status: "EXPIRED",
+            OR: [
+              { storagePath: { not: null } },
+              { previewClipStoragePath: { not: null } },
+              { streamRecordingId: { not: null } },
+            ],
+          },
+        ],
+        purchases: { none: {} },
+        meeting: {
+          occurrence: {
+            appointment: {
+              appointmentType: {
+                in: ["CONSULTATION", "SUBSCRIPTION", "TRIAL"],
               },
+              OR: [
+                { participants: { some: liveParticipant(userId) } },
+                {
+                  consultation: {
+                    OR: [
+                      { requestedBy: { userId } },
+                      {
+                        consultationPlan: {
+                          consultantProfile: { userId },
+                        },
+                      },
+                    ],
+                  },
+                },
+                {
+                  subscription: {
+                    OR: [
+                      { requestedBy: { userId } },
+                      {
+                        subscriptionPlan: {
+                          consultantProfile: { userId },
+                        },
+                      },
+                    ],
+                  },
+                },
+                {
+                  trial: {
+                    OR: [
+                      { consulteeProfile: { userId } },
+                      { consultantProfile: { userId } },
+                      {
+                        subscriptionPlan: {
+                          consultantProfile: { userId },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
             },
           },
         },
-        select: {
-          id: true,
-          storagePath: true,
-          previewClipStoragePath: true,
-        },
+      };
+      const oneToOneRecordings = await db.recording.findMany({
+        where: eligible,
+        select: { id: true },
       });
 
       if (Array.isArray(oneToOneRecordings)) {
         for (const rec of oneToOneRecordings) {
           try {
-            await purgeSingleUserRecordingOnErasure(db, rec);
+            await purgeSingleUserRecordingOnErasure(
+              db,
+              rec.id,
+              eligible,
+              now,
+              vendorFailures,
+            );
           } catch (error_) {
             failures.push(
               `recording_storage:${rec.id}: deletion not confirmed — re-run required`,
             );
-            reportSentryError(error_, {
-              subsystem: "compliance",
-              op: "scrubUser.purgeSingleUserRecordingOnErasure",
-              extra: { userId, recordingId: rec.id },
-            });
+            errors.push(error_);
           }
         }
       }
@@ -424,10 +517,22 @@ async function cleanupUserRecordingsOnErasure(
     failures.push(
       "recording_cleanup: could not complete recording erasure — re-run required",
     );
-    reportSentryError(error_, {
+    errors.push(error_);
+  }
+  vendorFailures.flush();
+  if (errors.length > 0) {
+    reportSentryError(errors[0], {
       subsystem: "compliance",
       op: "scrubUser.cleanupUserRecordingsOnErasure",
-      extra: { userId },
+      extra: {
+        userId,
+        failures: failures.slice(0, 20),
+        causes: errors.slice(0, 20).map((e) => {
+          const message = e instanceof Error ? e.message : String(e);
+          return scrubStringValue(message).slice(0, 300);
+        }),
+        failed: errors.length,
+      },
     });
   }
   return failures;
@@ -538,10 +643,16 @@ async function retryErasedUserVendorCleanup(
       return ["support-attachments: storage cleanup failed; re-run erasure"];
     },
   );
+  const productFileFailures = await purgeErasedCreatorFiles(
+    prisma,
+    userId,
+    now,
+  );
   vendorFailures.push(
     ...recordingFailures,
     ...documentFailures,
     ...supportFailures,
+    ...productFileFailures,
   );
   return vendorFailures;
 }
@@ -752,9 +863,11 @@ export async function scrubUser(
     );
 
   let collaborationsRemoved: CollaborationRef[] = [];
+  let archivedProducts: { consultantProfileId: string; slug: string }[] = [];
   let supportAttachmentPathsToRemove: string[] = [];
   let erasureRequestId: string | null = null;
   let principalOutboxQueued = false;
+  let endedSessions: EndedSessions[] = [];
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: userId },
@@ -844,6 +957,7 @@ export async function scrubUser(
       data: { requestNotes: null },
     });
     supportAttachmentPathsToRemove = await scrubSupportPiiTx(tx, userId, now);
+    archivedProducts = await scrubDigitalProductsTx(tx, userId, now);
 
     // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
     // every split and roster; the same flip the moderation ban runs.
@@ -925,7 +1039,8 @@ export async function scrubUser(
 
     // Hard-delete sessions + accounts so SSO and password-based logins
     // both break immediately.
-    await revokeAllUserSessions(tx, userId);
+    endedSessions = (await revokeAllUserSessions(tx, userId)).ended;
+    await detachSessionAccessLogs(tx, userId);
     await tx.account.deleteMany({ where: { userId } });
 
     // Withdraw all active DPDP ConsentArtifact rows while preserving their
@@ -993,6 +1108,9 @@ export async function scrubUser(
       });
     }
   });
+
+  // After commit, so a failed access-log write never fails the erasure.
+  await stampSessionEnds(endedSessions, { forgetUser: true });
 
   // Stream revocation is best-effort after commit, as in the moderation
   // side-effects; the rows are REMOVED either way. #1593 — each attempt
@@ -1084,6 +1202,13 @@ export async function scrubUser(
     supportAttachmentPathsToRemove,
     userId,
   );
+  // After commit, whether or not the creator had replays: a cached listing would keep their products.
+  for (const product of archivedProducts) purgeDigitalProductSurfaces(product);
+  const productFileFailures = await purgeErasedCreatorFiles(
+    prisma,
+    userId,
+    now,
+  );
 
   const vendorFailures = [
     ...paymentFailures,
@@ -1091,6 +1216,7 @@ export async function scrubUser(
     ...recordingFailures,
     ...documentFailures,
     ...supportFailures,
+    ...productFileFailures,
   ];
 
   const notificationFailures = await offboardNotificationVendor(userId);

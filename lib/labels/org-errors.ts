@@ -18,6 +18,7 @@
  * server handler. Unknown codes fall through `humanizeOrgError` to the
  * raw message so genuine free-form errors still render.
  */
+import { SUPPORT_EMAIL } from "@/lib/company";
 
 export const ORG_ERROR_COPY: Record<string, string> = {
   ORG_NOT_VERIFIED:
@@ -45,9 +46,8 @@ export const ORG_ERROR_COPY: Record<string, string> = {
     "This user does not have a learner profile on Familiarise yet. They need to sign up or complete onboarding before they can be added to an organization as a Learner.",
   LEARNER_REQUIRES_CANSPONSOR:
     "Learner can only be assigned on sponsor-capable organizations. Enable sponsorship under Settings → Capabilities first.",
-  // Why: PO balance enforcement (see docs/enterprise/10-money-and-ledger/08-invoicing.md
-  // "PO balance enforcement" section). The server emits EXCEEDED; the
-  // INSUFFICIENT alias exists so route renames don't break the UI copy.
+  // Why: PO balance enforcement (docs/finance/50-b2b/04-invoices-purchase-orders-and-dunning.md).
+  // The server emits EXCEEDED; the INSUFFICIENT alias exists so route renames don't break the UI copy.
   PO_BALANCE_EXCEEDED:
     "This purchase order doesn't have enough remaining budget for the invoice. Reduce the invoice total or add a new PO.",
   PO_BALANCE_INSUFFICIENT:
@@ -67,7 +67,7 @@ export const ORG_ERROR_COPY: Record<string, string> = {
   // copy points operators at the recovery path (talk to ops) rather
   // than leaving them stranded with a generic 400.
   // #1298 — static NEXT_PUBLIC read: this table ships to client components.
-  HOST_ORGS_GATED: `Host-capable organizations are not yet enabled on this tenant. Contact ops at ${process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com"} to flip ENABLE_HOST_ORGS for your account.`,
+  HOST_ORGS_GATED: `Host-capable organizations are not yet enabled on this tenant. Contact ops at ${SUPPORT_EMAIL} to flip ENABLE_HOST_ORGS for your account.`,
 };
 
 /**

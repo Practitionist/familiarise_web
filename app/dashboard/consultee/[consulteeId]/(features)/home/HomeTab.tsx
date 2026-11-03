@@ -36,6 +36,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
+import { noSessionLabel } from "@/lib/appointments/bucket";
 import {
   toOccurrenceVM,
   type NeedsActionReason,
@@ -141,7 +142,7 @@ function awaitingLabel(reason: NeedsActionReason | null): string {
     case "PENDING_APPROVAL":
       return "Pending";
     default:
-      return "Not scheduled";
+      return noSessionLabel(reason);
   }
 }
 
@@ -837,7 +838,7 @@ export default function HomeTab({
       <WaitingTimesStrip />
 
       {/* #1527 — answers live in the public Help Center; your private
-          conversations with us live in Support requests. */}
+          conversations with us live in Support cases. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <HelpCard
           href="/support"
@@ -848,7 +849,7 @@ export default function HomeTab({
         <HelpCard
           href={`${basePath}/support`}
           icon={MessageSquareText}
-          title="Open a support request"
+          title="Open a support case"
           body="Ask our team about a booking or a payment."
         />
       </div>

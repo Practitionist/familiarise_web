@@ -26,9 +26,6 @@ jest.mock("../../lib/api/after-safe", () => ({ scheduleAfter: jest.fn() }));
 jest.mock("../../lib/compliance/dpdp", () => ({
   buildSignupConsentArtifacts: () => [{ purpose: "signup" }],
 }));
-jest.mock("../../lib/rate-limit", () => ({
-  existingAccountNoticeLimiter: { limit: jest.fn() },
-}));
 jest.mock("../../lib/novu/subscriber", () => ({
   syncSubscriber: jest.fn(async () => undefined),
 }));

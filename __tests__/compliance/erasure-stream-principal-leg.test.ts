@@ -21,6 +21,19 @@ jest.mock("../../lib/novu/client", () => ({
 jest.mock("../../lib/novu/subscriber", () => ({
   deleteSubscriber: jest.fn(async () => true),
 }));
+jest.mock("../../lib/stream/recording-storage", () => ({
+  deleteRecordingAssets: jest.fn(async () => ({ success: true })),
+}));
+jest.mock("../../lib/stream/recording-stream-delete", () => ({
+  deleteStreamRecordingCopy: jest.fn(async () => ({ success: true })),
+}));
+
+const mockPurge = jest.fn();
+const mockPurgeProduct = jest.fn();
+jest.mock("../../lib/data/public-cache", () => ({
+  purgeRecordingSurfaces: (slugs: string[]) => mockPurge(slugs),
+  purgeDigitalProductSurfaces: (p: unknown) => mockPurgeProduct(p),
+}));
 
 const mockRevokeUserToken = jest.fn(async () => ({}));
 const mockDeleteUsers = jest.fn(async () => ({}));
@@ -162,14 +175,17 @@ describe("DPDP erasure Stream principal leg", () => {
   });
 
   it("purges 1:1 recordings, unpublishes host group recordings, and withdraws RecordingConsent on scrubUser", async () => {
-    const mockRecordingFindMany = jest.fn(async () => [
+    const mockRecordingFindMany = jest.fn(async () => [{ id: "rec-1on1" }]);
+    const mockRecordingClaim = jest.fn(async () => [
       {
         id: "rec-1on1",
         storagePath: null,
         previewClipStoragePath: null,
+        streamCallId: null,
+        streamRecordingId: null,
+        removedAt: null,
       },
     ]);
-    const mockRecordingUpdate = jest.fn(async () => ({}));
     const mockRecordingUpdateMany = jest.fn(async () => ({ count: 1 }));
     const mockRecordingConsentUpdateMany = jest.fn(async () => ({ count: 1 }));
 
@@ -177,7 +193,7 @@ describe("DPDP erasure Stream principal leg", () => {
       ...db,
       recording: {
         findMany: mockRecordingFindMany,
-        update: mockRecordingUpdate,
+        updateManyAndReturn: mockRecordingClaim,
         updateMany: mockRecordingUpdateMany,
       },
       recordingConsent: {
@@ -188,14 +204,54 @@ describe("DPDP erasure Stream principal leg", () => {
     await scrubUser(dbWithRecordings as never, "u-erased-1");
 
     expect(mockRecordingFindMany).toHaveBeenCalled();
-    expect(mockRecordingUpdate).toHaveBeenCalledWith({
-      where: { id: "rec-1on1" },
+    expect(mockRecordingClaim).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "rec-1on1",
+        status: { not: "EXPIRED" },
+        OR: [
+          { status: { not: "EXPIRED" } },
+          {
+            status: "EXPIRED",
+            OR: [
+              { storagePath: { not: null } },
+              { previewClipStoragePath: { not: null } },
+              { streamRecordingId: { not: null } },
+            ],
+          },
+        ],
+        purchases: { none: {} },
+      }),
       data: {
         status: "EXPIRED",
         recordingUrl: "",
+        removedAt: expect.any(Date),
+      },
+      select: {
+        id: true,
+        storagePath: true,
+        previewClipStoragePath: true,
+        streamCallId: true,
+        streamRecordingId: true,
+        removedAt: true,
+      },
+    });
+    expect(mockRecordingUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "rec-1on1",
+        status: "EXPIRED",
+        storagePath: null,
+        previewClipStoragePath: null,
+        streamRecordingId: null,
+      },
+      data: {
         storagePath: null,
         previewClipUrl: null,
         previewClipStoragePath: null,
+        previewClipDuration: null,
+        previewTranscript: null,
+        thumbnailUrl: null,
+        streamRecordingId: null,
+        removedAt: expect.any(Date),
       },
     });
     expect(mockRecordingUpdateMany).toHaveBeenCalledWith(
@@ -211,5 +267,65 @@ describe("DPDP erasure Stream principal leg", () => {
       where: { userId: "u-erased-1", decision: "GRANTED" },
       data: { decision: "DECLINED", decidedAt: expect.any(Date) },
     });
+  });
+});
+
+describe("erasure purges the public replays cache", () => {
+  const replays = {
+    findMany: jest.fn(async (args: { select: Record<string, boolean> }) =>
+      args.select.slug ? [{ slug: "intro" }, { slug: "advanced" }] : [],
+    ),
+    updateMany: jest.fn(async () => ({ count: 2 })),
+  };
+  const dbWithReplays = {
+    ...db,
+    recording: replays,
+    recordingConsent: { updateMany: jest.fn(async () => ({ count: 0 })) },
+  };
+
+  it("purges once with the unpublished slugs after a successful scrub", async () => {
+    await scrubUser(dbWithReplays as never, "u-erased-1");
+
+    expect(replays.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockPurge).toHaveBeenCalledTimes(1);
+    expect(mockPurge).toHaveBeenCalledWith(["intro", "advanced"]);
+  });
+
+  it("does not purge when the scrub transaction throws", async () => {
+    db.$transaction.mockRejectedValueOnce(new Error("tx failed"));
+
+    await expect(
+      scrubUser(dbWithReplays as never, "u-erased-1"),
+    ).rejects.toThrow("tx failed");
+    expect(replays.updateMany).not.toHaveBeenCalled();
+    expect(mockPurge).not.toHaveBeenCalled();
+  });
+
+  it("purges each archived product after commit, even with no replays", async () => {
+    (tx.digitalProduct.findMany as jest.Mock).mockResolvedValueOnce([
+      { consultantProfileId: "cp1", slug: "pack" },
+    ]);
+    replays.findMany.mockResolvedValue([]);
+
+    await scrubUser(dbWithReplays as never, "u-erased-1");
+
+    expect(mockPurgeProduct).toHaveBeenCalledTimes(1);
+    expect(mockPurgeProduct).toHaveBeenCalledWith({
+      consultantProfileId: "cp1",
+      slug: "pack",
+    });
+    expect(mockPurge).not.toHaveBeenCalled();
+  });
+
+  it("does not purge products when the transaction throws", async () => {
+    (tx.digitalProduct.findMany as jest.Mock).mockResolvedValueOnce([
+      { consultantProfileId: "cp1", slug: "pack" },
+    ]);
+    db.$transaction.mockRejectedValueOnce(new Error("tx failed"));
+
+    await expect(
+      scrubUser(dbWithReplays as never, "u-erased-1"),
+    ).rejects.toThrow();
+    expect(mockPurgeProduct).not.toHaveBeenCalled();
   });
 });

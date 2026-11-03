@@ -7,6 +7,7 @@ import {
   type DocumentBookingKind,
   type DocumentPartyRole,
 } from "./document-party";
+import { isPastRetention } from "./document-dates";
 import { MAX_DOCS_PER_APPOINTMENT } from "./document-review";
 import {
   buildThreadViews,
@@ -56,10 +57,12 @@ export async function readDocumentWorkspace(
     orderBy: { versionNo: "asc" },
   });
   const readOnlyReason = documentWriteRefusal(booking);
-  const threads = buildThreadViews(rows, {
-    viewerRole: party.role,
-    writable: readOnlyReason === null,
-  });
+  const threads = isPastRetention(booking.keptUntil)
+    ? []
+    : buildThreadViews(rows, {
+        viewerRole: party.role,
+        writable: readOnlyReason === null,
+      });
 
   return {
     booking: {

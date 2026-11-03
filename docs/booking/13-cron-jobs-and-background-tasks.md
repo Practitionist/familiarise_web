@@ -12,12 +12,11 @@ The booking system relies on several cron jobs to maintain data integrity, expir
 
 ### Invocation Model
 
-Each job follows a unified HTTP-first or GitHub Actions invocation pattern:
+Every job follows one HTTP invocation pattern:
 
 1. **Dynamic HTTP cleanup dispatcher (`app/api/cleanup/[job]/route.ts`)** -- Every cleanup job is registered in `lib/cron/cleanup-registry.ts` and exposed at `/api/cleanup/<job>`. `netlify/functions/cron-tick.mts` runs every five minutes and POSTs latency-sensitive targets (`auto-complete-appointments`, `detect-consultant-no-shows`, `expire-unpaid-trials`, `reschedule-proposals`, `appointment-reminders`, `tentative-occurrences`, `expire-stale-requests`, `settle-cancelled-sessions`, and financial/outbox sweeps) on their configured cadence (`TARGET_EVERY_MINUTES`).
-2. **GitHub Actions** (daily, weekly and intra-day batch fleets only) -- `cron-daily.yml`, `cron-weekly.yml` and `cron-intra-day.yml` execute core scripts directly via `tsx`. They are not a backstop for ticker targets.
 
-Both paths call the same core function exported from `scripts/appointments/` (or `scripts/payments/`, `scripts/trials/`), wrapped in `withCronLock` and `assertNotInMaintenance` / `abortIfMaintenance`.
+No GitHub Actions workflow schedules a job: the former daily, weekly and intra-day fleet workflows are deleted, and a job is run by hand through the admin Run door or `POST /api/cleanup/<job>` with the `CRON_SECRET` bearer. Every path calls the same core function exported from `scripts/appointments/` (or `scripts/payments/`, `scripts/trials/`), wrapped in `withCronLock` and `assertNotInMaintenance` / `abortIfMaintenance`.
 
 ---
 
@@ -29,12 +28,12 @@ Both paths call the same core function exported from `scripts/appointments/` (or
 | Cleanup tentative slots     | Netlify ticker every 15 min, 200 rows                                 | `scripts/appointments/cleanup-tentative-occurrences.ts`     | `/api/cleanup/tentative-occurrences`             |
 | Expire stale requests       | Netlify ticker every 15 min, 20 rows per arm                          | `scripts/appointments/expire-stale-requests.ts`             | `/api/cleanup/expire-stale-requests`             |
 | Cleanup abandoned payments  | Netlify ticker every 15 min, 10 payments                              | `scripts/payments/cleanup-abandoned-payments.ts`            | `/api/cleanup/abandoned-payments`                |
-| Reconcile slot availability | `cron-intra-day.yml` hourly (`17 * * * *`); detects only              | `scripts/appointments/reconcile-occurrence-availability.ts` | `/api/cleanup/reconcile-occurrence-availability` |
+| Reconcile slot availability | Netlify ticker hourly at :30; detects only                            | `scripts/appointments/reconcile-occurrence-availability.ts` | `/api/cleanup/reconcile-occurrence-availability` |
 | Detect consultant no-shows  | Netlify ticker every 30 min, 10-row bites until 16 s; no Actions twin | `scripts/appointments/detect-consultant-no-shows.ts`        | `/api/cleanup/detect-consultant-no-shows`        |
 | Settle cancelled sessions   | Netlify ticker every 30 min, 10 sessions                              | `scripts/appointments/settle-cancelled-sessions.ts`         | `/api/cleanup/settle-cancelled-sessions`         |
 | Settle platform incidents   | Netlify ticker hourly at :30, 10 remedies per bite; no Actions twin   | `scripts/appointments/settle-platform-incidents.ts`         | `/api/cleanup/settle-platform-incidents`         |
 
-The repository has four scheduled workflows only (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`, `cron-heartbeat.yml`), and of the jobs in this document only `reconcile-occurrence-availability` runs from one of them. Everything else runs on the ticker, and a ticker target that is missing from `TARGETS` in `netlify/functions/cron-tick.mts` runs nowhere.
+Every job in this document runs on the ticker, and a ticker target that is missing from `TARGETS` in `netlify/functions/cron-tick.mts` runs nowhere.
 
 ## Throughput of the session-outcome sweeps
 
@@ -70,13 +69,13 @@ Five other sweeps keep their cohorts moving past rows they cannot finish. `clean
 
 **Records affected**:
 
-| Entity       | Source Statuses            | Target Status | Criteria                                                                             |
-| ------------ | -------------------------- | ------------- | ------------------------------------------------------------------------------------ |
-| Webinar      | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots ended > 1h ago                                                             |
-| Class        | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots across all appointments ended > 1h ago                                     |
-| Consultation | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots ended > 1h ago, unless the consultant never joined (see below)             |
-| Subscription | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots across all appointments ended > 1h ago                                     |
-| Trial        | `SCHEDULED`                | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt` and creates an `ActivityLog` entry |
+| Entity       | Source Statuses            | Target Status | Criteria                                                                 |
+| ------------ | -------------------------- | ------------- | ------------------------------------------------------------------------ |
+| Webinar      | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots ended > 1h ago                                                 |
+| Class        | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots across all appointments ended > 1h ago                         |
+| Consultation | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots ended > 1h ago, unless the consultant never joined (see below) |
+| Subscription | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots across all appointments ended > 1h ago                         |
+| Trial        | `SCHEDULED`                | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt`                        |
 
 **The consultant no-show handoff (#1504).** A consultation that the consultant never joined is not this job's to close. The only path that cancels such a booking and refunds the consultee in full is the no-show detector described in section g, and that detector only considers bookings that are still `APPROVED` or `SCHEDULED`. Because this job's buffer is one hour and the detector's grace window is two, this job used to reach every unattended consultation first and mark it `COMPLETED`, which removed it from the detector's candidate set permanently; the platform's promised refund could therefore never fire in production.
 
@@ -134,37 +133,47 @@ This job no longer exists: the `cleanup-invalid-appointments` script, its route 
 | **GitHub Actions** | None                                                                        |
 | **HTTP Methods**   | `GET`, `POST`                                                               |
 
-**Purpose**: Expires consultation and subscription requests that have been ignored or abandoned at the request stage. This covers three distinct scenarios:
+**Purpose**: Expires stale requests through the guarded transition helpers. Thresholds and refund policy remain separate by cohort:
 
-| Scenario                           | Source Status              | Threshold                                                                   | Target Status |
-| ---------------------------------- | -------------------------- | --------------------------------------------------------------------------- | ------------- |
-| Consultant never responded         | `PENDING` (consultation)   | 48 hours since `requestedAt` (`PENDING_CONSULTATION_EXPIRATION_HOURS = 48`) | `EXPIRED`     |
-| Consultant never responded         | `PENDING` (subscription)   | 30 days since `requestedAt` (`PENDING_EXPIRATION_DAYS = 30`)                | `EXPIRED`     |
-| Approved but payment never started | `APPROVED_PENDING_PAYMENT` | 7 days since `updatedAt` (`PAYMENT_PENDING_EXPIRATION_DAYS = 7`)            | `EXPIRED`     |
+| Cohort                                                 | Threshold                                                       | Commit and follow-up                                                                                       |
+| ------------------------------------------------------ | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `PENDING` consultation                                 | 48 hours from `requestedAt`                                     | `EXPIRED`, tentative occurrence cancellation/tombstones, and full-remaining refund markers commit together |
+| Unpaid `PENDING` subscription                          | 30 days from `requestedAt`                                      | `EXPIRED`; the CAS repeats the absence of a live succeeded payment                                         |
+| `APPROVED` subscription with no live confirmed session | 30 days from `updatedAt`                                        | `EXPIRED` and full-remaining refund markers commit together                                                |
+| Paid `PENDING` subscription with no allocated session  | 48 hours from `capturedAt`, falling back to payment `createdAt` | `EXPIRED`, history, full-refund marker and bell commit atomically                                          |
+| `APPROVED_PENDING_PAYMENT` request                     | 7 days from `updatedAt`                                         | Shared unpaid lapse core clears the pay link, expires pending orders and tombstones tentative holds        |
 
-**Action**:
+The paid 48-hour arm repeats the no-live-session, no-live-proposal, capture-age and no-unplaced-`RESCHEDULED`-occurrence guards in its CAS. Allocation or rescheduling that wins first stages neither expiry nor refund. Its Serializable transaction reads only eligible payment IDs, stages `Payment.refundOwedKey = sub-unalloc:<paymentId>` with null paise (full remaining balance), and stages the bell on the same transaction client. A marker persistence failure rolls everything back. Existing markers and their attempt counts remain owned by their original door.
 
-- PENDING consultations: Bulk `updateMany` to `EXPIRED`, then immediately releases the tentative slots the expired requests pinned (`deleteMany` scoped to `isTentative: true` on their appointments). A PENDING consultation holds a real calendar slot, so the threshold is hours and the release happens in the same pass — booking-journey audit B1; previously a hold could sit for 30 days on a daily sweep that did not free slots.
-- PENDING subscriptions: Bulk `updateMany` to `EXPIRED`. Subscriptions hold no slots at request time (lazy allocation), so they keep the 30-day window.
-- **APPROVED-unallocated subscriptions (PR 2c money fix, audit gap #3)**: PAID bookings whose consultant never allocated any session were IMMORTAL before — `APPROVED` was not in `EXPIRED`'s allowed-from and no cohort covered them. The sweep now expires `APPROVED` rows with zero live confirmed slots after 30 days; `REQUEST_ALLOWED_FROM.EXPIRED` was widened to include `APPROVED` to make the transition legal.
-- **Refunds (PR 2c money fix, audit gap #1)**: every expired consultation/subscription with SUCCEEDED payments is refunded via the booking front door (`refundBookingPayment`, full remaining balance). Failures are counted + logged, never thrown — one bad gateway call must not stall the cohort drain.
-- APPROVED_PENDING_PAYMENT requests: Bulk `updateMany` to `EXPIRED` and clears `pendingPaymentUrl` to invalidate stale payment links.
+The 48-hour consultation and 30-day approved-subscription arms also stage each captured payment's existing `pending-consultation:<paymentId>` or `approved-unallocated:<paymentId>` marker in the same transaction as the EXPIRED transition. The amount is null, so the refund door uses the full remaining balance; the existing key and refund reason are preserved. Existing partial-marker requests are excluded before the per-run page limit, with a bounded presence check keeping the hold visible. A concurrent marker-count miss or partial marker that races after selection rolls back and holds only that request so later eligible requests continue. A partial marker's key, amount, reason and retry count remain unchanged, and the run reports the hold. A process interruption or notification failure after commit leaves the marker for `retry-auto-refunds`. Already-expired rows without a marker are never retrospectively staged, regardless of historical reason or payment age.
 
-**Safety**: Three separate operations (PENDING consultations, PENDING subscriptions, payment-pending requests), each with its own `try/catch`. Uses bulk `updateMany` rather than per-record updates for efficiency. Hourly cadence bounds worst-case hold lifetime at ~49h. Because two of those operations refund SUCCEEDED payments through `refundPaymentsForExpired`, this job is in `FINANCIAL_JOB_NAMES` and is held during DEGRADED maintenance as well as OFFLINE (#1506).
+After commit the arm may drive the markers through `driveRefundOwed` and the universal booking refund front door. A crash or exhausted admission budget leaves the marker for `retry-auto-refunds`; no `Refund` reservation or vendor call happens inside the expiry transaction. The single-plan admin recovery door uses the same bounded staging and persisted markers, without resetting retired attempts.
 
-**Consultant nudges for unallocated paid subscriptions (#1703 D4, added 2026-09-19).** This same run also calls `nudgeUnscheduledSubscriptions`, which reads paid `APPROVED` subscriptions with zero live confirmed slots and sends the consultant one nudge at each of `SUBSCRIPTION_NUDGE_DAYS = [3, 7, 14]` days since the subscription's `updatedAt`, through the `new-booking-request` Novu bell family and its email twin. `nudgeStageFor` maps an age to the latest stage that age has crossed, so a run that missed day 3 (a run outage, a paused job) sends day 7 once rather than both; the once-guard is a `FailedEmail` row keyed by stage. This is deliberately additive to the existing 30-day auto-refund in this same job, not a replacement for it: the refund stays the buyer-protective backstop, and the nudge is what gives the consultant a chance to act before it fires. The job's response body carries `subscriptionNudgesSent` alongside its existing counts.
+The single-plan admin door can retry a previously persisted `sub-unalloc:` marker
+without restamping it or resetting its attempts. Without such a marker, an
+already-expired plan does not create a new obligation. The cutover resets mock
+rows; this rollout has no deployment-time legacy cohort or data migration.
+Fresh-transition payment selection excludes settled or already-owned obligations
+before LIMIT and uses the shared refundable-balance predicate. Refund status,
+credit restoration and dispute balances retain their existing policy.
+
+**Bounds and reporting.** The HTTP/ticker default is 20 requests per arm; the direct core default and maximum are 500. Within the 48-hour family, current expiry staging and inline drives share one payment allowance. Each current-plan probe returns at most the limit plus one eligible payment ID. Fresh staging shares its payment allowance across selected plans: if a plan fits the full envelope but exceeds this invocation's remaining allowance, its entire expiry transaction rolls back and the ordered page stops with remaining work, without an error. A plan exceeding the full per-plan envelope is held and reported as an error. It never expires a plan after staging only the first part of its liabilities. `unallocatedHasMore` means unresolved obligations, including retained foreign-owned or retired markers that need operator review; it is not a runnable-retry queue signal and must not drive a busy loop. It stays true for peeks, retained markers, failures and truncation; `unallocatedRefundsDeferred` counts deferred inline work. A full-envelope capacity hold requires investigation or a bounded higher-limit run; persistent failures are not a drained backlog. The cap bounds returned IDs and marker writes, not the rows PostgreSQL examines for eligibility or refund/dispute aggregates; production query cost and throughput still require measurement.
+
+The paid 48-hour family shares one 16-second start budget across current expiry and inline drives, in that order. The fresh-expiry phase retains its ordered payment allowance while the coordinator keeps the same deadline closure and all staged markers for delivery. It stops admitting work, without cancelling an in-flight transaction or provider request. This is **not an overall deadline for `expireStaleRequests`**: earlier arms run first and can consume the worker's HTTP window before this family starts. Other arms still have related-read/notification bounds and fairness work remaining; the nudge page is capped before its outbox exclusions. These limitations prevent a whole-job drain or runtime guarantee.
+
+**Nudges.** Paid `PENDING` subscriptions with no live confirmed sessions or open proposal receive their latest reached 12-, 24- or 36-hour stage from the capture clock. Bell and email have separate durable dedupe guards; `subscriptionNudgesSent` records the run's count.
 
 ---
 
 ### f. Reconcile Slot Availability
 
-| Field              | Value                                                                                             |
-| ------------------ | ------------------------------------------------------------------------------------------------- |
-| **Schedule**       | `cron-intra-day.yml`, hourly at :17 (`17 * * * *`)                                                |
-| **Source**         | `scripts/appointments/reconcile-occurrence-availability.ts`                                       |
-| **API**            | `/api/cleanup/reconcile-occurrence-availability` (via `app/api/cleanup/[job]/route.ts`)           |
-| **GitHub Actions** | `.github/workflows/cron-intra-day.yml` (`jobs/appointments/reconcile-occurrence-availability.ts`) |
-| **HTTP Methods**   | `GET`, `POST`                                                                                     |
+| Field            | Value                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| **Schedule**     | Netlify ticker, hourly at :30 UTC, no `limit` sent, 24 s abort                           |
+| **Source**       | `scripts/appointments/reconcile-occurrence-availability.ts`                              |
+| **API**          | `/api/cleanup/reconcile-occurrence-availability` (via `app/api/cleanup/[job]/route.ts`)  |
+| **Manual run**   | Admin Run door, or `POST /api/cleanup/reconcile-occurrence-availability` with the bearer |
+| **HTTP Methods** | `GET`, `POST`                                                                            |
 
 **Purpose**: Fixes slot availability inconsistencies and detects booking conflicts. Performs two operations:
 
@@ -177,9 +186,9 @@ This job no longer exists: the `cleanup-invalid-appointments` script, its route 
 - Tentative flag mismatches: Automatically corrected.
 - Double bookings: Logged and returned in the response. The API returns HTTP `207` when double bookings are detected (vs `200` for clean results).
 
-**Ownership of the 207 response**: A `207` is a degraded-but-not-broken signal, not a page. The GitHub Actions workflow posts it to the ops Slack channel configured via `SLACK_OPS_WEBHOOK_URL`, and the on-call engineer owns the follow-up. That engineer is responsible for triaging the reported overlaps, manually resolving the affected bookings (the job never auto-resolves them), and confirming the next hourly run returns `200`. Treat a `207` that persists across more than one run as the trigger to escalate.
+**Ownership of the 207 response**: A `207` is a degraded-but-not-broken signal, not a page. Each overlapping occurrence pair is recorded once as a durable `SystemEvent` keyed on the pair, and the run sends one Sentry warning when it finds a pair not already reported in the last 24 hours (`reportStandingFinding`). The on-call engineer owns the follow-up: triage the reported overlaps, resolve the affected bookings by hand (the job never auto-resolves them), and confirm the next hourly run returns `200`. Treat a `207` that persists across more than one run as the trigger to escalate.
 
-**Safety**: Two independent `try/catch` blocks. The double booking detection is read-only and does not modify data. The GitHub Actions workflow is configured to trigger a failure notification specifically for double booking scenarios, routed to the ops Slack channel (`SLACK_OPS_WEBHOOK_URL`) described above.
+**Safety**: Two independent `try/catch` blocks. The double booking detection is read-only on bookings; it writes only the `SystemEvent` findings described above.
 
 ---
 
@@ -254,7 +263,7 @@ The table below lists where this job runs and how it is invoked.
 | **GitHub Actions** | None                                                |
 | **HTTP Methods**   | N/A                                                 |
 
-**Purpose**: Voids every session that overlaps an ops-declared platform incident and makes each learner whole. A run does four things for each unsettled incident, oldest first: the retroactive pass voids the overlapping sessions as `PLATFORM_OUTAGE` and writes their `IncidentRemedy` rows in the same transaction; due remedies are applied (consultation and paid-trial refunds 48 hours after the void, webinar refunds straight away, free-trial re-offer and subscription plan-end extension straight away, nothing for a class beyond the void); one `PLATFORM_INCIDENT_DIGEST` email goes to each learner; and one report goes to ops. The incident is stamped `settledAt` when every remedy is done or dead-lettered, every learner is notified and the report is staged. The runbook is in [the money console page](../payments/backoffice/01-money-console.md#platform-incidents).
+**Purpose**: Voids every session that overlaps an ops-declared platform incident and makes each learner whole. A run does four things for each unsettled incident, oldest first: the retroactive pass voids the overlapping sessions as `PLATFORM_OUTAGE` and writes their `IncidentRemedy` rows in the same transaction; due remedies are applied (consultation and paid-trial refunds 48 hours after the void, webinar refunds straight away, free-trial re-offer and subscription plan-end extension straight away, nothing for a class beyond the void); one `PLATFORM_INCIDENT_DIGEST` email goes to each learner; and one report goes to ops. The incident is stamped `settledAt` when every remedy is done or dead-lettered, every learner is notified and the report is staged. The runbook is in [the money console page](../finance/70-operations/02-admin-money-doors.md#platform-incidents).
 
 **Cadence**: The ticker runs it hourly at :30 (`TARGET_EVERY_MINUTES` is 60 and `TARGET_OFFSET_MINUTES` is 30 in `netlify/functions/cron-tick.mts`), with a bite of ten remedies on the 20-second tier. The :30 slot is the only one with room under the eight-targets-per-tick cap every hour, and the refunds wait 48 hours anyway.
 
@@ -297,12 +306,11 @@ lib/cron/cleanup-registry.ts     -- Central cleanup job registry
 app/api/cleanup/[job]/route.ts   -- Dynamic HTTP dispatcher (CRON_SECRET + assertNotInMaintenance)
 ```
 
-The core script has no HTTP or framework dependencies. `app/api/cleanup/[job]/route.ts` dispatches to `lib/cron/cleanup-registry.ts`, which adds authentication and maintenance guards and returns JSON. `netlify/functions/cron-tick.mts` and `.github/workflows/<job>.yml` invoke the registered jobs on schedule.
+The core script has no HTTP or framework dependencies. `app/api/cleanup/[job]/route.ts` dispatches to `lib/cron/cleanup-registry.ts`, which adds authentication and maintenance guards and returns JSON. `netlify/functions/cron-tick.mts` invokes the registered jobs on schedule, and a manual run goes through the same HTTP route.
 
 ```mermaid
 flowchart TD
     subgraph Triggers
-        GHA["GitHub Actions<br/>(schedule cron)"]
         TICK["Netlify ticker<br/>(cron-tick.mts, every 5 min)"]
         MANUAL["Manual curl<br/>(POST/GET)"]
     end
@@ -315,7 +323,6 @@ flowchart TD
         SCRIPT["scripts/appointments/*.ts<br/>- Query database<br/>- Apply business rules<br/>- Update records"]
     end
 
-    GHA --> SCRIPT
     TICK --> ROUTE
     MANUAL --> ROUTE
     ROUTE --> SCRIPT
@@ -347,8 +354,6 @@ if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
 ```
 
 The `invalid-appointments` endpoint uses a stronger `crypto.timingSafeEqual` comparison to prevent timing attacks.
-
-**GitHub Actions** workflows do not use the HTTP endpoints. They execute the core script directly, authenticating to the database via `DATABASE_URL` and `DIRECT_URL` repository secrets.
 
 ---
 

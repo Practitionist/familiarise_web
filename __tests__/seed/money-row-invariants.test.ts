@@ -53,13 +53,11 @@ describe("seeded payments", () => {
     );
   });
 
-  it("give a SUCCEEDED row one CARD leg equal to its amount, and nothing else a leg", () => {
-    expect(buildSeedPaymentLegs("SUCCEEDED", 118_000)).toEqual([
-      { source: "CARD", amountPaise: 118_000 },
+  it("give every row with an amount one CARD leg equal to it, whatever its outcome", () => {
+    expect(buildSeedPaymentLegs(118_000, "order_1")).toEqual([
+      { source: "CARD", amountPaise: 118_000, sourceRef: "order_1" },
     ]);
-    expect(buildSeedPaymentLegs("FAILED", 118_000)).toEqual([]);
-    expect(buildSeedPaymentLegs("EXPIRED", 118_000)).toEqual([]);
-    expect(buildSeedPaymentLegs("SUCCEEDED", 0)).toEqual([]);
+    expect(buildSeedPaymentLegs(0, "order_2")).toEqual([]);
   });
 });
 

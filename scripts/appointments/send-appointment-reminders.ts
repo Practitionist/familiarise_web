@@ -13,6 +13,7 @@
  */
 
 import prisma from "../../lib/prisma";
+import type { PrismaLike } from "../../lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
   notifyAppointmentReminder,
@@ -158,6 +159,15 @@ async function stagedReminderSlotIds(
   return [...ids];
 }
 
+// Shared by the window read, the run's early return and the ticker's idle probe.
+function reminderWindowWhere(windowStart: Date, windowEnd: Date) {
+  return {
+    startsAt: { gte: windowStart, lte: windowEnd },
+    isTentative: false,
+    completionStatus: "SCHEDULED" as const,
+  };
+}
+
 function queryUpcomingOccurrences(
   windowStart: Date,
   windowEnd: Date,
@@ -167,12 +177,7 @@ function queryUpcomingOccurrences(
   return prisma.appointmentOccurrence.findMany({
     where: {
       ...(stagedSlotIds.length > 0 ? { id: { notIn: stagedSlotIds } } : {}),
-      startsAt: {
-        gte: windowStart,
-        lte: windowEnd,
-      },
-      isTentative: false,
-      completionStatus: "SCHEDULED",
+      ...reminderWindowWhere(windowStart, windowEnd),
     },
     orderBy: { startsAt: "asc" },
     take: maxPerRun,
@@ -600,8 +605,8 @@ async function sendRemindersForWindow(
     legacyReminderEntityRef,
   );
 
-  // The dedupe is the database: the staged `FailedEmail` row (one per recipient
-  // per occurrence+window) read back below, and the bell's outbox row.
+  // The required job lease serializes email staging; staged rows suppress replay
+  // after a completed or interrupted run, and the bell has its own unique outbox key.
   for (const item of preparedSlots) {
     if (
       alreadyStaged.has(reminderEntityRef(item.slotId, window.label)) ||
@@ -733,9 +738,33 @@ export async function sendAppointmentReminders(opts?: {
     opts?.maxPerWindow && opts.maxPerWindow > 0
       ? Math.floor(opts.maxPerWindow)
       : MAX_SESSIONS_PER_WINDOW_PER_RUN;
-  return withCronLock("send-appointment-reminders", { failMode: "open" }, () =>
-    sendAppointmentRemindersUnlocked(maxPerWindow),
+  return withCronLock(
+    "send-appointment-reminders",
+    { failMode: "closed" },
+    () => sendAppointmentRemindersUnlocked(maxPerWindow),
   );
+}
+
+/** One indexed read: is any live session inside either reminder window? */
+export async function hasAppointmentReminderWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const at = now.getTime();
+  const offsetWindowWhere = (window: { minMs: number; maxMs: number }) =>
+    reminderWindowWhere(
+      new Date(at + window.minMs),
+      new Date(at + window.maxMs),
+    );
+  if (outOfTime()) return true;
+  const found = await db.appointmentOccurrence.findFirst({
+    where: {
+      OR: [offsetWindowWhere(REMINDER_24H), offsetWindowWhere(REMINDER_1H)],
+    },
+    select: { id: true },
+  });
+  return found !== null;
 }
 
 async function sendAppointmentRemindersUnlocked(
@@ -743,6 +772,16 @@ async function sendAppointmentRemindersUnlocked(
 ): Promise<ReminderResult> {
   console.log("🔔 Starting appointment reminders scan...");
   console.log(`   Per-window cap: ${maxPerWindow} slot(s)`);
+
+  if (!(await hasAppointmentReminderWork(prisma, new Date(), () => false))) {
+    return {
+      success: true,
+      reminders24h: 0,
+      reminders1h: 0,
+      errors: [],
+      timestamp: new Date().toISOString(),
+    };
+  }
 
   const [result24h, result1h] = await Promise.all([
     sendRemindersForWindow(REMINDER_24H, maxPerWindow),

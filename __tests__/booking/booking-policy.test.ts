@@ -34,10 +34,13 @@ const tx = {
           status: "APPROVED",
           requestedById: "cee-1",
           sessionsReturned: state.sessionsReturned,
-          schedulingPeriodEndsAt: END,
+          planEndsAt: END,
+          schedulingPeriodStartsAt: new Date("2026-10-30T00:00:00.000Z"),
+          schedulingTimezone: "UTC",
           requestedBy: { user: { name: "Asha" } },
           subscriptionPlan: {
             title: "Weekly",
+            durationInMonths: 1,
             consultantProfile: { user: { id: "u-expert", name: "Ravi" } },
           },
         },
@@ -128,7 +131,6 @@ jest.mock("../../lib/email/senders/booking", () => ({
 import { returnSessionToPlan } from "@/lib/booking/session-return";
 import { subscriptionEntitlement } from "@/lib/booking/entitlement";
 import { recordExpertStrike } from "@/lib/booking/expert-reliability";
-import { computeConsultantCompletionRate } from "@/lib/data/consultant-dashboard";
 import { POST as returnRoute } from "@/app/api/appointments/[appointmentId]/occurrences/[occurrenceId]/return/route";
 import {
   showsReliabilityNotice,
@@ -168,12 +170,11 @@ describe("returning a subscription session to the plan", () => {
       where: {
         id: "sub-1",
         status: "APPROVED",
-        sessionsReturned: { lt: 2 },
-        schedulingPeriodEndsAt: END,
+        sessionsReturned: 0,
       },
       data: {
         sessionsReturned: { increment: 1 },
-        schedulingPeriodEndsAt: new Date(END.getTime() + 7 * 24 * HOUR),
+        planEndsAt: new Date(END.getTime() + 7 * 24 * HOUR),
       },
     });
     expect(out.sessionsReturned).toBe(1);
@@ -281,12 +282,14 @@ describe("expert reliability strikes", () => {
         consultantProfileId: "cp-1",
         cause: "PLATFORM_VOID",
         appointmentId: "appt-1",
+        occurrenceIds: ["occ-1"],
       }),
     ).resolves.toBe(false);
     await recordExpertStrike(db, {
       consultantProfileId: "cp-1",
       cause: "EXPERT_CANCEL",
       appointmentId: "appt-1",
+      occurrenceIds: ["occ-1"],
     });
     expect(create).toHaveBeenCalledTimes(1);
     expect(create).toHaveBeenCalledWith({
@@ -294,14 +297,5 @@ describe("expert reliability strikes", () => {
         correlationId: "expert-reliability:cp-1",
       }),
     });
-  });
-
-  it("charges strikes, not consultee cancels, against the completion rate", () => {
-    const counts = [
-      { completionStatus: "COMPLETED", outcome: "HELD", _count: 8 },
-      { completionStatus: "CANCELLED", outcome: null, _count: 5 },
-    ];
-    expect(computeConsultantCompletionRate(counts)).toBe(100);
-    expect(computeConsultantCompletionRate(counts, 2)).toBe(80);
   });
 });

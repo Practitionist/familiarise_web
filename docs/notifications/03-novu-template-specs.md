@@ -319,7 +319,7 @@ Appointment Cancelled — {{payload.planTitle}}
 **Trigger function**: `notifyAppointmentReminder(userIds[], payload)`
 **Recipient**: Both consultant and consultee
 **Preference category**: `appointments`
-**Email twin**: `APPOINTMENT_REMINDER` (`emails/booking/AppointmentReminderEmail.tsx`), sent by `sendAppointmentReminderEmail()` from the same sweep as this bell, deduped by the staged `FailedEmail` row it reads back.
+**Email twin**: `APPOINTMENT_REMINDER` (`emails/booking/AppointmentReminderEmail.tsx`), sent by `sendAppointmentReminderEmail()` from the same sweep as this bell. A required Postgres job lease serializes staging; the staged `FailedEmail` row suppresses subsequent retries. A lease acquisition failure fails the run before delivery, so recovery must occur within the reminder window.
 
 **Payload variables** (`AppointmentPayload`):
 

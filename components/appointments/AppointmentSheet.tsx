@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowUpRight, CreditCard } from "lucide-react";
+import { ArrowUpRight, CreditCard, MessageSquare } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -14,20 +14,69 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { eventUnionStatusBadge } from "@/lib/appointments/status";
+import {
+  eventUnionStatusBadge,
+  isApprovedStatus,
+} from "@/lib/appointments/status";
 import {
   isDeadOccurrence,
   isDeliberateEnd,
 } from "@/lib/appointments/occurrences";
-import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
-import type { AppointmentVM } from "@/lib/appointments/view-model";
+import type {
+  AppointmentActionAdapter,
+  AppointmentChatTarget,
+} from "@/lib/appointments/adapter";
+import type {
+  AppointmentVM,
+  NeedsActionReason,
+} from "@/lib/appointments/view-model";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import { useZonedFormat } from "@/lib/time/zoned-format";
+import { SUPPORT_PATH } from "@/lib/appointments/new-time-door";
 import { CountdownBadge } from "./CountdownBadge";
 import { KIND_LABEL } from "./AppointmentRow";
 import { RowPrimaryAction } from "./RowPrimaryAction";
 import { SessionTimeline } from "./SessionTimeline";
+
+/** The note a row with no live session shows in place of its timeline. */
+const NO_SESSION_NOTE: Partial<Record<NeedsActionReason, string>> = {
+  UNSCHEDULED: "No sessions scheduled yet — set a schedule to get started.",
+  AWAITING_SCHEDULING:
+    "Awaiting scheduling — the expert places the sessions next.",
+};
+
+/** A booking with no session left gets its new time from the expert; support is the way to help. */
+function NeedsNewTimeNote({
+  vm,
+  role,
+}: {
+  vm: AppointmentVM;
+  role: AppointmentActionAdapter["role"];
+}) {
+  const requestId =
+    vm.raw.appointment?.consultationId ?? vm.raw.appointment?.subscriptionId;
+  if (role === "consultant" && isApprovedStatus(vm.status) && requestId) {
+    return (
+      <>
+        This booking has no session time any more. Use Place a new time to pick
+        one.
+      </>
+    );
+  }
+  const lead =
+    role === "consultee"
+      ? `${vm.counterpart.name} will place a new time.`
+      : "This booking has no session time any more.";
+  return (
+    <>
+      {lead} Need help?{" "}
+      <Link href={SUPPORT_PATH} className="font-medium underline">
+        Contact support
+      </Link>
+    </>
+  );
+}
 
 function initials(name: string): string {
   return name
@@ -44,6 +93,8 @@ interface AppointmentSheetProps {
   adapter: AppointmentActionAdapter;
   sponsoredLabel?: string | null;
   joinWindowMs?: number;
+  /** Chat actions open the chat sheet through this instead of navigating to Messages. */
+  onOpenChat?: (target: AppointmentChatTarget) => void;
 }
 
 /**
@@ -57,6 +108,7 @@ export function AppointmentSheet({
   adapter,
   sponsoredLabel,
   joinWindowMs,
+  onOpenChat,
 }: AppointmentSheetProps) {
   const router = useRouter();
   const format = useZonedFormat();
@@ -186,11 +238,15 @@ export function AppointmentSheet({
             {/* Timeline (tentative-only / slot-less rows get a note instead) */}
             {(allTentative || vm.occurrences.length === 0) && (
               <p className="text-xs text-muted-foreground rounded-lg bg-muted border border-border p-3">
-                {allTentative
-                  ? "Awaiting schedule confirmation."
-                  : vm.needsActionReason === "UNSCHEDULED"
-                    ? "No sessions scheduled yet — set a schedule to get started."
-                    : "No sessions scheduled yet."}
+                {allTentative ? (
+                  "Awaiting schedule confirmation."
+                ) : vm.needsActionReason === "NEEDS_RESCHEDULING" ? (
+                  <NeedsNewTimeNote vm={vm} role={adapter.role} />
+                ) : (
+                  ((vm.needsActionReason &&
+                    NO_SESSION_NOTE[vm.needsActionReason]) ??
+                  "No sessions scheduled yet.")
+                )}
               </p>
             )}
             {hasConcreteSessions && (
@@ -251,6 +307,21 @@ export function AppointmentSheet({
                       const destructiveClassName = item.destructive
                         ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
                         : undefined;
+                      const { chat } = item;
+                      if (chat && onOpenChat) {
+                        return (
+                          <Button
+                            key={item.key}
+                            variant="outline"
+                            size="sm"
+                            disabled={item.disabled}
+                            onClick={() => onOpenChat(chat)}
+                          >
+                            <MessageSquare className="mr-1.5 h-4 w-4 shrink-0" />
+                            <span className="truncate">{item.label}</span>
+                          </Button>
+                        );
+                      }
                       if (item.href && !item.disabled) {
                         return (
                           <Button

@@ -1,15 +1,20 @@
-"use client";
-
+import type { Metadata } from "next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { RefreshCw } from "lucide-react";
 import Link from "next/link";
+import { CompanyDetails } from "../CompanyDetails";
+import { COMPANY_INFO } from "@/lib/company";
+import { PAGE_META, POLICY_DATES, getMailtoLink } from "../constants";
 import {
-  COMPANY_INFO,
-  PAGE_META,
-  POLICY_DATES,
-  getMailtoLink,
-} from "../constants";
+  REFUND_POLICY_COPY,
+  REFUND_TIMING_BY_RAIL,
+} from "@/lib/payments/operations/refund-policy-copy";
+
+export const metadata: Metadata = {
+  title: `${PAGE_META.refund.title} | Familiarise`,
+  description: PAGE_META.refund.description,
+};
 
 export default function RefundPolicyPage() {
   return (
@@ -90,25 +95,20 @@ export default function RefundPolicyPage() {
                     <strong>Cancellation by Student:</strong>
                   </p>
                   <ul>
+                    {REFUND_POLICY_COPY.consultationTiers.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                    <li>{REFUND_POLICY_COPY.noticeRule}</li>
+                    <li>{REFUND_POLICY_COPY.freezeRule}</li>
                     <li>
-                      <strong>More than 24 hours before:</strong> Full refund
-                      (100% of booking amount)
-                    </li>
-                    <li>
-                      <strong>12-24 hours before:</strong> Partial refund (50%
-                      of booking amount)
-                    </li>
-                    <li>
-                      <strong>Less than 12 hours before:</strong> No refund
-                    </li>
-                    <li>
-                      {/* #1569 B2: learner no-show is forfeited (D7); see 3.5
-                          for the support link and recording that come with it. */}
                       <strong>No-show:</strong> No refund. If you weren&apos;t
                       able to join, use the support link on the appointment and
                       our team can review it.
                     </li>
                   </ul>
+                  <p className="text-sm text-muted-foreground">
+                    {REFUND_POLICY_COPY.orgLadder}
+                  </p>
                 </div>
                 <div>
                   <p>
@@ -116,10 +116,8 @@ export default function RefundPolicyPage() {
                   </p>
                   <ul>
                     <li>
-                      {/* #1569 B2: consultation host no-show — full refund,
-                          no free-reschedule promise (D4). */}
-                      Full refund (100%) regardless of timing, including a host
-                      no-show
+                      {REFUND_POLICY_COPY.expertCancel} This includes a host
+                      no-show.
                     </li>
                   </ul>
                 </div>
@@ -128,14 +126,7 @@ export default function RefundPolicyPage() {
                     <strong>Rescheduling:</strong>
                   </p>
                   <ul>
-                    <li>
-                      Students can request one free reschedule if done more than
-                      24 hours in advance
-                    </li>
-                    <li>
-                      Consultants must accommodate reasonable reschedule
-                      requests
-                    </li>
+                    <li>{REFUND_POLICY_COPY.reschedules}</li>
                   </ul>
                 </div>
               </div>
@@ -144,137 +135,55 @@ export default function RefundPolicyPage() {
                 3.2 Live Interactive Classes
               </h3>
               <div className="space-y-3">
-                <div>
-                  <p>
-                    <strong>Before First Session Starts:</strong>
-                  </p>
-                  <ul>
-                    <li>
-                      <strong>More than 7 days before start date:</strong> Full
-                      refund (100%)
-                    </li>
-                    <li>
-                      <strong>3-7 days before start date:</strong> Partial
-                      refund (75%)
-                    </li>
-                    <li>
-                      <strong>Less than 3 days before start date:</strong>{" "}
-                      Partial refund (50%)
-                    </li>
-                  </ul>
-                </div>
-                <div>
-                  <p>
-                    <strong>After Course Has Started:</strong>
-                  </p>
-                  <ul>
-                    <li>
-                      <strong>
-                        Within first week (after attending max 1 session):
-                      </strong>{" "}
-                      Pro-rated refund for remaining sessions minus 20%
-                      administration fee
-                    </li>
-                    <li>
-                      <strong>After first week:</strong> No refund available
-                    </li>
-                    <li>
-                      Missed sessions due to student absence are not refundable
-                    </li>
-                  </ul>
-                </div>
-                <div>
-                  <p>
-                    <strong>Course Cancellation by Consultant:</strong>
-                  </p>
-                  <ul>
-                    <li>
-                      Full refund (100%) if course is canceled before it starts
-                    </li>
-                    <li>
-                      Pro-rated refund for remaining sessions if canceled
-                      mid-course
-                    </li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>
+                    <strong>Before the first session:</strong>{" "}
+                    {REFUND_POLICY_COPY.eventWindow}
+                  </li>
+                  <li>
+                    <strong>After the class has started:</strong>{" "}
+                    {REFUND_POLICY_COPY.classSeries}
+                  </li>
+                  <li>
+                    Missed sessions due to student absence are not refundable
+                  </li>
+                  <li>
+                    <strong>Cancellation by the host:</strong>{" "}
+                    {REFUND_POLICY_COPY.hostCancelEvent}
+                  </li>
+                </ul>
               </div>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                3.3 Webinars & Workshops
+                3.3 Webinars &amp; Workshops
               </h3>
               <div className="space-y-3">
-                <div>
-                  <p>
-                    <strong>Cancellation by Student:</strong>
-                  </p>
-                  <ul>
-                    <li>
-                      <strong>More than 48 hours before event:</strong> Full
-                      refund (100%)
-                    </li>
-                    <li>
-                      <strong>24-48 hours before event:</strong> Partial refund
-                      (50%)
-                    </li>
-                    <li>
-                      <strong>Less than 24 hours before event:</strong> No
-                      refund
-                    </li>
-                    <li>
-                      {/* #1569 B2: learner no-show is forfeited (D7); see 3.5
-                          for the support link and recording that come with it. */}
-                      <strong>No-show:</strong> No refund. If you weren&apos;t
-                      able to join, use the support link on the appointment and
-                      our team can review it.
-                    </li>
-                  </ul>
-                </div>
-                <div>
-                  <p>
-                    <strong>Event Cancellation by Organizer:</strong>
-                  </p>
-                  <ul>
-                    <li>Full refund (100%) regardless of timing</li>
-                    <li>
-                      Platform may offer priority booking for future events
-                    </li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>
+                    <strong>Cancellation by Student:</strong>{" "}
+                    {REFUND_POLICY_COPY.eventWindow}
+                  </li>
+                  <li>
+                    <strong>No-show:</strong> No refund. If you weren&apos;t
+                    able to join, use the support link on the appointment and
+                    our team can review it.
+                  </li>
+                  <li>
+                    <strong>Event cancellation by the organiser:</strong>{" "}
+                    {REFUND_POLICY_COPY.hostCancelEvent}
+                  </li>
+                </ul>
               </div>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
                 3.4 Subscription Plans
               </h3>
               <div className="space-y-3">
-                <div>
-                  <p>
-                    <strong>Cancellation by Student:</strong>
-                  </p>
-                  <ul>
-                    <li>Subscriptions can be canceled at any time</li>
-                    <li>No refund for the current billing period</li>
-                    <li>Access continues until the end of the paid period</li>
-                    <li>
-                      Pro-rated refunds available only in case of consultant
-                      cancellation or service failure
-                    </li>
-                  </ul>
-                </div>
-                <div>
-                  <p>
-                    <strong>Mid-Subscription Issues:</strong>
-                  </p>
-                  <ul>
-                    <li>
-                      If consultant discontinues service mid-subscription,
-                      pro-rated refund for unused portion
-                    </li>
-                    <li>
-                      If platform experiences prolonged downtime, a pro-rated
-                      refund may be issued
-                    </li>
-                  </ul>
-                </div>
+                <ul>
+                  <li>{REFUND_POLICY_COPY.subscription}</li>
+                  <li>{REFUND_POLICY_COPY.freezeRule}</li>
+                  <li>{REFUND_POLICY_COPY.expertCancel}</li>
+                </ul>
               </div>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
@@ -306,13 +215,9 @@ export default function RefundPolicyPage() {
                   </p>
                   <ul>
                     <li>
-                      {/* #1833 review: tie the "full refund" promise to
-                          Section 6's fee deduction so the amount isn't
-                          ambiguous (CodeRabbit). */}
                       One-on-one consultation: a host no-show or a session cut
                       short by the host is cancelled with a full, automatic
-                      refund — the same non-refundable-fee deduction in Section
-                      6 applies here as it does to every refund on this page.
+                      refund of the amount you paid (see Section 6).
                     </li>
                     <li>
                       Live classes and webinars: a voided session is offered as
@@ -393,8 +298,6 @@ export default function RefundPolicyPage() {
                   Dissatisfaction with service after consuming majority of
                   purchased sessions
                 </li>
-                <li>Platform commission fees (non-refundable)</li>
-                <li>Payment gateway charges (non-refundable)</li>
               </ul>
 
               <Separator className="my-6" />
@@ -435,35 +338,29 @@ export default function RefundPolicyPage() {
               <h3 className="text-xl font-semibold mt-4 mb-2">
                 5.2 Refund Processing Time
               </h3>
+              <p>
+                A cancellation you make on the platform is refunded as soon as
+                it is confirmed. How long the money takes to reach you depends
+                on how the booking was paid:
+              </p>
               <ul>
                 <li>
-                  <strong>Review Period:</strong> Refund requests are reviewed
-                  within 2-3 business days
+                  <strong>Card or UPI:</strong> {REFUND_TIMING_BY_RAIL.GATEWAY}{" "}
+                  Your bank may take a little longer.
                 </li>
                 <li>
-                  <strong>Approval Notification:</strong> You will receive an
-                  email confirmation once approved
+                  <strong>Referral credits:</strong>{" "}
+                  {REFUND_TIMING_BY_RAIL.CREDITS}
                 </li>
                 <li>
-                  <strong>Refund Initiation:</strong> Refunds are initiated
-                  within 24-48 hours of approval
+                  <strong>Paid by your organisation:</strong>{" "}
+                  {REFUND_TIMING_BY_RAIL.INTERNAL}
                 </li>
                 <li>
-                  <strong>Bank Processing Time:</strong> 5-7 business days for
-                  the amount to reflect in your account
-                </li>
-                <li>
-                  <strong>Payment Gateway Delays:</strong> Razorpay may take
-                  additional time based on your bank's processing schedule
+                  <strong>Requests reviewed by our team:</strong> reviewed
+                  within 2-3 business days, then refunded the same way.
                 </li>
               </ul>
-              <div className="bg-yellow-50 dark:bg-yellow-950 p-4 rounded-lg mt-4">
-                <p className="text-sm">
-                  <strong>Note:</strong> The total time from refund request to
-                  receiving funds in your account may take 7-14 business days
-                  depending on your bank and payment method.
-                </p>
-              </div>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
                 5.3 Refund Method
@@ -494,27 +391,27 @@ export default function RefundPolicyPage() {
               </h2>
               <ul>
                 <li>
-                  The platform service fee is <strong>non-refundable</strong> in
-                  all cases
+                  The platform fee is paid out of the expert's share of the
+                  booking and is never added to your price
                 </li>
                 <li>
-                  Payment gateway charges (Razorpay fees) are{" "}
-                  <strong>non-refundable</strong>
+                  Familiarise does not deduct the platform fee or the payment
+                  gateway's charges from your refund
                 </li>
                 <li>
-                  Only the consultant's service fee portion is eligible for
-                  refunds
+                  Your refund is the percentage of the amount you paid, GST
+                  included, that the cancellation terms of your booking allow
                 </li>
                 <li>
-                  The displayed refund amount will be the amount you receive
-                  after deducting non-refundable fees
+                  The refund amount is shown before you confirm a cancellation,
+                  and it is the amount you receive
                 </li>
               </ul>
               <div className="bg-muted p-4 rounded-lg mt-4">
                 <p className="text-sm">
-                  <strong>Example:</strong> If you paid ₹1,000 for a
-                  consultation (₹850 consultant fee + ₹150 platform/gateway
-                  fees), a full refund would return ₹850, not ₹1,000.
+                  <strong>Example:</strong> If you paid ₹1,180 for a
+                  consultation (₹1,000 plus 18% GST), a 100% refund returns
+                  ₹1,180 and a 50% refund returns ₹590.
                 </p>
               </div>
 
@@ -548,7 +445,6 @@ export default function RefundPolicyPage() {
                   Number of sessions attended vs. total sessions purchased
                 </li>
                 <li>Cancellation timing relative to the service date</li>
-                <li>Administration fees for processing (where applicable)</li>
               </ul>
 
               <Separator className="my-6" />
@@ -778,19 +674,7 @@ export default function RefundPolicyPage() {
                 need assistance with a cancellation or refund request, please
                 contact us:
               </p>
-              <div className="bg-muted p-4 rounded-lg mt-4">
-                <p>
-                  <strong>Company Name:</strong> {COMPANY_INFO.name}
-                </p>
-                <p>
-                  <strong>Email:</strong>{" "}
-                  <a
-                    href={getMailtoLink()}
-                    className="font-medium text-foreground underline underline-offset-4 hover:no-underline"
-                  >
-                    {COMPANY_INFO.email}
-                  </a>
-                </p>
+              <CompanyDetails>
                 <p>
                   <strong>Support:</strong>{" "}
                   <Link
@@ -804,7 +688,7 @@ export default function RefundPolicyPage() {
                   <strong>Response Time:</strong> We aim to respond to all
                   inquiries within 24-48 hours
                 </p>
-              </div>
+              </CompanyDetails>
 
               <Separator className="my-6" />
 

@@ -27,10 +27,14 @@ import {
   applyRefundRequote,
   cancelPreviewQueryKey,
   cancelPreviewUrl,
+  cancelRefusalFrom,
+  CancelRefusedError,
   readRefundQuoteChanged,
   shownQuoteBody,
 } from "@/lib/appointments/cancel-requote";
+import { OperatorOpsHint } from "@/components/appointments/OperatorOpsHint";
 import { AllocateOrgBookingDialog } from "../AllocateOrgBookingDialog";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 export interface OrgActorDetailProps {
   orgId: string;
@@ -48,6 +52,8 @@ export interface OrgActorDetailProps {
   canReschedule: boolean;
   canAllocate?: boolean;
   isSubscription: boolean;
+  /** Set for a platform operator, who reschedules and cancels from the back office instead. */
+  opsHref?: string | null;
 }
 
 const fmt = (d: Date) =>
@@ -61,7 +67,7 @@ const fmt = (d: Date) =>
   });
 
 async function postJson(url: string, body: unknown) {
-  const res = await fetch(url, {
+  const res = await fetchWithIdentity(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -78,7 +84,10 @@ function RefundQuote({ appointmentId }: Readonly<{ appointmentId: string }>) {
     queryKey: cancelPreviewQueryKey(url),
     queryFn: async () => {
       const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
-      if (!res.ok) throw new Error("Could not estimate the refund");
+      if (!res.ok) {
+        const refusal = cancelRefusalFrom(await res.json().catch(() => null));
+        throw refusal ?? new Error("Could not estimate the refund");
+      }
       const parsed = CancelRefundPreviewSchema.safeParse(await res.json());
       if (!parsed.success) throw new Error("Could not estimate the refund");
       return parsed.data;
@@ -91,6 +100,9 @@ function RefundQuote({ appointmentId }: Readonly<{ appointmentId: string }>) {
     return (
       <p className="text-sm text-muted-foreground">Estimating the refund…</p>
     );
+  }
+  if (quote.error instanceof CancelRefusedError) {
+    return <p className="text-sm text-destructive">{quote.error.message}</p>;
   }
   if (quote.isError) {
     return (
@@ -135,12 +147,13 @@ export function OrgActorDetail({
   canReschedule,
   canAllocate = false,
   isSubscription,
+  opsHref = null,
 }: Readonly<OrgActorDetailProps>) {
   const router = useRouter();
   const { toast } = useToast();
   const [cancelOpen, setCancelOpen] = useState(false);
   const showAllocate = Boolean(canAllocate);
-  const acting = canCancel || canReschedule || showAllocate;
+  const acting = ((canCancel || canReschedule) && !opsHref) || showAllocate;
   const status = meta.status ? appointmentStatusBadge(meta.status) : null;
 
   const queryClient = useQueryClient();
@@ -151,21 +164,25 @@ export function OrgActorDetail({
     const shown = queryClient.getQueryData<CancelRefundPreview>(
       cancelPreviewQueryKey(previewUrl),
     );
-    const res = await fetch(`/api/appointments/${appointmentId}/cancel`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        notes: `Cancelled on behalf of ${orgName}`,
-        ...shownQuoteBody(
-          shown && shown.paid !== false
-            ? {
-                estimatedRefundPaise: shown.estimatedRefundPaise,
-                creditRestoresInFull: shown.creditRestoresInFull,
-              }
-            : undefined,
-        ),
-      }),
-    });
+    const res = await fetchWithIdentity(
+      `/api/appointments/${appointmentId}/cancel`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notes: `Cancelled on behalf of ${orgName}`,
+          ...shownQuoteBody(
+            shown && shown.paid !== false
+              ? {
+                  estimatedRefundPaise: shown.estimatedRefundPaise,
+                  creditRestoresInFull: shown.creditRestoresInFull,
+                  expectedPaid: shown.expectedPaid,
+                }
+              : undefined,
+          ),
+        }),
+      },
+    );
     const json: unknown = await res.json().catch(() => null);
     if (!res.ok) {
       const requote = res.status === 409 ? readRefundQuoteChanged(json) : null;
@@ -250,7 +267,7 @@ export function OrgActorDetail({
                 learnerName={meta.learnerName}
               />
             )}
-            {canReschedule && (
+            {canReschedule && !opsHref && (
               <ConfirmDialog
                 title="Ask to reschedule?"
                 description="The current time is released and the expert picks a new one."
@@ -260,7 +277,7 @@ export function OrgActorDetail({
                 trigger={<Button variant="outline">Reschedule</Button>}
               />
             )}
-            {canCancel && (
+            {canCancel && !opsHref && (
               <ConfirmDialog
                 open={cancelOpen}
                 onOpenChange={setCancelOpen}
@@ -276,6 +293,9 @@ export function OrgActorDetail({
               </ConfirmDialog>
             )}
           </div>
+        )}
+        {opsHref && (canCancel || canReschedule) && (
+          <OperatorOpsHint href={opsHref} />
         )}
         <p className="text-xs text-muted-foreground">
           Organization roles see when and with whom a session happens, never

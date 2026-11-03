@@ -19,15 +19,18 @@
 
 const mockTransaction = jest.fn();
 const mockOrgFindUnique = jest.fn();
-const mockPaymentFindMany = jest.fn();
+const mockOrgCandidates = jest.fn();
 const mockRecordSystemError = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    $executeRaw: jest.fn().mockResolvedValue(1),
     $transaction: (...a: unknown[]) => mockTransaction(...a),
-    organization: { findUnique: (...a: unknown[]) => mockOrgFindUnique(...a) },
-    payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
+    organization: {
+      findUnique: (...a: unknown[]) => mockOrgFindUnique(...a),
+      findMany: (...a: unknown[]) => mockOrgCandidates(...a),
+    },
     $disconnect: jest.fn(),
   },
 }));
@@ -69,6 +72,7 @@ jest.mock("../../lib/novu", () => ({
 jest.mock("../../lib/url", () => ({ getAppUrl: () => "https://app.test" }));
 
 import { Prisma } from "@prisma/client";
+import prisma from "../../lib/prisma";
 import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
 import { settleInvoiceAccruals } from "@/jobs/billing/settle-invoice-accruals";
 
@@ -106,7 +110,7 @@ beforeEach(() => {
     billingAccountId: "ba_1",
     dataResidencyRegion: "IN",
     paymentTermsDays: 30,
-    taxInfo: { gstStateCode: "29", gstin: null, hsnDefault: null },
+    taxInfo: { gstStateCode: "06", gstin: null, hsnDefault: null },
   });
   mockNotifyIssued.mockResolvedValue([{ id: "ob_1" }]);
   mockDispatchWebhook.mockResolvedValue({ enqueuedCount: 1 });
@@ -164,9 +168,9 @@ describe("rollupOrgInvoiceAccruals — serialization retry", () => {
 
 describe("settleInvoiceAccruals — exhausted retries", () => {
   it("records a system error and still bills the next org", async () => {
-    mockPaymentFindMany.mockResolvedValue([
-      { organizationId: "org_contended" },
-      { organizationId: "org_ok" },
+    mockOrgCandidates.mockResolvedValue([
+      { id: "org_contended" },
+      { id: "org_ok" },
     ]);
     // withSerializableRetry burns its four attempts on the first org, then the
     // second org commits on its first try.
@@ -189,17 +193,15 @@ describe("settleInvoiceAccruals — exhausted retries", () => {
   });
 });
 
-// #1447 — the rollup read SUPPLIER_STATE_CODE ?? "KA" while the B2C mint was
-// GSTIN-first; with only PLATFORM_GSTIN set the invoice must carry its state.
+// The rollup reads the supplier state from PLATFORM_GSTIN, like the B2C mint.
 describe("rollupOrgInvoiceAccruals — supplier state", () => {
   const OLD_ENV = process.env;
   afterAll(() => {
     process.env = OLD_ENV;
   });
 
-  it("writes the GSTIN's state when SUPPLIER_STATE_CODE is unset", async () => {
-    process.env = { ...OLD_ENV, PLATFORM_GSTIN: "29AAFCF1234Q1ZN" };
-    delete process.env.SUPPLIER_STATE_CODE;
+  it("writes the GSTIN's state", async () => {
+    process.env = { ...OLD_ENV, PLATFORM_GSTIN: "06AAFCF1234Q1ZN" };
     const invoiceCreate = jest.fn().mockResolvedValue({ id: "inv_9" });
     mockTransaction.mockImplementation(async (fn) =>
       fn({
@@ -218,9 +220,9 @@ describe("rollupOrgInvoiceAccruals — supplier state", () => {
 
     await rollupOrgInvoiceAccruals({ organizationId: "org_1" });
 
-    // Buyer state 29 matches the GSTIN-derived supplier state: intra-state.
+    // Buyer state 06 matches the GSTIN-derived supplier state: intra-state.
     expect(invoiceCreate.mock.calls[0][0].data).toMatchObject({
-      placeOfSupply: "29",
+      placeOfSupply: "06",
       cgstPaise: 90,
       sgstPaise: 90,
     });
@@ -317,8 +319,7 @@ describe("rollupOrgInvoiceAccruals — overage chargeStatus filter", () => {
 describe("rollupOrgInvoiceAccruals — buyer GSTIN drives the tax head", () => {
   const OLD_ENV = process.env;
   beforeEach(() => {
-    process.env = { ...OLD_ENV, PLATFORM_GSTIN: "29AAFCF1234Q1ZN" };
-    delete process.env.SUPPLIER_STATE_CODE;
+    process.env = { ...OLD_ENV, PLATFORM_GSTIN: "06AAFCF1234Q1ZN" };
   });
   afterAll(() => {
     process.env = OLD_ENV;
@@ -326,7 +327,7 @@ describe("rollupOrgInvoiceAccruals — buyer GSTIN drives the tax head", () => {
 
   // The leg already carries its 180p of GST; the invoice splits it, never adds more.
   it.each([
-    ["29AAAAA0000A1Z5", { cgstPaise: 90, sgstPaise: 90, igstPaise: 0 }],
+    ["06AAAAA0000A1Z5", { cgstPaise: 90, sgstPaise: 90, igstPaise: 0 }],
     ["27AAAAA0000A1Z5", { cgstPaise: 0, sgstPaise: 0, igstPaise: 180 }],
   ])("GSTIN %s with a null state", async (gstin, heads) => {
     mockOrgFindUnique.mockResolvedValue({
@@ -388,7 +389,7 @@ describe("rollupOrgInvoiceAccruals — PO coverage", () => {
       dataResidencyRegion: "IN",
       paymentTermsDays: 30,
       requiresPO: true,
-      taxInfo: { gstStateCode: "29", gstin: null, hsnDefault: null },
+      taxInfo: { gstStateCode: "06", gstin: null, hsnDefault: null },
     });
     const { tx, invoiceCreate } = issuingTx({});
     mockTransaction.mockImplementation(async (fn) => fn(tx));
@@ -403,5 +404,111 @@ describe("rollupOrgInvoiceAccruals — PO coverage", () => {
     });
     expect(mockNotifyIssued).not.toHaveBeenCalled();
     expect(mockDispatchWebhook).not.toHaveBeenCalled();
+  });
+});
+
+test("bounded invoice rollup counts skipped organizations against the examination limit", async () => {
+  mockOrgCandidates.mockResolvedValue([
+    { id: "org_1" },
+    { id: "org_2" },
+    { id: "org_3" },
+  ]);
+  mockTransaction.mockResolvedValue({
+    result: { billedPaymentCount: 0, totalPaise: 0 },
+    notifyStaged: [],
+  });
+  const result = await settleInvoiceAccruals({ limit: 2 });
+  expect(result).toMatchObject({
+    orgsProcessed: 2,
+    invoicesCreated: 0,
+    remaining: 1,
+  });
+  expect(mockTransaction).toHaveBeenCalledTimes(2);
+  expect(mockOrgCandidates).toHaveBeenCalledWith(
+    expect.objectContaining({
+      take: 3,
+      where: expect.objectContaining({
+        status: { not: "DEACTIVATED" },
+        deletedAt: null,
+      }),
+    }),
+  );
+});
+
+test("skipped invoice cohorts rotate so later organizations are examined", async () => {
+  const orgs = Array.from({ length: 25 }, (_, i) => ({
+    id: `org_${String(i).padStart(2, "0")}`,
+    lastAccrualRollupAt: null as Date | null,
+  }));
+  mockOrgCandidates.mockImplementation(async ({ take }: { take: number }) =>
+    [...orgs]
+      .sort(
+        (a, b) =>
+          (a.lastAccrualRollupAt?.getTime() ?? 0) -
+            (b.lastAccrualRollupAt?.getTime() ?? 0) || (a.id < b.id ? -1 : 1),
+      )
+      .slice(0, take),
+  );
+  const stamp = prisma.$executeRaw as jest.Mock;
+  stamp.mockImplementation(async (_sql: TemplateStringsArray, id: string) => {
+    const org = orgs.find((o) => o.id === id);
+    if (org) org.lastAccrualRollupAt = new Date();
+    return 1;
+  });
+  mockTransaction.mockResolvedValue({
+    result: { billedPaymentCount: 0, totalPaise: 0 },
+    notifyStaged: [],
+  });
+  for (let i = 0; i < 3; i++) await settleInvoiceAccruals({ limit: 10 });
+  expect(new Set(stamp.mock.calls.map(([, id]) => id)).size).toBe(25);
+  expect(stamp).toHaveBeenCalledTimes(30);
+  stamp.mockResolvedValue(1);
+});
+
+test("a cursor failure is visible without discarding successful invoices or later organizations", async () => {
+  mockOrgCandidates.mockResolvedValue([{ id: "org_1" }, { id: "org_2" }]);
+  mockTransaction.mockResolvedValue(invoice("invoice-issued"));
+  const stamp = jest.mocked(prisma.$executeRaw);
+  stamp
+    .mockRejectedValueOnce(new Error("cursor unavailable"))
+    .mockResolvedValue(1);
+
+  const result = await settleInvoiceAccruals();
+  expect(result).toMatchObject({
+    orgsProcessed: 2,
+    invoicesCreated: 2,
+    failed: 1,
+  });
+  expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+  expect(mockRecordSystemError.mock.calls[0][0]).toMatchObject({
+    organizationId: "org_1",
+    context: {
+      failures: [{ organizationId: "org_1", phase: "cursor", code: null }],
+    },
+  });
+  expect(stamp.mock.calls[0][0]).toEqual(
+    expect.arrayContaining([expect.stringContaining('UPDATE "organizations"')]),
+  );
+});
+
+test("a multi-organization failure reports once and still invoices the next organization", async () => {
+  mockOrgCandidates.mockResolvedValue([
+    { id: "org_bad_1" },
+    { id: "org_bad_2" },
+    { id: "org_ok" },
+  ]);
+  mockTransaction
+    .mockRejectedValueOnce(new Error("first failure"))
+    .mockRejectedValueOnce(new Error("second failure"))
+    .mockResolvedValueOnce(invoice("invoice-ok"));
+  const result = await settleInvoiceAccruals();
+  expect(result).toMatchObject({
+    orgsProcessed: 3,
+    invoicesCreated: 1,
+    failed: 2,
+  });
+  expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
+  expect(mockRecordSystemError.mock.calls[0][0]).toMatchObject({
+    context: { organizations: ["org_bad_1", "org_bad_2"] },
   });
 });

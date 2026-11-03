@@ -2,16 +2,7 @@
  * @jest-environment node
  */
 
-/**
- * #1580 C-P1-5 — a group event's reminder used to reach only the users joined
- * to the slot: neither the host nor the accepted collaborators. Both are on
- * the recipient list now, read through `collaboratorUserIds`.
- *
- * The second case pins the durable half of the dedupe that reordered this
- * sweep: the email twin stages its `FailedEmail` row BEFORE it sends, and the
- * next run reads that set back, so a run that died mid-window is re-drivable
- * per window rather than re-sent or lost.
- */
+/** Reminder fanout, staged-email replay, and required lease admission. */
 
 const slotFindMany = jest.fn(async (..._args: unknown[]) => [
   {
@@ -40,6 +31,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     appointmentOccurrence: {
       findMany: (...a: unknown[]) => slotFindMany(...a),
+      findFirst: jest.fn(async () => ({ id: "slot-1" })),
     },
     collaborator: {
       findMany: jest.fn(async () => [
@@ -57,10 +49,7 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/redis", () => ({
   __esModule: true,
   default: {
-    // The sweep's dedupe is the database. A Redis command in this path is a
-    // regression: the claim that used to sit here swallowed its own failure
-    // and skipped every reminder in the window while the run still reported
-    // success, so the mock throws rather than returning a key.
+    // Reminder delivery must work without a Redis claim.
     set: jest.fn(async () => {
       throw new Error("the reminder sweep must not depend on Redis");
     }),
@@ -96,6 +85,9 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 
 import prisma from "../../lib/prisma";
 import redis from "../../lib/redis";
+import { withCronLock } from "../../lib/cron/with-cron-lock";
+import { CronLockUnavailableError } from "../../lib/cron/cron-lock-errors";
+import { sendAppointmentReminderEmail } from "../../lib/email";
 import { notifyAppointmentReminder } from "@/lib/novu/service";
 import { sendAppointmentReminders } from "@/scripts/appointments/send-appointment-reminders";
 
@@ -111,6 +103,7 @@ beforeEach(() => {
   // set inside one case is inherited by the next case in this file. The empty
   // staged-set is therefore re-pinned here rather than left in the factory.
   stagedEmails.findMany.mockResolvedValue([]);
+  jest.mocked(withCronLock).mockImplementation((_name, _opts, fn) => fn());
 });
 
 it("reminds the attendee, the host and the accepted collaborator of a webinar", async () => {
@@ -124,9 +117,7 @@ it("reminds the attendee, the host and the accepted collaborator of a webinar", 
 });
 
 it("sends the reminder without depending on Redis", async () => {
-  // The claim the sweep used to take swallowed its own failure: one Redis
-  // error skipped every reminder in the window, and the run still reported
-  // success. The dedupe is the database, so the sweep must not call Redis.
+  // Redis availability must not decide whether an admitted run delivers.
   const result = await sendAppointmentReminders();
 
   expect(redisSet).not.toHaveBeenCalled();
@@ -182,4 +173,33 @@ it("skips staged sessions in the cohort read, so a full window still reaches its
   slotFindMany.mockImplementation(original);
 
   expect(bell).toHaveBeenCalledTimes(5);
+});
+
+it("refuses overlapping runs without a database lease and retries after recovery", async () => {
+  jest
+    .mocked(withCronLock)
+    .mockImplementation((name, opts, fn) =>
+      opts.failMode === "closed"
+        ? Promise.reject(new CronLockUnavailableError(name))
+        : fn(),
+    );
+
+  const results = await Promise.allSettled([
+    sendAppointmentReminders(),
+    sendAppointmentReminders(),
+  ]);
+
+  expect(results).toEqual([
+    { status: "rejected", reason: expect.any(CronLockUnavailableError) },
+    { status: "rejected", reason: expect.any(CronLockUnavailableError) },
+  ]);
+  expect(bell).not.toHaveBeenCalled();
+  expect(sendAppointmentReminderEmail).not.toHaveBeenCalled();
+
+  jest.mocked(withCronLock).mockImplementation((_name, _opts, fn) => fn());
+  await expect(sendAppointmentReminders()).resolves.toMatchObject({
+    success: true,
+    reminders1h: 1,
+    reminders24h: 1,
+  });
 });

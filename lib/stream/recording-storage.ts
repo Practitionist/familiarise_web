@@ -9,9 +9,12 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
+import type { RunFailureReporter } from "@/lib/observability/run-failures";
 import {
   createR2PresignedGetUrl,
   deleteR2Object,
+  isR2Configured,
+  listR2Keys,
 } from "@/lib/storage/r2-client";
 // The leaf module: `@/lib/supabase` is server-only and throws in cron processes.
 import { adminStorage, removeObjects } from "@/lib/supabase-storage-core";
@@ -112,38 +115,52 @@ export function getBestRecordingUrl(recording: {
 /** Delete ONLY the R2 object — callers own the row's status change. */
 export async function deleteRecordingObject(
   storagePath: string,
+  failures?: RunFailureReporter,
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const result = await deleteR2Object({ key: storagePath });
     if (!result.success) {
-      streamLogger.error(
-        "Failed to delete recording object from R2",
-        new Error(result.error ?? "R2 delete failed"),
-        { path: storagePath },
-      );
+      const error = new Error(result.error ?? "R2 delete failed");
+      if (failures)
+        failures.add("wind-down-recording-delete", error, {
+          path: storagePath,
+        });
+      else
+        streamLogger.error("Failed to delete recording object from R2", error, {
+          path: storagePath,
+        });
       return { success: false, error: result.error };
     }
     return { success: true };
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to delete from R2";
-    streamLogger.error("Failed to delete recording object from R2", error, {
-      path: storagePath,
-    });
+    if (failures)
+      failures.add("wind-down-recording-delete", error, { path: storagePath });
+    else
+      streamLogger.error("Failed to delete recording object from R2", error, {
+        path: storagePath,
+      });
     return { success: false, error: message };
   }
 }
 
 /** Remove the recording's preview folder (clip and thumbnail); false means objects may survive. */
-async function deleteRecordingPreviews(recordingId: string): Promise<boolean> {
+async function deleteRecordingPreviews(
+  recordingId: string,
+  failures?: RunFailureReporter,
+): Promise<boolean> {
   try {
     const { data, error } = await adminStorage()
       .from(RECORDING_PREVIEWS_BUCKET)
       .list(recordingId);
     if (error) {
-      streamLogger.error("Failed to list recording previews", error, {
-        recordingId,
-      });
+      if (failures)
+        failures.add("recording-preview-list", error, { recordingId });
+      else
+        streamLogger.error("Failed to list recording previews", error, {
+          recordingId,
+        });
       return false;
     }
     return removeObjects(
@@ -151,23 +168,72 @@ async function deleteRecordingPreviews(recordingId: string): Promise<boolean> {
       (data ?? []).map((file) => `${recordingId}/${file.name}`),
     );
   } catch (error) {
-    streamLogger.error("Failed to delete recording previews", error, {
-      recordingId,
-    });
+    if (failures)
+      failures.add("recording-preview-delete", error, { recordingId });
+    else
+      streamLogger.error("Failed to delete recording previews", error, {
+        recordingId,
+      });
     return false;
   }
 }
 
-/** Delete every stored asset of a recording: the R2 copy plus its preview clip and thumbnail. */
-export async function deleteRecordingAssets(recording: {
-  id: string;
-  storagePath: string | null;
-}): Promise<{ success: boolean; error?: string }> {
+/** One recording's transfer attempts are few; a longer listing is retried next run. */
+const MAX_ATTEMPT_KEYS = 100;
+
+/** Remove every R2 object under `recordings/<id>/`, including abandoned transfer attempts. */
+async function deleteRecordingAttemptObjects(
+  recordingId: string,
+  failures?: RunFailureReporter,
+): Promise<boolean> {
+  try {
+    const { keys, truncated } = await listR2Keys({
+      prefix: `recordings/${recordingId}/`,
+      maxKeys: MAX_ATTEMPT_KEYS,
+      signal: AbortSignal.timeout(15_000),
+    });
+    const results = await Promise.all(
+      keys.map((key) => deleteR2Object({ key })),
+    );
+    const failed = results.filter((r) => !r.success);
+    if (failed.length > 0) {
+      throw new Error(failed[0]?.error ?? "R2 delete failed");
+    }
+    return !truncated;
+  } catch (error) {
+    if (failures)
+      failures.add("recording-attempt-delete", error, { recordingId });
+    else
+      streamLogger.error("Failed to delete recording transfer objects", error, {
+        recordingId,
+      });
+    return false;
+  }
+}
+
+/** Delete every stored asset of a recording: its R2 objects plus its preview clip and thumbnail. */
+export async function deleteRecordingAssets(
+  recording: {
+    id: string;
+    storagePath: string | null;
+  },
+  failures?: RunFailureReporter,
+): Promise<{ success: boolean; error?: string }> {
   if (recording.storagePath) {
-    const main = await deleteRecordingObject(recording.storagePath);
+    const main = await deleteRecordingObject(recording.storagePath, failures);
     if (!main.success) return main;
   }
-  if (!(await deleteRecordingPreviews(recording.id))) {
+  // An environment without R2 credentials has written nothing under the prefix.
+  if (
+    isR2Configured() &&
+    !(await deleteRecordingAttemptObjects(recording.id, failures))
+  ) {
+    return {
+      success: false,
+      error: "Recording transfer objects were not removed",
+    };
+  }
+  if (!(await deleteRecordingPreviews(recording.id, failures))) {
     return { success: false, error: "Recording previews were not removed" };
   }
   return { success: true };

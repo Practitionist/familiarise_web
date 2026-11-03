@@ -2,6 +2,7 @@ import type { BetterAuthPlugin } from "better-auth";
 import { createAuthMiddleware } from "better-auth/api";
 import prisma from "@/lib/prisma";
 import { revokeSessionByToken } from "@/lib/auth/session-revoke";
+import { stampSessionEnds } from "@/lib/auth/session-access-log";
 
 /**
  * When a request that arrived with a session cookie leaves with a different
@@ -23,7 +24,8 @@ export const supersededSessionRevocation = {
             ctx.context.secret,
           );
           if (!previous || previous === issued) return;
-          await revokeSessionByToken(prisma, previous);
+          const { ended } = await revokeSessionByToken(prisma, previous);
+          await stampSessionEnds(ended);
         }),
       },
     ],

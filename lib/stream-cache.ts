@@ -126,57 +126,6 @@ export const channelExistsCache = new TTLCache<boolean>(2 * 60 * 1000, 2000);
 export const membershipCache = new TTLCache<boolean>(60 * 1000, 5000);
 
 /**
- * Track users who have completed initial sync in this process.
- *
- * #1134 P1-18 — this was a plain `Set<string>` that nothing ever evicted:
- * "cleared only on server restart" is a memory leak with a nicer name. At 100k
- * users a warm instance retains 100k strings and grows monotonically. It is
- * also per-process, so on serverless it was doing very little work for that
- * cost anyway.
- *
- * Now bounded with the same FIFO eviction as the TTL caches. Evicting an entry
- * early is harmless: the only consequence is that one user re-runs a sync that
- * is already idempotent.
- */
-const MAX_TRACKED_SYNCED_USERS = 10_000;
-
-class BoundedSet {
-  private readonly items = new Set<string>();
-
-  constructor(private readonly max: number) {}
-
-  add(value: string): void {
-    // Re-inserting refreshes recency, so a hot user is not evicted by churn.
-    this.items.delete(value);
-    this.items.add(value);
-    if (this.items.size > this.max) {
-      const oldest = this.items.values().next();
-      if (!oldest.done) this.items.delete(oldest.value);
-    }
-  }
-
-  has(value: string): boolean {
-    return this.items.has(value);
-  }
-
-  delete(value: string): boolean {
-    return this.items.delete(value);
-  }
-
-  clear(): void {
-    this.items.clear();
-  }
-
-  get size(): number {
-    return this.items.size;
-  }
-}
-
-export const initialSyncCompletedUsers = new BoundedSet(
-  MAX_TRACKED_SYNCED_USERS,
-);
-
-/**
  * Mark a user as synced to Stream
  */
 export function markUserSynced(userId: string): void {
@@ -238,21 +187,12 @@ export function getMembershipCached(
 }
 
 /**
- * Clear sync completion marker for a specific user.
- * Forces a full re-sync on the next call to syncUserEventChannels.
- */
-export function clearSyncCacheForUser(userId: string): void {
-  initialSyncCompletedUsers.delete(userId);
-}
-
-/**
  * Clear all Stream-related caches
  */
 export function clearAllStreamCaches(): void {
   userSyncCache.clear();
   channelExistsCache.clear();
   membershipCache.clear();
-  initialSyncCompletedUsers.clear();
 }
 
 /**

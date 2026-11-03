@@ -1,20 +1,44 @@
-/**
- * Weekly webhook ledger & delivery pruning job.
- *
- * Retention policy:
- * - Processed `WebhookEvent` (`processed = true, error = null`): 30 days
- * - Terminal unreplayable `WebhookEvent` (`processed = false, error IS NOT NULL`): 30 days
- * - Failed / aged `WebhookEvent` (`processed = false, error IS NOT NULL`): 90 days
- * - Terminal `OutboundWebhookDelivery` (`SUCCESS`, `FAILED`, `DEAD_LETTER`): 30 days
- * (`EmailEvent` batched 30d pruning is owned by `prune-system-job-executions.ts`.)
- */
+/** Weekly webhook retention: whole-batch DELETEs, each re-evaluating its own predicate. */
 
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { TERMINAL_ERROR_PREFIXES } from "@/lib/webhooks/event-log";
+import { yearsBefore } from "@/lib/cron/retention-cutoff";
 
-const PROCESSED_RETENTION_DAYS = 30;
-const FAILED_RETENTION_DAYS = 90;
+/** DPDP Rule 8(3): processing logs are kept a calendar year, whatever the event's outcome. */
+const WEBHOOK_EVENT_RETENTION_YEARS = 1;
+const OUTBOUND_DELIVERY_RETENTION_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** No batch starts after this; one overrunning statement still ends inside the 20 s ticker timeout. */
+const START_BUDGET_MS = 16_000;
+/** Rows per DELETE; the candidate read walks the `receivedAt` index. */
+export const WEBHOOK_DELETE_BATCH = 2_000;
+
+export function webhookEventRetentionCutoff(now: Date): Date {
+  return yearsBefore(now.getTime(), WEBHOOK_EVENT_RETENTION_YEARS);
+}
+
+export function outboundDeliveryRetentionCutoff(now: Date): Date {
+  return new Date(now.getTime() - OUTBOUND_DELIVERY_RETENTION_DAYS * DAY_MS);
+}
+
+/** Processed or failed events; a pending event (no error yet) still belongs to the sweeper. */
+function webhookEventBatch(cutoff: Date): Prisma.Sql {
+  return Prisma.sql`
+    DELETE FROM "WebhookEvent" WHERE "id" IN (
+      SELECT "id" FROM "WebhookEvent"
+      WHERE ("processed" OR "error" IS NOT NULL) AND "receivedAt" < ${cutoff}
+      ORDER BY "receivedAt" LIMIT ${WEBHOOK_DELETE_BATCH})`;
+}
+
+function outboundDeliveryBatch(cutoff: Date): Prisma.Sql {
+  return Prisma.sql`
+    DELETE FROM "OutboundWebhookDelivery" WHERE "id" IN (
+      SELECT "id" FROM "OutboundWebhookDelivery"
+      WHERE "status" IN ('SUCCESS', 'FAILED', 'DEAD_LETTER')
+        AND "createdAt" < ${cutoff}
+      ORDER BY "createdAt" LIMIT ${WEBHOOK_DELETE_BATCH})`;
+}
 
 function formatArchiveError(error: unknown): string {
   if (typeof error === "string") return error;
@@ -24,109 +48,72 @@ function formatArchiveError(error: unknown): string {
 
 export interface WebhookArchiveResult {
   success: boolean;
-  processedEventsDeleted: number;
-  terminalUnprocessedDeleted: number;
-  failedEventsDeleted: number;
+  webhookEventsDeleted: number;
   outboundDeliveriesDeleted: number;
   totalDeleted: number;
   errors: string[];
   timestamp: string;
+  hasMore: boolean;
 }
 
-export async function archiveWebhookEvents(): Promise<WebhookArchiveResult> {
+export interface WebhookArchiveOptions {
+  startedAt?: number;
+}
+
+export async function archiveWebhookEvents(
+  options: WebhookArchiveOptions = {},
+): Promise<WebhookArchiveResult> {
+  const startedAt = options.startedAt ?? Date.now();
   return withCronLock("archive-webhook-events", { failMode: "open" }, () =>
-    archiveWebhookEventsUnlocked(),
+    archiveWebhookEventsUnlocked(startedAt),
   );
 }
 
-async function archiveWebhookEventsUnlocked(): Promise<WebhookArchiveResult> {
+async function archiveWebhookEventsUnlocked(
+  startedAt: number,
+): Promise<WebhookArchiveResult> {
+  const deadline = startedAt + START_BUDGET_MS;
+  const now = new Date();
   const errors: string[] = [];
-  let processedEventsDeleted = 0;
-  let terminalUnprocessedDeleted = 0;
-  let failedEventsDeleted = 0;
-  let outboundDeliveriesDeleted = 0;
 
-  const processedRetention = new Date(
-    Date.now() - PROCESSED_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-  );
-  const failedRetention = new Date(
-    Date.now() - FAILED_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-  );
-
-  const runStep = async (
+  /** Whole batches until one comes back short or the deadline passes; a failure keeps committed counts. */
+  const drain = async (
     label: string,
-    fn: () => Promise<{ count: number }>,
-  ): Promise<number> => {
+    batch: Prisma.Sql,
+  ): Promise<{ count: number; hasMore: boolean }> => {
+    let count = 0;
     try {
-      const res = await fn();
-      return res.count;
+      while (Date.now() < deadline) {
+        const deleted = await prisma.$executeRaw(batch);
+        count += deleted;
+        if (deleted < WEBHOOK_DELETE_BATCH) return { count, hasMore: false };
+      }
+      return { count, hasMore: true };
     } catch (error) {
       const msg = `Failed to archive ${label}: ${formatArchiveError(error)}`;
       console.error(`❌ ${msg}`);
       errors.push(msg);
-      return 0;
+      return { count, hasMore: true };
     }
   };
 
-  processedEventsDeleted = await runStep("processed webhook events", () =>
-    prisma.webhookEvent.deleteMany({
-      where: {
-        processed: true,
-        error: null,
-        receivedAt: { lt: processedRetention },
-      },
-    }),
-  );
-
-  terminalUnprocessedDeleted = await runStep(
-    "terminal unprocessed webhook events",
-    () =>
-      prisma.webhookEvent.deleteMany({
-        where: {
-          processed: false,
-          receivedAt: { lt: processedRetention },
-          OR: TERMINAL_ERROR_PREFIXES.map((prefix) => ({
-            error: { startsWith: prefix },
-          })),
-        },
-      }),
-  );
-
-  failedEventsDeleted = await runStep("aged failed webhook events", () =>
-    prisma.webhookEvent.deleteMany({
-      where: {
-        processed: false,
-        error: { not: null },
-        receivedAt: { lt: failedRetention },
-      },
-    }),
-  );
-
-  outboundDeliveriesDeleted = await runStep(
+  // Deliveries first, so a year-deep event backlog cannot starve the 30-day window.
+  const deliveries = await drain(
     "terminal outbound webhook deliveries",
-    () =>
-      prisma.outboundWebhookDelivery.deleteMany({
-        where: {
-          status: { in: ["SUCCESS", "FAILED", "DEAD_LETTER"] },
-          createdAt: { lt: processedRetention },
-        },
-      }),
+    outboundDeliveryBatch(outboundDeliveryRetentionCutoff(now)),
   );
-
-  const totalDeleted =
-    processedEventsDeleted +
-    terminalUnprocessedDeleted +
-    failedEventsDeleted +
-    outboundDeliveriesDeleted;
+  const events = await drain(
+    "webhook events",
+    webhookEventBatch(webhookEventRetentionCutoff(now)),
+  );
 
   return {
     success: errors.length === 0,
-    processedEventsDeleted,
-    terminalUnprocessedDeleted,
-    failedEventsDeleted,
-    outboundDeliveriesDeleted,
-    totalDeleted,
+    webhookEventsDeleted: events.count,
+    outboundDeliveriesDeleted: deliveries.count,
+    totalDeleted: events.count + deliveries.count,
     errors,
     timestamp: new Date().toISOString(),
+    hasMore: deliveries.hasMore || events.hasMore,
   };
 }

@@ -37,10 +37,8 @@ export type SlotStartRefusalCode = "SLOT_NOT_ON_GRID" | "SLOT_TOO_SOON";
 /**
  * #1583 E-P1-03 / #1592 A-P1-04 — one edge check for every client-picked
  * start (request-for-approval and checkout): on the :00/:30 UTC grid, and at
- * least the checkout lead time ahead. The allocator's own re-validation keeps
- * its 5-second BUFFER_MS (ScheduleValidationService.validateSlotsInFuture)
- * because the slots it re-checks are server-picked moments earlier, not a
- * client's stale form; the two bounds are deliberately different.
+ * least the checkout lead time ahead. The allocator applies the same 15 minutes
+ * to a settled booking and 2 hours to an unpaid approval (`leadTimeFor`).
  */
 export function slotStartRefusal(
   slotStart: Date,

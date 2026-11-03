@@ -1,490 +1,204 @@
----
-title: Infra and Maintenance — SRE Orientation
-type: explanation
-band: index
-audience: sde1
-status: live
-last-reviewed: 2026-10-19
----
+# Infrastructure and maintenance: architecture and operating model
 
-# Infra and Maintenance — SRE Orientation
+This guide explains the implemented infrastructure, why its boundaries exist, and how to adapt the design to another product. Read it before changing a cron, a reconciliation query, maintenance admission, or hosting. The source files linked below own behavior; the [generated job inventory](../maintenance/04-cron-jobs-reference.md) owns the configured roster. Configuration, reviewed code, deployment, accepted execution and completed business obligations are separate evidence.
 
-This is the map for someone new on call. It covers where the system runs, how scheduled work reaches it, how you tell whether it is healthy, and — most importantly — which things you must never "fix" by hand.
+This guide describes current source contracts. Deployment and business-effect evidence remain separate: verify the required database schema and maintenance edge state before new readers, and verify actual worker effects after deployment. The Stream lifecycle catalog now dispatches through the ticker; its Netlify-only background destinations are a portability constraint.
 
-It is written for a DevOps or SRE engineer in their first weeks. It assumes you can read TypeScript but not that you know this codebase. Everything is prioritised: **read sections 1 to 4 in order, then the rest as you need it.**
+## 1. The system in one picture
 
-## Priority map
-
-| #      | Section                                                     | Why it matters to you                                                                            |
-| ------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| **1**  | [The single-connection trap](#1-the-single-connection-trap) | The one constraint that will cause an outage if you break it. Read this before writing any code. |
-| **2**  | [The two schedulers](#2-the-two-schedulers)                 | All background work runs from one of exactly two places. Knowing which is half of on-call.       |
-| **3**  | [Never repair these by hand](#3-never-repair-these-by-hand) | The database refuses bad money states for you. Undo that and you cause real financial loss.      |
-| **4**  | [Reading a job's health](#4-reading-a-jobs-health)          | The status codes lie if you read them naively. This is the decoding table.                       |
-| **5**  | [Maintenance mode](#5-maintenance-mode)                     | How planned downtime works, and the emergency door that cancels bookings.                        |
-| **6**  | [How you know it is healthy](#6-how-you-know-it-is-healthy) | The watchdogs, and the important gap between them.                                               |
-| **7**  | [Reconcilers](#7-reconcilers)                               | What they may and may not do.                                                                    |
-| **8**  | [The database sidecars](#8-the-database-sidecars)           | Where the invariants live, and the command that silently drops four of them.                     |
-| **9**  | [Continuous integration](#9-continuous-integration)         | What gates a merge, and what does not.                                                           |
-| **10** | [Vendors and quotas](#10-vendors-and-quotas)                | The rate limits that silently degrade the system.                                                |
-
-## The estate, in one picture
-
-```
-                      ┌────────────────────────────────────────┐
-   user ── HTTPS ──▶  │  DNS · Netlify Edge · CDN              │
-                      │  middleware.ts (auth, maintenance,    │
-                      │  rate limits) — edge runtime          │
-                      └───────────────────┬────────────────────┘
-                                          │
-                      ┌───────────────────▼────────────────────┐
-                      │  ___netlify-server-handler            │
-                      │  Next.js 15 App Router                │
-                      │  Node 22 Lambda · 1024 MB             │
-                      │  region: singapore · ceiling ~26 s    │
-                      └───────────────────┬────────────────────┘
-                                          │
-      ┌───────────────┬───────────────────┼───────────────────┬───────────────┐
-      ▼               ▼                   ▼                   ▼               ▼
- Supabase          Upstash            Razorpay              Stream           Novu
- Postgres          Redis              + RazorpayX           chat + video     bell
- ap-south-1        500k cmd/mo        INR only              + recordings
- Mumbai            REST only
-      │               │                   │                   │
-      │               │                   │                   │
-      │               └───── state · locks · limiter state ──┘
-      │                                                       │
-      │                                                  ┌────┴─────────────┐
-      │                                                  │  Sentry          │
-      │                                                  │  5k events/mo    │
-      │                                                  └──────────────────┘
-      │                                             ┌─────────────────────────┐
-      │                                             │  Supabase Storage · R2  │
-      │                                             └─────────────────────────┘
-      │
-      └── ONE project, many worktrees. Also entered by:
-          GitHub Actions (batch cron) · Netlify ticker (5-min cron) · Sentry canary
+```mermaid
+flowchart TD
+  API[Authenticated APIs and webhooks] --> TX[Domain transaction]
+  TX --> STATE[(Business rows and journals)]
+  TX --> OBL[(Refund markers and delivery outboxes)]
+  CLOCK[Active platform scheduler] --> TICK[Bounded ticker dispatch]
+  TICK --> DOOR[Authenticated cleanup registry]
+  ADMIN[Authenticated admin recovery] --> DOOR
+  LEGACY[Remaining operational Actions steps] --> CORE
+  DOOR --> CORE[One job implementation]
+  CORE --> LEASE[(Postgres execution lease)]
+  CORE --> CLAIM[Conditional claim and bounded slice]
+  OBL --> CLAIM
+  CLAIM --> VENDOR[Payment, email, chat and storage providers]
+  VENDOR --> CONFIRM[Conditional confirmation or retry obligation]
+  CONFIRM --> STATE
+  CORE --> HISTORY[(Execution outcome and checkpoint)]
+  HISTORY --> HEALTH[Independent capability health probe]
 ```
 
-Three facts to take from that picture.
-
-**One Postgres serves both development and production.** Every worktree on every machine symlinks the same `.env` and points at the same database. A careless script or a load test touches production rows. This is the single biggest operational hazard on this estate and it is deliberate — one project, not one per developer.
+The clock requests work. It does not own the business obligation. A refund owed, an unsent notification or an unfinished recording copy remains discoverable after a missed tick, a deployment or a worker crash. This is why the application uses persisted state and bounded recovery rather than assuming a successful cron HTTP request means the business operation completed.
 
-**Everything is in one region except compute.** The database is in Mumbai (`ap-south-1`); the functions run in Singapore. Every request therefore pays a cross-region round trip, which is why connection counts and query budgets are treated as scarce.
+| Component          | Responsibility                                                                                 | Main source                                                      |
+| ------------------ | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Domain operation   | Validate access, claim the transition, commit business state and required obligations together | Domain services; [money system guide](./02-money-system-hld.md)  |
+| Scheduler catalog  | Slugs, cadence, offsets, windows, request limits and HTTP waiting bounds                       | `lib/cron/schedule.ts`                                           |
+| Netlify adapter    | Read fleet preference once, choose due targets, dispatch and report transport outcomes         | `netlify/functions/cron-tick.mts`                                |
+| Cleanup registry   | One authenticated HTTP/admin mapping to each implementation                                    | `lib/cron/cleanup-registry.ts`, `cleanup-route.ts`               |
+| Core worker        | Bound actual reads and effects, claim current work, persist progress and expose failures       | Inventory links to each core                                     |
+| Execution lease    | Same-job admission, owned completion and resumable checkpoints                                 | `lib/cron/with-cron-lock.ts`, `SystemJobExecution`               |
+| Operational health | Detect missing successful capabilities in the intended environment                             | `lib/cron/operational-health.ts`, `app/api/health/jobs/route.ts` |
+| Database sidecars  | Enforce invariants Prisma cannot fully describe                                                | `prisma/sql/*.sql`                                               |
 
-**Redis is REST, not a socket.** There is no long-lived connection to Upstash. Every read is an HTTP call, which changes how you reason about timeouts and why the Redis call budget is measured in monthly commands rather than connections.
+Do not create a new script, job wrapper and API route for the same implementation. Register its existing core. A platform background adapter is justified when the execution envelope differs; it still calls the same core and lease.
 
-## 1. The single-connection trap
+## 2. Which scheduler owns what
 
-This is the most important thing on the page.
+The active application platform owns latency-sensitive recovery and money operations: payment/refund reconciliation, payout and billing slices, statutory exports, delivery retries and booking recovery. Netlify currently provides the five-minute tick. Some targets run every 15 minutes or in bounded daily/calendar windows; consult the executable catalog rather than inferring their cadence from the tick.
 
-On Netlify, each function invocation runs with **`PG_POOL_MAX=1`**. That is not a tuning choice; it is the ceiling the platform gives you, and `lib/prisma.ts` throws at import if the variable is unset on Netlify.
+GitHub Actions owns source verification, security checks, configuration/schema drift checks and explicitly requested engineering drills. Its scheduled workflows are the cron heartbeat, the live-database drift check and the security audit. The heartbeat watches only the other two, never a runtime job. No workflow schedules a registry job, because the ticker owns all 80 targets. An enabled workflow is not evidence of execution. GitHub documents that scheduled jobs can also be delayed or dropped under load ([official troubleshooting guide](https://docs.github.com/en/enterprise-cloud%40latest/actions/how-tos/troubleshoot-workflows)). It is unsuitable as the only recovery clock for a short business deadline.
 
-With exactly one database connection per invocation, this is fatal:
+Keep one automatic owner per operational job. Removing an old Actions step is part of the same reviewed handoff that establishes the replacement. A lease does not justify deliberately running both schedulers: a second invocation after the first finishes can repeat effects unless the domain itself is idempotent.
 
-```ts
-// NEVER — this deadlocks.
-await prisma.$transaction(async (tx) => {
-  const a = await prisma.appointment.findUnique({ where: { id } }); //  ← uses the global pool
-  await tx.organization.update({ where: { id: orgId }, data: { x } });
-});
-```
+The required hot-standby Netlify deployment is a separate concern from scheduler ownership. Each tick reads `ops:active_cron_platform` once. A different host preference suppresses Netlify dispatch; absent or unreadable preference fails open. This is an operational preference, not an atomic leader election. During failover an old worker may still be running. See the [deployment and failback guide](../deployment/README.md).
 
-```ts
-// ALWAYS — everything inside the transaction takes `tx`.
-await prisma.$transaction(async (tx) => {
-  const a = await tx.appointment.findUnique({ where: { id } }); //  ← same connection
-  await tx.organization.update({ where: { id: orgId }, data: { x } });
-});
-```
-
-The transaction holds the only connection while waiting for the global client to borrow one that will never be free. The invocation hangs until the function ceiling kills it, and the user sees a 504.
-
-**The rule, stated once:** inside a `$transaction`, every helper call receives and queries `tx`. Never the global `prisma`. This holds for helper functions too — passing `tx` down is part of their signature for this reason.
-
-Two corollaries you will meet immediately:
-
-- **Never make a network call inside a transaction.** Holding the single connection during a Razorpay or Stream call means every other query in the invocation waits on a vendor. Payments are confirmed by webhook, not by calling the gateway mid-transaction, and that is why.
-- **Do not run `Promise.all` of writes inside a transaction.** Parallel writes contend for the one connection and serialise anyway, with extra overhead. Write them in sequence.
-
-Multi-request runtimes (Cloud Run, Vercel Fluid, Fly) run a larger pool (`5` to `10`), so code that deadlocks locally may only fail on the deployed build. A deploy preview is the only place that reliably reproduces it.
-
-## 2. The two schedulers
-
-All background work in this system comes from exactly one of two schedulers. Knowing which owns a job is the first question to ask when something looks stuck.
-
-```
-   ┌──────────────────────────────────────────────────────────────────┐
-   │  SCHEDULER A — Netlify ticker            every 5 minutes        │
-   │  netlify/functions/cron-tick.mts                                 │
-   │  · 28 targets, latency-sensitive recovery sweeps                 │
-   │  · phase-staggered: 7–8 targets fire per 5-minute slot         │
-   └────────────────────────────┬─────────────────────────────────────┘
-                                │  POST /api/cleanup/<slug>?limit=N
-                                │  Authorization: Bearer $CRON_SECRET
-   ┌────────────────────────────▼─────────────────────────────────────┐
-   │  app/api/cleanup/[job]/route.ts        (the ONLY cleanup route) │
-   │    · timing-safe secret check                                     │
-   │    · ?limit= clamped to 500                                      │
-   │    · assertNotInMaintenance(job)                                  │
-   └────────────────────────────┬─────────────────────────────────────┘
-                                │
-   ┌────────────────────────────▼─────────────────────────────────────┐
-   │  withCronLock(jobName)  →  Postgres lease on SystemJobExecution │
-   └────────────────────────────┬─────────────────────────────────────┘
-                                │
-   ┌────────────────────────────▼─────────────────────────────────────┐
-   │  lib/cron/cleanup-registry.ts     57 slugs, one implementation   │
-   │  → core module (scripts/** or jobs/**)  →  row in SystemJobExecution
-   └──────────────────────────────────────────────────────────────────┘
-
-   ┌──────────────────────────────────────────────────────────────────┐
-   │  SCHEDULER B — GitHub Actions           7 cron-declaring files  │
-   │  cron-intra-day · cron-daily · cron-weekly                       │
-   │  + cron-heartbeat · db-live-drift · stream-webhook-drift        │
-   │  + security-audit                                                │
-   │  · daily / weekly / statutory batch work                         │
-   │  · 29 registry jobs + 13 jobs with no HTTP twin                  │
-   │  · bare `npx tsx jobs/<domain>/<job>.ts` processes               │
-   └──────────────────────────────────────────────────────────────────┘
-```
-
-**The split, and why it matters.** Sub-hourly _recovery_ work — sweeps that clean up after a failure — runs on the Netlify ticker, because GitHub throttles scheduled workflows and a job asking for every hour can be measured delivering once per hundred minutes. Daily and weekly _business_ work — payouts, invoices, statutory filings — runs on GitHub Actions, where a few hours of delay is harmless.
-
-**Actions is not a backstop for the ticker.** This trips people up constantly. If a job is listed as a ticker target, it runs on the ticker and nowhere else unless a workflow also names it. Twenty-seven of the 28 targets have no workflow at all — including `auto-complete-appointments` and `detect-consultant-no-shows`, which both move money. **If GitHub Actions is down, those two still run and the batch fleet does not.** If Actions is down, Monday payouts do not happen.
-
-Both schedulers converge on the same Postgres lease, so a tick and an Actions run of the same job can never proceed together. The loser gets a 409.
-
-**Do not add a third scheduler.** A job that is not in the ticker and not in a workflow runs nowhere. The build fails if you register a job with no scheduler, so this is caught in CI rather than in production.
-
-### The lock
-
-`withCronLock` writes a `RUNNING` row to `SystemJobExecution` and relies on a partial unique index that permits only one such row per job name. It is a Postgres lease, not a Redis lock — Redis is deliberately kept off this path because an incident on 2026-09-21 spent roughly 430,000 of the account's 500,000 monthly commands on cron locking alone.
-
-| Lock mode          | What it does when the lease table is unreachable                                                      |
-| ------------------ | ----------------------------------------------------------------------------------------------------- |
-| `closed` (28 jobs) | Refuses to run and pages. Correct for money: a missed run is recoverable, a silent double-run is not. |
-| `open` (23 jobs)   | Runs unlocked with a warning. Correct where repeating the work is harmless.                           |
-| bespoke Redis (2)  | `create-payout-batch` and `process-payouts`, because they also coordinate interactive admin runs.     |
-| none (3)           | Deliberately unlocked.                                                                                |
-
-Both modes flip to `closed` if the error looks like connection or pool exhaustion — that outage is exactly the window where two runners would both believe they hold the lease.
-
-The lease is 15 minutes by default and 35 for the payout and reconcile family. A running job renews every third of the TTL. **A hard-killed invocation leaks its lease until it expires**, so a job can appear stuck for up to 45 minutes after it actually died. That is a known cost, not a bug you should fix by shortening the TTL.
-
-## 3. Never repair these by hand
-
-This section is the reason the whole system is shaped the way it is.
-
-The database holds roughly **82 check constraints, 28 indexes and 8 triggers** that exist to make certain states physically impossible. An operator fixing a money row by hand with a SQL client is not "helping" — they are removing the only guarantee.
-
-```
- ┌──────────────────────────────────────────────────────────────────┐
- │  An unbalanced ledger transaction cannot commit.                 │
- │                                                                  │
- │   LedgerTransaction  ← idempotency key (UNIQUE)                  │
- │     └── LedgerEntry × N     amountPaise BIGINT  CHECK (> 0)      │
- │                                                                  │
- │   CONSTRAINT TRIGGER  (DEFERRED until COMMIT)                    │
- │     Σ(DEBIT) − Σ(CREDIT)  ==  0   for every transaction           │
- │                                                                  │
- │   If it does not balance, COMMIT is refused. Not rolled back —    │
- │   refused. Nothing was written.                                   │
- └──────────────────────────────────────────────────────────────────┘
-
- ┌──────────────────────────────────────────────────────────────────┐
- │  Two confirmed sessions cannot overlap for one expert.            │
- │                                                                  │
- │   EXCLUDE USING gist (                                           │
- │     consultantProfileId WITH =,                                  │
- │     tstzrange(startsAt, endsAt) WITH && )                         │
- │   WHERE not tentative, not deleted, not cancelled                 │
- │                                                                  │
- │   Violation → SQLSTATE 23P01 → HTTP 409 SCHEDULE_CONFLICT        │
- └──────────────────────────────────────────────────────────────────┘
-
- ┌──────────────────────────────────────────────────────────────────┐
- │  A payment's funding legs must sum to its amount.                 │
- │                                                                  │
- │   CONSTRAINT TRIGGER on PaymentLeg  AND  on Payment.amount       │
- │   Two carve-outs, both deliberate:                               │
- │     · REFERRAL_CREDIT — already netted out of Payment.amount      │
- │     · licence-only payments — licence absorbed at contract time   │
- │                                                                  │
- │   Reversal legs must be negative and cannot exceed their sibling. │
- └──────────────────────────────────────────────────────────────────┘
-```
-
-The rule that follows, and which is written into this repository's own agent instructions:
-
-> **Never write an application-level sweep to re-verify something a check constraint, an exclusion index or a trigger already refuses at commit.**
-
-Reconciling across a vendor boundary is legitimate, because a vendor really can disagree with us. Re-checking arithmetic the database already refuses is waste that rots.
-
-**What this means when you are on call:**
-
-- If a ledger row looks wrong, find the reconciler finding. Do not `UPDATE`.
-- If two sessions look like they overlap, the database already said no. One of your two rows is a read replica, a soft-deleted row, or a `RESCHEDULED` row the exclusion index ignores but the app still treats as occupied. That last one is a known gap.
-- If a payment's legs do not sum, the commit that created them failed. The rows you are looking at did not come from a successful transaction.
-
-## 4. Reading a job's health
-
-This is the decoding table. Most on-call confusion comes from reading a 2xx as "fine".
-
-| Status          | What it actually means                                                                                                                     | Do you need to act? |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
-| `200`           | Ran cleanly                                                                                                                                | No                  |
-| **`207`**       | **Ran, and found something a human must look at.** A double-booking detected, a row escrowed, a document missing, a cascade still failing. | **Yes**             |
-| `400`           | The `?limit=` was malformed                                                                                                                | Fix the caller      |
-| `401`           | `CRON_SECRET` missing or wrong                                                                                                             | Fix the secret      |
-| `404`           | Unknown slug                                                                                                                               | Fix the slug        |
-| **`409`**       | **Another copy holds the lease.** Expected under overlap.                                                                                  | **No**              |
-| `500`           | The job failed, or returned `success: false`                                                                                               | Investigate         |
-| `503` + `phase` | Maintenance held the job. Expected.                                                                                                        | No                  |
-| `503` no phase  | Lease table unreachable on a fail-closed job                                                                                               | Investigate         |
-
-Two traps:
-
-**A 207 is not a success.** An alert rule that treats any 2xx as healthy silently discards every needs-human finding. This is the most common way a real problem goes unnoticed here.
-
-**The ticker always returns 200.** Not even when every target failed. Netlify re-invokes a scheduled function that answers 5xx up to three times, seconds apart, and each retry re-fires every due target — production once ran the whole ticker at triple rate for weeks because one target was failing. So you cannot judge the ticker by its HTTP status. **Read the structured log line instead:**
-
-```json
-{
-  "event": "cron-tick",
-  "ok": true,
-  "lockHeld": 2,
-  "failed": 0,
-  "durationMs": 4120
-}
-```
-
-`failed` is the field that matters. It holds the slugs that returned something other than 200, 207, 409, or a maintenance-marked 503.
-
-## 5. Maintenance mode
-
-A deliberate way to take the site into a reduced state for a migration or an incident. Three phases, held in Redis and mirrored to a `MaintenanceWindow` audit row.
-
-```
-   ┌────────┐          ┌───────────┐          ┌─────────┐
-   │  OFF   │─────────▶│ DEGRADED  │─────────▶│ OFFLINE │
-   └────────┘          └───────────┘          └─────────┘
-   normal operation     reads fine             everything
-                       writes mostly           blocked —
-                       blocked —               EXCEPT webhooks
-                           │                       │
-                           │                       │ payments must
-                           │ financial jobs        │ still confirm
-                           │ are held              ▼
-                           ▼                   webhooks +
-                    writes refused          cron only
-```
-
-| Phase      | Reads | Writes                                        | Webhooks         | Cron jobs                               |
-| ---------- | ----- | --------------------------------------------- | ---------------- | --------------------------------------- |
-| `OFF`      | yes   | yes                                           | yes              | all run                                 |
-| `DEGRADED` | yes   | mostly — a 44-pattern deny-list blocks writes | yes              | only the **27** financial jobs are held |
-| `OFFLINE`  | no    | no                                            | **yes (exempt)** | all held                                |
-
-Two design points worth internalising.
-
-**Webhooks are always exempt, in every phase.** Razorpay can capture a payment at any moment. If webhook handling were blocked, those payments would sit unconfirmed. This is why maintenance mode can be used without stranding money.
-
-**The read fails open.** If Redis is unreachable, maintenance mode reports `OFF` and the site proceeds. That is deliberate — a Redis outage must not take the site down — but it means a Redis outage also silently disables the maintenance gate.
-
-### The emergency door
-
-`POST /api/admin/maintenance` is the one place where a mistake causes real damage. **An empty body means `OFFLINE`.** Activating `OFFLINE` drains active sessions, freezes appointments, and pauses discount codes.
-
-So, in order of how badly this can go:
-
-- Do not call it without a typed confirmation.
-- `OFFLINE` **cancels and refunds every booking in the window.** This is not reversible by flipping the phase back.
-- The activation is not idempotent and is not duration-bounded.
-- It is not currently written to an audit row before it takes effect.
-
-If you need the site in a reduced state during a migration, `DEGRADED` is almost always what you want. Reach for `OFFLINE` only when the site genuinely cannot serve reads.
-
-## 6. How you know it is healthy
-
-Three watchdogs, with an important gap between them.
-
-```
-   ┌────────────────────────────────────────────────────────────────┐
-   │  1. cron-heartbeat          daily, GitHub Actions             │
-   │     "did every workflow that declares cron: actually run?"     │
-   │     Tolerance: interval x 12, floor 6 h.                       │
-   │     ⚠ does NOT watch the Netlify ticker at all.                │
-   └────────────────────────────────────────────────────────────────┘
-   ┌────────────────────────────────────────────────────────────────┐
-   │  2. Sentry cron monitor      every 5 min, from the ticker      │
-   │     ⚠ checkin_margin 3, failure_issue_threshold 3             │
-   │     ⚠ CALIBRATED FOR A 5-MINUTE TICK.                        │
-   │       A 15 or 30 minute target will NEVER trip it, because    │
-   │       three consecutive misses fit inside its normal interval. │
-   └────────────────────────────────────────────────────────────────┘
-   ┌────────────────────────────────────────────────────────────────┐
-   │  3. GET /api/health  →  cron.stale                            │
-   │     every locked job refreshes cron:heartbeat:last in Redis    │
-   │     stale = true once older than 45 minutes                   │
-   │     watch this from an external uptime pinger                 │
-   └────────────────────────────────────────────────────────────────┘
-   ┌────────────────────────────────────────────────────────────────┐
-   │  Sentry ingest canary        every 6 hours, ticker target      │
-   │     Posts one real error event to prove Sentry still accepts   │
-   │     errors. Alerts BY EMAIL, never through Sentry.            │
-   │     Exists because Sentry answers 200 while silently           │
-   │     discarding events once the quota is spent.                 │
-   └────────────────────────────────────────────────────────────────┘
-```
-
-**Read that gap carefully.** The heartbeat checks that GitHub Actions workflows ran. It does not check the Netlify ticker. The Sentry monitor covers the ticker but cannot see an individual fifteen-minute target fail. So there is no single signal that says "the recovery sweeps are broken".
-
-The two that _are_ reliable for the ticker are the ticker's own `failed` field in the log line, and `cron.stale` on `/api/health`. When you are asked "is the cron fleet healthy", check those two, not the heartbeat.
-
-`/api/health` also returns degraded responses as `no-store`, so polling it runs several database and Redis queries each time. Do not poll it from a tight loop.
-
-## 7. Reconcilers
-
-A reconciler compares two sources of truth and adopts or reports the difference. There are exactly two kinds, and telling them apart tells you whether a sweep is behaving correctly.
-
-```
-   VENDOR-BOUNDARY                         INTERNAL-CACHE
-   ───────────────                         ───────────────
-   local row says PENDING                  cached value vs the
-   Razorpay / Stream /                     system that authored it
-   Supabase says otherwise
-        │                                        │
-        ▼                                        ▼
-   ADOPT the vendor's answer              REPORT the difference
-   reconcile-payment-status                reconcile-ledgers
-   reconcile-payout-status                 (BillingAccount.walletBalance
-   reconcile-disputes                         is only a cache for an
-   reconcile-refunds                          atomic debit guard; this
-   reconcile-orphaned-recordings              sweep asserts it)
-   reconcile-document-storage
-   sweep-stuck-webhook-events
-
-   ✗ A third kind must never exist:
-     re-verifying a database invariant. If COMMIT already refuses
-     the state, a sweep that re-checks it is waste.
-```
-
-When a reconciler finds something it cannot safely repair, it **records a finding and stops**. It does not guess. The vocabulary you will meet in logs and summaries:
-
-| Term             | Meaning                                                      |
-| ---------------- | ------------------------------------------------------------ |
-| **Dead-letter**  | Attempt budget exhausted; a human decides.                   |
-| **Needs-human**  | State is legitimate but unusual; the operator queue owns it. |
-| **Escrow**       | Row parked in a holding state with a stamp explaining why.   |
-| `AWAITING_HUMAN` | A marker that suppresses automatic earnings release.         |
-
-The largest reconciler is `reconcile-ledgers`: about seventeen derivation families, run set-based, writing a `LedgerReconciliationReport`. It repairs nothing. A `WALLET_BALANCE_DRIFT` finding freezes wallet spend for that account and pages once per run.
-
-## 8. The database sidecars
-
-The invariants in section 3 live in three hand-written SQL files, not in the Prisma schema.
-
-| File                        | Constraints | Indexes | Triggers |
-| --------------------------- | ----------- | ------- | -------- |
-| `check-constraints.sql`     | 82          | 28      | 3        |
-| `ledger-triggers.sql`       | 0           | 0       | 3        |
-| `payment-legs-triggers.sql` | 0           | 0       | 2        |
-
-Prisma's schema language cannot express any of these — no check constraints, no deferrable triggers, no partial or `NULLS NOT DISTINCT` indexes, no `EXCLUDE USING gist`. So they are applied separately, idempotently, each statement in its own short transaction with a 3-second lock timeout.
-
-### The command that will bite you
-
-```
-   npm run db:push        ──▶  db:preflight
-                              prisma db push        ← drops every sidecar index
-                              db:sidecars           ← re-adds them
-                              check-db-sidecars     ← asserts they exist
-
-   ⚠ `npm run db:push:schema` ALSO exists as a standalone script.
-     It runs db:preflight + prisma db push and STOPS.
-     Sidecars are never applied. Four money uniques are silently gone
-     and no test fails.
-```
-
-Because one Postgres serves development and production, a bare `prisma db push` against the shared database drops sidecar-owned indexes on live data. Always use the full `db:push`, never the `:schema` variant, and never run `db:*` without being certain.
-
-Four independent layers verify the sidecars, so a silent loss is unlikely but not impossible:
-
-1. **Static** — `scripts/db/sidecar-objects.ts` parses the SQL, so an object commented out by accident is caught.
-2. **Live catalog** — `scripts/ci/check-db-sidecars.ts` queries `pg_constraint`, `pg_indexes` and `pg_trigger` and fails on anything missing. Runs against a throwaway Postgres in CI.
-3. **Daily read-only drift** — `scripts/ci/check-db-live-drift.ts` runs `prisma migrate diff` and fails on any unplanned difference.
-4. **Round trip** — CI rebuilds a fresh database from scratch and asserts all objects exist.
-
-## 9. Continuous integration
-
-`ci.yaml` is the merge gate. Five jobs, and the one that matters most for infrastructure work is the last.
-
-| Job          | What it checks                                                                                                                |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `lint`       | Prettier (advisory), ESLint (blocking), `bash -n` and shellcheck on CI scripts                                                |
-| `typecheck`  | `tsc --noEmit`, supply-chain audit, and four static guards: money columns, auth schema, workflow secrets manifest, docs drift |
-| `unit-tests` | Jest, split into two shards                                                                                                   |
-| `build`      | `next build`. Skipped on ordinary pull requests; the Netlify deploy preview is the build gate there.                          |
-| `db-guards`  | Throwaway Postgres → `db push` → sidecars → assert → support race tier. Proves a fresh database keeps every invariant.        |
-
-**Two gates are deliberately advisory.** Knip (dead code) runs with `continue-on-error`. CodeRabbit is report-only by explicit policy — reviews do not block merges, and comments are triaged by hand against the code.
-
-**The load gate, load test and race-condition tests are manual-dispatch only.** One Postgres serves development and production, so a self-firing load test would be a recurring production incident. Run them deliberately, against a deploy preview, with the cleanup step enabled. A load-gate run whose cleanup was _skipped_ fails on purpose: a green run with production rows still in the database is the one outcome it must never report as success.
-
-## 10. Vendors and quotas
-
-The system degrades silently when a quota runs out. These are the limits worth knowing by heart.
-
-| Vendor                | Limit                                        | What happens at the ceiling                                                                       |
-| --------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| **Upstash Redis**     | 500,000 commands/month, shared with previews | Call failures. Some limiters fail open, which means the protection is silently off                |
-| **Sentry**            | 5,000 events/month                           | Sentry keeps answering 200 while discarding errors. The ingest canary exists purely to catch this |
-| **GitHub Actions**    | included minutes, then billed                | If billing lapses, every scheduled workflow stops and nothing outside Actions notices             |
-| **Supabase Postgres** | `PG_POOL_MAX=1` per Netlify invocation       | Deadlock on any global-client read inside a transaction                                           |
-| **Razorpay / Stream** | rate limits                                  | Webhook processing slows; retries stack                                                           |
-| **Stream recordings** | 14-day retention on their copy               | After that the file is gone. Transfer to R2 before it expires                                     |
-
-The GitHub Actions case is the one that has actually bitten. Actions can stop running for reasons unrelated to code — lapsed billing, a spending limit — and the heartbeat that watches for it lives _in_ Actions, so it cannot report the failure it exists to detect. **If a payout date passes and no payout row appeared, check whether the Actions fleet ran at all before debugging payout logic.**
-
-## Failure modes and recovery
-
-| Symptom                                   | First thing to check                                                                                     | Where to look                            |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| 504 on a write                            | A global-client read inside a transaction                                                                | The query touching Supabase              |
-| Sweeps seem to run at triple rate         | A target returning 5xx — Netlify retries the whole tick                                                  | Ticker's `failed` field                  |
-| Job stuck for 15–45 min after dying       | A leaked lease; wait for expiry rather than clearing it                                                  | `SystemJobExecution` rows with `RUNNING` |
-| Two sessions booked the same slot         | Not a data problem — the exclusion index refused the second; look for soft-deleted or `RESCHEDULED` rows | The 409 in the response                  |
-| Ledger does not balance                   | The commit was refused. Nothing was written                                                              | `LedgerReconciliationReport`             |
-| `CRON_SECRET` 401s everywhere             | The Actions secret is missing, not the Netlify one                                                       | Both environments                        |
-| Sentry shows no errors during an incident | Probably the quota. The canary tells you                                                                 | Canary alert email                       |
-| Payout did not run on schedule            | Did GitHub Actions run at all?                                                                           | Actions run history                      |
-
-## Where to read next
-
-| Question                                             | Document                                                                                                         |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| What each job is and what it mutates                 | [../maintenance/04-cron-jobs-reference.md](../maintenance/04-cron-jobs-reference.md)                             |
-| Response codes, locks, sidecars, reconciler taxonomy | [../maintenance/10-cron-and-reconciliation-reference.md](../maintenance/10-cron-and-reconciliation-reference.md) |
-| Why the scheduler is shaped this way                 | [ADR 27](../enterprise/70-design-decisions/27-state-as-outbox-and-scheduled-ticker.md)                           |
-| Why Postgres does the concurrency work               | [ADR 13](../enterprise/70-design-decisions/13-postgres-native-concurrency.md)                                    |
-| Why GitHub Actions still exists                      | [ADR 05](../enterprise/70-design-decisions/05-github-actions-crons.md)                                           |
-| Redis locking and caching posture                    | [../architecture/distributed-systems-explained.md](../architecture/distributed-systems-explained.md)             |
-| Maintenance phases in full                           | [../maintenance/02-degraded-vs-offline.md](../maintenance/02-degraded-vs-offline.md)                             |
-| Netlify specifics and the cold-start story           | [../deployment/netlify.md](../deployment/netlify.md)                                                             |
-| Environment variables                                | `.env.sample`                                                                                                    |
-| Infrastructure and maintenance audit                 | GitHub issue 2157                                                                                                |
-
-Related issues: 2157 (infrastructure and maintenance audit, with its P0–P3 findings), 2137 (booking productionization), 2145 and 2156 (alert paths and monitoring).
+## 3. Admission and execution are different lifetimes
+
+There are four independent bounds:
+
+1. The ticker's own wall-clock budget.
+2. Its per-target HTTP wait/abort timeout.
+3. The core's row, vendor-call and start-admission budgets.
+4. The lease TTL and renewal interval.
+
+An HTTP abort does not cancel already-started work. Lease expiry does not stop a process. A core must stop admitting work in time, propagate cancellation to supported provider operations, and fence late results independently. Raising an HTTP timeout or lowering a row limit alone cannot repair an unbounded related query.
+
+Netlify's scheduled runtime has a 30-second ceiling. Background functions run separately for up to 15 minutes and immediately acknowledge invocation with HTTP 202; Netlify documents retries after invocation errors, which our background functions avoid by never throwing (`runBackgroundWorker`). These are distinct contracts ([scheduled functions](https://docs.netlify.com/build/functions/scheduled-functions/), [background functions](https://docs.netlify.com/build/functions/background-functions/)). A 202 is not authenticated core admission, a successful lease or a completed copy.
+
+The recording adapter deliberately imports a narrow dependency graph: the shared cleanup boundary and recording core. Importing the entire registry can expand the standalone bundle through literal dynamic imports. Local import success does not establish deployable package contents, React renderer compatibility, cold-start cost or deployed execution. Keep this boundary until a measured deployment or an active correctness requirement justifies changing it. Never run the 12-minute recording transfer through a short synchronous Next.js request.
+
+## 4. Concurrency: what each protection actually guarantees
+
+| Protection                                        | Prevents                                                            | Does not establish                                                                             |
+| ------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Postgres partial unique on a RUNNING job name     | Two current owned leases for the same job                           | Cross-job exclusion, cancellation of an expired owner, exactly-once effects                    |
+| Conditional `updateMany` with expected state      | A stale writer winning that state transition                        | Delivery to an external provider                                                               |
+| Serializable transaction                          | A committed decision inconsistent with concurrent database changes  | Vendor rollback or immunity from retryable serialization failures                              |
+| Outbox/refund marker staged through the same `tx` | A committed state transition losing its required local obligation   | Provider acceptance or eventual delivery without a running relay                               |
+| Stable provider idempotency identity              | Replayed requests duplicating the same supported external operation | Atomicity between Postgres and a vendor, or indefinite deduplication beyond provider retention |
+| Claim identity in final publication               | A previous attempt publishing over a newer owner                    | Cleanup of every completed unpublished storage object                                          |
+| SQL constraints/triggers                          | Their declared database invariants at commit                        | External truth or application conflicts outside their predicates                               |
+
+`withCronLock` records attempts in `SystemJobExecution`. Acquisition expires stale owned rows and creates a new RUNNING row; the partial unique resolves racing acquisitions. Closed jobs refuse unavailable acquisition, including Prisma import failures. Open jobs may run unlocked only under their documented repeat-safe policy; connection/pool exhaustion is treated as closed. Completion updates the same execution only while it remains RUNNING. A stale owner cannot rewrite a newer execution's history or refresh success through an unowned finish.
+
+On Netlify the effective lease is capped at 90 seconds and renewed every third of its TTL; other hosts retain the requested TTL. Renewal errors or lost ownership do not cancel the core. A database outage or stalled process can therefore outlive its lease while another invocation starts. Conditional domain claims and attempt-specific external identities remain necessary; the short lease is not proof that all earlier effects have stopped.
+
+Different jobs can still touch the same payment, appointment, support case or recording. Their safety depends on shared domain transitions and row-level claims. For example, recording transfer and erasure must agree on the recording row and exact asset identity; separate cron leases alone cannot protect that race.
+
+Inside a Prisma transaction every helper uses the supplied `tx`. On Netlify, `PG_POOL_MAX=1` makes a global Prisma query inside that transaction wait for the connection it already holds. Multi-request runtimes use a bounded larger pool, but that does not make global reads transactionally correct. Provider requests stay outside database transactions. Awaiting queries sequentially inside one transaction preserves dependency order; `Promise.all` does not create additional transaction connections ([Prisma transaction behavior](https://www.prisma.io/docs/orm/v7/prisma-client/queries/transactions)).
+
+Serializable operations can fail and need bounded retry of the complete transaction; do not publish provisional effects from a transaction that later aborts ([PostgreSQL isolation](https://www.postgresql.org/docs/15/transaction-iso.html)). The maintenance worker rechecks a selected booking's current overlap inside its cancellation transaction, so a reschedule between confirmation and execution cannot cancel an unaffected booking.
+
+## 5. Bounded progress and fair recovery
+
+A destructive cleanup repeats age/status eligibility in its final conditional write. An expired idempotency record may have been renewed after selection; a pending attachment may have become live. Selecting an ID is not permanent deletion authority.
+
+A recurring poll needs more than `take: N`. If the oldest pending/error rows never leave the cohort, each invocation can select the same prefix forever. Payment/refund/top-up reconciliation uses separate last-attempt cursors; those cursors do not change business age or retry liability. Recovery must stamp attempted work, leave unstarted work unstamped and make failed pages visible. Cursor failure is not permission to claim the backlog drained.
+
+Count examined candidates and related work, not only successful mutations. One booking can contain many occurrences, participants, payments and notices; one organisation can contain many calls, channels and recordings. The automatic maintenance cancellation envelope currently rejects more than eight live participants, twelve occurrences, ten payments or ten notice recipients. It cancels the explicitly selected whole booking, not just the overlapping occurrence. These are execution guards, not offering limits or measured throughput promises.
+
+Jobs using calendar windows need a missed-window recovery procedure. A daily window with three bounded slices cannot be called sufficient until backlog volume, oldest age and completion rate have been measured. Failure samples must be bounded, reported once per run and retain enough phase/context for repair.
+
+## 6. Journals, obligations and reconciliations
+
+The money system records amounts in BigInt paise and enforces its journal/leg invariants in Postgres. The ledger audit compares separately maintained projections and external/business facts, stores per-payment findings and persists report checkpoints. Same-day completed reuse is distinct from a fresh operator recheck; reuse must not repeat drift effects. A recent-history-only scan cannot prove old liabilities disappeared. See the [money architecture](./02-money-system-hld.md) and [reconciliation reference](../maintenance/10-cron-and-reconciliation-reference.md).
+
+A wallet drift report freezes spend on the affected account and pages once per account with a weekly reminder. A later audit releases only its own drift-tagged freeze when the cache again equals the journal; an operator-created freeze remains operator-owned. The [job machinery catalog](../maintenance/11-job-machinery-catalog.md) covers current job signals and the dashboard design.
+
+Do not write JavaScript sweeps to re-prove balanced journals, immutable posted ledger entries or payment-leg sums already prevented by constraint triggers. Reconcile Razorpay, Stream, Resend and storage boundaries where the database cannot enforce external truth. The host occurrence exclusion protects only its SQL predicate; tentative holds, co-host/client conflicts, attendee seats and the documented RESCHEDULED occupancy case remain application concerns.
+
+A failed refund attempt is not a separate refund liability. Durable owed markers drive the canonical retry flow; exhausted attempts require classification and an explicit recovery decision. Compare current refundable balance and provider truth before reissue. Likewise, an unsent outbox record is not accepted email or an acknowledged notification. Every email recipient still passes the delivery guard.
+
+## 7. Read outcomes without confusing them with health
+
+| Observation                                    | Meaning                                                                                             |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| HTTP 200                                       | Read the typed core result and job-specific contract                                                |
+| HTTP 207                                       | Job-specific attention or partial failure; the ticker allowlist determines transport classification |
+| HTTP 409                                       | Lease admission refused; not evidence that the current owner is healthy                             |
+| HTTP 503                                       | Planned maintenance hold or failed admission, distinguished by the response code/body               |
+| Background HTTP 202                            | Invocation acknowledgement only                                                                     |
+| Environment-scoped COMPLETED execution         | Successful owned slice; not necessarily an empty backlog                                            |
+| Shared heartbeat                               | Fleet liveness hint; one job can hide another job's absence                                         |
+| Fresh capability probe plus overdue obligation | Workers are alive but the business deadline can still be at risk                                    |
+
+`jobOutcome` prioritizes an explicit `success`/`overallSuccess` verdict, distinguishes intentional holds, then infers from counters only when no verdict exists. Execution history stores failure/partial failure as FAILED, holds as CANCELLED and success as COMPLETED. An explicit registry status callback owns its HTTP mapping. Do not assume a transport callback and inferred core outcome are interchangeable.
+
+The authenticated, no-store `/api/health/jobs` probe checks that every ticker job ran within a budget derived from its schedule, in the intended Sentry deployment environment, and answers 503 when a `paging` job is overdue. Every target writes a run row, and `checkJobCoverage` (`lib/cron/job-coverage.ts`) fails `npm run build` when a target has no budget, so the guard holds even when Actions is refused. The probe also answers 503 from the daily `ops-digest` row when release lag is overdue or, once Razorpay keys are live, a paging job has skipped for a missing setting for more than 7 days. The digest is one email a day that is always sent; a Better Stack heartbeat makes a missing email an incident. The probe is implemented; the external Better Stack monitor that polls it, and Sentry's free uptime monitor as the second watcher, are owner steps ([runbook](../maintenance/00-betterstack-setup.md#runbook-create-the-better-stack-monitor-owner-step)), and accepted responses and actual alert delivery are deployment evidence. Keep calendar-only work and backlog deadlines separately visible. Sentry check-in acceptance and monitor enablement must be checked; a disabled monitor, a dropped capture or an always-200 ticker cannot be an independent alarm.
+
+The ticker missed-check-in email path has a [recorded end-to-end verification](../maintenance/00-betterstack-setup.md#recorded-end-to-end-verification). Recheck monitor enablement, notification routing and ordinary recovery when operating it; that receipt does not prove every capability or survive a Sentry outage. The same runbook records digest timing and the bounded restoration drill so another operator can repeat it safely.
+
+The ticker distinguishes a one-off target warning from a repeated failure using the authenticated `/api/health/jobs/streaks` history read and the catalog's target-to-execution-name mapping. Unavailable history remains a one-off; this route does not establish independent absence detection. When configured, one Better Stack summary per tick provides a separate best-effort sink. Neither replaces an external missed-run alarm or a business backlog deadline.
+
+Use bounded once-per-run Sentry reports. Native workers use the generic Core SDK APIs with the shared privacy/configuration policy. Capture tests alias a mocked `@sentry/core` to the mocked `@sentry/nextjs`; partial mocks use actual Core to avoid circular framework imports.
+
+## 8. Maintenance is an operator-controlled workflow
+
+| Phase                         | Application and job policy                                                                             |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| OFF                           | Normal admission                                                                                       |
+| DEGRADED                      | Reads remain available; classified money mutations and financial jobs are held                         |
+| OFFLINE                       | Non-exempt traffic and cleanup work are held; webhook/health/admin recovery exemptions remain explicit |
+| Missing/unreadable edge state | Mutations fail closed; it is never silently interpreted as OFF                                         |
+
+Activation requires an explicit phase and reason. OFFLINE setup drains calls and freezes channels in bounded passes, preserves acknowledgements and discount snapshots, and exposes retryable errors/backlog. It does not implicitly cancel bookings. Booking remediation is a separate preview, confirmation and durable request, processed after maintenance admission permits it. Every PATCH, including ETA-only changes, retains an operator reason. ETA expiry never reopens traffic.
+
+Recovery verifies dependencies and reverses the relevant freezes before explicitly returning to OFF. Partial recovery is retried; it must not claim that previously failed vendor work succeeded. Already-running requests and workers must settle because maintenance admission cannot retroactively stop them. Use the [pre-maintenance checklist](../maintenance/06-pre-maintenance-checklist.md) and [recovery runbook](../maintenance/07-post-maintenance-recovery.md).
+
+Before the first deployment, apply the reviewed additive schema before readers. Under coordinated operator control, verify durable platform state and bootstrap a missing `maintenance:phase` without a TTL; use OFF only when no platform window is active. Preserve an existing active phase. This is a rollout operation, not a missing-key fallback or an automatic repair cron.
+
+## 9. Database rollout and rollback boundaries
+
+One shared Postgres project serves environments and worktrees. Never infer that a branch's schema is safe to push. Generate a read-only live diff, separate the intended additive delta from existing drift, and inspect SQL-owned constraints/indexes/triggers separately. Never execute the whole diagnostic drift plan.
+
+The maintenance schema and persistent edge-state bootstrap have already been applied to the shared project under operator control. For a fresh environment, the checked-in [operator SQL](../maintenance/maintenance-remediation-schema.sql) adds five nullable columns, two tables, six indexes and three foreign keys, with no backfill; verify its exact required delta and live catalog before deploying readers. Do not replay already-applied Stream schema changes or an unrelated diagnostic drift plan. Record the exact schema SHA and catalog confirmation.
+
+Sidecar replacement runs dependent statements in order inside one transaction per file with a short lock timeout. A failed ADD must not leave its preceding DROP committed. A lock timeout limits waiting, not statement execution or total runtime. Existing-table ordinary index builds block writes; concurrent builds need a distinct outside-transaction operator plan with validity checks. Do not translate a small reviewed rollout into a universal migration recipe. See the [schema cutover guide](../prisma/02-schema-freeze-and-migration-cutover.md).
+
+Rollback of application code cannot erase business effects already committed. Prefer a compatible forward repair, keep durable obligations and exact source identities, and use the verified operator recovery procedure. Schema application and real worker execution require their own authorization.
+
+## 10. Active Stream ticker ownership and execution limits
+
+The ticker now dispatches the Stream recording and lifecycle jobs. Their moved Actions steps are removed. Automatic workers currently depend on Netlify as the active cron host: the catalog points to Netlify function URLs. A host migration needs a compatible long-worker destination before switching the active scheduler; preserving Netlify as standby alone does not make these targets portable.
+
+| Capability                                                                                                                 | Current configured cadence / destination                 |
+| -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `transfer-recordings`                                                                                                      | Every 15 minutes; `recording-transfer-background`        |
+| `reconcile-sessions` HTTP slug / `reconcile-orphaned-sessions` execution                                                   | Every 30 minutes; bounded registered core                |
+| `expire-recordings`, `reconcile-orphaned-recordings`, `wind-down-deactivated-orgs`, `stream-sync`, `expire-event-channels` | Staggered daily windows; `stream-maintenance-background` |
+| `stream-control-plane-drift`, `reconcile-stream-memberships`                                                               | Hourly slices in their configured daily windows          |
+
+The [catalog](../../lib/cron/schedule.ts) owns exact offsets, windows, limits and destinations. The schedule has a tested ceiling of twelve targets per tick (`MAX_TARGETS_PER_TICK=12`; the cadence test pins the busiest tick at 11, one free slot). Capacity is 288 × 12 = 3,456 target starts a day against about 2,897 used. When a wave would exceed it, `dueTargets` yields the checkpointed `reconcile-ledgers` target; it does not generally truncate arbitrary jobs. Cadence tests examine every tick of a week, and calendar-boundary scenarios remain relevant when changing windows. A wave is not a worker concurrency queue or proof of capacity.
+
+Stream-managed recording files have a [two-week source lifetime](https://getstream.io/video/docs/api/recording/storage/). An application's later retention date cannot extend that source lifetime. Copy completion must therefore be measured against each recording's source expiry, even when recent job executions succeeded.
+
+Transfer claims consume an attempt before work. A stale crashed claim keeps its consumed attempt, and a fresh claim uses its next attempt identity. Conditional publication prevents the old attempt from overwriting a newer owner. The core requests a fail-closed 15-minute lease and admits at most one recording per invocation; Netlify applies the renewable 90-second cap described above. Its separate 15-minute stale-recording claim threshold exceeds the 12-minute copy deadline. Do not infer fleet-wide one-copy concurrency after lease renewal fails. The theoretical 96 scheduled admissions/day is not measured successful throughput. The bounded 72-hour/attempt-risk alarm conditionally stamps each recording at most once every six hours, preserves retry timing and excludes already-expired sources.
+
+HTTP 202 acknowledges dispatch only. Verify eventual owned execution, AVAILABLE/PLATFORM state and matching R2 bytes separately; the domain's production verification owns that evidence. Failed cleanup of unpublished attempt objects still needs the documented operator recovery procedure: incomplete-multipart lifecycle rules do not remove all completed orphan objects. The [recording worker runbook](../stream/recording-background-worker.md) documents packaging, active-host, copy, alarm, capacity and cleanup checks. Do not invoke shared-data workers from a deploy preview to test these contracts.
+
+## 11. Reusing this design in another company
+
+Preserve the contracts, then substitute the providers. The minimum transferable design is one durable business database, obligations committed with their state transition, one automatic scheduler owner per job, authenticated dispatch, bounded core implementations, conditional claims, provider idempotency and independent deadline-aware health. These guarantees do not depend on Netlify, GitHub Actions, Razorpay or Stream names.
+
+| Decision to make again                           | Evidence to collect in the new product                                                                |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Synchronous slice or background/container worker | Actual object sizes, provider latency, cancellation support and measured execution envelope           |
+| Row cap, window and concurrency                  | Arrival rate, backlog age, successful throughput, provider quotas and database pool capacity          |
+| Lease policy and TTL                             | Which operations tolerate unlocked replay, renewal behavior and longest admitted work                 |
+| Retry identity and retention                     | Provider idempotency contract, duplicate delivery behavior and source expiry                          |
+| Database-owned invariant                         | Exact CHECK/unique/exclusion/trigger predicate; application conflicts it does not cover               |
+| Maintenance exemptions                           | Which ingress must keep recording external truth while normal traffic is held                         |
+| Health expectations                              | Required capabilities, calendar windows, oldest obligation deadline and independent alert delivery    |
+| Host failback                                    | Tested traffic switch, runtime pool sizing, binary-upload path, secrets and in-flight worker behavior |
+
+Changing to Vercel or a container changes the scheduler and long-running execution adapter, trusted IP headers, pool limits, payload/upload behavior, packaging and deployment procedures. It does not remove outboxes, conditional transitions or external reconciliation. Keep the required Netlify standby intact and prove the new adapter before retiring the old clock. Do not carry over another company's quotas, retention rules, money semantics or production data as defaults.
+
+A new engineer should trace one real family end to end: producer transaction → durable obligation → catalog entry → authenticated dispatch → lease/claim → provider call → conditional confirmation → execution result → capability and backlog alarm. Then reproduce a duplicate call, an unavailable lease, a provider timeout, a crash after commit and a stale-owner race using mocks or a disposable database. Shared production data is not a test fixture.
 
 ## Deprecated & Superseded Approaches
 
-**A generic outbox table and a queue worker.** Replaced by state-as-outbox (ADR 27), which keeps every obligation on the domain row it belongs to. The ADR 27 diagram still shows a Redis platform switch that was never implemented.
-
-**Redis as the cron lock.** Replaced by the `SystemJobExecution` lease after the 2026-09-21 command-budget incident. `CronLockUnavailableError` in `lib/cron/cron-lock-errors.ts` still says the lock "requires a real Redis lock"; that text is stale.
-
-**Individual per-job cron workflow files.** Sixty-seven of them once burned roughly 340 Actions runner starts a day. Consolidated into three fleet files plus the monitors.
-
-**A keep-warm pinger.** Added to fight ~28 s cold starts, then deleted once disabling Next.js entry preloading brought them to under 2 s. `__tests__/lib/next-config-preload.test.ts` actively asserts the file stays absent.
-
-**The hot-standby platform switch.** `AGENTS.md` §2.5 describes an Upstash key that mutes the ticker on a standby host, so a failover is a sub-minute key flip. **That gate does not exist in code.** If you are ever asked to perform a failback using it, the documented step is a no-op and you must change DNS instead. Treat any runbook that claims a one-step cron flip as wrong until you have grepped for it.
+- A scheduler's successful request or one shared heartbeat was treated as fleet completion. Use owned execution outcomes, capability freshness and business backlog deadlines.
+- Fail-closed lease acquisition could bypass a failed import, and completion could overwrite expired ownership. Current acquisition and completion retain those boundaries.
+- Maintenance selected an implicit cancellation interval and treated ETA as automatic recovery. Explicit admission, separate confirmed remediation and operator recovery supersede that behavior.
+- An oldest-first cap was treated as a resumable poll, and redundant Actions schedules were called a recovery guarantee. Persist fair progress and keep a single automatic owner.
+- Plain schema pushes and independently committed sidecar statements were treated as safe rollout. Read-only preflight, reader-first compatibility analysis and atomic dependent replacement are required.
+- A registry-wide recording adapter was treated as a harmless wiring deduplication. The narrow adapter remains deliberate until deployed bundle/runtime evidence supports a change.

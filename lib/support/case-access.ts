@@ -8,12 +8,13 @@ import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 
 /**
- * Personal-case categories that complain about an organization or its people;
- * organization views count them but never show who raised them.
+ * Personal-case categories that complain about an organization or its people,
+ * or report a safety risk; organization views count them but never show who raised them.
  */
 export const ORG_SENSITIVE_PERSONAL_CATEGORIES = [
   "ORG_ADMIN_DISPUTE",
   "QUALITY_COMPLAINT",
+  "SAFETY_CONCERN",
   "GRIEVANCE",
   "CONSULTANT_NO_SHOW",
   "CONSULTANT_LATE",
@@ -164,7 +165,7 @@ export async function visibleCaseWhere(viewer: {
   return (await visibleCaseAccess(viewer)).where;
 }
 
-export const ORG_FILED_CASE_TITLE = "Organization support request";
+export const ORG_FILED_CASE_TITLE = "Organization support case";
 
 export interface OrgFiledCaseSummary {
   id: string;

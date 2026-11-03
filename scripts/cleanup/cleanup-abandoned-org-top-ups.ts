@@ -13,7 +13,11 @@
  * runs in its daily window from 03:00 UTC.
  */
 
+import { startDeadline } from "@/lib/cron/run-deadline";
+import { LEAST_RECENTLY_RECONCILED } from "@/lib/payments/payouts/reconcile-cursor";
 import prisma from "../../lib/prisma";
+import type { PrismaLike } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   confirmTopUp,
@@ -22,6 +26,34 @@ import {
 import { readRazorpayOrderHolding } from "@/lib/payments/core/razorpay";
 
 const DEFAULT_GRACE_HOURS = 48; // exceeds Razorpay 24h webhook exponential retry SLA
+
+/** Pending minted top-ups created before `cutoff`; shared by the run and the ticker's idle probe. */
+function abandonedTopUpWhere(cutoff: Date): Prisma.WalletTopUpWhereInput {
+  return {
+    status: "PENDING",
+    providerPaymentId: null,
+    // A captured row whose confirm rolled back belongs to sweep-orphaned-topup-captures.
+    capturedAt: null,
+    createdAt: { lt: cutoff },
+    // Only a minted order can be proven empty; the rest never leave the table.
+    notes: { contains: "razorpay_order=order_" },
+  };
+}
+
+/** Ticker idle probe at the ticker's default grace window. */
+export async function hasAbandonedOrgTopUpWork(
+  db: PrismaLike,
+  now: Date,
+  outOfTime: () => boolean,
+): Promise<boolean> {
+  const cutoff = new Date(now.getTime() - DEFAULT_GRACE_HOURS * 60 * 60 * 1000);
+  if (outOfTime()) return true;
+  const row = await db.walletTopUp.findFirst({
+    where: abandonedTopUpWhere(cutoff),
+    select: { id: true },
+  });
+  return row !== null;
+}
 
 export interface AbandonedOrgTopUpCleanupResult {
   success: boolean;
@@ -41,6 +73,7 @@ export interface AbandonedOrgTopUpCleanupOptions {
   graceHours?: number;
   /** Oldest-first cap on the placeholders one run settles. */
   limit?: number;
+  startedAt?: number;
 }
 
 /**
@@ -92,6 +125,7 @@ async function settleOne(c: {
 async function cleanupAbandonedOrgTopUpsUnlocked(
   options: AbandonedOrgTopUpCleanupOptions = {},
 ): Promise<AbandonedOrgTopUpCleanupResult> {
+  const pastDeadline = startDeadline(options.startedAt);
   const graceHours = options.graceHours ?? DEFAULT_GRACE_HOURS;
   const cutoff = new Date(Date.now() - graceHours * 60 * 60 * 1000);
   const errors: string[] = [];
@@ -99,17 +133,9 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
 
   try {
     const candidates = await prisma.walletTopUp.findMany({
-      where: {
-        status: "PENDING",
-        providerPaymentId: null,
-        // A captured row whose confirm rolled back belongs to sweep-orphaned-topup-captures.
-        capturedAt: null,
-        createdAt: { lt: cutoff },
-        // Only a minted order can be proven empty; the rest never leave the table.
-        notes: { contains: "razorpay_order=order_" },
-      },
-      orderBy: { createdAt: "asc" },
-      take: options.limit,
+      where: abandonedTopUpWhere(cutoff),
+      orderBy: [LEAST_RECENTLY_RECONCILED, { id: "asc" }],
+      take: options.limit ?? 25,
       select: {
         id: true,
         billingAccountId: true,
@@ -120,6 +146,7 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
     });
 
     for (const c of candidates) {
+      if (pastDeadline()) break;
       try {
         const outcome = await settleOne(c);
         counts[outcome] += 1;
@@ -129,6 +156,14 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         errors.push(`${c.providerOrderId}: ${message}`);
+      } finally {
+        try {
+          await prisma.$executeRaw`UPDATE "WalletTopUp" SET "lastReconciledAt" = now() WHERE id = ${c.id}`;
+        } catch (error) {
+          errors.push(
+            `Polling cursor WalletTopUp ${c.id}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
     }
   } catch (error) {

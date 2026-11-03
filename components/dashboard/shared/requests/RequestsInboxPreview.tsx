@@ -30,6 +30,16 @@ import { requestCountLine } from "./request-count-line";
 
 const PREVIEW_ROWS = 5;
 
+/**
+ * The rows Home shows, first five. A checkout the learner is paying for is
+ * nobody's request, so it is left out; a row without the field is shown.
+ */
+export function homePreviewRows<
+  T extends { checkoutHold?: InboxRowInput["checkoutHold"] },
+>(rows: readonly T[]): T[] {
+  return rows.filter((row) => !row.checkoutHold).slice(0, PREVIEW_ROWS);
+}
+
 /** The one line under the name: the cycle words for a subscription, else when it was asked. */
 function previewLine(row: InboxRowInput, zone: string): string {
   if (row.kind === "next-cycle" && row.entitlement) {
@@ -60,6 +70,8 @@ export function RequestsInboxPreview({
     chip: null,
     sort: "priority" as const,
     page: 1,
+    after: null,
+    focus: null,
   };
   const query = useQuery({
     queryKey: inboxQueryKey(queryArgs),
@@ -121,7 +133,7 @@ export function RequestsInboxPreview({
       </div>
     );
   }
-  const rows = query.data.rows.slice(0, PREVIEW_ROWS);
+  const rows = homePreviewRows(query.data.rows);
   if (rows.length === 0) {
     return (
       <p className="p-4 text-center text-sm text-muted-foreground">

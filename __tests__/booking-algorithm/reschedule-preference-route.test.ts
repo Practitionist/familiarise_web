@@ -20,6 +20,7 @@
  *     preference on — not the appointment the row is filed against.
  */
 
+jest.mock("next/headers", () => ({ headers: async () => new Headers() }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -44,9 +45,6 @@ jest.mock("../../utils/appointmentlock", () => ({
   AppointmentBusyError: class extends Error {},
 }));
 jest.mock("../../lib/auth-server", () => ({ getSession: jest.fn() }));
-jest.mock("../../lib/activity/log-activity", () => ({
-  logActivity: jest.fn().mockResolvedValue(undefined),
-}));
 jest.mock("../../lib/novu/service", () => ({
   notifyAppointmentRescheduled: jest.fn().mockResolvedValue(undefined),
 }));
@@ -106,6 +104,7 @@ function subscriptionAppointment() {
     consultation: null,
     subscription: {
       id: "sub-1",
+      status: "APPROVED",
       subscriptionPlan: {
         title: "Test Plan",
         consultantProfileId: "cp-001",
@@ -160,6 +159,7 @@ function makeMockTx() {
         .mockResolvedValue([{ id: "slot-1" }, { id: "slot-2" }]),
     },
     rescheduleRequest: {
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn().mockImplementation(({ data }) => {
         createdData = data;
@@ -241,13 +241,22 @@ describe("reschedule route — preference without times", () => {
     expect(tryAutoConfirmProposal).not.toHaveBeenCalled();
   });
 
-  it("opens no request at all when neither times nor a preference are given", async () => {
+  it("'any time works' still opens a preference-only request, so the release can expire or be withdrawn", async () => {
     const res = await rescheduleHandler(post({}), params);
 
     expect(res.status).toBe(200);
-    // Unchanged behaviour: a bare release still writes nothing, so it cannot
-    // strand a reservation.
-    expect(mockTx.rescheduleRequest.create).not.toHaveBeenCalled();
+    expect(mockTx.rescheduleRequest.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          openForAppointmentId: "apt-1",
+          originStatus: "APPROVED",
+          preferredTimeOfDay: undefined,
+          preferredDays: undefined,
+          proposedTimes: { create: [] },
+        }),
+      }),
+    );
+    expect((await res.json()).rescheduleRequestId).toBeNull();
   });
 
   it("rejects a preference value outside the enum", async () => {

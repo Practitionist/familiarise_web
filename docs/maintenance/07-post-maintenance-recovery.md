@@ -1,229 +1,29 @@
-# Post-Maintenance Recovery
+# Post-maintenance recovery
 
-Complete these steps after ending maintenance mode. Items are ordered by priority.
+Use the ADMIN Maintenance page to end the window with a recovery audit reason (5–1000 characters). DELETE checks database/Redis health, restores non-expired discount codes from the original snapshot, and unfreezes group channels before publishing OFF. Review the response: errors or a channel backlog leave maintenance active so recovery can be retried. Each request handles at most 200 channel operations, recording `Meeting.maintenanceChannelRecoveredAt` and clearing its freeze stamp only after Stream acknowledges unfreeze. Recovery selects the exact maintenance window and includes meetings whose freeze acknowledgement was lost. If setup was partial or timed out, finish Retry Offline Setup before ending or downgrading OFFLINE. An already-ended window returns without repeating the recovery flow.
 
-## 1. End Maintenance Mode
+## Verify access and obligations
 
-- [ ] Navigate to: Dashboard > Maintenance
-- [ ] Click **"End Maintenance"**
-- [ ] Verify:
-  - [ ] Phase shows as OFF in the admin panel
-  - [ ] Maintenance banner disappears (may take up to 60s due to polling interval)
-  - [ ] Maintenance page redirects to home (polls every 30s)
+1. Confirm ordinary public access, sign-in, cookie-aware responses and the removal of the maintenance banner. Verify critical money doors without creating a real payment or payout.
+2. Check that group chat is writable and that active calls interrupted for maintenance are represented correctly. Inspect Stream failures in the recovery response rather than assuming a green page means chat recovered.
+3. Inspect the discount snapshot restore result. Codes that expired during maintenance remain inactive. A malformed snapshot is retained and reported, never deleted as if restoration succeeded.
+4. Inspect Better Stack separately: the incident request is bounded and best effort. Vendor unavailability must not hold a browser request indefinitely; a failed resolve can require a manual vendor action.
+5. Review queued Booking remediation requests and the `maintenance-booking-remediation` job history. It resumes after OFF, one booking per fifteen-minute slice. Check failed items and the corresponding refund-owed/notification outboxes. Never repeat an ad hoc raw gateway refund for an owed marker.
 
-**What happens automatically when you end maintenance**:
+## Reconciliation
 
-- Redis keys updated: `maintenance:phase` = `"OFF"` (and local Node `readMaintenancePhase` cache invalidated)
-- Prisma: `MaintenanceWindow` record updated with `endedAt` and `endedBy`
-- Stream chat channels unfrozen via `unfreezeChannelsAfterMaintenance()` (`deriveChannelsToUnfreeze()` queries `MeetingSession.endedReason = "maintenance"` within `LIVE_SESSION_WINDOW_MS`)
-- BetterStack incident auto-resolved (if one was created)
-- Novu "we're back" notification sent
+Recovery does not start an unbounded parallel reconciliation run. Use the authenticated System Jobs console or bounded cleanup HTTP routes for payment/refund status, dispute, payout status and vendor storage checks. Inspect each result before requesting the next slice. The scheduler resumes normal cadence and processes outstanding obligations independently of the recovery response.
 
-## 2. Verify Core Connectivity
+Use [the money recovery order](../finance/70-operations/03-maintenance-gate-and-recovery.md#re-driving-money-after-maintenance-ends) for dependency ordering. A calendar-window job held during maintenance may wait until its next window; review any missed window and its core bounds before requesting an authorized catch-up. A query parameter alone does not make an unbounded core safe.
 
-- [ ] **Database**: Hit `/api/health` and confirm `status: "healthy"`
+Retain the statutory follow-ups returned by recovery: inspect the GST outward register before filing, run IRP registration within its statutory window, regenerate the quarter's TDS draft when appropriate, and inspect ledger audit findings before reopening payouts. Do not submit statutory filings from a smoke test.
 
-  ```
-  curl https://your-domain.com/api/health
-  ```
+## Deployment and failback
 
-  Expected: `{ "status": "healthy", "maintenance": { "phase": "OFF" } }`
+Keep active and standby builds compatible with the same reviewed schema. Exercise restoration and rollback in an isolated environment; production execution records and vendor requests are not a test fixture. Schema generation is local only. Database schema changes and sidecar application require the established explicit production procedure.
 
-- [ ] **Redis**: Maintenance state should read as OFF
-  - This was already verified by ending maintenance, but confirm `/api/health` responds
+If the database has already closed the window but publishing OFF to Redis failed, use **Retry Recovery** in the OFF controls with an audit reason. The existing DELETE door safely republishes OFF for an already-ended window; reloading the page must not remove this recovery action.
 
-- [ ] **Auth**: Try logging in/out in an incognito window
-  - BetterAuth sessions should work normally
+## Deprecated & Superseded Approaches
 
-## 3. Check Webhook Deliveries
-
-This is the most critical post-maintenance step for financial integrity.
-
-- [ ] **Stripe**: Check for failed webhook deliveries
-  - Path: Stripe Dashboard > Developers > Webhooks > select endpoint > Recent deliveries
-  - Filter by: Status = Failed, Time = during maintenance window
-  - **Action**: For any failed deliveries, click "Resend" to retry
-  - Common failures: `payment_intent.succeeded` (most critical)
-
-- [ ] **Razorpay**: Check for failed webhook deliveries
-  - Path: Razorpay Dashboard > Webhooks > Recent Deliveries
-  - Filter by time range covering the maintenance window
-  - **Action**: Note any failed deliveries for manual reconciliation
-
-## 4. Run Critical Reconciliation Jobs
-
-Manually trigger these jobs in order. Use the admin system jobs dashboard or run directly:
-
-### Priority 1: Payment Reconciliation
-
-```bash
-# Check for payments that succeeded during maintenance but have no appointment
-npx tsx jobs/payments/reconcile-payment-status.ts
-```
-
-- [ ] Verify output: no "succeeded payments needing appointment creation" flagged
-- [ ] If flagged: these need manual appointment creation or webhook replay
-
-### Priority 2: Occurrence Availability Reconciliation
-
-```bash
-# Fix any occurrence-availability inconsistencies caused by interrupted operations
-npx tsx jobs/appointments/reconcile-occurrence-availability.ts
-```
-
-- [ ] Verify output: no double bookings detected, no orphaned tentative flags
-
-### Priority 3: Payment-Earnings Sync
-
-```bash
-# Ensure earnings records match payments
-npx tsx jobs/earnings/sync-payment-earnings.ts
-```
-
-- [ ] Verify output: no missing earnings entries created
-
-### Priority 4: Dispute Reconciliation
-
-```bash
-# Sync dispute status changes that occurred during maintenance
-curl -X POST "$APP_URL/api/cleanup/reconcile-disputes?limit=10" \
-  -H "Authorization: Bearer $CRON_SECRET"
-```
-
-The Netlify ticker also runs this job hourly at `:00`; the call above is only needed to avoid waiting for the next hour. The admin system-jobs console can run it as well.
-
-- [ ] Verify output: all dispute statuses match gateway state
-
-### Priority 5: Refund Reconciliation
-
-```bash
-# Sync any refund status changes that occurred during maintenance
-npx tsx jobs/refunds/reconcile-pending-refunds.ts
-```
-
-- [ ] Verify output: all refund statuses synced
-
-### Priority 5b: Document Storage Reconciliation
-
-```bash
-# Sync document-storage state that may have drifted during maintenance
-npx tsx jobs/cleanup/reconcile-document-storage.ts
-```
-
-- [ ] Verify output: no orphaned or missing document-storage rows flagged
-
-### Priority 6: Payout Reconciliation (if applicable)
-
-```bash
-# Only run if maintenance overlapped with payout processing (Monday 8-10 PM UTC)
-curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
-  "$APP_URL/api/cleanup/reconcile-payout-status"
-```
-
-- [ ] Verify output: all payout statuses match gateway state
-
-## 5. Verify BetterStack
-
-- [ ] **Check `/api/health` for BetterStack status**:
-
-  ```bash
-  curl https://familiarisenow.com/api/health
-  ```
-
-  Expected response now includes:
-
-  ```json
-  {
-    "status": "healthy",
-    "maintenance": { "phase": "OFF", "reason": null, "estimatedEnd": null },
-    "betterstack": {
-      "configured": true,
-      "reachable": true,
-      "monitors": [
-        { "name": "https://familiarisenow.com", "status": "up" },
-        { "name": "https://familiarisenow.com/api/health", "status": "up" }
-      ]
-    },
-    "timestamp": "..."
-  }
-  ```
-
-- [ ] **Verify the BetterStack incident was auto-resolved** (OFFLINE mode only):
-  - Path: https://uptime.betterstack.com/team/t332379/incidents
-  - The incident created when entering OFFLINE should show as "Resolved"
-  - Auto-resolution happens via `DELETE /api/admin/maintenance` calling `resolveIncident(betterstackIncidentId)`
-
-- [ ] **Verify the public status page shows "All systems operational"**:
-  - Path: https://familiarise.betteruptime.com
-  - Resolved incidents are reflected within 1-2 minutes
-
-- [ ] **If the incident was NOT auto-resolved** (the `DELETE` response body shows `betterstackIncidentId: null`):
-  - Incident creation failed when maintenance started, or was skipped (DEGRADED mode)
-  - Resolve manually: BetterStack dashboard → Incidents → find the incident → click "Resolve"
-  - Check server logs for `[BetterStack] Failed to create incident:` during the POST call
-
-## 6. Verify Notifications
-
-- [ ] Check that the "we're back" Novu notification was sent
-  - Path: Novu dashboard > Activity feed
-  - Look for the maintenance-ended notification
-
-## 7. Monitor for Errors
-
-- [ ] **Monitor application logs** for 30 minutes post-recovery
-  - Watch for: database connection errors, Prisma query failures, unexpected 500s
-  - Path: Netlify Dashboard > Deployments > Functions > Logs (or your logging provider)
-
-- [ ] **Monitor cron job executions** for the next scheduled cycle
-  - Check that the next cron job run completes successfully
-  - Path: GitHub Actions > Workflows > look for green checks
-
-- [ ] **Check error rates** in your monitoring dashboard
-  - Compare error rates to pre-maintenance baseline
-  - Elevated errors may indicate schema compatibility issues
-
-## 8. Verify Cron Job Resume
-
-- [ ] Check that cron jobs resume on their next schedule (phase-staggered `netlify/functions/cron-tick.mts` every 5 min + GitHub Actions backstops):
-  - Every 5 min: `drain-notification-outbox`, `dispatch-outbound-webhooks`, `reconcile-orphaned-confirmations`, `sweep-stuck-webhook-events`
-  - Every 15 min (phase-staggered across `:00`, `:05`, `:10`): `cleanup-abandoned-payments`, `reconcile-pending-refunds`, `retry-failed-emails`, `retry-auto-refunds`
-  - Every 30 min: `reconcile-payment-status`
-  - Hourly: Several jobs (see [Cron Jobs Reference](./04-cron-jobs-reference.md))
-  - Verify `/api/health` reports `cron.stale: false`
-
-## Recovery Troubleshooting
-
-### Maintenance mode stuck (can't end)
-
-1. Check Redis directly: Is `maintenance:phase` stuck?
-2. Try the API directly:
-   ```
-   curl -X DELETE https://your-domain.com/api/admin/maintenance \
-     -H "Cookie: <your-auth-cookie>"
-   ```
-3. If Redis is unreachable: The fail-open design means the site is already serving traffic. Fix Redis connection separately.
-
-### Webhooks failed and can't be retried
-
-1. Check the `WebhookEvent` table for failed events:
-   ```sql
-   SELECT * FROM "WebhookEvent"
-   WHERE processed = false
-   AND "createdAt" > NOW() - INTERVAL '24 hours'
-   ORDER BY "createdAt" DESC;
-   ```
-2. For Stripe: Use the dashboard to manually resend specific events
-3. For other gateways: May need to manually reconcile using the reconciliation jobs
-
-### Appointments created with wrong data
-
-1. Run `reconcile-occurrence-availability` to fix slot state
-2. Check recently created appointments against payment records
-3. Contact affected users if their appointment details are incorrect
-
-### Users still see maintenance page
-
-1. Check that Redis `maintenance:phase` is set to `"OFF"`
-2. The maintenance page polls every 30 seconds -- wait for the next poll
-3. Users with cached pages may need a hard refresh (Ctrl+Shift+R)
-4. Check that the `/api/health` endpoint returns `phase: "OFF"`
+Recovery used to publish OFF before unfreezing channels and then launch six reconciliation jobs in parallel. The current control path verifies recovery first, reports failures, and leaves reconciliation to bounded, independently observable jobs. ETA expiration is no longer an alternative recovery mechanism.

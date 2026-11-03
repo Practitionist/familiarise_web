@@ -4,8 +4,8 @@
  * inline (~80 sites, see PR #1062). Extracted once so that shape lives here.
  */
 
-import * as Sentry from "@sentry/nextjs";
-import type { SeverityLevel } from "@sentry/nextjs";
+import * as Sentry from "@sentry/core";
+import type { SeverityLevel } from "@sentry/core";
 import { isExpectedError } from "@/lib/observability/expected";
 import {
   isDeadlock,

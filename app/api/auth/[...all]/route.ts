@@ -11,23 +11,27 @@ import { sessionLookupFailedResponse } from "@/lib/auth/session-lookup-error";
 
 const handler = toNextJsHandler(auth);
 
+/** The response with every session cookie expired. */
+function withExpiredCookies(response: Response): Response {
+  const headers = new Headers(response.headers);
+  expireSessionCookies(headers);
+  return new Response(response.body, { status: response.status, headers });
+}
+
 /**
- * `/get-session` answers `200 null` for a failed lookup as well as a missing
- * session (the customSession plugin swallows the error). With a validly
- * signed cookie whose row is live, that null is a failure: answer 503 so the
- * BetterAuth client keeps its last session instead of rendering signed out.
- * A cookie whose session is gone is expired so later requests stop carrying it.
+ * A failed `/get-session` lookup (a 500, or `200 null` while the cookie's row
+ * is live) answers 503 so the BetterAuth client keeps its last session. An
+ * ended session (a 401 from the refresh hook, or a gone row) has its cookie expired.
  */
 async function withLookupFailure(
   request: Request,
   response: Response,
 ): Promise<Response> {
-  if (
-    response.status !== 200 ||
-    !new URL(request.url).pathname.endsWith("/get-session")
-  ) {
-    return response;
-  }
+  if (!new URL(request.url).pathname.endsWith("/get-session")) return response;
+  // customSession drops the plugin's cookie deletion when the refresh hook ends the session.
+  if (response.status === 401) return withExpiredCookies(response);
+  if (response.status === 500) return sessionLookupFailedResponse();
+  if (response.status !== 200) return response;
   if ((await response.clone().text()).trim() !== "null") return response;
   const cookieHeader = request.headers.get("cookie");
   const token = verifiedSessionToken((name) =>
@@ -35,11 +39,7 @@ async function withLookupFailure(
   );
   if (!token) return response;
   if ((await classifyMissingSession(token)) === "none") {
-    // An idle or capped session ends inside the plugin, whose cookie deletion
-    // customSession drops; clear the dead cookie here instead.
-    const headers = new Headers(response.headers);
-    expireSessionCookies(headers);
-    return new Response(response.body, { status: response.status, headers });
+    return withExpiredCookies(response);
   }
   return sessionLookupFailedResponse();
 }

@@ -54,6 +54,7 @@ jest.mock("../../lib/stream/health", () => ({
 
 import * as Sentry from "@sentry/nextjs";
 
+import { getMaintenanceState } from "../../lib/maintenance";
 import { GET } from "../../app/api/health/route";
 import prisma from "@/lib/prisma";
 import redis, { isMockRedis, isRedisCircuitOpen } from "@/lib/redis";
@@ -93,7 +94,8 @@ describe("GET /api/health", () => {
     expect(res.status).toBe(200);
     expect(body.status).toBe("healthy");
     expect(body.database).toBe("connected");
-    expect(body.platform.eventLoopStallMs).toBeLessThan(50);
+    // No wall-clock upper bound: the route's own verdict is the Sentry warn below.
+    expect(Number.isFinite(body.platform.eventLoopStallMs)).toBe(true);
     expect(body.platform.databaseProbeRetried).toBe(false);
     expect(typeof body.platform.databaseLatencyMs).toBe("number");
     expect(typeof body.platform.processUptimeMs).toBe("number");
@@ -243,5 +245,16 @@ describe("GET /api/health", () => {
         stale: true,
       });
     });
+  });
+
+  it("degrades instead of throwing when the maintenance read fails", async () => {
+    (getMaintenanceState as jest.Mock).mockRejectedValueOnce(
+      new Error("column does not exist"),
+    );
+    const res = await GET(request());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.status).toBe("degraded");
+    expect(body.maintenance.phase).toBe("OFF");
   });
 });

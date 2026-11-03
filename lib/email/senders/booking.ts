@@ -48,8 +48,10 @@ import {
   money,
   prepareSpecEmails,
   stageSpecGuarded,
+  stageSpecOncePerRecipient,
   whenText,
   type PreparedRecipientEmails,
+  type RecipientClaim,
   type RecipientEmailSpec,
 } from "./shared";
 
@@ -191,6 +193,10 @@ export interface AppointmentRescheduledEmailArgs {
   newStartsAt?: Date | null;
   proposedBy?: string;
   respondBy?: Date | null;
+  /** MOVED by a host: the free full-refund leave ends then. */
+  leaveBy?: Date | null;
+  /** MOVED: these recipients already hold another session at the new time. */
+  clash?: boolean;
   dashboardUrl: string;
 }
 
@@ -230,6 +236,11 @@ function buildRescheduledEmail(args: AppointmentRescheduledEmailArgs): {
             args.outcome === "PROPOSED" && args.respondBy
               ? whenText(args.respondBy, r.zone)
               : undefined,
+          leaveByText:
+            args.outcome === "MOVED" && args.leaveBy
+              ? whenText(args.leaveBy, r.zone)
+              : undefined,
+          clash: args.outcome === "MOVED" && args.clash === true,
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
@@ -540,8 +551,13 @@ function buildTrialScheduledEmail(args: TrialScheduledEmailArgs): {
   };
 }
 
-export const stageTrialScheduledEmail =
-  defineLifecycleStager<TrialScheduledEmailArgs>(buildTrialScheduledEmail);
+/** Renders the scheduled notice outside any transaction; stage it with `stagePreparedEmails`. */
+export function prepareTrialScheduledEmail(
+  args: TrialScheduledEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildTrialScheduledEmail(args);
+  return prepareSpecEmails(spec, userIds);
+}
 
 // ── Window opened ───────────────────────────────────────────────────────────
 
@@ -901,3 +917,12 @@ export const stageDocumentAndRecordingEmail =
   defineLifecycleStager<DocumentAndRecordingEmailArgs>(
     buildDocumentAndRecordingEmail,
   );
+
+/** Stages the notice at most once per recipient under `claim`. */
+export function stageDocumentAndRecordingEmailOnce(
+  args: DocumentAndRecordingEmailArgs,
+  claim: RecipientClaim,
+): Promise<StagedRecipientEmail[]> {
+  const { userIds, spec } = buildDocumentAndRecordingEmail(args);
+  return stageSpecOncePerRecipient(spec, userIds, claim);
+}

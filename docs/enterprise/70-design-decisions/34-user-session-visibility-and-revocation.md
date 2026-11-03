@@ -12,7 +12,7 @@ last-reviewed: 2026-10-10
 
 A session is a Postgres `Session` row plus the httpOnly
 `__Secure-better-auth.session_token` cookie that carries its signed token
-(BetterAuth **1.7.7**). The cookie cache is permanently off, so every server
+(BetterAuth **1.7.14**). The cookie cache is permanently off, so every server
 read loads the row and its user.
 
 The forces:
@@ -80,13 +80,15 @@ stateDiagram-v2
 
 ### 2. Tri-state lookup
 
-BetterAuth's `customSession` plugin swallows lookup errors and answers `null`,
-which looks the same as "signed out". The app separates the two.
+BetterAuth's `customSession` plugin throws on a failed lookup and answers 401
+when the refresh hook ends the session. The app separates "failed" from
+"signed out".
 
 - `getSession({ allowUnenrolledOperator? })` in `lib/auth-server.ts` returns the
   session or `null`, and **throws** `SessionLookupFailedError`
   (`lib/auth/session-lookup-error.ts`) when the read throws, or when it answered
   `null` but the browser holds a validly signed cookie whose row is still live.
+  A 401 from the refresh hook ending the session reads as `null`.
   One indexed row read (`classifyMissingSession` in
   `lib/auth/session-cookie.ts`) settles that case. The error is a 503 `Refusal`
   with code `SESSION_LOOKUP_FAILED`, marked expected so it never pages.
@@ -102,9 +104,10 @@ which looks the same as "signed out". The app separates the two.
   `BETTER_AUTH_SECRETS` entry when rotation is configured, else
   `BETTER_AUTH_SECRET`.
 - `/api/auth/get-session` (`app/api/auth/[...all]/route.ts`) applies the same
-  check. When the plugin answers `200 null` but the cookie is validly signed and
-  its row is live (or the row read fails), the route answers 503 with
-  `Retry-After: 2`. The BetterAuth client keeps its last session on any
+  check. When the plugin answers 500, or `200 null` while the cookie is validly
+  signed and its row is live (or the row read fails), the route answers 503
+  with `Retry-After: 2`. A 401 from the refresh hook gets its cookies expired,
+  because `customSession` drops BetterAuth's own deletion on that path. The BetterAuth client keeps its last session on any
   non-401, so open tabs do not render signed out during a blip.
 
 ### 3. Device list and per-device revoke
@@ -130,14 +133,17 @@ which looks the same as "signed out". The app separates the two.
 
 Every session delete goes through `lib/auth/session-revoke.ts`:
 
-| Function                   | Caller                                                       |
-| -------------------------- | ------------------------------------------------------------ |
-| `revokeAllUserSessions`    | Ban and suspend, account deletion, erasure, 2FA enrolment    |
-| `revokeUserSessionsExcept` | "Sign out other devices"                                     |
-| `revokeSessionById`        | Device list, staff revoke, the lifetime hook on refresh      |
-| `revokeSessionsForUsers`   | The sweep when an org turns SSO enforcement on               |
-| `revokeSessionByToken`     | `supersededSessionRevocation`: signing in over a live cookie |
+| Function                    | Caller                                                       |
+| --------------------------- | ------------------------------------------------------------ |
+| `revokeAllUserSessions`     | Ban and suspend, account deletion, erasure, 2FA enrolment    |
+| `revokeUserSessionsExcept`  | "Sign out other devices"                                     |
+| `revokeSessionById`         | Device list, staff revoke, the lifetime hook on refresh      |
+| `revokeEmailDomainSessions` | The SSO enforcement sweeps in `lib/sso/session-sweeps.ts`    |
+| `revokeSessionByToken`      | `supersededSessionRevocation`: signing in over a live cookie |
 
+- Each returns `{ revoked, ended }`. The caller stamps `ended` into the CERT-In
+  access log with `stampSessionEnds` once its write commits, so a log failure
+  never rolls back a ban or an erasure.
 - Direct Prisma is the right primitive. BetterAuth's admin `revokeUserSessions`
   checks the calling admin's session and cannot join a transaction, and
   system-initiated revokes have neither.
@@ -243,7 +249,7 @@ load, and reloads the tab on 409 `IDENTITY_CHANGED`.
 ### 8. Expired-row cleanup
 
 `lib/auth/cleanup-auth-tokens.ts` is the `auth-tokens` job in
-`lib/cron/cleanup-registry.ts`. `cron-daily.yml` runs it through
+`lib/cron/cleanup-registry.ts`. The Netlify ticker runs it daily at 03:00 UTC through
 `POST /api/cleanup/auth-tokens`. There is no per-user session cap.
 
 ## Alternatives considered
@@ -259,7 +265,7 @@ load, and reloads the tab on 409 `IDENTITY_CHANGED`.
   event. Short absolute caps apply only where the blast radius is large
   (operators) or where an IdP owns deprovisioning (enforced SSO).
 - **Skipping the per-read write for capped sessions.** Not possible: BetterAuth
-  1.7.7 has no hook to skip a refresh that is due.
+  1.7.14 has no hook to skip a refresh that is due.
 - **Push-style revocation (Redis signal, polling tick).** Rejected: always-on
   traffic to beat "next request or next focus" by seconds.
 - **BetterAuth `multiSession` and a per-user session cap.** Not installed. The

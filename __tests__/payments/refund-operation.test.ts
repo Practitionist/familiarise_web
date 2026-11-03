@@ -76,7 +76,7 @@ function txStub() {
   return {
     // #812 — the refund cascade now posts a balanced ledger txn inside the tx and
     // the ledger BLOCKS on failure, so the stub must satisfy postLedgerTxn:
-    // idempotency miss → upsert accounts → create txn → upsert balance snapshot.
+    // idempotency miss → create accounts → create txn → upsert balance snapshot.
     // These are no-ops; the ledger journal itself is covered by ledger-specific
     // tests, not this cascade test.
     ledgerTransaction: {
@@ -84,7 +84,7 @@ function txStub() {
       create: jest.fn(async () => ({ id: stableUuid() })),
     },
     ledgerAccount: {
-      upsert: jest.fn(async ({ where }: any) => ({ id: where.id })),
+      createMany: jest.fn(async () => ({ count: 0 })),
     },
     systemEvent: { create: jest.fn(async () => ({})) },
     // Referral-credit restoration now runs inside Phase 3b (it closes the #B20
@@ -482,6 +482,9 @@ function projectSelect(row: Row, select: Record<string, unknown>): Row {
 // Mock the prisma module — same client returned for both top-level + tx.
 // ---------------------------------------------------------------------------
 
+jest.mock("../../lib/payments/ledger/refund-reversal-basis", () =>
+  jest.requireActual("../fixtures/no-refund-reversal-basis"),
+);
 jest.mock("../../lib/prisma", () => {
   const stub = txStub();
   return {
@@ -888,7 +891,7 @@ describe("refundPayment — multi-collaborator refund balances the ledger (#813 
   // balanced journal). We inject the failure at postLedgerTxn's create call.
   it("rolls back the entire cascade when the ledger posting throws (atomicity invariant)", async () => {
     seedMultiCollaborator();
-    // postLedgerTxn: findUnique (miss) → ledgerAccount.upsert → ledgerTransaction.create.
+    // postLedgerTxn: findUnique (miss) → ledgerAccount.createMany → ledgerTransaction.create.
     // Fail the create exactly once → the cascade's catch re-throws → tx rolls back.
     (tx.ledgerTransaction.create as jest.Mock).mockRejectedValueOnce(
       new Error("simulated ledger write failure"),

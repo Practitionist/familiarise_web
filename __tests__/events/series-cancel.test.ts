@@ -55,6 +55,9 @@ jest.mock("../../lib/prisma", () => {
       updateMany: jest.fn(async () => ({ count: 1 })),
     },
     dispute: { findMany: jest.fn(async () => []) },
+    appointmentParticipant: {
+      findMany: jest.fn(async () => [{ userId: "u-a", paymentId: "pay-a" }]),
+    },
     $executeRaw: (...a: unknown[]) => mockExecuteRaw(...(a as [])),
     $transaction: (fn: (tx: unknown) => unknown) => fn(db),
   };
@@ -69,6 +72,7 @@ const ledger = {
   heldCount: 8,
   unitPaise: BigInt(10_000),
   deliveredHeld: 3,
+  inProgressHeld: 0,
   remaining: [],
   neverScheduled: 5,
 };

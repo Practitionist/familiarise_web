@@ -5,9 +5,13 @@ import { DashboardContent } from "@/components/dashboard/PageScaffold";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PlannerSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { OfferingEditorContainer } from "@/components/offerings/editor/OfferingEditorContainer";
+import { DigitalProductEditorContainer } from "@/components/offerings/editor/DigitalProductEditorContainer";
 import { useOfferingEvent } from "@/components/offerings/editor/load-offering";
 import { OFFERING_MANIFESTS } from "@/components/offerings/editor/manifests";
-import type { OfferingType } from "@/components/offerings/editor/manifest";
+import type {
+  EditorOfferingType,
+  OfferingType,
+} from "@/components/offerings/editor/manifest";
 
 /**
  * Authoring an offering is a page, not a dialog. `?from=<planId>` is the
@@ -17,10 +21,26 @@ import type { OfferingType } from "@/components/offerings/editor/manifest";
 export default function NewOfferingPage() {
   const params = useParams();
   const consultantId = params.consultantId as string;
-  const type = params.type as OfferingType;
-  const fromId = useSearchParams().get("from");
+  const type = params.type as EditorOfferingType;
 
+  if (type === "digital-product") {
+    return (
+      <DashboardContent className="content-flush-bottom flex flex-1 flex-col">
+        <DashboardErrorBoundary>
+          <DigitalProductEditorContainer consultantId={consultantId} />
+        </DashboardErrorBoundary>
+      </DashboardContent>
+    );
+  }
   if (!OFFERING_MANIFESTS[type]) notFound();
+  return <NewPlanOffering consultantId={consultantId} type={type} />;
+}
+
+function NewPlanOffering({
+  consultantId,
+  type,
+}: Readonly<{ consultantId: string; type: OfferingType }>) {
+  const fromId = useSearchParams().get("from");
 
   const source = useOfferingEvent(type, fromId);
 

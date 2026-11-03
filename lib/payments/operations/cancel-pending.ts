@@ -11,6 +11,7 @@ import {
 import { Prisma, type PaymentGateway } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { returnDiscountUse } from "@/lib/payments/checkout/discount-use";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import {
   transitionConsultationRequest,
@@ -177,6 +178,7 @@ export async function cancelPendingCheckout(args: {
         // Referral credits consumed at checkout go back to the user —
         // same step the abandoned-payments cron performs.
         await reverseCreditsForPayment(payment.id, tx);
+        await returnDiscountUse(tx, payment.id);
 
         // #1003 — and so does the org's program engagement. Checkout debits
         // BookingUtilization inside the booking transaction, BEFORE capture, so

@@ -58,12 +58,14 @@ import {
   reverseCreditsForPayment,
 } from "@/lib/referrals/service";
 import { seatLedger } from "@/lib/booking/class-series";
+import { sessionsTotalOf } from "@/lib/booking/entitlement";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
+import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+import { refundReversalBasis } from "@/lib/payments/ledger/refund-reversal-basis";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
 import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
-import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   attemptTrigger,
   notifyRefundProcessed,
@@ -81,7 +83,7 @@ import {
   attemptStaged as attemptStagedEmails,
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
-import { applyReversal, postPayoutClawback } from "./reversal-engine";
+import { applyReversal, clawBackCompletedOrgPayout } from "./reversal-engine";
 import {
   accumulatePaidConsultantClawback,
   applyPaidConsultantClawbacks,
@@ -93,6 +95,13 @@ import {
   RefundValidationError,
   refundPayment,
 } from "./refund";
+// Late-bound cycle: refund-owed drives its markers through this module.
+import {
+  claimOwedMarker,
+  settleOwedByHand,
+  type HandSettledOwed,
+  type OwedMarkerInput,
+} from "./refund-owed";
 
 import {
   applyCappedEarningReversal,
@@ -169,23 +178,27 @@ export type BookingRefundResult = {
   rail: FundingRail;
   /** Present when the gateway returned a settlement status ("SUCCEEDED" | "PENDING"). */
   status?: "SUCCEEDED" | "PENDING";
+  /** The owed refund this hand refund settled and cleared. */
+  settledOwed?: HandSettledOwed;
 };
 
-export async function refundBookingPayment(input: {
-  paymentId: string;
-  /** Defaults to the full remaining refundable balance. */
-  amountPaise?: number;
-  reason: string;
-  initiatedByUserId?: string | null;
-  /** #1780 — one refund per key on every rail; a repeat returns the first. */
-  dedupeKey?: string;
-  supportRecommendationId?: string;
-  /**
-   * #1780 row 4 — a per-session refund (a missed class session) leaves the
-   * seat live; every other refund marks the funded seat REFUNDED.
-   */
-  keepSeat?: boolean;
-}): Promise<BookingRefundResult> {
+export async function refundBookingPayment(
+  input: {
+    paymentId: string;
+    /** Defaults to the full remaining refundable balance. */
+    amountPaise?: number;
+    reason: string;
+    initiatedByUserId?: string | null;
+    /** #1780 — one refund per key on every rail; a repeat returns the first. */
+    dedupeKey?: string;
+    supportRecommendationId?: string;
+    /**
+     * #1780 row 4 — a per-session refund (a missed class session) leaves the
+     * seat live; every other refund marks the funded seat REFUNDED.
+     */
+    keepSeat?: boolean;
+  } & OwedMarkerInput,
+): Promise<BookingRefundResult> {
   // #781 §B — soft-deleted financial rows are retired; never refund them.
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
@@ -221,6 +234,7 @@ export async function refundBookingPayment(input: {
       amountRefundedPaise: r.amountRefundedPaise,
       rail: "GATEWAY",
       ...(r.status ? { status: r.status } : {}),
+      ...(r.settledOwed ? { settledOwed: r.settledOwed } : {}),
     };
   }
 
@@ -274,13 +288,15 @@ async function withDedupe(
  * idempotency claim — a second cancellation of the same booking restores
  * nothing twice.
  */
-async function refundFreeCreditPayment(input: {
-  paymentId: string;
-  reason: string;
-  initiatedByUserId?: string | null;
-  dedupeKey?: string;
-  supportRecommendationId?: string;
-}): Promise<BookingRefundResult> {
+async function refundFreeCreditPayment(
+  input: {
+    paymentId: string;
+    reason: string;
+    initiatedByUserId?: string | null;
+    dedupeKey?: string;
+    supportRecommendationId?: string;
+  } & OwedMarkerInput,
+): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
     select: {
@@ -323,6 +339,9 @@ async function refundFreeCreditPayment(input: {
             "ALREADY_FULLY_REFUNDED",
           );
         }
+        const settledOwed = await claimOwedMarker(tx, payment.id, input, {
+          kind: "whole",
+        });
 
         const refundRow = await tx.refund.create({
           data: {
@@ -344,6 +363,7 @@ async function refundFreeCreditPayment(input: {
             metadata: {
               initiatedByUserId: input.initiatedByUserId ?? null,
               source: "free-credit",
+              ...(settledOwed ? { settledOwed } : {}),
             } as Prisma.InputJsonValue,
           },
         });
@@ -384,6 +404,7 @@ async function refundFreeCreditPayment(input: {
           refundId: refundRow.id,
           amountRefundedPaise: 0,
           rail: "CREDITS" as const,
+          ...(settledOwed ? { settledOwed } : {}),
         };
       },
       {
@@ -398,14 +419,14 @@ async function refundFreeCreditPayment(input: {
 }
 
 /**
- * #1771 K-5 — return N sessions of a credit-funded class seat. The credits
- * rail restores whole or not at all, so an ops partial return is its own door:
- * N × the seat's credit unit (capped at what is still consumed), a ₹0 Refund
- * row under the caller's key, and the booking journal reversed pro rata. The
- * seat stays live; a later whole restoration is refused (the row exists), so
- * further returns come back through this door.
+ * #1771 K-5 — return N sessions of a credit-funded class seat or subscription.
+ * The credits rail restores whole or not at all, so an ops partial return is
+ * its own door: N × the booking's credit unit (capped at what is still
+ * consumed), a ₹0 Refund row under the caller's key, and the booking journal
+ * reversed pro rata, so delivered sessions keep their earnings. A later whole
+ * restoration is refused (the row exists); further returns come back here.
  */
-export async function restoreClassSeatCredits(input: {
+export async function restoreSessionCredits(input: {
   paymentId: string;
   sessions: number;
   reason: string;
@@ -430,25 +451,32 @@ export async function restoreClassSeatCredits(input: {
       paymentIntent: true,
       createdAt: true,
       appointmentId: true,
-      appointment: { select: { classId: true } },
+      appointment: { select: { classId: true, subscriptionId: true } },
     },
   });
-  if (!payment?.appointmentId || !payment.appointment?.classId) {
+  if (
+    !payment?.appointmentId ||
+    (!payment.appointment?.classId && !payment.appointment?.subscriptionId)
+  ) {
     throw new RefundValidationError(
-      `Payment ${input.paymentId} is not a class seat`,
-      "NOT_A_CLASS_SEAT",
+      "This payment is not for a class seat or a subscription, so it has no session credits to restore.",
+      "NOT_SESSION_CREDIT",
+      { paymentId: input.paymentId },
     );
   }
+  const isSubscription = !payment.appointment.classId;
   if (!isFreeCreditIntent(payment.paymentIntent)) {
     throw new RefundValidationError(
-      `Payment ${input.paymentId} is not credit-funded; refund an amount instead`,
+      "This payment was not made with credits. Refund an amount instead.",
       "NOT_CREDIT_FUNDED",
+      { paymentId: input.paymentId },
     );
   }
   if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
     throw new RefundValidationError(
-      `Payment ${input.paymentId} is not SUCCEEDED; cannot restore`,
+      "This payment was never completed, so there is nothing to restore.",
       "PAYMENT_NOT_SUCCEEDED",
+      { paymentId: input.paymentId, paymentStatus: payment.paymentStatus },
     );
   }
   const appointmentId = payment.appointmentId;
@@ -475,28 +503,14 @@ export async function restoreClassSeatCredits(input: {
               "ALREADY_FULLY_REFUNDED",
             );
           }
-          const seat = await tx.appointmentParticipant.findFirst({
-            where: { paymentId: payment.id },
-            select: { createdAt: true, status: true, sessionsPurchased: true },
-          });
-          const joinedAt =
-            seat && seat.createdAt > payment.createdAt
-              ? seat.createdAt
-              : payment.createdAt;
-          const ledger = await seatLedger(
-            tx,
-            {
-              appointmentId,
-              createdAt: joinedAt,
-              sessionsPurchased: seat?.sessionsPurchased,
-            },
-            creditValue,
-          );
-          const seatLive =
-            !!seat && !["CANCELLED", "REFUNDED"].includes(seat.status);
-          const eligible = seatLive
-            ? await missedUnmadeSessions(tx, appointmentId, joinedAt)
-            : Math.max(0, ledger.heldCount - ledger.deliveredHeld);
+          const { ledger, eligible, seatLive } = isSubscription
+            ? await subscriptionCreditBounds(tx, appointmentId, creditValue)
+            : await classSeatCreditBounds(
+                tx,
+                payment,
+                appointmentId,
+                creditValue,
+              );
           assertReturnable(payment.id, ledger, input.sessions, {
             creditValue,
             stillUsed,
@@ -533,6 +547,10 @@ export async function restoreClassSeatCredits(input: {
               "CREDIT_EXPIRED",
             );
           }
+          // Only operators return session credits, so this settles the owed refund by hand.
+          const settledOwed = await settleOwedByHand(tx, payment.id, {
+            kind: restoredPaise >= stillUsed ? "whole" : "credits-part",
+          });
           // Kept on the row, so a keyed replay answers the real amount.
           await tx.refund.update({
             where: { id: refundRow.id },
@@ -542,6 +560,7 @@ export async function restoreClassSeatCredits(input: {
                 source: "free-credit-partial",
                 sessions: input.sessions,
                 restoredPaise,
+                ...(settledOwed ? { settledOwed } : {}),
               } as Prisma.InputJsonValue,
             },
           });
@@ -552,12 +571,22 @@ export async function restoreClassSeatCredits(input: {
             initiatedByUserId: input.initiatedByUserId,
             reason: input.reason,
             share: { num: restoredPaise, den: creditValue },
+            completes: restoredPaise >= stillUsed,
           });
+          // An ended plan's tranches waited unheld for this return; what the
+          // reversal left of them starts its hold in the same commit.
+          if (isSubscription && !seatLive) {
+            await stampTranchesOnCancel(tx, {
+              paymentId: payment.id,
+              now: new Date(),
+            });
+          }
           notice = await stageRefundNotice(tx, payment, restoredPaise);
           return {
             refundId: refundRow.id,
             amountRefundedPaise: 0,
             rail: "CREDITS" as const,
+            ...(settledOwed ? { settledOwed } : {}),
           };
         },
         {
@@ -574,6 +603,75 @@ export async function restoreClassSeatCredits(input: {
   }
   await attemptRefundNotice(notice);
   return { ...result, restoredPaise };
+}
+
+/** A class seat: its own unit, and what it may get back live or released. */
+async function classSeatCreditBounds(
+  tx: Tx,
+  payment: { id: string; createdAt: Date },
+  appointmentId: string,
+  creditValue: number,
+) {
+  const seat = await tx.appointmentParticipant.findFirst({
+    where: { paymentId: payment.id },
+    select: { createdAt: true, status: true, sessionsPurchased: true },
+  });
+  const joinedAt =
+    seat && seat.createdAt > payment.createdAt
+      ? seat.createdAt
+      : payment.createdAt;
+  const ledger = await seatLedger(
+    tx,
+    {
+      appointmentId,
+      createdAt: joinedAt,
+      sessionsPurchased: seat?.sessionsPurchased,
+    },
+    creditValue,
+  );
+  const seatLive = !!seat && !["CANCELLED", "REFUNDED"].includes(seat.status);
+  const eligible = seatLive
+    ? await missedUnmadeSessions(tx, appointmentId, joinedAt)
+    : Math.max(0, ledger.heldCount - ledger.deliveredHeld);
+  return { ledger, eligible, seatLive };
+}
+
+/**
+ * A subscription: the unit is the credit over the plan's sessions, and only a
+ * plan that ended (cancelled or run out) gets its undelivered sessions back.
+ */
+async function subscriptionCreditBounds(
+  tx: Tx,
+  appointmentId: string,
+  creditValue: number,
+) {
+  const row = await tx.appointment.findUnique({
+    where: { id: appointmentId },
+    select: {
+      subscription: {
+        select: {
+          status: true,
+          sessionsTotal: true,
+          subscriptionPlan: { select: { totalSessions: true } },
+        },
+      },
+    },
+  });
+  const delivered = await tx.appointmentOccurrence.count({
+    where: {
+      appointmentId,
+      deletedAt: null,
+      completionStatus: { in: ["COMPLETED", "UNVERIFIED"] },
+    },
+  });
+  const total = row?.subscription ? sessionsTotalOf(row.subscription) : 0;
+  const status = row?.subscription?.status;
+  const seatLive = status !== "CANCELLED" && status !== "COMPLETED";
+  return {
+    ledger: { unitPaise: BigInt(creditValue) / BigInt(Math.max(total, 1)) },
+    eligible: seatLive ? 0 : Math.max(0, total - delivered),
+    seatLive,
+  };
 }
 
 async function restoredOn(refundId: string): Promise<number> {
@@ -695,6 +793,8 @@ async function reverseFreeCreditSettlement(
     reason: string;
     /** #1771 K-5 — reverse only num/den of the booking (a partial credit return). */
     share?: { num: number; den: number };
+    /** This return exhausts the credit, so it takes the DISCOUNT's exact remainder. */
+    completes?: boolean;
   },
 ): Promise<void> {
   const share = input.share;
@@ -735,7 +835,13 @@ async function reverseFreeCreditSettlement(
           refundedAmountPaise: true,
           status: true,
           orgPayoutId: true,
-          orgPayout: { select: { status: true, clawbackInitiatedAt: true } },
+          orgPayout: {
+            select: {
+              status: true,
+              clawbackInitiatedAt: true,
+              netPayoutPaise: true,
+            },
+          },
         },
       },
     },
@@ -843,41 +949,17 @@ async function reverseFreeCreditSettlement(
       orgEarn.orgPayout?.status === "COMPLETED" &&
       orgApplied > 0
     ) {
-      await tx.organizationPayout.update({
-        where: { id: orgEarn.orgPayoutId },
-        data: {
-          clawbackAmountPaise: { increment: orgApplied },
-          clawbackInitiatedAt: orgEarn.orgPayout.clawbackInitiatedAt
-            ? undefined
-            : new Date(),
-        },
-      });
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgEarn.organizationId,
-          actorMembershipId: null,
-          category: "PAYOUT",
-          action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Credit-funded cancellation clawback: ${orgApplied} paise from payout ${orgEarn.orgPayoutId}`,
-          details: {
-            paymentId: input.paymentId,
-            refundId: input.refundId,
-            orgEarningsId: orgEarn.id,
-            orgPayoutId: orgEarn.orgPayoutId,
-            amountPaise: orgApplied,
-            initiatedByUserId: input.initiatedByUserId,
-          } as Prisma.InputJsonValue,
-        },
-      });
-      // #1582 C-P1-02c — journal the clawback in the same tx as the counter.
-      // Gated on the APPLIED figure, never the request: a zero (refused CAS, or
-      // a cap that leaves nothing) must post NOTHING, because `postLedgerTxn`
-      // THROWS on a non-positive amount.
-      await postPayoutClawback(tx, {
-        refundId: input.refundId,
-        payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgApplied,
+      // Gated on the APPLIED figure: a zero must post nothing, as `postLedgerTxn` throws on it.
+      await clawBackCompletedOrgPayout(tx, {
+        orgPayout: { ...orgEarn.orgPayout, id: orgEarn.orgPayoutId },
         organizationId: orgEarn.organizationId,
+        orgEarningsId: orgEarn.id,
+        paymentId: input.paymentId,
+        refundId: input.refundId,
+        grossPaise: orgApplied,
+        amountPaise: orgApplied,
+        label: "Credit-funded cancellation clawback",
+        initiatedByUserId: input.initiatedByUserId,
       });
     }
   }
@@ -892,6 +974,20 @@ async function reverseFreeCreditSettlement(
       direction: "CREDIT",
       amountPaise: promoTotal,
     });
+    // A coupon on a credit-funded booking was booked to DISCOUNT; it returns with the credits.
+    const { discountBackPaise } = await refundReversalBasis(
+      tx,
+      input.paymentId,
+      part,
+      input.completes ?? !share,
+    );
+    if (discountBackPaise > 0) {
+      credits.push({
+        account: { kind: "DISCOUNT" },
+        direction: "CREDIT",
+        amountPaise: discountBackPaise,
+      });
+    }
   } else if (discountBack > 0) {
     credits.push({
       account: { kind: "DISCOUNT" },
@@ -1013,15 +1109,17 @@ async function reverseFreeCreditSettlement(
  * race-safety. There is no gateway leg to wait on, so unlike `refundPayment`
  * this settles in a single phase.
  */
-async function refundInternalFundedPayment(input: {
-  paymentId: string;
-  amountPaise?: number;
-  reason: string;
-  initiatedByUserId?: string | null;
-  dedupeKey?: string;
-  supportRecommendationId?: string;
-  keepSeat?: boolean;
-}): Promise<BookingRefundResult> {
+async function refundInternalFundedPayment(
+  input: {
+    paymentId: string;
+    amountPaise?: number;
+    reason: string;
+    initiatedByUserId?: string | null;
+    dedupeKey?: string;
+    supportRecommendationId?: string;
+    keepSeat?: boolean;
+  } & OwedMarkerInput,
+): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
     select: {
@@ -1087,6 +1185,11 @@ async function refundInternalFundedPayment(input: {
             "AMOUNT_EXCEEDS_REFUNDABLE",
           );
         }
+        const settledOwed = await claimOwedMarker(tx, payment.id, input, {
+          kind: "amount",
+          handPaise: requested,
+          refundableBeforePaise: refundable,
+        });
 
         const refundRow = await tx.refund.create({
           data: {
@@ -1111,6 +1214,7 @@ async function refundInternalFundedPayment(input: {
             metadata: {
               initiatedByUserId: input.initiatedByUserId ?? null,
               source: "internal-funded",
+              ...(settledOwed ? { settledOwed } : {}),
             } as Prisma.InputJsonValue,
           },
         });
@@ -1151,6 +1255,7 @@ async function refundInternalFundedPayment(input: {
           refundId: refundRow.id,
           amountRefundedPaise: requested,
           rail: "INTERNAL" as const,
+          ...(settledOwed ? { settledOwed } : {}),
         };
       },
       {

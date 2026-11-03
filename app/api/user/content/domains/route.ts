@@ -1,14 +1,9 @@
-import prisma from "@/lib/prisma";
+import { getDomainsWithChildren } from "@/lib/data/taxonomy";
 import { NextResponse } from "next/server";
 
 export async function GET() {
   try {
-    const domains = await prisma.domain.findMany({
-      include: {
-        subDomains: true,
-        tags: true,
-      },
-    });
+    const domains = await getDomainsWithChildren();
 
     return NextResponse.json(domains);
   } catch (error) {

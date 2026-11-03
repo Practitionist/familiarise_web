@@ -31,7 +31,7 @@ export async function POST(
   try {
     const { appointmentId } = await params;
     // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
-    const authResult = await requireApiAuth();
+    const authResult = await requireApiAuth({ expectUser: true });
     if (authResult.error) return authResult.error;
     const { session } = authResult;
     // Same budget as the sibling reschedule route: both move slots and money.

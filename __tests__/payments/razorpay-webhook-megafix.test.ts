@@ -462,6 +462,42 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
   });
 
   describe("5. Enterprise Outbound Webhooks & RazorpayX Payout Routing", () => {
+    it.each(["order_retryable", "order_newer"])(
+      "retains invoice order %s when a payment attempt fails",
+      async (providerPaymentOrderId) => {
+        const db = getMockDb();
+        const updateMany = jest.fn(async () => ({ count: 1 }));
+        db.organizationInvoice = {
+          updateMany,
+          findUnique: jest.fn(async () => ({ providerPaymentOrderId })),
+        };
+        db.orgAuditLog = { create: jest.fn(async () => ({})) };
+
+        const { handleOrgPaymentFailure } =
+          await import("../../app/api/webhooks/utils");
+        await handleOrgPaymentFailure(
+          {
+            type: "invoice_payment",
+            invoiceId: "inv_1",
+            organizationId: "org_1",
+          },
+          "pay_old_failed",
+        );
+
+        expect(updateMany).not.toHaveBeenCalled();
+        expect(db.orgAuditLog.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              details: expect.objectContaining({
+                providerPaymentId: "pay_old_failed",
+                outcome: "failed",
+              }),
+            }),
+          }),
+        );
+      },
+    );
+
     it("emits invoice.paid outbound webhook atomically inside handleOrgPaymentSuccess", async () => {
       const db = getMockDb();
       const webhooksMod =
@@ -503,6 +539,7 @@ describe("Razorpay & RazorpayX Webhook Megafix Suite", () => {
         })),
       };
       db.__tx.creditNote = { groupBy: jest.fn(async () => []) };
+      db.__tx.ledgerTransaction = { findUnique: jest.fn(async () => null) };
       db.__tx.membership = { findMany: jest.fn(async () => []) };
       db.__tx.overageEvent = {
         updateMany: jest.fn(async () => ({ count: 0 })),

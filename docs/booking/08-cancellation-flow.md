@@ -1109,7 +1109,7 @@ A booking with no session scheduled at all is a different matter and does refund
 
 **What the cascade reverses**: the refund is not just a gateway call. `applyRefundCascade` reverses the funding legs at their source, returns program engagements to the organisation's cap, increments the consultant's and the organisation's refunded share, claws back an already-completed payout, mints a GST credit note for any invoiced portion, reverses the withheld TDS, restores referral credits, and posts a balanced double-entry reversal. Org-funded bookings carry a synthetic payment intent that no gateway can resolve, so they reverse purely in-ledger through the reversal engine instead of calling out.
 
-**Cross-reference**: [Cancellation Payment Flow](../payments/cancellations-rescheduling/01-cancellation-payment-flow.md)
+**Cross-reference**: [Cancellation Payment Flow](../finance/30-refunds-disputes/01-refunds.md)
 
 ---
 
@@ -1369,7 +1369,7 @@ Consultation and subscription cancellations write a consultant-dashboard activit
 
 ## Refund Quote Binding and Durability
 
-**Current.** The refund percentage comes from `quoteBookingRefund` in `lib/payments/operations/cancellation-policy.ts`, the same function the cancel preview calls. The ladder is 100% at 24 hours or more of notice, 50% from 2 to under 24 hours, and 0% under 2 hours; an expert, admin or platform cancel and an expert no-show are 100%. A subscription is tiered per undelivered session. The route computes the quote inside the cancel transaction and, when the request carries `expectedRefundPaise` (optional; an absent value is logged and unbound), checks it before the status compare-and-swap, so a different server quote answers 409 `REFUND_QUOTE_CHANGED` with the current quote (`assertQuoteMatchesClick`). The cancel dialogs send the displayed quote through `shownQuoteBody()` in `lib/appointments/cancel-requote.ts` (callers: `useEventActions.tsx`, `useConsultantEventActions.ts`, `OrgActorDetail.tsx` and `SubscriptionsPage.tsx`), and on a 409 they re-quote with `readRefundQuoteChanged()` and `applyRefundRequote()`. The same transaction stamps the per-payment refund-owed marker with `stampRefundOwed()`, the door is called under `dedupeKey: "cancel:<appointmentId>:<paymentId>"`, and `retry-auto-refunds` re-drives and clears the marker. The platform absorbs the gateway fee on any refund, so the buyer receives exactly the quoted percentage. Trial cancellation enforces the same check in `lib/trials/cancellation.ts`.
+**Current.** The refund percentage comes from `quoteBookingRefund` in `lib/payments/operations/cancellation-policy.ts`, the same function the cancel preview calls. The ladder is 100% at 24 hours or more of notice, 50% from 2 to under 24 hours, and 0% under 2 hours; an expert, admin or platform cancel and an expert no-show are 100%. A subscription is tiered per undelivered session. The route computes the quote inside the cancel transaction and, when the request carries `expectedRefundPaise` (optional; an absent value is logged and unbound), checks it before the status compare-and-swap, so a different server quote answers 409 `REFUND_QUOTE_CHANGED` with the current quote (`assertQuoteMatchesClick`). The cancel dialogs send the displayed quote through `shownQuoteBody()` in `lib/appointments/cancel-requote.ts` (callers: `useEventActions.tsx`, `useConsultantEventActions.ts`, `OrgActorDetail.tsx` and the back office's `PlatformCancelDoor.tsx`), and on a 409 they re-quote with `readRefundQuoteChanged()` and `applyRefundRequote()`; the platform cancel door, whose refusal carries only the code, refetches the preview instead. The same transaction stamps the per-payment refund-owed marker with `stampRefundOwed()`, the door is called under `dedupeKey: "cancel:<appointmentId>:<paymentId>"`, and `retry-auto-refunds` re-drives and clears the marker. The platform absorbs the gateway fee on any refund, so the buyer receives exactly the quoted percentage. Trial cancellation enforces the same check in `lib/trials/cancellation.ts`.
 
 See [the money HLD](../start-here/02-money-system-hld.md#10-refunds) and worked example 6 in [the machinery guide](../start-here/03-booking-and-money-machinery.md#example-6--cancelling-at-23-hours-while-the-dialog-showed-100-current-behaviour-then-the-d3-fix-landing-in-wave-0-w0-3).
 
@@ -1381,8 +1381,8 @@ See [the money HLD](../start-here/02-money-system-hld.md#10-refunds) and worked 
 - [Event Types and Validation](./02-event-types-and-validation.md) -- Differences between event models
 - [API Reference](./04-api-reference.md) -- All booking endpoints including validate and allocate
 - [Rescheduling Flow](./07-rescheduling-flow.md) -- How rescheduling works (contrast with this doc)
-- [Cancellation Payment Flow](../payments/cancellations-rescheduling/01-cancellation-payment-flow.md) -- Refund processing and earnings reversal
-- [Rescheduling Payment Flow](../payments/cancellations-rescheduling/02-rescheduling-payment-flow.md) -- How payment is handled during reschedule
+- [Cancellation Payment Flow](../finance/30-refunds-disputes/01-refunds.md) -- Refund processing and earnings reversal
+- [Rescheduling Payment Flow](../finance/30-refunds-disputes/01-refunds.md) -- How payment is handled during reschedule
 
 ## Deprecated & Superseded Approaches
 

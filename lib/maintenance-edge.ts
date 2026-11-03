@@ -6,6 +6,7 @@
  */
 
 import { NextRequest } from "next/server";
+import { z } from "zod";
 
 import { REDIS_KEYS } from "./maintenance-keys";
 
@@ -42,21 +43,17 @@ let cachedState: MaintenanceState | null = null;
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = 180_000;
 const FAILURE_CACHE_MS = 30_000;
-// A failed read keeps serving the last state Redis confirmed for this long, so a
-// slow Upstash call never turns into a 503 on checkout; only a cold isolate fails closed.
+// Retain the last confirmed page presentation; failed refreshes still deny mutations.
 const STALE_IF_ERROR_MS = 15 * 60_000;
 let lastGoodState: MaintenanceState | null = null;
 let lastGoodAt = 0;
 
-const REDIS_FETCH_TIMEOUT_MS = (() => {
-  const v = Number(process.env.REDIS_FETCH_TIMEOUT_MS);
-  return Number.isFinite(v) && v > 0 ? v : 500;
-})();
+const REDIS_FETCH_TIMEOUT_MS = 500;
 
 async function redisGet(key: string): Promise<string | null> {
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
+  if (!url || !token) throw new Error("Maintenance Redis is not configured");
 
   const res = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -65,8 +62,10 @@ async function redisGet(key: string): Promise<string | null> {
   });
 
   if (!res.ok) throw new Error(`Upstash GET ${res.status}`);
-  const data = await res.json();
-  return data.result ?? null;
+  const data = z
+    .object({ result: z.string().nullable() })
+    .parse(await res.json());
+  return data.result;
 }
 
 async function readMaintenanceState(): Promise<MaintenanceState> {
@@ -75,19 +74,21 @@ async function readMaintenanceState(): Promise<MaintenanceState> {
     redisGet(REDIS_KEYS.CONFIG),
   ]);
 
-  if (!phase || phase === "OFF") return OFF_STATE;
+  const parsedPhase = z.enum(["OFF", "DEGRADED", "OFFLINE"]).parse(phase);
+  if (parsedPhase === "OFF") return OFF_STATE;
 
-  let config: Partial<MaintenanceState> = {};
-  if (configRaw) {
-    try {
-      config = JSON.parse(configRaw);
-    } catch {
-      // Malformed config — treat as no config
-    }
-  }
+  const config = configRaw
+    ? z
+        .object({
+          reason: z.string().nullable().optional(),
+          estimatedEnd: z.string().nullable().optional(),
+          bypassSecret: z.string().nullable().optional(),
+        })
+        .parse(JSON.parse(configRaw))
+    : {};
 
   return {
-    phase: phase as MaintenanceState["phase"],
+    phase: parsedPhase,
     reason: config.reason ?? null,
     estimatedEnd: config.estimatedEnd ?? null,
     bypassSecret: config.bypassSecret ?? null,
@@ -107,7 +108,9 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
     // Serve the last confirmed state while it is fresh enough, and retry soon.
     const staleLeft = lastGoodState ? lastGoodAt + STALE_IF_ERROR_MS - now : 0;
     const fallback =
-      staleLeft > 0 && lastGoodState ? lastGoodState : UNREADABLE_STATE;
+      staleLeft > 0 && lastGoodState
+        ? { ...lastGoodState, unreadable: true as const }
+        : UNREADABLE_STATE;
     // The fallback is cached no longer than the stale window it was served under.
     const holdMs =
       fallback === UNREADABLE_STATE
@@ -142,7 +145,7 @@ export function getMaintenanceStateCachedOnly(
       });
     waitUntil?.(refresh);
   }
-  return cachedState ?? OFF_STATE;
+  return cachedState ?? UNREADABLE_STATE;
 }
 
 export const HAS_FILE_EXTENSION = /\.\w{2,10}$/;
@@ -187,6 +190,20 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/admin/ops-proposals",
   "/api/admin/tds",
   "/api/admin/billing-accounts",
+  "/api/admin/org-payouts",
+  "/api/admin/earnings",
+  "/api/admin/disputes",
+  "/api/admin/payout-accounts",
+  "/api/admin/reconcile-ledgers",
+  "/api/admin/referrals/credits",
+  "/api/admin/organizations/*/invoices",
+  "/api/admin/organizations/*/billing-account",
+  "/api/admin/organizations/*/overages",
+  "/api/admin/class-series/*/cancel-series",
+  "/api/admin/class-series/*/cancel-session",
+  "/api/admin/class-series/*/make-up",
+  "/api/admin/class-series/*/skip-make-up",
+  "/api/admin/class-series/sweeps",
   "/api/payments/*/recover",
   "/api/recordings/*/purchase",
   "/api/overage/*/order",
@@ -239,41 +256,21 @@ export function isWriteBlockedInDegraded(
   );
 }
 
-// Booking and money writes that already need Redis for their locks, so failing
-// them closed while maintenance state is unreadable costs no availability.
-const FAIL_CLOSED_WHEN_UNREADABLE = [
-  "/api/checkout",
-  "/api/appointments/*/cancel",
-  "/api/appointments/*/reschedule",
-  "/api/appointments/*/occurrences",
-  "/api/bookings/consultations",
-  "/api/bookings/subscriptions",
-  "/api/bookings/webinars",
-  "/api/bookings/classes",
-  "/api/bookings/*/allocate",
-  "/api/bookings/*/abandon",
-  "/api/trials",
-  "/api/scheduling/request-for-approval",
-  "/api/meetings/*/extend",
-  "/api/organizations/*/appointments/*/allocate",
-  "/api/payments/*/recover",
-  "/api/recordings/*/purchase",
-  "/api/overage/*/order",
-  "/api/admin/payouts",
-  "/api/admin/refunds",
-  "/api/consultant/payouts/instant",
-  "/api/organizations/*/billing-account/wallet/top-ups",
-  "/api/organizations/*/billing-account/invoices",
-  "/api/organizations/*/payouts",
-];
-
+// Every non-exempt mutation requires readable maintenance state.
 export function isFailClosedWhenUnreadable(
   pathname: string,
   method: string,
+  searchParams?: URLSearchParams,
 ): boolean {
-  if (READ_ONLY_METHODS.has(method.toUpperCase())) return false;
-  return FAIL_CLOSED_WHEN_UNREADABLE.some((pattern) =>
-    matchesBlockedPattern(pathname, pattern),
+  if (
+    pathname === "/api/checkout/verify" &&
+    method.toUpperCase() === "GET" &&
+    searchParams?.get("sync") === "true"
+  )
+    return true;
+  return (
+    !READ_ONLY_METHODS.has(method.toUpperCase()) &&
+    !isMaintenanceExempt(pathname)
   );
 }
 

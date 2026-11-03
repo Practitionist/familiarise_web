@@ -1,0 +1,243 @@
+/**
+ * ChatContainer is text-only: it replaces the composer's attachment selector
+ * with a null component, and the appointment documents hint only appears above
+ * a live composer (never in read-only maintenance mode).
+ */
+import * as React from "react";
+import { render, screen } from "@testing-library/react";
+
+let mockPhase: string | null = "NORMAL";
+let mockOverrides: Record<string, React.ComponentType> | undefined;
+let mockMessages: { id: string; user?: { id: string } }[] = [];
+let mockListed: unknown;
+let mockStateChannel:
+  { type: string; id?: string; data?: { frozen?: boolean } } | undefined;
+
+const mockChannel = {
+  type: "messaging",
+  id: "dm-1",
+  state: { members: {}, messages: [] },
+};
+
+jest.mock("../../providers/MaintenanceProvider", () => ({
+  useMaintenanceState: () => ({ phase: mockPhase }),
+}));
+
+jest.mock("stream-chat-react", () => {
+  const react = jest.requireActual<typeof import("react")>("react");
+  const passthrough = ({ children }: { children?: React.ReactNode }) =>
+    react.createElement("div", null, children);
+
+  return {
+    Channel: passthrough,
+    Window: passthrough,
+    MessageList: ({ messages }: { messages?: unknown }) => {
+      mockListed = messages;
+      return react.createElement("div", { "data-testid": "message-list" });
+    },
+    VirtualizedMessageList: () =>
+      react.createElement("div", { "data-testid": "message-list" }),
+    MessageComposer: () =>
+      react.createElement("div", { "data-testid": "message-composer" }),
+    WithComponents: ({
+      children,
+      overrides,
+    }: {
+      children?: React.ReactNode;
+      overrides?: Record<string, React.ComponentType>;
+    }) => {
+      mockOverrides = overrides;
+      return react.createElement("div", null, children);
+    },
+    useChatContext: () => ({ channel: mockChannel }),
+    useChannelStateContext: () => ({
+      messages: mockMessages,
+      channel: mockStateChannel,
+    }),
+  };
+});
+
+jest.mock("../../components/chat/AppointmentDocumentsHint", () => {
+  const react = jest.requireActual<typeof import("react")>("react");
+  return {
+    AppointmentDocumentsHint: () =>
+      react.createElement("div", {
+        "data-testid": "appointment-documents-hint",
+      }),
+  };
+});
+
+jest.mock("../../components/chat/BookingTag", () => {
+  const react = jest.requireActual<typeof import("react")>("react");
+  return {
+    BookingTagComposer: () =>
+      react.createElement("div", { "data-testid": "message-composer" }),
+  };
+});
+
+jest.mock("../../components/chat/ComposerDraftPersistence", () => {
+  const react = jest.requireActual<typeof import("react")>("react");
+  return {
+    ComposerDraftPersistence: () =>
+      react.createElement("div", { "data-testid": "composer-draft" }),
+  };
+});
+
+jest.mock("../../components/chat/CustomChannelHeader", () => ({
+  CustomChannelHeader: () => null,
+}));
+jest.mock("../../components/chat/CustomMessage", () => ({
+  CustomMessage: () => null,
+}));
+jest.mock("../../components/chat/SupportInterventionBanner", () => ({
+  SupportInterventionBanner: () => null,
+}));
+jest.mock("../../components/chat/SystemMessage", () => ({
+  SystemMessage: () => null,
+}));
+jest.mock("../../components/stream/StreamErrorBoundary", () => {
+  const react = jest.requireActual<typeof import("react")>("react");
+  return {
+    StreamChatErrorBoundary: ({ children }: { children?: React.ReactNode }) =>
+      react.createElement("div", null, children),
+  };
+});
+jest.mock("../../lib/stream-channel-ids", () => ({
+  isEventChannel: () => false,
+  parseEventChannelId: (id: string) =>
+    id.startsWith("class-")
+      ? { eventType: "class", eventId: id.slice("class-".length) }
+      : null,
+}));
+jest.mock("../../components/dashboard/DataCard", () => ({
+  EmptyState: () => null,
+}));
+
+import { ChatContainer } from "@/components/chat/ChatContainer";
+
+beforeEach(() => {
+  mockPhase = "NORMAL";
+  mockOverrides = undefined;
+  mockMessages = [];
+  mockListed = undefined;
+  mockStateChannel = undefined;
+});
+
+describe("ChatContainer", () => {
+  it("replaces the attachment selector with a null component", () => {
+    render(<ChatContainer />);
+
+    expect(mockOverrides?.MessageSystem).toBeDefined();
+    const Selector = mockOverrides?.AttachmentSelector;
+    if (!Selector) {
+      throw new Error("AttachmentSelector override is missing");
+    }
+    const { container } = render(<Selector />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("mounts the documents hint above the composer", () => {
+    render(<ChatContainer />);
+
+    const hint = screen.getByTestId("appointment-documents-hint");
+    const composer = screen.getByTestId("message-composer");
+    expect(hint).toBeInTheDocument();
+    expect(composer).toBeInTheDocument();
+    expect(
+      hint.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("persists the composer draft only while the composer is live", () => {
+    const view = render(<ChatContainer />);
+    expect(screen.getByTestId("composer-draft")).toBeInTheDocument();
+    view.unmount();
+
+    mockPhase = "OFFLINE";
+    render(<ChatContainer />);
+    expect(screen.queryByTestId("composer-draft")).not.toBeInTheDocument();
+  });
+
+  it("leaves the retired booking cards out of the list, so a DM of only those is empty", () => {
+    mockMessages = [{ id: "card", user: { id: "system-booking-context" } }];
+    render(<ChatContainer />);
+    expect(mockListed).toEqual([]);
+
+    const hello = { id: "m1", user: { id: "them" } };
+    mockMessages = [mockMessages[0], hello];
+    render(<ChatContainer />);
+    expect(mockListed).toEqual([hello]);
+  });
+
+  it("hides the composer and hint while chat is read-only", () => {
+    mockPhase = "DEGRADED";
+    render(<ChatContainer />);
+
+    expect(screen.queryByTestId("message-composer")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("appointment-documents-hint"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Chat is temporarily read-only during maintenance."),
+    ).toBeInTheDocument();
+  });
+
+  it("replaces the composer with the reason when the conversation is frozen", () => {
+    mockStateChannel = { type: "messaging", data: { frozen: true } };
+    render(<ChatContainer />);
+
+    expect(screen.queryByTestId("message-composer")).toBeNull();
+    expect(screen.queryByTestId("appointment-documents-hint")).toBeNull();
+    expect(screen.queryByTestId("composer-draft")).toBeNull();
+    expect(screen.getByRole("status").textContent).toMatch(
+      /read-only\. It reopens when you book a session together again/,
+    );
+  });
+
+  it("words a frozen event channel differently from a frozen DM", () => {
+    mockStateChannel = { type: "team", data: { frozen: true } };
+    render(<ChatContainer />);
+
+    expect(screen.getByRole("status").textContent).toMatch(
+      /This channel is read-only\. Its session has ended/,
+    );
+  });
+
+  it("keeps the composer for a channel that is not frozen", () => {
+    mockStateChannel = { type: "messaging", data: { frozen: false } };
+    render(<ChatContainer />);
+
+    expect(screen.getByTestId("message-composer")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  describe("the empty state of an event channel", () => {
+    const EmptyState = () => {
+      render(<ChatContainer />);
+      const Component =
+        mockOverrides?.EmptyStateIndicator as React.ComponentType<{
+          listType: string;
+        }>;
+      return render(<Component listType="message" />);
+    };
+
+    it("invites the first message in a live class channel", () => {
+      mockStateChannel = { type: "team", id: "class-1", data: {} };
+      EmptyState();
+      expect(screen.getByText("Say hello to your class")).toBeTruthy();
+    });
+
+    it("does not invite one in a frozen class channel", () => {
+      mockStateChannel = {
+        type: "team",
+        id: "class-1",
+        data: { frozen: true },
+      };
+      EmptyState();
+      expect(screen.queryByText("Say hello to your class")).toBeNull();
+      expect(
+        screen.getByText("No messages were sent in this channel."),
+      ).toBeTruthy();
+    });
+  });
+});

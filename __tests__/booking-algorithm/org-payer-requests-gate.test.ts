@@ -26,14 +26,10 @@ const mockRedirect = jest.fn((path: string) => {
   // running past a gate it was supposed to be stopped by.
   throw new Error(`NEXT_REDIRECT:${path}`);
 });
-const mockPermanentRedirect = jest.fn((path: string) => {
-  throw new Error(`NEXT_PERMANENT_REDIRECT:${path}`);
-});
 
 jest.mock("next/navigation", () => ({
   __esModule: true,
   redirect: (path: string) => mockRedirect(path),
-  permanentRedirect: (path: string) => mockPermanentRedirect(path),
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");
   },
@@ -88,7 +84,6 @@ function mountedComponents(element: unknown): unknown[] {
 async function renderPage() {
   return OrgRequestsPage({
     params: Promise.resolve({ orgId: ORG }),
-    searchParams: Promise.resolve({}),
   });
 }
 
@@ -108,7 +103,6 @@ describe("who may open the org Requests page", () => {
 
     expect(mounted).toContain(RequestsClient);
     expect(mockRedirect).not.toHaveBeenCalled();
-    expect(mockPermanentRedirect).not.toHaveBeenCalled();
   });
 
   // #1527 decision 8 — MANAGER reads Unscheduled too.
@@ -120,9 +114,10 @@ describe("who may open the org Requests page", () => {
       );
 
       // No allocation controls: choosing times is still the expert's act.
-      await expect(renderPage()).rejects.toThrow("NEXT_PERMANENT_REDIRECT");
-      expect(mockPermanentRedirect).toHaveBeenCalledWith(UNSCHEDULED);
-      expect(mockRedirect).not.toHaveBeenCalled();
+      await expect(renderPage()).rejects.toThrow(
+        `NEXT_REDIRECT:${UNSCHEDULED}`,
+      );
+      expect(mockRedirect).toHaveBeenCalledWith(UNSCHEDULED);
     },
   );
 
@@ -135,7 +130,6 @@ describe("who may open the org Requests page", () => {
     expect(mockRedirect).toHaveBeenCalledWith(
       `/dashboard/organization/${ORG}/home`,
     );
-    expect(mockPermanentRedirect).not.toHaveBeenCalled();
   });
 
   it("a SUPPORT is sent home — operations.read is not the payer role", async () => {
@@ -144,7 +138,6 @@ describe("who may open the org Requests page", () => {
     );
 
     await expect(renderPage()).rejects.toThrow("NEXT_REDIRECT");
-    expect(mockPermanentRedirect).not.toHaveBeenCalled();
   });
 });
 

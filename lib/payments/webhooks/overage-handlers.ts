@@ -9,17 +9,10 @@
  * order and stamps it onto `paymentIntent`); these handlers run on the gateway
  * webhook for that order.
  *
- * Money model (org-relief, DECIDED #775): the org funded the covered portion
- * of the booking and the consultant was paid once at booking; the member's
- * marginal relieves the org. Capture posts `Dr GATEWAY_CLEARING / Cr ORG_PAYABLE(org) /
- * Cr GST_PAYABLE`: the org is credited base + surcharge, the side-payment's
- * `taxAmount` (GST on the surcharge) goes to GST_PAYABLE, and the org credit is REALIZED AT
- * ORG PAYOUT — it flows to the org through the next payout batch like any
- * other payable. There is NO invoice-netting and NO wallet credit-back for
- * member overage money; the ledger payable is the single realization path.
- * Reconcile asserts every CHARGED member event has its `overage:<sidePaymentId>`
- * txn and a side-payment amount equal to its GST-inclusive marginalPaise
- * (OVERAGE_SETTLEMENT_MISMATCH).
+ * Capture posts `Dr GATEWAY_CLEARING / Cr DISCOUNT(base) / Cr PLATFORM_FEE(surcharge) /
+ * Cr GST_PAYABLE`: checkout carved the base off the org's leg and the platform funded it
+ * as DISCOUNT, so the member's base reverses that discount; the org is credited nothing.
+ * Reconcile (OVERAGE_SETTLEMENT_MISMATCH) asserts every CHARGED event has that txn.
  *
  * The one exception is the FAILED→CHARGED late capture whose parent had already
  * rolled onto an org invoice while the base sat restored: `recarveOverageBase`
@@ -143,44 +136,44 @@ async function resolveInvoicedBaseAfterRecarve(
 
 async function postOverageMemberLedgerEntries(
   tx: Tx,
-  side: {
-    id: string;
-    amount: number;
-    taxAmount: number;
-    organizationId: string | null;
-  },
+  side: { id: string; amount: number; taxAmount: number },
 ): Promise<void> {
-  if (side.amount <= 0 || !side.organizationId) return;
+  if (side.amount <= 0) return;
   const taxPaise = Math.min(side.taxAmount, side.amount);
-  const postings: Posting[] = [
+  const event = await tx.overageEvent.findFirst({
+    where: { paymentId: side.id },
+    select: { basePaise: true },
+  });
+  const basePaise = Math.min(event?.basePaise ?? 0, side.amount - taxPaise);
+  const credits: Posting[] = [
     {
-      account: gatewayCashAccount(),
-      direction: "DEBIT",
-      amountPaise: side.amount,
-    },
-  ];
-  if (side.amount - taxPaise > 0) {
-    postings.push({
-      account: {
-        kind: "ORG_PAYABLE",
-        organizationId: side.organizationId,
-      },
+      account: { kind: "DISCOUNT" },
       direction: "CREDIT",
-      amountPaise: side.amount - taxPaise,
-    });
-  }
-  if (taxPaise > 0) {
-    postings.push({
+      amountPaise: basePaise,
+    },
+    {
+      account: { kind: "PLATFORM_FEE" },
+      direction: "CREDIT",
+      amountPaise: side.amount - taxPaise - basePaise,
+    },
+    {
       account: { kind: "GST_PAYABLE" },
       direction: "CREDIT",
       amountPaise: taxPaise,
-    });
-  }
+    },
+  ];
   await postLedgerTxn(tx, {
     idempotencyKey: `overage:${side.id}`,
     kind: "OVERAGE_MEMBER",
     paymentId: side.id,
-    postings,
+    postings: [
+      {
+        account: gatewayCashAccount(),
+        direction: "DEBIT",
+        amountPaise: side.amount,
+      },
+      ...credits.filter((c) => c.amountPaise > 0),
+    ],
   });
 }
 
@@ -444,16 +437,17 @@ async function neutraliseInvoicedOverageBase(
   } = args;
   const key = `overage-recarve-invoice:${sidePaymentId}`;
 
+  // The org was already invoiced the base, so the member's base pays down its receivable.
   if (organizationId) {
     await postLedgerTxn(tx, {
       idempotencyKey: key,
       kind: "OVERAGE_MEMBER",
       paymentId: sidePaymentId,
       invoiceId,
-      description: `Overage base already invoiced — reverse the org-relief credit for side-payment ${sidePaymentId}`,
+      description: `Overage base already invoiced — move the member's base for side-payment ${sidePaymentId} onto the org's receivable`,
       postings: [
         {
-          account: { kind: "ORG_PAYABLE", organizationId },
+          account: { kind: "DISCOUNT" },
           direction: "DEBIT",
           amountPaise: basePaise,
         },
@@ -509,7 +503,7 @@ async function neutraliseInvoicedOverageBase(
       : "NO credit note (invoice not issued / not found) — manual billing adjustment still needed";
   const summary =
     `Late capture of overage side-payment ${sidePaymentId} after its ` +
-    `parent was invoiced — base ${basePaise}p pulled off ORG_PAYABLE by ` +
+    `parent was invoiced — base ${basePaise}p moved onto ORG_RECEIVABLE by ` +
     `reversal ${key} and credited back on the invoice by ${creditNoteLabel}`;
   const context = {
     sidePaymentId,
