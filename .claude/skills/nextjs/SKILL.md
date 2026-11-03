@@ -29,9 +29,9 @@ A `searchParams` prop makes the page dynamic. `app/explore/products/(index)/page
 
 ### The rule
 
-A streaming page response begins with HTTP 200. The first Suspense fallback to render, including any `loading.tsx`, sends the headers and fixes the status. A `notFound()` called after that point can only inject `<meta name="robots" content="noindex">` into a response that is already 200, which crawlers may record as a soft 404 ([loading.js status codes](https://nextjs.org/docs/app/api-reference/file-conventions/loading#status-codes), [notFound](https://nextjs.org/docs/app/api-reference/functions/not-found)). Calling `notFound()` before any fallback has rendered keeps the 404 status.
+A streaming page response begins with HTTP 200. The first Suspense fallback to render, including any `loading.tsx`, sends the headers and fixes the status. A `notFound()` called after that point can only inject `<meta name="robots" content="noindex">` into a response that is already 200, which crawlers may record as a soft 404 ([loading.js status codes](https://nextjs.org/docs/15/app/api-reference/file-conventions/loading#status-codes), [notFound](https://nextjs.org/docs/15/app/api-reference/functions/not-found)). Calling `notFound()` before any fallback has rendered keeps the 404 status.
 
-A segment's `loading.tsx` wraps that segment's `page.tsx`, its `not-found.tsx` and every nested layout, but not that segment's own `layout.tsx` ([loading.js](https://nextjs.org/docs/app/api-reference/file-conventions/loading)). That asymmetry is the whole fix.
+A segment's `loading.tsx` wraps that segment's `page.tsx`, its `not-found.tsx` and every nested layout, but not that segment's own `layout.tsx` ([loading.js](https://nextjs.org/docs/15/app/api-reference/file-conventions/loading)). That asymmetry is the whole fix.
 
 ### What this repo does
 
@@ -43,11 +43,11 @@ A segment's `loading.tsx` wraps that segment's `page.tsx`, its `not-found.tsx` a
 
 Enforcers: `__tests__/explore/not-found-layouts.test.tsx` and `__tests__/dashboard/not-found-layouts.test.tsx` fail if a checking layout, an `(index)` group or the no-ancestor-loading rule regresses. The explanation and the measured behaviour live in `maintenance/references/nextjs-netlify-caching.md` under "A page whose existence or visibility is checked must answer 404".
 
-A layout that reads uncached or runtime data makes navigation wait for it, because `loading.tsx` cannot show a fallback for the layout itself without Cache Components ([loading.js](https://nextjs.org/docs/app/api-reference/file-conventions/loading)). Keep layout checks to one cached, indexed read.
+A layout that reads uncached or runtime data makes navigation wait for it, because `loading.tsx` cannot show a fallback for the layout itself without Cache Components ([loading.js](https://nextjs.org/docs/15/app/api-reference/file-conventions/loading)). Keep layout checks to one cached, indexed read.
 
 ### `notFound`, `redirect`, `permanentRedirect`
 
-- All three work by throwing. Never wrap them in `try/catch`. If you must catch near them, call `unstable_rethrow(error)` first ([notFound](https://nextjs.org/docs/app/api-reference/functions/not-found), [redirect](https://nextjs.org/docs/app/api-reference/functions/redirect)).
+- All three work by throwing. Never wrap them in `try/catch`. If you must catch near them, call `unstable_rethrow(error)` first ([notFound](https://nextjs.org/docs/15/app/api-reference/functions/not-found), [redirect](https://nextjs.org/docs/15/app/api-reference/functions/redirect)).
 - Do not call them from an un-awaited promise, or no boundary will catch them.
 - `redirect()` answers 307 (temporary) outside Server Actions and keeps the method. A Server Action form post without JavaScript gets 303. `permanentRedirect()` answers 308. In a streamed response the redirect becomes a meta tag instead of a status, so a redirect that must be a real 3xx belongs before the first fallback, in the layout, in `middleware.ts` or in `next.config.mjs` `redirects`.
 - `redirect()` works during render in Client Components but not in event handlers, where `useRouter().push` is the tool.
@@ -141,8 +141,8 @@ Details live in the deployment and maintenance skills. The facts that bite App R
 - [unstable_cache (v15)](https://nextjs.org/docs/15/app/api-reference/functions/unstable_cache)
 - [use cache (v15, Canary)](https://nextjs.org/docs/15/app/api-reference/directives/use-cache)
 - [Next.js 15 release notes](https://nextjs.org/blog/next-15)
-- [loading.js and its status-code section](https://nextjs.org/docs/app/api-reference/file-conventions/loading)
-- [notFound](https://nextjs.org/docs/app/api-reference/functions/not-found) and [redirect](https://nextjs.org/docs/app/api-reference/functions/redirect)
+- [loading.js and its status-code section](https://nextjs.org/docs/15/app/api-reference/file-conventions/loading)
+- [notFound](https://nextjs.org/docs/15/app/api-reference/functions/not-found) and [redirect](https://nextjs.org/docs/15/app/api-reference/functions/redirect)
 - [route.js (v15)](https://nextjs.org/docs/15/app/api-reference/file-conventions/route) and [middleware.js (v15)](https://nextjs.org/docs/15/app/api-reference/file-conventions/middleware)
 - [React `cache`](https://react.dev/reference/react/cache) and [React `useEffectEvent`](https://react.dev/reference/react/useEffectEvent)
 - [Netlify Next.js runtime overview](https://docs.netlify.com/build/frameworks/framework-setup-guides/nextjs/overview/) and [Netlify Functions overview](https://docs.netlify.com/build/functions/overview/)
