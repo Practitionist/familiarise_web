@@ -42,6 +42,20 @@ export const ASSET_REJECT_MESSAGES: Record<string, string> = {
     "Archives inside the ZIP aren't allowed. Unpack them into the main archive.",
   ZIP_EXECUTABLE_ENTRY:
     "The archive contains a program or script, which isn't allowed. Remove it and upload again.",
+  ZIP_EMPTY_ARCHIVE:
+    "This archive has no files in it. Add the files you want to sell and zip them again.",
+  ZIP_UNLISTED_DATA:
+    "The archive holds data its file list doesn't account for, which can hide a file. Re-create it with a standard ZIP tool.",
+  ZIP_EMBEDDED_ZIP_RECORD:
+    "A file inside the archive was stored in a way that can hide another file, and its contents look like part of a ZIP. Re-zip the files on your computer and upload the new archive.",
+  ZIP_DEEP_SCAN_TOO_LARGE:
+    "This archive was made by a tool that streams files, and it's too large for us to check that way. Re-zip the files on your computer (Compress, or zip -r) or split them into smaller archives, then upload again.",
+  ZIP_ENTRY_DATA_MISMATCH:
+    "A file inside the archive doesn't match the size or checksum the archive records for it. Re-zip the files on your computer and upload the new archive.",
+  ZIP_UNVERIFIABLE_ENTRY:
+    "A file inside the archive uses a streaming compression method we can't check. Re-zip the files on your computer (Compress, or zip -r) and upload the new archive.",
+  ZIP_LOCAL_HEADER_MISMATCH:
+    "A file inside the archive is described differently in two places, which can hide what it really is. Re-create the archive with a standard ZIP tool.",
   NEWER_VERSION_EXISTS: "A newer version of this file was already uploaded.",
   LINEAGE_DELETED:
     "The file this replaced was removed, so this version was discarded.",

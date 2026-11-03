@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { reportSentryError } from "@/lib/observability/report";
+import { razorpayKeyMode } from "@/lib/payments/core/razorpay-key-mode";
 import Razorpay from "razorpay";
 import { createHash } from "node:crypto";
 import {
@@ -78,9 +79,9 @@ import {
   // reported once per process at load; collections keep booting and each payout call refuses.
   if (
     process.env.NEXT_PHASE !== "phase-production-build" &&
-    (process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID)?.startsWith(
-      "rzp_live_",
-    ) &&
+    razorpayKeyMode(
+      process.env.RAZORPAYX_KEY_ID || process.env.RAZORPAY_KEY_ID,
+    ) === "live" &&
     !process.env.RAZORPAYX_EGRESS_PROXY_URL
   ) {
     reportSentryError(

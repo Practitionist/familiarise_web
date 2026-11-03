@@ -12,7 +12,7 @@ Sentry answers "what failed", and Better Stack together with the ticker check-in
 - Run one bounded query per source and run them in sequence, never in `Promise.all`, because `PG_POOL_MAX=1` on Netlify. Every source reads at most `TRACE_ROW_CAP` (50) rows and fetches one extra so a capped source can say "Capped; older rows hidden". Support cases are capped at 10 with 30 events each, and a booking trace covers at most 20 payments.
 - A source that fails shows "Read failed" and the rest of the trace still renders.
 - Respect the visibility rules of the surfaces that already show the data. The trace sits behind `payments.read`, so admin and staff can open it. Staff see only the console actions they took themselves, and system events appear only in an admin's trace.
-- Judge a job's missed window with `assessOperationalCompletions` for a job in `OPERATIONAL_COMPLETION_REQUIREMENTS`, otherwise through its ticker target in `lib/cron/schedule.ts`. Never copy cadence data into the metrics reader.
+- Judge a job's missed window through its ticker target in `lib/cron/schedule.ts`: its freshness budget (`freshnessBudgetMinutes`, the budget `/api/health/jobs` uses) and, for a windowed target, its latest due window. Never copy cadence data into the metrics reader.
 
 ## Query budget
 

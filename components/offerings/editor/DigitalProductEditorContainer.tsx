@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { useQueryClient } from "@tanstack/react-query";
 import * as Sentry from "@sentry/nextjs";
 import { AlertTriangle, Trash2 } from "lucide-react";
@@ -67,14 +68,25 @@ function publishBlockedReason(
     : "To publish, add a file that passes verification in Files.";
 }
 
-/** DELETE the product; a sold one answers 409 HAS_PURCHASES with the archive hint. */
-async function deleteDigitalProduct(productId: string): Promise<void> {
+const archiveInsteadSchema = z.object({
+  error: z.string(),
+  code: z.enum(["HAS_PURCHASES", "HAS_ORDERS"]),
+});
+
+/** DELETE the product; one with a sale or a checkout is refused with the reason to archive it instead. */
+async function deleteDigitalProduct(
+  productId: string,
+): Promise<{ archiveInstead: string } | null> {
   const res = await fetch(
     `/api/digital-products/${encodeURIComponent(productId)}`,
     { method: "DELETE" },
   );
-  if (res.ok) return;
+  if (res.ok) return null;
   const body: unknown = await res.json().catch(() => null);
+  const refusal = archiveInsteadSchema.safeParse(body);
+  if (res.status === 409 && refusal.success) {
+    return { archiveInstead: refusal.data.error };
+  }
   throw new Error(errorMessageFromBody(body, "Couldn't delete the product"));
 }
 
@@ -97,6 +109,7 @@ export function DigitalProductEditorContainer({
   );
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
+  const [archiveReason, setArchiveReason] = React.useState<string | null>(null);
   const form = useForm<DigitalProductFormValues>({
     resolver: zodResolver(digitalProductFormSchema),
     defaultValues: product ? formValuesOf(product) : DIGITAL_PRODUCT_DEFAULTS,
@@ -180,16 +193,33 @@ export function DigitalProductEditorContainer({
     }
   };
 
+  const closeDeleteDialog = (open: boolean) => {
+    setConfirmDelete(open);
+    if (!open) setArchiveReason(null);
+  };
+
   const remove = async () => {
     if (!product) return;
     setDeleting(true);
     try {
-      await deleteDigitalProduct(product.id);
-      await queryClient.invalidateQueries({
-        queryKey: MY_DIGITAL_PRODUCTS_QUERY_KEY,
-      });
-      toast({ title: "Product deleted" });
-      router.push(listHref);
+      const refused = await deleteDigitalProduct(product.id);
+      if (refused && status !== "ARCHIVED") {
+        setArchiveReason(refused.archiveInstead);
+        return;
+      }
+      if (refused) {
+        toast({
+          title: "Couldn't delete",
+          description: refused.archiveInstead,
+        });
+      } else {
+        await queryClient.invalidateQueries({
+          queryKey: MY_DIGITAL_PRODUCTS_QUERY_KEY,
+        });
+        toast({ title: "Product deleted" });
+        router.push(listHref);
+      }
+      closeDeleteDialog(false);
     } catch (error) {
       toast({
         title: "Couldn't delete",
@@ -198,11 +228,39 @@ export function DigitalProductEditorContainer({
         variant: "destructive",
       });
       void refresh();
+      closeDeleteDialog(false);
     } finally {
       setDeleting(false);
-      setConfirmDelete(false);
     }
   };
+
+  const archiveInstead = async () => {
+    if (!product) return;
+    setDeleting(true);
+    try {
+      await setDigitalProductLifecycle(product.id, "archive");
+      toast({
+        title: "Product archived",
+        description:
+          "It's off sale, and anyone who bought it keeps their files.",
+      });
+    } catch (error) {
+      toast({
+        title: "Couldn't archive",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      void refresh();
+      setDeleting(false);
+      closeDeleteDialog(false);
+    }
+  };
+
+  const dialogAction = archiveReason
+    ? { run: archiveInstead, label: "Archive", busy: "Archiving…" }
+    : { run: remove, label: "Delete", busy: "Deleting…" };
 
   return (
     <>
@@ -274,25 +332,36 @@ export function DigitalProductEditorContainer({
         onPublish={(values) => persist(values, { publish: true })}
         onCancel={() => router.back()}
       />
-      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+      <AlertDialog open={confirmDelete} onOpenChange={closeDeleteDialog}>
         <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this product?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Its listing and files are deleted for good. Nobody has bought it,
-              so no buyer loses access.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
+          {archiveReason ? (
+            <AlertDialogHeader>
+              <AlertDialogTitle>Archive it instead?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {archiveReason}. Archiving takes it off sale and keeps every
+                purchase and checkout on record.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+          ) : (
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete this product?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Its listing and files are deleted for good. You can delete it
+                only while nobody has bought it or started a checkout; otherwise
+                you can archive it.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>Keep it</AlertDialogCancel>
             <AlertDialogAction
               disabled={deleting}
               onClick={(e) => {
                 e.preventDefault();
-                void remove();
+                void dialogAction.run();
               }}
             >
-              {deleting ? "Deleting…" : "Delete"}
+              {deleting ? dialogAction.busy : dialogAction.label}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

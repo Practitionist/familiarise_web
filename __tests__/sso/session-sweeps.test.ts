@@ -79,7 +79,7 @@ describe("revokeEnforcedDomainSessions", () => {
       providers: ["acme.co.in,acme.com"],
     });
 
-    const revoked = await revokeEnforcedDomainSessions(prisma, "org_1", {
+    const { revoked } = await revokeEnforcedDomainSessions(prisma, "org_1", {
       keepSessionId: "sess_owner",
     });
 
@@ -122,9 +122,9 @@ describe("revokeEnforcedDomainSessions", () => {
       claims: ["acme.com"],
       providers: ["acme.com"],
     });
-    await expect(revokeEnforcedDomainSessions(prisma, "org_1")).resolves.toBe(
-      0,
-    );
+    await expect(
+      revokeEnforcedDomainSessions(prisma, "org_1"),
+    ).resolves.toMatchObject({ revoked: 0 });
     expect(db.session.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -144,7 +144,7 @@ describe("revokeOrgManagedUserSessions (membership removed or suspended)", () =>
 
     await expect(
       revokeOrgManagedUserSessions(prisma, "org_1", "u_1"),
-    ).resolves.toBe(2);
+    ).resolves.toMatchObject({ revoked: 2 });
     expect(db.orgDomainClaim.findFirst).toHaveBeenCalledWith({
       where: {
         organizationId: "org_1",
@@ -165,7 +165,7 @@ describe("revokeOrgManagedUserSessions (membership removed or suspended)", () =>
     });
     await expect(
       revokeOrgManagedUserSessions(prisma, "org_1", "u_2"),
-    ).resolves.toBe(0);
+    ).resolves.toMatchObject({ revoked: 0 });
     expect(db.session.deleteMany).not.toHaveBeenCalled();
   });
 });

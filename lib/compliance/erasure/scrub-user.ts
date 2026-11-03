@@ -17,6 +17,8 @@
  *
  *   BetterAuth Session + Account rows → hard-deleted (forces sign-out
  *   across every device immediately; SSO accounts are dropped too).
+ *   SessionAccessLog.userId → NULL; IP, user agent and times stay until the
+ *   180-day prune (CERT-In Directions, a legal obligation under DPDP s.17).
  *
  *   PayoutAccount holder name, bank name, last-4, IFSC and UPI id → NULL;
  *   the RazorpayX fund account and contact are deactivated, and the
@@ -63,6 +65,11 @@ import {
 } from "@/lib/data/public-cache";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
+import {
+  detachSessionAccessLogs,
+  stampSessionEnds,
+  type EndedSessions,
+} from "@/lib/auth/session-access-log";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
 import {
@@ -860,6 +867,7 @@ export async function scrubUser(
   let supportAttachmentPathsToRemove: string[] = [];
   let erasureRequestId: string | null = null;
   let principalOutboxQueued = false;
+  let endedSessions: EndedSessions[] = [];
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: userId },
@@ -1031,7 +1039,8 @@ export async function scrubUser(
 
     // Hard-delete sessions + accounts so SSO and password-based logins
     // both break immediately.
-    await revokeAllUserSessions(tx, userId);
+    endedSessions = (await revokeAllUserSessions(tx, userId)).ended;
+    await detachSessionAccessLogs(tx, userId);
     await tx.account.deleteMany({ where: { userId } });
 
     // Withdraw all active DPDP ConsentArtifact rows while preserving their
@@ -1099,6 +1108,9 @@ export async function scrubUser(
       });
     }
   });
+
+  // After commit, so a failed access-log write never fails the erasure.
+  await stampSessionEnds(endedSessions, { forgetUser: true });
 
   // Stream revocation is best-effort after commit, as in the moderation
   // side-effects; the rows are REMOVED either way. #1593 — each attempt

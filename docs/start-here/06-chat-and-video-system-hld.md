@@ -361,8 +361,8 @@ a stale claim preserves its consumed attempt. All five lifecycle cores also fail
 closed on unavailable ownership. The adapters have no independent schedules.
 
 `/api/health/jobs` requires a successful environment-scoped transfer completion
-within 45 minutes, session recovery within 90 minutes, and each daily lifecycle
-capability within 27 hours. Admission cannot satisfy completion health. The risk
+within 60 minutes, session recovery within 90 minutes, and each daily lifecycle
+capability within 28.5 hours (budgets derived from the schedule). Admission cannot satisfy completion health. The risk
 alarm samples at most 100 READY Stream sources with a future expiry that is within
 72 hours or with at least three attempts. Each recording is conditionally claimed
 for an alarm at most once per six hours; expired sources are excluded. Alert

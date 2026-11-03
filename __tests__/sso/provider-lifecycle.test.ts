@@ -27,7 +27,10 @@ jest.mock("../../lib/enterprise/governance", () => ({
   DomainVerificationRequiredError: class extends Error {},
   hasVerifiedDomain: jest.fn(async () => true),
 }));
-const revokeEnforcedDomainSessions = jest.fn(async (..._a: unknown[]) => 0);
+const revokeEnforcedDomainSessions = jest.fn(async (..._a: unknown[]) => ({
+  revoked: 0,
+  ended: [],
+}));
 jest.mock("../../lib/sso/session-sweeps", () => ({
   revokeEnforcedDomainSessions: (...a: unknown[]) =>
     revokeEnforcedDomainSessions(...a),

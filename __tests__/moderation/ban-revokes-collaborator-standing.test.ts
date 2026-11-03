@@ -17,7 +17,10 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { moderationAction: { update: jest.fn(async () => ({})) } },
+  default: {
+    moderationAction: { update: jest.fn(async () => ({})) },
+    $executeRaw: jest.fn(),
+  },
 }));
 jest.mock("../../lib/stream-client", () => ({
   __esModule: true,
@@ -64,6 +67,7 @@ jest.mock("../../lib/collaborators/service", () => ({
   revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
 }));
 
+import prisma from "@/lib/prisma";
 import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
 import {
   applyBestEffortEffects,
@@ -75,7 +79,11 @@ const tx = {
     update: jest.fn(async () => ({})),
     findUnique: jest.fn(async () => ({ consultantProfileId: "cp-1" })),
   },
-  session: { deleteMany: jest.fn(async () => ({ count: 1 })) },
+  $queryRaw: jest.fn(async () => [{ ready: false }]),
+  session: {
+    findMany: jest.fn(async () => []),
+    deleteMany: jest.fn(async () => ({ count: 1 })),
+  },
   consultantEarnings: {
     findMany: jest.fn(async () => []),
     updateMany: jest.fn(async () => ({ count: 0 })),
@@ -139,6 +147,19 @@ describe("a ban revokes collaborator standing", () => {
     );
     expect(summary.collaboratorRevocation).toBe("ok");
     expect(summary.errors).toBeUndefined();
+  });
+
+  it("still bans and ends sessions while the access-log table is missing", async () => {
+    const transactional = await applyTransactionalEffects(tx as never, input);
+
+    expect(tx.user.update).toHaveBeenCalled();
+    expect(tx.session.deleteMany).toHaveBeenCalledWith({
+      where: { userId: "u1" },
+    });
+    expect(transactional.sessionsRevoked).toBe(1);
+    const summary = await applyBestEffortEffects(input, transactional);
+    expect(summary).not.toHaveProperty("stagedSessionEnds");
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 
   it("records a failed revocation per plan without blocking the other steps", async () => {

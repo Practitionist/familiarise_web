@@ -93,6 +93,8 @@ graph TD
                                                                status = 'RUNNING'` -> P0 TOCTOU lock race!
 ```
 
+The cron box above is the audit-time snapshot. It is no longer true that `cron-heartbeat.yml` writes `cron:heartbeat:last`: only `withCronLock` writes that key, and the workflow now watches just the Actions-scheduled workflows.
+
 ### 1.2 Target Production Architecture (Improvised, Decoupled & Hardened)
 
 ```text

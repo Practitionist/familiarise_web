@@ -32,7 +32,7 @@ Actions-owned jobs → existing CLI → the same canonical core where registered
 Admin run door    → explicit mapped canonical core (recording copies use async admission)
 ```
 
-Recording transfer and the five daily Stream lifecycle targets use a separate execution path: the same catalog's background destination → authenticated narrow adapter → canonical transfer core. The ticker dispatches recording copies every 15 minutes and daily lifecycle slices in staggered windows, accepts only 202, and lists that receipt in `accepted`. Cleanup and staff run doors queue that adapter using a server-configured HTTPS origin. They do not claim a successful copy. Only an owned successful core execution refreshes completion health: 45 minutes for copy, 90 minutes for synchronous session recovery, and 27 hours for the daily lifecycle jobs. See [Stream lifecycle operations](../stream/09-background-sync.md) for slice bounds and continuation. See the [recording worker runbook](../stream/recording-background-worker.md) for the 72-hour/three-attempt alarm, source classification and orphan-object recovery.
+Recording transfer and the five daily Stream lifecycle targets use a separate execution path: the same catalog's background destination → authenticated narrow adapter → canonical transfer core. The ticker dispatches recording copies every 15 minutes and daily lifecycle slices in staggered windows, accepts only 202, and lists that receipt in `accepted`. Cleanup and staff run doors queue that adapter using a server-configured HTTPS origin. They do not claim a successful copy. Only an owned successful core execution refreshes completion health: 60 minutes for copy, 90 minutes for synchronous session recovery, and 28.5 hours for the daily lifecycle jobs. Every ticker target gets such a budget, derived from its schedule in `lib/cron/operational-health.ts` and printed on the "Freshness" line of the [generated reference](./04-cron-jobs-reference.md); `/api/health/jobs` answers 503 when a `paging` one lapses. See [Stream lifecycle operations](../stream/09-background-sync.md) for slice bounds and continuation. See the [recording worker runbook](../stream/recording-background-worker.md) for the 72-hour/three-attempt alarm, source classification and orphan-object recovery.
 
 Do not add per-job cleanup route files, parallel implementations or new `GITHUB_OUTPUT` wrappers. Keep one automatic owner per job. A lease reduces overlap; it does not make sequential external effects safe to repeat.
 
@@ -208,13 +208,13 @@ A sweep that finds something it cannot safely repair records a finding and stops
 
 Three workflows declare a `cron:` schedule. The three fleet workflows `cron-intra-day.yml`, `cron-daily.yml` and `cron-weekly.yml` are deleted; every registered job runs on the Netlify ticker.
 
-| Workflow             | Schedules (UTC) | Purpose                                          |
-| -------------------- | --------------- | ------------------------------------------------ |
-| `cron-heartbeat.yml` | `04:40`         | Dead-man's switch for the scheduled workflows    |
-| `db-live-drift.yml`  | `07:03`         | Read-only schema drift against the live database |
-| `security-audit.yml` | Mon `07:00`     | Supply-chain audit, including between PRs        |
+| Workflow             | Schedules (UTC) | Purpose                                             |
+| -------------------- | --------------- | --------------------------------------------------- |
+| `cron-heartbeat.yml` | `04:40`         | Dead-man's switch for the other scheduled workflows |
+| `db-live-drift.yml`  | `07:03`         | Read-only schema drift against the live database    |
+| `security-audit.yml` | Mon `07:00`     | Supply-chain audit, including between PRs           |
 
-The heartbeat is deliberately **not** in `withCronLock`: a watchdog must not depend on the resource it is monitoring. It is read-only, so a double run is harmless. It writes `cron:heartbeat:last` to Upstash, which `/api/health` exposes as `cron.stale` after 45 minutes so an external uptime pinger can watch it with no GitHub dependency.
+The heartbeat watches only `db-live-drift` and `security-audit`, by reading the Actions API (`scripts/ci/check-cron-heartbeat.ts`); it alerts when one has stopped starting. It watches no runtime job, writes no Redis key and takes no lease, because it never touches the database. Runtime jobs are watched from outside Actions: `/api/health/jobs` (freshness budgets derived from `lib/cron/schedule.ts`, plus the digest verdicts), the ticker heartbeat and the daily `ops-digest`. The Redis key `cron:heartbeat:last` that `/api/health` exposes as `cron.stale` after 45 minutes is written only by `withCronLock` on a completed production run.
 
 Two workflows that write to the shared production database — the load gate and the load smoke test — are `workflow_dispatch`-only and refuse to self-fire.
 

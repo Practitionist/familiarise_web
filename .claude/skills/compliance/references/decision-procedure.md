@@ -93,7 +93,12 @@ the operator can see what to settle.
   `name → "Erased User <8hex>"`).
 - Nulls PII on profiles, payout-account masked fields, and user-authored text.
 - Flips memberships, program assignments and collaborators.
-- Hard-deletes sessions and accounts — immediate sign-out everywhere.
+- Hard-deletes sessions and accounts — immediate sign-out everywhere. Inside
+  the transaction the scrub sets the user's `SessionAccessLog.userId` to null
+  (`detachSessionAccessLogs`); after commit `stampSessionEnds(ended,
+{ forgetUser: true })` stamps each session's end, so a log failure never
+  fails the erasure. IP, user agent and times stay for the 180-day CERT-In
+  prune (`lib/auth/session-access-log.ts`).
 - **Deliberately preserves** `city`/`country` (geographic compliance reporting),
   payment and ledger rows, tax records, and the Razorpay reference ids.
 

@@ -149,23 +149,21 @@ function findProductPage(where: Prisma.DigitalProductWhereInput) {
   });
 }
 
-/** File names are each lineage's first name, so a replacement never renames a file. */
+/** File names keep each lineage's first stem, so a replacement changes at most the extension. */
 async function toPublicProduct(
   row: NonNullable<Awaited<ReturnType<typeof findProductPage>>>,
 ): Promise<PublicProduct> {
   const { consultantProfile, assets, ...product } = row;
-  const names = await lineageDisplayNames(prisma, assets);
+  const nameOf = await lineageDisplayNames(prisma, assets);
   return {
     ...product,
     fileCount: assets.length,
-    files: assets.map(
-      ({ id, lineageId, originalName, mimeType, sizeBytes }) => ({
-        id,
-        originalName: names.get(lineageId) ?? originalName,
-        mimeType,
-        sizeBytes,
-      }),
-    ),
+    files: assets.map((a) => ({
+      id: a.id,
+      originalName: nameOf(a),
+      mimeType: a.mimeType,
+      sizeBytes: a.sizeBytes,
+    })),
     creator: {
       consultantProfileId: consultantProfile.id,
       name: consultantProfile.user.name,

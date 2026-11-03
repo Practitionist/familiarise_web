@@ -35,6 +35,10 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { removeMember } from "@/lib/enterprise/member-removal";
 import { revokeOrgManagedUserSessions } from "@/lib/sso/session-sweeps";
 import {
+  stampSessionEnds,
+  type EndedSessions,
+} from "@/lib/auth/session-access-log";
+import {
   applyMembershipRoleEffects,
   auditPayoutRecipientChange,
   recomputeIndependenceAcross,
@@ -332,11 +336,15 @@ async function applyRoleAndStatusTransitions(
     roleChanged: boolean;
     statusChanged: boolean;
   },
-): Promise<Awaited<ReturnType<typeof applyMembershipRoleEffects>> | null> {
+): Promise<{
+  roleEffects: Awaited<ReturnType<typeof applyMembershipRoleEffects>> | null;
+  ended: EndedSessions[];
+}> {
   const { current, patch, actor, orgId, memberId } = args;
   let roleEffects: Awaited<
     ReturnType<typeof applyMembershipRoleEffects>
   > | null = null;
+  let ended: EndedSessions[] = [];
 
   if (args.roleChanged && patch.role !== undefined) {
     await assertRoleChangeAllowed(tx, {
@@ -362,11 +370,15 @@ async function applyRoleAndStatusTransitions(
       to: patch.status,
     });
     if (patch.status === "SUSPENDED") {
-      await revokeOrgManagedUserSessions(tx, orgId, current.userId);
+      ({ ended } = await revokeOrgManagedUserSessions(
+        tx,
+        orgId,
+        current.userId,
+      ));
     }
   }
 
-  return roleEffects;
+  return { roleEffects, ended };
 }
 
 export async function PATCH(
@@ -456,6 +468,7 @@ export async function PATCH(
 
   let stagedRoleEmail: StagedOnboardingEmail | null = null;
   let stagedRoleBells: StagedTrigger[] = [];
+  let stagedSessionEnds: EndedSessions[] = [];
 
   try {
     const result = await withSerializableRetry(() =>
@@ -463,6 +476,7 @@ export async function PATCH(
         async (tx) => {
           stagedRoleEmail = null;
           stagedRoleBells = [];
+          stagedSessionEnds = [];
           const current = await tx.membership.findFirst({
             where: { id: memberId, organizationId: orgId },
           });
@@ -481,7 +495,7 @@ export async function PATCH(
           const statusChanged =
             patch.status !== undefined && patch.status !== current.status;
 
-          const roleEffects = await applyRoleAndStatusTransitions(tx, {
+          const transitions = await applyRoleAndStatusTransitions(tx, {
             orgId,
             memberId,
             current,
@@ -492,7 +506,12 @@ export async function PATCH(
             statusChanged,
           });
 
-          const otherData = memberUpdateData(patch, current.role, roleEffects);
+          stagedSessionEnds = transitions.ended;
+          const otherData = memberUpdateData(
+            patch,
+            current.role,
+            transitions.roleEffects,
+          );
           const updated =
             Object.keys(otherData).length > 0
               ? await tx.membership.update({
@@ -568,6 +587,7 @@ export async function PATCH(
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
+    await stampSessionEnds(stagedSessionEnds);
 
     if (stagedRoleEmail || stagedRoleBells.length > 0) {
       const staged = stagedRoleEmail;

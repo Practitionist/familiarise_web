@@ -1270,7 +1270,7 @@ If your SaaS handles payments, bookings, refunds, emails, or webhooks, you need 
 4. **Protect Sentry Error Quota with a Circuit Breaker + Ingest Canary (`#1868`, `#1933`):**
    When Sentry's monthly error quota is exhausted, Sentry continues returning `200 OK` for sessions and transactions while **silently dropping 100% of error events**. Protect your quota with:
    - Per-process rate limiting / circuit breaker in `sentry.shared.config.ts` (`#1933`) so a 5-minute database or Redis flap cannot emit 5,000 events.
-   - A six-hourly `sentry-ingest-canary` (`#1868`) that verifies a test event is actually stored and pages via email (not Sentry!) if ingest goes dark.
+   - A daily `sentry-ingest-canary` that reads Sentry's `stats_v2` error outcomes (it sends no event) and pages via email and Better Stack (not Sentry!) if ingest goes dark.
 
 ---
 

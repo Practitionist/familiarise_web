@@ -8,6 +8,7 @@ import {
   revokeAllUserSessions,
   revokeSessionById,
 } from "@/lib/auth/session-revoke";
+import { stampSessionEnds } from "@/lib/auth/session-access-log";
 
 /**
  * POST /api/admin/users/[userId]/sessions/revoke — end a user's
@@ -60,9 +61,10 @@ export const POST = withOpsAction(
       }
 
       const userId = params.userId;
-      const { revoked } = body.sessionId
+      const { revoked, ended } = body.sessionId
         ? await revokeSessionById(prisma, userId, body.sessionId)
         : await revokeAllUserSessions(prisma, userId);
+      await stampSessionEnds(ended);
       return {
         target: { kind: "User", id: userId },
         correlationId: `user:${userId}`,
