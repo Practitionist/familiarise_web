@@ -52,7 +52,7 @@ export interface CleanupJobEntry {
 
 // Per-run defaults for the per-row booking sweeps the ticker drives. `?limit=`
 // overrides them (clamped to LIMIT_CAP); no caller gets an unbounded cohort.
-/** Sessions per reminder window; each costs a claim, a bell and an email. */
+/** Sessions per reminder window; each costs a bell and an email. */
 const MAX_REMINDER_SESSIONS_PER_WINDOW = 25;
 /** Parents and slot outcomes per bite; one Stream report each, bites until the drain deadline. */
 const MAX_AUTO_COMPLETE_PER_PASS = 25;
