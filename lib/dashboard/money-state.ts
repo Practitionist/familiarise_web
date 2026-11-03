@@ -467,7 +467,7 @@ function deriveBooking(
   if (wait === "NEXT_CYCLE") {
     return {
       state: "AWAITING_ALLOCATION",
-      why: `Week done · ${c} schedules the next ${input.entitlement?.nextBatch ?? 0}.`,
+      why: `Week done · the next ${input.entitlement?.nextBatch ?? 0} to be scheduled.`,
     };
   }
   if (status === "DRAFT")

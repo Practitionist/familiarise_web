@@ -433,6 +433,21 @@ describe("ALLOCATE (#1775 C-5)", () => {
       label: "Schedule the next 4",
     });
   });
+
+  it("words the next-cycle wait the same for both sides, naming nobody", () => {
+    const input = base({
+      request: req("APPROVED"),
+      occurrences: [slot(false, PAST)],
+      payments: paid,
+      holdExpiresAt: null,
+      entitlement: { remaining: 4, nextBatch: 4 },
+    });
+    for (const role of ["CONSULTANT", "CONSULTEE"] as const) {
+      expect(
+        deriveBookingPresentation(input, role, { now: NOW }).bookingState.why,
+      ).toBe("Week done · the next 4 to be scheduled.");
+    }
+  });
 });
 
 // #1780 E-5 — a confirmed class seat whose host missed three sessions (or a
