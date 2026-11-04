@@ -143,6 +143,7 @@ export function makeSubscription(overrides: Record<string, any> = {}) {
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00.000Z"), // Monday
     schedulingPeriodEndsAt: new Date("2025-02-02T23:59:59.000Z"), // Sunday
     subscriptionPlan: makeSubscriptionPlan(),
+    sessionsRefunded: 0,
     requestedBy: {
       user: { name: "Test User", id: "user-1" },
     },

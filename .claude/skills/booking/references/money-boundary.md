@@ -520,15 +520,29 @@ predicate, never a caller's copy of it.
 
 ## 13. A subscription settles at its fixed plan end
 
-A subscription's plan end is fixed at purchase in `Subscription.planEndsAt`:
-the start plus `durationInMonths` on the consultant's wall clock, clamped to the
-month's last day (31 January plus one month is 28 or 29 February), exclusive
-(`planEndOf` in `lib/booking/entitlement.ts`). Every sweep, admin view, incident
-extension, document and renewal reads it through `subscriptionPlanEnd` or
-`subscriptionIsOver`; an incident extension or a returned session moves the
-stored value. A plan holds `sessionsPerWeek × durationInMonths × 4` sessions
-(`planTotalSessions`), frozen at purchase, and the plan or period of a purchased
-subscription cannot be changed.
+A subscription's terms are fixed at purchase by `purchaseTermsOf`
+(`lib/booking/entitlement.ts`): the weekly cap (`Subscription.sessionsPerWeek`),
+the session length (`sessionMinutes`), the sessions sold (`sessionsTotal` =
+weeks × sessions a week, where a months plan counts `durationInMonths × 4`
+weeks) and the plan end (`planEndsAt`). A weeks plan ends `durationInWeeks × 7`
+zone-days after the start at the same wall time (`weeksPlanEndOf`, so a DST
+change never moves the end hour); a months plan ends on the same date
+`durationInMonths` later, clamped to the month's last day (`planEndOf`),
+exclusive. Every sweep, admin view, incident extension, document and renewal
+reads the end through `subscriptionPlanEnd` or `subscriptionIsOver`; an incident
+extension or a returned session moves the stored value. Readers of a sold plan's
+cadence use `soldTermsOf` / `soldSessionsPerWeek` / `soldSessionMinutes`, which
+fall back to the plan only for a row sold before the freeze, and a plan edit
+stamps those rows first (`freezeSoldTerms`), so an edit applies to new buyers
+only.
+
+A support partial refund of k sessions (the `REVIEW_REFUND` door with a
+session count) refunds `min(floor(paid × k / sessionsTotal), refundable)` and,
+in the approval's commit, adds k to `Subscription.sessionsRefunded` by CAS on
+the count read (`removePlanSessions`, `lib/booking/plan-refund.ts`). Those
+sessions leave the schedulable total (`sessionsTotal − sessionsRefunded`), so
+the expert never delivers a session whose earnings were already reversed. A
+void of that approval puts them back (`restorePlanSessions`).
 
 At the plan end the `settle-cancelled-sessions` sweep
 (`scripts/appointments/settle-cancelled-sessions.ts`) settles once: every
@@ -537,7 +551,11 @@ through `refundBookingPayment`, under a durable owed marker keyed
 `plan-end:<subscriptionId>:pay:<paymentId>` stamped in the commit that completes
 the plan. While that marker is set, the tranches stamped in the same commit
 stay `PENDING` (`RELEASABLE_PAYMENT`), so a refund that keeps failing never
-releases them.
+releases them. The share is `floor(paid × (T − delivered) / T)` less what the
+payment already returned, with `T = sessionsTotal` (the sessions sold, not the
+schedulable count): on a ₹15,600 plan of 78 sessions, a ₹1,800 support refund
+of 9 sessions in week 10 and a plan end with 61 delivered settle
+`floor(15,600 × 17 / 78) − 1,800` = ₹1,600, so no session is paid twice.
 
 The pass resumes each tick from a checkpoint, so plans that must wait
 never starve the ones behind them. A void in the middle of a plan is not paid
@@ -552,6 +570,9 @@ back while the session can still be re-booked; it waits for the plan end.
 - **History-counted reschedule caps.** Caps once counted distinct RESCHEDULED
   history instants per side, so a declined or expired proposal that restored
   the booking still cost a reschedule. They count release records now.
+- **A sold plan reading the live plan row's cadence.** A plan edit once changed
+  the weekly cap and session length of plans already sold; they are frozen on
+  the subscription now.
 - **A plan end derived from the scheduling period.** Readers once treated
   `schedulingPeriodEndsAt` as the plan end, so a void mid-plan was refunded while
   still re-bookable. Read `subscriptionPlanEnd`.
