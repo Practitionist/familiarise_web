@@ -610,6 +610,7 @@ export function RequestsInbox({
         variant: "destructive",
       });
     },
+    onSettled: invalidate,
   });
 
   const [withdrawTarget, setWithdrawTarget] = useState<InboxRowInput | null>(
