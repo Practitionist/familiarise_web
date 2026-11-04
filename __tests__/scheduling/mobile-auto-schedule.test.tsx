@@ -53,6 +53,16 @@ it("retries an ambiguous 5xx under the same key", async () => {
   expect(keyOf(1)).toBe(keyOf(0));
 });
 
+it("retries an unreadable 200 under the same key", async () => {
+  mockAllocateSlots.mockResolvedValue({ success: false, httpStatus: 200 });
+  const button = renderDoor();
+  fireEvent.click(button);
+  await waitFor(() => expect(button).not.toBeDisabled());
+  fireEvent.click(button);
+  await waitFor(() => expect(mockAllocateSlots).toHaveBeenCalledTimes(2));
+  expect(keyOf(1)).toBe(keyOf(0));
+});
+
 it("starts a fresh key after a definite refusal", async () => {
   mockAllocateSlots.mockResolvedValue({
     success: false,

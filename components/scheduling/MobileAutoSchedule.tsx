@@ -54,9 +54,10 @@ export function MobileAutoSchedule({
           allowPartial: topUp,
         },
       );
-      // A definite answer spends the key; an ambiguous 5xx may have committed,
-      // so a retry replays it under the same key.
-      if (response.success || (response.httpStatus ?? 500) < 500) {
+      // Only a success or a 4xx refusal is definite and spends the key; a
+      // 5xx or an unreadable 2xx may have committed, so a retry replays it.
+      const status = response.httpStatus ?? 500;
+      if (response.success || (status >= 400 && status < 500)) {
         attemptKeyRef.current = null;
       }
       if (!response.success) {
