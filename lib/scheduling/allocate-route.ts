@@ -146,7 +146,7 @@ export async function handleAllocate(
             override: body.override === true && canOverride,
             allowPartial: body.allowPartial === true && canOverride,
             topUp: body.topUp === true && canOverride,
-            byOperator: hostActor !== "consultant",
+            byConsultant: hostActor === "consultant",
           }),
       );
 

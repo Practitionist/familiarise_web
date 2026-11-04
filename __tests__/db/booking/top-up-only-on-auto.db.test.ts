@@ -72,7 +72,7 @@ async function expectLeftToItsConsultant(subscriptionId: string) {
 
 async function scheduledPlan(
   mode: "auto" | "manual",
-  opts: { byOperator?: boolean } = {},
+  opts: { byConsultant?: boolean } = { byConsultant: true },
 ) {
   const host = await seedHost();
   await publishMornings(host);
@@ -91,12 +91,13 @@ async function scheduledPlan(
           eventType: "subscription",
           eventId: subscriptionId,
           mode: "auto",
-          byOperator: opts.byOperator,
+          byConsultant: opts.byConsultant,
         }
       : {
           eventType: "subscription",
           eventId: subscriptionId,
           mode: "manual",
+          byConsultant: opts.byConsultant,
           slots: [
             first.toISOString(),
             new Date(first.getTime() + HOUR_MS / 2).toISOString(),
@@ -143,6 +144,7 @@ it("re-placing a released session with Auto never switches a by-hand plan to the
     eventType: "subscription",
     eventId: subscriptionId,
     mode: "auto",
+    byConsultant: true,
   });
   expect(replaced).toMatchObject({ success: true });
   expect(await reasons(subscriptionId)).toContain(SCHEDULE_REASON.reschedule);
@@ -161,6 +163,7 @@ it("a returned last session never lets a later one-week Auto become the plan's c
     eventType: "subscription",
     eventId: subscriptionId,
     mode: "auto",
+    byConsultant: true,
   });
   expect(week).toMatchObject({ success: true });
   expect(await reasons(subscriptionId)).toContain(SCHEDULE_REASON.weekAuto);
@@ -169,7 +172,8 @@ it("a returned last session never lets a later one-week Auto become the plan's c
 }, 60_000);
 
 it("an operator's Auto first week is a one-off, not the consultant's consent", async () => {
-  const subscriptionId = await scheduledPlan("auto", { byOperator: true });
+  // No consultant marker, as the sponsor and operator doors call it.
+  const subscriptionId = await scheduledPlan("auto", {});
   expect(await reasons(subscriptionId)).toContain(SCHEDULE_REASON.weekAuto);
   expect(await reasons(subscriptionId)).not.toContain(SCHEDULE_REASON.planAuto);
   await expectLeftToItsConsultant(subscriptionId);

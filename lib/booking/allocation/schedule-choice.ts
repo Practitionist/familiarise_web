@@ -65,7 +65,8 @@ export function lastChoiceWasAuto(
 /**
  * The token one allocation run records, from server-side facts only: whether
  * the plan was ever placed before (never a client flag), the mode, and who
- * ran it. Only the consultant's own first placement is a plan-level choice.
+ * ran it. Only the consultant's own first placement is a plan-level choice;
+ * a caller that does not say it is the consultant never records one.
  */
 export function scheduleReason(args: {
   mode: "auto" | "manual" | "requested";
@@ -74,7 +75,7 @@ export function scheduleReason(args: {
   /** Released sessions awaiting a new time before this run. */
   releasedBefore: number;
   bySweep?: boolean;
-  byOperator?: boolean;
+  byConsultant?: boolean;
   confirmsReschedule?: boolean;
 }): ScheduleReason {
   if (args.bySweep) return SCHEDULE_REASON.topUp;
@@ -82,7 +83,7 @@ export function scheduleReason(args: {
     return SCHEDULE_REASON.reschedule;
   }
   const auto = args.mode === "auto";
-  if (args.placedBefore || args.byOperator) {
+  if (args.placedBefore || !args.byConsultant) {
     return auto ? SCHEDULE_REASON.weekAuto : SCHEDULE_REASON.weekByHand;
   }
   return auto ? SCHEDULE_REASON.planAuto : SCHEDULE_REASON.planByHand;

@@ -149,10 +149,11 @@ export interface AllocationRequest {
   /** The hourly top-up placing a plan's open week as the system, not a person. */
   bySweep?: boolean;
   /**
-   * Staff or a host-org operator placed the sessions, not the consultant: a
-   * one-off placement that never records the plan's Auto consent.
+   * The plan's own consultant placed the sessions. Only then can a first
+   * placement record the plan's Auto choice; any other caller (staff, a host
+   * or sponsor org operator, or a door that does not say) is a one-off.
    */
-  byOperator?: boolean;
+  byConsultant?: boolean;
 }
 
 /** The per-call extras every allocation mode threads into its transaction. */

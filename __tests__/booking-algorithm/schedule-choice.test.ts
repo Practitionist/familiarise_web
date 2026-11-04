@@ -38,7 +38,7 @@ it("parses strictly: human copy is never a token", () => {
 });
 
 describe("scheduleReason from server facts", () => {
-  const empty = { placedBefore: false, releasedBefore: 0 };
+  const empty = { placedBefore: false, releasedBefore: 0, byConsultant: true };
   it.each([
     [{ mode: "auto" as const, ...empty }, SCHEDULE_REASON.planAuto],
     [{ mode: "manual" as const, ...empty }, SCHEDULE_REASON.planByHand],
@@ -69,13 +69,17 @@ describe("scheduleReason from server facts", () => {
       },
       SCHEDULE_REASON.topUp,
     ],
-    // An operator's first placement is one-off, never the consultant's consent.
+    // Anyone but the consultant (or a door that does not say) is a one-off.
     [
-      { mode: "auto" as const, ...empty, byOperator: true },
+      { mode: "auto" as const, ...empty, byConsultant: false },
       SCHEDULE_REASON.weekAuto,
     ],
     [
-      { mode: "manual" as const, ...empty, byOperator: true },
+      { mode: "auto" as const, placedBefore: false, releasedBefore: 0 },
+      SCHEDULE_REASON.weekAuto,
+    ],
+    [
+      { mode: "manual" as const, ...empty, byConsultant: false },
       SCHEDULE_REASON.weekByHand,
     ],
   ])("%j → %s", (args, token) => {
