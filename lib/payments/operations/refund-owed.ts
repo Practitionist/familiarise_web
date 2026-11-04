@@ -8,6 +8,8 @@ import {
   recordSystemEvent,
 } from "@/lib/enterprise/system-events";
 import { Refusal } from "@/lib/errors/refusal";
+import { LAUNCH_TIMEZONE } from "@/lib/scheduling/weeklyUtcOffset";
+import { formatDateLabel } from "@/lib/time/display";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import type { FundingRail } from "@/lib/payments/funding-rail";
 import { GATEWAY_NOT_FOUND } from "@/lib/payments/core/types";
@@ -74,12 +76,37 @@ export async function clearOwedMarkerSettledBy(
   });
 }
 
-/** The refusal a hand refund gets when the payment's owed refund already went out. */
-function owedAlreadySent(paymentId: string, key: string) {
+/** What an operator needs to see of the owed refund that already went out. */
+const SENT_REFUND_SELECT = {
+  id: true,
+  status: true,
+  amountPaise: true,
+  createdAt: true,
+  refundId: true,
+} as const;
+
+type SentRefund = {
+  id: string;
+  amountPaise: bigint | number;
+  createdAt: Date;
+  refundId: string | null;
+};
+
+/**
+ * The refusal a hand refund gets when the payment's owed refund already went
+ * out, with the amount, date and reference of that refund.
+ */
+function owedAlreadySent(
+  paymentId: string,
+  key: string,
+  sent: SentRefund,
+): RefundValidationError {
+  const reference = sent.refundId ?? sent.id;
+  const on = formatDateLabel(sent.createdAt, { zone: LAUNCH_TIMEZONE });
   return new RefundValidationError(
-    "This owed refund already went out, so nothing is owed on this payment any more. Check the refund history; to refund more, submit the refund again.",
+    `${rupees(Number(sent.amountPaise))} already went back to the buyer on ${on} (refund ${reference}), so nothing is owed on this payment. Only submit again if you mean to refund more on top of this.`,
     "OWED_REFUND_ALREADY_SENT",
-    { paymentId, key },
+    { paymentId, key, refundRowId: sent.id, reference },
   );
 }
 
@@ -95,11 +122,11 @@ export async function refuseIfOwedAlreadySent(
   if (!key) return;
   const own = await prisma.refund.findUnique({
     where: { dedupeKey: key },
-    select: { status: true },
+    select: SENT_REFUND_SELECT,
   });
   if (own?.status !== RefundStatus.SUCCEEDED) return;
   await clearOwedMarkerSettledBy(prisma, paymentId, key);
-  throw owedAlreadySent(paymentId, key);
+  throw owedAlreadySent(paymentId, key, own);
 }
 
 /** What an operator's hand refund did to the owed refund, as its Refund row's metadata records it. */
@@ -152,7 +179,7 @@ export async function settleOwedByHand(
   if (!key) return null;
   const own = await tx.refund.findUnique({
     where: { dedupeKey: key },
-    select: { status: true },
+    select: SENT_REFUND_SELECT,
   });
   if (own?.status === RefundStatus.PENDING) {
     throw new RefundValidationError(
@@ -166,7 +193,7 @@ export async function settleOwedByHand(
   const where = { id: paymentId, refundOwedKey: key, refundOwedPaise: stamped };
   // The pre-check clears it; one that succeeded since is still never paid twice.
   if (own?.status === RefundStatus.SUCCEEDED)
-    throw owedAlreadySent(paymentId, key);
+    throw owedAlreadySent(paymentId, key, own);
   if (cover.kind === "credits-part") {
     throw new RefundValidationError(
       "This payment still owes its whole credit restoration. Return every remaining session, or let the owed restoration run.",

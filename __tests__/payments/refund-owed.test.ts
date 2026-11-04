@@ -27,6 +27,7 @@ type RefundRow = {
   status: "SUCCEEDED" | "PENDING" | "FAILED";
   failedNotifiedAt?: Date | null;
   createdAt?: Date;
+  refundId?: string | null;
 };
 
 const mockRows = new Map<string, Row>();
@@ -570,14 +571,22 @@ describe("a hand refund once the owed refund already went out", () => {
       dedupeKey: "cancel:appt:p1",
       amountPaise: 5_000,
       status: "SUCCEEDED",
+      createdAt: new Date("2026-11-02T06:30:00.000Z"),
+      refundId: "rfnd_gw_123",
     });
   }
+  /** The refusal names what went out, when, and its reference, and warns before a second payment. */
+  const ALREADY_SENT_COPY =
+    "₹50.00 already went back to the buyer on 2 Nov 2026 (refund rfnd_gw_123), so nothing is owed on this payment. Only submit again if you mean to refund more on top of this.";
 
   it("is refused inside the refund transaction, so nothing is paid twice", async () => {
     ownRefundSucceeded();
     await expect(
       settleOwedByHand(mockDb as never, "p1", { kind: "whole" }),
-    ).rejects.toMatchObject({ code: "OWED_REFUND_ALREADY_SENT" });
+    ).rejects.toMatchObject({
+      code: "OWED_REFUND_ALREADY_SENT",
+      message: ALREADY_SENT_COPY,
+    });
   });
 
   it("is refused before the transaction, and the stale marker is cleared", async () => {
@@ -586,7 +595,7 @@ describe("a hand refund once the owed refund already went out", () => {
       refuseIfOwedAlreadySent("p1", mockRows.get("p1")!.refundOwedKey),
     ).rejects.toMatchObject({
       code: "OWED_REFUND_ALREADY_SENT",
-      message: expect.stringContaining("This owed refund already went out"),
+      message: ALREADY_SENT_COPY,
     });
     expect(mockRows.get("p1")).toMatchObject({
       refundOwedKey: null,
