@@ -3,7 +3,7 @@
  *
  * `MAX_CANDIDATE_STARTS_PER_ROW = 50` bounds the 30-minute starts walked out of
  * one availability row. `rowEndMs` normally ends the walk first, and a custom
- * row is walked as scheduling-zone day slices that never exceed 25 hours. A
+ * row is walked as scheduling-zone day slices, ≤ 25 h in every inhabited zone. A
  * weekly row longer than any day still exits on the ceiling — and it used to do
  * so in complete silence, so the tail of that row was invisible to allocation
  * and the resulting SLOT_SHORTAGE was indistinguishable from a genuinely full
@@ -88,7 +88,10 @@ function customRow(hours: number) {
   };
 }
 
-/** A UTC WEEKLY row of `hours` (more than a day), starting Monday 00:00. */
+/**
+ * A UTC WEEKLY row of `hours` (more than a day), starting Monday 00:00. A
+ * legacy-only shape: writes cap weekly rows at 12 h.
+ */
 function longWeeklyRow(hours: number) {
   return {
     id: `weekly-${hours}h`,

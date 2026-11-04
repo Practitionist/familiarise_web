@@ -13,8 +13,8 @@ import type {
  * The walk stops at the first candidate outside availability, but adjacent rows
  * make `isWithinAvailability` keep answering true past this row's own end, so a
  * consultant with contiguous cover would otherwise walk the whole week. 50 steps
- * is the longest calendar day (25 hours on a fall-back day), the most one custom
- * day slice can hold, so the cap bounds the scan without truncating a real row.
+ * is a 25-hour fall-back day; a custom day slice is ≤ 25 h in every inhabited
+ * zone, so the cap bounds the scan without truncating a real row.
  */
 export const MAX_CANDIDATE_STARTS_PER_ROW = 50;
 

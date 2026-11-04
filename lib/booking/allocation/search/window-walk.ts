@@ -99,8 +99,8 @@ export function customAvailabilityIndex(
  * #1194 — the walk is bounded by the ROW'S OWN END (passed by the caller),
  * not just by isWithinAvailability (which adjacent rows keep answering true).
  * MAX_CANDIDATE_STARTS_PER_ROW stays as a safety net: custom rows arrive as
- * day slices and never reach it, so hitting it means a weekly row longer than
- * any calendar day.
+ * day slices, ≤ 25 h in every inhabited zone, so hitting it means a weekly row
+ * longer than a day (a legacy shape; writes cap weekly rows at 12 h).
  *
  * The anchor is snapped UP to the booking grid (buyer paths refuse off-grid
  * starts), so an off-grid legacy row 10:15-12:00 yields 10:30, 11:00, 11:30:

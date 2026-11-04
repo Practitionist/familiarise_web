@@ -318,8 +318,8 @@ first fit stops the slicing. Consultations and webinars carry no
 `schedulingTimezone`, so they slice in the default `Asia/Kolkata`; the zone only
 sets the walk's granularity, not which blocks are found, because a block is
 checked against the merged availability index and may span a slice cut. A
-fall-back day's slice is 25 hours, which is why `MAX_CANDIDATE_STARTS_PER_ROW`
-is 50. The validator, the manual path and the grid already judged custom rows
+fall-back day's slice is 25 hours, the longest day in every inhabited zone,
+which is why `MAX_CANDIDATE_STARTS_PER_ROW` is 50. The validator, the manual path and the grid already judged custom rows
 by containment or per atom, so they needed no change.
 
 A subscription is paced in fixed plan weeks (`subscriptionEntitlement` in
