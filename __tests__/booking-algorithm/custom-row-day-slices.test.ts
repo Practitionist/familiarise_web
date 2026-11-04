@@ -31,6 +31,7 @@ import {
 } from "../../lib/booking/allocation/search/recurrence";
 import { ScheduleCalculationService } from "../../utils/scheduling-engine/ScheduleCalculationService";
 import { ScheduleValidationService } from "../../utils/scheduling-engine/ScheduleValidationService";
+import { SlotShortageError } from "../../utils/scheduling-engine/errors";
 import type {
   ConsultantAllocationData,
   EventConfig,
@@ -359,6 +360,31 @@ describe("auto search inside one multi-day custom row", () => {
       held,
     );
     expect(sessionStarts(slots)).toEqual(["2026-08-15T13:30:00.000Z"]);
+  });
+});
+
+describe("the single-session horizon", () => {
+  it("does not reach a long row's day beyond the weekly arm's 8-week horizon", async () => {
+    // Every atom from the row's start to past the horizon (now + 57 days) is
+    // held, so the row's first free day lies beyond what a weekly row offers.
+    const held = atomsBetween(
+      "2026-08-14T12:30:00.000Z",
+      "2026-10-05T12:30:00.000Z",
+    );
+    await expect(
+      place(
+        customConsultant([
+          {
+            startsAt: "2026-08-14T12:30:00.000Z",
+            endsAt: "2026-12-31T12:30:00.000Z",
+          },
+        ]),
+        { sessionDurationInHours: 1, schedulingTimezone: IST },
+        1,
+        "consultation",
+        held,
+      ),
+    ).rejects.toThrow(SlotShortageError);
   });
 });
 

@@ -205,11 +205,11 @@ export function bestBlockForSingleSession(
       }
     }
   } else {
-    // Custom rows as scheduling-zone day slices in start order; sliced
-    // lazily, so a first fit stops it.
+    // Custom rows as scheduling-zone day slices in start order, inside the
+    // same horizon as the weekly arm; sliced lazily, so a first fit stops it.
     rowStarts = customSpansInStartOrder(customRows, schedulingTimezone, {
       startMs: now.getTime(),
-      endMs: Number.POSITIVE_INFINITY,
+      endMs: horizon.getTime(),
     });
   }
 
