@@ -274,10 +274,9 @@ function formatWeeklySlot(
  * Overnight handling delegates to convertTimezoneToUtcWithOvernight.
  *
  * The start is snapped onto the booking grid and the end carried by the same
- * shift (`snapInstantsToSchedulingGrid`): a custom row hands the allocator its
- * raw `startsAt` via `matchCustomSlotToDay`, so an off-grid start mints off-grid
- * candidate starts exactly as a weekly one does, and the server refuses the row
- * with GRID.
+ * shift (`snapInstantsToSchedulingGrid`): the allocator walks a custom row
+ * from its own `startsAt`, so an off-grid start mints off-grid candidate starts
+ * exactly as a weekly one does, and the server refuses the row with GRID.
  */
 function formatCustomSlot(
   slot: { startTime: string; endTime: string },

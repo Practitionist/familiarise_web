@@ -124,7 +124,7 @@ describe("weekly windows", () => {
 describe("custom windows", () => {
   it("refuses a range that starts off the grid — the same defect, not a different one", () => {
     // A custom row hands the allocator its raw `startsAt`
-    // (`matchCustomSlotToDay`), so an off-grid start mints off-grid candidates
+    // (`customRowDaySlices`), so an off-grid start mints off-grid candidates
     // exactly as a weekly row does.
     expect(
       validateCustomWindow(
