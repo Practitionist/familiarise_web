@@ -312,9 +312,11 @@ half-hour lattice so a :45 zone's atom across midnight stays on the day it
 starts. Every covered day is a candidate under the same spacing, daily cap and
 lead time. `customSpansInStartOrder` clips rows to the walk's window first (the
 recurring period, or the single-session horizon of 8 weeks for a consultation
-and 4 for a webinar, the same as the weekly arm) and slices lazily in start
-order, so a row begun before the period still offers its in-period tail and a
-first fit stops the slicing. Consultations and webinars carry no
+and 4 for a webinar, the same as the weekly arm) and yields the slices in start
+order, so a row begun before the period still offers its in-period tail. The
+recurring sweep files every slice in its period up front, so its cost is bounded
+by the period; only the single-session walk consumes them lazily, so its first
+fit stops the slicing. Consultations and webinars carry no
 `schedulingTimezone`, so they slice in the default `Asia/Kolkata`; the zone only
 sets the walk's granularity, not which blocks are found, because a block is
 checked against the merged availability index and may span a slice cut. A

@@ -81,8 +81,9 @@ export function customRowDaySlices(
 /**
  * The day slices of every custom row that overlaps `[window.startMs,
  * window.endMs)`, each row clipped to the window first, in start order so a
- * long row's later days interleave with the rows that start inside it. Lazy: a
- * row is sliced only once the walk reaches its start.
+ * long row's later days interleave with the rows that start inside it. A
+ * generator, so a consumer that stops early (the single-session walk's first
+ * fit) never slices the rows past where it stopped.
  */
 export function* customSpansInStartOrder(
   rows: readonly { startsAt: Date; endsAt: Date }[],
