@@ -625,8 +625,8 @@ const STAMPABLE = {
 
 export const REFUND_NEEDS_SUPPORT = "REFUND_NEEDS_SUPPORT";
 
-/** What the refused door was changing: a whole booking, or one seat in it. */
-export type HeldMarkerSubject = "booking" | "seat";
+/** What the refused door was changing: a whole booking, one seat in it, or a whole class or webinar. */
+export type HeldMarkerSubject = "booking" | "seat" | "class" | "webinar";
 
 const HELD_MARKER_COPY: Record<
   HeldMarkerSubject,
@@ -643,6 +643,18 @@ const HELD_MARKER_COPY: Record<
       "This seat couldn't be released yet: a refund on it needs our support team. We've been notified and will be in touch.",
     inProgress:
       "This seat couldn't be released yet: a refund on it is still being processed. You can release it once that completes.",
+  },
+  class: {
+    needsSupport:
+      "This class couldn't be cancelled yet: a refund on one of its seats needs our support team. We've been notified and will be in touch.",
+    inProgress:
+      "This class couldn't be cancelled yet: a refund on one of its seats is still being processed. Try again once it completes.",
+  },
+  webinar: {
+    needsSupport:
+      "This webinar couldn't be cancelled yet: a refund on one of its seats needs our support team. We've been notified and will be in touch.",
+    inProgress:
+      "This webinar couldn't be cancelled yet: a refund on one of its seats is still being processed. Try again once it completes.",
   },
 };
 

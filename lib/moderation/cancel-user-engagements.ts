@@ -27,8 +27,10 @@ import { EMAIL_BUDGET_MS, sendAppointmentCancelledEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
+import { isRefusal } from "@/lib/errors/refusal";
 import {
   driveRefundOwed,
+  recordRefundNeedsSupport,
   stampOwedOrHeld,
   type OwedRefundAlreadyHeld,
   type RefundOwedMarker,
@@ -330,7 +332,9 @@ async function runWorkItem(
       id: item.id,
       error: errMsg(error),
     });
-    captureModerationError(error);
+    // A held refund marker refused the cancel with nothing committed; a re-run retries it.
+    if (isRefusal(error)) await recordRefundNeedsSupport(error);
+    else captureModerationError(error);
   }
 }
 
