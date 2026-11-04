@@ -179,14 +179,14 @@ export function bestBlockForSingleSession(
   let bestBlock: Date[] | null = null;
   let bestScore = -1;
 
+  const horizon = new Date(now.getTime() + (maxWeeksToSearch * 7 + 1) * DAY_MS);
   /** Row spans in walk order: week-major weekly occurrences, or custom slices by start. */
-  const rowStarts: RowSpan[] = [];
+  let rowStarts: Iterable<RowSpan>;
   if (consultant.scheduleType === ScheduleType.WEEKLY) {
     // Week-major, row-minor: each row's next `maxWeeksToSearch` occurrences
     // after now, projected per date so a DST change moves the instant, not the wall clock.
-    const horizon = new Date(
-      now.getTime() + (maxWeeksToSearch * 7 + 1) * DAY_MS,
-    );
+    const weeklyStarts: RowSpan[] = [];
+    rowStarts = weeklyStarts;
     const occurrencesByRow = sortedWeekly.map((slot) =>
       // A row still running now keeps its remaining candidates (each one is
       // skipped below if it starts before now), exactly as a custom row does.
@@ -198,20 +198,19 @@ export function bestBlockForSingleSession(
       for (const occurrences of occurrencesByRow) {
         const occurrence = occurrences[week];
         if (!occurrence) continue;
-        rowStarts.push({
+        weeklyStarts.push({
           start: occurrence.start,
           endMs: occurrence.end.getTime(),
         });
       }
     }
   } else {
-    // Custom rows as scheduling-zone day slices in start order.
-    rowStarts.push(
-      ...customSpansInStartOrder(customRows, schedulingTimezone, {
-        startMs: now.getTime(),
-        endMs: Number.POSITIVE_INFINITY,
-      }),
-    );
+    // Custom rows as scheduling-zone day slices in start order; sliced
+    // lazily, so a first fit stops it.
+    rowStarts = customSpansInStartOrder(customRows, schedulingTimezone, {
+      startMs: now.getTime(),
+      endMs: Number.POSITIVE_INFINITY,
+    });
   }
 
   for (const { start: rowStart, endMs: rowEndMs } of rowStarts) {

@@ -201,23 +201,25 @@ describe("customRowDaySlices", () => {
 describe("customSpansInStartOrder", () => {
   it("slices only what overlaps the window, clipping a long row to it", () => {
     // A two-year coalesced row walked over one IST week yields seven slices.
-    const spans = customSpansInStartOrder(
-      [
+    const spans = [
+      ...customSpansInStartOrder(
+        [
+          {
+            startsAt: at("2026-01-01T00:00:00.000Z"),
+            endsAt: at("2028-01-01T00:00:00.000Z"),
+          },
+          {
+            startsAt: at("2027-03-01T04:30:00.000Z"),
+            endsAt: at("2027-03-01T08:30:00.000Z"),
+          },
+        ],
+        IST,
         {
-          startsAt: at("2026-01-01T00:00:00.000Z"),
-          endsAt: at("2028-01-01T00:00:00.000Z"),
+          startMs: Date.parse("2026-08-13T18:30:00.000Z"),
+          endMs: Date.parse("2026-08-20T18:30:00.000Z"),
         },
-        {
-          startsAt: at("2027-03-01T04:30:00.000Z"),
-          endsAt: at("2027-03-01T08:30:00.000Z"),
-        },
-      ],
-      IST,
-      {
-        startMs: Date.parse("2026-08-13T18:30:00.000Z"),
-        endMs: Date.parse("2026-08-20T18:30:00.000Z"),
-      },
-    );
+      ),
+    ];
     expect(spans).toHaveLength(7);
     expect(spans[0].start.toISOString()).toBe("2026-08-13T18:30:00.000Z");
     expect(new Date(spans[6].endMs).toISOString()).toBe(

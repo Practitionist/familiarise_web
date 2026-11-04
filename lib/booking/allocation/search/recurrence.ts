@@ -80,24 +80,40 @@ export function customRowDaySlices(
 
 /**
  * The day slices of every custom row that overlaps `[window.startMs,
- * window.endMs)`, each row clipped to the window first, ordered by start so a
- * long row's later days interleave with the rows that start inside it.
+ * window.endMs)`, each row clipped to the window first, in start order so a
+ * long row's later days interleave with the rows that start inside it. Lazy: a
+ * row is sliced only once the walk reaches its start.
  */
-export function customSpansInStartOrder(
+export function* customSpansInStartOrder(
   rows: readonly { startsAt: Date; endsAt: Date }[],
   timeZone: string | undefined,
   window: { startMs: number; endMs: number },
-): RowSpan[] {
-  return rows
-    .flatMap((row) => {
-      const startMs = Math.max(new Date(row.startsAt).getTime(), window.startMs);
-      const endMs = Math.min(new Date(row.endsAt).getTime(), window.endMs);
-      return endMs > startMs
-        ? customRowDaySlices(
-            { startsAt: new Date(startMs), endsAt: new Date(endMs) },
-            timeZone,
-          )
-        : [];
-    })
-    .sort((a, b) => a.start.getTime() - b.start.getTime());
+): Generator<RowSpan> {
+  const clipped = rows
+    .map((row) => ({
+      startMs: Math.max(new Date(row.startsAt).getTime(), window.startMs),
+      endMs: Math.min(new Date(row.endsAt).getTime(), window.endMs),
+    }))
+    .filter((row) => row.endMs > row.startMs)
+    .sort((a, b) => a.startMs - b.startMs);
+  // Slices already cut but not yet walked, in start order.
+  let pending: RowSpan[] = [];
+  for (const row of clipped) {
+    for (
+      let head = pending.at(0);
+      head && head.start.getTime() <= row.startMs;
+      head = pending.at(0)
+    ) {
+      pending = pending.slice(1);
+      yield head;
+    }
+    pending = [
+      ...pending,
+      ...customRowDaySlices(
+        { startsAt: new Date(row.startMs), endsAt: new Date(row.endMs) },
+        timeZone,
+      ),
+    ].sort((a, b) => a.start.getTime() - b.start.getTime());
+  }
+  yield* pending;
 }
