@@ -1,5 +1,6 @@
 "use client";
 
+import { earliestWeekSessions } from "@/lib/booking/release-weeks";
 import { MobileAutoSchedule } from "./MobileAutoSchedule";
 import { rescheduleWindow } from "@/lib/booking/entitlement";
 import { leadMsFor } from "@/lib/booking/lead-time";
@@ -204,8 +205,27 @@ export function TimePicker({
     [focusAt, subject, openedAt],
   );
 
-  const [releaseMode, setReleaseMode] = React.useState<ReleaseMode>("entire");
-  const [selectedSlotIds, setSelectedSlotIds] = React.useState<string[]>([]);
+  // A subscription whose sessions span two plan weeks starts with the next
+  // week's sessions picked: a release moves one week at a time.
+  const [initialRelease] = React.useState(() => {
+    const plan = subject.rescheduleEntitlement;
+    const upcoming = sessions.filter((s) => s.startTime.getTime() > Date.now());
+    const firstWeek = plan ? earliestWeekSessions(plan, upcoming) : upcoming;
+    return firstWeek.length < upcoming.length
+      ? {
+          mode: (firstWeek.length === 1
+            ? "individual"
+            : "multiple") as ReleaseMode,
+          slotIds: firstWeek.flatMap((s) => s.slots.map((slot) => slot.id)),
+        }
+      : { mode: "entire" as ReleaseMode, slotIds: [] as string[] };
+  });
+  const [releaseMode, setReleaseMode] = React.useState<ReleaseMode>(
+    initialRelease.mode,
+  );
+  const [selectedSlotIds, setSelectedSlotIds] = React.useState<string[]>(
+    initialRelease.slotIds,
+  );
   const [proposedSlots, setProposedSlots] = React.useState<
     { startsAt: string; endsAt: string }[]
   >([]);
