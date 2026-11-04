@@ -68,6 +68,8 @@ const Resolution = z.object({
         approved: z.boolean().nullable(),
         decidedAt: z.string().nullable(),
         releaseSeat: z.boolean(),
+        /** Plan sessions the remedy removes; null for a money-only remedy. */
+        sessionsRemoved: z.number().nullable(),
         voidedAt: z.string().nullable(),
         voidedById: z.string().nullable(),
         refund: z.object({ id: z.string(), status: z.string() }).nullable(),
@@ -106,6 +108,17 @@ const Resolution = z.object({
     canVoidRecommendations: z.boolean(),
     /** Per-payment cumulative ceiling across live support refunds; null is unbounded. */
     refundLimitPaise: z.number().nullable(),
+    /** The case's 1:1 plan payment, for a refund priced in sessions. */
+    planRefund: z
+      .object({
+        paymentId: z.string(),
+        amountPaise: z.number(),
+        refundablePaise: z.number(),
+        sessionsTotal: z.number(),
+        sessionsRefunded: z.number(),
+        removable: z.number(),
+      })
+      .nullable(),
     ownershipScope: z.enum(["PERSONAL", "ORG_OPERATIONS", "ORG_BILLING"]),
     updatedAt: z.string(),
     caseKind: z.enum(["INCIDENT", "PROBLEM"]),

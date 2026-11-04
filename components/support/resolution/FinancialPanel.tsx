@@ -20,6 +20,7 @@ import { throwSupportError } from "@/lib/support/error-copy";
 import { formatDateTimeLabel } from "@/lib/time/display";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { sessionShareOf } from "@/lib/booking/plan-refund";
 import { ReasonAction } from "./ReasonAction";
 import {
   rupeesToPaise,
@@ -28,6 +29,25 @@ import {
 } from "./resolution-data";
 
 type Recommendation = CaseResolution["recommendations"][number];
+type PlanRefund = NonNullable<CaseResolution["planRefund"]>;
+
+/** Whole sessions typed into the box, within what the plan can still give back. */
+function parseSessions(text: string, plan: PlanRefund): number | null {
+  if (!/^\d+$/.test(text.trim())) return null;
+  const sessions = Number(text.trim());
+  return sessions >= 1 && sessions <= plan.removable ? sessions : null;
+}
+
+/** The plain per-session sum staff see before recommending. */
+function sessionRefundCopy(plan: PlanRefund, sessions: number, amountPaise: number) {
+  const each = inr(Math.floor(plan.amountPaise / plan.sessionsTotal));
+  const capped =
+    amountPaise < sessionShareOf(plan.amountPaise, sessions, plan.sessionsTotal)
+      ? ` (capped at the ${inr(plan.refundablePaise)} still refundable)`
+      : "";
+  const left = plan.sessionsTotal - plan.sessionsRefunded - sessions;
+  return `${sessions} of ${plan.sessionsTotal} sessions × about ${each} each = ${inr(amountPaise)}${capped}. These sessions come off the plan when the refund is approved; ${left} stay on it.`;
+}
 
 /** Mirrors the server's send grace: an approval this recent may still be sending its refund. */
 const REFUND_SEND_GRACE_MS = 15 * 60 * 1000;
@@ -247,20 +267,33 @@ function ReviewDialog({
 
 function RecommendForm({
   paymentId,
+  plan,
   limitPaise,
   busy,
   run,
 }: Readonly<{
   paymentId: string;
+  /** Set for a 1:1 plan payment: the refund may be priced in sessions. */
+  plan: PlanRefund | null;
   limitPaise: number | null;
   busy: boolean;
   run: RunCaseAction;
 }>) {
   const seatId = useId();
   const [amount, setAmount] = useState("");
+  const [sessionsText, setSessionsText] = useState("");
   const [reason, setReason] = useState("");
   const [releaseSeat, setReleaseSeat] = useState(false);
-  const amountPaise = rupeesToPaise(amount);
+  const sessions = plan ? parseSessions(sessionsText, plan) : null;
+  const sessionAmount =
+    plan && sessions !== null
+      ? Math.min(
+          sessionShareOf(plan.amountPaise, sessions, plan.sessionsTotal),
+          plan.refundablePaise,
+        )
+      : null;
+  const bySessions = plan !== null && sessionsText.trim() !== "";
+  const amountPaise = bySessions ? sessionAmount : rupeesToPaise(amount);
   return (
     <form
       className="space-y-2"
@@ -274,28 +307,55 @@ function RecommendForm({
             amountPaise,
             reason: reason.trim(),
             releaseSeat,
+            ...(bySessions && sessions !== null ? { sessions } : {}),
           },
           () => {
             setAmount("");
+            setSessionsText("");
             setReason("");
             setReleaseSeat(false);
           },
         );
       }}
     >
-      <p className="text-xs text-muted-foreground">
-        For a booking paid entirely with credits, enter 0 to request full credit
-        restoration.
-      </p>
-      <Input
-        aria-label="Recommended refund in rupees"
-        type="number"
-        min="0"
-        step="0.01"
-        value={amount}
-        onChange={(event) => setAmount(event.target.value)}
-        placeholder="Refund amount (₹)"
-      />
+      {plan && (
+        <div className="space-y-1">
+          <Input
+            aria-label="Plan sessions to refund"
+            type="number"
+            min="1"
+            max={plan.removable}
+            step="1"
+            value={sessionsText}
+            onChange={(event) => setSessionsText(event.target.value)}
+            placeholder={`Sessions to refund (up to ${plan.removable})`}
+          />
+          <p className="text-xs text-muted-foreground">
+            {sessions !== null && sessionAmount !== null
+              ? sessionRefundCopy(plan, sessions, sessionAmount)
+              : bySessions
+                ? `Enter 1 to ${plan.removable}: only sessions not yet booked or delivered can be refunded.`
+                : "Refund missed sessions by count, or leave this empty and enter an amount for a money-only refund."}
+          </p>
+        </div>
+      )}
+      {!bySessions && (
+        <>
+          <p className="text-xs text-muted-foreground">
+            For a booking paid entirely with credits, enter 0 to request full
+            credit restoration.
+          </p>
+          <Input
+            aria-label="Recommended refund in rupees"
+            type="number"
+            min="0"
+            step="0.01"
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            placeholder="Refund amount (₹)"
+          />
+        </>
+      )}
       <Textarea
         aria-label="Reason for the refund recommendation"
         value={reason}
@@ -403,6 +463,9 @@ export function FinancialPanel({
               <p>
                 {recommendationStatus(rec)}
                 {rec.releaseSeat ? " · Releases the seat" : ""}
+                {rec.sessionsRemoved
+                  ? ` · Removes ${rec.sessionsRemoved} session${rec.sessionsRemoved === 1 ? "" : "s"} from the plan`
+                  : ""}
               </p>
               {awaiting && (
                 <output className="block space-y-1 rounded border border-border p-2">
@@ -480,6 +543,9 @@ export function FinancialPanel({
         {paymentId && (
           <RecommendForm
             paymentId={paymentId}
+            plan={
+              data.planRefund?.paymentId === paymentId ? data.planRefund : null
+            }
             limitPaise={data.refundLimitPaise}
             busy={busy}
             run={run}
