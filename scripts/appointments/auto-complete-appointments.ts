@@ -731,7 +731,6 @@ async function completeSubscriptions(
           transitionSubscriptionRequest(tx, {
             where: { id: subscription.id },
             to: AppointmentStatus.COMPLETED,
-            fromIn: REQUEST_ALLOWED_FROM.COMPLETED,
             reason: AUTO_COMPLETE_REASON,
           }),
         ),

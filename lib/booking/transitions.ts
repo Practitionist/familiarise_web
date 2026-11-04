@@ -253,6 +253,18 @@ export async function transitionConsultationRequest(
   );
 }
 
+// A subscription goes from APPROVED straight to COMPLETED; it never enters
+// SCHEDULED (Consultation keeps that state for the incident rebook).
+export const SUBSCRIPTION_ALLOWED_FROM: Record<
+  AppointmentStatus,
+  AppointmentStatus[]
+> = {
+  ...REQUEST_ALLOWED_FROM,
+  SCHEDULED: [],
+  COMPLETED: ["APPROVED"],
+  CANCELLED: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT"],
+};
+
 export async function transitionSubscriptionRequest(
   tx: Pick<Tx, "subscription" | "bookingStatusHistory">,
   args: HistoryMeta & {
@@ -277,7 +289,13 @@ export async function transitionSubscriptionRequest(
   const res = await tx.subscription.updateMany({
     where: {
       ...args.where,
-      status: { in: args.fromIn ?? REQUEST_ALLOWED_FROM[args.to] },
+      // No fromIn widens a subscription into SCHEDULED.
+      status: {
+        in:
+          args.to === "SCHEDULED"
+            ? []
+            : (args.fromIn ?? SUBSCRIPTION_ALLOWED_FROM[args.to]),
+      },
     },
     data: { status: args.to, ...args.data },
   });

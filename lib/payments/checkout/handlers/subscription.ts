@@ -22,16 +22,11 @@ import {
   resolvePriorSubscriptionForRenewal,
 } from "@/lib/payments/checkout/renewal";
 
-/**
- * #1766 — the statuses under which a subscription still holds its
- * entitlement. SCHEDULED is legal in REQUEST_ALLOWED_FROM though no writer
- * reaches it yet; listing it keeps the guard right if one appears.
- */
+/** The statuses under which a subscription still holds its entitlement. */
 export const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.PENDING,
   AppointmentStatus.APPROVED,
   AppointmentStatus.APPROVED_PENDING_PAYMENT,
-  AppointmentStatus.SCHEDULED,
 ];
 
 export async function handleSubscriptionCheckout(
