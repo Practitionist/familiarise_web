@@ -155,6 +155,16 @@ A hold blocks the payout because payout batching picks only `READY` earnings, an
 
 `applyHoldTx()` does not check the case status, so a hold can be applied to a RESOLVED case; the 28-day auto-close then releases it as the system, in the same transaction as the close (`releaseAutoClosedCaseTx()` in `lib/support/sla-sweep.ts`, ops-log actor role SYSTEM), with no step-up because no person acts. The hold and void doors run at the database's default isolation inside `withOpsAction()`, not Serializable; they rely on the event-log replay check and the `EarningsHold` unique indexes.
 
+## Planned changes (owner decisions 2026-11-04)
+
+Not built yet; the rules above still apply until each one lands.
+
+- **No second admin.** The second-admin proposal (₹25,000), the author-versus-approver rule (`assertNotOwnRemedy`) and the payout maker-checker are removed. An ADMIN's money action is their own call, with step-up sign-in, a typed confirm, warning banners and the ops log; a daily digest lists actions over ₹10,000. ([#2572](https://github.com/Practitionist/familiarise_web/issues/2572); the future multi-admin model is [#2573](https://github.com/Practitionist/familiarise_web/issues/2573).)
+- **STAFF caps.** ₹5,000 per payment (unchanged) and ₹30,000 per rolling 24 hours (was ₹50,000); above either, an ADMIN. ([#2572](https://github.com/Practitionist/familiarise_web/issues/2572))
+- **Class-wide cancel.** STAFF recommend; an ADMIN executes one action that refunds every attendee for the sessions not yet held through the normal refund rails. ([#2563](https://github.com/Practitionist/familiarise_web/issues/2563))
+- **Make-up remedy.** A no-money remedy from a case ("add N sessions" or "add up to 4 weeks"), logged and visible to both sides; the same mechanism as the plan-end extra-weeks choice. ([#2563](https://github.com/Practitionist/familiarise_web/issues/2563), [#2561](https://github.com/Practitionist/familiarise_web/issues/2561))
+- **Per-class payout hold.** A half-missed class automatically holds only that class's unpaid host earnings (`SUPPORT_CASE` `EarningsHold`) until its case closes. ([#2563](https://github.com/Practitionist/familiarise_web/issues/2563))
+
 ## Failure modes
 
 | Symptom                                             | Cause                                                                                                   | Recovery                                                                                                                             |

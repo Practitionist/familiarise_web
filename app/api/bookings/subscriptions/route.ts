@@ -18,6 +18,8 @@ import { requestListOrderBy } from "@/lib/booking/list-query";
 import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   parseRequestListQueryOrRespond,
+  NOT_BEING_MOVED,
+  assertNotBeingMoved,
   releaseDeclinedRequestHold,
   validateListRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
@@ -323,8 +325,9 @@ export async function PATCH(request: NextRequest) {
       const { holdNotices, rejectionPlan } = await prisma.$transaction(
         async (tx) => {
           await assertNoLiveCheckoutHold(tx, "subscription", id);
+          await assertNotBeingMoved(tx, { subscriptionId: id }, "decline");
           await transitionSubscriptionRequest(tx, {
-            where: { id },
+            where: { id, ...NOT_BEING_MOVED },
             to: status,
             data: { pendingPaymentUrl: null },
           });

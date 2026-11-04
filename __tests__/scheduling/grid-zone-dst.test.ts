@@ -131,7 +131,7 @@ describe("cell instants never read the device zone", () => {
       day(2026, 3, 8),
       "America/New_York",
     );
-    expect(end.getTime() + 1 - start.getTime()).toBe(23 * 60 * 60 * 1000);
+    expect(end.getTime() - start.getTime()).toBe(23 * 60 * 60 * 1000);
   });
 });
 

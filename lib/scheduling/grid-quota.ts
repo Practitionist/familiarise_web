@@ -19,9 +19,12 @@ import { byCodeUnit } from "@/lib/scheduling/code-unit-order";
 
 export interface GridQuota {
   unit: CycleUnit;
-  /** Sessions one cycle holds. */
+  /** Sessions one plan week holds. */
   capacity: number;
-  /** Sessions held against this cycle. */
+  /** 1-based plan week the window covers, of `weekCount`: "Week 3 of 26". */
+  weekNumber: number;
+  weekCount: number;
+  /** Sessions held in that plan week. */
   filled: number;
   /** Sessions that may still be placed in this cycle (the reschedule batch while one is open). */
   remainingThisCycle: number;
@@ -42,6 +45,8 @@ export interface GridQuota {
 export const gridQuotaSchema: z.ZodType<GridQuota> = z.object({
   unit: z.enum(["week", "month"]),
   capacity: z.number().int().nonnegative(),
+  weekNumber: z.number().int().positive(),
+  weekCount: z.number().int().positive(),
   filled: z.number().int().nonnegative(),
   remainingThisCycle: z.number().int().nonnegative(),
   allBooked: z.boolean(),
@@ -91,6 +96,8 @@ export function computeGridQuota(input: {
   return {
     unit: cycle.unit,
     capacity: cycle.capacity,
+    weekNumber: cycle.ordinal + 1,
+    weekCount: cycle.count,
     filled: Math.max(0, cycle.filled),
     remainingThisCycle: rescheduling > 0 ? rescheduling : cycle.nextBatch,
     allBooked: remaining === 0 && rescheduling === 0,
@@ -105,8 +112,8 @@ export function computeGridQuota(input: {
 
 /**
  * True when a cell [startMs,endMs) must paint "Limit reached": the plan has
- * ended for it, every session of the plan is held, the cell overlaps a full
- * cycle's (half-open) window, or it falls on a full day.
+ * ended for it, every session of the plan is held, it lies before the open
+ * plan week (a full week), the open week is full too, or it falls on a full day.
  */
 export function cellLimitReached(
   quota: GridQuota,
@@ -117,6 +124,8 @@ export function cellLimitReached(
   if (quota.allBooked) return true;
   const windowStartMs = Date.parse(quota.windowStart);
   const windowEndMs = Date.parse(quota.windowEnd);
+  // Before the open plan week: an earlier week that is full (or already past).
+  if (endMs <= windowStartMs) return true;
   if (
     quota.remainingThisCycle === 0 &&
     startMs < windowEndMs &&
@@ -130,8 +139,9 @@ export function cellLimitReached(
 }
 
 /**
- * Footer copy: "2 of 3 this week" while there is room, "… · next opens Sun
- * 8 Mar" when the cycle is full, "Plan ended on Fri 6 Mar" once it is over.
+ * Footer copy: "Week 3 of 26 · 2 of 3 booked" while the open week has room,
+ * "Week 4 of 26 is set · next opens Mon 16 Mar" once this week and the next
+ * are both full, "Plan ended on Fri 6 Mar" once it is over.
  */
 export function quotaFooterText(
   quota: GridQuota,
@@ -142,9 +152,11 @@ export function quotaFooterText(
   if (nowMs >= planEndMs) {
     return `Plan ended on ${formatDayLabel(lastInstantBefore(new Date(planEndMs)), { zone })}`;
   }
-  const held = `${quota.filled} of ${quota.capacity} this ${quota.unit}`;
+  const unitWord = quota.unit === "week" ? "Week" : "Month";
+  const which = `${unitWord} ${quota.weekNumber} of ${quota.weekCount}`;
+  const held = `${which} · ${quota.filled} of ${quota.capacity} booked`;
   if (quota.remainingThisCycle > 0 || quota.allBooked) return held;
   const nextOpensMs = Date.parse(quota.windowEnd);
-  if (nextOpensMs >= planEndMs) return held;
-  return `${held} · next opens ${formatDayLabel(new Date(nextOpensMs), { zone })}`;
+  if (nextOpensMs >= planEndMs) return `${which} is set`;
+  return `${which} is set · next opens ${formatDayLabel(new Date(nextOpensMs), { zone })}`;
 }

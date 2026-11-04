@@ -3,6 +3,7 @@
  * Core business logic for processing payment capture and failure events.
  */
 
+import { convertCompletedTrial } from "@/lib/trials/conversion";
 import { casMiss } from "@/lib/cron/run-counters";
 import {
   reportSentryError,
@@ -2021,6 +2022,8 @@ async function confirmApprovalStatus(
         `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.status} (consultant will allocate slots)`,
       );
     }
+    // A trial converts only once the plan is paid for.
+    if (!capturedAfterTerminal) await convertCompletedTrial(tx, entityId);
   }
   return { capturedAfterTerminal };
 }

@@ -270,7 +270,7 @@ export class ScheduleValidationService {
        * (mirrors assertCollaboratorsFree's ownAppointmentIds).
        */
       ownAppointmentIds?: string[];
-      /** How far ahead every slot must start (`leadTimeFor`); 15 min by default. */
+      /** How far ahead every slot must start (`leadMsFor`); 15 min by default. */
       leadTimeMs?: number;
     },
   ): Promise<ValidationResult> {
@@ -678,7 +678,7 @@ export class ScheduleValidationService {
   /**
    * UNIVERSAL VALIDATOR: every slot starts at least `leadTimeMs` from now (15
    * minutes for a settled booking, 2 hours while the client still has to pay;
-   * see `leadTimeFor`). One cutoff for the whole batch.
+   * see `leadMsFor`). One cutoff for the whole batch.
    */
   private validateSlotsInFuture(
     slots: Date[],

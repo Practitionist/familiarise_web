@@ -51,6 +51,7 @@ jest.mock("../../../lib/booking/reschedule-restore", () => {
 import { POST as reschedule } from "../../../app/api/appointments/[appointmentId]/reschedule/route";
 import { POST as withdraw } from "../../../app/api/appointments/[appointmentId]/reschedule/withdraw/route";
 import { expireRescheduleProposals } from "../../../scripts/appointments/expire-reschedule-proposals";
+import { RELEASE_ONE_WEEK_MESSAGE } from "../../../lib/booking/release-weeks";
 
 const hoursAhead = (hours: number) =>
   new Date(Math.ceil((Date.now() + hours * HOUR_MS) / HOUR_MS) * HOUR_MS);
@@ -351,4 +352,78 @@ describe("1:1 reschedule lifecycle on the database", () => {
     expect(rotated.status).toBe("PENDING_REVIEW");
     expect(rotated.updatedAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
   });
+});
+
+describe("a release spanning two plan weeks", () => {
+  it("is refused before any confirmed time moves; one week at a time works", async () => {
+    const host = await seedHost();
+    const buyer = await seedConsultee();
+    const first = hoursAhead(24 * 3);
+    const booking = await seedOneToOne(
+      "subscription",
+      host,
+      buyer,
+      { startsAt: first, endsAt: new Date(first.getTime() + HOUR_MS) },
+      {
+        status: "APPROVED",
+        isTentative: false,
+        payment: { status: "SUCCEEDED", expiresAt: null },
+      },
+    );
+    const sub = await prisma.subscription.findUniqueOrThrow({
+      where: { id: booking.subscriptionId! },
+      select: { subscriptionPlanId: true },
+    });
+    await prisma.subscriptionPlan.update({
+      where: { id: sub.subscriptionPlanId },
+      data: { sessionsPerWeek: 1, durationInMonths: 1, totalSessions: 4 },
+    });
+    // This week's session and next week's (opened once this week was full).
+    const second = new Date(first.getTime() + 7 * 24 * HOUR_MS);
+    await prisma.appointmentOccurrence.create({
+      data: {
+        appointmentId: booking.appointmentId,
+        ordinal: 2,
+        startsAt: second,
+        endsAt: new Date(second.getTime() + HOUR_MS),
+        isTentative: false,
+        consultantProfileId: host.consultantProfileId,
+        completionStatus: "SCHEDULED",
+      },
+    });
+    sessionUser.current = {
+      id: buyer.userId,
+      role: "CONSULTEE",
+      consulteeProfileId: buyer.consulteeProfileId,
+      consultantProfileId: null,
+      name: "Buyer",
+    };
+    const live = () =>
+      prisma.appointmentOccurrence.count({
+        where: {
+          appointmentId: booking.appointmentId,
+          completionStatus: "SCHEDULED",
+          isTentative: false,
+        },
+      });
+
+    const both = await post(reschedule, "/reschedule", booking.appointmentId);
+    expect(both.status).toBe(409);
+    expect(await both.json()).toMatchObject({
+      code: "RELEASE_ONE_WEEK",
+      error: RELEASE_ONE_WEEK_MESSAGE,
+    });
+    expect(await live()).toBe(2);
+    expect(
+      await prisma.rescheduleRequest.count({
+        where: { appointmentId: booking.appointmentId },
+      }),
+    ).toBe(0);
+
+    const one = await post(reschedule, "/reschedule", booking.appointmentId, {
+      slotIds: [booking.occurrenceId],
+    });
+    expect(one.status).toBe(200);
+    expect(await live()).toBe(1);
+  }, 60_000);
 });

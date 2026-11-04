@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ZoneSwitch } from "@/components/scheduling/ZoneSwitch";
 import { useSession } from "@/lib/auth-client";
-import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/reschedule-proposals";
+import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
 import {
   canSwitchToDeviceZone,
   dayRows,

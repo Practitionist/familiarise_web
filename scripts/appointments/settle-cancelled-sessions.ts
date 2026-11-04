@@ -25,6 +25,7 @@
  * and app/api/cleanup/settle-cancelled-sessions/route.ts (the ticker twin).
  */
 
+import { PLAN_END_REFUND_REASON } from "@/lib/payments/refund-reasons";
 import {
   AppointmentStatus,
   OccurrenceCompletionStatus,
@@ -114,7 +115,6 @@ type CancelledSession = Prisma.AppointmentOccurrenceGetPayload<{
 /** The plan-end refund of a subscription's undelivered sessions, one per payment. */
 export const planEndRefundKey = (subscriptionId: string, paymentId: string) =>
   `plan-end:${subscriptionId}:pay:${paymentId}`;
-export const PLAN_END_REFUND_REASON = "PLAN_ENDED_UNUSED_SESSIONS";
 const PLAN_ENDED_HISTORY_REASON = "PLAN_ENDED";
 const PLAN_LIVE_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.APPROVED,

@@ -76,3 +76,22 @@ describe("R18 — the quote gives up rather than spinning forever", () => {
     expect(dialog).toContain("retry: false");
   });
 });
+
+describe("the consultant cancels someone else's booking", () => {
+  it("the consultant adapter opens the dialog as the consultant", () => {
+    expect(cancelDialogProps(consultantAdapter)).toContain(
+      'viewerRole="consultant"',
+    );
+    expect(cancelDialogProps(consulteeAdapter)).not.toContain("viewerRole");
+  });
+
+  it("names the client's full refund and the reliability cost, never 'You paid'", () => {
+    const consultantArm = dialog.slice(
+      dialog.indexOf("const consultantRefundLine"),
+      dialog.indexOf("const renderRefundLine"),
+    );
+    expect(consultantArm).toContain("gets a full refund");
+    expect(consultantArm).toContain("counts against your reliability");
+    expect(consultantArm).not.toContain("You paid");
+  });
+});

@@ -194,6 +194,85 @@ export async function seedOneToOne(
 }
 
 /**
+ * A paid subscription (by default 2 sessions a week for a month) whose first
+ * cycle is not placed yet: the plan, the wrapper with both participants, and
+ * a captured card payment.
+ */
+export async function seedPaidSubscription(
+  host: SeededHost,
+  subscriber: SeededConsultee,
+  periodStart: Date,
+  shape: {
+    sessionsPerWeek?: number;
+    totalSessions?: number;
+    firstCycleDays?: number;
+  } = {},
+) {
+  const { sessionsPerWeek = 2, totalSessions = 8, firstCycleDays = 30 } = shape;
+  const price = BigInt(400_000);
+  const plan = await prisma.subscriptionPlan.create({
+    data: {
+      title: "Database tier subscription",
+      price,
+      consultantProfileId: host.consultantProfileId,
+      sessionsPerWeek,
+      durationInMonths: 1,
+      sessionDurationInHours: 1,
+      totalSessions,
+    },
+  });
+  const subscription = await prisma.subscription.create({
+    data: {
+      subscriptionPlanId: plan.id,
+      requestedById: subscriber.consulteeProfileId,
+      status: "PENDING",
+      bookingSource: "DIRECT_CHECKOUT",
+      schedulingPeriodStartsAt: periodStart,
+      schedulingPeriodEndsAt: new Date(
+        periodStart.getTime() + firstCycleDays * 24 * HOUR_MS,
+      ),
+      planEndsAt: new Date(periodStart.getTime() + 30 * 24 * HOUR_MS),
+      schedulingTimezone: "UTC",
+      sessionsTotal: totalSessions,
+    },
+  });
+  const appointment = await prisma.appointment.create({
+    data: { appointmentType: "SUBSCRIPTION", subscriptionId: subscription.id },
+  });
+  await prisma.appointmentParticipant.createMany({
+    data: [
+      {
+        appointmentId: appointment.id,
+        userId: host.userId,
+        role: "CONSULTANT",
+        status: "CONFIRMED",
+      },
+      {
+        appointmentId: appointment.id,
+        userId: subscriber.userId,
+        role: "CONSULTEE",
+        status: "CONFIRMED",
+      },
+    ],
+  });
+  await prisma.payment.create({
+    data: {
+      amount: price,
+      originalAmount: price,
+      paymentMethod: "card",
+      paymentIntent: `order_dbtier_${randomUUID()}`,
+      paymentGateway: "RAZORPAY",
+      paymentStatus: "SUCCEEDED",
+      userId: subscriber.userId,
+      appointmentId: appointment.id,
+      isMockPayment: true,
+      legs: { create: [{ source: "CARD", amountPaise: price }] },
+    },
+  });
+  return { subscriptionId: subscription.id, appointmentId: appointment.id };
+}
+
+/**
  * No two live, occupying rows of one host profile overlap — the invariant every
  * race test ends on (tentative holds included, unlike the exclusion constraint).
  */

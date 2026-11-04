@@ -411,7 +411,6 @@ export type SubscriptionPayload = {
   consultantName: string;
   consulteeName?: string;
   dashboardUrl: string;
-  cycleOrdinal?: number;
   remainingSessions?: number;
   nextBatch?: number;
 };
@@ -425,6 +424,8 @@ export type BookingRequestPayload = NotificationScope & {
   requestedDateTimeIso?: string;
   dashboardUrl: string;
   nudgeHours?: number;
+  /** The daily plan-week reminder: one sentence covering every plan due. */
+  weekSummary?: string;
 };
 
 export type BookingRequestInput = Omit<

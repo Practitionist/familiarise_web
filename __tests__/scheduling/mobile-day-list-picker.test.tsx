@@ -170,7 +170,7 @@ describe("MobileDayListPicker", () => {
     expect(url).toContain("consulteeUserId=buyer-1");
     expect(url).toContain("timezone=UTC");
     expect(url).toContain("startDateInUtc=2026-11-02T00:00:00.000Z");
-    expect(url).toContain("endDateInUtc=2026-11-15T23:59:59.999Z");
+    expect(url).toContain("endDateInUtc=2026-11-16T00:00:00.000Z");
 
     const days = within(
       screen.getByRole("radiogroup", { name: "Day" }),
@@ -358,7 +358,7 @@ describe("MobileDayListPicker", () => {
         allowedEnd: new Date("2027-01-31T00:00:00.000Z"),
       });
       expect(lastUrl()).toContain("startDateInUtc=2026-12-02T00:00:00.000Z");
-      expect(lastUrl()).toContain("endDateInUtc=2026-12-15T23:59:59.999Z");
+      expect(lastUrl()).toContain("endDateInUtc=2026-12-16T00:00:00.000Z");
       expect(chipNames()[0]).toMatch(/^Wed, 2 Dec/);
       expect(chipNames()).toHaveLength(14);
       expect(times()).toEqual(["10:00 am – 11:00 am"]);
@@ -385,7 +385,7 @@ describe("MobileDayListPicker", () => {
       fireEvent.click(screen.getByRole("button", { name: "Next 2 weeks" }));
       await settle();
       expect(lastUrl()).toContain("startDateInUtc=2026-11-16T00:00:00.000Z");
-      expect(lastUrl()).toContain("endDateInUtc=2026-11-29T23:59:59.999Z");
+      expect(lastUrl()).toContain("endDateInUtc=2026-11-30T00:00:00.000Z");
       expect(chipNames()[0]).toMatch(/^Mon, 16 Nov/);
       fireEvent.click(
         screen.getByRole("button", { name: "9:00 am – 10:00 am" }),

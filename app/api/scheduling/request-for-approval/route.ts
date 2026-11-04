@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertRequestLeadFits } from "@/lib/booking/lead-time";
 import prisma from "@/lib/prisma";
 import { AppointmentStatus, type Prisma } from "@prisma/client";
 import {
@@ -295,6 +296,7 @@ export async function POST(req: NextRequest) {
 
     try {
       assertWindowMatchesPlanDuration(consultationPlan, startTime, endTime);
+      assertRequestLeadFits(consultationPlan.price, startTime);
     } catch (err) {
       if (err instanceof BookingRuleError) return bookingRuleResponse(err);
       throw err;

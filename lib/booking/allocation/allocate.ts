@@ -1,6 +1,7 @@
 // The allocator's one entry point: routes by mode, attempts the staged notices
 // after commit, and turns any failure into a classified AllocationResult.
 
+import { scheduleReason } from "@/lib/booking/allocation/schedule-choice";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   AllocationRequest,
@@ -223,15 +224,61 @@ async function underAppointmentLock<T>(
 }
 
 /**
+ * What the event had before this run, read on the server so the recorded
+ * scheduling choice never trusts a client flag: whether a confirmed session
+ * ever existed (a returned, cancelled or tombstoned one still counts, so the
+ * plan's first choice is durable), and released sessions awaiting a new time.
+ */
+async function placementBefore(
+  request: AllocationRequest,
+): Promise<{ placed: number; released: number }> {
+  const relation = `${getEventRelationField(request.eventType)}Id`;
+  const [placed, released] = await Promise.all([
+    prisma.appointmentOccurrence.count({
+      where: {
+        appointment: {
+          [relation]: request.eventId,
+        } as Prisma.AppointmentWhereInput,
+        isTentative: false,
+      },
+    }),
+    prisma.appointmentOccurrence.count({
+      where: {
+        appointment: {
+          [relation]: request.eventId,
+          deletedAt: null,
+        } as Prisma.AppointmentWhereInput,
+        deletedAt: null,
+        isTentative: true,
+        completionStatus: "RESCHEDULED",
+      },
+    }),
+  ]);
+  return { placed, released };
+}
+
+/**
  * Mode router extracted so allocate() can post-process success uniformly
  * (PR 2c notification) without each mode knowing about it.
  */
 export async function dispatch(
   request: AllocationRequest,
 ): Promise<AllocationResult> {
+  const before = await placementBefore(request);
   const txOptions: AllocationTxOptions = {
     approvableFrom: request.approvableFrom,
     inTx: request.inTx,
+    historyReason: scheduleReason({
+      mode:
+        request.mode === "auto" || request.mode === "manual"
+          ? request.mode
+          : "requested",
+      placedBefore: before.placed > 0,
+      releasedBefore: before.released,
+      bySweep: request.bySweep,
+      byConsultant: request.byConsultant,
+      confirmsReschedule: !!request.excludeRescheduleRequestId,
+    }),
   };
   switch (request.mode) {
     case "auto":

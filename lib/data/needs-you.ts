@@ -106,6 +106,38 @@ export function trialRequestWhere(
 }
 
 /**
+ * A booking a reschedule put back to PENDING: an open proposal, or sessions
+ * released and not yet re-placed. It is being moved, not newly requested.
+ */
+export const BEING_MOVED = {
+  OR: [
+    { rescheduleRequests: { some: { status: "PENDING_REVIEW" } } },
+    {
+      occurrences: {
+        some: {
+          isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
+        },
+      },
+    },
+  ],
+} satisfies Prisma.AppointmentWhereInput;
+
+/** The consultant's own open proposal waits on the client, never on them. */
+const AWAITING_CLIENT_ANSWER = {
+  appointment: {
+    rescheduleRequests: {
+      some: {
+        status: "PENDING_REVIEW",
+        initiatorRole: "CONSULTANT",
+        proposedTimes: { some: {} },
+      },
+    },
+  },
+} satisfies Prisma.ConsultationWhereInput & Prisma.SubscriptionWhereInput;
+
+/**
  * The one "requests to answer" number: PENDING consultations and live
  * subscriptions that are real requests (never an unpaid checkout in flight),
  * plus PENDING trials. The nav badge, Home, NeedsYou and the request cap all
@@ -118,8 +150,20 @@ export async function countRequestsToAnswer(
   const cp = args.consultantProfileId;
   const scope = args.orgScope ?? { kind: "personal" };
   const [consultations, subscriptions, trials] = await runBounded([
-    () => db.consultation.count({ where: pendingConsultationWhere(cp, scope) }),
-    () => db.subscription.count({ where: pendingSubscriptionWhere(cp, scope) }),
+    () =>
+      db.consultation.count({
+        where: {
+          ...pendingConsultationWhere(cp, scope),
+          NOT: AWAITING_CLIENT_ANSWER,
+        },
+      }),
+    () =>
+      db.subscription.count({
+        where: {
+          ...pendingSubscriptionWhere(cp, scope),
+          NOT: AWAITING_CLIENT_ANSWER,
+        },
+      }),
     () => db.trial.count({ where: trialRequestWhere(cp, scope, ["PENDING"]) }),
   ] as const);
   return consultations + subscriptions + trials;
@@ -136,9 +180,10 @@ export function holdingSince(
 
 /**
  * The request cap's count, across every tenant: real submitted requests
- * (PENDING, REQUEST_SUBMITTED, still inside their hold) plus PENDING trial
- * requests. No appointment arm, so an unallocated request counts, and no
- * direct checkout ever does. Call it inside the cap lock with `tx`.
+ * (PENDING, REQUEST_SUBMITTED, still inside their hold, not a booking being
+ * moved) plus PENDING trial requests. No appointment arm, so an unallocated
+ * request counts, and no direct checkout ever does. Call it inside the cap
+ * lock with `tx`.
  */
 export async function countOpenRequestsForCap(
   consultantProfileId: string,
@@ -153,6 +198,7 @@ export async function countOpenRequestsForCap(
           bookingSource: "REQUEST_SUBMITTED",
           consultationPlan: { consultantProfileId },
           requestedAt: { gte: holdingSince("CONSULTATION", now) },
+          NOT: { appointment: BEING_MOVED },
         },
       }),
     () =>
@@ -163,6 +209,7 @@ export async function countOpenRequestsForCap(
           deletedAt: null,
           subscriptionPlan: { consultantProfileId },
           requestedAt: { gte: holdingSince("SUBSCRIPTION", now) },
+          NOT: { appointment: BEING_MOVED },
         },
       }),
     () => db.trial.count({ where: { consultantProfileId, status: "PENDING" } }),

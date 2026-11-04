@@ -1,4 +1,8 @@
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
+import {
+  isTooSoonFor,
+  RESCHEDULE_MIN_LEAD_HOURS,
+} from "@/lib/booking/lead-time";
 import * as Sentry from "@sentry/nextjs";
 import {
   applyRateLimit,
@@ -22,7 +26,6 @@ import type {
 } from "@prisma/client";
 import { RescheduleProposalSchema } from "@/schemas/appointments";
 import {
-  RESCHEDULE_MIN_LEAD_HOURS,
   autoConfirmRefusalIsFinal,
   autoConfirmTimesTaken,
   computeProposalExpiry,
@@ -75,6 +78,10 @@ import {
 } from "@/lib/booking/reschedule-caps";
 import type { AppointmentType } from "@/lib/payments/payouts/constants";
 import { releasedSessionsOf } from "@/lib/booking/released-sessions";
+import {
+  RELEASE_ONE_WEEK_MESSAGE,
+  spansPlanWeeks,
+} from "@/lib/booking/release-weeks";
 
 const RESCHEDULE_REALLOCATION_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -454,11 +461,14 @@ export async function POST(
               );
             }
           }
-          const earliestAllowedProposal =
-            now.getTime() + RESCHEDULE_MIN_LEAD_HOURS * 3_600_000;
           if (
-            proposedSlots?.some(
-              (s) => s.startsAt.getTime() < earliestAllowedProposal,
+            proposedSlots?.some((s) =>
+              isTooSoonFor(
+                "reschedule",
+                { settled: true },
+                s.startsAt.getTime(),
+                now.getTime(),
+              ),
             )
           ) {
             throw Object.assign(
@@ -467,6 +477,29 @@ export async function POST(
               ),
               { httpStatus: 400, code: "PROPOSAL_TOO_SOON" },
             );
+          }
+
+          // A released batch is re-placed into one plan week, so a release
+          // across two weeks is refused before any confirmed time moves.
+          const plan = appointment.subscription?.subscriptionPlan;
+          if (
+            appointment.subscription &&
+            plan &&
+            spansPlanWeeks(
+              {
+                sessionsPerWeek: plan.sessionsPerWeek,
+                durationInMonths: plan.durationInMonths,
+                schedulingPeriodStartsAt:
+                  appointment.subscription.schedulingPeriodStartsAt,
+                schedulingTimezone: appointment.subscription.schedulingTimezone,
+              },
+              slotsToReschedule.map((s) => s.startsAt),
+            )
+          ) {
+            throw Object.assign(new Error(RELEASE_ONE_WEEK_MESSAGE), {
+              httpStatus: 409,
+              code: "RELEASE_ONE_WEEK",
+            });
           }
 
           // One open reschedule per booking: a second release (a double

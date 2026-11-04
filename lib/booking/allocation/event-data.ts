@@ -85,6 +85,7 @@ export async function approveByMoney<
     to: AppointmentStatus;
     fromIn: AppointmentStatus[];
     data?: D;
+    reason?: string;
   }) => Promise<void>,
   settled: Omit<W, "id">,
   unpaid: Omit<W, "id"> | (() => Promise<void>),
@@ -92,6 +93,8 @@ export async function approveByMoney<
   approvableFrom: AppointmentStatus[] = ALLOCATION_APPROVABLE_FROM,
   /** Runs before the awaiting-payment write; a throw refuses the approval. */
   beforeUnpaid?: () => void,
+  /** Recorded on the history row: how the times were placed. */
+  reason?: string,
 ): Promise<ApprovalOutcome> {
   try {
     await transition({
@@ -99,6 +102,7 @@ export async function approveByMoney<
       to: AppointmentStatus.APPROVED,
       fromIn: approvableFrom,
       data,
+      reason,
     });
     return "approved";
   } catch (error) {
@@ -119,6 +123,7 @@ export async function approveByMoney<
       AppointmentStatus.APPROVED_PENDING_PAYMENT,
     ].filter((status) => approvableFrom.includes(status)),
     data,
+    reason,
   });
   return "awaiting_payment";
 }
@@ -133,6 +138,8 @@ export async function updateEventStatus(
   firstSlot: Date,
   config: EventConfig,
   approvableFrom?: AppointmentStatus[],
+  /** How the times were placed (`scheduleReason`), for the history row. */
+  reason?: string,
 ): Promise<ApprovalOutcome | undefined> {
   switch (eventType) {
     // #836 — allocation racing a cancel/expiry must not resurrect the
@@ -155,6 +162,7 @@ export async function updateEventStatus(
         approvableFrom,
         // The client pays before the session: refuse a too-close first one.
         () => assertUnpaidApprovalFits(firstSlot),
+        reason,
       );
 
     // #1775 C-1 — a plan is paid at purchase: an unpaid one is refused,
@@ -181,6 +189,8 @@ export async function updateEventStatus(
         },
         undefined,
         approvableFrom,
+        undefined,
+        reason,
       );
 
     case "webinar": {
@@ -269,7 +279,7 @@ export async function fetchEventData(
   planId?: string | null;
   /**
    * Whether the booking is paid (or free): it decides the lead time a placed
-   * session needs (`leadTimeFor`). Only an unpaid consultation request is not.
+   * session needs (`leadMsFor`). Only an unpaid consultation request is not.
    */
   settled: boolean;
   /** The buyer's own direct checkout is still being paid: nobody may answer it yet. */

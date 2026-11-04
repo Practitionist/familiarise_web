@@ -4,7 +4,10 @@ import {
   toOccurrenceLike,
   type OccurrenceLike,
 } from "@/lib/appointments/view-model";
-import { subscriptionPlanEnd } from "@/lib/booking/entitlement";
+import {
+  sessionsTotalOf,
+  subscriptionPlanEnd,
+} from "@/lib/booking/entitlement";
 
 /**
  * Turns one appointment into everything a reschedule page needs.
@@ -87,6 +90,7 @@ export function buildRescheduleSubject(
     schedulingTimezone?: string;
     sessionsPerWeek?: number;
     totalSessions?: number;
+    rescheduleEntitlement?: TimePickerSubject["rescheduleEntitlement"];
   } | null => {
     switch (appointment.appointmentType) {
       case "CONSULTATION": {
@@ -131,6 +135,29 @@ export function buildRescheduleSubject(
           schedulingTimezone: subscription?.schedulingTimezone,
           sessionsPerWeek: plan?.sessionsPerWeek,
           totalSessions: plan?.totalSessions,
+          rescheduleEntitlement:
+            subscription && plan
+              ? {
+                  sessionsTotal: sessionsTotalOf({
+                    sessionsTotal: subscription.sessionsTotal ?? null,
+                    subscriptionPlan: { totalSessions: plan.totalSessions },
+                  }),
+                  sessionsPerWeek: plan.sessionsPerWeek,
+                  durationInMonths: plan.durationInMonths,
+                  schedulingPeriodStartsAt:
+                    subscription.schedulingPeriodStartsAt,
+                  schedulingTimezone: subscription.schedulingTimezone,
+                  planEndsAt: subscription.planEndsAt ?? null,
+                  occurrences: appointment.occurrences.map((o) => ({
+                    id: o.id,
+                    startsAt: o.startsAt,
+                    endsAt: o.endsAt,
+                    completionStatus: o.completionStatus,
+                    isTentative: o.isTentative,
+                    deletedAt: o.deletedAt,
+                  })),
+                }
+              : undefined,
         };
       }
       case "WEBINAR": {
@@ -222,6 +249,7 @@ export function buildRescheduleSubject(
       schedulingTimezone: resolved.schedulingTimezone,
       sessionsPerWeek: resolved.sessionsPerWeek,
       totalSessions: resolved.totalSessions,
+      rescheduleEntitlement: resolved.rescheduleEntitlement,
       slots,
       // Tentative sessions mean a move is already in flight — pin the count
       // for allocate-path stale-tab guards if this subject is reused there.

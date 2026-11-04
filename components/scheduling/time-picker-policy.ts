@@ -1,9 +1,9 @@
 import type { AppointmentsType } from "@prisma/client";
+import type { SubscriptionEntitlementInput } from "@/lib/booking/entitlement";
+import type { GridLead } from "@/lib/scheduling/allocationService";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
-import {
-  RESCHEDULE_MIN_LEAD_HOURS,
-  supportsProposals,
-} from "@/lib/booking/reschedule-proposals";
+import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
+import { supportsProposals } from "@/lib/booking/reschedule-proposals";
 
 /**
  * The four surfaces that place slots on a consultant's calendar, expressed as
@@ -83,6 +83,8 @@ export interface TimePickerPolicy {
    * strands nobody, so neither has a counterparty to give notice to.
    */
   minLeadHours: number;
+  /** The writer this picker submits to; the grid paints "too soon" by its lead time. */
+  lead: GridLead;
   /**
    * Whether this surface releases sessions that already exist. Showing
    * released slots and offering a release step are the same condition, so it
@@ -147,6 +149,12 @@ export interface TimePickerSubject {
   /** The plan's scheduling period; the grid clamps selection to it. */
   allowedStart?: Date;
   allowedEnd?: Date;
+  /**
+   * A subscription reschedule: the plan's counter inputs, so the picker clamps
+   * to the plan week the server would place into once the moved sessions are
+   * released (`rescheduleWindow`).
+   */
+  rescheduleEntitlement?: Omit<SubscriptionEntitlementInput, "now">;
   /** Existing sessions, for the release step. */
   slots?: OccurrenceLike[];
   /** A session is already released and awaiting a new time. */
@@ -162,10 +170,14 @@ type PolicyHandlers = Pick<TimePickerPolicy, "onSubmit"> &
   Partial<Pick<TimePickerPolicy, "onConflict">>;
 
 /** A consultant placing a pending request that has never been scheduled. */
-export function allocatePolicy(handlers: PolicyHandlers): TimePickerPolicy {
+export function allocatePolicy(
+  handlers: PolicyHandlers,
+  { settled }: { settled: boolean },
+): TimePickerPolicy {
   return {
     kind: "ALLOCATE",
     minLeadHours: 0,
+    lead: { purpose: "allocate", unpaid: !settled },
     showReleasedSlots: false,
     submitLabel: "Save times",
     allowReleaseWithoutTime: false,
@@ -184,6 +196,7 @@ export function rescheduleConsulteePolicy(
   return {
     kind: "RESCHEDULE_CONSULTEE",
     minLeadHours: RESCHEDULE_MIN_LEAD_HOURS,
+    lead: { purpose: "reschedule" },
     showReleasedSlots: true,
     submitLabel: "Request this time",
     allowReleaseWithoutTime: true,
@@ -202,6 +215,7 @@ export function rescheduleConsultantPolicy(
   return {
     kind: "RESCHEDULE_CONSULTANT",
     minLeadHours: RESCHEDULE_MIN_LEAD_HOURS,
+    lead: { purpose: "reschedule" },
     showReleasedSlots: true,
     submitLabel: "Propose this time",
     allowReleaseWithoutTime: true,
@@ -222,6 +236,7 @@ export function rebookIncidentPolicy(
   return {
     kind: "REBOOK_INCIDENT",
     minLeadHours: 0,
+    lead: { purpose: "book" },
     showReleasedSlots: false,
     submitLabel: "Rebook free",
     allowReleaseWithoutTime: false,
@@ -240,6 +255,7 @@ export function manageTimingsPolicy(
   return {
     kind: "MANAGE_TIMINGS",
     minLeadHours: 0,
+    lead: { purpose: "allocate" },
     showReleasedSlots: false,
     submitLabel: "Save timings",
     allowReleaseWithoutTime: false,

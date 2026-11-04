@@ -95,7 +95,7 @@ describe("Requests inbox anatomy (A-4)", () => {
     );
     expect(html).toContain("Requested");
     expect(html).toContain("Awaiting payment");
-    expect(html).toContain("Schedule the next 2 · 4 of 24 booked");
+    expect(html).toContain("Schedule the next 1 · 4 of 24 booked");
     expect(html).not.toMatch(/\d+ slots/);
     // QA #1783 case 2 — every row carries a money line with an amount.
     const moneyLines = [
@@ -112,6 +112,7 @@ describe("Requests inbox anatomy (A-4)", () => {
       return rowActions(
         row,
         deriveBookingPresentation(row.presentation, "CONSULTANT", { now: NOW }),
+        NOW,
       );
     };
     expect(actionsOf("s-awaiting")).toEqual({

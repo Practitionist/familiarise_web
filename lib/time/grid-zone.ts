@@ -96,7 +96,10 @@ function nextCalendarDay(day: Date): Date {
   return new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1, 12);
 }
 
-/** The half-open [first instant, last ms] of the calendar days `from`..`to`, in `zone`. */
+/**
+ * The half-open [first instant, next day's first instant) of the calendar days
+ * `from`..`to`, in `zone`. Exclusive, so the last half-hour of `to` is a whole atom.
+ */
 export function dayRangeBounds(
   from: Date,
   to: Date,
@@ -104,7 +107,7 @@ export function dayRangeBounds(
 ): { start: Date; end: Date } {
   return {
     start: dayStartInstant(from, zone),
-    end: new Date(dayStartInstant(nextCalendarDay(to), zone).getTime() - 1),
+    end: dayStartInstant(nextCalendarDay(to), zone),
   };
 }
 

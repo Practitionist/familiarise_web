@@ -23,6 +23,7 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { scopeToPlanHostWhere, type Scope } from "@/lib/api/scope/parse";
 import { liveCheckoutHold } from "@/lib/booking/request-cohort";
+import { liveReminderPayment } from "@/lib/booking/payment-reminder-eligibility";
 import { mapLimit, poolLimit } from "@/lib/db/bounded";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import { lifecycleOf, planOf } from "@/lib/appointments/presentation-input";
@@ -137,6 +138,7 @@ const INBOX_APPOINTMENT_SELECT = {
 const CONSULTATION_SELECT = {
   id: true,
   status: true,
+  pendingPaymentUrl: true,
   requestedAt: true,
   bookingSource: true,
   requestNotes: true,
@@ -150,13 +152,21 @@ const CONSULTATION_SELECT = {
       consultantProfile: PROFILE_WITH_USER_SELECT,
     },
   },
-  requestedBy: PROFILE_WITH_USER_SELECT,
+  requestedBy: {
+    select: {
+      ...PROFILE_WITH_USER_SELECT.select,
+      user: {
+        select: { ...PROFILE_WITH_USER_SELECT.select.user.select, email: true },
+      },
+    },
+  },
   appointment: INBOX_APPOINTMENT_SELECT,
 } satisfies Prisma.ConsultationSelect;
 
 const SUBSCRIPTION_SELECT = {
   id: true,
   status: true,
+  pendingPaymentUrl: true,
   requestedAt: true,
   bookingSource: true,
   requestNotes: true,
@@ -178,7 +188,7 @@ const SUBSCRIPTION_SELECT = {
       consultantProfile: PROFILE_WITH_USER_SELECT,
     },
   },
-  requestedBy: PROFILE_WITH_USER_SELECT,
+  requestedBy: CONSULTATION_SELECT.requestedBy,
   appointment: INBOX_APPOINTMENT_SELECT,
 } satisfies Prisma.SubscriptionSelect;
 
@@ -417,9 +427,13 @@ function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
     "CONSULTANT",
     { now },
   );
-  // A paid plan's clock is capture + 48 h, not the request hold.
-  const timed =
-    nextAction.kind === "ALLOCATE" && nextAction.deadline
+  // A paid plan's clock is capture + 48 h, not the request hold; an open
+  // proposal's clock is its own expiry, after which the original time stays.
+  const openProposal =
+    row.proposal?.status === "PENDING_REVIEW" ? row.proposal : null;
+  const timed = openProposal
+    ? { ...row, deadline: openProposal.expiresAt, requestedStartPassed: false }
+    : nextAction.kind === "ALLOCATE" && nextAction.deadline
       ? { ...row, deadline: nextAction.deadline }
       : row;
   const isStrandedReschedule =
@@ -427,12 +441,19 @@ function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
     bookingState.state !== "REQUESTED" &&
     row.rescheduledSlotCount > 0 &&
     row.proposal === null;
-  return {
-    ...timed,
-    bucket: isStrandedReschedule
-      ? "answer-today"
-      : inboxBucketOf(timed, bookingState.state, now),
-  };
+  const bucket: InboxBucket =
+    openProposal?.initiatorRole === "CONSULTANT" &&
+    openProposal.proposedTimes.length > 0
+      ? "waiting-on-them"
+      : isStrandedReschedule
+        ? "answer-today"
+        : inboxBucketOf(
+            timed,
+            bookingState.state,
+            now,
+            nextAction.kind === "ALLOCATE",
+          );
+  return { ...timed, bucket };
 }
 
 function consultationRow(
@@ -463,6 +484,7 @@ function consultationRow(
       id: c.id,
       kind: "consultation",
       appointmentId: c.appointment?.id ?? null,
+      reminderExpiresAt: liveReminderPayment(c, now)?.expiresAt ?? null,
       planTitle: c.consultationPlan.title,
       requester: {
         name: c.requestedBy.user.name ?? "Learner",
@@ -606,6 +628,7 @@ function subscriptionRow(
       id: s.id,
       kind,
       appointmentId: s.appointment?.id ?? null,
+      reminderExpiresAt: liveReminderPayment(s, now)?.expiresAt ?? null,
       planTitle: s.subscriptionPlan.title,
       requester: {
         name: s.requestedBy.user.name ?? "Learner",
@@ -669,6 +692,7 @@ function trialRow(
       id: t.id,
       kind: "trial",
       appointmentId: t.appointment?.id ?? null,
+      reminderExpiresAt: null,
       planTitle: t.subscriptionPlan.title,
       requester: {
         name: t.consulteeProfile.user.name ?? "Learner",

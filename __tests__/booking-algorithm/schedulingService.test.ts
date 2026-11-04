@@ -28,6 +28,8 @@ jest.mock("../../lib/booking/allocation/coverage", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // The allocator counts what the event already holds to record how it was scheduled.
+    appointmentOccurrence: { count: jest.fn().mockResolvedValue(0) },
     // The allocator's slot batch reads co-host seats and an expert consultee's own profile.
     consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
     collaborator: { findMany: jest.fn().mockResolvedValue([]) },
@@ -1699,8 +1701,9 @@ describe("Auto allocation", () => {
       makeSubscriptionEvent({
         // The first cycle ended long ago, but the plan end (moved by returns
         // or an incident) is still ahead, so the cycle rolls to now.
-        schedulingPeriodStartsAt: new Date("2024-01-06T00:00:00Z"),
-        schedulingPeriodEndsAt: new Date("2024-01-13T00:00:00Z"),
+        // A Wednesday: 52 plan weeks on, the plan week starts at "now".
+        schedulingPeriodStartsAt: new Date("2024-01-03T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2024-01-10T00:00:00Z"),
         planEndsAt: new Date("2025-03-01T00:00:00Z"),
       }),
     );
@@ -3447,8 +3450,9 @@ describe("allocation resilience — error codes", () => {
           }),
         }),
         // The first cycle ended before "now" (2025-01-01); the plan has not.
-        schedulingPeriodStartsAt: new Date("2024-01-01T00:00:00Z"),
-        schedulingPeriodEndsAt: new Date("2024-01-08T00:00:00Z"),
+        // A Wednesday start, so the plan week holding "now" holds a Monday.
+        schedulingPeriodStartsAt: new Date("2024-01-03T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2024-01-10T00:00:00Z"),
         planEndsAt: new Date("2025-03-01T00:00:00Z"),
         appointment: null,
       }),
