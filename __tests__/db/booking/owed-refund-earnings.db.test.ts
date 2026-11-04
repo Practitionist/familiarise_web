@@ -467,4 +467,44 @@ describe("earnings wait for a plan-end refund that is still owed", () => {
     expect(now.consultant.status).toBe("PENDING");
     expect(now.org.status).toBe("PENDING");
   });
+
+  it("a refund under another key leaves the marker, and the earnings stay held", async () => {
+    const s = await seedEndedPlan();
+    await settleWithFailingGatewayAndLetHoldsLapse(s);
+    const key = planEndRefundKey(s.subscriptionId, s.paymentId);
+    const other = await prisma.refund.create({
+      data: {
+        paymentId: s.paymentId,
+        amountPaise: BigInt(1_000),
+        status: "SUCCEEDED",
+        refundId: `rfnd_other_${randomUUID()}`,
+        dedupeKey: `admin-refund:ops:${s.paymentId}:${randomUUID()}`,
+        paymentGateway: "RAZORPAY",
+      },
+    });
+    await prisma.$transaction(
+      (tx) =>
+        applyRefundCascade(tx, {
+          paymentId: s.paymentId,
+          refundId: other.id,
+          amountPaise: 1_000,
+          reason: "goodwill",
+          initiatedByUserId: null,
+        }),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    expect(
+      (
+        await prisma.payment.findUniqueOrThrow({
+          where: { id: s.paymentId },
+          select: { refundOwedKey: true },
+        })
+      ).refundOwedKey,
+    ).toBe(key);
+    await releaseEarningsFromHold();
+    const now = await statuses(s);
+    expect(now.consultant.status).toBe("PENDING");
+    expect(now.org.status).toBe("PENDING");
+  });
 });
