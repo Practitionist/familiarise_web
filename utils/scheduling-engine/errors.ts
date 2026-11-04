@@ -75,6 +75,7 @@ export type AllocationConflictCode = Extract<
   | "AVAILABILITY_CHANGED"
   | "RESCHEDULE_NO_LONGER_OPEN"
   | "SESSION_HAS_REMEDY"
+  | "PROPOSAL_AWAITING_CLIENT"
 >;
 
 /** 409 — lock contention, duplicate booking race, already allocated */

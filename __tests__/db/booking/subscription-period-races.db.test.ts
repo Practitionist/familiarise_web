@@ -15,6 +15,7 @@ import {
   overlappingOccupyingPairs,
   seedConsultee,
   seedHost,
+  seedPaidSubscription,
   type SeededConsultee,
   type SeededHost,
 } from "./harness";
@@ -133,75 +134,6 @@ async function publishMornings(host: SeededHost, days: number[]) {
   });
 }
 
-/** A paid subscription (2 sessions a week, 1 month) whose first cycle is not placed yet. */
-async function seedPaidSubscription(
-  host: SeededHost,
-  subscriber: SeededConsultee,
-  periodStart: Date,
-) {
-  const price = BigInt(400_000);
-  const plan = await prisma.subscriptionPlan.create({
-    data: {
-      title: "Database tier subscription",
-      price,
-      consultantProfileId: host.consultantProfileId,
-      sessionsPerWeek: 2,
-      durationInMonths: 1,
-      sessionDurationInHours: 1,
-      totalSessions: 8,
-    },
-  });
-  const subscription = await prisma.subscription.create({
-    data: {
-      subscriptionPlanId: plan.id,
-      requestedById: subscriber.consulteeProfileId,
-      status: "PENDING",
-      bookingSource: "DIRECT_CHECKOUT",
-      schedulingPeriodStartsAt: periodStart,
-      schedulingPeriodEndsAt: new Date(
-        periodStart.getTime() + 30 * 24 * HOUR_MS,
-      ),
-      planEndsAt: new Date(periodStart.getTime() + 30 * 24 * HOUR_MS),
-      schedulingTimezone: "UTC",
-      sessionsTotal: 8,
-    },
-  });
-  const appointment = await prisma.appointment.create({
-    data: { appointmentType: "SUBSCRIPTION", subscriptionId: subscription.id },
-  });
-  await prisma.appointmentParticipant.createMany({
-    data: [
-      {
-        appointmentId: appointment.id,
-        userId: host.userId,
-        role: "CONSULTANT",
-        status: "CONFIRMED",
-      },
-      {
-        appointmentId: appointment.id,
-        userId: subscriber.userId,
-        role: "CONSULTEE",
-        status: "CONFIRMED",
-      },
-    ],
-  });
-  await prisma.payment.create({
-    data: {
-      amount: price,
-      originalAmount: price,
-      paymentMethod: "card",
-      paymentIntent: `order_dbtier_${randomUUID()}`,
-      paymentGateway: "RAZORPAY",
-      paymentStatus: "SUCCEEDED",
-      userId: subscriber.userId,
-      appointmentId: appointment.id,
-      isMockPayment: true,
-      legs: { create: [{ source: "CARD", amountPaise: price }] },
-    },
-  });
-  return { subscriptionId: subscription.id, appointmentId: appointment.id };
-}
-
 function checkoutAt(planId: string, startsAt: Date) {
   return {
     appointmentType: "CONSULTATION" as const,
@@ -273,11 +205,13 @@ describe("subscription period allocation × 3 consultee checkouts", () => {
       }),
     ]);
 
+    // The allocator spreads a week's sessions (a free day between them), so
+    // it holds the 3rd and 5th mornings; the 4th stays free for a buyer.
     const outcomes = await Promise.all(
       [
         [b1, futureAt(3, 9)],
-        [b2, futureAt(4, 9)],
-        [b3, futureAt(5, 9)],
+        [b2, futureAt(5, 9)],
+        [b3, futureAt(4, 9)],
       ].map(([buyer, at]) =>
         handleCheckout(
           checkoutAt(plan.id, at as Date),
@@ -294,7 +228,7 @@ describe("subscription period allocation × 3 consultee checkouts", () => {
     expect(allocation).toMatchObject({ success: true });
     expect(await placedStarts(sub.subscriptionId)).toEqual([
       futureAt(3, 9).getTime(),
-      futureAt(4, 9).getTime(),
+      futureAt(5, 9).getTime(),
     ]);
     expect(refusedBeforePayment(outcomes[0])).toBe(true);
     expect(refusedBeforePayment(outcomes[1])).toBe(true);

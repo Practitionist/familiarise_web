@@ -18,6 +18,8 @@ jest.mock("../../lib/booking/allocation/coverage", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    // The allocator counts what the event already holds to record how it was scheduled.
+    appointmentOccurrence: { count: jest.fn().mockResolvedValue(0) },
     // The allocator's slot batch reads co-host seats and an expert consultee's own profile.
     consultantProfile: { findUnique: jest.fn().mockResolvedValue(null) },
     collaborator: { findMany: jest.fn().mockResolvedValue([]) },

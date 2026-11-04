@@ -75,10 +75,12 @@ export function windowsForDay(
   durationInHours: number,
   timezone: string,
   nowMs: number,
+  /** The writer's lead time (`leadMsFor`): 15 min to book, 2 h for a priced request. */
+  leadMs: number = MINIMUM_BOOKING_LEAD_TIME_MS,
 ): SlotWithStatus[] {
   if (atoms.length === 0) return [];
   const normalized = atoms.map((atom, index) => normalizeAtom(atom, index));
-  const cutoff = nowMs + MINIMUM_BOOKING_LEAD_TIME_MS;
+  const cutoff = nowMs + leadMs;
   return breakDownSlotsPreservingStatus(
     normalized,
     durationInHours,
@@ -94,16 +96,20 @@ export function windowsForDay(
       ...window,
       tooSoon: under.some((atom) => atom.tooSoon === true),
       limitReached: under.some((atom) => atom.limitReached === true),
-      _isPast: start < cutoff,
+      // The writers refuse a start at or before the cutoff.
+      _isPast: start <= cutoff,
     };
   });
 }
 
-/** A window the buyer can take now: not past or too soon, not full, not over a plan limit. */
+/**
+ * A window the buyer can take now: wholly free (a partly booked half-hour is
+ * refused by every writer), not past or too soon, not over a plan limit.
+ */
 export function isBookableWindow(slot: SlotWithStatus): boolean {
   return (
     !slot._isPast &&
-    slot.bookingStatus !== "fully-booked" &&
+    slot.bookingStatus === "available" &&
     slot.tooSoon !== true &&
     slot.limitReached !== true
   );

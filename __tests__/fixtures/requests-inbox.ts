@@ -295,3 +295,50 @@ export function serveInboxFixture(prisma: {
   prisma.trial.count.mockImplementation(t.count);
   prisma.membership.findMany.mockResolvedValue([]);
 }
+
+/**
+ * A paid 1:1 a reschedule put back to PENDING: its one session released, and
+ * the proposal open (who asked, and whether they named times, vary by case).
+ */
+export function movingConsultation(
+  initiatorRole: "CONSULTEE" | "CONSULTANT",
+  withTimes: boolean,
+) {
+  const appointment = wrapper("a-m", {
+    occurrences: [
+      {
+        startsAt: hoursAhead(72),
+        isTentative: true,
+        completionStatus: "RESCHEDULED",
+      },
+    ],
+    payment: [{ status: "SUCCEEDED", amount: 150000, expiresAt: null }],
+  });
+  return {
+    ...pendingConsultation,
+    id: "c-moving",
+    requestedAt: hoursAgo(1),
+    appointment: {
+      ...appointment,
+      rescheduleRequests: [
+        {
+          id: "rr-1",
+          status: "PENDING_REVIEW",
+          reason: null,
+          expiresAt: hoursAhead(20),
+          initiatorRole,
+          preferredTimeOfDay: null,
+          preferredDays: null,
+          proposedTimes: withTimes
+            ? [
+                {
+                  startsAt: hoursAhead(96),
+                  endsAt: hoursAhead(96.5),
+                },
+              ]
+            : [],
+        },
+      ],
+    },
+  };
+}

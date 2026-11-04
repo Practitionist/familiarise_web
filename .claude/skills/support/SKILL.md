@@ -54,6 +54,16 @@ Terse rules for agents. The human explanation is in `docs/support/` (start at `d
 - Never capture to Sentry per row in a sweep arm; collect into `errors` and report once.
 - Never run `prisma db push`, `npm run db:*` or the DB race tier against the shared database.
 
+## Planned (owner decisions 2026-11-04, not built yet)
+
+The code still has the rules described above until these land; don't build against them early.
+
+- Auto-cases only for customer-impacting events that need a human: half a class missed, a refund still failing after 72 h, a disputed plan-end choice. Internal signals stay on the ops list (#2563).
+- Class-wide cancel: STAFF recommend, an ADMIN executes (`classSeries.money`), refunding every attendee's unheld sessions through the normal rails, with no second admin (#2563).
+- A no-money make-up remedy from a case ("add N sessions" / "add up to 4 weeks"), logged and visible to both sides (#2563, #2561).
+- A half-missed class holds only that class's unpaid host earnings (`SUPPORT_CASE` hold) until the case closes (#2563).
+- Lean team (#2572): second-admin proposals, `assertNotOwnRemedy` and the payout maker-checker go; STAFF caps become ₹5,000 per payment and ₹30,000 per rolling 24 h. Multi-admin design: #2573.
+
 ## Gotchas
 
 - Attachment finalisation and orphan removal compete on the pending row. Claim

@@ -16,12 +16,15 @@ import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-overrid
  */
 export function AllocateClient({
   subject,
+  settled,
   backHref,
   title,
   pinnedAt,
   viewerZone,
 }: Readonly<{
   subject: TimePickerSubject;
+  /** Paid (or free): decides the lead time a placed session needs. */
+  settled: boolean;
   backHref: string;
   title: string;
   /** Open the grid on this instant instead of the resolved focus (#1703 F5). */
@@ -40,11 +43,14 @@ export function AllocateClient({
 
   // The grid's hook already announced the outcome (full, partial or saved
   // times), so these only navigate.
-  const policy = allocatePolicy({
-    onSubmit: goBack,
-    // Allocated elsewhere, or no longer allocatable: the list is the answer.
-    onConflict: goBack,
-  });
+  const policy = allocatePolicy(
+    {
+      onSubmit: goBack,
+      // Allocated elsewhere, or no longer allocatable: the list is the answer.
+      onConflict: goBack,
+    },
+    { settled },
+  );
 
   return (
     <TimePicker

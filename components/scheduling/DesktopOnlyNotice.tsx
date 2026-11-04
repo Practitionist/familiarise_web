@@ -23,7 +23,13 @@ import { Monitor } from "lucide-react";
 export function DesktopOnlyNotice({
   children,
   className,
-}: Readonly<{ children: React.ReactNode; className?: string }>) {
+  mobileAction,
+}: Readonly<{
+  children: React.ReactNode;
+  className?: string;
+  /** What a phone can still do here (e.g. auto-schedule), under the notice. */
+  mobileAction?: React.ReactNode;
+}>) {
   const [isDesktop, setIsDesktop] = useState(false);
 
   useEffect(() => {
@@ -56,6 +62,7 @@ export function DesktopOnlyNotice({
           Choosing times needs a wider screen than this one. Everything else in
           your dashboard works here.
         </p>
+        {mobileAction}
       </div>
 
       {/* Flex, not block: the calendar sizes itself with `flex-1`, which needs

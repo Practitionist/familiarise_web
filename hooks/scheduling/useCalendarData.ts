@@ -7,7 +7,10 @@ import {
   endOfMonth,
   type Day,
 } from "date-fns";
-import { AllocationService } from "@/lib/scheduling/allocationService";
+import {
+  AllocationService,
+  type GridLead,
+} from "@/lib/scheduling/allocationService";
 import {
   availabilityPollJitterMs,
   createAvailabilityPoller,
@@ -61,6 +64,8 @@ export interface UseCalendarDataOptions {
   includeAppointmentDetails?: boolean;
   /** Occurrences a reschedule would release; the plan-limit overlay counts them free. */
   releasingOccurrenceIds?: readonly string[];
+  /** The writer the grid is drawn for; its lead time decides "too soon". */
+  lead?: GridLead;
 }
 
 export type { BookableInterval, OverlapDetail, ServerCell };
@@ -216,6 +221,8 @@ interface CalendarData {
 }
 
 export interface UseCalendarDataReturn extends CalendarData {
+  /** The lead time the server applied to these cells; re-applied between polls. */
+  leadMs: number | null;
   refetch: () => Promise<void>;
   refetchAvailability: () => Promise<void>;
   refetchEventSlots: () => Promise<void>;
@@ -241,7 +248,10 @@ export function useCalendarData(
     includeAppointmentDetails = false,
     weekStartsOn = 0,
     releasingOccurrenceIds,
+    lead,
   } = options;
+  const leadPurpose = lead?.purpose;
+  const leadUnpaid = lead?.unpaid === true;
   const releasing = releasingOccurrenceIds?.length
     ? [...releasingOccurrenceIds].sort(byCodeUnit).join(",")
     : undefined;
@@ -251,6 +261,7 @@ export function useCalendarData(
     useState<ConsultantData | null>(null);
   const [rawSlots, setRawSlots] = useState<RawSlotData[]>([]);
   const [quota, setQuota] = useState<GridQuota | null>(null);
+  const [leadMs, setLeadMs] = useState<number | null>(null);
   const [cellsWindow, setCellsWindow] = useState<{
     startMs: number;
     endMs: number;
@@ -411,6 +422,9 @@ export function useCalendarData(
             classId: eventType === "class" ? eventId : undefined,
             subscriptionId: eventType === "subscription" ? eventId : undefined,
             releasing,
+            lead: leadPurpose
+              ? { purpose: leadPurpose, unpaid: leadUnpaid }
+              : undefined,
           },
         );
 
@@ -440,9 +454,10 @@ export function useCalendarData(
         setRawSlots(validated);
         setCellsWindow({
           startMs: startDate.getTime(),
-          endMs: endDate.getTime() + 1,
+          endMs: endDate.getTime(),
         });
         setQuota(data.quota ?? null);
+        setLeadMs(data.leadMs ?? null);
         setAvailabilityError(null);
       } catch (fetchError) {
         if (requestId !== availabilityRequestIdRef.current) return;
@@ -491,6 +506,8 @@ export function useCalendarData(
       gridZone,
       weekStartsOn,
       releasing,
+      leadPurpose,
+      leadUnpaid,
     ],
   );
 
@@ -677,6 +694,7 @@ export function useCalendarData(
     eventOccurrences,
     subscriptionMeta,
     quota,
+    leadMs,
     cellsWindow,
     loading: Boolean(
       autoLoad && consultantId && !(settled.consultant && settled.availability),

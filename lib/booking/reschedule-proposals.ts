@@ -21,9 +21,7 @@ import type { AppointmentsType, RescheduleInitiatorRole } from "@prisma/client";
 import type { RescheduleOutcomeFields } from "@/lib/novu/workflows";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import type { AppointmentKind } from "@/lib/appointments/view-model";
-
-/** No session moves, from or to, closer than this to its start. */
-export const RESCHEDULE_MIN_LEAD_HOURS = 24;
+import { RESCHEDULE_MIN_LEAD_HOURS } from "@/lib/booking/lead-time";
 
 type ReleasableRow = {
   startsAt: Date | string;

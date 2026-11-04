@@ -259,7 +259,7 @@ export function stalePicks(
   return picks
     .filter((pick) => {
       const startMs = new Date(pick.startsAt).getTime();
-      if (startMs < start.getTime() || startMs > end.getTime()) return false;
+      if (startMs < start.getTime() || startMs >= end.getTime()) return false;
       return !isStartOffered(startMs, free, rules);
     })
     .map((pick) => pick.startsAt);

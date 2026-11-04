@@ -167,6 +167,7 @@ export default async function AllocateSlotsPage({
   return (
     <DashboardViewportFill className="gap-4">
       <AllocateClient
+        settled={request.settled}
         backHref={backHref}
         title={request.title}
         pinnedAt={parsePinnedAt(at)}

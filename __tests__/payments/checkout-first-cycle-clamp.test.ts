@@ -195,7 +195,7 @@ it("persists end = start + 7 zone-days and sessionsTotal = 24 despite a 90-day c
   ]);
 });
 
-it("converts the pair's completed trial through the CAS helper, never a bare update", async () => {
+function trialTx() {
   const tx = makeTx();
   const trial = {
     findFirst: jest.fn().mockResolvedValue({ id: "trial-1" }),
@@ -207,8 +207,17 @@ it("converts the pair's completed trial through the CAS helper, never a bare upd
     update: jest.fn(),
   };
   Object.assign(tx, { trial });
+  Object.assign(tx.subscription, {
+    findUnique: jest.fn().mockResolvedValue({
+      requestedById: "consultee-profile-1",
+      subscriptionPlan: { consultantProfileId: "cp-1" },
+    }),
+  });
+  return { tx, trial };
+}
 
-  await handleSubscriptionCheckout(
+const checkout = (tx: ReturnType<typeof makeTx>, skipPayment: boolean) =>
+  handleSubscriptionCheckout(
     tx,
     {
       appointmentType: "SUBSCRIPTION",
@@ -216,11 +225,21 @@ it("converts the pair's completed trial through the CAS helper, never a bare upd
       schedulingPeriodStartsAt: START.toISOString(),
     } as unknown as CheckoutInput,
     "consultee-profile-1",
-    false,
+    skipPayment,
     null,
     "policy-1",
   );
 
+it("a card checkout leaves the completed trial alone: it converts at capture", async () => {
+  const { tx, trial } = trialTx();
+  await checkout(tx, false);
+  expect(trial.updateMany).not.toHaveBeenCalled();
+  expect(trial.update).not.toHaveBeenCalled();
+});
+
+it("a checkout paid on the spot converts the pair's trial through the CAS helper", async () => {
+  const { tx, trial } = trialTx();
+  await checkout(tx, true);
   expect(trial.update).not.toHaveBeenCalled();
   expect(trial.updateMany).toHaveBeenCalledWith({
     where: { id: "trial-1", status: { in: ["COMPLETED"] } },

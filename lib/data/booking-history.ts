@@ -35,6 +35,10 @@
  * a select allow-list that stops at id and name (#946 — no email, ever).
  */
 
+import {
+  SCHEDULE_REASON_COPY,
+  parseScheduleReason,
+} from "@/lib/booking/allocation/schedule-choice";
 import type {
   BookingHistoryEntity,
   RescheduleInitiatorRole,
@@ -233,7 +237,8 @@ export async function getBookingTimeline(
       entityId: row.entityId,
       from: row.fromStatus,
       to: row.toStatus,
-      reason: row.reason,
+      // A scheduling token reads as words; any other reason is already copy.
+      reason: scheduleReasonCopy(row.reason),
       actor: row.actorUser
         ? { id: row.actorUser.id, name: row.actorUser.name }
         : null,
@@ -273,4 +278,9 @@ export async function getBookingTimeline(
     entries: merged.slice(0, TIMELINE_LIMIT),
     truncated,
   };
+}
+
+function scheduleReasonCopy(reason: string | null): string | null {
+  const token = parseScheduleReason(reason);
+  return token ? SCHEDULE_REASON_COPY[token] : reason;
 }

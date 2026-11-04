@@ -21,6 +21,8 @@ import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
   refuseMalformedEventId,
+  NOT_BEING_MOVED,
+  assertNotBeingMoved,
   releaseDeclinedRequestHold,
   validateDetailRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
@@ -347,11 +349,16 @@ export async function PATCH(
                 subscriptionId,
               );
             }
+            await assertNotBeingMoved(
+              tx,
+              { subscriptionId },
+              status === AppointmentStatus.REJECTED ? "decline" : "approve",
+            );
             // #836 — allowed-from guard rides the WHERE; the idempotency
             // pre-checks above are only friendly error text. updateMany
             // returns no row, so re-read for the heavy include.
             await transitionSubscriptionRequest(tx, {
-              where: { id: subscriptionId },
+              where: { id: subscriptionId, ...NOT_BEING_MOVED },
               to: status,
               data:
                 status === AppointmentStatus.REJECTED

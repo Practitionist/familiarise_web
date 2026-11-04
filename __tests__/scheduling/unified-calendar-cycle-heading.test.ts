@@ -1,7 +1,7 @@
 /**
- * #1766 — the allocate-page footer heading is one sentence over the one
- * entitlement counter: what this cycle still takes, the window it runs in,
- * and the plan-wide count. Pinned string-level on the extracted pure fn for
+ * The allocate-page footer heading is one sentence over the one entitlement
+ * counter: which plan week is open ("Week N of W"), what it still takes, the
+ * days it runs, and the plan-wide count. Pinned string-level on the extracted pure fn for
  * the four owner scenarios.
  */
 import {
@@ -47,22 +47,22 @@ it.each([
   [
     "fresh plan",
     {},
-    "Pick 4 for 2 Mar – 8 Mar 2026 · 4 per week · 0 of 12 booked",
+    "Week 1 of 14 · pick 4 for 2 Mar – 8 Mar 2026 · 0 of 12 booked",
   ],
   [
-    "cycle placed",
+    "a placed week opens the next one",
     { SCHEDULED: 4 },
-    "This cycle is set · next opens after 11 Mar 2026 · 4 of 12 booked",
+    "Week 2 of 14 · pick 4 for 9 Mar – 15 Mar 2026 · 4 of 12 booked",
   ],
   [
-    "cycle complete",
+    "a delivered week opens the next one too",
     { COMPLETED: 4 },
-    "Pick 4 for 5 Mar – 11 Mar 2026 · 4 per week · 4 of 12 booked",
+    "Week 2 of 14 · pick 4 for 9 Mar – 15 Mar 2026 · 4 of 12 booked",
   ],
   [
     "top-up",
     { SCHEDULED: 2 },
-    "Pick 2 for 3 Mar – 9 Mar 2026 · 4 per week · 2 of 12 booked",
+    "Week 1 of 14 · pick 2 for 2 Mar – 8 Mar 2026 · 2 of 12 booked",
   ],
 ])("%s", (_name, spec, expected) => {
   expect(heading(spec)).toBe(expected);

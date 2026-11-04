@@ -39,7 +39,11 @@ export type BookingRuleCode =
   | "CHECKOUT_IN_PROGRESS"
   | "TOO_CLOSE_TO_START"
   | "RETIME_NOT_ALLOWED"
-  | "RETIME_TOO_SOON";
+  | "RETIME_TOO_SOON"
+  | "USE_RESCHEDULE_RESPOND"
+  | "REQUEST_TOO_SOON"
+  | "USE_CANCEL_ENDPOINT"
+  | "PLACE_RELEASED_SESSIONS";
 
 export class BookingRuleError extends Error {
   constructor(

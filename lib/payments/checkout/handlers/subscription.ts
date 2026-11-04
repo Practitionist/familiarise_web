@@ -2,10 +2,8 @@
 // entitlement, plus the placeholder wrapper the payment hangs on.
 
 import { recordParticipants } from "@/lib/booking/participants";
-import {
-  appendCreationHistory,
-  transitionTrial,
-} from "@/lib/booking/transitions";
+import { appendCreationHistory } from "@/lib/booking/transitions";
+import { convertCompletedTrial } from "@/lib/trials/conversion";
 import type { Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
 import {
@@ -15,12 +13,7 @@ import {
   subscriptionEntitlement,
   subscriptionPlanEnd,
 } from "@/lib/booking/entitlement";
-import {
-  AppointmentsType,
-  Prisma,
-  AppointmentStatus,
-  TrialStatus,
-} from "@prisma/client";
+import { AppointmentsType, Prisma, AppointmentStatus } from "@prisma/client";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import type { SubscriptionCheckoutResult } from "@/lib/payments/checkout/schema";
@@ -41,46 +34,11 @@ export const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.SCHEDULED,
 ];
 
-export async function linkCompletedTrialToSubscription(
-  tx: Tx,
-  consulteeProfileId: string,
-  consultantProfileId: string,
-  subscriptionId: string,
-): Promise<void> {
-  const completedTrial = await tx.trial.findFirst({
-    where: {
-      consulteeProfileId,
-      consultantProfileId,
-      status: TrialStatus.COMPLETED,
-      convertedToSubscriptionId: null,
-    },
-  });
-
-  if (!completedTrial) return;
-
-  await transitionTrial(tx, {
-    where: { id: completedTrial.id },
-    to: TrialStatus.CONVERTED,
-    data: { convertedToSubscriptionId: subscriptionId },
-  });
-
-  console.log(
-    JSON.stringify({
-      event: "trial_converted",
-      trialId: completedTrial.id,
-      subscriptionId,
-      consulteeProfileId,
-      consultantProfileId,
-      timestamp: new Date().toISOString(),
-    }),
-  );
-}
-
 export async function handleSubscriptionCheckout(
   tx: Tx,
   data: CheckoutInput,
   consulteeProfileId: string,
-  _skipPayment: boolean,
+  skipPayment: boolean,
   /** Resolved org context — see handleConsultationCheckout for rationale. */
   organizationId: string | null,
   /** #1499 — see handleConsultationCheckout. */
@@ -240,13 +198,8 @@ export async function handleSubscriptionCheckout(
     throw createErr;
   }
 
-  // Link any completed trial to this subscription (trial conversion tracking)
-  await linkCompletedTrialToSubscription(
-    tx,
-    consulteeProfileId,
-    plan.consultantProfileId,
-    subscription.id,
-  );
+  // A no-gateway checkout is paid now; a card checkout converts at capture.
+  if (skipPayment) await convertCompletedTrial(tx, subscription.id);
 
   // FIX Issue #2: Create placeholder appointment for payment linkage
   // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
@@ -276,7 +229,7 @@ export async function handleSubscriptionCheckout(
       tx,
       appointment.id,
       [{ userId: consulteeUser.userId, role: "CONSULTEE" }],
-      { organizationId, status: _skipPayment ? "CONFIRMED" : "HELD" },
+      { organizationId, status: skipPayment ? "CONFIRMED" : "HELD" },
     );
   }
   // #1333 — see handleConsultationCheckout. Placed after the buyer lookup so

@@ -62,7 +62,11 @@ export type RowAction =
   | { kind: "allocate-next" }
   | { kind: "propose-times" }
   | { kind: "pick-time" }
-  | { kind: "trial-decline" };
+  | { kind: "trial-decline" }
+  | { kind: "accept-proposal" }
+  | { kind: "place-new-time" }
+  | { kind: "keep-original" }
+  | { kind: "withdraw-proposal" };
 
 export interface RowActions {
   primary: RowAction | null;
@@ -78,6 +82,10 @@ const ACTION_LABEL: Record<RowAction["kind"], string> = {
   "propose-times": "Propose new times",
   "pick-time": "Pick a time",
   "trial-decline": "Decline",
+  "accept-proposal": "Accept new times",
+  "place-new-time": "Pick a new time",
+  "keep-original": "Keep the original time",
+  "withdraw-proposal": "Withdraw my request",
 };
 
 /**
@@ -95,6 +103,11 @@ export function answerableProposal(row: InboxRowInput) {
     return null;
   }
   return p;
+}
+
+/** The reschedule open on this booking, whoever asked; null when none is. */
+export function openProposal(row: InboxRowInput) {
+  return row.proposal?.status === "PENDING_REVIEW" ? row.proposal : null;
 }
 
 /**
@@ -120,6 +133,36 @@ const isDestructive = (action: RowAction) =>
   action.kind === "withdraw" ||
   action.kind === "trial-decline";
 
+/**
+ * A booking being moved is answered, never declined: the client's proposal is
+ * accepted (or placed, when any time works) or turned down to keep the original
+ * time; the consultant's own proposal can only be withdrawn; released sessions
+ * with no proposal left need a new time.
+ */
+function movingActions(row: InboxRowInput): RowActions | null {
+  const proposal = openProposal(row);
+  if (proposal?.initiatorRole === "CONSULTANT") {
+    return {
+      primary:
+        proposal.proposedTimes.length > 0 ? null : { kind: "place-new-time" },
+      secondary: [{ kind: "withdraw-proposal" }],
+    };
+  }
+  if (proposal) {
+    return {
+      primary:
+        proposal.proposedTimes.length > 0
+          ? { kind: "accept-proposal" }
+          : { kind: "place-new-time" },
+      secondary: [{ kind: "keep-original" }],
+    };
+  }
+  if (row.rescheduledSlotCount > 0) {
+    return { primary: { kind: "place-new-time" }, secondary: [] };
+  }
+  return null;
+}
+
 /** ONE primary action per row, mirroring the detail page's needs-you CTA. */
 export function rowActions(
   row: InboxRowInput,
@@ -129,6 +172,10 @@ export function rowActions(
   const { bookingState, nextAction } = presentation;
   // The buyer is paying right now; nothing here may race them.
   if (row.checkoutHold) return { primary: null, secondary: [] };
+  if (row.kind !== "trial" && row.kind !== "next-cycle") {
+    const moving = movingActions(row);
+    if (moving) return moving;
+  }
   if (row.kind === "next-cycle" || nextAction.kind === "ALLOCATE") {
     return { primary: { kind: "allocate-next" }, secondary: [] };
   }
@@ -267,6 +314,27 @@ function whenLine(row: InboxRowInput, viewer: ViewerZone): string {
   return "No time named";
 }
 
+/** Who asked to move the booking, and to what; null when nothing is open. */
+export function proposalLine(
+  row: InboxRowInput,
+  viewer: ViewerZone,
+): string | null {
+  const proposal = openProposal(row);
+  if (!proposal) return null;
+  const [first, ...rest] = proposal.proposedTimes;
+  const times = first
+    ? `${formatDateTime(first.startsAt, viewer)}${rest.length > 0 ? ` +${rest.length} more` : ""}`
+    : null;
+  if (proposal.initiatorRole === "CONSULTANT") {
+    return times
+      ? `You asked to move this to ${times} · waiting for ${row.requester.name}`
+      : "You released this session · pick a new time";
+  }
+  return times
+    ? `${row.requester.name} asked to move · proposed ${times}`
+    : `${row.requester.name} asked to move · any time works — you pick`;
+}
+
 /** JSON turned the cycle window into strings; the heading wants Dates. */
 function reviveEntitlement(e: NonNullable<InboxRowInput["entitlement"]>) {
   return {
@@ -354,7 +422,11 @@ export function InboxRow({
       : ACTION_LABEL[action.kind];
 
   const linkFor = (action: RowAction): string | null => {
-    if (action.kind === "allocate-next" || action.kind === "propose-times") {
+    if (
+      action.kind === "allocate-next" ||
+      action.kind === "propose-times" ||
+      action.kind === "place-new-time"
+    ) {
       return row.hrefs.allocate;
     }
     if (action.kind === "approve" && action.mode === "allocate") {
@@ -520,8 +592,10 @@ export function InboxRow({
               &ldquo;{row.requestNotes.trim()}&rdquo;
             </p>
           ) : null}
-          {row.proposal && (
-            <p className="text-xs text-muted-foreground">Proposed new times</p>
+          {proposalLine(row, viewer) && (
+            <p className="text-xs text-muted-foreground">
+              {proposalLine(row, viewer)}
+            </p>
           )}
           {row.checkoutHold && (
             <p className="text-xs text-muted-foreground">

@@ -112,7 +112,8 @@ describe("readRequestsInbox (A-1)", () => {
     expect(byId["s-next"].entitlement).toMatchObject({
       total: 24,
       held: 4,
-      cycle: { nextBatch: 2 },
+      // One of this plan week's two is already delivered: one left to place.
+      cycle: { nextBatch: 1 },
     });
     expect(byId["t-awaiting"].amountPaise).toBe(50000);
     expect(subscriptions.meta).toMatchObject({

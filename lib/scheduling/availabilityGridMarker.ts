@@ -308,6 +308,8 @@ export interface AvailabilityGridEtagKey {
   classId?: string | null;
   /** {@link leadTimeBucket} at request time: moves when a cell enters the lead time. */
   leadBucket: number;
+  /** The purpose's lead time (`leadMsFor`): a different lead paints different cells. */
+  leadMs: number;
   /** {@link subscriptionQuotaFold} when the quota overlay was asked for. */
   quotaFold?: string | null;
 }
@@ -318,8 +320,11 @@ const THIRTY_MIN_MS = 30 * 60 * 1000;
  * The 30-minute bucket `now + lead time` falls in. A grid cell flips to "too
  * soon" when that instant crosses its start, so the tag has to move with it.
  */
-export function leadTimeBucket(nowMs: number): number {
-  return Math.ceil((nowMs + MINIMUM_BOOKING_LEAD_TIME_MS) / THIRTY_MIN_MS);
+export function leadTimeBucket(
+  nowMs: number,
+  leadMs: number = MINIMUM_BOOKING_LEAD_TIME_MS,
+): number {
+  return Math.ceil((nowMs + leadMs) / THIRTY_MIN_MS);
 }
 
 /**
@@ -368,6 +373,7 @@ export function availabilityGridEtag(
     key.webinarId ?? "",
     key.classId ?? "",
     String(key.leadBucket),
+    String(key.leadMs),
     key.quotaFold ?? "",
     iso(marker.profileUpdatedAt),
     iso(marker.consultantDeletedAt ?? null),
