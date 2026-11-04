@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import {
   PLAN_CHOICES,
+  SCHEDULE_REASON,
   lastChoiceWasAuto,
 } from "@/lib/booking/allocation/schedule-choice";
 
@@ -31,4 +32,17 @@ export async function plansScheduledOnAuto(
       .filter(([, reasons]) => lastChoiceWasAuto(reasons))
       .map(([id]) => id),
   );
+}
+
+/**
+ * Every plan whose consultant chose Auto, read from the history first so a
+ * bounded scan can be limited to them: by-hand plans never take its budget.
+ */
+export async function planIdsOnAuto(): Promise<string[]> {
+  const rows = await prisma.bookingStatusHistory.findMany({
+    where: { entity: "SUBSCRIPTION", reason: SCHEDULE_REASON.planAuto },
+    select: { entityId: true },
+    distinct: ["entityId"],
+  });
+  return [...(await plansScheduledOnAuto(rows.map((row) => row.entityId)))];
 }

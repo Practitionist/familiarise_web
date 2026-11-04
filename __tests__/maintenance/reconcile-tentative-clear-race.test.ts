@@ -234,6 +234,31 @@ describe("reconcile-occurrence-availability × top-up cohort (#1766)", () => {
   const allocate = jest.requireMock("../../lib/booking/allocation")
     .allocate as jest.Mock;
 
+  /** Plan-choice history; the mock applies the query's reason filter. */
+  function planHistory(rows: { entityId: string; reason: string }[]) {
+    (prisma.bookingStatusHistory.findMany as jest.Mock).mockImplementation(
+      async ({ where }: { where: { reason: string | { in: string[] } } }) =>
+        rows.filter((row) =>
+          typeof where.reason === "string"
+            ? row.reason === where.reason
+            : where.reason.in.includes(row.reason),
+        ),
+    );
+  }
+  afterEach(() => planHistory([]));
+
+  it("reads only Auto plans, so by-hand plans never take the scan's pages", async () => {
+    planHistory([
+      { entityId: "sub-auto", reason: SCHEDULE_REASON.planAuto },
+      { entityId: "sub-hand", reason: SCHEDULE_REASON.planByHand },
+      { entityId: "sub-week", reason: SCHEDULE_REASON.weekAuto },
+    ]);
+    await reconcileOccurrenceAvailability();
+    const { where } = (prisma.subscription.findMany as jest.Mock).mock
+      .calls[0][0];
+    expect(where.id).toEqual({ in: ["sub-auto"] });
+  });
+
   // Plan weeks run from 2026-01-05 (UTC); each row names its plan week
   // relative to the current one, so the fixture holds whatever today is.
   const PLAN_START = Date.parse("2026-01-05T00:00:00Z");
@@ -305,12 +330,10 @@ describe("reconcile-occurrence-availability × top-up cohort (#1766)", () => {
 
   it("names a plan whose CURRENT cycle is short, and only that one", async () => {
     // Both plans were scheduled with Auto, so the sweep may top them up.
-    (prisma.bookingStatusHistory.findMany as jest.Mock).mockResolvedValueOnce(
-      ["sub-whole", "sub-short"].map((entityId) => ({
-        entityId,
-        reason: SCHEDULE_REASON.planAuto,
-      })),
-    );
+    planHistory([
+      { entityId: "sub-whole", reason: SCHEDULE_REASON.planAuto },
+      { entityId: "sub-short", reason: SCHEDULE_REASON.planAuto },
+    ]);
     (prisma.subscription.findMany as jest.Mock).mockResolvedValueOnce([
       // This week and the next (the furthest open week) fully placed.
       heldSubscription("sub-whole", [

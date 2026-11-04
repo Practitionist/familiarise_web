@@ -18,7 +18,7 @@
  * Schedule: Hourly
  */
 
-import { plansScheduledOnAuto } from "@/lib/data/plan-schedule-choice";
+import { planIdsOnAuto } from "@/lib/data/plan-schedule-choice";
 import prisma from "../../lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
@@ -657,10 +657,15 @@ function requiredSessionsFor(
 async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
   const candidates: TopUpCandidate[] = [];
 
+  // Only plans whose consultant scheduled with Auto are placed by the sweep;
+  // every other plan waits for its consultant (the week reminder). Filtering
+  // in the query keeps by-hand plans from taking the bounded scan's pages.
+  const autoPlanIds = await planIdsOnAuto();
   let cursor: string | undefined;
   for (let page = 0; page < TOP_UP_SCAN_PAGES; page++) {
     const subscriptions = await prisma.subscription.findMany({
       where: {
+        id: { in: autoPlanIds },
         status: AppointmentStatus.APPROVED,
         deletedAt: null,
         // #1766 — no stored-window bound: the row keeps the first cycle only
@@ -711,13 +716,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
       ...pageArgs(cursor),
     });
 
-    // Only plans whose consultant last scheduled with Auto are placed by the
-    // sweep; every other plan waits for its consultant (the week reminder).
-    const onAuto = await plansScheduledOnAuto(
-      subscriptions.map((sub) => sub.id),
-    );
     for (const subscription of subscriptions) {
-      if (!onAuto.has(subscription.id)) continue;
       const plan = subscription.subscriptionPlan;
       const entitlement = subscriptionEntitlement({
         sessionsTotal: sessionsTotalOf(subscription),
