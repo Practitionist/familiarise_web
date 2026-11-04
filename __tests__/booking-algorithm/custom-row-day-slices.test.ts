@@ -131,6 +131,25 @@ describe("customRowDaySlices", () => {
     ]);
   });
 
+  it("returns nothing for an invalid or inverted row", () => {
+    const valid = at("2026-08-14T12:30:00.000Z");
+    expect(
+      customRowDaySlices(
+        { startsAt: new Date(Number.NaN), endsAt: valid },
+        IST,
+      ),
+    ).toEqual([]);
+    expect(
+      customRowDaySlices(
+        { startsAt: valid, endsAt: new Date(Number.NaN) },
+        IST,
+      ),
+    ).toEqual([]);
+    expect(customRowDaySlices({ startsAt: valid, endsAt: valid }, IST)).toEqual(
+      [],
+    );
+  });
+
   it("leaves a row inside one day whole", () => {
     expect(
       sliceIsos(

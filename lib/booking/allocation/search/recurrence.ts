@@ -41,7 +41,14 @@ export function customRowDaySlices(
 ): RowSpan[] {
   const startMs = new Date(row.startsAt).getTime();
   const endMs = new Date(row.endsAt).getTime();
-  if (!(endMs > startMs)) return [];
+  // An invalid Date reads NaN; it is refused here explicitly.
+  if (
+    !Number.isFinite(startMs) ||
+    !Number.isFinite(endMs) ||
+    endMs <= startMs
+  ) {
+    return [];
+  }
   const firstDay = ScheduleCalculationService.dayKey(
     new Date(startMs),
     timeZone,
@@ -65,9 +72,10 @@ export function customRowDaySlices(
     );
   const slices: RowSpan[] = [];
   let cutMs = dayStartMs(0);
-  for (let offset = 1; cutMs < endMs; offset++) {
-    const nextCutMs = dayStartMs(offset);
-    if (!(nextCutMs > cutMs)) break;
+  let offset = 1;
+  while (cutMs < endMs) {
+    const nextCutMs = dayStartMs(offset++);
+    if (!Number.isFinite(nextCutMs) || nextCutMs <= cutMs) break;
     const sliceStart = Math.max(startMs, cutMs);
     const sliceEnd = Math.min(endMs, nextCutMs);
     if (sliceEnd > sliceStart) {
