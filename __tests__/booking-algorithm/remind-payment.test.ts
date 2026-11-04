@@ -213,6 +213,8 @@ describe.each(["consultation", "subscription"] as const)(
       expect(response.status).toBe(409);
       expect(await response.json()).toMatchObject({
         code: "NOT_AWAITING_PAYMENT",
+        error:
+          "There is no open payment link to remind about. It may have expired or already been paid.",
       });
       expect(limit).not.toHaveBeenCalled();
       expect(deliver).not.toHaveBeenCalled();

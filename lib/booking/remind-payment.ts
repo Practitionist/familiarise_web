@@ -80,7 +80,8 @@ function remindRateLimited(nextAllowedAt: Date): Refusal {
 function notAwaitingPayment(kind: string, id: string): Refusal {
   return new Refusal({
     code: "NOT_AWAITING_PAYMENT",
-    userMessage: "This request is not waiting for a payment.",
+    userMessage:
+      "There is no open payment link to remind about. It may have expired or already been paid.",
     devMessage: `${kind} ${id} has no live pay link to remind about`,
   });
 }
