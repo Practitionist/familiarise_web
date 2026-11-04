@@ -1,0 +1,17 @@
+{
+  "date": "2026-11-04",
+  "fixture_subscriptions": 0,
+  "fixture_consultations": 0,
+  "fixture_plans": 0,
+  "fixture_windows": 0,
+  "fixture_appointments": 0,
+  "fixture_occurrences": 0,
+  "fixture_topic": 0,
+  "fixture_outbox": 0,
+  "restored_custom_rows": 36,
+  "before_windows_hash": "7c805057da0c9d380d123525c9207277",
+  "after_windows_hash": "7c805057da0c9d380d123525c9207277",
+  "scheduleType": "CUSTOM",
+  "timezone": "Asia/Tehran",
+  "external_side_effect": "One booking notification reached SENT before its fixture outbox row was removed; external inbox may retain it."
+}

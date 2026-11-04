@@ -1,0 +1,15 @@
+{
+  "date": "2026-11-04",
+  "commit": "874858f25df728377bff91b631932176e49452cd",
+  "matured_pending_with_owed_marker": 0,
+  "already_succeeded_owed_refund": 0,
+  "ready_consultant_earnings_with_owed_marker": 0,
+  "ready_organization_earnings_with_owed_marker": 0,
+  "spent_non_deleted_markers": 5,
+  "needs_human_http_status": 200,
+  "stuck_owed_items": 5,
+  "all_messages_have_hold_sentence": true,
+  "admin_nav_counts_http_status": 200,
+  "staff_nav_counts_http_status": 200,
+  "bare_nav_counts_http_status": 403
+}

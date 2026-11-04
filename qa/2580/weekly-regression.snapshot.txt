@@ -1,0 +1,208 @@
+## Latest page snapshot
+uid=37_0 RootWebArea "Allocate: Basic Subscription · Rachel Anderson — Familiarise" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/requests/cmu15oxm402dvc7yoly4zgxhi/allocate?type=subscription&at=2026-11-27T12%3A00%3A00Z"
+  uid=37_1 region "Notifications (F8)"
+    uid=37_2 list
+  uid=37_3 complementary
+    uid=37_4 button "Switch dashboard" expandable haspopup="menu"
+    uid=37_5 button "Find" haspopup="dialog" keyshortcuts="Control+K Meta+K"
+    uid=37_6 navigation "Dashboard"
+      uid=37_7 link "Today" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/home"
+      uid=37_9 "INBOX"
+      uid=37_10 link "Booking requests" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/requests"
+      uid=37_12 link "Messages" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/messages"
+      uid=37_14 "CALENDAR"
+      uid=37_15 link "Appointments" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/appointments"
+      uid=37_17 link "Availability" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/availability"
+      uid=37_19 "SELL"
+      uid=37_20 link "1:1 & subscriptions" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/sell/sessions"
+      uid=37_22 link "Group programs" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/sell/programs"
+      uid=37_24 link "Products" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/sell/products"
+      uid=37_26 link "Collaborations" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/collaborations"
+      uid=37_28 "STUDIO"
+      uid=37_29 link "Recordings" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/recordings"
+      uid=37_31 link "Session documents" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/documents"
+      uid=37_33 "MONEY"
+      uid=37_34 link "Earnings & payouts" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/earnings"
+      uid=37_36 "REPUTATION & GROWTH"
+      uid=37_37 link "Reviews" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/reviews"
+      uid=37_39 link "Invite & earn" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/referrals"
+      uid=37_41 link "My library" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/library"
+      uid=37_43 "SETTINGS & HELP"
+      uid=37_44 link "Help & support" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/support"
+      uid=37_46 link "Settings" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/settings"
+  uid=37_48 button "Collapse sidebar" expandable expanded keyshortcuts="Control+\ Meta+\"
+  uid=37_49 image "Angela Anderson" url="https://deploy-preview-2580--familiarise.netlify.app/_next/image?url=https%3A%2F%2Favatars.githubusercontent.com%2Fu%2F19964497&w=48&q=75"
+  uid=37_50 "Verified"
+  uid=37_51 navigation "Breadcrumb"
+    uid=37_52 link "Booking requests" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/requests"
+    uid=37_54 link "Basic Subscription" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/93ce5896-704e-4619-894b-09220a90b192/requests/cmu15oxm402dvc7yoly4zgxhi"
+    uid=37_56 "Allocate"
+  uid=37_57 link "View public page" url="https://deploy-preview-2580--familiarise.netlify.app/explore/experts/93ce5896-704e-4619-894b-09220a90b192"
+  uid=37_59 button "Copy link"
+  uid=37_60 button "Help" expandable haspopup="menu"
+  uid=37_61 button "Notifications" expandable haspopup="dialog"
+    uid=37_62 status "37 unread notifications" atomic live="polite" relevant="additions text"
+  uid=37_63 button "Account menu" expandable haspopup="menu"
+  uid=37_64 main
+    uid=37_65 "Choose the times for Rachel Anderson's booking. Green is free for both of you; anything else is already taken."
+    uid=37_66 "Times shown in "
+    uid=37_67 "AST (UTC-04:00)"
+    uid=37_68 button "Use my device's time zone"
+    uid=37_69 "This cycle"
+    uid=37_70 "3 Dec 2026 at 8:00 pm – 10 Dec 2026 at 8:00 pm"
+    uid=37_71 button "Week" pressed
+    uid=37_72 button "Month"
+    uid=37_73 button "Previous week"
+    uid=37_74 "3 Dec – 9 Dec 2026"
+    uid=37_75 button "Next week" focusable focused
+    uid=37_76 button "Today" description="Jump to today"
+    uid=37_77 button "Clear selection" disableable disabled
+    uid=37_78 "Use the arrow keys to move between times, Home and End to jump to the first or last day, Enter to choose a time, and Page Up or Page Down to change week."
+    uid=37_79 "Time"
+    uid=38_1 "Thu"
+    uid=38_2 "3"
+    uid=38_3 "Fri"
+    uid=38_4 "4"
+    uid=38_5 "Sat"
+    uid=38_6 "5"
+    uid=38_7 "Sun"
+    uid=38_8 "6"
+    uid=38_9 "Mon"
+    uid=38_10 "7"
+    uid=38_11 "Tue"
+    uid=38_12 "8"
+    uid=38_13 "Wed"
+    uid=38_14 "9"
+    uid=37_94 button "Unavailable · 12:00 am–6:00 am" expandable
+    uid=38_15 "6:00 am"
+    uid=38_16 button "This booking · Thu, 3 Dec, 6:00 am"
+    uid=38_17 button "Free · Fri, 4 Dec, 6:00 am" description="Free · Fri, 4 Dec, 6:00 am. Free to book."
+    uid=38_18 button "Unavailable · Sat, 5 Dec, 6:00 am" description="Unavailable · Sat, 5 Dec, 6:00 am. Outside the published hours." disableable disabled
+    uid=38_19 button "Unavailable · Sun, 6 Dec, 6:00 am" description="Unavailable · Sun, 6 Dec, 6:00 am. Outside the published hours." disableable disabled
+    uid=38_20 button "Free · Mon, 7 Dec, 6:00 am" description="Free · Mon, 7 Dec, 6:00 am. Free to book."
+    uid=38_21 button "Unavailable · Tue, 8 Dec, 6:00 am" description="Unavailable · Tue, 8 Dec, 6:00 am. Outside the published hours." disableable disabled
+    uid=38_22 button "Free · Wed, 9 Dec, 6:00 am" description="Free · Wed, 9 Dec, 6:00 am. Free to book."
+    uid=38_23 "6:30 am"
+    uid=38_24 button "This booking · Thu, 3 Dec, 6:30 am"
+    uid=38_25 button "Free · Fri, 4 Dec, 6:30 am" description="Free · Fri, 4 Dec, 6:30 am. Free to book."
+    uid=38_26 button "Unavailable · Sat, 5 Dec, 6:30 am" description="Unavailable · Sat, 5 Dec, 6:30 am. Outside the published hours." disableable disabled
+    uid=38_27 button "Unavailable · Sun, 6 Dec, 6:30 am" description="Unavailable · Sun, 6 Dec, 6:30 am. Outside the published hours." disableable disabled
+    uid=38_28 button "Free · Mon, 7 Dec, 6:30 am" description="Free · Mon, 7 Dec, 6:30 am. Free to book."
+    uid=38_29 button "Unavailable · Tue, 8 Dec, 6:30 am" description="Unavailable · Tue, 8 Dec, 6:30 am. Outside the published hours." disableable disabled
+    uid=38_30 button "Free · Wed, 9 Dec, 6:30 am" description="Free · Wed, 9 Dec, 6:30 am. Free to book."
+    uid=39_0 "7:00 am"
+    uid=39_1 button "Outside period · Thu, 3 Dec, 7:00 am" description="Outside period · Thu, 3 Dec, 7:00 am. Inside the published hours but outside this booking's dates." disableable disabled
+    uid=39_2 button "Free · Fri, 4 Dec, 7:00 am" description="Free · Fri, 4 Dec, 7:00 am. Free to book."
+    uid=39_3 button "Unavailable · Sat, 5 Dec, 7:00 am" description="Unavailable · Sat, 5 Dec, 7:00 am. Outside the published hours." disableable disabled
+    uid=39_4 button "Unavailable · Sun, 6 Dec, 7:00 am" description="Unavailable · Sun, 6 Dec, 7:00 am. Outside the published hours." disableable disabled
+    uid=39_5 button "Unavailable · Mon, 7 Dec, 7:00 am" description="Unavailable · Mon, 7 Dec, 7:00 am. Outside the published hours." disableable disabled
+    uid=39_6 button "Unavailable · Tue, 8 Dec, 7:00 am" description="Unavailable · Tue, 8 Dec, 7:00 am. Outside the published hours." disableable disabled
+    uid=39_7 button "Free · Wed, 9 Dec, 7:00 am" description="Free · Wed, 9 Dec, 7:00 am. Free to book."
+    uid=39_8 "7:30 am"
+    uid=39_9 button "Outside period · Thu, 3 Dec, 7:30 am" description="Outside period · Thu, 3 Dec, 7:30 am. Inside the published hours but outside this booking's dates." disableable disabled
+    uid=39_10 button "Free · Fri, 4 Dec, 7:30 am" description="Free · Fri, 4 Dec, 7:30 am. Free to book."
+    uid=39_11 button "Unavailable · Sat, 5 Dec, 7:30 am" description="Unavailable · Sat, 5 Dec, 7:30 am. Outside the published hours." disableable disabled
+    uid=39_12 button "Unavailable · Sun, 6 Dec, 7:30 am" description="Unavailable · Sun, 6 Dec, 7:30 am. Outside the published hours." disableable disabled
+    uid=39_13 button "Unavailable · Mon, 7 Dec, 7:30 am" description="Unavailable · Mon, 7 Dec, 7:30 am. Outside the published hours." disableable disabled
+    uid=39_14 button "Unavailable · Tue, 8 Dec, 7:30 am" description="Unavailable · Tue, 8 Dec, 7:30 am. Outside the published hours." disableable disabled
+    uid=39_15 button "Free · Wed, 9 Dec, 7:30 am" description="Free · Wed, 9 Dec, 7:30 am. Free to book."
+    uid=39_16 "8:00 am"
+    uid=39_17 button "Unavailable · Thu, 3 Dec, 8:00 am" description="Unavailable · Thu, 3 Dec, 8:00 am. Outside the published hours." disableable disabled
+    uid=39_18 button "Unavailable · Fri, 4 Dec, 8:00 am" description="Unavailable · Fri, 4 Dec, 8:00 am. Outside the published hours." disableable disabled
+    uid=39_19 button "Unavailable · Sat, 5 Dec, 8:00 am" description="Unavailable · Sat, 5 Dec, 8:00 am. Outside the published hours." disableable disabled
+    uid=39_20 button "Unavailable · Sun, 6 Dec, 8:00 am" description="Unavailable · Sun, 6 Dec, 8:00 am. Outside the published hours." disableable disabled
+    uid=39_21 button "Free · Mon, 7 Dec, 8:00 am" description="Free · Mon, 7 Dec, 8:00 am. Free to book."
+    uid=39_22 button "Free · Tue, 8 Dec, 8:00 am" description="Free · Tue, 8 Dec, 8:00 am. Free to book."
+    uid=39_23 button "Free · Wed, 9 Dec, 8:00 am" description="Free · Wed, 9 Dec, 8:00 am. Free to book."
+    uid=39_24 "8:30 am"
+    uid=39_25 button "Unavailable · Thu, 3 Dec, 8:30 am" description="Unavailable · Thu, 3 Dec, 8:30 am. Outside the published hours." disableable disabled
+    uid=39_26 button "Unavailable · Fri, 4 Dec, 8:30 am" description="Unavailable · Fri, 4 Dec, 8:30 am. Outside the published hours." disableable disabled
+    uid=39_27 button "Unavailable · Sat, 5 Dec, 8:30 am" description="Unavailable · Sat, 5 Dec, 8:30 am. Outside the published hours." disableable disabled
+    uid=39_28 button "Unavailable · Sun, 6 Dec, 8:30 am" description="Unavailable · Sun, 6 Dec, 8:30 am. Outside the published hours." disableable disabled
+    uid=39_29 button "Free · Mon, 7 Dec, 8:30 am" description="Free · Mon, 7 Dec, 8:30 am. Free to book."
+    uid=39_30 button "Free · Tue, 8 Dec, 8:30 am" description="Free · Tue, 8 Dec, 8:30 am. Free to book."
+    uid=39_31 button "Free · Wed, 9 Dec, 8:30 am" description="Free · Wed, 9 Dec, 8:30 am. Free to book."
+    uid=39_32 button "Unavailable · 9:00 am–11:00 am" expandable
+    uid=39_33 "11:00 am"
+    uid=39_34 button "Outside period · Thu, 3 Dec, 11:00 am" description="Outside period · Thu, 3 Dec, 11:00 am. Inside the published hours but outside this booking's dates." disableable disabled
+    uid=39_35 button "Free · Fri, 4 Dec, 11:00 am" description="Free · Fri, 4 Dec, 11:00 am. Free to book."
+    uid=39_36 button "Unavailable · Sat, 5 Dec, 11:00 am" description="Unavailable · Sat, 5 Dec, 11:00 am. Outside the published hours." disableable disabled
+    uid=39_37 button "Unavailable · Sun, 6 Dec, 11:00 am" description="Unavailable · Sun, 6 Dec, 11:00 am. Outside the published hours." disableable disabled
+    uid=39_38 button "Unavailable · Mon, 7 Dec, 11:00 am" description="Unavailable · Mon, 7 Dec, 11:00 am. Outside the published hours." disableable disabled
+    uid=39_39 button "Free · Tue, 8 Dec, 11:00 am" description="Free · Tue, 8 Dec, 11:00 am. Free to book."
+    uid=39_40 button "Unavailable · Wed, 9 Dec, 11:00 am" description="Unavailable · Wed, 9 Dec, 11:00 am. Outside the published hours." disableable disabled
+    uid=39_41 "11:30 am"
+    uid=39_42 button "Outside period · Thu, 3 Dec, 11:30 am" description="Outside period · Thu, 3 Dec, 11:30 am. Inside the published hours but outside this booking's dates." disableable disabled
+    uid=39_43 button "Free · Fri, 4 Dec, 11:30 am" description="Free · Fri, 4 Dec, 11:30 am. Free to book."
+    uid=39_44 button "Unavailable · Sat, 5 Dec, 11:30 am" description="Unavailable · Sat, 5 Dec, 11:30 am. Outside the published hours." disableable disabled
+    uid=39_45 button "Unavailable · Sun, 6 Dec, 11:30 am" description="Unavailable · Sun, 6 Dec, 11:30 am. Outside the published hours." disableable disabled
+    uid=39_46 button "Unavailable · Mon, 7 Dec, 11:30 am" description="Unavailable · Mon, 7 Dec, 11:30 am. Outside the published hours." disableable disabled
+    uid=39_47 button "Free · Tue, 8 Dec, 11:30 am" description="Free · Tue, 8 Dec, 11:30 am. Free to book."
+    uid=39_48 button "Unavailable · Wed, 9 Dec, 11:30 am" description="Unavailable · Wed, 9 Dec, 11:30 am. Outside the published hours." disableable disabled
+    uid=39_49 "12:00 pm"
+    uid=39_50 button "Unavailable · Thu, 3 Dec, 12:00 pm" description="Unavailable · Thu, 3 Dec, 12:00 pm. Outside the published hours." disableable disabled
+    uid=39_51 button "Unavailable · Fri, 4 Dec, 12:00 pm" description="Unavailable · Fri, 4 Dec, 12:00 pm. Outside the published hours." disableable disabled
+    uid=39_52 button "Unavailable · Sat, 5 Dec, 12:00 pm" description="Unavailable · Sat, 5 Dec, 12:00 pm. Outside the published hours." disableable disabled
+    uid=39_53 button "Unavailable · Sun, 6 Dec, 12:00 pm" description="Unavailable · Sun, 6 Dec, 12:00 pm. Outside the published hours." disableable disabled
+    uid=39_54 button "Unavailable · Mon, 7 Dec, 12:00 pm" description="Unavailable · Mon, 7 Dec, 12:00 pm. Outside the published hours." disableable disabled
+    uid=39_55 button "Free · Tue, 8 Dec, 12:00 pm" description="Free · Tue, 8 Dec, 12:00 pm. Free to book."
+    uid=39_56 button "Unavailable · Wed, 9 Dec, 12:00 pm" description="Unavailable · Wed, 9 Dec, 12:00 pm. Outside the published hours." disableable disabled
+    uid=39_57 "12:30 pm"
+    uid=39_58 button "Unavailable · Thu, 3 Dec, 12:30 pm" description="Unavailable · Thu, 3 Dec, 12:30 pm. Outside the published hours." disableable disabled
+    uid=39_59 button "Unavailable · Fri, 4 Dec, 12:30 pm" description="Unavailable · Fri, 4 Dec, 12:30 pm. Outside the published hours." disableable disabled
+    uid=39_60 button "Unavailable · Sat, 5 Dec, 12:30 pm" description="Unavailable · Sat, 5 Dec, 12:30 pm. Outside the published hours." disableable disabled
+    uid=39_61 button "Unavailable · Sun, 6 Dec, 12:30 pm" description="Unavailable · Sun, 6 Dec, 12:30 pm. Outside the published hours." disableable disabled
+    uid=39_62 button "Unavailable · Mon, 7 Dec, 12:30 pm" description="Unavailable · Mon, 7 Dec, 12:30 pm. Outside the published hours." disableable disabled
+    uid=39_63 button "Free · Tue, 8 Dec, 12:30 pm" description="Free · Tue, 8 Dec, 12:30 pm. Free to book."
+    uid=39_64 button "Unavailable · Wed, 9 Dec, 12:30 pm" description="Unavailable · Wed, 9 Dec, 12:30 pm. Outside the published hours." disableable disabled
+    uid=39_65 "1:00 pm"
+    uid=39_66 button "Outside period · Thu, 3 Dec, 1:00 pm" description="Outside period · Thu, 3 Dec, 1:00 pm. Inside the published hours but outside this booking's dates." disableable disabled
+    uid=39_67 button "Free · Fri, 4 Dec, 1:00 pm" description="Free · Fri, 4 Dec, 1:00 pm. Free to book."
+    uid=39_68 button "Unavailable · Sat, 5 Dec, 1:00 pm" description="Unavailable · Sat, 5 Dec, 1:00 pm. Outside the published hours." disableable disabled
+    uid=39_69 button "Unavailable · Sun, 6 Dec, 1:00 pm" description="Unavailable · Sun, 6 Dec, 1:00 pm. Outside the published hours." disableable disabled
+    uid=39_70 button "Unavailable · Mon, 7 Dec, 1:00 pm" description="Unavailable · Mon, 7 Dec, 1:00 pm. Outside the published hours." disableable disabled
+    uid=39_71 button "Free · Tue, 8 Dec, 1:00 pm" description="Free · Tue, 8 Dec, 1:00 pm. Free to book."
+    uid=39_72 button "Free · Wed, 9 Dec, 1:00 pm" description="Free · Wed, 9 Dec, 1:00 pm. Free to book."
+    uid=39_73 "1:30 pm"
+    uid=39_74 button "Outside period · Thu, 3 Dec, 1:30 pm" description="Outside period · Thu, 3 Dec, 1:30 pm. Inside the published hours but outside this booking's dates." disableable disabled
+    uid=39_75 button "Free · Fri, 4 Dec, 1:30 pm" description="Free · Fri, 4 Dec, 1:30 pm. Free to book."
+    uid=39_76 button "Unavailable · Sat, 5 Dec, 1:30 pm" description="Unavailable · Sat, 5 Dec, 1:30 pm. Outside the published hours." disableable disabled
+    uid=39_77 button "Unavailable · Sun, 6 Dec, 1:30 pm" description="Unavailable · Sun, 6 Dec, 1:30 pm. Outside the published hours." disableable disabled
+    uid=39_78 button "Unavailable · Mon, 7 Dec, 1:30 pm" description="Unavailable · Mon, 7 Dec, 1:30 pm. Outside the published hours." disableable disabled
+    uid=39_79 button "Free · Tue, 8 Dec, 1:30 pm" description="Free · Tue, 8 Dec, 1:30 pm. Free to book."
+    uid=39_80 button "Free · Wed, 9 Dec, 1:30 pm" description="Free · Wed, 9 Dec, 1:30 pm. Free to book."
+    uid=39_81 "2:00 pm"
+    uid=39_82 button "Unavailable · Thu, 3 Dec, 2:00 pm" description="Unavailable · Thu, 3 Dec, 2:00 pm. Outside the published hours." disableable disabled
+    uid=39_83 button "Free · Fri, 4 Dec, 2:00 pm" description="Free · Fri, 4 Dec, 2:00 pm. Free to book."
+    uid=39_84 button "Unavailable · Sat, 5 Dec, 2:00 pm" description="Unavailable · Sat, 5 Dec, 2:00 pm. Outside the published hours." disableable disabled
+    uid=39_85 button "Unavailable · Sun, 6 Dec, 2:00 pm" description="Unavailable · Sun, 6 Dec, 2:00 pm. Outside the published hours." disableable disabled
+    uid=39_86 button "Free · Mon, 7 Dec, 2:00 pm" description="Free · Mon, 7 Dec, 2:00 pm. Free to book."
+    uid=39_87 button "Unavailable · Tue, 8 Dec, 2:00 pm" description="Unavailable · Tue, 8 Dec, 2:00 pm. Outside the published hours." disableable disabled
+    uid=39_88 button "Free · Wed, 9 Dec, 2:00 pm" description="Free · Wed, 9 Dec, 2:00 pm. Free to book."
+    uid=39_89 "2:30 pm"
+    uid=39_90 button "Unavailable · Thu, 3 Dec, 2:30 pm" description="Unavailable · Thu, 3 Dec, 2:30 pm. Outside the published hours." disableable disabled
+    uid=39_91 button "Free · Fri, 4 Dec, 2:30 pm" description="Free · Fri, 4 Dec, 2:30 pm. Free to book."
+    uid=39_92 button "Unavailable · Sat, 5 Dec, 2:30 pm" description="Unavailable · Sat, 5 Dec, 2:30 pm. Outside the published hours." disableable disabled
+    uid=39_93 button "Unavailable · Sun, 6 Dec, 2:30 pm" description="Unavailable · Sun, 6 Dec, 2:30 pm. Outside the published hours." disableable disabled
+    uid=39_94 button "Free · Mon, 7 Dec, 2:30 pm" description="Free · Mon, 7 Dec, 2:30 pm. Free to book."
+    uid=39_95 button "Unavailable · Tue, 8 Dec, 2:30 pm" description="Unavailable · Tue, 8 Dec, 2:30 pm. Outside the published hours." disableable disabled
+    uid=39_96 button "Free · Wed, 9 Dec, 2:30 pm" description="Free · Wed, 9 Dec, 2:30 pm. Free to book."
+    uid=39_97 button "Unavailable · 3:00 pm–12:00 am" expandable
+    uid=37_131 status atomic live="polite" relevant="additions text"
+      uid=37_132 "0 of 1 time picked"
+    uid=39_98 "Free: Free to book., 34 half-hours this week"
+    uid=37_133 "This booking: Belongs to the booking you are working on., 2 half-hours this week"
+    uid=39_99 "Outside period: Inside the published hours but outside this booking's dates., 6 half-hours this week"
+    uid=37_135 "Week 2 of 5 · pick 1 for 3 Dec – 10 Dec 2026 · 3 of 4 booked"
+    uid=37_136 "Week 2 of 5 · 0 of 1 booked"
+    uid=37_137 "Limits counted in UTC (UTC)"
+    uid=37_138 button "Cancel"
+    uid=37_139 button "Auto-schedule this week" description="Automatically place every session on free times."
+    uid=37_140 button "Save picked times" description="Pick the times first." disableable disabled
+  uid=37_141 Iframe "Netlify Drawer"
+    uid=37_142 RootWebArea url="https://app.netlify.com/cdp?deployID=6aeb0d2871c8651e46dc1f3d&siteID=1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c&vcs=github"
+      uid=37_143 tab "Logo Deploy Preview" selectable
+      uid=37_144 button "Expand" description="Expand"
+      uid=37_145 button "Dismiss" description="Dismiss"
+      uid=37_146 alert atomic live="assertive" relevant="additions text"
+  uid=37_147 alert atomic live="assertive" relevant="additions text"

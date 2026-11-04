@@ -1,0 +1,29 @@
+[
+  {
+    "appointment": "d61e2bc9-d320-4c7e-a4c1-267d26e416e7",
+    "id": "5dbefb21-4ae8-4284-a2f2-d61cbb7e9363",
+    "startsAt": "2026-11-13 12:30:00+00",
+    "endsAt": "2026-11-13 13:30:00+00",
+    "isTentative": false,
+    "completionStatus": "SCHEDULED",
+    "ist": "2026-11-13 18:00:00"
+  },
+  {
+    "appointment": "d61e2bc9-d320-4c7e-a4c1-267d26e416e7",
+    "id": "3705c48a-fd7b-4ac4-a56b-35d38478e294",
+    "startsAt": "2026-11-13 18:30:00+00",
+    "endsAt": "2026-11-13 19:30:00+00",
+    "isTentative": false,
+    "completionStatus": "SCHEDULED",
+    "ist": "2026-11-14 00:00:00"
+  },
+  {
+    "appointment": "d61e2bc9-d320-4c7e-a4c1-267d26e416e7",
+    "id": "cba716a7-a7d5-476f-808c-046c6dec63e8",
+    "startsAt": "2026-11-14 18:30:00+00",
+    "endsAt": "2026-11-14 19:30:00+00",
+    "isTentative": false,
+    "completionStatus": "SCHEDULED",
+    "ist": "2026-11-15 00:00:00"
+  }
+]

@@ -1,0 +1,119 @@
+## Latest page snapshot
+uid=29_0 RootWebArea "Allocate: QA-2580 fixture · Charlotte Brown — Familiarise" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/requests/debb2580-0002-4000-8000-000000000001/allocate?type=subscription"
+  uid=29_1 region "Notifications (F8)"
+    uid=29_2 list
+  uid=29_3 complementary
+    uid=29_4 button "Switch dashboard" expandable haspopup="menu"
+    uid=29_5 button "Find" haspopup="dialog" keyshortcuts="Control+K Meta+K"
+    uid=29_6 navigation "Dashboard"
+      uid=29_7 link "Today" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/home"
+      uid=29_9 "INBOX"
+      uid=29_10 link "Booking requests" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/requests"
+      uid=29_12 link "Messages" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/messages"
+      uid=29_14 "CALENDAR"
+      uid=29_15 link "Appointments" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/appointments"
+      uid=29_17 link "Availability" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/availability"
+      uid=29_19 "SELL"
+      uid=29_20 link "1:1 & subscriptions" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/sell/sessions"
+      uid=29_22 link "Group programs" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/sell/programs"
+      uid=29_24 link "Products" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/sell/products"
+      uid=29_26 link "Collaborations" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/collaborations"
+      uid=29_28 "STUDIO"
+      uid=29_29 link "Recordings" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/recordings"
+      uid=29_31 link "Session documents" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/documents"
+      uid=29_33 "MONEY"
+      uid=29_34 link "Earnings & payouts" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/earnings"
+      uid=29_36 "REPUTATION & GROWTH"
+      uid=29_37 link "Reviews" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/reviews"
+      uid=29_39 link "Invite & earn" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/referrals"
+      uid=29_41 link "My library" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/library"
+      uid=29_43 "SETTINGS & HELP"
+      uid=29_44 link "Help & support" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/support"
+      uid=29_46 link "Settings" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/settings"
+  uid=29_48 button "Collapse sidebar" expandable expanded keyshortcuts="Control+\ Meta+\"
+  uid=29_49 image "Grace Anderson" url="https://deploy-preview-2580--familiarise.netlify.app/_next/image?url=https%3A%2F%2Fcdn.jsdelivr.net%2Fgh%2Ffaker-js%2Fassets-person-portrait%2Fmale%2F512%2F5.jpg&w=48&q=75"
+  uid=29_50 "Under review"
+  uid=29_51 navigation "Breadcrumb"
+    uid=29_52 link "Booking requests" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/requests"
+    uid=29_54 link "QA-2580 fixture" url="https://deploy-preview-2580--familiarise.netlify.app/dashboard/consultant/fe4ab6fe-913e-4727-bad0-f3bd915eb513/requests/debb2580-0002-4000-8000-000000000001"
+    uid=29_56 "Allocate"
+  uid=29_57 link "View public page" url="https://deploy-preview-2580--familiarise.netlify.app/explore/experts/fe4ab6fe-913e-4727-bad0-f3bd915eb513"
+  uid=29_59 button "Copy link"
+  uid=29_60 button "Help" expandable haspopup="menu"
+  uid=29_61 button "Notifications" expandable haspopup="dialog"
+    uid=29_62 status "3 unread notifications" atomic live="polite" relevant="additions text"
+  uid=29_63 button "Account menu" expandable haspopup="menu"
+  uid=29_64 "Verification under review."
+  uid=29_65 " "
+  uid=29_66 "Our team is reviewing your profile — you'll receive an email once the review is complete (usually 1-2 business days)."
+  uid=29_67 main
+    uid=29_68 "Choose the times for Charlotte Brown's booking. Green is free for both of you; anything else is already taken."
+    uid=29_69 "Times shown in "
+    uid=29_70 "GMT+3:30 (UTC+03:30)"
+    uid=29_71 button "Use my device's time zone"
+    uid=29_72 "This cycle"
+    uid=29_73 "8 Nov 2026 at 10:00 pm – 15 Nov 2026 at 10:00 pm"
+    uid=29_74 button "Week" pressed
+    uid=29_75 button "Month"
+    uid=29_76 button "Previous week"
+    uid=29_77 "8 Nov – 14 Nov 2026"
+    uid=29_78 button "Next week"
+    uid=29_79 button "Today" description="Jump to today"
+    uid=29_80 button "Clear selection" disableable disabled
+    uid=29_81 "Use the arrow keys to move between times, Home and End to jump to the first or last day, Enter to choose a time, and Page Up or Page Down to change week."
+    uid=29_82 "Time"
+    uid=29_83 "Sun"
+    uid=29_84 "8"
+    uid=29_85 "Mon"
+    uid=29_86 "9"
+    uid=29_87 "Tue"
+    uid=29_88 "10"
+    uid=29_89 "Wed"
+    uid=29_90 "11"
+    uid=29_91 "Thu"
+    uid=29_92 "12"
+    uid=29_93 "Fri"
+    uid=29_94 "13"
+    uid=29_95 "Sat"
+    uid=29_96 "14"
+    uid=29_97 button "Unavailable · 12:00 am–5:30 pm" expandable
+    uid=29_98 "5:30 pm"
+    uid=29_99 button "Unavailable · Sun, 8 Nov, 5:30 pm" description="Unavailable · Sun, 8 Nov, 5:30 pm. Outside the published hours." disableable disabled
+    uid=29_100 button "Unavailable · Mon, 9 Nov, 5:30 pm" description="Unavailable · Mon, 9 Nov, 5:30 pm. Outside the published hours." disableable disabled
+    uid=29_101 button "Booked · Tue, 10 Nov, 5:30 pm" disableable disabled
+    uid=29_102 button "Unavailable · Wed, 11 Nov, 5:30 pm" description="Unavailable · Wed, 11 Nov, 5:30 pm. Outside the published hours." disableable disabled
+    uid=29_103 button "Unavailable · Thu, 12 Nov, 5:30 pm" description="Unavailable · Thu, 12 Nov, 5:30 pm. Outside the published hours." disableable disabled
+    uid=29_104 button "Booked · Fri, 13 Nov, 5:30 pm" description="Booked · Fri, 13 Nov, 5:30 pm. Already taken." disableable disabled
+    uid=29_105 button "Unavailable · Sat, 14 Nov, 5:30 pm" description="Unavailable · Sat, 14 Nov, 5:30 pm. Outside the published hours." disableable disabled
+    uid=29_106 "6:00 pm"
+    uid=29_107 button "Unavailable · Sun, 8 Nov, 6:00 pm" description="Unavailable · Sun, 8 Nov, 6:00 pm. Outside the published hours." disableable disabled
+    uid=29_108 button "Unavailable · Mon, 9 Nov, 6:00 pm" description="Unavailable · Mon, 9 Nov, 6:00 pm. Outside the published hours." disableable disabled
+    uid=29_109 button "Booked · Tue, 10 Nov, 6:00 pm" disableable disabled
+    uid=29_110 button "Unavailable · Wed, 11 Nov, 6:00 pm" description="Unavailable · Wed, 11 Nov, 6:00 pm. Outside the published hours." disableable disabled
+    uid=29_111 button "Unavailable · Thu, 12 Nov, 6:00 pm" description="Unavailable · Thu, 12 Nov, 6:00 pm. Outside the published hours." disableable disabled
+    uid=29_112 button "Booked · Fri, 13 Nov, 6:00 pm" description="Booked · Fri, 13 Nov, 6:00 pm. Already taken." disableable disabled
+    uid=29_113 button "Unavailable · Sat, 14 Nov, 6:00 pm" description="Unavailable · Sat, 14 Nov, 6:00 pm. Outside the published hours." disableable disabled
+    uid=29_114 button "Unavailable · 6:30 pm–12:00 am" expandable
+    uid=29_115 status atomic live="polite" relevant="additions text"
+      uid=29_116 "0 of 12 times picked"
+    uid=29_117 "Booked: Already taken., 4 half-hours this week"
+    uid=29_118 "Choose times for 12 sessions (1 hour each)"
+    uid=29_119 "Week 1 of 5 · 0 of 3 booked"
+    uid=29_120 "Limits counted in IST (UTC+05:30)"
+    uid=29_121 button "Cancel"
+    uid=29_122 button "Auto-schedule this week" description="Automatically place every session on free times."
+    uid=29_123 button "Save picked times" description="Pick the times first." disableable disabled
+  uid=29_124 Iframe "Netlify Drawer"
+    uid=29_125 RootWebArea url="https://app.netlify.com/cdp?deployID=6aeb0d2871c8651e46dc1f3d&siteID=1a1ad7d0-fda0-4efe-9d58-aa0ce0fd6d5c&vcs=github"
+      uid=29_126 tab "Logo Collaborate on this Deploy Preview" selectable
+      uid=29_127 tab "Log in to the Netlify Drawer" selectable
+      uid=29_128 tab "Copy URL" selectable
+      uid=29_129 button "Minimize" description="Minimize"
+      uid=29_130 heading "Collaborate on projects before going live" level="2"
+      uid=29_131 "Share feedback — with images & video — directly from the browser."
+      uid=29_132 "It flows right into the tools you already know and love."
+      uid=29_133 "Notify with @replies and make sure that the whole team stays aligned."
+      uid=29_134 button "Create a free account"
+      uid=29_135 link "Already have a Netlify account? Log in"
+      uid=29_137 alert atomic live="assertive" relevant="additions text"
+  uid=29_138 alert atomic live="assertive" relevant="additions text"
