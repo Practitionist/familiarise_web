@@ -45,14 +45,12 @@ interface HeldRow {
   id: string;
   status: EarningStatus;
   preHoldStatus: EarningStatus | null;
-  holdUntil: Date | null;
 }
 
 interface StatusWhere {
   ids: string[];
   status: EarningStatus;
   preHoldStatus?: EarningStatus | null;
-  holdUntilLte?: Date;
 }
 
 interface Rail {
@@ -77,7 +75,6 @@ const HELD_ROW_SELECT = {
   id: true,
   status: true,
   preHoldStatus: true,
-  holdUntil: true,
 } as const;
 
 function statusWhere(w: StatusWhere) {
@@ -85,7 +82,6 @@ function statusWhere(w: StatusWhere) {
     id: { in: w.ids },
     status: w.status,
     ...(w.preHoldStatus !== undefined && { preHoldStatus: w.preHoldStatus }),
-    ...(w.holdUntilLte && { holdUntil: { lte: w.holdUntilLte } }),
   };
 }
 
@@ -226,8 +222,8 @@ export interface ReleaseOutcome {
 
 /**
  * Releases the matching active holds on `ids`. An earning left without any
- * active hold returns to its `preHoldStatus`; a row with none recorded matures
- * to READY once `holdUntil` has passed, else PENDING.
+ * active hold returns to its `preHoldStatus`; a row with none recorded returns
+ * to PENDING, so the release job's guards decide when it is READY.
  */
 export async function releaseEarningsHolds(
   db: EarningsHoldDb,
@@ -284,10 +280,7 @@ export async function releaseEarningsHolds(
   );
   const groups = new Map<string, { where: StatusWhere; to: EarningStatus }>();
   for (const row of rows) {
-    const matured = Boolean(row.holdUntil && row.holdUntil <= now);
-    const to =
-      row.preHoldStatus ??
-      (matured ? EarningStatus.READY : EarningStatus.PENDING);
+    const to = row.preHoldStatus ?? EarningStatus.PENDING;
     assertEarningStatusTransitionLegal(row.id, EarningStatus.HELD, to);
     const key = `${row.preHoldStatus ?? "none"}:${to}`;
     const group = groups.get(key) ?? {
@@ -295,7 +288,6 @@ export async function releaseEarningsHolds(
         ids: [],
         status: EarningStatus.HELD,
         preHoldStatus: row.preHoldStatus,
-        ...(row.preHoldStatus === null && matured && { holdUntilLte: now }),
       },
       to,
     };

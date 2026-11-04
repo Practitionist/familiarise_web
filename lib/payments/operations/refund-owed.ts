@@ -8,6 +8,8 @@ import {
   recordSystemEvent,
 } from "@/lib/enterprise/system-events";
 import { Refusal } from "@/lib/errors/refusal";
+import { LAUNCH_TIMEZONE } from "@/lib/scheduling/weeklyUtcOffset";
+import { formatDateLabel } from "@/lib/time/display";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import type { FundingRail } from "@/lib/payments/funding-rail";
 import { GATEWAY_NOT_FOUND } from "@/lib/payments/core/types";
@@ -58,6 +60,75 @@ const CLEARED_MARKER = {
   refundOwedNextAt: null,
 } as const;
 
+/**
+ * A refund that settles under its marker's own key clears the marker in the
+ * settling transaction, by CAS on that key, so the payment's earnings hold lifts.
+ */
+export async function clearOwedMarkerSettledBy(
+  tx: Pick<Tx, "payment">,
+  paymentId: string,
+  dedupeKey: string | null,
+): Promise<void> {
+  if (!dedupeKey) return;
+  await tx.payment.updateMany({
+    where: { id: paymentId, refundOwedKey: dedupeKey },
+    data: CLEARED_MARKER,
+  });
+}
+
+/** What an operator needs to see of the owed refund that already went out. */
+const SENT_REFUND_SELECT = {
+  id: true,
+  status: true,
+  amountPaise: true,
+  createdAt: true,
+  refundId: true,
+} as const;
+
+type SentRefund = {
+  id: string;
+  amountPaise: bigint | number;
+  createdAt: Date;
+  refundId: string | null;
+};
+
+/**
+ * The refusal a hand refund gets when the payment's owed refund already went
+ * out, with the amount, date and reference of that refund.
+ */
+function owedAlreadySent(
+  paymentId: string,
+  key: string,
+  sent: SentRefund,
+): RefundValidationError {
+  const reference = sent.refundId ?? sent.id;
+  const on = formatDateLabel(sent.createdAt, { zone: LAUNCH_TIMEZONE });
+  return new RefundValidationError(
+    `${rupees(Number(sent.amountPaise))} already went back to the buyer on ${on} (refund ${reference}), so nothing is owed on this payment. Only submit again if you mean to refund more on top of this.`,
+    "OWED_REFUND_ALREADY_SENT",
+    { paymentId, key, refundRowId: sent.id, reference },
+  );
+}
+
+/**
+ * Before an operator's refund opens its transaction, given the marker key it
+ * read: when that owed refund already succeeded, clears the marker and refuses,
+ * so the hand refund never pays the same money twice.
+ */
+export async function refuseIfOwedAlreadySent(
+  paymentId: string,
+  key: string | null | undefined,
+): Promise<void> {
+  if (!key) return;
+  const own = await prisma.refund.findUnique({
+    where: { dedupeKey: key },
+    select: SENT_REFUND_SELECT,
+  });
+  if (own?.status !== RefundStatus.SUCCEEDED) return;
+  await clearOwedMarkerSettledBy(prisma, paymentId, key);
+  throw owedAlreadySent(paymentId, key, own);
+}
+
 /** What an operator's hand refund did to the owed refund, as its Refund row's metadata records it. */
 export const handSettledOwedSchema = z.object({
   key: z.string(),
@@ -88,7 +159,7 @@ const rupees = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
  * refund's own transaction and by CAS on the marker key and its owed amount:
  * one that covers what is owed clears the marker, a smaller one reduces it and
  * leaves its attempts and backoff alone. Refused while the marker's own refund
- * is in flight; a marker whose own refund already moved is just cleared.
+ * is in flight, and once it has already gone out.
  */
 export async function settleOwedByHand(
   tx: Pick<Tx, "payment" | "refund">,
@@ -108,7 +179,7 @@ export async function settleOwedByHand(
   if (!key) return null;
   const own = await tx.refund.findUnique({
     where: { dedupeKey: key },
-    select: { status: true },
+    select: SENT_REFUND_SELECT,
   });
   if (own?.status === RefundStatus.PENDING) {
     throw new RefundValidationError(
@@ -120,10 +191,9 @@ export async function settleOwedByHand(
   const stamped =
     row.refundOwedPaise === null ? null : Number(row.refundOwedPaise);
   const where = { id: paymentId, refundOwedKey: key, refundOwedPaise: stamped };
-  if (own?.status === RefundStatus.SUCCEEDED) {
-    await tx.payment.updateMany({ where, data: CLEARED_MARKER });
-    return null;
-  }
+  // The pre-check clears it; one that succeeded since is still never paid twice.
+  if (own?.status === RefundStatus.SUCCEEDED)
+    throw owedAlreadySent(paymentId, key, own);
   if (cover.kind === "credits-part") {
     throw new RefundValidationError(
       "This payment still owes its whole credit restoration. Return every remaining session, or let the owed restoration run.",
@@ -404,7 +474,8 @@ async function planOwedRestore(
 
 /**
  * Moves a refund to FAILED through the caller's CAS and, in the same
- * transaction, gives back the owed refund it settled by hand.
+ * transaction, gives back the owed refund it settled by hand and counts the
+ * failed drive when it was the marker's own refund.
  */
 export function failRefund(
   refundRowId: string,
@@ -412,8 +483,53 @@ export function failRefund(
 ): Promise<{ count: number }> {
   return prisma.$transaction(async (tx) => {
     const moved = await fail(tx);
-    if (moved.count === 1) await restoreOwedOnFailedRefund(tx, refundRowId);
+    if (moved.count === 1) {
+      await restoreOwedOnFailedRefund(tx, refundRowId);
+      await countOwedDriveFailure(tx, refundRowId);
+    }
     return moved;
+  });
+}
+
+/**
+ * A marker's own refund confirmed FAILED (a refusal, or reconcile failing an
+ * ambiguous answer) is one failed drive: counted by CAS in the failing
+ * transaction, so a gateway that keeps answering ambiguously still reaches
+ * the needs-human cap.
+ */
+export async function countOwedDriveFailure(
+  tx: Tx,
+  refundRowId: string,
+): Promise<void> {
+  const refund = await tx.refund.findUnique({
+    where: { id: refundRowId },
+    select: { paymentId: true, dedupeKey: true },
+  });
+  if (!refund?.dedupeKey) return;
+  const payment = await tx.payment.findUnique({
+    where: { id: refund.paymentId },
+    select: { refundOwedKey: true, refundOwedAttempts: true },
+  });
+  if (!payment || payment.refundOwedKey !== refund.dedupeKey) return;
+  const attempts = payment.refundOwedAttempts;
+  const bumped = await bumpOwedAttempt(tx, {
+    paymentId: refund.paymentId,
+    key: refund.dedupeKey,
+    attempts,
+    permanent: false,
+  });
+  if (!bumped.counted || !bumped.stuck) return;
+  await recordSystemError({
+    organizationId: null,
+    category: "PAYMENT",
+    summary: `Refund owed on payment ${refund.paymentId} failed ${bumped.next} times — refund by hand`,
+    err: new Error("OWED_REFUND_ATTEMPTS_SPENT"),
+    context: {
+      paymentId: refund.paymentId,
+      key: refund.dedupeKey,
+      refundRowId,
+    },
+    db: tx,
   });
 }
 
@@ -756,7 +872,7 @@ export function stampRefundsOwed(
 }
 
 export type RefundOwedOutcome =
-  /** Money moved now; the marker is cleared unless the gateway is still settling. */
+  /** Money moved now, or the gateway is still settling it (a PENDING refund); the marker clears once it settles. */
   | { kind: "refunded"; refund: DrivenRefund }
   /** An earlier drive under this key already refunded it. */
   | { kind: "replayed"; refund: DrivenRefund }
@@ -815,13 +931,63 @@ export async function driveRefundOwed(
       if (error.code === "OWED_MARKER_SETTLED") return { kind: "settled" };
       if (error.code === "OWED_MARKER_CHANGED") return { kind: "blocked" };
     }
+    // The drive's own refund is still PENDING (an ambiguous gateway answer, or
+    // a settle that failed after the gateway took it): reconcile settles it by
+    // lookup, so the drive spends no attempt on it.
+    const inFlight = await pendingReservation(marker.key);
+    if (inFlight) return { kind: "refunded", refund: inFlight };
     // The gateway has no such payment: retrying only adds FAILED refund rows.
     const permanent =
       error instanceof RefundGatewayError &&
       error.gatewayCode === GATEWAY_NOT_FOUND;
+    // The transaction that failed the drive's own refund may have counted it.
+    const now = await readOrNull(() =>
+      prisma.payment.findUnique({
+        where: { id: marker.paymentId },
+        select: { refundOwedKey: true, refundOwedAttempts: true },
+      }),
+    );
+    const read = marker.attempts ?? 0;
+    if (now?.refundOwedKey === marker.key && now.refundOwedAttempts > read) {
+      const spent = now.refundOwedAttempts >= MAX_REFUND_OWED_ATTEMPTS;
+      const stuck =
+        spent ||
+        (permanent &&
+          (await countFailedAttempt(
+            { ...marker, attempts: now.refundOwedAttempts },
+            error,
+            true,
+          )));
+      return { kind: "failed", error, stuck, permanent };
+    }
     const stuck = await countFailedAttempt(marker, error, permanent);
     return { kind: "failed", error, stuck, permanent };
   }
+}
+
+/** A read the never-throwing drive can lose: a failure reads as nothing found. */
+async function readOrNull<T>(read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch {
+    return null;
+  }
+}
+
+/** The drive's own refund under the marker's key while it is still PENDING, else null. */
+async function pendingReservation(key: string): Promise<DrivenRefund | null> {
+  const row = await readOrNull(() =>
+    prisma.refund.findUnique({
+      where: { dedupeKey: key },
+      select: { id: true, amountPaise: true, status: true },
+    }),
+  );
+  if (row?.status !== RefundStatus.PENDING) return null;
+  return {
+    refundId: row.id,
+    amountRefundedPaise: Number(row.amountPaise),
+    status: "PENDING",
+  };
 }
 
 /**
@@ -894,26 +1060,12 @@ async function countFailedAttempt(
   permanent: boolean,
 ): Promise<boolean> {
   const attempts = marker.attempts ?? 0;
-  const next = permanent
-    ? Math.max(attempts + 1, MAX_REFUND_OWED_ATTEMPTS)
-    : attempts + 1;
-  const stuck = next >= MAX_REFUND_OWED_ATTEMPTS;
-  const counted = await prisma.payment
-    .updateMany({
-      where: {
-        id: marker.paymentId,
-        refundOwedKey: marker.key,
-        refundOwedAttempts: attempts,
-      },
-      data: {
-        refundOwedAttempts: next,
-        refundOwedNextAt: stuck
-          ? null
-          : new Date(Date.now() + REFUND_OWED_BACKOFF_MS[next - 1]),
-      },
-    })
-    .then((r) => r.count === 1)
-    .catch(() => false);
+  const { counted, stuck } = await bumpOwedAttempt(prisma, {
+    paymentId: marker.paymentId,
+    key: marker.key,
+    attempts,
+    permanent,
+  }).catch(() => ({ counted: false, ...nextAttempt(attempts, permanent) }));
   if (counted && stuck) {
     await recordSystemErrorSafe({
       organizationId: null,
@@ -932,4 +1084,45 @@ async function countFailedAttempt(
     });
   }
   return stuck;
+}
+
+/**
+ * One failed drive, by CAS on the marker's key and the attempt count read,
+ * with the sweep's next drive scheduled; a permanent failure spends the budget.
+ */
+async function bumpOwedAttempt(
+  db: Pick<Tx, "payment">,
+  args: {
+    paymentId: string;
+    key: string;
+    attempts: number;
+    permanent: boolean;
+  },
+): Promise<{ counted: boolean; stuck: boolean; next: number }> {
+  const { next, stuck } = nextAttempt(args.attempts, args.permanent);
+  const { count } = await db.payment.updateMany({
+    where: {
+      id: args.paymentId,
+      refundOwedKey: args.key,
+      refundOwedAttempts: args.attempts,
+    },
+    data: {
+      refundOwedAttempts: next,
+      refundOwedNextAt: stuck
+        ? null
+        : new Date(Date.now() + REFUND_OWED_BACKOFF_MS[next - 1]),
+    },
+  });
+  return { counted: count === 1, stuck, next };
+}
+
+/** The attempt count after one more failed drive, and whether it spends the budget. */
+function nextAttempt(
+  attempts: number,
+  permanent: boolean,
+): { next: number; stuck: boolean } {
+  const next = permanent
+    ? Math.max(attempts + 1, MAX_REFUND_OWED_ATTEMPTS)
+    : attempts + 1;
+  return { next, stuck: next >= MAX_REFUND_OWED_ATTEMPTS };
 }

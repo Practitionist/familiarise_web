@@ -80,6 +80,7 @@ import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import {
   restoreOwedOnFailedRefund,
   resettleOwedOnLateSuccess,
+  countOwedDriveFailure,
 } from "@/lib/payments/operations/refund-owed";
 import {
   EMAIL_BUDGET_MS,
@@ -857,6 +858,7 @@ export async function handleRefundCreated(
             // A failed hand refund gives back the owed refund it settled; a late success takes it off again.
             if (newStatus === "FAILED") {
               await restoreOwedOnFailedRefund(tx, existingRefund.id);
+              await countOwedDriveFailure(tx, existingRefund.id);
             }
             if (lateSuccess) {
               await resettleOwedOnLateSuccess(tx, existingRefund.id);
@@ -928,6 +930,7 @@ export async function handleRefundCreated(
             if (claimed.count > 0) {
               if (mappedNewStatus === "FAILED") {
                 await restoreOwedOnFailedRefund(tx, reservation.id);
+                await countOwedDriveFailure(tx, reservation.id);
               }
               if (mappedNewStatus === "SUCCEEDED") {
                 await runRefundSideEffects(

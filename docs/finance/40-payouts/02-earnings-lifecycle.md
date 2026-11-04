@@ -3,7 +3,7 @@ title: Earnings lifecycle
 type: reference
 audience: engineers changing earnings, holds, refunds or payouts
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-04
 ---
 
 # Earnings lifecycle
@@ -39,7 +39,7 @@ stateDiagram-v2
   [*] --> PENDING_TRUST: INVOICE sponsor unverified and unpaid
   PENDING_TRUST --> PENDING: sponsor verified or first invoice paid
   PENDING_TRUST --> READY: sponsor verified and hold already matured
-  PENDING --> READY: holdUntil passed, no open refund (release-earnings)
+  PENDING --> READY: holdUntil passed, no open or owed refund (release-earnings)
   PENDING --> HELD: first hold placed
   PENDING_TRUST --> HELD: first hold placed
   READY --> HELD: first hold placed
@@ -67,7 +67,17 @@ A new expert waits longer. `withNewExpertHold` adds 7 days (`NEW_EXPERT_EXTRA_HO
 
 A subscription is the exception to a hold set at mint: its earnings are one row per cycle with `holdUntil` unset, and the hold is stamped when the cycle's last session completes. Cancelled-session and trial settlements stamp holds later in the same way (`stampConsultantHolds`).
 
-The `release-earnings` job (`scripts/earnings/release-earnings.ts`) runs on the ticker every 15 minutes. In a Serializable transaction it moves each PENDING row whose `holdUntil` has passed to READY, for consultant and organisation earnings separately. It skips a row when its payment has a refund still pending, when the booking has a live session not yet delivered, or when a session is parked as an unsettled miss or awaiting a human (`RELEASABLE_PAYMENT`). It never touches HELD rows.
+The `release-earnings` job (`scripts/earnings/release-earnings.ts`) runs on the ticker every 15 minutes. In a Serializable transaction it moves each PENDING row whose `holdUntil` has passed to READY, for consultant and organisation earnings separately. It skips a row when its payment has a refund still pending or still owes a refund (`Payment.refundOwedKey` set), when the booking has a live session not yet delivered, or when a session is parked as an unsettled miss or awaiting a human (`RELEASABLE_PAYMENT`). The cohort read, the claim's `WHERE`, the ticker's idle probe (`hasReleasableEarningsWork`) and the sponsor trust-park release (`releaseSponsorTrustPark`) all read that one constant. It never touches HELD rows.
+
+### An owed refund holds the payment's earnings
+
+A door that ends a booking with money to return (a cancel, a trial cancel, rejection or expiry, a seat leave, a whole-event cancel, a no-show, a moderation cancel, a maintenance freeze, an incident remedy, an overage credit-back, or the plan-end settlement) stamps an owed-refund marker on the payment in the same commit (`stampRefundOwed`, `lib/payments/operations/refund-owed.ts`) and drives it after commit. While the marker is set, every PENDING earning on that payment, consultant and organisation, stays PENDING even after its `holdUntil` passes. The marker is a hold, not a clawback: the refund's own cascade sizes the reversal when the money moves. Support and operator refunds stamp no marker; they settle one by hand. The release run's Serializable transaction does not block a door that stamps a marker at READ COMMITTED without touching the earnings rows, so a marker stamped during a release run may miss that run's gate; the refund's cascade then claws back the released row. The plan-end settlement writes the earnings rows in the same commit, so it conflicts with the run instead.
+
+- **A drive that refunds, or a replay that finds the refund already done,** clears the marker by CAS on its key (`driveRefundOwed`), and the next release run releases what the refund left. A gateway answer still settling (a PENDING `Refund` row) keeps the marker, and the PENDING refund holds the earnings on its own. Whoever settles that refund later (the webhook, the reconcile sweep or the drive itself) clears its own marker in the settling transaction (`applyRefundCascade`).
+- **A failed drive** keeps the marker and counts an attempt; `retry-auto-refunds` re-drives it after 1 hour, then 4 hours. A gateway error that leaves its refund PENDING (a timeout, say) counts no attempt: the money may have moved, and reconcile settles that refund by lookup. If reconcile or the gateway's webhook then fails it, the failing transaction counts the attempt (`failRefund` → `countOwedDriveFailure`), so a gateway that keeps answering ambiguously still reaches the cap.
+- **A marker whose attempts are spent** (`MAX_REFUND_OWED_ATTEMPTS`, 3) pages ops once, shows in the ops queue, and makes any later booking change answer `REFUND_NEEDS_SUPPORT`. Its earnings stay held until support refunds by hand through an ops refund door, which settles the marker (`settleOwedByHand`): a refund that covers what is owed clears it and lifts the hold, and a smaller one reduces it and keeps the hold. A hand refund on a marker whose own refund already went out is refused (`OWED_REFUND_ALREADY_SENT`) and clears the stale marker. The refusal names that refund's amount, date and reference ("₹250.00 already went back to the buyer on 2 Nov 2026 (refund rfnd_…), so nothing is owed on this payment. Only submit again if you mean to refund more on top of this."), so the operator does not pay the same money twice.
+
+For example, a ₹1,000 plan of 4 sessions ends with 1 session unused. The settlement stamps the tranche holds (168 hours) and a ₹250 owed refund in one commit, and the gateway keeps failing. Seven days later the tranche's `holdUntil` has passed, but the release job leaves it PENDING until the refund goes out or support settles it.
 
 ### PENDING_TRUST
 
@@ -75,7 +85,7 @@ An organisation that is still `PENDING_VERIFICATION` and funds bookings by INVOI
 
 ### HELD and the five holds
 
-A row is HELD exactly when it carries at least one active `EarningsHold`. `lib/payments/payouts/earnings-holds.ts` is the only writer of HELD. It places holds on PENDING, PENDING_TRUST and READY rows by conditional update, so a PAID or REFUNDED row can never be frozen. The first hold records the row's prior status in `preHoldStatus`, and the last release restores exactly that status.
+A row is HELD exactly when it carries at least one active `EarningsHold`. `lib/payments/payouts/earnings-holds.ts` is the only writer of HELD. It places holds on PENDING, PENDING_TRUST and READY rows by conditional update, so a PAID or REFUNDED row can never be frozen. The first hold records the row's prior status in `preHoldStatus`, and the last release restores exactly that status. A legacy row with no recorded prior returns to PENDING, never straight to READY, so the release job's guards (`RELEASABLE_PAYMENT`) decide when it is payable.
 
 | Reason         | Placed by                                                                 | Released by                                                    |
 | -------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------- |
@@ -117,14 +127,15 @@ The Earnings page never shows these enum names. `deriveEarningPresentation` (`li
 
 ## Rules and their enforcers
 
-| Rule                                                                                                          | Enforcer                                                                                      | Test                                                         | Repair                                             |
-| ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------- |
-| Only `earnings-holds.ts` writes HELD, and a hold names one earning                                            | `placeEarningsHolds`, `earnings_hold_one_earning`, the two active-key unique indexes          | `__tests__/payments/earnings-hold.test.ts`                   | Release the stray hold through its owner           |
-| A guarded writer moves a PAID row only to REFUNDED; the bank-return reopen to READY is the one bulk exception | `assertEarningStatusTransitionLegal`                                                          | `__tests__/enterprise/earning-status-transitions.test.ts`    | A forced refund with a TDS reversal                |
-| Concurrent partial refunds never over-reverse                                                                 | Compare-and-set in `applyCappedEarningReversal` and `applyCappedOrgEarningReversal`           | `__tests__/payments/earning-refund-cas.test.ts`              | The helper re-reads once and takes the residual    |
-| An earning is never released with a refund in flight                                                          | `RELEASABLE_PAYMENT` repeated in the claim's WHERE in `release-earnings`                      | `__tests__/maintenance/release-earnings-open-refund.test.ts` | The next sweep releases it once the refund settles |
-| An unverified sponsor's earnings never reach a payout                                                         | `checkSponsorTrustPark` at mint; the release job selects only PENDING                         | `__tests__/payments/pending-trust-hold-release.test.ts`      | Verify the organisation or pay its invoice         |
-| A chargeback freezes only unsent money                                                                        | `cancelOpenPayoutsForPayment` cancels PENDING and APPROVED payouts and leaves PROCESSING ones | `__tests__/payments/dispute-payout-block.test.ts`            | The chargeback settlement and clawback             |
+| Rule                                                                                                                                                       | Enforcer                                                                                      | Test                                                                                                                 | Repair                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Only `earnings-holds.ts` writes HELD, and a hold names one earning                                                                                         | `placeEarningsHolds`, `earnings_hold_one_earning`, the two active-key unique indexes          | `__tests__/payments/earnings-hold.test.ts`                                                                           | Release the stray hold through its owner                      |
+| A guarded writer moves a PAID row only to REFUNDED; the bank-return reopen to READY is the one bulk exception                                              | `assertEarningStatusTransitionLegal`                                                          | `__tests__/enterprise/earning-status-transitions.test.ts`                                                            | A forced refund with a TDS reversal                           |
+| Concurrent partial refunds never over-reverse                                                                                                              | Compare-and-set in `applyCappedEarningReversal` and `applyCappedOrgEarningReversal`           | `__tests__/payments/earning-refund-cas.test.ts`                                                                      | The helper re-reads once and takes the residual               |
+| An earning is never released with a refund in flight                                                                                                       | `RELEASABLE_PAYMENT` repeated in the claim's WHERE in `release-earnings`                      | `__tests__/maintenance/release-earnings-open-refund.test.ts`                                                         | The next sweep releases it once the refund settles            |
+| An earning is never released while its payment still owes a refund (a row already READY when the marker is stamped is clawed back by the refund's cascade) | `refundOwedKey: null` in `RELEASABLE_PAYMENT` (release, idle probe, trust park)               | `__tests__/maintenance/release-earnings-owed-refund.test.ts`, `__tests__/db/booking/owed-refund-earnings.db.test.ts` | A successful drive or support's hand refund clears the marker |
+| An unverified sponsor's earnings never reach a payout                                                                                                      | `checkSponsorTrustPark` at mint; the release job selects only PENDING                         | `__tests__/payments/pending-trust-hold-release.test.ts`                                                              | Verify the organisation or pay its invoice                    |
+| A chargeback freezes only unsent money                                                                                                                     | `cancelOpenPayoutsForPayment` cancels PENDING and APPROVED payouts and leaves PROCESSING ones | `__tests__/payments/dispute-payout-block.test.ts`                                                                    | The chargeback settlement and clawback                        |
 
 ## Where in code
 
@@ -145,6 +156,7 @@ The Earnings page never shows these enum names. `deriveEarningPresentation` (`li
 
 ## Deprecated & Superseded Approaches
 
+- **Releasing on a PENDING `Refund` row alone.** The release used to wait only for a refund already in flight, so an owed marker whose gateway call kept failing (a plan-end refund, for one) let the earnings mature and release. The release now also waits for `Payment.refundOwedKey` to clear.
 - **A hold anchored at earnings-creation time.** Earlier text described the hold as "completed time plus 3 days" or as measured from creation. The hold is the later of capture and last session end plus the per-type hours. There is no 3-day default; an unknown type falls back to the 24-hour consultation window.
 - **A flat 20 percent marketplace fee.** The fee is the approved `PlatformFeeSchedule`; 20 percent is only the fallback. Documents that show a fixed 20/80 split predate the schedule.
 - **A separate release job for PENDING_TRUST by age.** No cron releases a park. Only an administrator's verification or a paid invoice does, and `PENDING_TRUST_PARK_STALE` merely reports old parks.

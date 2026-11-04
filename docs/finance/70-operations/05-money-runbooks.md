@@ -4,7 +4,7 @@ type: how-to
 band: 70-operations
 audience: sde3
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-04
 ---
 
 # Money runbooks
@@ -135,6 +135,48 @@ ORDER BY h."placedAt" DESC LIMIT 25;
 - `OVERAGE`: released when the member overage is paid or settled to the organisation (see runbook 6).
 - `SUPPORT_CASE`: released by the support case that placed it, through the case doors, which need a fresh step-up, the maintenance gate and an ops-log row.
 - `OPERATOR` and `MODERATION`: released from the Earnings section ("Release"). The door refuses while the payment has an open refund or dispute, and a hold on an earning that is not `PENDING`, `PENDING_TRUST` or `READY` is refused.
+
+A `PENDING` earning past its hold-until time whose payment still owes a refund is held by the owed marker, not by an `EarningsHold` row. Find it with:
+
+```sql
+SELECT 'consultant' AS arm, e.id, e."consultantSharePaise" AS "sharePaise",
+       e."holdUntil", p.id AS payment, p."refundOwedKey",
+       p."refundOwedAttempts", p."refundOwedAt"
+FROM "ConsultantEarnings" e
+JOIN "Payment" p ON p.id = e."paymentId"
+WHERE e.status = 'PENDING' AND e."holdUntil" <= now()
+  AND p."refundOwedKey" IS NOT NULL
+UNION ALL
+SELECT 'organisation', o.id, o."orgSharePaise", o."holdUntil", p.id,
+       p."refundOwedKey", p."refundOwedAttempts", p."refundOwedAt"
+FROM "OrganizationEarnings" o
+JOIN "Payment" p ON p.id = o."paymentId"
+WHERE o.status = 'PENDING' AND o."holdUntil" <= now()
+  AND p."refundOwedKey" IS NOT NULL
+ORDER BY "refundOwedAt" LIMIT 25;
+```
+
+It releases on the next run after the marker clears. A marker still retrying (`refundOwedAttempts` under 3) is re-driven by `retry-auto-refunds` and clears when its refund goes out. Every confirmed failure counts toward the 3, including an ambiguous gateway answer that reconcile later fails, so a refund that never goes out reaches the ops queue. A spent marker is in the ops queue ("Refunds the bookings owe"); refund it by hand through an ops refund door, which settles the marker. Never clear `refundOwedKey` by SQL to release earnings: the buyer is still owed the money.
+
+**A spent marker whose refund already went out.** Before the fix of 2026-11-04, a refund that settled after its drive's attempts were spent (an ambiguous gateway answer that reconcile later settled) never cleared its marker, so its earnings stay held although the buyer has the money. Find them:
+
+```sql
+SELECT p.id AS payment, p."refundOwedKey", p."refundOwedAttempts",
+       r.id AS refund, r."refundId", r."amountPaise", r."createdAt"
+FROM "Payment" p
+JOIN "Refund" r ON r."dedupeKey" = p."refundOwedKey" AND r.status = 'SUCCEEDED'
+WHERE p."deletedAt" IS NULL
+ORDER BY r."createdAt";
+```
+
+For each row:
+
+1. Confirm the refund in the gateway dashboard by its reference (`refundId`).
+2. Open the payment, choose **Issue refund**, and submit. The door refuses with "… already went back to the buyer on … (refund …), so nothing is owed on this payment" and clears the marker in the same step; no money moves.
+3. Submit again only if more is owed on top of that refund.
+4. **Verify:** the query no longer lists the payment, and its earnings are `READY` after the next `release-earnings` run.
+
+Never clear `refundOwedKey` by SQL.
 
 A `PENDING` earning that is simply young is not held: `release-earnings` moves it to `READY` after its hold-until time (24 hours for a consultation, 48 for a webinar, 168 for a subscription, 24 for a class, plus 7 days for a new expert). **Verify:** the earning is `READY` and appears in the next payout batch.
 

@@ -535,7 +535,11 @@ At the plan end the `settle-cancelled-sessions` sweep
 session not delivered (voided, returned or never placed) is refunded pro rata
 through `refundBookingPayment`, under a durable owed marker keyed
 `plan-end:<subscriptionId>:pay:<paymentId>` stamped in the commit that completes
-the plan. The pass resumes each tick from a checkpoint, so plans that must wait
+the plan. While that marker is set, the tranches stamped in the same commit
+stay `PENDING` (`RELEASABLE_PAYMENT`), so a refund that keeps failing never
+releases them.
+
+The pass resumes each tick from a checkpoint, so plans that must wait
 never starve the ones behind them. A void in the middle of a plan is not paid
 back while the session can still be re-booked; it waits for the plan end.
 

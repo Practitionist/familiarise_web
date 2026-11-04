@@ -308,6 +308,7 @@ invariant (no two time-holding rows overlap per host profile or per buyer):
 | `buyer-lapsed-seat.db.test.ts`           | A lapsed seat no longer blocking a dual-role buyer                    |
 | `seat-leave-redrive.db.test.ts`          | A seat-leave crash re-driven by the owed-refund sweep                 |
 | `seat-leave-owned-marker.db.test.ts`     | A seat leave refused by another door's owed marker                    |
+| `owed-refund-earnings.db.test.ts`        | A failing plan-end refund holding both earnings arms past their hold  |
 | `zero-total-checkout.db.test.ts`         | A fully discounted order taking the no-gateway rail                   |
 | `unique-violation-shape.db.test.ts`      | The real shape of a unique violation, classified by constraint        |
 

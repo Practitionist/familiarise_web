@@ -133,10 +133,11 @@ export async function readStuckOwedRefunds() {
       row.refundOwedPaise === null
         ? "its full balance"
         : `₹${(Number(row.refundOwedPaise) / 100).toFixed(2)}`;
-    const message =
+    const message = `${
       row.disputes.length > 0
         ? `Payment ${row.id} owes a refund of ${owed} (${row.refundOwedKey}) that a live dispute holds. Settle the dispute, then refund it by hand.`
-        : `Payment ${row.id} owes a refund of ${owed} (${row.refundOwedKey}) that failed ${row.refundOwedAttempts} times. Refund it by hand.`;
+        : `Payment ${row.id} owes a refund of ${owed} (${row.refundOwedKey}) that failed ${row.refundOwedAttempts} times. Refund it by hand.`
+    } Its earnings stay held until this is settled.`;
     return {
       id: `stuck-owed:${row.id}`,
       message,
