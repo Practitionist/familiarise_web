@@ -83,6 +83,10 @@ const mockStamp = jest.fn(async () => ({ count: 1 }));
 const mockTxFindUnique = jest.fn();
 const tx = {
   payment: { updateMany: mockStamp, findUnique: mockTxFindUnique },
+  systemEvent: { findFirst: async () => null },
+  // No unpaid earnings yet: the hand top-up hold has nothing to freeze.
+  consultantEarnings: { findMany: async () => [] },
+  organizationEarnings: { findMany: async () => [] },
 } as never;
 
 /** The route's two halves: stamp in the reject commit, drive after it. */
@@ -219,6 +223,7 @@ describe("refundRejectedRequest", () => {
       expect.objectContaining({
         severity: "WARN",
         correlationId: "owed-already-held:pay-1:rejection:cons-1:pay-1",
+        strict: true,
       }),
     );
   });

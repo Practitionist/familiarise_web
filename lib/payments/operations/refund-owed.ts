@@ -1,4 +1,10 @@
-import { PaymentStatus, Prisma, RefundStatus } from "@prisma/client";
+import {
+  EarningStatus,
+  EarningsHoldReason,
+  PaymentStatus,
+  Prisma,
+  RefundStatus,
+} from "@prisma/client";
 import { z } from "zod";
 
 import prisma, { type Tx } from "@/lib/prisma";
@@ -17,6 +23,11 @@ import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
+import {
+  EarningsHoldRaceError,
+  HOLDABLE_EARNING_STATUSES,
+  placeEarningsHolds,
+} from "@/lib/payments/payouts/earnings-holds";
 import { refundBookingPayment } from "./booking-refund";
 import {
   findDedupedRefund,
@@ -769,7 +780,8 @@ export type OwedRefundAlreadyHeld = {
 /**
  * Stamps the door's marker; when another door's owed refund already holds the
  * payment (first writer wins), records in the caller's transaction that this
- * action added nothing and answers what holds it, so an operator can top up by hand.
+ * action added nothing, holds the payment's earnings for the hand top-up, and
+ * answers what holds it.
  */
 export async function stampOwedOrHeld(
   tx: Tx,
@@ -800,6 +812,66 @@ async function heldBy(
   return row ? reportHeld(tx, marker, row) : null;
 }
 
+/** The ops instruction for a door's refund another door's owed refund held: what to pay by hand. */
+export function handTopUpCopy(owedPaise: number | null, held: boolean): string {
+  const remaining =
+    owedPaise === null
+      ? "the remaining balance"
+      : `the remaining ${rupees(owedPaise)}`;
+  return held
+    ? `Another refund is still owed on this payment; refund ${remaining} by hand, then release the hold.`
+    : `Another refund is still owed on this payment; refund ${remaining} by hand.`;
+}
+
+/** The earnings a hand top-up hold freezes: unpaid, or already held by another owner. */
+const TOP_UP_HOLDABLE: EarningStatus[] = [
+  ...HOLDABLE_EARNING_STATUSES,
+  EarningStatus.HELD,
+];
+
+/**
+ * Freezes the payment's unpaid earnings under an OPERATOR hold keyed on the
+ * door's event, so they wait for the hand top-up; a replay finds its own hold.
+ */
+async function holdForHandTopUp(
+  tx: Tx,
+  paymentId: string,
+  sourceRef: string,
+  owedPaise: number | null,
+): Promise<void> {
+  const where = { paymentId, status: { in: TOP_UP_HOLDABLE } };
+  const consultant = await tx.consultantEarnings.findMany({
+    where,
+    select: { id: true },
+  });
+  const org = await tx.organizationEarnings.findMany({
+    where,
+    select: { id: true },
+  });
+  const hold = {
+    reason: EarningsHoldReason.OPERATOR,
+    sourceRef,
+    note: handTopUpCopy(owedPaise, true),
+  };
+  try {
+    await placeEarningsHolds(
+      tx,
+      "consultant",
+      consultant.map((r) => r.id),
+      hold,
+    );
+    await placeEarningsHolds(
+      tx,
+      "org",
+      org.map((r) => r.id),
+      hold,
+    );
+  } catch (err) {
+    // A row that kept moving stays unheld; the needs-human list still names the payment.
+    if (!(err instanceof EarningsHoldRaceError)) throw err;
+  }
+}
+
 async function reportHeld(
   tx: Tx,
   marker: RefundOwedMarker,
@@ -816,14 +888,33 @@ async function reportHeld(
     heldPaise,
     note: owedAlreadyHeldNote(marker.paymentId, heldKey, heldPaise),
   };
-  await recordSystemEvent({
-    category: "PAYMENT",
-    severity: "WARN",
-    message: held.note,
-    context: { ...held, reason: marker.reason, owedPaise: marker.amountPaise },
-    correlationId: `${OWED_ALREADY_HELD_PREFIX}${marker.paymentId}:${marker.key}`,
-    db: tx,
+  const correlationId = `${OWED_ALREADY_HELD_PREFIX}${marker.paymentId}:${marker.key}`;
+  // The event is the needs-human row: written once per payment and door key, with the door's commit.
+  const standing = await tx.systemEvent.findFirst({
+    where: { correlationId },
+    select: { id: true },
   });
+  if (!standing) {
+    await recordSystemEvent({
+      category: "PAYMENT",
+      severity: "WARN",
+      message: held.note,
+      context: {
+        ...held,
+        reason: marker.reason,
+        owedPaise: marker.amountPaise,
+      },
+      correlationId,
+      db: tx,
+      strict: true,
+    });
+  }
+  await holdForHandTopUp(
+    tx,
+    marker.paymentId,
+    correlationId,
+    marker.amountPaise,
+  );
   return held;
 }
 

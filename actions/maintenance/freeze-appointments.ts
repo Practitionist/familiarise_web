@@ -7,6 +7,7 @@ import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import {
+  heldInsteadOf,
   stampRefundsOwed,
   type RefundOwedMarker,
 } from "@/lib/payments/operations/refund-owed";
@@ -502,10 +503,14 @@ async function freezeOneAppointment(tx: Tx, ctx: FreezeContext) {
       payments: ctx.appointment.payment.length,
       recipients: new Set(notice.userIds).size,
     });
-  // Every refund the freeze owes commits with it, in one statement.
+  // Every refund the freeze owes commits with it, in one statement; a payment
+  // another door's refund already holds is recorded and held for a hand top-up.
   const owed = refundsOwed(ctx.appointment.id, ctx.appointment.payment);
-  await stampRefundsOwed(tx, owed);
-  effects.refunds.push(...owed);
+  const held =
+    (await stampRefundsOwed(tx, owed)) < owed.length
+      ? new Set((await heldInsteadOf(tx, owed)).map((h) => h.paymentId))
+      : new Set<string>();
+  effects.refunds.push(...owed.filter((m) => !held.has(m.paymentId)));
 
   await closeFrozenSlots(tx, ctx);
   for (const trialId of effects.trialsToTombstone)

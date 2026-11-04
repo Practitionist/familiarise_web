@@ -258,12 +258,11 @@ describe("a whole-event cancel against another door's refund marker", () => {
       select: { dedupeKey: true, amountPaise: true },
       orderBy: { createdAt: "asc" },
     });
-    expect(heldRefunds).toEqual([
-      { dedupeKey: heldKey, amountPaise: BigInt(UNIT) },
-      {
-        dedupeKey: `event-cancel:${cls.classId}:pay:${held.paymentId}`,
-        amountPaise: BigInt(UNDELIVERED - UNIT),
-      },
+    expect(
+      heldRefunds.map((r) => [r.dedupeKey, Number(r.amountPaise)]),
+    ).toEqual([
+      [heldKey, UNIT],
+      [`event-cancel:${cls.classId}:pay:${held.paymentId}`, UNDELIVERED - UNIT],
     ]);
     expect(await markerOf(clear.paymentId)).toBeNull();
     expect(await markerOf(held.paymentId)).toBeNull();

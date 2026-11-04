@@ -20,17 +20,20 @@ const NeedsHumanList = z.object({
       message: z.string(),
       createdAt: z.string(),
       paymentId: z.string().nullable(),
-      /** A credit seat gets the credit door, a held paid seat or a stuck owed refund the refund door, a support remedy its case. */
+      /** A credit seat gets the credit door; a held paid seat, a stuck owed refund or a held top-up the refund door; a support remedy its case. */
       kind: z
         .enum([
           "credit",
           "held-paid-seat",
           "stuck-owed-refund",
+          "owed-already-held",
           "support-recommendation",
         ])
         .optional(),
       occurrenceId: z.string().nullish(),
       unitPaise: z.number().nullish(),
+      /** A held top-up's amount, preset in the refund door. */
+      amountPaise: z.number().nullish(),
       caseId: z.string().nullish(),
       /** An ended credit plan: ops may answer that no credit is owed. */
       creditPlan: z.boolean().optional(),
@@ -51,6 +54,17 @@ function doorFor(item: NeedsHuman) {
   // A hand refund settles a stuck owed marker and unblocks the cancel.
   if (item.kind === "stuck-owed-refund") {
     return { door: "issue" as const, paymentId };
+  }
+  // Another door's refund held this one: refund its amount by hand, then release the hold.
+  if (item.kind === "owed-already-held") {
+    return {
+      door: "issue" as const,
+      paymentId,
+      amountRupees:
+        typeof item.amountPaise === "number"
+          ? (item.amountPaise / 100).toFixed(2)
+          : undefined,
+    };
   }
   if (item.kind !== "held-paid-seat") {
     return { door: "credits" as const, paymentId };
@@ -145,7 +159,8 @@ export function RefundDoorsPanel() {
                       onClick={() => setOpen(doorFor(item))}
                     >
                       {item.kind === "held-paid-seat" ||
-                      item.kind === "stuck-owed-refund"
+                      item.kind === "stuck-owed-refund" ||
+                      item.kind === "owed-already-held"
                         ? "Issue refund"
                         : "Return credits"}
                     </Button>

@@ -1,7 +1,14 @@
+import { EarningsHoldReason } from "@prisma/client";
+import { z } from "zod";
+
 import prisma from "@/lib/prisma";
 import { occurrenceRefundKey } from "@/lib/booking/class-sessions";
 import { SUPPORT_REFUND_SEND_GRACE_MS } from "@/lib/support/money-policy";
-import { MAX_REFUND_OWED_ATTEMPTS } from "@/lib/payments/operations/refund-owed";
+import {
+  handTopUpCopy,
+  MAX_REFUND_OWED_ATTEMPTS,
+  OWED_ALREADY_HELD_PREFIX,
+} from "@/lib/payments/operations/refund-owed";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { PARTIAL_CREDIT_CLOSED_PREFIX } from "@/lib/payments/operations/credit-plan-return";
 
@@ -235,10 +242,85 @@ export async function readUnsentSupportRefunds(now = new Date()) {
   }));
 }
 
+/** What a door that lost the owed-marker stamp recorded about the refund it could not add. */
+const owedHeldContextSchema = z.object({
+  paymentId: z.string(),
+  heldKey: z.string(),
+  owedPaise: z.number().nullable().optional(),
+});
+
+/**
+ * Doors whose refund another door's owed refund already held (first writer
+ * wins): the buyer is still owed that amount. Listed while the OPERATOR hold
+ * the door placed is active; with nothing to hold, until another refund lands
+ * on the payment after the event (the hold-free hand top-up).
+ */
+export async function readOwedAlreadyHeld() {
+  const events = await prisma.systemEvent.findMany({
+    where: { correlationId: { startsWith: OWED_ALREADY_HELD_PREFIX } },
+    orderBy: { createdAt: "asc" },
+    select: EVENT_SELECT,
+  });
+  const first = new Map<string, EventRow>();
+  for (const e of events) {
+    if (e.correlationId && !first.has(e.correlationId)) {
+      first.set(e.correlationId, e);
+    }
+  }
+  if (first.size === 0) return [];
+  const holds = await prisma.earningsHold.findMany({
+    where: {
+      reason: EarningsHoldReason.OPERATOR,
+      sourceRef: { in: [...first.keys()] },
+    },
+    select: { sourceRef: true, releasedAt: true },
+  });
+  const parsed = [...first.entries()].flatMap(([ref, e]) => {
+    const ctx = owedHeldContextSchema.safeParse(e.context);
+    return ctx.success ? [{ ref, e, ctx: ctx.data }] : [];
+  });
+  const refunds = await prisma.refund.findMany({
+    where: {
+      paymentId: { in: [...new Set(parsed.map((p) => p.ctx.paymentId))] },
+      status: { in: ["SUCCEEDED", "PENDING"] },
+    },
+    select: { paymentId: true, dedupeKey: true, createdAt: true },
+  });
+  return parsed.flatMap(({ ref, e, ctx }) => {
+    const own = holds.filter((h) => h.sourceRef === ref);
+    const held = own.length > 0;
+    const open = held
+      ? own.some((h) => h.releasedAt === null)
+      : !refunds.some(
+          (r) =>
+            r.paymentId === ctx.paymentId &&
+            r.createdAt > e.createdAt &&
+            r.dedupeKey !== ctx.heldKey,
+        );
+    if (!open) return [];
+    const owedPaise = ctx.owedPaise ?? null;
+    return [
+      {
+        id: `owed-held:${ref}`,
+        message: `Payment ${ctx.paymentId} (${ctx.heldKey}): ${handTopUpCopy(owedPaise, held)}`,
+        createdAt: e.createdAt,
+        paymentId: ctx.paymentId,
+        occurrenceId: null,
+        unitPaise: null,
+        /** The amount the losing door owed; null is the remaining balance. */
+        amountPaise: owedPaise,
+        kind: "owed-already-held" as const,
+        caseId: null,
+        creditPlan: false,
+      },
+    ];
+  });
+}
+
 /**
  * #1771 K-5 — credit seats the automatic paths could not settle, plus (#1834)
  * paid seats still HELD at settle, plus approved support remedies with no live
- * refund. The Refunds tab lists these; #1527 — the Refunds nav badge counts the
+ * refund, plus refunds another door's owed refund held. The Refunds tab lists these; #1527 — the Refunds nav badge counts the
  * same list, so it is the one reader.
  */
 export async function readRefundNeedsHuman() {
@@ -273,8 +355,9 @@ export async function readRefundNeedsHuman() {
     heldEvents.map((e) => toItem(e, "held-paid-seat")),
   );
   const stuck = await readStuckOwedRefunds();
+  const owedHeld = await readOwedAlreadyHeld();
   const unsent = await readUnsentSupportRefunds();
-  const items = [...credit, ...held, ...stuck, ...unsent].sort(
+  const items = [...credit, ...held, ...stuck, ...owedHeld, ...unsent].sort(
     (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
   );
   return items;
