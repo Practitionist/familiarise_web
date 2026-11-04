@@ -6,24 +6,8 @@
  */
 
 import "./setup";
+import { emptySearchDb } from "../fixtures/allocator-search";
 
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    appointment: { findMany: jest.fn() },
-    rescheduleRequest: { findFirst: jest.fn() },
-  },
-  ALLOCATION_TX_MAX_WAIT_MS: 8000,
-  ALLOCATION_TX_TIMEOUT_MS: 30000,
-}));
-jest.mock("../../utils/appointmentlock", () => ({
-  lockAutoAllocate: jest.fn(),
-  unlockAutoAllocate: jest.fn(),
-  lockConsulteeBooking: jest.fn(),
-  unlockConsulteeBooking: jest.fn(),
-}));
-
-import type { PrismaLike } from "../../lib/prisma";
 import { findAvailableSlots } from "../../lib/booking/allocation/search/find-available-slots";
 import {
   customRowDaySlices,
@@ -69,9 +53,7 @@ const place = (
   held: string[] = [],
 ) =>
   findAvailableSlots(
-    {
-      appointment: { findMany: jest.fn().mockResolvedValue([]) },
-    } as unknown as PrismaLike,
+    emptySearchDb(),
     consultant,
     sessions * 2,
     2,
