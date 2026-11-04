@@ -183,8 +183,14 @@ export function planEndOf(start: Date, months: number, tz: string): Date {
  * so a DST change inside the plan never shifts the end hour; exclusive. */
 export function weeksPlanEndOf(start: Date, weeks: number, tz: string): Date {
   return shiftWallDate(start, tz, ({ y, m, d }) => {
-    const to = new Date(Date.UTC(y, m - 1, d + 7 * Math.max(1, Math.trunc(weeks))));
-    return { y: to.getUTCFullYear(), m: to.getUTCMonth() + 1, d: to.getUTCDate() };
+    const to = new Date(
+      Date.UTC(y, m - 1, d + 7 * Math.max(1, Math.trunc(weeks))),
+    );
+    return {
+      y: to.getUTCFullYear(),
+      m: to.getUTCMonth() + 1,
+      d: to.getUTCDate(),
+    };
   });
 }
 
@@ -341,7 +347,8 @@ export function purchaseTermsOf(
 /** "3 active clients keep their current terms. …" or null with none. */
 export function activeClientsNotice(count: number): string | null {
   if (count <= 0) return null;
-  const clients = count === 1 ? "1 active client keeps" : `${count} active clients keep`;
+  const clients =
+    count === 1 ? "1 active client keeps" : `${count} active clients keep`;
   return `${clients} their current terms. Changes apply to new buyers only.`;
 }
 
@@ -376,7 +383,9 @@ export interface SoldTermsShape {
 }
 
 /** The entitlement terms of a sold subscription, frozen columns first. */
-export function soldTermsOf(sub: SoldTermsShape): Pick<
+export function soldTermsOf(
+  sub: SoldTermsShape,
+): Pick<
   SubscriptionEntitlementInput,
   "sessionsTotal" | "sessionsRefunded" | "sessionsPerWeek" | "durationInMonths"
 > {

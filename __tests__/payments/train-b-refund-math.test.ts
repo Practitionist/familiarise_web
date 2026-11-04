@@ -30,12 +30,17 @@ const plan = {
 };
 const T = purchaseTermsOf(plan, START, ZONE).sessionsTotal;
 
-const payment = (
-  refunds: { amountPaise: number; status: string }[] = [],
-) => ({ id: "pay-1", amount: A, refunds, disputes: [] });
+const payment = (refunds: { amountPaise: number; status: string }[] = []) => ({
+  id: "pay-1",
+  amount: A,
+  refunds,
+  disputes: [],
+});
 
-const marker = (unused: number, refunds: { amountPaise: number; status: string }[] = []) =>
-  planEndMarker("sub-1", payment(refunds), unused, T)?.amountPaise ?? 0;
+const marker = (
+  unused: number,
+  refunds: { amountPaise: number; status: string }[] = [],
+) => planEndMarker("sub-1", payment(refunds), unused, T)?.amountPaise ?? 0;
 
 describe("the worked plan sells 78 sessions", () => {
   it("is 26 weeks × 3 a week at ₹200 each", () => {

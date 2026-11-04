@@ -124,8 +124,10 @@ export function buildRescheduleSubject(
           typeLabel: "Subscription",
           sessionDurationInHours:
             subscription && plan
-              ? soldSessionMinutes({ ...subscription, subscriptionPlan: plan }) /
-                60
+              ? soldSessionMinutes({
+                  ...subscription,
+                  subscriptionPlan: plan,
+                }) / 60
               : undefined,
           eventType: "subscription",
           eventId: subscription?.id ?? undefined,

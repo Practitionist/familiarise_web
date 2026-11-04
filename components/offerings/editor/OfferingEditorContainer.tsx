@@ -191,7 +191,9 @@ export function OfferingEditorContainer({
       ? applySponsorPricingHintToManifest(manifest, sponsorPricingHint)
       : manifest;
   const soldTermsNotice =
-    type === "subscription" ? activeClientsNotice(activeClientsOf(initialEvent)) : null;
+    type === "subscription"
+      ? activeClientsNotice(activeClientsOf(initialEvent))
+      : null;
   const noticedManifest = soldTermsNotice
     ? withPricingNotice(hintedManifest, soldTermsNotice)
     : hintedManifest;

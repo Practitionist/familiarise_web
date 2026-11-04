@@ -21,10 +21,7 @@ import {
   FormMessage,
   RequiredMark,
 } from "@/components/ui/form";
-import {
-  monthsForWeeks,
-  planLengthLabel,
-} from "@/lib/booking/entitlement";
+import { monthsForWeeks, planLengthLabel } from "@/lib/booking/entitlement";
 
 export const PLAN_WEEK_PRESETS = [4, 8, 12, 26, 52] as const;
 export const MAX_PLAN_WEEKS = 52;
@@ -72,12 +69,12 @@ export function PlanLengthField<T extends FieldValues = FieldValues>({
         })
       : null
     : typeof months === "number" && months >= 1
-        ? planLengthLabel({
-            durationInWeeks: null,
-            durationInMonths: months,
-            sessionsPerWeek: perWeek,
-          })
-        : null;
+      ? planLengthLabel({
+          durationInWeeks: null,
+          durationInMonths: months,
+          sessionsPerWeek: perWeek,
+        })
+      : null;
 
   if (!inWeeks) {
     return (
@@ -107,7 +104,9 @@ export function PlanLengthField<T extends FieldValues = FieldValues>({
           {summary ? `${summary}. ` : ""}This plan is sold in months; clients
           who already bought it keep their current terms.
         </FormDescription>
-        {monthsError?.message && <FormMessage>{monthsError.message}</FormMessage>}
+        {monthsError?.message && (
+          <FormMessage>{monthsError.message}</FormMessage>
+        )}
       </FormItem>
     );
   }

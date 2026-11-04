@@ -1188,7 +1188,13 @@ async function recommendRefundTx(
   });
   if (open) throw openRecommendationError();
   if (input.sessions !== undefined)
-    await assertSessionShare(tx, caseId, linked, input.amountPaise, input.sessions);
+    await assertSessionShare(
+      tx,
+      caseId,
+      linked,
+      input.amountPaise,
+      input.sessions,
+    );
   const recommendation = await tx.supportFinancialRecommendation.create({
     data: {
       caseId,
@@ -1240,7 +1246,10 @@ async function assertSessionShare(
       "SESSIONS_EXCEED_PLAN",
       `Only ${basis.removable} session${basis.removable === 1 ? "" : "s"} on this plan ${basis.removable === 1 ? "is" : "are"} not booked or delivered yet. Cancel booked sessions first to remove more.`,
     );
-  const quote = await quoteCaseRefund(tx, caseId, { id: "", paymentId: payment.id });
+  const quote = await quoteCaseRefund(tx, caseId, {
+    id: "",
+    paymentId: payment.id,
+  });
   const share = Math.min(
     sessionShareOf(Number(payment.amount), sessions, basis.sessionsTotal),
     quote.refundablePaise,

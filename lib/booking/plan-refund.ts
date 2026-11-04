@@ -4,7 +4,10 @@
  * earnings were already reversed. `Subscription.sessionsRefunded` records them.
  */
 import type { Tx } from "@/lib/prisma";
-import { soldTermsOf, subscriptionEntitlement } from "@/lib/booking/entitlement";
+import {
+  soldTermsOf,
+  subscriptionEntitlement,
+} from "@/lib/booking/entitlement";
 
 /** A session count's share of a plan payment, in paise: floor(A × k / T). */
 export function sessionShareOf(
@@ -13,7 +16,9 @@ export function sessionShareOf(
   sessionsTotal: number,
 ): number {
   if (sessionsTotal <= 0 || sessions <= 0) return 0;
-  return Math.floor((amountPaise * Math.min(sessions, sessionsTotal)) / sessionsTotal);
+  return Math.floor(
+    (amountPaise * Math.min(sessions, sessionsTotal)) / sessionsTotal,
+  );
 }
 
 export interface PlanRefundBasis {
@@ -86,7 +91,11 @@ export async function planRefundBasis(
 
 export type PlanSessionsChange =
   | { ok: true; sessionsRefunded: number }
-  | { ok: false; reason: "NOT_A_PLAN" | "EXCEEDS_REMOVABLE" | "RACED"; removable: number };
+  | {
+      ok: false;
+      reason: "NOT_A_PLAN" | "EXCEEDS_REMOVABLE" | "RACED";
+      removable: number;
+    };
 
 /**
  * Removes `sessions` from the plan behind `paymentId` inside the caller's tx,
@@ -100,10 +109,17 @@ export async function removePlanSessions(
   const basis = await planRefundBasis(tx, paymentId);
   if (!basis) return { ok: false, reason: "NOT_A_PLAN", removable: 0 };
   if (sessions > basis.removable)
-    return { ok: false, reason: "EXCEEDS_REMOVABLE", removable: basis.removable };
+    return {
+      ok: false,
+      reason: "EXCEEDS_REMOVABLE",
+      removable: basis.removable,
+    };
   const next = basis.sessionsRefunded + sessions;
   const moved = await tx.subscription.updateMany({
-    where: { id: basis.subscriptionId, sessionsRefunded: basis.sessionsRefunded },
+    where: {
+      id: basis.subscriptionId,
+      sessionsRefunded: basis.sessionsRefunded,
+    },
     data: { sessionsRefunded: next, sessionsTotal: basis.sessionsTotal },
   });
   if (moved.count !== 1)
@@ -121,7 +137,10 @@ export async function restorePlanSessions(
   if (!basis) return { ok: false, reason: "NOT_A_PLAN", removable: 0 };
   const next = Math.max(0, basis.sessionsRefunded - sessions);
   const moved = await tx.subscription.updateMany({
-    where: { id: basis.subscriptionId, sessionsRefunded: basis.sessionsRefunded },
+    where: {
+      id: basis.subscriptionId,
+      sessionsRefunded: basis.sessionsRefunded,
+    },
     data: { sessionsRefunded: next },
   });
   if (moved.count !== 1)

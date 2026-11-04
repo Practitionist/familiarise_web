@@ -381,7 +381,9 @@ describe("a plan payment's refund priced in sessions", () => {
       target: { value: "9" },
     });
     expect(
-      screen.getByText(/9 of 78 sessions × about ₹200(\.00)? each = ₹1,800(\.00)?/),
+      screen.getByText(
+        /9 of 78 sessions × about ₹200(\.00)? each = ₹1,800(\.00)?/,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText(/69 stay on it/)).toBeInTheDocument();
     expect(
@@ -407,7 +409,9 @@ describe("a plan payment's refund priced in sessions", () => {
       target: { value: "61" },
     });
     expect(
-      screen.getByText(/Enter 1 to 60: only sessions not yet booked or delivered/),
+      screen.getByText(
+        /Enter 1 to 60: only sessions not yet booked or delivered/,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Recommend refund" }),

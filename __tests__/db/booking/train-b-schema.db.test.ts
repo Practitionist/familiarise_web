@@ -34,7 +34,10 @@ import {
   type SeededHost,
 } from "./harness";
 
-async function seedPlan(host: SeededHost, data: Partial<Prisma.SubscriptionPlanUncheckedCreateInput> = {}) {
+async function seedPlan(
+  host: SeededHost,
+  data: Partial<Prisma.SubscriptionPlanUncheckedCreateInput> = {},
+) {
   return prisma.subscriptionPlan.create({
     data: {
       title: "Train B plan",
@@ -45,7 +48,11 @@ async function seedPlan(host: SeededHost, data: Partial<Prisma.SubscriptionPlanU
   });
 }
 
-async function seedSubscription(planId: string, consulteeProfileId: string, data: Partial<Prisma.SubscriptionUncheckedCreateInput> = {}) {
+async function seedSubscription(
+  planId: string,
+  consulteeProfileId: string,
+  data: Partial<Prisma.SubscriptionUncheckedCreateInput> = {},
+) {
   const start = new Date("2026-01-05T12:30:00.000Z");
   return prisma.subscription.create({
     data: {
@@ -145,7 +152,9 @@ describe("sidecar constraints", () => {
     const host = await seedHost();
     const consultee = await seedConsultee();
     const plan = await seedPlan(host);
-    const choice = async (data: Partial<Prisma.PlanEndChoiceUncheckedCreateInput>) => {
+    const choice = async (
+      data: Partial<Prisma.PlanEndChoiceUncheckedCreateInput>,
+    ) => {
       const sub = await seedSubscription(plan.id, consultee.consulteeProfileId);
       return prisma.planEndChoice.create({
         data: {
@@ -159,7 +168,9 @@ describe("sidecar constraints", () => {
     };
     const decidedAt = new Date("2026-07-07T09:00:00.000Z");
     const previousPlanEndsAt = new Date("2026-07-06T12:30:00.000Z");
-    await expect(choice({ decidedAt })).rejects.toThrow(/plan_end_choice_shape/);
+    await expect(choice({ decidedAt })).rejects.toThrow(
+      /plan_end_choice_shape/,
+    );
     await expect(choice({ status: "REFUNDED" })).rejects.toThrow(
       /plan_end_choice_shape/,
     );
@@ -185,9 +196,9 @@ describe("sidecar constraints", () => {
         previousPlanEndsAt,
       }),
     ).resolves.toEqual(expect.objectContaining({ status: "EXTENDED" }));
-    await expect(
-      choice({ status: "REFUNDED", decidedAt }),
-    ).resolves.toEqual(expect.objectContaining({ status: "REFUNDED" }));
+    await expect(choice({ status: "REFUNDED", decidedAt })).resolves.toEqual(
+      expect.objectContaining({ status: "REFUNDED" }),
+    );
   });
 });
 
@@ -239,22 +250,38 @@ describe("frozen purchase terms", () => {
       sessionDurationInHours: 1,
       totalSessions: 8,
     });
-    const legacy = await seedSubscription(plan.id, consultee.consulteeProfileId);
-    const frozen = await seedSubscription(plan.id, consultee.consulteeProfileId, {
-      sessionsPerWeek: 1,
-      sessionMinutes: 30,
-      sessionsTotal: 4,
-    });
+    const legacy = await seedSubscription(
+      plan.id,
+      consultee.consulteeProfileId,
+    );
+    const frozen = await seedSubscription(
+      plan.id,
+      consultee.consulteeProfileId,
+      {
+        sessionsPerWeek: 1,
+        sessionMinutes: 30,
+        sessionsTotal: 4,
+      },
+    );
     await prisma.$transaction(async (tx) => {
       await freezeSoldTerms(tx, plan.id);
       await tx.subscriptionPlan.update({
         where: { id: plan.id },
-        data: { sessionsPerWeek: 5, sessionDurationInHours: 2, totalSessions: 20 },
+        data: {
+          sessionsPerWeek: 5,
+          sessionDurationInHours: 2,
+          totalSessions: 20,
+        },
       });
     });
     const rows = await prisma.subscription.findMany({
       where: { id: { in: [legacy.id, frozen.id] } },
-      select: { id: true, sessionsPerWeek: true, sessionMinutes: true, sessionsTotal: true },
+      select: {
+        id: true,
+        sessionsPerWeek: true,
+        sessionMinutes: true,
+        sessionsTotal: true,
+      },
     });
     const byId = new Map(rows.map((r) => [r.id, r]));
     expect(byId.get(legacy.id)).toMatchObject({
@@ -322,7 +349,11 @@ describe("sessionsRefunded CAS", () => {
     await expect(
       prisma.$transaction((tx) => removePlanSessions(tx, payment.id, 9)),
     ).resolves.toEqual(
-      expect.objectContaining({ ok: false, reason: "EXCEEDS_REMOVABLE", removable: 8 }),
+      expect.objectContaining({
+        ok: false,
+        reason: "EXCEEDS_REMOVABLE",
+        removable: 8,
+      }),
     );
     await prisma.$transaction((tx) => removePlanSessions(tx, payment.id, 3));
     await prisma.$transaction((tx) => restorePlanSessions(tx, payment.id, 3));
@@ -384,9 +415,10 @@ describe("support partial refund priced in sessions", () => {
       where: { id: subscriptionId },
     });
     expect(after.sessionsRefunded).toBe(3);
-    const stored = await prisma.supportFinancialRecommendation.findUniqueOrThrow({
-      where: { id: rowId(recommendation) },
-    });
+    const stored =
+      await prisma.supportFinancialRecommendation.findUniqueOrThrow({
+        where: { id: rowId(recommendation) },
+      });
     expect(stored.sessionsRemoved).toBe(3);
   });
 
@@ -404,9 +436,7 @@ describe("support partial refund priced in sessions", () => {
         releaseSeat: false,
         sessions: 3,
       }),
-    ).rejects.toEqual(
-      expect.objectContaining({ code: "PREVIEW_CHANGED" }),
-    );
+    ).rejects.toEqual(expect.objectContaining({ code: "PREVIEW_CHANGED" }));
   });
 
   it("refuses more sessions than the plan still has unheld", async () => {

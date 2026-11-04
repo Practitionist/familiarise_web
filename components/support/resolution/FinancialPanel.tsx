@@ -39,7 +39,11 @@ function parseSessions(text: string, plan: PlanRefund): number | null {
 }
 
 /** The plain per-session sum staff see before recommending. */
-function sessionRefundCopy(plan: PlanRefund, sessions: number, amountPaise: number) {
+function sessionRefundCopy(
+  plan: PlanRefund,
+  sessions: number,
+  amountPaise: number,
+) {
   const each = inr(Math.floor(plan.amountPaise / plan.sessionsTotal));
   const capped =
     amountPaise < sessionShareOf(plan.amountPaise, sessions, plan.sessionsTotal)
