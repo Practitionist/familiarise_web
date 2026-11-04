@@ -306,15 +306,21 @@ A custom row is an absolute range and may span several days (rows coalesce on
 adjacency, so back-to-back days fold into one row). The auto search walks it as
 one slice per day of the plan's `schedulingTimezone` (`customRowDaySlices` in
 `lib/booking/allocation/search/recurrence.ts`): each slice runs from that day's
-first instant to the next day's (`dayRangeBounds`, exclusive end), clipped to
-the row, with the cuts rounded up to the UTC half-hour lattice so a :45 zone's
-atom across midnight stays on the day it starts. Every covered day is a
-candidate under the same spacing, daily cap and lead time, and a slice that
-began before the period still offers its in-period tail. Consultations and
-webinars walk the same slices in start order. A fall-back day's slice is 25
-hours, which is why `MAX_CANDIDATE_STARTS_PER_ROW` is 50. The validator, the
-manual path and the grid already judged custom rows by containment or per atom,
-so they needed no change.
+first instant to the next day's (`dayStartInstant`, the exclusive bounds
+`dayRangeBounds` uses), clipped to the row, with the cuts rounded up to the UTC
+half-hour lattice so a :45 zone's atom across midnight stays on the day it
+starts. Every covered day is a candidate under the same spacing, daily cap and
+lead time. `customSpansInStartOrder` clips rows to the walk's window first (the
+recurring period, or the single-session horizon of 8 weeks for a consultation
+and 4 for a webinar, the same as the weekly arm) and slices lazily in start
+order, so a row begun before the period still offers its in-period tail and a
+first fit stops the slicing. Consultations and webinars carry no
+`schedulingTimezone`, so they slice in the default `Asia/Kolkata`; the zone only
+sets the walk's granularity, not which blocks are found, because a block is
+checked against the merged availability index and may span a slice cut. A
+fall-back day's slice is 25 hours, which is why `MAX_CANDIDATE_STARTS_PER_ROW`
+is 50. The validator, the manual path and the grid already judged custom rows
+by containment or per atom, so they needed no change.
 
 A subscription is paced in fixed plan weeks (`subscriptionEntitlement` in
 `lib/booking/entitlement.ts`). Week k is `[day0 + 7k, day0 + 7k + 7)`, where
