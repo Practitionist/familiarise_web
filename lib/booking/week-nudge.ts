@@ -99,6 +99,9 @@ export function weekNudgeFor(
   );
   if (!(WEEK_NUDGE_DAYS as readonly number[]).includes(daysIn)) return null;
   if (planOnAuto && daysIn === 0) return null;
+  // Every ladder day starts at the same local hour, so one consultant's plans
+  // due today are all due in the same run and one daily batch carries them.
+  if (localHour(now, consultantZone) < LADDER_START_HOUR) return null;
   return {
     weekNumber: ordinal + 1,
     weekCount: count,

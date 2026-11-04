@@ -76,6 +76,14 @@ it("skips the first day for a plan scheduled with Auto, not the later ones", () 
   expect(day(3)).not.toBeNull();
 });
 
+it("starts every ladder day at 09:00, so one run batches the day's plans", () => {
+  // Day +1 (Tue 10 Mar) at 08:30 and 09:00 IST.
+  expect(weekNudgeFor(plan(delivered), at(WEEK_TWO, 24 + 8.5), TZ)).toBeNull();
+  expect(
+    weekNudgeFor(plan(delivered), at(WEEK_TWO, 24 + 9), TZ),
+  ).not.toBeNull();
+});
+
 it("anchors on the consultant's own zone", () => {
   // 09:00 IST on Mon 9 Mar is 03:30 UTC; a London consultant waits for 09:00 London.
   expect(

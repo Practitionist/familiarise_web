@@ -53,10 +53,12 @@ const delivered = [0, 2, 4].map((day) => {
   };
 });
 
-const sub = (id: string, consulteeName: string) => ({
+const sub = (id: string, consulteeName: string, startDayOffset = 0) => ({
   id,
   sessionsTotal: 72,
-  schedulingPeriodStartsAt: START,
+  schedulingPeriodStartsAt: new Date(
+    START.getTime() + startDayOffset * 24 * HOUR,
+  ),
   schedulingTimezone: "Asia/Kolkata",
   planEndsAt: null,
   requestedBy: { user: { name: consulteeName } },
@@ -191,4 +193,19 @@ describe("plans scheduled with Auto", () => {
       expect.objectContaining({ consulteeName: "Priya" }),
     ]);
   });
+});
+
+it("never sends a reminder at 08:00 that would use up the day's batch", async () => {
+  // Priya's plan is on day +1 of its week; Ravi's started a day later and is
+  // on day 0 (due from 09:00). Both go out together at 09:00 London.
+  mockPrisma.subscription.findMany.mockResolvedValue([
+    sub("sub-a", "Priya"),
+    sub("sub-b", "Ravi", 1),
+  ]);
+  expect((await runAt("2026-03-10T08:00:00.000Z")).nudged).toBe(0);
+  expect((await runAt("2026-03-10T09:00:00.000Z")).nudged).toBe(1);
+  expect(mockSendEmail.mock.calls[0][0].weeks).toEqual([
+    expect.objectContaining({ consulteeName: "Priya" }),
+    expect.objectContaining({ consulteeName: "Ravi" }),
+  ]);
 });
