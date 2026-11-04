@@ -387,6 +387,19 @@ export async function nudgeUnplacedPlanWeeks(limits: {
   maxRequests: number;
 }): Promise<{ nudged: number; errors: string[] }> {
   const errors: string[] = [];
+  // A failed read never throws into the job: the expiry stages after it run.
+  try {
+    return await runWeekNudges(limits, errors);
+  } catch (error) {
+    errors.push(`Week reminders stopped: ${error}`);
+    return { nudged: 0, errors };
+  }
+}
+
+async function runWeekNudges(
+  limits: { maxRequests: number },
+  errors: string[],
+): Promise<{ nudged: number; errors: string[] }> {
   const now = new Date();
   const budget =
     Math.min(

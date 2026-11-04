@@ -209,3 +209,14 @@ it("never sends a reminder at 08:00 that would use up the day's batch", async ()
     expect.objectContaining({ consulteeName: "Ravi" }),
   ]);
 });
+
+it("reports a failed read instead of throwing into the expiry job", async () => {
+  mockPrisma.notificationPreference.findMany.mockRejectedValue(
+    new Error("db down"),
+  );
+  const result = await runAt("2026-03-09T10:00:00.000Z");
+  expect(result.nudged).toBe(0);
+  expect(result.errors).toEqual([
+    expect.stringContaining("Week reminders stopped: Error: db down"),
+  ]);
+});
