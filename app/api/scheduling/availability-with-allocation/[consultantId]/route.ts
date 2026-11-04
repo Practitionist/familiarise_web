@@ -959,16 +959,8 @@ export async function GET(
           return false;
         }
 
-        // Defensive: Check duration is reasonable (<= 24 hours)
-        const durationHours =
-          (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-        if (durationHours > 24) {
-          console.warn(
-            `⚠️ Filtering out custom slot ${slot.id}: duration > 24 hours (${durationHours.toFixed(1)}h)`,
-          );
-          return false;
-        }
-
+        // No length cap: rows coalesce on save, so a custom row may span days;
+        // processCustomSlots clips it to the requested range.
         return true;
       })
       .map((slot) => ({

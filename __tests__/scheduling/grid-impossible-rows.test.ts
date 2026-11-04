@@ -7,7 +7,8 @@
  * session, a multi-year one, off-grid ones and a 10k-session series. The route
  * answers 200, paints off-grid time on whole atoms without double-painting,
  * bounds a multi-year row to the window, and reports the impossible rows once
- * per request instead of once per row.
+ * per request instead of once per row. A custom row longer than a day is not
+ * one of them: rows coalesce on save, so it is painted on every day it covers.
  */
 
 jest.mock("../../lib/prisma", () => ({
@@ -234,4 +235,70 @@ it("survives a 10k-session series overlapping the window", async () => {
   expectNoOverlap(cells);
   expect(cells.every((c) => c.bookingStatus !== "available")).toBe(true);
   expect(mockedReport).toHaveBeenCalledWith([], "availability-grid");
+}, 15_000);
+
+it("paints a coalesced multi-day custom row on every viewer day it covers", async () => {
+  // Fri 14 Aug 2026 18:00 to Mon 17 Aug 10:00 in Asia/Kolkata: 64 hours.
+  jest.setSystemTime(new Date("2026-08-08T00:00:00.000Z"));
+  mockedProfile.mockResolvedValue({
+    id: CONSULTANT_ID,
+    userId: "user-consultant",
+    deletedAt: null,
+    scheduleType: "CUSTOM",
+    availabilityWindowsWeekly: [],
+    availabilityWindowsCustom: [
+      {
+        id: "custom-weekend",
+        startsAt: at("2026-08-14T12:30:00.000Z"),
+        endsAt: at("2026-08-17T04:30:00.000Z"),
+      },
+    ],
+  });
+  mockedAppointments.mockResolvedValue([]);
+
+  // Thu 13 Aug 00:00 to Wed 19 Aug 00:00 IST: the row sits inside the range.
+  const res = await GET(
+    new NextRequest(
+      `${URL_BASE}?startDateInUtc=2026-08-12T18:30:00.000Z&endDateInUtc=2026-08-18T18:30:00.000Z&timezone=Asia/Kolkata`,
+    ),
+    { params },
+  );
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { data: Record<string, Cell[]> };
+  const cells = Object.values(body.data).flat();
+  expectNoOverlap(cells);
+  expect(cells.every((c) => c.bookingStatus === "available")).toBe(true);
+
+  // Each cell is filed under the IST day its own start falls on.
+  const istDay = (iso: string) =>
+    new Date(Date.parse(iso) + 330 * 60 * 1000).toISOString().slice(0, 10);
+  for (const [day, dayCells] of Object.entries(body.data)) {
+    for (const cell of dayCells) expect(istDay(cell.startsAt)).toBe(day);
+  }
+  const perDay = Object.fromEntries(
+    Object.entries(body.data).map(([day, dayCells]) => [day, dayCells.length]),
+  );
+  // Friday 18:00–24:00, all of Saturday and Sunday, Monday 00:00–10:00.
+  expect(perDay).toEqual({
+    "2026-08-14": 12,
+    "2026-08-15": 48,
+    "2026-08-16": 48,
+    "2026-08-17": 20,
+  });
+  const starts = cells.map((c) => c.startsAt).sort();
+  expect(starts[0]).toBe("2026-08-14T12:30:00.000Z");
+  expect(starts[starts.length - 1]).toBe("2026-08-17T04:00:00.000Z");
+
+  // A range that cuts through the row draws only its own day.
+  const saturday = await GET(
+    new NextRequest(
+      `${URL_BASE}?startDateInUtc=2026-08-14T18:30:00.000Z&endDateInUtc=2026-08-15T18:30:00.000Z&timezone=Asia/Kolkata`,
+    ),
+    { params },
+  );
+  const saturdayData = (
+    (await saturday.json()) as { data: Record<string, Cell[]> }
+  ).data;
+  expect(Object.keys(saturdayData)).toEqual(["2026-08-15"]);
+  expect(saturdayData["2026-08-15"]).toHaveLength(48);
 }, 15_000);

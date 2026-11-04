@@ -321,8 +321,10 @@ fit stops the slicing. Consultations and webinars carry no
 sets the walk's granularity, not which blocks are found, because a block is
 checked against the merged availability index and may span a slice cut. A
 fall-back day's slice is 25 hours, the longest day in every inhabited zone,
-which is why `MAX_CANDIDATE_STARTS_PER_ROW` is 50. The validator, the manual path and the grid already judged custom rows
-by containment or per atom, so they needed no change.
+which is why `MAX_CANDIDATE_STARTS_PER_ROW` is 50. The validator and the manual path judge custom rows by containment. The grid
+route keeps custom rows of any length (it used to drop rows over 24 hours);
+`processCustomSlots` clips each to the requested range and each atom is keyed
+by its own viewer day.
 
 A subscription is paced in fixed plan weeks (`subscriptionEntitlement` in
 `lib/booking/entitlement.ts`). Week k is `[day0 + 7k, day0 + 7k + 7)`, where
@@ -470,6 +472,9 @@ auto-mode allocation of a consultation or subscription, with `topUp` (and
 - **Partly booked windows offered as "Request".** `isBookableWindow` now requires
   `available`.
 - **`leadTimeFor`.** Replaced by `leadMsFor(purpose, { settled })`.
+- **Dropping custom rows longer than 24 hours from the grid.** The grid route
+  discarded them as unreasonable, so a coalesced multi-day row drew an empty
+  grid while the allocator placed sessions in it. The range clip bounds the work.
 - **Matching a custom row on its start day only.** The auto search used to offer
   a custom row on the UTC day its `startsAt` fell on (`matchCustomSlotToDay`) and
   walk at most 48 starts from there, so a multi-day row offered only its first
