@@ -36,8 +36,10 @@ import {
   applyRefundCascade,
   RefundGatewayError,
 } from "../../../lib/payments/operations/refund";
+import { readStuckOwedRefunds } from "../../../lib/backoffice/needs-human";
 import {
   driveRefundOwed,
+  failRefund,
   markerFromRow,
   MAX_REFUND_OWED_ATTEMPTS,
   REFUND_OWED_SELECT,
@@ -394,5 +396,75 @@ describe("earnings wait for a plan-end refund that is still owed", () => {
     const now = await statuses(s);
     expect(now.consultant.status).toBe("READY");
     expect(now.org.status).toBe("READY");
+  });
+
+  it("three ambiguous answers that reconcile fails spend the marker and list it for a human", async () => {
+    const s = await seedEndedPlan();
+    await settleWithFailingGatewayAndLetHoldsLapse(s);
+    const key = planEndRefundKey(s.subscriptionId, s.paymentId);
+    // The settlement's failed drive spent one attempt; start the loop from zero.
+    await prisma.payment.update({
+      where: { id: s.paymentId },
+      data: { refundOwedAttempts: 0, refundOwedNextAt: null },
+    });
+
+    for (let cycle = 0; cycle < MAX_REFUND_OWED_ATTEMPTS; cycle += 1) {
+      let reservationId = "";
+      refundDoor.refundBookingPayment.mockImplementationOnce(
+        async (args: { paymentId: string; amountPaise?: number }) => {
+          const row = await prisma.refund.create({
+            data: {
+              paymentId: args.paymentId,
+              amountPaise: BigInt(args.amountPaise ?? PRICE),
+              status: "PENDING",
+              refundId: `rfnd_pending_${randomUUID()}`,
+              dedupeKey: key,
+              paymentGateway: "RAZORPAY",
+            },
+          });
+          reservationId = row.id;
+          throw new RefundGatewayError(
+            "gateway timeout",
+            "GATEWAY_REFUND_FAILED",
+            row.id,
+          );
+        },
+      );
+      expect(await redrive(s.paymentId)).toMatchObject({ kind: "refunded" });
+      // Reconcile finds no such refund at the gateway and fails it.
+      await failRefund(reservationId, (tx) =>
+        tx.refund.updateMany({
+          where: { id: reservationId, status: "PENDING" },
+          data: { status: "FAILED", failedAt: new Date() },
+        }),
+      );
+      // The next drive frees the failed key, as the front door's replay check does.
+      await prisma.refund.updateMany({
+        where: { id: reservationId },
+        data: { dedupeKey: null },
+      });
+    }
+
+    const spent = await prisma.payment.findUniqueOrThrow({
+      where: { id: s.paymentId },
+      select: { refundOwedKey: true, refundOwedAttempts: true },
+    });
+    expect(spent).toEqual({
+      refundOwedKey: key,
+      refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS,
+    });
+    const queue = await readStuckOwedRefunds();
+    expect(queue.map((item) => item.paymentId)).toContain(s.paymentId);
+    const pages = await prisma.systemEvent.count({
+      where: {
+        message: { contains: `Refund owed on payment ${s.paymentId} failed` },
+      },
+    });
+    expect(pages).toBe(1);
+
+    await releaseEarningsFromHold();
+    const now = await statuses(s);
+    expect(now.consultant.status).toBe("PENDING");
+    expect(now.org.status).toBe("PENDING");
   });
 });

@@ -156,7 +156,7 @@ WHERE o.status = 'PENDING' AND o."holdUntil" <= now()
 ORDER BY "refundOwedAt" LIMIT 25;
 ```
 
-It releases on the next run after the marker clears. A marker still retrying (`refundOwedAttempts` under 3) clears itself when its refund goes out. A spent marker is in the ops queue ("Refunds the bookings owe"); refund it by hand through an ops refund door, which settles the marker. Never clear `refundOwedKey` by SQL to release earnings: the buyer is still owed the money.
+It releases on the next run after the marker clears. A marker still retrying (`refundOwedAttempts` under 3) is re-driven by `retry-auto-refunds` and clears when its refund goes out. Every confirmed failure counts toward the 3, including an ambiguous gateway answer that reconcile later fails, so a refund that never goes out reaches the ops queue. A spent marker is in the ops queue ("Refunds the bookings owe"); refund it by hand through an ops refund door, which settles the marker. Never clear `refundOwedKey` by SQL to release earnings: the buyer is still owed the money.
 
 A `PENDING` earning that is simply young is not held: `release-earnings` moves it to `READY` after its hold-until time (24 hours for a consultation, 48 for a webinar, 168 for a subscription, 24 for a class, plus 7 days for a new expert). **Verify:** the earning is `READY` and appears in the next payout batch.
 
