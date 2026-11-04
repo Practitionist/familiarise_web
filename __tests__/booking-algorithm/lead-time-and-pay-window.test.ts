@@ -22,6 +22,7 @@ import {
   payWindowEnd,
 } from "@/lib/payments/operations/approval-payment";
 import { bestBlockForSingleSession } from "@/lib/booking/allocation/search/blocks";
+import { customSpansInStartOrder } from "@/lib/booking/allocation/search/recurrence";
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { ScheduleType } from "@prisma/client";
 
@@ -132,7 +133,7 @@ describe("single-session search", () => {
       new Set(),
       new Date("2030-01-01T12:05:00Z"),
       [],
-      consultant.availabilityWindowsCustom,
+      customSpansInStartOrder(consultant.availabilityWindowsCustom),
     );
     expect(block?.[0].toISOString()).toBe("2030-01-01T12:30:00.000Z");
   });

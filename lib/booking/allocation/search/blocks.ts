@@ -17,6 +17,7 @@ import { weeklyRowIntervalsInRange } from "@/utils/schedule/weekly-projection";
 import {
   type AllocationWalkContext,
   type ProjectableWeeklyRow,
+  type RowSpan,
   DAY_MS,
 } from "@/lib/booking/allocation/search/constants";
 import {
@@ -165,7 +166,8 @@ export function bestBlockForSingleSession(
   bookedSlots: Set<string>,
   now: Date,
   sortedWeekly: ProjectableWeeklyRow[],
-  sortedCustom: ConsultantAllocationData["availabilityWindowsCustom"],
+  /** Custom rows as scheduling-zone day slices, in start order. */
+  customSpans: RowSpan[],
   schedulingTimezone?: string,
   preference?: AllocationPreference,
   walk?: AllocationWalkContext,
@@ -177,8 +179,8 @@ export function bestBlockForSingleSession(
   let bestBlock: Date[] | null = null;
   let bestScore = -1;
 
-  /** Row {start, endMs} pairs, in the order the search has always used them. */
-  const rowStarts: { start: Date; endMs: number }[] = [];
+  /** Row spans in walk order: week-major weekly occurrences, or custom slices by start. */
+  const rowStarts: RowSpan[] = [];
   if (consultant.scheduleType === ScheduleType.WEEKLY) {
     // Week-major, row-minor: each row's next `maxWeeksToSearch` occurrences
     // after now, projected per date so a DST change moves the instant, not the wall clock.
@@ -203,12 +205,7 @@ export function bestBlockForSingleSession(
       }
     }
   } else {
-    for (const slot of sortedCustom) {
-      rowStarts.push({
-        start: new Date(slot.startsAt),
-        endMs: new Date(slot.endsAt).getTime(),
-      });
-    }
+    rowStarts.push(...customSpans);
   }
 
   for (const { start: rowStart, endMs: rowEndMs } of rowStarts) {

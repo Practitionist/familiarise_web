@@ -1,11 +1,12 @@
 /**
  * #1194 — a truncated availability row must say so.
  *
- * `MAX_CANDIDATE_STARTS_PER_ROW = 48` bounds the 30-minute starts walked out of
- * one availability row. `rowEndMs` normally ends the walk first, but a row
- * longer than a day of cover still exits on the ceiling — and it used to do so
- * in complete silence, so the tail of that row was invisible to allocation and
- * the resulting SLOT_SHORTAGE was indistinguishable from a genuinely full
+ * `MAX_CANDIDATE_STARTS_PER_ROW = 50` bounds the 30-minute starts walked out of
+ * one availability row. `rowEndMs` normally ends the walk first, and a custom
+ * row is walked as scheduling-zone day slices that never exceed 25 hours. A
+ * weekly row longer than any day still exits on the ceiling — and it used to do
+ * so in complete silence, so the tail of that row was invisible to allocation
+ * and the resulting SLOT_SHORTAGE was indistinguishable from a genuinely full
  * calendar.
  */
 
@@ -87,7 +88,23 @@ function customRow(hours: number) {
   };
 }
 
-function consultationWithRow(hours: number) {
+/** A UTC WEEKLY row of `hours` (more than a day), starting Monday 00:00. */
+function longWeeklyRow(hours: number) {
+  return {
+    id: `weekly-${hours}h`,
+    timezone: "UTC",
+    localStartDay: "MONDAY",
+    localStartMinutes: 0,
+    localEndDay: "TUESDAY",
+    localEndMinutes: (hours - 24) * 60,
+  };
+}
+
+function consultationWithRow(
+  hours: number,
+  scheduleType: ScheduleType = ScheduleType.CUSTOM,
+) {
+  const weekly = scheduleType === ScheduleType.WEEKLY;
   return {
     id: "consult-1",
     consultationPlan: {
@@ -95,9 +112,9 @@ function consultationWithRow(hours: number) {
       durationInHours: 1,
       consultantProfile: {
         user: { id: "consultant-user-1", timezone: "UTC" },
-        scheduleType: ScheduleType.CUSTOM,
-        availabilityWindowsWeekly: [],
-        availabilityWindowsCustom: [customRow(hours)],
+        scheduleType,
+        availabilityWindowsWeekly: weekly ? [longWeeklyRow(hours)] : [],
+        availabilityWindowsCustom: weekly ? [] : [customRow(hours)],
       },
     },
     requestedBy: { user: { id: "consultee-1" } },
@@ -179,9 +196,11 @@ const truncationWarnings = () =>
 
 describe("#1194 — the candidate-start ceiling is no longer silent", () => {
   it("warns, with consultant and event ids, when the cap ends the walk", async () => {
-    // 48 hours of cover: the walk consumes its 48 starts and the 49th is still
-    // inside the row, so the ceiling — not the row — ended it.
-    mockTx.consultation.findUnique.mockResolvedValue(consultationWithRow(48));
+    // A 26-hour weekly row: the walk consumes its 50 starts and the 51st is
+    // still inside the row, so the ceiling — not the row — ended it.
+    mockTx.consultation.findUnique.mockResolvedValue(
+      consultationWithRow(26, ScheduleType.WEEKLY),
+    );
 
     const result = await allocate({
       eventType: "consultation",
@@ -193,13 +212,13 @@ describe("#1194 — the candidate-start ceiling is no longer silent", () => {
     const warnings = truncationWarnings();
     expect(warnings.length).toBeGreaterThan(0);
     expect(warnings[0][1]).toMatchObject({
-      cap: 48,
+      cap: 50,
       consultantUserId: "consultant-user-1",
       consultantProfileId: "consultant-profile-1",
       eventType: "consultation",
       eventId: "consult-1",
       rowStart: "2025-01-06T00:00:00.000Z",
-      rowEnd: "2025-01-08T00:00:00.000Z",
+      rowEnd: "2025-01-07T02:00:00.000Z",
     });
 
     expect(addBreadcrumb).toHaveBeenCalledWith(
@@ -226,10 +245,12 @@ describe("#1194 — the candidate-start ceiling is no longer silent", () => {
     expect(addBreadcrumb).not.toHaveBeenCalled();
   });
 
-  it("stays silent when the row ends exactly at the 48th start", async () => {
-    // 24 hours = exactly MAX_CANDIDATE_STARTS_PER_ROW starts. Nothing was
+  it("stays silent when the row ends exactly at the 50th start", async () => {
+    // 25 hours = exactly MAX_CANDIDATE_STARTS_PER_ROW starts. Nothing was
     // truncated, so reporting one would be a false positive.
-    mockTx.consultation.findUnique.mockResolvedValue(consultationWithRow(24));
+    mockTx.consultation.findUnique.mockResolvedValue(
+      consultationWithRow(25, ScheduleType.WEEKLY),
+    );
 
     const result = await allocate({
       eventType: "consultation",
@@ -239,5 +260,19 @@ describe("#1194 — the candidate-start ceiling is no longer silent", () => {
 
     expect(result.success).toBe(true);
     expect(truncationWarnings()).toHaveLength(0);
+  });
+
+  it("stays silent for a 48-hour custom row, which is walked one day at a time", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(consultationWithRow(48));
+
+    const result = await allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "auto",
+    });
+
+    expect(result.success).toBe(true);
+    expect(truncationWarnings()).toHaveLength(0);
+    expect(addBreadcrumb).not.toHaveBeenCalled();
   });
 });

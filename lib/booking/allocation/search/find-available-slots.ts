@@ -47,13 +47,14 @@ import {
   SearchTimeoutError,
 } from "@/utils/scheduling-engine/errors";
 import {
-  matchCustomSlotToDay,
+  customSpansInStartOrder,
   sortWeeklyByNextOccurrence,
 } from "@/lib/booking/allocation/search/recurrence";
 import {
   DAY_MS,
   ALLOCATOR_SEARCH_TIME_BUDGET_MS,
   type AllocationWalkContext,
+  type RowSpan,
 } from "@/lib/booking/allocation/search/constants";
 import {
   projectableWeeklyRows,
@@ -327,11 +328,13 @@ export async function findAvailableSlots(
     consultant.scheduleType === ScheduleType.WEEKLY
       ? sortWeeklyByNextOccurrence(projectableWeekly, now)
       : [];
-  const sortedCustom =
+  // A custom row is an absolute range that may span days: the walk sees one
+  // slice per scheduling-zone day, so every day it covers is a candidate.
+  const customSpans =
     consultant.scheduleType === ScheduleType.CUSTOM
-      ? [...consultant.availabilityWindowsCustom].sort(
-          (a, b) =>
-            new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+      ? customSpansInStartOrder(
+          consultant.availabilityWindowsCustom,
+          config.schedulingTimezone,
         )
       : [];
 
@@ -349,7 +352,7 @@ export async function findAvailableSlots(
       bookedSlots,
       now,
       sortedWeekly,
-      sortedCustom,
+      customSpans,
       config.schedulingTimezone,
       preference,
       walk,
@@ -437,20 +440,23 @@ export async function findAvailableSlots(
       ? MAX_CLASS_SESSIONS_PER_DAY
       : MAX_SUBSCRIPTION_SESSIONS_PER_DAY;
 
-  // Weekly occurrences over the whole period, projected once and filed by the
-  // UTC day they start on, in `sortedWeekly` order.
-  const weeklyStartsByUtcDay = new Map<
-    number,
-    { start: Date; endMs: number }[]
-  >();
+  // Availability over the whole period, projected once and filed by the UTC day
+  // each span starts on: weekly occurrences in `sortedWeekly` order, custom rows
+  // as one slice per scheduling-zone day in start order.
+  const periodStart = new Date(
+    Date.UTC(
+      startDate.getUTCFullYear(),
+      startDate.getUTCMonth(),
+      startDate.getUTCDate(),
+    ),
+  );
+  const rowSpansByUtcDay = new Map<number, RowSpan[]>();
+  const fileSpan = (dayMs: number, span: RowSpan) => {
+    const spans = rowSpansByUtcDay.get(dayMs) ?? [];
+    spans.push(span);
+    rowSpansByUtcDay.set(dayMs, spans);
+  };
   if (consultant.scheduleType === ScheduleType.WEEKLY) {
-    const periodStart = new Date(
-      Date.UTC(
-        startDate.getUTCFullYear(),
-        startDate.getUTCMonth(),
-        startDate.getUTCDate(),
-      ),
-    );
     const periodEnd = new Date(endDate.getTime() + DAY_MS);
     for (const slot of sortedWeekly) {
       for (const occurrence of weeklyRowIntervalsInRange(
@@ -458,35 +464,34 @@ export async function findAvailableSlots(
         periodStart,
         periodEnd,
       )) {
-        const dayMs = Math.floor(occurrence.start.getTime() / DAY_MS) * DAY_MS;
-        const starts = weeklyStartsByUtcDay.get(dayMs) ?? [];
-        starts.push({
+        fileSpan(Math.floor(occurrence.start.getTime() / DAY_MS) * DAY_MS, {
           start: occurrence.start,
           endMs: occurrence.end.getTime(),
         });
-        weeklyStartsByUtcDay.set(dayMs, starts);
       }
     }
+  } else {
+    // A slice that began before the first walked day still has its in-period
+    // tail offered on that day.
+    customSpans
+      .filter((span) => span.endMs > startDate.getTime())
+      .forEach((span) =>
+        fileSpan(
+          Math.max(
+            Math.floor(span.start.getTime() / DAY_MS) * DAY_MS,
+            periodStart.getTime(),
+          ),
+          span,
+        ),
+      );
   }
 
   /**
-   * Availability rows that start on this UTC day, as {start, endMs} pairs.
-   * #1194 — the end lets candidateStartsInRow bound its walk to the row's
-   * own time range instead of a blind 48-step cap that adjacent rows can
-   * trick into walking past.
+   * Availability spans that start on this UTC day. #1194 — the end lets
+   * candidateStartsInRow bound its walk to the span's own time range.
    */
-  const rowStartsForDay = (
-    currentDay: Date,
-  ): { start: Date; endMs: number }[] =>
-    consultant.scheduleType === ScheduleType.WEEKLY
-      ? (weeklyStartsByUtcDay.get(currentDay.getTime()) ?? [])
-      : sortedCustom
-          .map((slot) => {
-            const start = matchCustomSlotToDay(slot.startsAt, currentDay);
-            if (!start) return null;
-            return { start, endMs: new Date(slot.endsAt).getTime() };
-          })
-          .filter((r): r is { start: Date; endMs: number } => r !== null);
+  const rowStartsForDay = (currentDay: Date): RowSpan[] =>
+    rowSpansByUtcDay.get(currentDay.getTime()) ?? [];
 
   /**
    * Whether the per-day cap, and for a class the calendar-week cap, still

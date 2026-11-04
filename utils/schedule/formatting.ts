@@ -275,7 +275,7 @@ function formatWeeklySlot(
  *
  * The start is snapped onto the booking grid and the end carried by the same
  * shift (`snapInstantsToSchedulingGrid`): a custom row hands the allocator its
- * raw `startsAt` via `matchCustomSlotToDay`, so an off-grid start mints off-grid
+ * raw `startsAt` (`customRowDaySlices`), so an off-grid start mints off-grid
  * candidate starts exactly as a weekly one does, and the server refuses the row
  * with GRID.
  */

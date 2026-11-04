@@ -97,10 +97,10 @@ export function customAvailabilityIndex(
  * with seven hours free. Walking the row restores the other fifteen starts.
  *
  * #1194 — the walk is bounded by the ROW'S OWN END (passed by the caller),
- * not just by isWithinAvailability (which adjacent rows keep answering true)
- * nor by the old hard MAX_CANDIDATE_STARTS_PER_ROW=48 ceiling (which
- * silently truncated legitimate long rows). Callers that cannot supply a
- * row end still get the 48-step safety net.
+ * not just by isWithinAvailability (which adjacent rows keep answering true).
+ * MAX_CANDIDATE_STARTS_PER_ROW stays as a safety net: custom rows arrive as
+ * day slices and never reach it, so hitting it means a weekly row longer than
+ * any calendar day.
  *
  * The anchor is snapped UP to the booking grid (buyer paths refuse off-grid
  * starts), so an off-grid legacy row 10:15-12:00 yields 10:30, 11:00, 11:30:
@@ -112,7 +112,7 @@ export function candidateStartsInRow(
   /**
    * Epoch ms of this row's own end; the walk stops here (#1194). Required —
    * every live caller has the row it is walking, and the optional form was
-   * how the 48-step ceiling came to silently truncate a legitimate row.
+   * how the ceiling came to silently truncate a legitimate row.
    */
   rowEndMs: number,
   walk?: AllocationWalkContext,
@@ -143,7 +143,7 @@ export function candidateStartsInRow(
   // day of cover was truncated and its tail is invisible to allocation. The
   // walk used to exit here in silence, so an unallocatable long row looked
   // like "no slots available". Probing the NEXT candidate keeps a row that
-  // simply ends at the 48th start from reporting a truncation it never had.
+  // simply ends at the last allowed start from reporting a truncation it never had.
   if (!boundedByRow) {
     const next = new Date(
       anchorMs + MAX_CANDIDATE_STARTS_PER_ROW * SCHEDULING_INTERVAL_MS,
