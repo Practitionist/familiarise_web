@@ -4077,6 +4077,9 @@ model SubscriptionPlan {
   subtitle         String?  @db.VarChar(160)
   description      String?  @db.Text
   durationInMonths Int      @default(1)
+  /// Plan length in weeks (1..52) for plans created with the weeks picker;
+  /// null = durationInMonths × 4 weeks. CHECK lives in prisma/sql.
+  durationInWeeks  Int?
   price            BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency    Currency @default(INR)
 
@@ -4200,6 +4203,23 @@ model Subscription {
   /// 7 days later. CHECK 0..2 lives in prisma/sql.
   sessionsReturned Int @default(0)
 
+  /// Weekly cap and session length frozen at purchase; plan edits never move
+  /// them. Null = read the plan (rows sold before the freeze).
+  sessionsPerWeek Int?
+  sessionMinutes  Int?
+
+  /// Sessions removed from the plan by a support partial refund; the
+  /// schedulable total is sessionsTotal − sessionsRefunded. CHECK in prisma/sql.
+  sessionsRefunded Int @default(0)
+
+  /// Roll-forward fair rotation: the last time the Regular-time job filled it.
+  lastRolledAt DateTime? @db.Timestamptz
+  /// Set when the roll-forward pauses after 3 plan weeks with nothing placed.
+  rollPausedAt DateTime? @db.Timestamptz
+
+  regularTimes  RegularTime[]
+  planEndChoice PlanEndChoice?
+
   appointment               Appointment?
   convertedFromTrial        Trial?
   // #1743 — nullable-unique continuity link for same-plan re-purchase renewals.
@@ -4223,6 +4243,59 @@ model Subscription {
   @@index([cancelledAt])
   // Inbox tab counts filter by status + order by requestedAt across plans.
   @@index([status, requestedAt])
+  // Plan-end settlement keyset filters on status and walks planEndsAt.
+  @@index([status, planEndsAt])
+}
+
+/// One weekly slot of a 1:1 plan's Regular time (weekday + local start in
+/// `timezone`). An edit closes the live rows (validUntil) and inserts new ones.
+/// CHECK ranges and the one-live-slot partial unique live in prisma/sql.
+model RegularTime {
+  id                String       @id @default(cuid())
+  subscriptionId    String
+  subscription      Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  /// ISO weekday 1..7 in `timezone`.
+  weekday           Int
+  /// Minutes after local midnight, 0..1439.
+  localStartMinutes Int
+  /// The subscription's schedulingTimezone when the row was set.
+  timezone          String
+  /// First plan-week start this row applies to.
+  validFrom         DateTime     @db.Timestamptz
+  /// Set when a newer Regular time supersedes this row.
+  validUntil        DateTime?    @db.Timestamptz
+  createdByUserId   String
+  createdAt         DateTime     @default(now()) @db.Timestamptz
+
+  @@index([subscriptionId, validUntil])
+}
+
+enum PlanEndChoiceStatus {
+  OFFERED
+  EXTENDED
+  REFUNDED
+  EXPIRED
+  EXPERT_DECLINED
+}
+
+/// The learner's plan-end choice between extra weeks and a refund of unused
+/// sessions. One per subscription; shape CHECKs live in prisma/sql.
+model PlanEndChoice {
+  id                 String              @id @default(cuid())
+  subscriptionId     String              @unique
+  subscription       Subscription        @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  status             PlanEndChoiceStatus @default(OFFERED)
+  unusedAtOffer      Int
+  /// Null = refund only.
+  extraWeeksOffered  Int?
+  offeredAt          DateTime            @db.Timestamptz
+  deadline           DateTime            @db.Timestamptz
+  decidedAt          DateTime?           @db.Timestamptz
+  decidedByUserId    String?
+  /// The plan end before the extension; restored on EXPERT_DECLINED.
+  previousPlanEndsAt DateTime?           @db.Timestamptz
+
+  @@index([status, deadline])
 }
 
 enum AppointmentStatus {
