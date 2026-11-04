@@ -20,6 +20,7 @@ import {
   type RowSpan,
   DAY_MS,
 } from "@/lib/booking/allocation/search/constants";
+import { customSpansInStartOrder } from "@/lib/booking/allocation/search/recurrence";
 import {
   isWithinAvailability,
   candidateStartsInRow,
@@ -166,8 +167,7 @@ export function bestBlockForSingleSession(
   bookedSlots: Set<string>,
   now: Date,
   sortedWeekly: ProjectableWeeklyRow[],
-  /** Custom rows as scheduling-zone day slices, in start order. */
-  customSpans: RowSpan[],
+  customRows: ConsultantAllocationData["availabilityWindowsCustom"],
   schedulingTimezone?: string,
   preference?: AllocationPreference,
   walk?: AllocationWalkContext,
@@ -205,7 +205,13 @@ export function bestBlockForSingleSession(
       }
     }
   } else {
-    rowStarts.push(...customSpans);
+    // Custom rows as scheduling-zone day slices in start order.
+    rowStarts.push(
+      ...customSpansInStartOrder(customRows, schedulingTimezone, {
+        startMs: now.getTime(),
+        endMs: Number.POSITIVE_INFINITY,
+      }),
+    );
   }
 
   for (const { start: rowStart, endMs: rowEndMs } of rowStarts) {

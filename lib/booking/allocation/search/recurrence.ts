@@ -2,7 +2,7 @@
 
 import { weeklyRowIntervalsInRange } from "@/utils/schedule/weekly-projection";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
-import { dayRangeBounds } from "@/lib/time/grid-zone";
+import { dayStartInstant } from "@/lib/time/grid-zone";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import {
   type ProjectableWeeklyRow,
@@ -41,35 +41,63 @@ export function customRowDaySlices(
 ): RowSpan[] {
   const startMs = new Date(row.startsAt).getTime();
   const endMs = new Date(row.endsAt).getTime();
-  const slices: RowSpan[] = [];
-  const first = ScheduleCalculationService.wallClock(
+  if (!(endMs > startMs)) return [];
+  const firstDay = ScheduleCalculationService.dayKey(
     new Date(startMs),
     timeZone,
   );
-  for (let offset = 0; ; offset++) {
-    // A local-noon date names the calendar day; `dayRangeBounds` reads only its fields.
-    const day = new Date(first.year, first.month - 1, first.day + offset, 12);
-    const { start, end } = dayRangeBounds(day, day, timeZone);
-    const dayStartMs = onLattice(start.getTime());
-    if (!(dayStartMs < endMs)) break;
-    const sliceStart = Math.max(startMs, dayStartMs);
-    const sliceEnd = Math.min(endMs, onLattice(end.getTime()));
+  // A row inside one zone day is its own slice; the cut search is skipped.
+  if (
+    firstDay ===
+    ScheduleCalculationService.dayKey(new Date(endMs - 1), timeZone)
+  ) {
+    return [{ start: new Date(startMs), endMs }];
+  }
+  const [year, month, day] = firstDay.split("-").map(Number);
+  // A local-noon date names the calendar day; `dayStartInstant` reads only its
+  // fields. Each day's exclusive end is the next day's start, carried forward.
+  const dayStartMs = (offset: number) =>
+    onLattice(
+      dayStartInstant(
+        new Date(year, month - 1, day + offset, 12),
+        timeZone,
+      ).getTime(),
+    );
+  const slices: RowSpan[] = [];
+  let cutMs = dayStartMs(0);
+  for (let offset = 1; cutMs < endMs; offset++) {
+    const nextCutMs = dayStartMs(offset);
+    if (!(nextCutMs > cutMs)) break;
+    const sliceStart = Math.max(startMs, cutMs);
+    const sliceEnd = Math.min(endMs, nextCutMs);
     if (sliceEnd > sliceStart) {
       slices.push({ start: new Date(sliceStart), endMs: sliceEnd });
     }
+    cutMs = nextCutMs;
   }
   return slices;
 }
 
 /**
- * Every custom row's scheduling-zone day slices, ordered by start, so a long
- * row's later days interleave with the rows that start inside it.
+ * The day slices of every custom row that overlaps `[window.startMs,
+ * window.endMs)`, each row clipped to the window first, ordered by start so a
+ * long row's later days interleave with the rows that start inside it.
  */
 export function customSpansInStartOrder(
   rows: readonly { startsAt: Date; endsAt: Date }[],
-  timeZone?: string,
+  timeZone: string | undefined,
+  window: { startMs: number; endMs: number },
 ): RowSpan[] {
   return rows
-    .flatMap((row) => customRowDaySlices(row, timeZone))
+    .flatMap((row) => {
+      const startMs = Math.max(new Date(row.startsAt).getTime(), window.startMs);
+      const endMs = Math.min(new Date(row.endsAt).getTime(), window.endMs);
+      return endMs > startMs
+        ? customRowDaySlices(
+            { startsAt: new Date(startMs), endsAt: new Date(endMs) },
+            timeZone,
+          )
+        : [];
+    })
     .sort((a, b) => a.start.getTime() - b.start.getTime());
 }

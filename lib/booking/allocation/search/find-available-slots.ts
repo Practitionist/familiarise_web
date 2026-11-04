@@ -328,15 +328,6 @@ export async function findAvailableSlots(
     consultant.scheduleType === ScheduleType.WEEKLY
       ? sortWeeklyByNextOccurrence(projectableWeekly, now)
       : [];
-  // A custom row is an absolute range that may span days: the walk sees one
-  // slice per scheduling-zone day, so every day it covers is a candidate.
-  const customSpans =
-    consultant.scheduleType === ScheduleType.CUSTOM
-      ? customSpansInStartOrder(
-          consultant.availabilityWindowsCustom,
-          config.schedulingTimezone,
-        )
-      : [];
 
   // #1065 — the preference's ceiling. Zero when nothing was asked for, which
   // makes every "is this candidate perfect?" test below true on the first
@@ -352,7 +343,7 @@ export async function findAvailableSlots(
       bookedSlots,
       now,
       sortedWeekly,
-      customSpans,
+      consultant.availabilityWindowsCustom,
       config.schedulingTimezone,
       preference,
       walk,
@@ -471,19 +462,16 @@ export async function findAvailableSlots(
       }
     }
   } else {
-    // A slice that began before the first walked day still has its in-period
-    // tail offered on that day.
-    customSpans
-      .filter((span) => span.endMs > startDate.getTime())
-      .forEach((span) =>
-        fileSpan(
-          Math.max(
-            Math.floor(span.start.getTime() / DAY_MS) * DAY_MS,
-            periodStart.getTime(),
-          ),
-          span,
-        ),
-      );
+    // A custom row is an absolute range that may span days: clipped to the
+    // period, it is walked as one slice per scheduling-zone day, so every day
+    // it covers is a candidate, including the tail of a row begun earlier.
+    for (const span of customSpansInStartOrder(
+      consultant.availabilityWindowsCustom,
+      config.schedulingTimezone,
+      { startMs: startDate.getTime(), endMs: endDate.getTime() },
+    )) {
+      fileSpan(Math.floor(span.start.getTime() / DAY_MS) * DAY_MS, span);
+    }
   }
 
   /**
