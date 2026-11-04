@@ -4,7 +4,7 @@ type: tutorial
 band: index
 audience: sde2
 status: live
-last-reviewed: 2026-10-17
+last-reviewed: 2026-11-04
 ---
 
 # The Booking & Money Machinery — Visual Guide, Organizational Scoping & Worked Permutations
@@ -279,7 +279,7 @@ The sponsored-rail permutations (a licensed-seat programme on the `INVOICE` rail
 
 ### Permutation 8: Payout Pipeline, TDS Section 194-O Withholding, & MSME 43B(h) Deadlines
 
-Once `holdUntil` passes (`24h` Consultation and Class, `48h` Webinar, `168h` Subscription; anchored on the later of capture and the last live session end) and no live dispute or unsettled session void exists, `release-earnings` flips `ConsultantEarnings` and `OrganizationEarnings` from `PENDING → READY`.
+Once `holdUntil` passes (`24h` Consultation and Class, `48h` Webinar, `168h` Subscription; anchored on the later of capture and the last live session end) and no live dispute, unsettled session void, pending refund or owed-refund marker (`Payment.refundOwedKey`) exists, `release-earnings` flips `ConsultantEarnings` and `OrganizationEarnings` from `PENDING → READY`.
 
 ```mermaid
 sequenceDiagram

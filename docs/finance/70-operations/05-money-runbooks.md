@@ -4,7 +4,7 @@ type: how-to
 band: 70-operations
 audience: sde3
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-04
 ---
 
 # Money runbooks
@@ -135,6 +135,20 @@ ORDER BY h."placedAt" DESC LIMIT 25;
 - `OVERAGE`: released when the member overage is paid or settled to the organisation (see runbook 6).
 - `SUPPORT_CASE`: released by the support case that placed it, through the case doors, which need a fresh step-up, the maintenance gate and an ops-log row.
 - `OPERATOR` and `MODERATION`: released from the Earnings section ("Release"). The door refuses while the payment has an open refund or dispute, and a hold on an earning that is not `PENDING`, `PENDING_TRUST` or `READY` is refused.
+
+A `PENDING` earning past its hold-until time whose payment still owes a refund is held by the owed marker, not by an `EarningsHold` row. Find it with:
+
+```sql
+SELECT e.id, e.status, e."holdUntil", p.id AS payment, p."refundOwedKey",
+       p."refundOwedAttempts", p."refundOwedAt"
+FROM "ConsultantEarnings" e
+JOIN "Payment" p ON p.id = e."paymentId"
+WHERE e.status = 'PENDING' AND e."holdUntil" <= now()
+  AND p."refundOwedKey" IS NOT NULL
+ORDER BY p."refundOwedAt" LIMIT 25;
+```
+
+It releases on the next run after the marker clears. A marker still retrying (`refundOwedAttempts` under 3) clears itself when its refund goes out. A spent marker is in the ops queue ("Refunds the bookings owe"); refund it by hand through an ops refund door, which settles the marker. Never clear `refundOwedKey` by SQL to release earnings: the buyer is still owed the money.
 
 A `PENDING` earning that is simply young is not held: `release-earnings` moves it to `READY` after its hold-until time (24 hours for a consultation, 48 for a webinar, 168 for a subscription, 24 for a class, plus 7 days for a new expert). **Verify:** the earning is `READY` and appears in the next payout batch.
 
