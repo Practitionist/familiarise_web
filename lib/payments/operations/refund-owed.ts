@@ -58,6 +58,50 @@ const CLEARED_MARKER = {
   refundOwedNextAt: null,
 } as const;
 
+/**
+ * A refund that settles under its marker's own key clears the marker in the
+ * settling transaction, by CAS on that key, so the payment's earnings hold lifts.
+ */
+export async function clearOwedMarkerSettledBy(
+  tx: Pick<Tx, "payment">,
+  paymentId: string,
+  dedupeKey: string | null,
+): Promise<void> {
+  if (!dedupeKey) return;
+  await tx.payment.updateMany({
+    where: { id: paymentId, refundOwedKey: dedupeKey },
+    data: CLEARED_MARKER,
+  });
+}
+
+/** The refusal a hand refund gets when the payment's owed refund already went out. */
+function owedAlreadySent(paymentId: string, key: string) {
+  return new RefundValidationError(
+    "This owed refund already went out, so nothing is owed on this payment any more. Check the refund history; to refund more, submit the refund again.",
+    "OWED_REFUND_ALREADY_SENT",
+    { paymentId, key },
+  );
+}
+
+/**
+ * Before an operator's refund opens its transaction, given the marker key it
+ * read: when that owed refund already succeeded, clears the marker and refuses,
+ * so the hand refund never pays the same money twice.
+ */
+export async function refuseIfOwedAlreadySent(
+  paymentId: string,
+  key: string | null | undefined,
+): Promise<void> {
+  if (!key) return;
+  const own = await prisma.refund.findUnique({
+    where: { dedupeKey: key },
+    select: { status: true },
+  });
+  if (own?.status !== RefundStatus.SUCCEEDED) return;
+  await clearOwedMarkerSettledBy(prisma, paymentId, key);
+  throw owedAlreadySent(paymentId, key);
+}
+
 /** What an operator's hand refund did to the owed refund, as its Refund row's metadata records it. */
 export const handSettledOwedSchema = z.object({
   key: z.string(),
@@ -88,7 +132,7 @@ const rupees = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
  * refund's own transaction and by CAS on the marker key and its owed amount:
  * one that covers what is owed clears the marker, a smaller one reduces it and
  * leaves its attempts and backoff alone. Refused while the marker's own refund
- * is in flight; a marker whose own refund already moved is just cleared.
+ * is in flight, and once it has already gone out.
  */
 export async function settleOwedByHand(
   tx: Pick<Tx, "payment" | "refund">,
@@ -120,10 +164,9 @@ export async function settleOwedByHand(
   const stamped =
     row.refundOwedPaise === null ? null : Number(row.refundOwedPaise);
   const where = { id: paymentId, refundOwedKey: key, refundOwedPaise: stamped };
-  if (own?.status === RefundStatus.SUCCEEDED) {
-    await tx.payment.updateMany({ where, data: CLEARED_MARKER });
-    return null;
-  }
+  // The pre-check clears it; one that succeeded since is still never paid twice.
+  if (own?.status === RefundStatus.SUCCEEDED)
+    throw owedAlreadySent(paymentId, key);
   if (cover.kind === "credits-part") {
     throw new RefundValidationError(
       "This payment still owes its whole credit restoration. Return every remaining session, or let the owed restoration run.",
@@ -756,7 +799,7 @@ export function stampRefundsOwed(
 }
 
 export type RefundOwedOutcome =
-  /** Money moved now; the marker is cleared unless the gateway is still settling. */
+  /** Money moved now, or the gateway is still settling it (a PENDING refund); the marker clears once it settles. */
   | { kind: "refunded"; refund: DrivenRefund }
   /** An earlier drive under this key already refunded it. */
   | { kind: "replayed"; refund: DrivenRefund }
@@ -815,6 +858,10 @@ export async function driveRefundOwed(
       if (error.code === "OWED_MARKER_SETTLED") return { kind: "settled" };
       if (error.code === "OWED_MARKER_CHANGED") return { kind: "blocked" };
     }
+    // An ambiguous gateway answer left its reservation PENDING: reconcile
+    // settles it by lookup, so the drive spends no attempt on it.
+    const inFlight = await pendingReservation(error);
+    if (inFlight) return { kind: "refunded", refund: inFlight };
     // The gateway has no such payment: retrying only adds FAILED refund rows.
     const permanent =
       error instanceof RefundGatewayError &&
@@ -822,6 +869,25 @@ export async function driveRefundOwed(
     const stuck = await countFailedAttempt(marker, error, permanent);
     return { kind: "failed", error, stuck, permanent };
   }
+}
+
+/** The refund a gateway error left PENDING for reconcile, or null when it settled or was refused. */
+async function pendingReservation(
+  error: unknown,
+): Promise<DrivenRefund | null> {
+  if (!(error instanceof RefundGatewayError) || !error.refundRowId) return null;
+  const row = await prisma.refund
+    .findUnique({
+      where: { id: error.refundRowId },
+      select: { id: true, amountPaise: true, status: true },
+    })
+    .catch(() => null);
+  if (row?.status !== RefundStatus.PENDING) return null;
+  return {
+    refundId: row.id,
+    amountRefundedPaise: Number(row.amountPaise),
+    status: "PENDING",
+  };
 }
 
 /**

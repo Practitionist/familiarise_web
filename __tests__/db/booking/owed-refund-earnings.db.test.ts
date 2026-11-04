@@ -4,7 +4,9 @@
  * marker in one commit, the gateway keeps failing, and once the holds have run
  * out neither the consultant nor the host-organisation earning is released
  * until the marker clears (a successful re-drive, or support settling it by
- * hand after the drive's attempts are spent).
+ * hand after the drive's attempts are spent). An ambiguous gateway answer
+ * spends no attempt, the reconciled refund clears its own marker, and a hand
+ * refund after the owed refund went out is refused rather than paid twice.
  */
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
@@ -29,12 +31,17 @@ jest.mock("../../../lib/novu/stage-then-attempt", () => ({
   flushNotificationsAfter: jest.fn(async () => undefined),
 }));
 
-import { RefundGatewayError } from "../../../lib/payments/operations/refund";
+import { Prisma } from "@prisma/client";
+import {
+  applyRefundCascade,
+  RefundGatewayError,
+} from "../../../lib/payments/operations/refund";
 import {
   driveRefundOwed,
   markerFromRow,
   MAX_REFUND_OWED_ATTEMPTS,
   REFUND_OWED_SELECT,
+  refuseIfOwedAlreadySent,
   settleOwedByHand,
 } from "../../../lib/payments/operations/refund-owed";
 import {
@@ -271,6 +278,120 @@ describe("earnings wait for a plan-end refund that is still owed", () => {
     );
     await releaseEarningsFromHold();
     now = await statuses(s);
+    expect(now.consultant.status).toBe("READY");
+    expect(now.org.status).toBe("READY");
+  });
+
+  it("an ambiguous gateway answer spends no attempt, and reconciling its refund clears the marker and releases both arms", async () => {
+    const s = await seedEndedPlan();
+    await settleWithFailingGatewayAndLetHoldsLapse(s);
+    expect(await redrive(s.paymentId)).toMatchObject({ kind: "failed" });
+    const key = planEndRefundKey(s.subscriptionId, s.paymentId);
+
+    // The last attempt's gateway call times out: its reservation stays PENDING.
+    let reservationId = "";
+    refundDoor.refundBookingPayment.mockImplementationOnce(
+      async (args: { paymentId: string; amountPaise?: number }) => {
+        const row = await prisma.refund.create({
+          data: {
+            paymentId: args.paymentId,
+            amountPaise: BigInt(args.amountPaise ?? PRICE),
+            status: "PENDING",
+            refundId: `rfnd_pending_${randomUUID()}`,
+            dedupeKey: key,
+            paymentGateway: "RAZORPAY",
+          },
+        });
+        reservationId = row.id;
+        throw new RefundGatewayError(
+          "gateway timeout",
+          "GATEWAY_REFUND_FAILED",
+          row.id,
+        );
+      },
+    );
+    expect(await redrive(s.paymentId)).toMatchObject({
+      kind: "refunded",
+      refund: { status: "PENDING" },
+    });
+    const kept = await prisma.payment.findUniqueOrThrow({
+      where: { id: s.paymentId },
+      select: { refundOwedKey: true, refundOwedAttempts: true },
+    });
+    expect(kept).toEqual({
+      refundOwedKey: key,
+      refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS - 1,
+    });
+
+    // Reconcile finds the refund went out and settles it, as its sweep does.
+    await prisma.$transaction(
+      async (tx) => {
+        await tx.refund.updateMany({
+          where: { id: reservationId, status: "PENDING" },
+          data: { status: "SUCCEEDED" },
+        });
+        await applyRefundCascade(tx, {
+          paymentId: s.paymentId,
+          refundId: reservationId,
+          amountPaise: PRICE / 4,
+          reason: "Gateway refund reconciled",
+          initiatedByUserId: null,
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    expect(
+      (
+        await prisma.payment.findUniqueOrThrow({
+          where: { id: s.paymentId },
+          select: { refundOwedKey: true },
+        })
+      ).refundOwedKey,
+    ).toBeNull();
+
+    await releaseEarningsFromHold();
+    const now = await statuses(s);
+    expect(now.consultant.status).toBe("READY");
+    expect(now.org.status).toBe("READY");
+  });
+
+  it("a hand refund after the owed refund went out is refused, and the stale marker clears so the earnings release", async () => {
+    const s = await seedEndedPlan();
+    await settleWithFailingGatewayAndLetHoldsLapse(s);
+    const key = planEndRefundKey(s.subscriptionId, s.paymentId);
+    // A spent marker whose own refund in fact succeeded.
+    await prisma.refund.create({
+      data: {
+        paymentId: s.paymentId,
+        amountPaise: BigInt(PRICE / 4),
+        status: "SUCCEEDED",
+        refundId: `rfnd_done_${randomUUID()}`,
+        dedupeKey: key,
+        paymentGateway: "RAZORPAY",
+      },
+    });
+    await prisma.payment.update({
+      where: { id: s.paymentId },
+      data: { refundOwedAttempts: MAX_REFUND_OWED_ATTEMPTS },
+    });
+
+    await expect(
+      prisma.$transaction((tx) =>
+        settleOwedByHand(tx, s.paymentId, { kind: "whole" }),
+      ),
+    ).rejects.toMatchObject({ code: "OWED_REFUND_ALREADY_SENT" });
+    await expect(
+      refuseIfOwedAlreadySent(s.paymentId, key),
+    ).rejects.toMatchObject({
+      code: "OWED_REFUND_ALREADY_SENT",
+    });
+    const refunds = await prisma.refund.count({
+      where: { paymentId: s.paymentId },
+    });
+    expect(refunds).toBe(1);
+
+    await releaseEarningsFromHold();
+    const now = await statuses(s);
     expect(now.consultant.status).toBe("READY");
     expect(now.org.status).toBe("READY");
   });

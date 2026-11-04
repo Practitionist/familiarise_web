@@ -133,6 +133,7 @@ import {
 // Late-bound cycle: refund-owed reaches refundPayment through booking-refund.
 import {
   claimOwedMarker,
+  clearOwedMarkerSettledBy,
   failRefund,
   stampOwedOrHeld,
   type HandSettledOwed,
@@ -1088,11 +1089,21 @@ export async function applyRefundCascade(
           status: true,
           cascadedAt: true,
           deletedAt: true,
+          dedupeKey: true,
         },
       },
       disputes: REFUNDABLE_BALANCE_SELECT.disputes,
     },
   });
+  // The refund its owed marker waited on has settled, whoever settled it.
+  if (payment.refundOwedKey) {
+    await clearOwedMarkerSettledBy(
+      tx,
+      payment.id,
+      payment.refunds.find((r) => r.id === rawInput.refundId)?.dedupeKey ??
+        null,
+    );
+  }
 
   // #1582 C-P0-03 — cumulative cap at cascade time closes the PENDING-then-LOST
   // window: every other returned refund and every LOST/CHARGE_REFUNDED dispute
