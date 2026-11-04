@@ -302,6 +302,20 @@ Mon/Wed/Fri rather than Mon/Tue/Wed. The unconditional earliest-fit sweep after
 it reconsiders everything the spaced sweep declined, so spacing never costs a
 placement (`isSpacedFrom` in `find-available-slots.ts`).
 
+A custom row is an absolute range and may span several days (rows coalesce on
+adjacency, so back-to-back days fold into one row). The auto search walks it as
+one slice per day of the plan's `schedulingTimezone` (`customRowDaySlices` in
+`lib/booking/allocation/search/recurrence.ts`): each slice runs from that day's
+first instant to the next day's (`dayRangeBounds`, exclusive end), clipped to
+the row, with the cuts rounded up to the UTC half-hour lattice so a :45 zone's
+atom across midnight stays on the day it starts. Every covered day is a
+candidate under the same spacing, daily cap and lead time, and a slice that
+began before the period still offers its in-period tail. Consultations and
+webinars walk the same slices in start order. A fall-back day's slice is 25
+hours, which is why `MAX_CANDIDATE_STARTS_PER_ROW` is 50. The validator, the
+manual path and the grid already judged custom rows by containment or per atom,
+so they needed no change.
+
 A subscription is paced in fixed plan weeks (`subscriptionEntitlement` in
 `lib/booking/entitlement.ts`). Week k is `[day0 + 7k, day0 + 7k + 7)`, where
 `day0` is the plan start's zone-day in `schedulingTimezone`. The open week is the
@@ -448,5 +462,10 @@ auto-mode allocation of a consultation or subscription, with `topUp` (and
 - **Partly booked windows offered as "Request".** `isBookableWindow` now requires
   `available`.
 - **`leadTimeFor`.** Replaced by `leadMsFor(purpose, { settled })`.
+- **Matching a custom row on its start day only.** The auto search used to offer
+  a custom row on the UTC day its `startsAt` fell on (`matchCustomSlotToDay`) and
+  walk at most 48 starts from there, so a multi-day row offered only its first
+  24 hours and a row that began before the period offered nothing. Replaced by
+  the per-day slices in §6.
 - **A single-instant overlap probe.** The allocator once probed one span from
   the earliest to the latest pick, so a session between two picks read as taken.
