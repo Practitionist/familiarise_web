@@ -312,10 +312,11 @@ describe("auto search inside one multi-day custom row", () => {
   });
 
   it("places a consultation on a later day of the row when its first day is taken", async () => {
-    // Friday 18:00 IST to Saturday 18:00 IST is held.
+    // Friday 18:00 IST to Saturday 19:00 IST is held: more than 25 hours, so
+    // only a walk that reaches past the row's first day finds a time.
     const held = atomsBetween(
       "2026-08-14T12:30:00.000Z",
-      "2026-08-15T12:30:00.000Z",
+      "2026-08-15T13:30:00.000Z",
     );
     const slots = await place(
       customConsultant([IST_WEEKEND_ROW]),
@@ -324,7 +325,7 @@ describe("auto search inside one multi-day custom row", () => {
       "consultation",
       held,
     );
-    expect(sessionStarts(slots)).toEqual(["2026-08-15T12:30:00.000Z"]);
+    expect(sessionStarts(slots)).toEqual(["2026-08-15T13:30:00.000Z"]);
   });
 });
 
