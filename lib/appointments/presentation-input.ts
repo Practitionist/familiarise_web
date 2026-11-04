@@ -242,7 +242,11 @@ function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
   };
 }
 
-function entitlementSummary(
+/**
+ * The card's entitlement facts. "Not held" is what was never placed or
+ * delivered: a placed session awaiting its outcome is not counted yet.
+ */
+export function entitlementSummary(
   e: SubscriptionEntitlement | null,
   now = new Date(),
 ): BookingPresentationInput["entitlement"] {
@@ -250,7 +254,7 @@ function entitlementSummary(
     ? {
         remaining: e.remaining,
         nextBatch: e.cycle.nextBatch,
-        notHeld: Math.max(0, e.total - e.completed),
+        notHeld: e.remaining,
         planEnded: now.getTime() >= e.planEndsAt.getTime(),
       }
     : null;
