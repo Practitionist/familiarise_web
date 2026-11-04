@@ -635,7 +635,11 @@ export default function SubscriptionCheckoutPage({
             )}
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
-              <div>{planData?.data?.durationInMonths || 1} months</div>
+              <div>
+                {planData?.data?.durationInWeeks
+                  ? `${planData.data.durationInWeeks} weeks`
+                  : `${planData?.data?.durationInMonths || 1} months`}
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Sessions per Week</div>

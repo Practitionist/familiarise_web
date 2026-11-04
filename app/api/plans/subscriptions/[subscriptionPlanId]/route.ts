@@ -12,7 +12,11 @@ import {
   faqReplaceNested,
 } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
-import { planTotalSessions } from "@/lib/booking/entitlement";
+import {
+  activeClientsNotice,
+  subscriptionPlanTotals,
+} from "@/lib/booking/entitlement";
+import { activeClientCount, freezeSoldTerms } from "@/lib/booking/sold-terms";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 import {
   archivedAtForArchive,
@@ -58,8 +62,22 @@ export async function GET(
       );
     }
 
+    // The editor asks for its live buyers so it can say a change spares them;
+    // only the plan's author is told.
+    const activeClients =
+      request.nextUrl.searchParams.get("include") === "activeClients" &&
+      (await getSession())?.user?.consultantProfileId ===
+        subscriptionPlan.consultantProfileId
+        ? await activeClientCount(prisma, subscriptionPlanId)
+        : undefined;
+
     return NextResponse.json(
-      { data: transformTopicsToStrings(subscriptionPlan) },
+      {
+        data: {
+          ...transformTopicsToStrings(subscriptionPlan),
+          ...(activeClients === undefined ? {} : { activeClients }),
+        },
+      },
       { status: 200 },
     );
   } catch (error) {
@@ -135,26 +153,31 @@ export async function PUT(
 
     const validatedData = validationResult.data;
 
-    // Recompute derived metrics if base fields are being updated
-    let totalSessions: number | undefined;
-    let totalHours: number | undefined;
-
-    if (
+    // Terms edits re-derive the plan's totals; sold subscriptions keep theirs.
+    const termsChange =
       validatedData.sessionsPerWeek !== undefined ||
       validatedData.durationInMonths !== undefined ||
-      validatedData.sessionDurationInHours !== undefined
-    ) {
-      const sessionsPerWeek =
-        validatedData.sessionsPerWeek ?? existingPlan.sessionsPerWeek;
-      const durationInMonths =
-        validatedData.durationInMonths ?? existingPlan.durationInMonths;
-      const sessionDurationInHours =
-        validatedData.sessionDurationInHours ??
-        existingPlan.sessionDurationInHours;
-
-      totalSessions = planTotalSessions({ sessionsPerWeek, durationInMonths });
-      totalHours = totalSessions * sessionDurationInHours;
-    }
+      validatedData.durationInWeeks !== undefined ||
+      validatedData.sessionDurationInHours !== undefined;
+    const durationInWeeks =
+      validatedData.durationInWeeks === undefined
+        ? existingPlan.durationInWeeks
+        : validatedData.durationInWeeks;
+    const derived = termsChange
+      ? {
+          durationInWeeks,
+          ...subscriptionPlanTotals({
+            sessionsPerWeek:
+              validatedData.sessionsPerWeek ?? existingPlan.sessionsPerWeek,
+            durationInMonths:
+              validatedData.durationInMonths ?? existingPlan.durationInMonths,
+            durationInWeeks,
+            sessionDurationInHours:
+              validatedData.sessionDurationInHours ??
+              existingPlan.sessionDurationInHours,
+          }),
+        }
+      : null;
 
     // Floor check on the effective post-update trial price. Untouched
     // plans are never retro-policed — only edits that set a price or
@@ -210,13 +233,14 @@ export async function PUT(
           where: { subscriptionPlanId },
         });
       }
+      if (derived) await freezeSoldTerms(tx, subscriptionPlanId);
 
       return tx.subscriptionPlan.update({
         where: { id: subscriptionPlanId },
         data: {
           title: validatedData.title,
           description: validatedData.description,
-          durationInMonths: validatedData.durationInMonths,
+          ...(derived ?? {}),
           price:
             validatedData.price !== undefined
               ? Math.round(validatedData.price)
@@ -224,8 +248,6 @@ export async function PUT(
           priceCurrency: validatedData.priceCurrency,
           sessionsPerWeek: validatedData.sessionsPerWeek,
           sessionDurationInHours: validatedData.sessionDurationInHours,
-          totalSessions,
-          totalHours,
           emailSupport: validatedData.emailSupport,
           language: validatedData.language,
           level: validatedData.level,
@@ -282,8 +304,14 @@ export async function PUT(
       });
     });
 
+    // Sold subscriptions keep their frozen terms; say how many the edit spared.
+    const activeClients = await activeClientCount(prisma, subscriptionPlanId);
     return NextResponse.json(
-      { data: transformTopicsToStrings(subscriptionPlan) },
+      {
+        data: transformTopicsToStrings(subscriptionPlan),
+        activeClients,
+        notice: activeClientsNotice(activeClients),
+      },
       { status: 200 },
     );
   } catch (error) {

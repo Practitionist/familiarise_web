@@ -171,7 +171,10 @@ function subscriptionRow(event: SubscriptionPlanEvent): OfferingRow {
     title: plan.title,
     description: plan.description ?? "",
     priceText: `${price(plan.price, plan.priceCurrency)}/mo`,
-    durationText: plural(plan.durationInMonths, "month", "months"),
+    durationText:
+      typeof plan.durationInWeeks === "number"
+        ? plural(plan.durationInWeeks, "week", "weeks")
+        : plural(plan.durationInMonths, "month", "months"),
     sessionsPerWeek,
     sessionDurationInHours,
     cadenceText: formatCadence(sessionsPerWeek, sessionDurationInHours),
