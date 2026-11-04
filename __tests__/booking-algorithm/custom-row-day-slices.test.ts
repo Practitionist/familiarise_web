@@ -329,21 +329,36 @@ describe("auto search inside one multi-day custom row", () => {
 });
 
 describe("the validator already accepts these placements", () => {
-  it("accepts a session on the row's last day", async () => {
-    const service = new ScheduleValidationService({
-      appointment: { findMany: jest.fn().mockResolvedValue([]) },
-    } as never);
-    const result = await service.validate(
+  const service = new ScheduleValidationService({
+    appointment: { findMany: jest.fn().mockResolvedValue([]) },
+  } as never);
+  const validate = (slots: Date[]) =>
+    service.validate(
       "consultation",
       "c-1",
-      // Mon 17 Aug 08:00–09:00 IST, inside the row's final slice.
-      [at("2026-08-17T02:30:00.000Z"), at("2026-08-17T03:00:00.000Z")],
+      slots,
       customConsultant([IST_WEEKEND_ROW]),
       { durationInHours: 1 },
       [],
-      { overrideAvailabilityWindow: true },
     );
+
+  it("accepts a session on the row's last day", async () => {
+    // Mon 17 Aug 08:00–09:00 IST, inside the row's final slice.
+    const result = await validate([
+      at("2026-08-17T02:30:00.000Z"),
+      at("2026-08-17T03:00:00.000Z"),
+    ]);
     expect(result.errors).toEqual([]);
     expect(result.isValid).toBe(true);
+  });
+
+  it("refuses a session just past the row's end", async () => {
+    // Mon 17 Aug 10:00–11:00 IST: the row ends at 10:00.
+    const result = await validate([
+      at("2026-08-17T04:30:00.000Z"),
+      at("2026-08-17T05:00:00.000Z"),
+    ]);
+    expect(result.isValid).toBe(false);
+    expect(result.errors[0]).toMatch(/^\[OUTSIDE_AVAILABILITY\]/);
   });
 });
