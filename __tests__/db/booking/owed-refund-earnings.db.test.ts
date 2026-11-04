@@ -12,20 +12,12 @@ import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
 import { HOUR_MS, seedConsultee, seedHost } from "./harness";
 
-jest.mock("../../../lib/novu", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
-jest.mock("../../../lib/novu/service", () => {
-  const noop = jest.fn(async () => []);
-  return new Proxy(
-    {},
-    { get: (_target, prop) => (prop === "__esModule" ? true : noop) },
-  );
-});
+jest.mock("../../../lib/novu", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
+jest.mock("../../../lib/novu/service", () =>
+  jest.requireActual("../../fixtures/noop-module").noopModule(),
+);
 jest.mock("../../../lib/novu/stage-then-attempt", () => ({
   __esModule: true,
   flushNotificationsAfter: jest.fn(async () => undefined),
@@ -209,6 +201,32 @@ async function settleWithFailingGatewayAndLetHoldsLapse(s: Seeded) {
   });
 }
 
+/** The next drive reserves its refund under `key`, then its gateway call times out. */
+function nextDriveTimesOut(key: string): { id: string } {
+  const reservation = { id: "" };
+  refundDoor.refundBookingPayment.mockImplementationOnce(
+    async (args: { paymentId: string; amountPaise?: number }) => {
+      const row = await prisma.refund.create({
+        data: {
+          paymentId: args.paymentId,
+          amountPaise: BigInt(args.amountPaise ?? PRICE),
+          status: "PENDING",
+          refundId: `rfnd_pending_${randomUUID()}`,
+          dedupeKey: key,
+          paymentGateway: "RAZORPAY",
+        },
+      });
+      reservation.id = row.id;
+      throw new RefundGatewayError(
+        "gateway timeout",
+        "GATEWAY_REFUND_FAILED",
+        row.id,
+      );
+    },
+  );
+  return reservation;
+}
+
 async function redrive(paymentId: string) {
   const row = await prisma.payment.findUniqueOrThrow({
     where: { id: paymentId },
@@ -291,27 +309,7 @@ describe("earnings wait for a plan-end refund that is still owed", () => {
     const key = planEndRefundKey(s.subscriptionId, s.paymentId);
 
     // The last attempt's gateway call times out: its reservation stays PENDING.
-    let reservationId = "";
-    refundDoor.refundBookingPayment.mockImplementationOnce(
-      async (args: { paymentId: string; amountPaise?: number }) => {
-        const row = await prisma.refund.create({
-          data: {
-            paymentId: args.paymentId,
-            amountPaise: BigInt(args.amountPaise ?? PRICE),
-            status: "PENDING",
-            refundId: `rfnd_pending_${randomUUID()}`,
-            dedupeKey: key,
-            paymentGateway: "RAZORPAY",
-          },
-        });
-        reservationId = row.id;
-        throw new RefundGatewayError(
-          "gateway timeout",
-          "GATEWAY_REFUND_FAILED",
-          row.id,
-        );
-      },
-    );
+    const reservation = nextDriveTimesOut(key);
     expect(await redrive(s.paymentId)).toMatchObject({
       kind: "refunded",
       refund: { status: "PENDING" },
@@ -329,12 +327,12 @@ describe("earnings wait for a plan-end refund that is still owed", () => {
     await prisma.$transaction(
       async (tx) => {
         await tx.refund.updateMany({
-          where: { id: reservationId, status: "PENDING" },
+          where: { id: reservation.id, status: "PENDING" },
           data: { status: "SUCCEEDED" },
         });
         await applyRefundCascade(tx, {
           paymentId: s.paymentId,
-          refundId: reservationId,
+          refundId: reservation.id,
           amountPaise: PRICE / 4,
           reason: "Gateway refund reconciled",
           initiatedByUserId: null,
@@ -409,38 +407,18 @@ describe("earnings wait for a plan-end refund that is still owed", () => {
     });
 
     for (let cycle = 0; cycle < MAX_REFUND_OWED_ATTEMPTS; cycle += 1) {
-      let reservationId = "";
-      refundDoor.refundBookingPayment.mockImplementationOnce(
-        async (args: { paymentId: string; amountPaise?: number }) => {
-          const row = await prisma.refund.create({
-            data: {
-              paymentId: args.paymentId,
-              amountPaise: BigInt(args.amountPaise ?? PRICE),
-              status: "PENDING",
-              refundId: `rfnd_pending_${randomUUID()}`,
-              dedupeKey: key,
-              paymentGateway: "RAZORPAY",
-            },
-          });
-          reservationId = row.id;
-          throw new RefundGatewayError(
-            "gateway timeout",
-            "GATEWAY_REFUND_FAILED",
-            row.id,
-          );
-        },
-      );
+      const reservation = nextDriveTimesOut(key);
       expect(await redrive(s.paymentId)).toMatchObject({ kind: "refunded" });
       // Reconcile finds no such refund at the gateway and fails it.
-      await failRefund(reservationId, (tx) =>
+      await failRefund(reservation.id, (tx) =>
         tx.refund.updateMany({
-          where: { id: reservationId, status: "PENDING" },
+          where: { id: reservation.id, status: "PENDING" },
           data: { status: "FAILED", failedAt: new Date() },
         }),
       );
       // The next drive frees the failed key, as the front door's replay check does.
       await prisma.refund.updateMany({
-        where: { id: reservationId },
+        where: { id: reservation.id },
         data: { dedupeKey: null },
       });
     }
