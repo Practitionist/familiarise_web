@@ -461,6 +461,34 @@ describe("driveRefundOwed", () => {
   });
 });
 
+describe("a drive whose own refund is still PENDING", () => {
+  it("spends no attempt when the settle fails after the gateway took the refund", async () => {
+    seat("p1", 10_000);
+    const owed = marker("p1", 5_000);
+    mockRows.get("p1")!.refundOwedAttempts = 2;
+    mockRefundBookingPayment.mockImplementationOnce(
+      async (input: { paymentId: string; dedupeKey: string }) => {
+        // The gateway accepted it; the settling transaction then failed.
+        mockRefunds.push({
+          id: "rf_taken",
+          paymentId: input.paymentId,
+          dedupeKey: input.dedupeKey,
+          amountPaise: 5_000,
+          status: "PENDING",
+        });
+        throw new Error("cascade transaction failed");
+      },
+    );
+
+    expect(await driveRefundOwed({ ...owed, attempts: 2 })).toMatchObject({
+      kind: "refunded",
+      refund: { refundId: "rf_taken", status: "PENDING" },
+    });
+    expect(mockRows.get("p1")!.refundOwedAttempts).toBe(2);
+    expect(mockRecordSystemError).not.toHaveBeenCalled();
+  });
+});
+
 describe("a hand refund once the owed refund already went out", () => {
   function ownRefundSucceeded() {
     seat("p1", 10_000);

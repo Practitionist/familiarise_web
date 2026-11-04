@@ -858,9 +858,10 @@ export async function driveRefundOwed(
       if (error.code === "OWED_MARKER_SETTLED") return { kind: "settled" };
       if (error.code === "OWED_MARKER_CHANGED") return { kind: "blocked" };
     }
-    // An ambiguous gateway answer left its reservation PENDING: reconcile
-    // settles it by lookup, so the drive spends no attempt on it.
-    const inFlight = await pendingReservation(error);
+    // The drive's own refund is still PENDING (an ambiguous gateway answer, or
+    // a settle that failed after the gateway took it): reconcile settles it by
+    // lookup, so the drive spends no attempt on it.
+    const inFlight = await pendingReservation(marker.key);
     if (inFlight) return { kind: "refunded", refund: inFlight };
     // The gateway has no such payment: retrying only adds FAILED refund rows.
     const permanent =
@@ -871,14 +872,11 @@ export async function driveRefundOwed(
   }
 }
 
-/** The refund a gateway error left PENDING for reconcile, or null when it settled or was refused. */
-async function pendingReservation(
-  error: unknown,
-): Promise<DrivenRefund | null> {
-  if (!(error instanceof RefundGatewayError) || !error.refundRowId) return null;
+/** The drive's own refund under the marker's key while it is still PENDING, else null. */
+async function pendingReservation(key: string): Promise<DrivenRefund | null> {
   const row = await prisma.refund
     .findUnique({
-      where: { id: error.refundRowId },
+      where: { dedupeKey: key },
       select: { id: true, amountPaise: true, status: true },
     })
     .catch(() => null);
