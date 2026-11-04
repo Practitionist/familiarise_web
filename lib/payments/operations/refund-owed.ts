@@ -941,12 +941,12 @@ export async function driveRefundOwed(
       error instanceof RefundGatewayError &&
       error.gatewayCode === GATEWAY_NOT_FOUND;
     // The transaction that failed the drive's own refund may have counted it.
-    const now = await prisma.payment
-      .findUnique({
+    const now = await readOrNull(() =>
+      prisma.payment.findUnique({
         where: { id: marker.paymentId },
         select: { refundOwedKey: true, refundOwedAttempts: true },
-      })
-      .catch(() => null);
+      }),
+    );
     const read = marker.attempts ?? 0;
     if (now?.refundOwedKey === marker.key && now.refundOwedAttempts > read) {
       const spent = now.refundOwedAttempts >= MAX_REFUND_OWED_ATTEMPTS;
@@ -965,14 +965,23 @@ export async function driveRefundOwed(
   }
 }
 
+/** A read the never-throwing drive can lose: a failure reads as nothing found. */
+async function readOrNull<T>(read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch {
+    return null;
+  }
+}
+
 /** The drive's own refund under the marker's key while it is still PENDING, else null. */
 async function pendingReservation(key: string): Promise<DrivenRefund | null> {
-  const row = await prisma.refund
-    .findUnique({
+  const row = await readOrNull(() =>
+    prisma.refund.findUnique({
       where: { dedupeKey: key },
       select: { id: true, amountPaise: true, status: true },
-    })
-    .catch(() => null);
+    }),
+  );
   if (row?.status !== RefundStatus.PENDING) return null;
   return {
     refundId: row.id,
