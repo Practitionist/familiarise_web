@@ -85,7 +85,7 @@ An organisation that is still `PENDING_VERIFICATION` and funds bookings by INVOI
 
 ### HELD and the five holds
 
-A row is HELD exactly when it carries at least one active `EarningsHold`. `lib/payments/payouts/earnings-holds.ts` is the only writer of HELD. It places holds on PENDING, PENDING_TRUST and READY rows by conditional update, so a PAID or REFUNDED row can never be frozen. The first hold records the row's prior status in `preHoldStatus`, and the last release restores exactly that status.
+A row is HELD exactly when it carries at least one active `EarningsHold`. `lib/payments/payouts/earnings-holds.ts` is the only writer of HELD. It places holds on PENDING, PENDING_TRUST and READY rows by conditional update, so a PAID or REFUNDED row can never be frozen. The first hold records the row's prior status in `preHoldStatus`, and the last release restores exactly that status. A legacy row with no recorded prior returns to PENDING, never straight to READY, so the release job's guards (`RELEASABLE_PAYMENT`) decide when it is payable.
 
 | Reason         | Placed by                                                                 | Released by                                                    |
 | -------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------- |
