@@ -3,7 +3,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { createElement, useCallback, useRef, type ReactElement } from "react";
 import { ToastAction } from "@/components/ui/toast";
-import { DATA_CONSENT_ANCHOR } from "@/lib/dashboard/account-href";
 import { useToast } from "@/hooks/use-toast";
 import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
@@ -64,14 +63,13 @@ function isCheckoutApiError(value: unknown): value is CheckoutApiError {
   );
 }
 
-// #1527 3c — the member clears CONSENT_REQUIRED themselves. /profile 308s to
-// accountSettingsHref(user, "account") and the browser keeps the anchor.
-function consentToastAction(): ReactElement {
+// The member clears CONSENT_REQUIRED themselves in Settings › Account.
+function consentToastAction(consentHref: string): ReactElement {
   return createElement(
     ToastAction,
     {
       altText: "Open your data consent settings",
-      onClick: () => window.location.assign(`/profile#${DATA_CONSENT_ANCHOR}`),
+      onClick: () => window.location.assign(consentHref),
     },
     "Open settings",
   );
@@ -79,6 +77,7 @@ function consentToastAction(): ReactElement {
 
 export function createHandleApiError(
   toast: ReturnType<typeof useToast>["toast"],
+  consentHref: string | null,
 ) {
   return (errorData: CheckoutApiError) => {
     // Rate-limited: the limiter answers 429 with code RATE_LIMITED — back
@@ -113,9 +112,10 @@ export function createHandleApiError(
       title,
       description,
       variant: "destructive",
-      ...(errorType === ErrorTypes.CONSENT_REQUIRED && {
-        action: consentToastAction(),
-      }),
+      ...(errorType === ErrorTypes.CONSENT_REQUIRED &&
+        consentHref && {
+          action: consentToastAction(consentHref),
+        }),
     });
   };
 }

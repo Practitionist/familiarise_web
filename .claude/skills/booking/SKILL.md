@@ -311,6 +311,16 @@ gateway order after commit. The money predicate rides every CAS WHERE, so a
 capture that commits first answers 409 `ALREADY_PAID` and the policy-quoted
 cancel owns it.
 
+A manual Remind on an approved-but-unpaid request is offered and accepted
+under one predicate, `liveReminderPayment`
+(`lib/booking/payment-reminder-eligibility.ts`): `APPROVED_PENDING_PAYMENT`, a
+`pendingPaymentUrl`, an appointment, a consultee email, and a newest PENDING
+payment whose `expiresAt` is still ahead. The Requests inbox read ships only that
+expiry (`reminderExpiresAt`) and the row hides Remind at that instant;
+`remindApprovedPayment` re-checks the same predicate and answers 409
+`NOT_AWAITING_PAYMENT`. An `AWAITING_PAYMENT` presentation alone is not proof
+that there is a link to resend, so never gate Remind on the booking state.
+
 ### 6. There are no backfill migrations
 
 The schema is managed with `prisma db push`, not migrations, and everything

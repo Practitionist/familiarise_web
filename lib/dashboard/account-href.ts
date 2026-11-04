@@ -1,8 +1,7 @@
 /**
- * #1527 §17b — where "my account" lives for each kind of viewer, now that
- * `/profile` is retired: a personal viewer's Settings › Account (or
- * Notifications), the back office's My profile, a workspace operator's
- * workspace settings. Pure, so the `/profile` redirect and client links
+ * Where "my account" lives for each kind of viewer: a personal viewer's
+ * Settings › Account (or Notifications), the back office's My profile, a
+ * workspace operator's workspace settings. Pure, so server and client links
  * share one answer.
  */
 

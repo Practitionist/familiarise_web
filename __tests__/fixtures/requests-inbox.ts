@@ -13,7 +13,7 @@ export const CP = "cp-1";
 
 const profile = (id: string, name: string) => ({
   id,
-  user: { id: `u-${id}`, name, image: null },
+  user: { id: `u-${id}`, name, image: null, email: `${id}@example.test` },
 });
 const consultant = profile("cp-1", "Asha Rao");
 
@@ -63,9 +63,10 @@ function wrapper(
   };
 }
 
-const pendingConsultation = {
+export const pendingConsultation = {
   id: "c-pending",
   status: "PENDING",
+  pendingPaymentUrl: null,
   requestedAt: hoursAgo(30),
   bookingSource: "REQUEST_SUBMITTED",
   requestNotes: "Career switch",
@@ -117,10 +118,11 @@ const subscriptionBase = {
   requestedBy: profile("ce-2", "Rahul Sen"),
 };
 
-const awaitingSubscription = {
+export const awaitingSubscription = {
   ...subscriptionBase,
   id: "s-awaiting",
   status: "APPROVED_PENDING_PAYMENT",
+  pendingPaymentUrl: "https://pay.example.test/subscription",
   requestedAt: hoursAgo(5),
   appointment: wrapper("a-s1", {
     occurrences: [

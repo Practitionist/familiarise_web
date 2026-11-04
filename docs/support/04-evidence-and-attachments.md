@@ -24,6 +24,8 @@ When a customer complains about a session, staff usually need the other side's a
 
 Banned users are excluded. A case with no booking has no eligible recipients. The delivering-party part is `deliveringPartiesByAppointment()` in `lib/support/evidence-parties.ts`, which chat access also uses.
 
+Thread access is separate from evidence access. An ACCEPTED PRESENTER collaborator on the linked booking may read and reply to an ordinary case thread ([organization scopes and visibility](09-org-scopes-and-visibility.md)), but being an evidence recipient never grants the thread. Anonymous grievances and sensitive delivery or safety complaints never open to a presenter. A host-organization operator who is only asked for evidence still sees only their own prompt and answer, and the evidence page never returns the case messages.
+
 ### Lifecycle
 
 ```mermaid
@@ -140,16 +142,16 @@ already removed by storage.
 
 ## Invariants
 
-| Rule                                                                                 | Enforcer                                                                   | Test                                                                                                                 |
-| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Only eligible parties are asked, and they lose access when they stop being eligible. | App: `requestEvidenceTx()`, the evidence routes, `attachmentCaseAccess()`. | `__tests__/support/evidence-route-authz.test.ts`, `__tests__/support/org-filed-subject-and-evidence-parties.test.ts` |
-| Recipients never see the case transcript.                                            | App: the evidence GET projection.                                          | `__tests__/support/evidence-route-authz.test.ts`                                                                     |
-| An evidence request is answered once.                                                | App: compare-and-set on `respondedAt IS NULL AND cancelledAt IS NULL`.     | `__tests__/support/evidence-route-authz.test.ts`                                                                     |
-| One request per `(caseId, clientActionId)`.                                          | The database: `@@unique([caseId, clientActionId])`.                        | `__tests__/support/lifecycle-decisions.test.ts`                                                                      |
-| An attachment hangs off at most one message or request; size is not negative.        | The database: `support_case_attachment_shape`.                             | No dedicated test.                                                                                                   |
-| A file's first bytes match its type.                                                 | App: `headMatchesMimeType()` at confirm.                                   | `__tests__/support/attachment-verification.test.ts`                                                                  |
-| Finalisation and cleanup cannot both own the same pending row.                       | App: conditional completion/tombstone and live-reference readback.         | `__tests__/support/attachment-ownership.test.ts`                                                                     |
-| Files are served only through access-checked, 60-second signed links.                | App: `attachmentDownload()`.                                               | `__tests__/support/route-authz-matrix.test.ts`                                                                       |
+| Rule                                                                                 | Enforcer                                                                                        | Test                                                                                                                 |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Only eligible parties are asked, and they lose access when they stop being eligible. | App: `requestEvidenceTx()`, the evidence routes, `attachmentCaseAccess()`.                      | `__tests__/support/evidence-route-authz.test.ts`, `__tests__/support/org-filed-subject-and-evidence-parties.test.ts` |
+| Recipients never see the case transcript through the evidence page.                  | App: the evidence GET projection; thread access comes only from correspondence or presentation. | `__tests__/support/evidence-route-authz.test.ts`                                                                     |
+| An evidence request is answered once.                                                | App: compare-and-set on `respondedAt IS NULL AND cancelledAt IS NULL`.                          | `__tests__/support/evidence-route-authz.test.ts`                                                                     |
+| One request per `(caseId, clientActionId)`.                                          | The database: `@@unique([caseId, clientActionId])`.                                             | `__tests__/support/lifecycle-decisions.test.ts`                                                                      |
+| An attachment hangs off at most one message or request; size is not negative.        | The database: `support_case_attachment_shape`.                                                  | No dedicated test.                                                                                                   |
+| A file's first bytes match its type.                                                 | App: `headMatchesMimeType()` at confirm.                                                        | `__tests__/support/attachment-verification.test.ts`                                                                  |
+| Finalisation and cleanup cannot both own the same pending row.                       | App: conditional completion/tombstone and live-reference readback.                              | `__tests__/support/attachment-ownership.test.ts`                                                                     |
+| Files are served only through access-checked, 60-second signed links.                | App: `attachmentDownload()`.                                                                    | `__tests__/support/route-authz-matrix.test.ts`                                                                       |
 
 The 20-file cap has no dedicated test.
 

@@ -653,8 +653,7 @@ interface LinkedAccount {
 
 /**
  * Social sign-in providers linked to this account. `returnHref` is where the
- * provider sends the browser back after linking — the Account section itself
- * (#1527 §17b), not the retired `/profile`.
+ * provider sends the browser back after linking — the Account section itself.
  */
 export function ConnectedAccountsSection({
   returnHref,

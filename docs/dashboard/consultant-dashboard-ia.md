@@ -1,6 +1,6 @@
 # Consultant dashboard information architecture: the sidebar groups and the Settings hub
 
-**Date:** 2026-09-27 (supersedes the 2026-09-21 version) · **Issue:** #1527 · **PR:** #1842 · **Scope:** `app/dashboard/consultant/[consultantId]/layout.tsx`, `lib/dashboard/nav/consultant.ts`, the `(features)/settings` hub, and the shared `DashboardShell`.
+**Date:** 2026-09-27 (supersedes the 2026-09-21 version) · **Issue:** #1527 · **PR:** #1842 · **Scope:** `app/dashboard/consultant/[consultantId]/ConsultantDashboardLayout.tsx`, `lib/dashboard/nav/consultant.ts`, the `(features)/settings` hub, and the shared `DashboardShell`.
 
 This page records how the consultant (Expert) dashboard is organised after the 2026-09-26/27 dashboard overhaul (PR #1842, part of #1527), and why. It replaces the 2026-09-21 version of this document, which described the sidebar and Settings hub as they stood before that PR. The owner locked "Expert" and "Learner" as the platform's end-user terms during this PR's review rounds; "Consultant" and "Client" no longer appear in the product surface, though the underlying routes, database enums and `consultant`/`consultee` code identifiers are unchanged.
 
@@ -56,9 +56,9 @@ Settings still renders through the shared `SettingsLayout` primitive (a grouped 
 | Business       | Booking requests       | `/settings/booking`       |
 | Business       | Get paid               | `/settings/get-paid`      |
 
-Account absorbed `/profile`, `/settings/change-password` and the old Security tab, so a consultant's name, photo, phone, password, active sessions, connected accounts and account deletion live in one place shared with the consultee, workspace, and back-office dashboards. The old Security tab is folded into `account`, and `/profile` redirects per viewer (a consultant or consultee lands on their own Account section; ADMIN/STAFF land on the back-office Settings page; ORG_WORKSPACE lands on `/settings/account`) rather than to a single fixed page. Experience & education lets an expert edit work history and education after onboarding.
+Account absorbed `/profile`, `/settings/change-password` and the old Security tab, so a consultant's name, photo, phone, password, active sessions, connected accounts and account deletion live in one place shared with the consultee, workspace, and back-office dashboards. The old Security tab is folded into `account`, and `/profile` no longer exists; `accountSettingsHref` gives each viewer their own Account page (a consultant or consultee their Account section, ADMIN/STAFF the back-office Settings page, ORG_WORKSPACE `/settings/account`). Experience & education lets an expert edit work history and education after onboarding.
 
-The hub root `/settings` shows the grouped section list. `/settings/payouts` 308-redirects to `/settings/get-paid` via `[...legacy]/page.tsx` (`GetPaidClient.tsx` lives directly inside `settings/get-paid/`); `?tab=` is no longer read. A jest pin (`__tests__/dashboards/settings-hub.test.tsx`) asserts that every section has a unique URL.
+The hub root `/settings` shows the grouped section list. The payout section is `/settings/get-paid` (`GetPaidClient.tsx` lives directly inside `settings/get-paid/`); the old `/settings/payouts` URL is gone; `?tab=` is no longer read. A jest pin (`__tests__/dashboards/settings-hub.test.tsx`) asserts that every section has a unique URL.
 
 The consultee (Learner) Settings hub also uses `SettingsLayout`: its sections are Account, Notifications and Learning profile (`CONSULTEE_SETTINGS_SECTIONS` in the consultee tree's own `settings.ts`), following the same one-URL-per-section pattern.
 
@@ -66,7 +66,7 @@ The consultee (Learner) Settings hub also uses `SettingsLayout`: its sections ar
 
 | Concern                                   | File                                                                                                                |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Sidebar groups, mobile tabs, crumb labels | `lib/dashboard/nav/consultant.ts`, `app/dashboard/consultant/[consultantId]/layout.tsx`                             |
+| Sidebar groups, mobile tabs, crumb labels | `lib/dashboard/nav/consultant.ts`, `app/dashboard/consultant/[consultantId]/ConsultantDashboardLayout.tsx`          |
 | Shared shell, switcher, header menus      | `components/dashboard/DashboardShell.tsx`, `components/dashboard/ContextSwitcher.tsx`                               |
 | Availability page                         | `app/dashboard/consultant/[consultantId]/(features)/availability/page.tsx`                                          |
 | Sell pages, share attribution & editor    | `components/offerings/list/SellPageShell.tsx`, `lib/dashboard/sell-pages.ts`, `components/offerings/**`             |

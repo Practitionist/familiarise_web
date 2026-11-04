@@ -1,4 +1,4 @@
-import { notFound, permanentRedirect, redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { requireUserRole } from "@/lib/auth-guard";
 import {
@@ -7,18 +7,13 @@ import {
   isBackofficeTree,
   resolveBackofficeCapability,
 } from "@/lib/backoffice/capability";
-import {
-  findMoneyTab,
-  moneyTabsFor,
-  retiredMoneyTabHref,
-} from "@/lib/backoffice/money-tabs";
+import { findMoneyTab, moneyTabsFor } from "@/lib/backoffice/money-tabs";
 import { MoneyTabBody } from "./MoneyTabBody";
 
 /**
- * #1771 K-2 — the shared `[tab]` page of both trees; each section is its own
- * sidebar item. A section the viewer cannot open (unknown, or outside the
- * tree's audience or the viewer's own surfaces) lands on the first section
- * they hold, never on an error boundary (QA #1824).
+ * The shared `[tab]` page of both trees; each section is its own sidebar item.
+ * An unknown section 404s; a known one the viewer cannot open lands on the
+ * first section they hold.
  */
 export async function renderMoneyTab(args: {
   tab: string;
@@ -27,13 +22,12 @@ export async function renderMoneyTab(args: {
 }) {
   if (!isBackofficeTree(args.tree)) notFound();
   const treePath = `/dashboard/${args.tree}`;
-  const retired = retiredMoneyTabHref(treePath, args.tab);
-  if (retired) permanentRedirect(retired);
   const session = await requireUserRole(["ADMIN", "STAFF"]);
   const cap = resolveBackofficeCapability(session.user.role, args.tree);
   if (!cap) redirect("/dashboard");
   const tab = findMoneyTab(args.tab);
-  if (!tab || !can(cap, tab.surface)) {
+  if (!tab) notFound();
+  if (!can(cap, tab.surface)) {
     const first = moneyTabsFor(cap.audience).find((t) => can(cap, t.surface));
     redirect(
       first ? `${treePath}/money/${first.key}` : backofficeLandingHref(cap),

@@ -98,6 +98,8 @@ export interface InboxRowInput {
   id: string;
   kind: InboxRowKind;
   appointmentId: string | null;
+  /** The server-validated manual reminder window; links and email stay server-side. */
+  reminderExpiresAt: Stamp | null;
   planTitle: string;
   requester: { name: string; image: string | null };
   requestedAt: Stamp;

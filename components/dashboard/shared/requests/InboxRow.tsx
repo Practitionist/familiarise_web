@@ -31,6 +31,7 @@ import {
 import {
   toStampDate,
   type InboxRowInput,
+  type Stamp,
 } from "@/lib/dashboard/requests-inbox-state";
 import {
   formatInViewerZone,
@@ -39,7 +40,7 @@ import {
 } from "@/lib/time/viewer-zone";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   CHECKOUT_HOLD_BADGE,
@@ -166,6 +167,7 @@ function movingActions(row: InboxRowInput): RowActions | null {
 export function rowActions(
   row: InboxRowInput,
   presentation: Pick<BookingPresentation, "bookingState" | "nextAction">,
+  now: Date = new Date(),
 ): RowActions {
   const { bookingState, nextAction } = presentation;
   // The buyer is paying right now; nothing here may race them.
@@ -215,7 +217,13 @@ export function rowActions(
     kind === "REMIND_OR_WITHDRAW" ||
     bookingState.state === "AWAITING_PAYMENT"
   ) {
-    return { primary: { kind: "remind" }, secondary: [{ kind: "withdraw" }] };
+    return {
+      primary:
+        row.reminderExpiresAt && toStampDate(row.reminderExpiresAt) > now
+          ? { kind: "remind" }
+          : null,
+      secondary: [{ kind: "withdraw" }],
+    };
   }
   return { primary: null, secondary: [] };
 }
@@ -359,6 +367,22 @@ export interface InboxRowProps {
 /** 44 px targets on the phone (WCAG 2.5.5), compact from sm. */
 const TOUCH = "min-h-11 sm:min-h-8";
 
+/** The longest delay `setTimeout` honours; a later instant would fire at once. */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** Re-renders once just after `at`, so an action gated on that instant leaves on time. */
+function useRerenderAfter(at: Stamp | null) {
+  const [, setTick] = useState(0);
+  const target = at ? toStampDate(at).getTime() : null;
+  useEffect(() => {
+    if (target === null) return;
+    const delay = target - Date.now() + 1;
+    if (delay <= 0 || delay > MAX_TIMER_MS) return;
+    const id = setTimeout(() => setTick((n) => n + 1), delay);
+    return () => clearTimeout(id);
+  }, [target]);
+}
+
 export function InboxRow({
   row,
   viewer,
@@ -377,7 +401,8 @@ export function InboxRow({
     { now },
   );
   const { bookingState, moneyState } = presentation;
-  const actions = rowActions(row, presentation);
+  useRerenderAfter(row.reminderExpiresAt);
+  const actions = rowActions(row, presentation, now);
   const badge = row.checkoutHold
     ? CHECKOUT_HOLD_BADGE
     : row.kind === "next-cycle"

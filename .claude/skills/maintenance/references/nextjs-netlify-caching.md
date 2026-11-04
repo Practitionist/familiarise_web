@@ -100,13 +100,15 @@ For invalidation, `revalidatePath` and `revalidateTag` both work and propagate t
 
 Documented adapter limitations worth remembering: pages set to the `edge` runtime actually run in the functions region, `beforeFiles` rewrites cannot point at static files in `public/`, and headers and redirects are evaluated after middleware.
 
-## A missing public page must answer 404, so no `loading.tsx` may sit at or above a dynamic page
+## A page whose existence or visibility is checked must answer 404, so no `loading.tsx` may sit above the layout that checks it
 
 Next.js commits the HTTP status as soon as the first byte streams, and a `loading.tsx` streams its fallback first, so a `notFound()` called inside the page after that point can only add a noindex meta tag to a response that is already `200`. Search engines then index soft 404s, so visibility gates belong in the layout too, not only plain existence checks. The `loading.tsx` file convention is described at https://nextjs.org/docs/app/api-reference/file-conventions/loading.
 
 A segment's `loading.tsx` wraps that segment's page and everything below it, but not that segment's own `layout.tsx`. Therefore the existence check for a public dynamic segment such as `app/explore/products/[slug]` lives in that segment's `layout.tsx`: an async server component that reads the item through the same `React.cache` reader as the page, calls `notFound()` when it is missing or when the viewer may not see it (archived, draft or ORG_ONLY plans run the same `canViewPlanDetail` gate the page does), and otherwise renders `children`. The segment's own `loading.tsx` stays, because it sits below the layout.
 
 No ancestor of such a segment may have a `loading.tsx`, and that includes `app/loading.tsx`, because an ancestor's loading file wraps the descendant layouts too. When an ancestor index page needs a skeleton, move its `page.tsx` and `loading.tsx` into a route group such as `app/explore/experts/(index)/`, which leaves the URL unchanged and stops the skeleton from covering the child layouts. `__tests__/explore/not-found-layouts.test.tsx` fails if either rule regresses.
+
+The same rule covers the dashboards. The role roots `consultant/[consultantId]`, `consultee/[consulteeId]`, `organization/[orgId]`, `org-workspace/[orgWorkspaceId]` and `(backoffice)/[tree]` each have a server `layout.tsx` that calls `notFound()` for a missing or not-owned id, with `app/dashboard/not-found.tsx` as the boundary. The index pages of `/dashboard`, `/dashboard/consultant` and `/dashboard/consultee` live in `(index)` groups so their skeletons do not cover those layouts, and `__tests__/dashboard/not-found-layouts.test.tsx` pins both. An unknown child segment such as `/dashboard/consultee/<id>/products` matches `(backoffice)/[tree]/[...legacy]`, whose layout 404s any tree other than the two back-office ones. Deep pages below a `loading.tsx` (appointment, payment and support-case details) still call `notFound()` after the skeleton has streamed, so they remain soft 404s.
 
 ## How to verify — the only four techniques that have worked here
 
@@ -256,6 +258,8 @@ The same trap fires without any rename. Several files on `dev` are already Prett
 Never run `prisma db push` as part of a rendering change. There is deferred, unrelated schema drift that a push would apply to a database shared with production.
 
 ## Sources
+
+For the general App Router rules this file builds on (Server and Client Components, status codes, route handlers, middleware, React 18.3 limits and a PR checklist), see `.claude/skills/nextjs/SKILL.md`.
 
 These were opened as primary sources rather than summarised second-hand.
 

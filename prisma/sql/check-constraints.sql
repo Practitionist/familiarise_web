@@ -757,12 +757,15 @@ CREATE TRIGGER usage_ledger_entry_immutable
   EXECUTE FUNCTION assert_usage_ledger_entry_immutable();
 
 -- SPLIT
--- BookingStatusHistory is append-only (reschedule-restore and response-rate read
--- it as truth). A trigger never scans existing rows, so it ships live, not staged.
+-- BookingStatusHistory is append-only except retention deletes of rows older than
+-- 3 years, which prune-audit-logs performs. A trigger never scans existing rows, so it ships live.
 DROP TRIGGER IF EXISTS booking_status_history_immutable ON "BookingStatusHistory";
 -- SPLIT
 CREATE OR REPLACE FUNCTION assert_booking_status_history_immutable() RETURNS trigger AS $$
 BEGIN
+  IF TG_OP = 'DELETE' AND OLD."createdAt" < now() - interval '3 years' THEN
+    RETURN OLD;
+  END IF;
   RAISE EXCEPTION 'BookingStatusHistory % is immutable (% refused)', OLD."id", TG_OP;
 END;
 $$ LANGUAGE plpgsql;

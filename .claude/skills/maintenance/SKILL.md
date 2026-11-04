@@ -40,6 +40,11 @@ Every registry entry carries a required `idle` field: either `{ hasWork(db, now,
 
 Recording transfer is ticker-owned every 15 minutes through its existing background adapter. Keep 202 admission separate from successful core completion. Its requested fail-closed 15-minute lease is capped on Netlify at 90 seconds, renewed every 30 seconds; renewal loss does not cancel the core, so preserve domain claim and publication fencing. The recording's stale-claim threshold remains 15 minutes. Session recovery runs via HTTP at :10/:40. The five daily lifecycle targets queue the narrow `stream-maintenance-background` worker in staggered daily windows; their Actions steps are removed. All six migrated cores fail closed, and each daily lifecycle job has a 28.5-hour freshness budget. See `docs/stream/09-background-sync.md` for slice bounds and continuation.
 
+Appointment reminders require a Postgres lease before staging email. If lease
+acquisition fails, the run fails without delivery; the next ticker run retries
+within the existing reminder window. Staged email reads prevent sequential
+replay, but do not provide atomic deduplication for overlapping unlocked runs.
+
 Cron leases are Postgres-backed. Closed jobs never run when acquisition fails,
 including Prisma import failures. Completion is conditional on the same execution
 still being RUNNING; only successful owned completion advances freshness. Typed

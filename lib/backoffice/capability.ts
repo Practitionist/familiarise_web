@@ -59,3 +59,15 @@ export function backofficeLandingHref(
     ? "/dashboard/admin/home"
     : "/dashboard/staff/support";
 }
+
+/** STAFF opening `/dashboard/admin/…` get the same page in their own tree. */
+export function staffTwinHref(
+  pathWithQuery: string | null | undefined,
+): string {
+  const match = /^\/dashboard\/admin(?=\/|\?|$)(.*)$/.exec(pathWithQuery ?? "");
+  if (!match) return backofficeLandingHref({ tree: "staff" });
+  const rest = match[1];
+  return rest && rest !== "/"
+    ? `/dashboard/staff${rest}`
+    : backofficeLandingHref({ tree: "staff" });
+}

@@ -7,6 +7,7 @@ import type {
   CaseWorkspace,
 } from "@/types/support-case";
 import { caseKeyOf, type CaseRef } from "./case-key";
+import { isPresenterAuthoredMessage } from "./case-message-actor";
 import { PLAN_TITLE_SELECT, planTitle } from "./case-read";
 import { ticketTopic } from "./case-topic";
 import { slaStateOf } from "./sla";
@@ -317,6 +318,9 @@ export async function readCaseWorkspace(
       authorName: m.authorUser?.name ?? null,
       body: m.body,
       internal: m.isInternal,
+      actorKind: isPresenterAuthoredMessage(m.metadata)
+        ? ("PRESENTER" as const)
+        : undefined,
       at: m.createdAt.toISOString(),
     })),
     hasMore: c.messages.length > TIMELINE_LIMIT,
