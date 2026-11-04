@@ -44,8 +44,10 @@ export async function convertCompletedTrial(
       consultantProfileId: subscription.subscriptionPlan.consultantProfileId,
       status: TrialStatus.COMPLETED,
       convertedToSubscriptionId: null,
+      // A trial completed after the payment did not lead to it.
       completedAt: {
         gte: new Date(paidAt.getTime() - TRIAL_CONVERSION_WINDOW_MS),
+        lte: paidAt,
       },
     },
     select: { id: true },

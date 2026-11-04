@@ -90,6 +90,16 @@ async function startCheckout({ buyer, plan }: Seeded) {
   });
 }
 
+/** The gateway captured the payment `daysAgo` days ago. */
+const markCaptured = (paymentId: string, daysAgo = 0) =>
+  prisma.payment.update({
+    where: { id: paymentId },
+    data: {
+      paymentStatus: "SUCCEEDED",
+      capturedAt: new Date(Date.now() - daysAgo * 24 * 3_600_000),
+    },
+  });
+
 /** The capture's confirmation, as the webhook runs it. */
 const confirmCapture = (appointmentId: string, userId: string) =>
   prisma.$transaction(
@@ -107,6 +117,7 @@ it("checkout start leaves the trial COMPLETED; the capture converts it", async (
     convertedToSubscriptionId: null,
   });
 
+  await markCaptured(payment.id);
   await confirmCapture(payment.appointmentId!, seeded.buyer.userId);
   expect(await trialOf(seeded.trial.id)).toEqual({
     status: "CONVERTED",
@@ -128,13 +139,16 @@ it("is judged at the capture, not when a late reconcile confirms it", async () =
   // Captured 29 days after the trial ended, confirmed by a sweep on day 31.
   const seeded = await seedTrialledPlan(31);
   const payment = await startCheckout(seeded);
-  await prisma.payment.update({
-    where: { id: payment.id },
-    data: {
-      paymentStatus: "SUCCEEDED",
-      capturedAt: new Date(Date.now() - 2 * 24 * 3_600_000),
-    },
-  });
+  await markCaptured(payment.id, 2);
   await confirmCapture(payment.appointmentId!, seeded.buyer.userId);
   expect((await trialOf(seeded.trial.id)).status).toBe("CONVERTED");
+});
+
+it("a trial completed after the plan was paid is not its conversion", async () => {
+  // Captured two days ago; the trial completed yesterday; a re-drive confirms today.
+  const seeded = await seedTrialledPlan(1);
+  const payment = await startCheckout(seeded);
+  await markCaptured(payment.id, 2);
+  await confirmCapture(payment.appointmentId!, seeded.buyer.userId);
+  expect((await trialOf(seeded.trial.id)).status).toBe("COMPLETED");
 });
