@@ -36,6 +36,7 @@ function rows(spec: Record<string, number>) {
 function plan12(occurrences: ReturnType<typeof rows>) {
   return subscriptionEntitlement({
     sessionsTotal: 12,
+    sessionsRefunded: 0,
     sessionsPerWeek: 4,
     durationInMonths: 3,
     occurrences,
@@ -121,6 +122,7 @@ describe("subscriptionEntitlement — fixed plan weeks on a 12-plan at 4/week", 
   it("the last sessions are bounded by what remains", () => {
     const short = subscriptionEntitlement({
       sessionsTotal: 10,
+      sessionsRefunded: 0,
       sessionsPerWeek: 4,
       durationInMonths: 3,
       occurrences: [
@@ -141,6 +143,7 @@ describe("pacing: a 3-a-week plan never runs ahead of its calendar weeks", () =>
     const thursday = new Date(NOW.getTime() + 3 * 24 * HOUR);
     const e = subscriptionEntitlement({
       sessionsTotal: 72,
+      sessionsRefunded: 0,
       sessionsPerWeek: 3,
       durationInMonths: 6,
       occurrences: [0, 1, 2].map((d) => row(d, "COMPLETED")),
@@ -157,6 +160,7 @@ describe("pacing: a 3-a-week plan never runs ahead of its calendar weeks", () =>
   it("an idle week stays this week's to fill, whatever was delivered before", () => {
     const e = subscriptionEntitlement({
       sessionsTotal: 72,
+      sessionsRefunded: 0,
       sessionsPerWeek: 3,
       durationInMonths: 6,
       occurrences: [0, 1, 2].map((d) => row(d, "COMPLETED")),

@@ -193,6 +193,7 @@ export async function resolveBookingRefundContext(
       subscription: {
         select: {
           sessionsTotal: true,
+          sessionsRefunded: true,
           subscriptionPlan: { select: { totalSessions: true } },
         },
       },
@@ -302,10 +303,15 @@ export async function resolveBookingRefundContext(
   const sessionsTotal = row?.subscription
     ? sessionsTotalOf(row.subscription)
     : null;
+  // Sessions a support refund removed are not unscheduled entitlement.
+  const schedulable =
+    sessionsTotal === null
+      ? null
+      : sessionsTotal - (row?.subscription?.sessionsRefunded ?? 0);
   const windowState = cancelWindowState(slots, new Date(nowMs), {
     hasUnscheduledEntitlement:
-      sessionsTotal !== null &&
-      sessionsTotal - sessionsCompleted - scheduledStarts.length > 0,
+      schedulable !== null &&
+      schedulable - sessionsCompleted - scheduledStarts.length > 0,
   });
 
   return {

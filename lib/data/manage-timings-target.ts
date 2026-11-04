@@ -3,6 +3,7 @@ import { toPlain } from "@/lib/data/serialize";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { resolvePrimaryPlanOwnerIds } from "@/lib/booking/plan-owners";
 import { toOccurrenceLike } from "@/lib/appointments/view-model";
+import { sessionsTotalOf } from "@/lib/booking/entitlement";
 import {
   isOccurrenceOver,
   liveOccurrences,
@@ -120,7 +121,10 @@ export async function readManageTimingsTarget(
   // sessions in with future ones.
   const groupTotalSessions =
     appointment.appointmentType === "SUBSCRIPTION"
-      ? (appointment.subscription?.subscriptionPlan?.totalSessions ?? undefined)
+      ? appointment.subscription
+        ? sessionsTotalOf(appointment.subscription) -
+          appointment.subscription.sessionsRefunded
+        : undefined
       : appointment.appointmentType === "CLASS"
         ? (appointment.class?.classPlan?.totalSessions ?? undefined)
         : undefined;

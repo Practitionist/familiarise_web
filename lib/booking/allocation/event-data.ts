@@ -20,7 +20,9 @@ import { assertUnpaidApprovalFits } from "@/lib/booking/lead-time";
 import { WEEKLY_COVERAGE_SELECT } from "@/utils/scheduling-engine/availabilityCoverage";
 import {
   lastInstantBefore,
-  sessionsTotalOf,
+  soldSessionMinutes,
+  soldSessionsPerWeek,
+  soldTermsOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import { formatDateLabel } from "@/lib/time/display";
@@ -394,6 +396,9 @@ export async function fetchEventData(
         where: { id: eventId },
         select: {
           sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionMinutes: true,
+          sessionsRefunded: true,
           schedulingPeriodStartsAt: true,
           schedulingTimezone: true,
           planEndsAt: true,
@@ -442,9 +447,7 @@ export async function fetchEventData(
       // #1766 — one counter: the frozen entitlement and the current cycle
       // decide how many sessions this run may place and in which window.
       const entitlement = subscriptionEntitlement({
-        sessionsTotal: sessionsTotalOf(event),
-        sessionsPerWeek: event.subscriptionPlan.sessionsPerWeek,
-        durationInMonths: event.subscriptionPlan.durationInMonths,
+        ...soldTermsOf(event),
         occurrences: event.appointment?.occurrences ?? [],
         schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
         schedulingTimezone: event.schedulingTimezone,
@@ -460,9 +463,10 @@ export async function fetchEventData(
         );
       }
       config = {
-        durationInMonths: event.subscriptionPlan?.durationInMonths,
-        sessionsPerWeek: event.subscriptionPlan?.sessionsPerWeek,
-        sessionDurationInHours: event.subscriptionPlan?.sessionDurationInHours,
+        durationInMonths: event.subscriptionPlan.durationInMonths,
+        // The terms frozen at purchase, not today's plan row.
+        sessionsPerWeek: soldSessionsPerWeek(event),
+        sessionDurationInHours: soldSessionMinutes(event) / 60,
         totalSessions: entitlement.total,
         cycleTargetSessions: entitlement.cycle.nextBatch,
         schedulingPeriodStartsAt: entitlement.cycle.windowStart,

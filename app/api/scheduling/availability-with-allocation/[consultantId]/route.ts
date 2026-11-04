@@ -43,7 +43,7 @@ import {
   type GridQuota,
 } from "@/lib/scheduling/grid-quota";
 import {
-  sessionsTotalOf,
+  soldTermsOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import { LEAD_PURPOSES, leadMsFor } from "@/lib/booking/lead-time";
@@ -406,6 +406,7 @@ export async function GET(
     let quotaSubject: {
       id: string;
       sessionsTotal: number;
+      sessionsRefunded: number;
       sessionsPerWeek: number;
       durationInMonths: number;
       schedulingPeriodStartsAt: Date;
@@ -424,6 +425,8 @@ export async function GET(
           id: true,
           updatedAt: true,
           sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionsRefunded: true,
           schedulingPeriodStartsAt: true,
           schedulingTimezone: true,
           planEndsAt: true,
@@ -460,9 +463,7 @@ export async function GET(
       });
       quotaSubject = {
         id: subscription.id,
-        sessionsTotal: sessionsTotalOf(subscription),
-        sessionsPerWeek: subscription.subscriptionPlan.sessionsPerWeek,
-        durationInMonths: subscription.subscriptionPlan.durationInMonths,
+        ...soldTermsOf(subscription),
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
         schedulingTimezone: subscription.schedulingTimezone,
         planEndsAt: subscription.planEndsAt,
@@ -1089,6 +1090,7 @@ export async function GET(
       );
       const entitlement = subscriptionEntitlement({
         sessionsTotal: quotaSubject.sessionsTotal,
+        sessionsRefunded: quotaSubject.sessionsRefunded,
         sessionsPerWeek: quotaSubject.sessionsPerWeek,
         durationInMonths: quotaSubject.durationInMonths,
         occurrences,

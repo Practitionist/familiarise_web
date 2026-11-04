@@ -36,7 +36,7 @@ import {
   OCCUPIED_EVENT_STATUSES,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
-  sessionsTotalOf,
+  soldTermsOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import { allocate } from "@/lib/booking/allocation";
@@ -684,6 +684,8 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         id: true,
         updatedAt: true,
         sessionsTotal: true,
+        sessionsPerWeek: true,
+        sessionsRefunded: true,
         schedulingPeriodStartsAt: true,
         schedulingTimezone: true,
         planEndsAt: true,
@@ -719,9 +721,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
     for (const subscription of subscriptions) {
       const plan = subscription.subscriptionPlan;
       const entitlement = subscriptionEntitlement({
-        sessionsTotal: sessionsTotalOf(subscription),
-        sessionsPerWeek: plan.sessionsPerWeek,
-        durationInMonths: plan.durationInMonths,
+        ...soldTermsOf(subscription),
         occurrences: subscription.appointment?.occurrences ?? [],
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
         schedulingTimezone: subscription.schedulingTimezone,

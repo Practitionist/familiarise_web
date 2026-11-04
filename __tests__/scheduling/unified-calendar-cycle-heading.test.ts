@@ -32,6 +32,7 @@ function heading(spec: Record<string, number>) {
   return subscriptionCycleHeading(
     subscriptionEntitlement({
       sessionsTotal: 12,
+      sessionsRefunded: 0,
       sessionsPerWeek: 4,
       durationInMonths: 3,
       occurrences: rows(spec),

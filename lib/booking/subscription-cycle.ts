@@ -24,7 +24,7 @@ import {
   isCompletedOccurrence,
   planWeekNumber,
   maturedTrancheOrdinal,
-  sessionsTotalOf,
+  soldTermsOf,
   subscriptionEntitlement,
   subscriptionTranches,
 } from "./entitlement";
@@ -104,6 +104,8 @@ export async function settleSubscriptionCycleWithNotice(
           id: true,
           status: true,
           sessionsTotal: true,
+          sessionsPerWeek: true,
+          sessionsRefunded: true,
           schedulingPeriodStartsAt: true,
           schedulingTimezone: true,
           planEndsAt: true,
@@ -133,14 +135,13 @@ export async function settleSubscriptionCycleWithNotice(
     },
   });
   const sub = wrapper?.subscription;
-  if (!sub || (sub.status !== "APPROVED" && sub.status !== "SCHEDULED")) {
+  if (!sub || sub.status !== "APPROVED") {
     return { bells: [], emailArgs: null };
   }
 
+  const terms = soldTermsOf(sub);
   const entitlement = subscriptionEntitlement({
-    sessionsTotal: sessionsTotalOf(sub),
-    sessionsPerWeek: sub.subscriptionPlan.sessionsPerWeek,
-    durationInMonths: sub.subscriptionPlan.durationInMonths,
+    ...terms,
     occurrences: wrapper.occurrences,
     schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
     schedulingTimezone: sub.schedulingTimezone,
@@ -150,10 +151,8 @@ export async function settleSubscriptionCycleWithNotice(
 
   // The money half: every tranche up to the highest matured one that is
   // still unstamped starts its hold now, anchored on the last delivered end.
-  const tranches = subscriptionTranches(
-    sub.subscriptionPlan,
-    entitlement.total,
-  );
+  // Tranches follow the sessions sold, as they were minted at capture.
+  const tranches = subscriptionTranches(terms, terms.sessionsTotal);
   const matured = maturedTrancheOrdinal(tranches, entitlement.completed);
   if (matured >= 0 && wrapper.payment.length > 0) {
     const lastCompletedEnd = wrapper.occurrences

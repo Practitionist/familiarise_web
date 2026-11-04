@@ -101,7 +101,12 @@ describe("subscriptionPlanEnd / subscriptionIsOver", () => {
 });
 
 describe("the cycle window stops at the plan end", () => {
-  const plan = { sessionsPerWeek: 2, durationInMonths: 1, sessionsTotal: 8 };
+  const plan = {
+    sessionsPerWeek: 2,
+    durationInMonths: 1,
+    sessionsTotal: 8,
+    sessionsRefunded: 0,
+  };
 
   it("clamps the last cycle to the plan end", () => {
     const planEndsAt = new Date("2026-04-03T06:00:00Z");

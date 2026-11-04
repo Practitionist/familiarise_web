@@ -59,7 +59,7 @@ import {
 } from "@/lib/booking/transitions";
 import { settleSubscriptionCycleWithNotice } from "@/lib/booking/subscription-cycle";
 import {
-  sessionsTotalOf,
+  soldTermsOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import {
@@ -698,9 +698,7 @@ async function completeSubscriptions(
       // #1766 — COMPLETED is terminal: a plan whose live cycle ended but whose
       // entitlement is not spent is waiting for its next cycle, not finished.
       const entitlement = subscriptionEntitlement({
-        sessionsTotal: sessionsTotalOf(subscription),
-        sessionsPerWeek: subscription.subscriptionPlan.sessionsPerWeek,
-        durationInMonths: subscription.subscriptionPlan.durationInMonths,
+        ...soldTermsOf(subscription),
         occurrences: subscription.appointment?.occurrences ?? [],
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
         schedulingTimezone: subscription.schedulingTimezone,

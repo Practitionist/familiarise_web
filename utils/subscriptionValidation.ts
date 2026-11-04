@@ -1,7 +1,8 @@
 import type { PrismaLike } from "@/lib/prisma";
 import {
   lastInstantBefore,
-  sessionsTotalOf,
+  soldSessionMinutes,
+  soldTermsOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
@@ -67,7 +68,6 @@ export class SubscriptionValidationService {
       throw new Error("Subscription not found");
     }
 
-    const { subscriptionPlan } = subscription;
     const schedulingTimezone =
       subscription.schedulingTimezone ??
       ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
@@ -85,9 +85,7 @@ export class SubscriptionValidationService {
           )
         : [];
     const entitlement = subscriptionEntitlement({
-      sessionsTotal: sessionsTotalOf(subscription),
-      sessionsPerWeek: subscriptionPlan.sessionsPerWeek,
-      durationInMonths: subscriptionPlan.durationInMonths,
+      ...soldTermsOf(subscription),
       occurrences: keptOccurrences,
       schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
       schedulingTimezone,
@@ -102,7 +100,7 @@ export class SubscriptionValidationService {
     );
     const cycleCalls = countWholeCalls(
       proposedSlotDates,
-      subscriptionPlan.sessionDurationInHours,
+      soldSessionMinutes(subscription) / 60,
     );
 
     const result: SubscriptionValidationResult = {

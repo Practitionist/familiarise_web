@@ -6,6 +6,9 @@ import {
 } from "@/lib/appointments/view-model";
 import {
   sessionsTotalOf,
+  soldSessionMinutes,
+  soldSessionsPerWeek,
+  soldTermsOf,
   subscriptionPlanEnd,
 } from "@/lib/booking/entitlement";
 
@@ -119,7 +122,11 @@ export function buildRescheduleSubject(
           consulteeName: subscription?.requestedBy?.user?.name,
           title: plan?.title ?? "Subscription",
           typeLabel: "Subscription",
-          sessionDurationInHours: plan?.sessionDurationInHours,
+          sessionDurationInHours:
+            subscription && plan
+              ? soldSessionMinutes({ ...subscription, subscriptionPlan: plan }) /
+                60
+              : undefined,
           eventType: "subscription",
           eventId: subscription?.id ?? undefined,
           // The plan's scheduling period and cadence. Omitting these drew an
@@ -133,17 +140,19 @@ export function buildRescheduleSubject(
             ? subscriptionPlanEnd(subscription)
             : undefined,
           schedulingTimezone: subscription?.schedulingTimezone,
-          sessionsPerWeek: plan?.sessionsPerWeek,
-          totalSessions: plan?.totalSessions,
+          sessionsPerWeek:
+            subscription && plan
+              ? soldSessionsPerWeek({ ...subscription, subscriptionPlan: plan })
+              : undefined,
+          totalSessions:
+            subscription && plan
+              ? sessionsTotalOf({ ...subscription, subscriptionPlan: plan }) -
+                subscription.sessionsRefunded
+              : undefined,
           rescheduleEntitlement:
             subscription && plan
               ? {
-                  sessionsTotal: sessionsTotalOf({
-                    sessionsTotal: subscription.sessionsTotal ?? null,
-                    subscriptionPlan: { totalSessions: plan.totalSessions },
-                  }),
-                  sessionsPerWeek: plan.sessionsPerWeek,
-                  durationInMonths: plan.durationInMonths,
+                  ...soldTermsOf({ ...subscription, subscriptionPlan: plan }),
                   schedulingPeriodStartsAt:
                     subscription.schedulingPeriodStartsAt,
                   schedulingTimezone: subscription.schedulingTimezone,
