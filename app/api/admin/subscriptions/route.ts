@@ -267,7 +267,8 @@ export async function GET(req: NextRequest) {
         consultantEmail: consultantUser?.email ?? null,
         planTitle: plan?.title ?? "Subscription Plan",
         durationInMonths: plan?.durationInMonths ?? 1,
-        sessionsPerWeek: plan?.sessionsPerWeek ?? 1,
+        sessionsPerWeek:
+          subscription?.sessionsPerWeek ?? plan?.sessionsPerWeek ?? 1,
         sessionsTotal,
         sessionsCompleted,
         sessionsUpcoming,

@@ -16,6 +16,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { SubscriptionValidationService } from "@/utils/subscriptionValidation";
 import {
+  soldSessionMinutes,
+  soldSessionsPerWeek,
+} from "@/lib/booking/entitlement";
+import {
   validationRequestSchema,
   eventIdSchema,
 } from "@/schemas/slotAllocation/validationSchemas";
@@ -158,8 +162,9 @@ export async function POST(
         },
         {
           durationInMonths: subscriptionPlan.durationInMonths,
-          sessionsPerWeek: subscriptionPlan.sessionsPerWeek,
-          sessionDurationInHours: subscriptionPlan.sessionDurationInHours,
+          // The terms frozen at purchase, not today's plan row.
+          sessionsPerWeek: soldSessionsPerWeek(subscription),
+          sessionDurationInHours: soldSessionMinutes(subscription) / 60,
           schedulingPeriodStartsAt:
             subscriptionValidation.subscriptionPeriod.start,
           schedulingPeriodEndsAt: subscriptionValidation.subscriptionPeriod.end,

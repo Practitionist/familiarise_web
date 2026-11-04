@@ -206,8 +206,8 @@ export async function settleSubscriptionCycleWithNotice(
   const cycleOrdinal = lastDelivered
     ? planWeekNumber(
         {
-          sessionsPerWeek: sub.subscriptionPlan.sessionsPerWeek,
-          durationInMonths: sub.subscriptionPlan.durationInMonths,
+          sessionsPerWeek: terms.sessionsPerWeek,
+          durationInMonths: terms.durationInMonths,
           schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt,
           schedulingTimezone: sub.schedulingTimezone,
         },
