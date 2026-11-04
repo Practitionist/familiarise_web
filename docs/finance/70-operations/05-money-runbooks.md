@@ -139,13 +139,21 @@ ORDER BY h."placedAt" DESC LIMIT 25;
 A `PENDING` earning past its hold-until time whose payment still owes a refund is held by the owed marker, not by an `EarningsHold` row. Find it with:
 
 ```sql
-SELECT e.id, e.status, e."holdUntil", p.id AS payment, p."refundOwedKey",
+SELECT 'consultant' AS arm, e.id, e."consultantSharePaise" AS "sharePaise",
+       e."holdUntil", p.id AS payment, p."refundOwedKey",
        p."refundOwedAttempts", p."refundOwedAt"
 FROM "ConsultantEarnings" e
 JOIN "Payment" p ON p.id = e."paymentId"
 WHERE e.status = 'PENDING' AND e."holdUntil" <= now()
   AND p."refundOwedKey" IS NOT NULL
-ORDER BY p."refundOwedAt" LIMIT 25;
+UNION ALL
+SELECT 'organisation', o.id, o."orgSharePaise", o."holdUntil", p.id,
+       p."refundOwedKey", p."refundOwedAttempts", p."refundOwedAt"
+FROM "OrganizationEarnings" o
+JOIN "Payment" p ON p.id = o."paymentId"
+WHERE o.status = 'PENDING' AND o."holdUntil" <= now()
+  AND p."refundOwedKey" IS NOT NULL
+ORDER BY "refundOwedAt" LIMIT 25;
 ```
 
 It releases on the next run after the marker clears. A marker still retrying (`refundOwedAttempts` under 3) clears itself when its refund goes out. A spent marker is in the ops queue ("Refunds the bookings owe"); refund it by hand through an ops refund door, which settles the marker. Never clear `refundOwedKey` by SQL to release earnings: the buyer is still owed the money.
