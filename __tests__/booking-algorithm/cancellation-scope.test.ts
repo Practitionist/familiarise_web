@@ -24,6 +24,9 @@
 
 const mockAppointmentFindFirst = jest.fn();
 const mockRecordSystemError = jest.fn();
+const mockRescheduleFindMany = jest.fn(
+  async (..._args: unknown[]) => [] as unknown[],
+);
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -33,7 +36,9 @@ jest.mock("../../lib/prisma", () => ({
     },
     // No session was released by a reschedule or refunded on its own.
     appointmentOccurrence: { findMany: async () => [] },
-    rescheduleRequest: { findMany: async () => [] },
+    rescheduleRequest: {
+      findMany: (...a: unknown[]) => mockRescheduleFindMany(...a),
+    },
     refund: { findMany: async () => [] },
   },
 }));
@@ -220,6 +225,44 @@ describe("resolveBookingRefundContext", () => {
 
     // Not the lowest tier for a time that already passed.
     expect(ctx.hoursUntilNextSession).toBeGreaterThan(24 * 30);
+  });
+
+  it("applies the client's own late release before picking the shortest notice", async () => {
+    // The client released session 1 with an hour's notice; session 2 is in 2 h.
+    const releasedStart = hoursFromNow(-5);
+    mockRescheduleFindMany.mockResolvedValueOnce([
+      {
+        id: "rr-1",
+        status: "EXPIRED",
+        createdAt: new Date(releasedStart.getTime() - HOUR),
+        releasedSessions: [
+          { ordinal: 1, startsAt: releasedStart.toISOString() },
+        ],
+      },
+    ]);
+    mockAppointmentFindFirst.mockResolvedValue({
+      id: WRAPPER,
+      cancellationPolicy: null,
+      payment: [{ id: "pay-1", amount: 100_000, refunds: [], disputes: [] }],
+      occurrences: [
+        {
+          startsAt: releasedStart,
+          endsAt: hoursFromNow(-4),
+          ordinal: 1,
+          completionStatus: "RESCHEDULED",
+        },
+        {
+          startsAt: hoursFromNow(2),
+          endsAt: hoursFromNow(3),
+          ordinal: 2,
+          completionStatus: "SCHEDULED",
+        },
+      ],
+    });
+
+    const ctx = await resolveBookingRefundContext({ subscriptionId: "sub-1" });
+
+    expect(ctx.hoursUntilNextSession).toBeCloseTo(1, 5);
   });
 
   it("never lets a never-replaced session outrank an imminent one", async () => {
