@@ -475,7 +475,7 @@ export async function findAvailableSlots(
   }
 
   /**
-   * Availability spans that start on this UTC day. #1194 — the end lets
+   * Availability spans that start on this UTC day. The end lets
    * candidateStartsInRow bound its walk to the span's own time range.
    */
   const rowStartsForDay = (currentDay: Date): RowSpan[] =>
