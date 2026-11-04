@@ -53,6 +53,12 @@ Agents should read [`.claude/skills/support/SKILL.md`](../../.claude/skills/supp
 
 Pages mark behaviour that is not on `dev` as **planned** with a priority from the support tracker (#2293): **P0** live breakage, a security hole or data loss now; **P1** a launch blocker; **P2** within about 30 days after launch (#2270); **P3** backlog; **P4** deferred by decision. Case-linked chat access and intervention (#2343) and the platform reschedule door are on `dev`.
 
+## Back-office inbox layout
+
+The inbox uses its available width, including the space left by the dashboard sidebar. Below 60rem, operators see the case list or the selected case, with an **All cases** link that preserves the URL filters. Search stays visible in the list; **Filters** expands the remaining controls and shows how many are active. At 60rem, an 18rem case list sits beside the reader and filters stay visible. **Details** overlays the conversation until the case workspace itself reaches 64rem, then docks beside it; its close button and Escape from inside the panel return focus to the Details button. Resizing keeps the same conversation and draft mounted.
+
+On the admin inbox, **Support reports** expands the Self-Serve Health and Monthly Grievance Summary cards in one vertical column, including on small screens. Monthly metrics use two columns in a narrow report and four when the report has at least 30rem. Staff keep the same inbox layout without the admin reports.
+
 ## Deprecated & Superseded Approaches
 
 The previous `docs/support/` set described separate tickets and appointment threads, a single production-architecture page and a short schema page. Those pages were replaced by this set, and links elsewhere in the docs were repointed to the new pages. Separate ticket and thread tables, import aliases and legacy API stubs were removed in the pre-MVP cleanup, and canonical cases are seeded directly.

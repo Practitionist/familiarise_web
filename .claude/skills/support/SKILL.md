@@ -66,6 +66,8 @@ The code still has the rules described above until these land; don't build again
 
 ## Gotchas
 
+- The back-office inbox responds to its container, not the viewport: list/reader split at 60rem; Details docks only when the case workspace reaches 64rem. Keep admin health and monthly reports stacked in the expandable Support reports section; preserve URL filters on All cases and drafts across resizing. See [inbox layout](../../../docs/support/README.md#back-office-inbox-layout).
+
 - Attachment finalisation and orphan removal compete on the pending row. Claim
   the tombstone before deleting, reread live references per 100-path batch, and
   never revive a tombstoned upload. Completed live evidence retains its replay
