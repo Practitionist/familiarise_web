@@ -390,11 +390,23 @@ a time and the first writer wins, so a door that finds another door's marker
 already on the payment commits nothing and answers through `heldMarkerRefusal`:
 409 `REFUND_IN_PROGRESS` while that marker is still retrying, or 409
 `REFUND_NEEDS_SUPPORT` once it has spent `MAX_REFUND_OWED_ATTEMPTS` or a live
-dispute holds the payment. The cancel route, trial cancel and seat leave all
-follow this rule, so no door drives a refund it does not own and none leaves its
-own refund undurable. A `REFUND_NEEDS_SUPPORT` refusal writes one audited
+dispute holds the payment. The cancel route, trial cancel, seat leave and the
+whole-event cancel all follow this rule, so no door drives a refund it does not
+own and none leaves its own refund undurable. `stampWholeEventRefundsOwed` stamps
+the roster in one statement, accepts a replay of its own key, and throws the
+refusal (subject `class` or `webinar`) on any seat whose marker is not its own,
+so the cancel route, the ADMIN `cancel-series` door and the moderation cancel
+commit nothing; `refundWholeEventPayments` then drives only the event's own keys. A `REFUND_NEEDS_SUPPORT` refusal writes one audited
 `SystemEvent` per payment and marker (`recordRefundNeedsSupport`), and support
 settles the marker through an operator refund door.
+
+**A door that proceeds anyway holds the money for a hand top-up.** Rejection,
+moderation of a 1:1 booking or a removed attendee, a consultant no-show, the
+maintenance freeze and the overage credit-back end the booking even when another
+door's marker holds the payment. `stampOwedOrHeld` / `heldInsteadOf` then
+records one `owed-already-held:<payment>:<key>` `SystemEvent` and places an
+`OPERATOR` `EarningsHold` keyed on it, in the door's transaction, and
+`readOwedAlreadyHeld` lists it in the Refunds tab until the hold is released.
 
 **An operator's refund settles the owed refund by hand.** Every operator door
 passes `settlesOwedByHand` to `refundBookingPayment`: the issue and ladder
@@ -567,3 +579,6 @@ back while the session can still be re-booked; it waits for the plan end.
   `assertNotBeingMoved` refuses it now.
 - **A passed, never-replaced released session quoted from its old start.** Its
   notice once came out negative, the lowest tier; it now counts as full notice.
+- **A whole-event cancel that committed without owning every seat's marker.** It
+  logged the seats another door held and drove whatever marker it found; it now
+  refuses, and a losing door that proceeds holds the earnings for a top-up.

@@ -4,7 +4,7 @@ type: how-to
 band: domain
 audience: sde2
 status: live
-last-reviewed: 2026-10-23
+last-reviewed: 2026-11-04
 ---
 
 # Support runbooks
@@ -40,6 +40,36 @@ Also look for a refund keyed to the recommendation that is not yet linked: `SELE
 **Verify.** The query returns no row for the recommendation, the case timeline shows `RECOMMENDATION_VOIDED` or a live refund, and the decision can be recorded.
 
 **Prevention.** [Money remedies](05-money-remedies.md#recommendation-to-refund).
+
+## A refund held by another door's owed refund
+
+**Symptom.** The Refunds tab lists "Payment … (…): Another refund is still owed on this payment; refund the remaining ₹X by hand, then release the hold.", and the expert's earnings on that payment show HELD.
+
+**Confirm.**
+
+```sql
+SELECT e."correlationId", e.context, e."createdAt", p."refundOwedKey", p."refundOwedPaise"
+FROM system_events e
+JOIN "Payment" p ON p.id = e.context->>'paymentId'
+WHERE e."correlationId" LIKE 'owed-already-held:%'
+ORDER BY e."createdAt";
+
+SELECT "consultantEarningsId", "organizationEarningsId", "releasedAt"
+FROM "EarningsHold"
+WHERE reason = 'OPERATOR' AND "sourceRef" = '<correlationId>';
+```
+
+**Impact.** A door (a rejection, a moderation cancel, a no-show, a maintenance freeze or an overage credit-back) ended the booking while another door's refund already held the payment, so its own refund of ₹X was never stamped. The buyer is short ₹X until someone refunds it, and the payment's unpaid earnings stay held. A class-wide cancel never gets here: it refuses until every seat's refund is its own.
+
+**Fix.**
+
+1. Check the payment's refunds: if the first door's refund and any later refunds already cover what the buyer is owed, skip to step 3.
+2. Refund ₹X through **Issue refund** on the row (the amount is preset). If the first door's marker is still on the payment (`refundOwedKey` above is not null), wait for it to clear, or refund its amount on top: a hand refund settles that marker first, so ₹X alone would only pay the older refund.
+3. Release the hold on each held earning of the payment (consultant and host organisation) through the earnings release door, with a reason.
+
+**Verify.** The row leaves the Refunds tab once every hold it placed is released (or, when the payment had nothing to hold, once another refund lands on it), and the earnings return to their prior status.
+
+**Prevention.** None needed: the door records and holds automatically. See [refunds](../finance/30-refunds-disputes/01-refunds.md#5-when-a-refund-does-not-finish).
 
 ## Failed evidence purge
 
