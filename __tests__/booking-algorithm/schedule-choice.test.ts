@@ -1,7 +1,8 @@
 /**
  * The top-up places a plan's open weeks on its own only when the consultant
  * chose Auto when first scheduling the plan. The choice is a stable token,
- * derived from server facts (what the plan held before the run); one later
+ * derived from server facts (whether the plan was ever placed, and who placed
+ * it); one later
  * week, the sweep's own runs and re-placed or confirmed reschedules never
  * change it, and a plan with no token recorded is by hand.
  */
@@ -37,22 +38,22 @@ it("parses strictly: human copy is never a token", () => {
 });
 
 describe("scheduleReason from server facts", () => {
-  const empty = { heldBefore: 0, releasedBefore: 0 };
+  const empty = { placedBefore: false, releasedBefore: 0 };
   it.each([
     [{ mode: "auto" as const, ...empty }, SCHEDULE_REASON.planAuto],
     [{ mode: "manual" as const, ...empty }, SCHEDULE_REASON.planByHand],
     [{ mode: "requested" as const, ...empty }, SCHEDULE_REASON.planByHand],
     [
-      { mode: "auto" as const, heldBefore: 3, releasedBefore: 0 },
+      { mode: "auto" as const, placedBefore: true, releasedBefore: 0 },
       SCHEDULE_REASON.weekAuto,
     ],
     [
-      { mode: "manual" as const, heldBefore: 3, releasedBefore: 0 },
+      { mode: "manual" as const, placedBefore: true, releasedBefore: 0 },
       SCHEDULE_REASON.weekByHand,
     ],
     // Re-placing a released session is never a plan-level choice.
     [
-      { mode: "auto" as const, heldBefore: 0, releasedBefore: 1 },
+      { mode: "auto" as const, placedBefore: false, releasedBefore: 1 },
       SCHEDULE_REASON.reschedule,
     ],
     [
@@ -62,11 +63,20 @@ describe("scheduleReason from server facts", () => {
     [
       {
         mode: "auto" as const,
-        heldBefore: 3,
+        placedBefore: true,
         releasedBefore: 0,
         bySweep: true,
       },
       SCHEDULE_REASON.topUp,
+    ],
+    // An operator's first placement is one-off, never the consultant's consent.
+    [
+      { mode: "auto" as const, ...empty, byOperator: true },
+      SCHEDULE_REASON.weekAuto,
+    ],
+    [
+      { mode: "manual" as const, ...empty, byOperator: true },
+      SCHEDULE_REASON.weekByHand,
     ],
   ])("%j → %s", (args, token) => {
     expect(scheduleReason(args)).toBe(token);

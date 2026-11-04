@@ -148,6 +148,11 @@ export interface AllocationRequest {
   heldAppointmentLock?: ApprovalLock;
   /** The hourly top-up placing a plan's open week as the system, not a person. */
   bySweep?: boolean;
+  /**
+   * Staff or a host-org operator placed the sessions, not the consultant: a
+   * one-off placement that never records the plan's Auto consent.
+   */
+  byOperator?: boolean;
 }
 
 /** The per-call extras every allocation mode threads into its transaction. */

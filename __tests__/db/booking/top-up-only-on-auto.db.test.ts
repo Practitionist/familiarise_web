@@ -59,7 +59,21 @@ async function publishMornings(host: SeededHost) {
   });
 }
 
-async function scheduledPlan(mode: "auto" | "manual") {
+/** The sweep runs over a rested plan and places nothing for it. */
+async function expectLeftToItsConsultant(subscriptionId: string) {
+  await prisma.subscription.update({
+    where: { id: subscriptionId },
+    data: { updatedAt: new Date(Date.now() - 7 * HOUR_MS) },
+  });
+  const before = await liveSessions(subscriptionId);
+  await reconcileOccurrenceAvailability();
+  expect(await liveSessions(subscriptionId)).toBe(before);
+}
+
+async function scheduledPlan(
+  mode: "auto" | "manual",
+  opts: { byOperator?: boolean } = {},
+) {
   const host = await seedHost();
   await publishMornings(host);
   const start = futureAt(1, 0);
@@ -73,7 +87,12 @@ async function scheduledPlan(mode: "auto" | "manual") {
   const first = futureAt(2, 9);
   const result = await allocate(
     mode === "auto"
-      ? { eventType: "subscription", eventId: subscriptionId, mode: "auto" }
+      ? {
+          eventType: "subscription",
+          eventId: subscriptionId,
+          mode: "auto",
+          byOperator: opts.byOperator,
+        }
       : {
           eventType: "subscription",
           eventId: subscriptionId,
@@ -128,13 +147,30 @@ it("re-placing a released session with Auto never switches a by-hand plan to the
   expect(replaced).toMatchObject({ success: true });
   expect(await reasons(subscriptionId)).toContain(SCHEDULE_REASON.reschedule);
   expect(await reasons(subscriptionId)).not.toContain(SCHEDULE_REASON.planAuto);
-  await prisma.subscription.update({
-    where: { id: subscriptionId },
-    data: { updatedAt: new Date(Date.now() - 7 * HOUR_MS) },
+  await expectLeftToItsConsultant(subscriptionId);
+}, 60_000);
+
+it("a returned last session never lets a later one-week Auto become the plan's choice", async () => {
+  const subscriptionId = await scheduledPlan("manual");
+  // The client returned their only session to the plan.
+  await prisma.appointmentOccurrence.updateMany({
+    where: { appointment: { subscriptionId }, deletedAt: null },
+    data: { completionStatus: "CANCELLED" },
   });
-  const before = await liveSessions(subscriptionId);
+  const week = await allocate({
+    eventType: "subscription",
+    eventId: subscriptionId,
+    mode: "auto",
+  });
+  expect(week).toMatchObject({ success: true });
+  expect(await reasons(subscriptionId)).toContain(SCHEDULE_REASON.weekAuto);
+  expect(await reasons(subscriptionId)).not.toContain(SCHEDULE_REASON.planAuto);
+  await expectLeftToItsConsultant(subscriptionId);
+}, 60_000);
 
-  await reconcileOccurrenceAvailability();
-
-  expect(await liveSessions(subscriptionId)).toBe(before);
+it("an operator's Auto first week is a one-off, not the consultant's consent", async () => {
+  const subscriptionId = await scheduledPlan("auto", { byOperator: true });
+  expect(await reasons(subscriptionId)).toContain(SCHEDULE_REASON.weekAuto);
+  expect(await reasons(subscriptionId)).not.toContain(SCHEDULE_REASON.planAuto);
+  await expectLeftToItsConsultant(subscriptionId);
 }, 60_000);

@@ -224,36 +224,37 @@ async function underAppointmentLock<T>(
 }
 
 /**
- * What the event held before this run, read on the server so the recorded
- * scheduling choice never trusts a client flag: sessions scheduled or
- * delivered, and released sessions awaiting a new time.
+ * What the event had before this run, read on the server so the recorded
+ * scheduling choice never trusts a client flag: whether a confirmed session
+ * ever existed (a returned, cancelled or tombstoned one still counts, so the
+ * plan's first choice is durable), and released sessions awaiting a new time.
  */
 async function placementBefore(
   request: AllocationRequest,
-): Promise<{ held: number; released: number }> {
-  const appointment = {
-    [`${getEventRelationField(request.eventType)}Id`]: request.eventId,
-    deletedAt: null,
-  } as Prisma.AppointmentWhereInput;
-  const [held, released] = await Promise.all([
+): Promise<{ placed: number; released: number }> {
+  const relation = `${getEventRelationField(request.eventType)}Id`;
+  const [placed, released] = await Promise.all([
     prisma.appointmentOccurrence.count({
       where: {
-        appointment,
-        deletedAt: null,
+        appointment: {
+          [relation]: request.eventId,
+        } as Prisma.AppointmentWhereInput,
         isTentative: false,
-        completionStatus: { in: ["SCHEDULED", "COMPLETED", "UNVERIFIED"] },
       },
     }),
     prisma.appointmentOccurrence.count({
       where: {
-        appointment,
+        appointment: {
+          [relation]: request.eventId,
+          deletedAt: null,
+        } as Prisma.AppointmentWhereInput,
         deletedAt: null,
         isTentative: true,
         completionStatus: "RESCHEDULED",
       },
     }),
   ]);
-  return { held, released };
+  return { placed, released };
 }
 
 /**
@@ -272,9 +273,10 @@ export async function dispatch(
         request.mode === "auto" || request.mode === "manual"
           ? request.mode
           : "requested",
-      heldBefore: before.held,
+      placedBefore: before.placed > 0,
       releasedBefore: before.released,
       bySweep: request.bySweep,
+      byOperator: request.byOperator,
       confirmsReschedule: !!request.excludeRescheduleRequestId,
     }),
   };
