@@ -37,7 +37,7 @@ export const WEEK_NUDGE_DAYS = [0, 1, 3] as const;
 const LADDER_START_HOUR = 9;
 /** Reminders go out only inside these local hours [start, end). */
 export const WAKING_HOURS = { start: 8, end: 21 } as const;
-/** Plans read per page and pages per run (keyset over id, a fair rotation). */
+/** Consultants read per page and pages per run (keyset over id, a fair rotation). */
 const NUDGE_PAGE = 200;
 const NUDGE_PAGES = 5;
 
@@ -193,21 +193,26 @@ type NudgePlan = Prisma.SubscriptionGetPayload<{
 }>;
 
 /**
- * At most `budget` nudgeable plans, read by keyset on id from the rotating
- * start (see `rotationOffset`): from the pivot to the end, then from the
- * start up to the pivot.
+ * The nudgeable plans of at most `budget` consultants, every plan of each:
+ * consultants are read by keyset on id from the rotating start (see
+ * `rotationOffset`), from the pivot to the end and then from the start, and
+ * each selected consultant's plans are read in full, so one consultant's
+ * daily reminder is never split across runs.
  */
 async function readNudgeablePlans(
   now: Date,
   budget: number,
 ): Promise<NudgePlan[]> {
-  const where = nudgeablePlans(now);
-  const total = await prisma.subscription.count({ where });
+  const plans = nudgeablePlans(now);
+  const where: Prisma.ConsultantProfileWhereInput = {
+    subscriptionPlans: { some: { subscriptions: { some: plans } } },
+  };
+  const total = await prisma.consultantProfile.count({ where });
   const offset = rotationOffset(total, budget, now);
   const pivot =
     offset > 0
       ? (
-          await prisma.subscription.findFirst({
+          await prisma.consultantProfile.findFirst({
             where,
             orderBy: { id: "asc" },
             skip: offset,
@@ -215,28 +220,38 @@ async function readNudgeablePlans(
           })
         )?.id
       : undefined;
-  const segments: Prisma.SubscriptionWhereInput[] = pivot
+  const segments: Prisma.ConsultantProfileWhereInput[] = pivot
     ? [{ id: { gte: pivot } }, { id: { lt: pivot } }]
     : [{}];
-  const read: NudgePlan[] = [];
+  const consultantIds: string[] = [];
   for (const segment of segments) {
     let cursor: string | undefined;
-    while (read.length < budget) {
-      const take = Math.min(NUDGE_PAGE, budget - read.length);
-      const page = await prisma.subscription.findMany({
+    while (consultantIds.length < budget) {
+      const take = Math.min(NUDGE_PAGE, budget - consultantIds.length);
+      const page = await prisma.consultantProfile.findMany({
         where: {
           AND: [where, segment, ...(cursor ? [{ id: { gt: cursor } }] : [])],
         },
-        select: NUDGE_PLAN_SELECT,
+        select: { id: true },
         orderBy: { id: "asc" },
         take,
       });
-      read.push(...page);
+      consultantIds.push(...page.map((row) => row.id));
       if (page.length < take) break;
       cursor = page[page.length - 1].id;
     }
   }
-  return read;
+  if (consultantIds.length === 0) return [];
+  return prisma.subscription.findMany({
+    where: {
+      AND: [
+        plans,
+        { subscriptionPlan: { consultantProfileId: { in: consultantIds } } },
+      ],
+    },
+    select: NUDGE_PLAN_SELECT,
+    orderBy: { id: "asc" },
+  });
 }
 
 /** The reminder one plan is owed now, with its consultant, or null. */

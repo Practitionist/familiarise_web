@@ -1,10 +1,16 @@
 /**
  * The reminder scan: the consultant's own zone (their user's) decides when,
- * one bell and one email per consultant list every plan due, and the read
- * starts at an hourly rotating offset so plans past the budget are reached.
+ * one bell and one email per consultant list every plan due, and consultants
+ * are read from an hourly rotating offset, each with every plan, so nobody
+ * past the budget is missed and no consultant's group is split.
  */
 const mockPrisma = {
-  subscription: { count: jest.fn(), findFirst: jest.fn(), findMany: jest.fn() },
+  consultantProfile: {
+    count: jest.fn(),
+    findFirst: jest.fn(),
+    findMany: jest.fn(),
+  },
+  subscription: { findMany: jest.fn() },
   notificationPreference: { findMany: jest.fn() },
   bookingStatusHistory: { findMany: jest.fn() },
   notificationOutbox: { findMany: jest.fn() },
@@ -93,7 +99,8 @@ function runAt(iso: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockPrisma.subscription.count.mockResolvedValue(2);
+  mockPrisma.consultantProfile.count.mockResolvedValue(1);
+  mockPrisma.consultantProfile.findMany.mockResolvedValue([{ id: "cp-1" }]);
   mockPrisma.subscription.findMany.mockResolvedValue([
     sub("sub-a", "Priya"),
     sub("sub-b", "Ravi"),
@@ -140,22 +147,43 @@ describe("rotation", () => {
     expect(rotationOffset(2500, 1000, hour(3))).toBe(500);
   });
 
-  it("reads from the pivot to the end, then from the start", async () => {
-    mockPrisma.subscription.count.mockResolvedValue(2500);
-    mockPrisma.subscription.findFirst.mockResolvedValue({ id: "sub-pivot" });
-    mockPrisma.subscription.findMany.mockResolvedValue([]);
+  it("reads consultants from the pivot to the end, then from the start", async () => {
+    mockPrisma.consultantProfile.count.mockResolvedValue(2500);
+    mockPrisma.consultantProfile.findFirst.mockResolvedValue({
+      id: "cp-pivot",
+    });
+    mockPrisma.consultantProfile.findMany.mockResolvedValue([]);
     const now = "2026-03-09T10:00:00.000Z";
     await runAt(now);
     const offset = rotationOffset(2500, 1000, new Date(now));
-    expect(mockPrisma.subscription.findFirst).toHaveBeenCalledWith(
+    expect(mockPrisma.consultantProfile.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ skip: offset, orderBy: { id: "asc" } }),
     );
-    const segments = mockPrisma.subscription.findMany.mock.calls.map(
+    const segments = mockPrisma.consultantProfile.findMany.mock.calls.map(
       ([args]) => args.where.AND[1],
     );
     expect(segments).toEqual([
-      { id: { gte: "sub-pivot" } },
-      { id: { lt: "sub-pivot" } },
+      { id: { gte: "cp-pivot" } },
+      { id: { lt: "cp-pivot" } },
+    ]);
+  });
+
+  it("reads every plan of each selected consultant, so a group is never split", async () => {
+    // A tiny budget (one page of consultants): the two plans still go together.
+    mockPrisma.consultantProfile.findMany.mockResolvedValue([{ id: "cp-1" }]);
+    jest.useFakeTimers({
+      now: new Date("2026-03-09T10:00:00.000Z"),
+      doNotFake: ["nextTick", "setImmediate", "queueMicrotask", "setTimeout"],
+    });
+    expect((await nudgeUnplacedPlanWeeks({ maxRequests: 1 })).nudged).toBe(1);
+    const { where, take } = mockPrisma.subscription.findMany.mock.calls[0][0];
+    expect(take).toBeUndefined();
+    expect(where.AND[1]).toEqual({
+      subscriptionPlan: { consultantProfileId: { in: ["cp-1"] } },
+    });
+    expect(mockSendEmail.mock.calls[0][0].weeks).toEqual([
+      expect.objectContaining({ consulteeName: "Priya" }),
+      expect.objectContaining({ consulteeName: "Ravi" }),
     ]);
   });
 });
