@@ -1246,6 +1246,12 @@ ALTER TABLE "Subscription" ADD CONSTRAINT "subscription_sessions_refunded_range"
   CHECK ("sessionsRefunded" >= 0
     AND ("sessionsTotal" IS NULL OR "sessionsRefunded" <= "sessionsTotal"));
 -- SPLIT
+-- A session-count remedy removes at least one session.
+ALTER TABLE "SupportFinancialRecommendation" DROP CONSTRAINT IF EXISTS "support_recommendation_sessions_removed_min";
+-- SPLIT
+ALTER TABLE "SupportFinancialRecommendation" ADD CONSTRAINT "support_recommendation_sessions_removed_min"
+  CHECK ("sessionsRemoved" IS NULL OR "sessionsRemoved" >= 1);
+-- SPLIT
 -- Frozen purchase terms are positive when stamped.
 ALTER TABLE "Subscription" DROP CONSTRAINT IF EXISTS "subscription_frozen_terms_positive";
 -- SPLIT

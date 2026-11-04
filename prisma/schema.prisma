@@ -573,29 +573,32 @@ model SupportCaseDecision {
 }
 
 model SupportFinancialRecommendation {
-  id             String      @id @default(uuid())
-  caseId         String
-  supportCase    SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
-  paymentId      String
-  payment        Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-  proposedById   String
-  proposedBy     User        @relation("SupportRecommendationAuthor", fields: [proposedById], references: [id], onDelete: Restrict)
-  clientActionId String      @db.VarChar(128)
-  amountPaise    BigInt
-  reason         String      @db.Text
-  decidedAt      DateTime?   @db.Timestamptz
-  decidedById    String?
-  decidedBy      User?       @relation("SupportRecommendationDecider", fields: [decidedById], references: [id], onDelete: Restrict)
-  decisionReason String?     @db.Text
-  approved       Boolean?
+  id              String      @id @default(uuid())
+  caseId          String
+  supportCase     SupportCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+  paymentId       String
+  payment         Payment     @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  proposedById    String
+  proposedBy      User        @relation("SupportRecommendationAuthor", fields: [proposedById], references: [id], onDelete: Restrict)
+  clientActionId  String      @db.VarChar(128)
+  amountPaise     BigInt
+  reason          String      @db.Text
+  decidedAt       DateTime?   @db.Timestamptz
+  decidedById     String?
+  decidedBy       User?       @relation("SupportRecommendationDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+  decisionReason  String?     @db.Text
+  approved        Boolean?
   /// Marks the funded seat REFUNDED once the refund is sent (no session or recording access; group seats resell); never cancels the booking or its sessions.
-  releaseSeat    Boolean     @default(false)
+  releaseSeat     Boolean     @default(false)
+  /// Subscription sessions this remedy removes from the plan when approved
+  /// (Subscription.sessionsRefunded); null = a money-only remedy.
+  sessionsRemoved Int?
   /// An approval withdrawn because its refund never went live (null or FAILED).
-  voidedAt       DateTime?   @db.Timestamptz
-  voidedById     String?
-  refundId       String?     @unique
-  refund         Refund?     @relation(fields: [refundId], references: [id], onDelete: Restrict)
-  createdAt      DateTime    @default(now()) @db.Timestamptz
+  voidedAt        DateTime?   @db.Timestamptz
+  voidedById      String?
+  refundId        String?     @unique
+  refund          Refund?     @relation(fields: [refundId], references: [id], onDelete: Restrict)
+  createdAt       DateTime    @default(now()) @db.Timestamptz
 
   @@unique([caseId, clientActionId])
   @@index([caseId, decidedAt])
