@@ -1795,11 +1795,14 @@ async function postBookingLedgerJournal(
       overageAccrualPaise,
       hasWalletSurcharge,
     });
+    const postings = [...debits, ...credits];
+    // A ₹0 booking moves no money, so it has no journal.
+    if (postings.length === 0) return;
     await postLedgerTxn(tx, {
       idempotencyKey: `booking:${payment.id}`,
       kind: "BOOKING",
       paymentId: payment.id,
-      postings: [...debits, ...credits],
+      postings,
     });
   } catch (err) {
     const isRetryableSerialization =
