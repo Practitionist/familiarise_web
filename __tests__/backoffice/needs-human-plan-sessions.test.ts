@@ -86,6 +86,12 @@ it("says how many sessions a void puts back on the plan", async () => {
     new Date("2026-11-02T00:00:00Z"),
   );
   const byId = Object.fromEntries(items.map((i) => [i.id, i.message]));
+  const detailsOf = Object.fromEntries(items.map((i) => [i.id, i.details]));
+  // Record refs stay out of the message, in the item's details.
+  expect(detailsOf["rec-waiting"]).toBe("Plan sub-5 · refund rec-waiting");
+  expect(detailsOf["rec-money"]).toBeNull();
+  for (const message of Object.values(byId))
+    expect(message).not.toMatch(/sub-\d|rec-/);
   expect(byId["rec-plan"]).toBe(
     "Support case FAM-2026-000009: an approved refund of ₹1800.00 failed. Retry or void it on the case. 9 sessions go back to the plan if you void this refund.",
   );
@@ -93,7 +99,7 @@ it("says how many sessions a void puts back on the plan", async () => {
     /was never sent\. Retry or void it on the case\. 1 session goes back to the plan if you void this refund\.$/,
   );
   expect(byId["rec-waiting"]).toBe(
-    "Support case FAM-2026-000013: an approved refund of ₹1800.00 failed. Retry or void it on the case. 9 sessions go back to the plan if you void this refund. Plan end for plan sub-5 is waiting for refund rec-waiting: retry it or void it.",
+    "Support case FAM-2026-000013: an approved refund of ₹1800.00 failed. Retry or void it on the case. 9 sessions go back to the plan if you void this refund. The plan end is waiting for this refund: retry it or void it.",
   );
   expect(byId["rec-settled"]).toBe(
     "Support case FAM-2026-000012: an approved refund of ₹1800.00 failed. Retry or void it on the case. The plan settled without these sessions, so this refund is still owed: retry it.",

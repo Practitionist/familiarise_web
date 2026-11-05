@@ -224,7 +224,6 @@ type UnsentPlan = {
 function planNote(
   sessionsRemoved: number | null,
   plan: UnsentPlan,
-  recommendationId: string,
   now: Date,
 ): string {
   if (!sessionsRemoved || !plan) return "";
@@ -235,7 +234,17 @@ function planNote(
       ? " 1 session goes back to the plan if you void this refund."
       : ` ${sessionsRemoved} sessions go back to the plan if you void this refund.`;
   if (!subscriptionIsOver(plan, now)) return back;
-  return `${back} Plan end for plan ${plan.id} is waiting for refund ${recommendationId}: retry it or void it.`;
+  return `${back} The plan end is waiting for this refund: retry it or void it.`;
+}
+
+/** The plan and refund refs behind a session-count remedy, for the item's details. */
+function planRefs(
+  sessionsRemoved: number | null,
+  plan: UnsentPlan,
+  recommendationId: string,
+): string | null {
+  if (!sessionsRemoved || !plan) return null;
+  return `Plan ${plan.id} · refund ${recommendationId}`;
 }
 
 /**
@@ -289,7 +298,12 @@ export async function readUnsentSupportRefunds(now = new Date()) {
   });
   return rows.map((row) => ({
     id: row.id,
-    message: `Support case ${row.supportCase.referenceNumber}: an approved refund of ₹${(Number(row.amountPaise) / 100).toFixed(2)} ${row.refund ? "failed" : "was never sent"}. Retry or void it on the case.${planNote(row.sessionsRemoved, row.payment.appointment?.subscription ?? null, row.id, now)}`,
+    message: `Support case ${row.supportCase.referenceNumber}: an approved refund of ₹${(Number(row.amountPaise) / 100).toFixed(2)} ${row.refund ? "failed" : "was never sent"}. Retry or void it on the case.${planNote(row.sessionsRemoved, row.payment.appointment?.subscription ?? null, now)}`,
+    details: planRefs(
+      row.sessionsRemoved,
+      row.payment.appointment?.subscription ?? null,
+      row.id,
+    ),
     createdAt: row.decidedAt ?? row.createdAt,
     paymentId: row.paymentId,
     occurrenceId: null,
