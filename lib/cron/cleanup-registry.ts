@@ -1724,6 +1724,50 @@ export const CLEANUP_JOB_BUILDERS: Record<string, CleanupJobEntry> = {
       }),
   },
 
+  // @cleanup-twin roll-forward-regular-time
+  "roll-forward-regular-time": {
+    meta: {
+      title: "Roll forward regular times",
+      description:
+        "Fill the next four weeks of 1:1 plans that have a regular time",
+      category: "Appointments",
+      manualRun: "inline",
+    },
+    idle: {
+      hasWork: async (db, now, outOfTime) => {
+        if (outOfTime()) return true;
+        const { rollablePlansWhere } =
+          await import("@/lib/booking/regular-time/roll-forward");
+        return (
+          (await db.subscription.findFirst({
+            where: rollablePlansWhere(now),
+            select: { id: true },
+          })) !== null
+        );
+      },
+    },
+    build: () =>
+      cleanupRoute({
+        job: "roll-forward-regular-time",
+        run: async (req) => {
+          const { rollForwardRegularTime } =
+            await import("@/lib/booking/regular-time/roll-forward");
+          const limit = parseLimitParam(req);
+          return rollForwardRegularTime(limit === undefined ? {} : { limit });
+        },
+        summarize: (r) => ({
+          plansScanned: r.scanned,
+          sessionsPlaced: r.placed,
+          conflicts: r.conflicts,
+          errors: r.errors,
+          hasMore: r.hasMore,
+        }),
+        needsAttention: (r) => r.errors > 0,
+        items: (r) => ({ processed: r.scanned, errors: r.errors }),
+        failureMessage: "Failed to roll forward regular times",
+      }),
+  },
+
   // @cleanup-twin reconcile-orphaned-confirmations
   "reconcile-orphaned-confirmations": {
     meta: {

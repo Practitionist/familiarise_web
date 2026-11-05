@@ -5,6 +5,8 @@
 // consultant's quiet hours) waits for the next run. A plan scheduled with Auto
 // skips the first day; the sweep places it. One bell and one email
 // per consultant per local day list every plan due; the outbox rows dedupe.
+// A plan with a Regular time is off the ladder: the roll-forward places it and
+// reminds only when its horizon has conflicts (`nudgeRegularTimeConflicts`).
 
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
 import { AppointmentStatus, type Prisma } from "@prisma/client";
@@ -131,6 +133,7 @@ interface DuePlan {
 const nudgeablePlans = (now: Date): Prisma.SubscriptionWhereInput => ({
   status: AppointmentStatus.APPROVED,
   deletedAt: null,
+  regularTimes: { none: { validUntil: null } },
   OR: [{ planEndsAt: null }, { planEndsAt: { gt: now } }],
   appointment: {
     deletedAt: null,
@@ -529,4 +532,114 @@ export function weekSummary(
   if (rest.length === 0) return `${head} still needs session times.`;
   const more = rest.length === 1 ? "1 more plan" : `${rest.length} more plans`;
   return `${head} and ${more} need session times this week.`;
+}
+
+/** The outbox key for one consultant's Regular-time conflict bell on one local day. */
+export function regularConflictsDedupeKey(
+  consultantProfileId: string,
+  localDay: string,
+): string {
+  return `roll-conflicts:${consultantProfileId}:${localDay}`;
+}
+
+export interface RegularConflictPlan {
+  consulteeName: string;
+  planTitle: string;
+  toFix: number;
+  url: string;
+}
+
+/** "Priya's plan has 2 regular times to fix." / "… and 2 more plans have …" */
+export function conflictSummary(
+  plans: ReadonlyArray<Pick<RegularConflictPlan, "consulteeName" | "toFix">>,
+): string {
+  const [first, ...rest] = plans;
+  const times =
+    first.toFix === 1 ? "1 regular time" : `${first.toFix} regular times`;
+  const head = `${first.consulteeName}'s plan has ${times} to fix`;
+  if (rest.length === 0) return `${head}.`;
+  const more =
+    rest.length === 1 ? "1 more plan needs" : `${rest.length} more plans need`;
+  return `${head}, and ${more} a look.`;
+}
+
+/**
+ * One bell per consultant per local day listing the Regular-time plans whose
+ * horizon has conflicts; only inside waking hours and outside quiet hours.
+ * The outbox `transactionId` dedupes a later run the same day.
+ */
+export async function nudgeRegularTimeConflicts(
+  due: ReadonlyArray<{
+    consultantProfileId: string;
+    userId: string;
+    zone: string;
+    localDay: string;
+    plans: RegularConflictPlan[];
+  }>,
+  now: Date,
+): Promise<{ nudged: number; errors: unknown[] }> {
+  const awake = due.filter(
+    (d) => d.plans.length > 0 && inWakingHours(now, d.zone),
+  );
+  if (awake.length === 0) return { nudged: 0, errors: [] };
+  const quietUntil = await quietUntilByUser(
+    awake.map((d) => d.userId),
+    now,
+  );
+  const keyed = awake
+    .filter((d) => {
+      const notBefore = quietUntil.get(d.userId);
+      return !(notBefore && notBefore > now);
+    })
+    .map((d) => {
+      const dedupeKey = regularConflictsDedupeKey(
+        d.consultantProfileId,
+        d.localDay,
+      );
+      return {
+        ...d,
+        dedupeKey,
+        transactionId: deriveTransactionId(
+          NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+          [d.userId],
+          {},
+          dedupeKey,
+        ),
+      };
+    });
+  if (keyed.length === 0) return { nudged: 0, errors: [] };
+  const staged = new Set(
+    (
+      await prisma.notificationOutbox.findMany({
+        where: { transactionId: { in: keyed.map((d) => d.transactionId) } },
+        select: { transactionId: true },
+      })
+    ).map((row) => row.transactionId),
+  );
+  let nudged = 0;
+  const errors: unknown[] = [];
+  for (const d of keyed) {
+    if (staged.has(d.transactionId)) continue;
+    try {
+      await notifyUnplacedWeekNudge(
+        d.userId,
+        {
+          ...notificationScope(null),
+          consulteeName: d.plans[0].consulteeName,
+          planTitle: d.plans[0].planTitle,
+          appointmentType: "SUBSCRIPTION",
+          dashboardUrl:
+            d.plans.length === 1
+              ? d.plans[0].url
+              : `${getAppUrl()}/dashboard/consultant/${d.consultantProfileId}/requests?type=subscription`,
+          weekSummary: conflictSummary(d.plans),
+        },
+        d.dedupeKey,
+      );
+      nudged += 1;
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  return { nudged, errors };
 }

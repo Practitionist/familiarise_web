@@ -74,6 +74,7 @@ export const TARGETS = [
   "prune-system-events",
   "databreach-deadline-alerts",
   "reconcile-occurrence-availability",
+  "roll-forward-regular-time",
   "auth-tokens",
   "reconcile-document-storage",
   "prune-audit-logs",
@@ -181,6 +182,7 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "prune-system-events": 500,
   "databreach-deadline-alerts": 50,
   "reconcile-occurrence-availability": null,
+  "roll-forward-regular-time": 25,
   "auth-tokens": null,
   "reconcile-document-storage": null,
   "prune-audit-logs": 500,
@@ -273,6 +275,7 @@ export const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "prune-system-events": 60,
   "databreach-deadline-alerts": 60,
   "reconcile-occurrence-availability": 60,
+  "roll-forward-regular-time": 60,
   "auth-tokens": 1440,
   "reconcile-document-storage": 1440,
   "prune-audit-logs": 1440,
@@ -364,6 +367,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "prune-system-events": 10,
   "databreach-deadline-alerts": 15,
   "reconcile-occurrence-availability": 30,
+  "roll-forward-regular-time": 50,
   "auth-tokens": 180,
   "reconcile-document-storage": 185,
   "prune-audit-logs": 190,
@@ -466,6 +470,8 @@ export const TARGET_WINDOWS: Partial<Record<Target, CalendarWindow>> = {
   "archive-webhook-events": WEEKLY_SUNDAY,
   "consent-retention-sweeper": WEEKLY_SUNDAY,
   "expire-onboarding-drafts": WEEKLY_SUNDAY,
+  // Hourly at :50 except 03:50 UTC, the month-start tick that is already full.
+  "roll-forward-regular-time": { startMinuteUtc: 240, windowMinutes: 1380 },
 };
 
 /**
@@ -636,6 +642,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "prune-system-events": 20_000,
   "databreach-deadline-alerts": 20_000,
   "reconcile-occurrence-availability": 24_000,
+  "roll-forward-regular-time": 24_000,
   "auth-tokens": 20_000,
   "reconcile-document-storage": 24_000,
   "prune-audit-logs": 20_000,

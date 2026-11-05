@@ -207,6 +207,8 @@ async function hostBusy(
 }
 
 export interface RegularTimeView {
+  /** Sessions a week, frozen at purchase: how many slots a Regular time holds. */
+  perWeek: number;
   slots: RegularSlot[];
   label: string | null;
   timeZone: string;
@@ -224,6 +226,7 @@ export async function readRegularTimeView(
   const slots = liveRegularSlots(plan);
   const entitlement = entitlementOf(plan, now);
   const base = {
+    perWeek: soldTermsOf(plan).sessionsPerWeek,
     slots,
     label: slots.length > 0 ? regularTimeLabel(slots) : null,
     timeZone: plan.schedulingTimezone,
