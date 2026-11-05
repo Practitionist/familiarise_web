@@ -11,6 +11,7 @@ import {
   soldTermsOf,
   subscriptionPlanEnd,
 } from "@/lib/booking/entitlement";
+import { hasLiveRegularTime } from "@/lib/booking/regular-time/queries";
 
 /**
  * Turns one appointment into everything a reschedule page needs.
@@ -80,6 +81,8 @@ function soldPlanFields(appointment: TAppointmentDetail["appointment"]) {
       schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
       schedulingTimezone: subscription.schedulingTimezone,
       planEndsAt: subscription.planEndsAt ?? null,
+      // The server's horizon: a Regular time opens four plan weeks.
+      hasRegularTime: hasLiveRegularTime(subscription),
       occurrences: appointment.occurrences.map((o) => ({
         id: o.id,
         startsAt: o.startsAt,

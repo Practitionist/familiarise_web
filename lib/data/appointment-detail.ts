@@ -20,6 +20,7 @@ import {
   bookingAnomalies,
   scheduleAnomalyReport,
 } from "@/lib/appointments/report-anomalies";
+import { LIVE_REGULAR_TIME_PROBE } from "@/lib/booking/regular-time/queries";
 
 const userSelect = {
   select: { id: true, name: true, image: true },
@@ -123,6 +124,7 @@ export async function readAppointmentDetail(appointmentId: string) {
             include: { consultantProfile: consultantProfileSelect },
           },
           requestedBy: consulteeProfileSelect,
+          regularTimes: LIVE_REGULAR_TIME_PROBE,
         },
       },
       webinar: {
