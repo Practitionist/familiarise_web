@@ -327,7 +327,7 @@ To protect the 5,000/month Sentry error quota:
      +---> PATH A: In-App Bell (`lib/novu/`)
      |       - Some routes staged `NotificationOutbox`; `handlePaymentSuccess` called
      |         `notify*` post-commit outside `tx` (lost on container freeze).
-     |       - `stageBells(tx)` bypassed `NotificationPreference` & `notificationRoutingMode`.
+     |       - The former staging path bypassed recipient preferences and workspace routing.
      |       - `<Inbox />` connected without `subscriberHash` HMAC verification.
      |
      +---> PATH B: Email (`lib/email/` -> Resend)
@@ -342,7 +342,7 @@ To protect the 5,000/month Sentry error quota:
 ```mermaid
 flowchart LR
     subgraph "Legacy Asymmetric Producer Path (Superseded)"
-        P["API Route / Webhook"] -->|"In-Tx or Floating .catch()"| B["Novu Bell Path<br/>(stageBells bypassed prefs;<br/>no subscriberHash HMAC)"]
+        P["API Route / Webhook"] -->|"In-Tx or Floating .catch()"| B["Novu Bell Path<br/>(legacy staging bypassed prefs;<br/>no subscriberHash HMAC)"]
         P -->|"Inline Blocking await deliver()<br/>inside Tx / Redis Lock"| E["Resend Email Path<br/>(nextRetryAt = NOW() race;<br/>24h body-hash collision;<br/>dropped RFC 8058 retry headers)"]
     end
 ```

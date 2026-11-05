@@ -74,7 +74,7 @@ Email and bell attempts stop automatic replay once the conservative 24-hour prov
 
 The failed-email recovery door requires an operator reason, writes an audit with its compare-and-set mutation, and refuses credential bodies, pre-launch holds, prior receipts, policy cancellations and expired/invalid replay timestamps. It checks current account policy and suppression in the same transaction. Manual review means inspecting provider evidence and choosing an appropriate fresh business action; there is no force-resend switch.
 
-A request/post-commit bundle starts at most five bell attempts. Remaining staged rows use the existing relay; its five-minute cadence means staging is not an immediate delivery guarantee. Nontransactional helpers open a short staging transaction and never send if persistence fails. Broadcast announcements retain their source/revision check. Per-recipient staging uses more rows and writes than the former shared audience row.
+A request/post-commit bundle starts at most five bell attempts. Remaining staged rows use the existing relay; its ten-minute cadence (at UTC minutes ending in 5) means staging is not an immediate delivery guarantee. Nontransactional helpers open a short staging transaction and never send if persistence fails. Broadcast announcements retain their source/revision check. Per-recipient staging uses more rows and writes than the former shared audience row.
 
 ## Operational ownership
 
