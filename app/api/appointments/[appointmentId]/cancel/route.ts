@@ -1200,7 +1200,7 @@ export async function POST(
       .catch((err: unknown) => {
         if (err instanceof CaptureLandedError) return runCancel(true);
         if (err instanceof PlanRefundLandedError) return runCancel(false);
-        return Promise.reject(err);
+        throw err;
       })
       .catch(async (err: unknown) => {
         // A retry after a 504 finds the booking already cancelled by this
