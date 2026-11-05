@@ -258,22 +258,66 @@ const settledOwedMetaSchema = z.object({
   settledOwed: z.object({ key: z.string(), settledPaise: z.number() }),
 });
 
-/** What a refund paid toward a top-up: none of the holding refund, and none of a hand refund's share that settled it. */
+/** What a refund paid toward top-ups: none of a holding refund, and none of a hand refund's share that settled one. */
 function topUpPaidBy(
   refund: {
     dedupeKey: string | null;
     amountPaise: number | bigint;
     metadata: unknown;
   },
-  heldKey: string,
+  heldKeys: ReadonlySet<string>,
 ): number {
-  if (refund.dedupeKey === heldKey) return 0;
+  if (refund.dedupeKey && heldKeys.has(refund.dedupeKey)) return 0;
   const meta = settledOwedMetaSchema.safeParse(refund.metadata);
   const settledHeld =
-    meta.success && meta.data.settledOwed.key === heldKey
+    meta.success && heldKeys.has(meta.data.settledOwed.key)
       ? meta.data.settledOwed.settledPaise
       : 0;
   return Math.max(0, Number(refund.amountPaise) - settledHeld);
+}
+
+type OpenTopUp = {
+  createdAt: Date;
+  paymentId: string;
+  heldKey: string;
+  owedPaise: number;
+};
+
+/**
+ * What each top-up still owes after the refunds that landed on its payment
+ * since it was recorded, paid to the payment's oldest open top-up first (two
+ * losing doors on one payment each close on their own share).
+ */
+function stillOwedFifo(
+  topUps: ReadonlyMap<string, OpenTopUp>,
+  refunds: readonly {
+    paymentId: string;
+    createdAt: Date;
+    dedupeKey: string | null;
+    amountPaise: number | bigint;
+    metadata: unknown;
+  }[],
+): Map<string, number> {
+  const oldestFirst = [...topUps.entries()].sort(
+    ([, a], [, b]) => a.createdAt.getTime() - b.createdAt.getTime(),
+  );
+  const still = new Map(oldestFirst.map(([ref, t]) => [ref, t.owedPaise]));
+  const heldKeys = new Set(oldestFirst.map(([, t]) => t.heldKey));
+  const byTime = [...refunds].sort(
+    (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+  );
+  for (const refund of byTime) {
+    let left = topUpPaidBy(refund, heldKeys);
+    for (const [ref, t] of oldestFirst) {
+      if (left <= 0) break;
+      if (t.paymentId !== refund.paymentId || refund.createdAt <= t.createdAt)
+        continue;
+      const pays = Math.min(left, still.get(ref) ?? 0);
+      still.set(ref, (still.get(ref) ?? 0) - pays);
+      left -= pays;
+    }
+  }
+  return still;
 }
 
 /** Held top-ups older than this leave the list; the runbook's triage query finds them. */
@@ -283,9 +327,10 @@ const OWED_HELD_READ_LIMIT = 500;
 /**
  * Doors whose refund another door's owed refund already held (first writer
  * wins). Open while money is still owed: refunds landed on the payment since
- * the event, other than the holding marker's own, cover less than the top-up,
- * and the payment still has a refundable balance. Once paid, the row asks for
- * the door's OPERATOR hold to be released, until it is.
+ * the event (oldest top-up first; never a holding refund, nor a hand refund's
+ * share that settled one) cover less than the top-up, and the payment still has
+ * a refundable balance. Any later refund on the payment counts, whatever its
+ * reason. Once paid, the row asks for the door's OPERATOR hold to be released.
  */
 export async function readOwedAlreadyHeld(now = new Date()) {
   const events = await prisma.systemEvent.findMany({
@@ -345,15 +390,19 @@ export async function readOwedAlreadyHeld(now = new Date()) {
     select: { sourceRef: true },
   });
   const held = new Set(activeHolds.map((h) => h.sourceRef));
+  const still = stillOwedFifo(
+    new Map(
+      [...first.entries()].map(([ref, row]) => [
+        ref,
+        { ...row, createdAt: row.e.createdAt },
+      ]),
+    ),
+    refunds,
+  );
   return [...first.entries()].flatMap(([ref, row]) => {
-    const toppedUp = refunds
-      .filter(
-        (r) => r.paymentId === row.paymentId && r.createdAt > row.e.createdAt,
-      )
-      .reduce((sum, r) => sum + topUpPaidBy(r, row.heldKey), 0);
     const payment = byPayment.get(row.paymentId);
     const owed = Math.min(
-      row.owedPaise - toppedUp,
+      still.get(ref) ?? 0,
       payment ? refundableBalancePaise(Number(payment.amount), payment) : 0,
     );
     const holding = held.has(ref);

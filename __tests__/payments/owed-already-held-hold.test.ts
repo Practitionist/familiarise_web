@@ -405,6 +405,21 @@ describe("the needs-human list of held top-ups", () => {
     expect(await read()).toEqual([]);
   });
 
+  it("two losing doors on one payment: a later refund pays the oldest top-up first", async () => {
+    const second = "owed-already-held:pay-1:overage-credit:pay-1";
+    store.events = [
+      event(at, 20_000),
+      { ...event(later(60_000), 20_000), id: "evt-2", correlationId: second },
+    ];
+    store.refunds = [refund("ops:hand", 20_000, 120_000)];
+    expect(await read()).toEqual([
+      expect.objectContaining({
+        id: `owed-held:${second}`,
+        amountPaise: 20_000,
+      }),
+    ]);
+  });
+
   it("closes when the payment has nothing left to refund", async () => {
     store.events = [event(at)];
     store.amount = 0;
