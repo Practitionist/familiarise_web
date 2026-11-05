@@ -420,10 +420,20 @@ async function readCaseHolds(tx: Tx, caseId: string): Promise<HoldSummary[]> {
   return holds.reverse();
 }
 
-/** The case booking's captured plan payment and how many sessions can still come off it. */
-async function casePlanRefund(caseId: string, appointmentId: string) {
+/**
+ * The case booking's captured plan payment and how many sessions can still
+ * come off it; null when that payment is outside the case's financial scope.
+ */
+async function casePlanRefund(
+  supportCase: Pick<
+    SupportCase,
+    "id" | "ownershipScope" | "requesterUserId" | "organizationId"
+  >,
+  appointmentId: string,
+) {
   const payment = await prisma.payment.findFirst({
     where: {
+      ...financialPaymentScope(supportCase),
       appointmentId,
       paymentStatus: "SUCCEEDED",
       deletedAt: null,
@@ -435,7 +445,7 @@ async function casePlanRefund(caseId: string, appointmentId: string) {
   const basis = await planRefundBasis(prisma, payment.id);
   if (!basis) return null;
   const quote = await prisma.$transaction((tx) =>
-    quoteCaseRefund(tx, caseId, { id: "", paymentId: payment.id }),
+    quoteCaseRefund(tx, supportCase.id, { id: "", paymentId: payment.id }),
   );
   return {
     paymentId: payment.id,
@@ -530,7 +540,7 @@ export async function readCaseResolution(caseId: string, actor: CaseActor) {
       actor.role === "ADMIN" ? null : STAFF_REFUND_PER_PAYMENT_PAISE,
     planRefund:
       moneyRead && supportCase.appointmentId
-        ? await casePlanRefund(caseId, supportCase.appointmentId)
+        ? await casePlanRefund(supportCase, supportCase.appointmentId)
         : null,
     ownershipScope: supportCase.ownershipScope,
     updatedAt: supportCase.updatedAt,

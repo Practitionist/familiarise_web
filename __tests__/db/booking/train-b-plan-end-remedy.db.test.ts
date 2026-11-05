@@ -7,7 +7,10 @@
  */
 import { randomUUID } from "node:crypto";
 import prisma from "../../../lib/prisma";
-import { performCaseAction } from "../../../lib/support/case-actions";
+import {
+  performCaseAction,
+  readCaseResolution,
+} from "../../../lib/support/case-actions";
 import { resolveBookingRefundContext } from "../../../lib/booking/cancellation-scope";
 import { quoteBookingRefund } from "../../../lib/payments/operations/cancellation-policy";
 import { caseVersion, rowId, seedCase, seedUser } from "../seed";
@@ -340,5 +343,26 @@ describe("cancel vs a session-count remedy", () => {
     expect(quote.refundPaise + (supportCalls(recommendationId)[1] ?? 0)).toBe(
       PRICE / 2,
     );
+  });
+});
+
+describe("the case resolution's plan block", () => {
+  it("reads a plan only through a payment in the case's financial scope", async () => {
+    const plan = await seedPlanCase();
+    const payment = await prisma.payment.findUniqueOrThrow({
+      where: { id: plan.paymentId },
+      select: { userId: true, appointmentId: true },
+    });
+    const appointmentId = payment.appointmentId ?? "";
+    const staff = await seedUser("STAFF");
+    const own = await seedCase(payment.userId ?? "", { appointmentId });
+    const stranger = await seedUser();
+    const other = await seedCase(stranger.userId, { appointmentId });
+
+    expect((await readCaseResolution(own.id, staff))?.planRefund).toEqual(
+      expect.objectContaining({ paymentId: plan.paymentId }),
+    );
+    // Someone else's payment on the booking: no plan block, and no throw.
+    expect((await readCaseResolution(other.id, staff))?.planRefund).toBeNull();
   });
 });
