@@ -407,11 +407,14 @@ door's partial marker holds the payment (a full-balance one already covers
 them). `stampOwedOrHeld` / `heldInsteadOf` then records one
 `owed-already-held:<payment>:<key>` `SystemEvent` with the top-up amount and
 places an `OPERATOR` `EarningsHold` keyed on it, in the door's transaction; a
-hold race rolls the door back. `readOwedAlreadyHeld` lists it in the Refunds
-tab while the money is unpaid (refunds since the event vs the amount, and the
-balance), then until the hold is released. Operators (ADMIN or STAFF) read a
-held-marker refusal through `opsHeldMarkerMessage`: the seat payment, the
-holding key and the next step.
+hold race refuses with a retryable 409 and rolls the door back.
+`readOwedAlreadyHeld` lists it in the Refunds tab while the money is unpaid
+(later refunds, oldest row first, minus any share that settled the holding
+refund; the balance), then until the hold is released. Operators (ADMIN or
+STAFF) read a held-marker refusal through `opsHeldMarkerMessage`: the payment,
+the holding key and their own door's next step. The miss ledger's class lock
+is `FOR NO KEY UPDATE`, compatible with the key-share lock history-row foreign
+keys take.
 
 **An operator's refund settles the owed refund by hand.** Every operator door
 passes `settlesOwedByHand` to `refundBookingPayment`: the issue and ladder
