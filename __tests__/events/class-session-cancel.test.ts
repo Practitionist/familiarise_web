@@ -48,34 +48,44 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 }));
 
 const cancelledAt = new Date(Date.now() - 86_400_000);
+const missAt = (misses: number, i: number) =>
+  new Date(
+    cancelledAt.getTime() - db.missGapDays * (misses - 1 - i) * 86_400_000,
+  );
 const occurrences = (misses: number) =>
-  Array.from({ length: db.N }, (_, i) => ({
-    id: `occ-${i + 1}`,
-    ordinal: i + 1,
-    startsAt: new Date(Date.now() + (i + 1) * 86_400_000),
-    endsAt: new Date(Date.now() + (i + 1) * 86_400_000 + 3_600_000),
-    completionStatus: i < misses ? "CANCELLED" : "SCHEDULED",
-    movedAt: null,
-    hostCancelledAt:
-      i < misses
-        ? new Date(
-            cancelledAt.getTime() -
-              db.missGapDays * (misses - 1 - i) * 86_400_000,
-          )
-        : null,
-  }));
+  Array.from({ length: db.N }, (_, i) => {
+    // The newest miss may be a void with an outcome (a relabel's target).
+    const voided = i === misses - 1 && db.lastMissVoid !== null;
+    return {
+      id: `occ-${i + 1}`,
+      ordinal: i + 1,
+      startsAt: new Date(Date.now() + (i + 1) * 86_400_000),
+      endsAt: new Date(Date.now() + (i + 1) * 86_400_000 + 3_600_000),
+      completionStatus:
+        i < misses ? (voided ? "VOIDED" : "CANCELLED") : "SCHEDULED",
+      movedAt: null,
+      hostCancelledAt: i < misses && !voided ? missAt(misses, i) : null,
+      voidedAt: voided ? missAt(misses, i) : null,
+      outcome: voided ? db.lastMissVoid : null,
+    };
+  });
 const db = {
   misses: 3,
   N: 12,
   /** Days between consecutive host misses; the newest lands at `cancelledAt`. */
   missGapDays: 0,
+  /** The newest miss's void outcome, or null when it is a host cancel. */
+  lastMissVoid: null as string | null,
   flagged: null as Record<string, unknown> | null,
   occurrenceCreate: jest.fn(),
+  /** The class wrapper's row lock the miss ledger takes. */
+  rowLock: jest.fn(async (..._a: unknown[]) => 1),
   /** The missed session's own host profile, as the make-up's pre-read sees it. */
   sourceProfile: null as string | null,
 };
 jest.mock("../../lib/prisma", () => {
   const tx = {
+    $executeRaw: (...a: unknown[]) => db.rowLock(...a),
     appointmentOccurrence: {
       findUniqueOrThrow: async () => ({ startsAt: new Date() }),
       findMany: async () => occurrences(db.misses),
@@ -122,8 +132,10 @@ jest.mock("../../lib/prisma", () => {
   };
 });
 
+import prisma from "@/lib/prisma";
 import {
   cancelClassSession,
+  onClassSessionVoided,
   reliabilityFlagDue,
   scheduleClassMakeUp,
   type HostedClass,
@@ -148,6 +160,7 @@ beforeEach(() => {
   db.misses = 3;
   db.N = 12;
   db.missGapDays = 0;
+  db.lastMissVoid = null;
   db.flagged = null;
   db.sourceProfile = null;
   hostFree.current = true;
@@ -227,6 +240,45 @@ it("a 100-session class with misses spread out trips at the 15th miss, not the 1
     exitRight: true,
   });
   expect(exitBells()).toHaveLength(1);
+});
+
+it("takes the class wrapper's row lock before reading the miss ledger", async () => {
+  transition.mockResolvedValue(1);
+  await cancelClassSession(hosted, "occ-3");
+  const [sql] = db.rowLock.mock.calls[0] as [TemplateStringsArray];
+  expect(sql.join("?")).toMatch(/FROM "Appointment" WHERE id = \? FOR UPDATE/);
+});
+
+const relabel = (occurrenceId: string) =>
+  prisma.$transaction((tx) =>
+    onClassSessionVoided(tx, {
+      appointmentId: "apt-1",
+      occurrenceId,
+      startsAt: new Date(),
+      voidedAt: new Date(),
+      hostAttributed: true,
+      relabelled: true,
+    }),
+  );
+
+it("an ops relabel that blames an existing void on the host trips the 30-day window once", async () => {
+  db.N = 100;
+  db.misses = 3;
+  db.missGapDays = 5;
+  db.lastMissVoid = "HOST_ABSENT";
+  const tripped = await relabel("occ-3");
+  expect(tripped.exitEmailArgs).not.toBeNull();
+  expect(exitBells()).toHaveLength(1);
+});
+
+it("a relabel on a class whose right already stood sends nothing", async () => {
+  db.N = 100;
+  db.misses = 4;
+  db.missGapDays = 5;
+  db.lastMissVoid = "HOST_ABSENT";
+  const again = await relabel("occ-4");
+  expect(again.exitEmailArgs).toBeNull();
+  expect(exitBells()).toHaveLength(0);
 });
 
 // #1771 — after an ops clear, a later host cancellation re-flags; none does not.

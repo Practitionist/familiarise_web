@@ -330,14 +330,17 @@ export type LandedMiss = { occurrenceId: string; relabelled?: boolean };
 
 /**
  * The series ledger now, and whether the exit right already stood before
- * `landed`; the miss that first trips it is the one whose bells go out.
+ * `landed`; the miss that first trips it is the one whose bells and emails go
+ * out. The class wrapper's row lock serialises concurrent misses (a cancel and
+ * an outcome sweep), so the second one reads the first and never trips again.
  */
 export async function seriesLedgerAfterMiss(
-  db: Pick<Tx, "appointment" | "appointmentOccurrence">,
+  db: Pick<Tx, "appointment" | "appointmentOccurrence" | "$executeRaw">,
   appointmentId: string,
   landed: LandedMiss,
   now: Date,
 ): Promise<{ ledger: SeriesLedger; heldBefore: boolean }> {
+  await db.$executeRaw`SELECT 1 FROM "Appointment" WHERE id = ${appointmentId} FOR UPDATE`;
   const { N, occurrences } = await readSeries(db, appointmentId);
   const before = occurrences.map((o) => {
     if (o.id !== landed.occurrenceId) return o;

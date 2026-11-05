@@ -3,7 +3,8 @@
  * removes a miss (an un-void of a session that was not the host's fault) can
  * withdraw a right the learner has not used yet. A right already used is final:
  * the learner's exit refund stays, and a replayed exit is a no-op rather than a
- * fresh check. Real Postgres, the real seat-leave door.
+ * fresh check. Concurrent misses are serialised on the class, so the exit
+ * email goes out once. Real Postgres, the real seat-leave door.
  */
 import prisma from "../../../lib/prisma";
 import { HOUR_MS, seedHost } from "./harness";
@@ -21,6 +22,7 @@ jest.mock("../../../lib/stream/access-revocation", () =>
   jest.requireActual("../../fixtures/noop-module").noopModule(),
 );
 
+import { onClassSessionVoided } from "../../../lib/booking/class-sessions";
 import { leaveEventSeat } from "../../../lib/booking/seat-leave";
 import {
   seatClassBuyer,
@@ -89,3 +91,42 @@ it("an ops un-void withdraws an unused exit right; a used one stays final", asyn
   expect(await refundedPaise(used.paymentId)).toBe(paidOnExit);
 });
 
+it("a host miss and an outcome void landing together send the exit email once", async () => {
+  const host = await seedHost();
+  const cls = await seedClassUnderWay(host, SHAPE);
+  await seatClassBuyer(cls, SHAPE);
+  const [first, second, a, b] = cls.occurrenceIds.slice(SHAPE.delivered);
+  const voidAs = (id: string, at: Date) => ({
+    where: { id },
+    data: {
+      completionStatus: "VOIDED" as const,
+      voidedAt: at,
+      outcome: "HOST_ABSENT" as const,
+    },
+  });
+  // Two misses already: the next one trips the right.
+  await prisma.appointmentOccurrence.update(voidAs(first, new Date()));
+  await prisma.appointmentOccurrence.update(voidAs(second, new Date()));
+
+  // Both voids are written before either reads the ledger.
+  let release!: () => void;
+  const bothWritten = new Promise<void>((r) => (release = r));
+  let written = 0;
+  const land = (id: string) =>
+    prisma.$transaction(async (tx) => {
+      const now = new Date();
+      await tx.appointmentOccurrence.update(voidAs(id, now));
+      written += 1;
+      if (written === 2) release();
+      await bothWritten;
+      return onClassSessionVoided(tx, {
+        appointmentId: cls.appointmentId,
+        occurrenceId: id,
+        startsAt: now,
+        voidedAt: now,
+        hostAttributed: true,
+      });
+    });
+  const results = await Promise.all([land(a), land(b)]);
+  expect(results.filter((r) => r.exitEmailArgs !== null)).toHaveLength(1);
+});
